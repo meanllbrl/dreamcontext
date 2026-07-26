@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "checklist-window",
+  "description": "Narrow capability for the pinned checklist window. Deliberately excludes every shell:* and global-shortcut:* permission the default capability grants — this window renders agent-authored markdown and holds a user-pasted secret, so it gets only what it actually uses: window chrome control, targeted events, and the file-attach dialog. See knowledge/dashboard-server-security.md for the containment pattern this follows.",
+  "windows": ["checklist-*"],
+  "remote": {
+    "urls": ["http://localhost:*", "http://127.0.0.1:*"]
+  },
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-focus",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-position",
+    "core:window:allow-set-always-on-top",
+    "core:event:allow-emit-to",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "dialog:allow-open"
+  ]
+}

@@ -11,11 +11,13 @@ import {
   toolGlyph, classifyReference, parseEditDiff, summarizeSubAgents, subAgentToolUseIds,
   deriveDiffStartLine, estimateTokens, formatTokenCount, formatDuration, classifyOutputLine,
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
-  turnHasVisibleProgress, nextStickToBottom, BOTTOM_SLACK,
+  turnHasVisibleProgress, nextStickToBottom, nextRestoreTop, isAtBottom, BOTTOM_SLACK,
   wheelIntent, keyIntent, touchIntent,
   isAgentRun, runDurationMs, formatModelName, runMetaChips,
-  isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote,
-  type SubAgentRun, type ProgressProbe,
+  isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote, startSubAgentRun,
+  nextFirstShown, splitWindow, revealScrollCorrection, WINDOW_TAIL, WINDOW_STEP, clampLines,
+  promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV,
+  type SubAgentRun, type ProgressProbe, type HistoryNav,
 } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 
 // ─── toolGlyph ──────────────────────────────────────────────────────────────────
@@ -163,6 +165,75 @@ describe('summarizeSubAgents', () => {
   it('an all-completed set still reports total + earliestStart with running:0', () => {
     const runs = [run({ status: 'completed', startedAt: 500 }), run({ status: 'error', startedAt: 700 })];
     expect(summarizeSubAgents(runs)).toEqual({ running: 0, total: 2, agents: 2, earliestStart: 500 });
+  });
+});
+
+// ─── startSubAgentRun (the double-row regression) ────────────────────────────────
+//
+// Captured live from the CLI on a two-agent BACKGROUND fan-out (the Agent tool's default,
+// and what every fan-out skill dispatches): the `background_tasks_changed` roster announces
+// each agent BEFORE its own `task_started` frame arrives —
+//
+//   roster [A] → task_started A → roster [A,B] → task_started B
+//
+// so the roster arm has already adopted the run by the time the start frame lands. When that
+// arm appended blindly, every backgrounded agent got two rows: the adopted one collected all
+// the progress (each later frame patches the FIRST match by task_id) and its twin sat at
+// "Working…" with only a clock, so a 2-agent fan-out's card read "4 agents running".
+// A FOREGROUND agent emits no roster frame at all — which is why this only ever showed up on
+// backgrounded dispatches.
+
+describe('startSubAgentRun', () => {
+  it('a task_started for a task the roster already adopted MERGES — one row, not two', () => {
+    // What the roster arm builds: name + taskType, and nothing else the roster doesn't carry.
+    const adopted = run({ taskId: 'a5e40', name: 'Review round-2 plan — security lens', taskType: 'local_agent', startedAt: 1000 });
+    const started = run({
+      taskId: 'a5e40', name: 'Review round-2 plan — security lens', taskType: 'local_agent',
+      toolUseId: 'toolu_01', subagentType: 'goal-plan-reviewer', prompt: 'Review the plan…', startedAt: 1200,
+    });
+    const next = startSubAgentRun([adopted], started);
+    expect(next).toHaveLength(1);
+    // Identity comes from the start frame — the roster carries none of these.
+    expect(next[0].toolUseId).toBe('toolu_01');
+    expect(next[0].subagentType).toBe('goal-plan-reviewer');
+    expect(next[0].prompt).toBe('Review the plan…');
+    // The clock measures the run, so the EARLIER of the two stamps wins.
+    expect(next[0].startedAt).toBe(1000);
+  });
+
+  it('a start frame never resets live state a progress frame already wrote', () => {
+    const live = run({
+      taskId: 'a5e40', taskType: 'local_agent', status: 'completed', endedAt: 9000,
+      activity: 'Running grep', summary: 'Found 2 issues', usage: { totalTokens: 79000, toolUses: 13 },
+    });
+    const next = startSubAgentRun([live], run({ taskId: 'a5e40', subagentType: 'goal-plan-reviewer', startedAt: 5000 }));
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({
+      status: 'completed', endedAt: 9000, activity: 'Running grep', summary: 'Found 2 issues',
+      subagentType: 'goal-plan-reviewer',
+    });
+    expect(next[0].usage).toEqual({ totalTokens: 79000, toolUses: 13 });
+  });
+
+  it('an unknown task_id is appended — a foreground agent has no roster frame to be adopted by', () => {
+    const existing = run({ taskId: 'a5e40' });
+    const next = startSubAgentRun([existing], run({ taskId: 'a85d4', name: 'critic lens' }));
+    expect(next.map((r) => r.taskId)).toEqual(['a5e40', 'a85d4']);
+  });
+
+  it('the whole captured background fan-out reduces to exactly one row per agent', () => {
+    // roster [A] → started A → roster [A,B] → started B, with the roster arm's own adopt rule.
+    const adopt = (runs: SubAgentRun[], taskId: string, name: string): SubAgentRun[] => (
+      runs.some((r) => r.taskId === taskId) ? runs : [...runs, run({ taskId, name, taskType: 'local_agent' })]
+    );
+    let runs: SubAgentRun[] = [];
+    runs = adopt(runs, 'A', 'security lens');
+    runs = startSubAgentRun(runs, run({ taskId: 'A', name: 'security lens', taskType: 'local_agent', toolUseId: 'toolu_a', subagentType: 'goal-plan-reviewer' }));
+    runs = adopt(runs, 'A', 'security lens');
+    runs = adopt(runs, 'B', 'critic lens');
+    runs = startSubAgentRun(runs, run({ taskId: 'B', name: 'critic lens', taskType: 'local_agent', toolUseId: 'toolu_b', subagentType: 'goal-plan-reviewer' }));
+    expect(summarizeSubAgents(runs)).toMatchObject({ running: 2, total: 2, agents: 2 });
+    expect(subAgentToolUseIds(runs)).toEqual(new Set(['toolu_a', 'toolu_b']));
   });
 });
 
@@ -700,5 +771,488 @@ describe('nextStickToBottom', () => {
     };
     expect(nextStickToBottom(true, detached)).toBe(true);
     expect(nextStickToBottom(false, detached)).toBe(false);
+  });
+});
+
+// ─── isAtBottom (the re-measurement a "pinned" view cannot do without) ───────────────
+//
+// Owner report 07-25: "when the background-agent pin is up the scroll goes too far down, an
+// update fixes it, then it slides down again". The mechanism, measured in Chromium: docked
+// furniture BELOW the scroller (the background-shells tray, the auto-growing composer) grows,
+// the scroller shrinks under a view that was at its maximum, and the maximum moves out from
+// under a `scrollTop` that is still perfectly valid — so NO scroll event is dispatched and
+// nothing in the event path can notice. A tray growing 186px left 174px of transcript below
+// the fold with the view still believing it was pinned (hence no Latest pill to get back with).
+// Only a re-measurement of the live geometry finds that, which is what the pin's own
+// next-frame re-assert does with this predicate.
+
+describe('isAtBottom', () => {
+  it('true at the bottom and anywhere inside the slack window', () => {
+    expect(isAtBottom({ scrollTop: 1500, scrollHeight: 2000, clientHeight: 500 })).toBe(true);
+    expect(isAtBottom({ scrollTop: 1500 - BOTTOM_SLACK, scrollHeight: 2000, clientHeight: 500 })).toBe(true);
+  });
+
+  it('false one pixel past the slack window', () => {
+    expect(isAtBottom({ scrollTop: 1499 - BOTTOM_SLACK, scrollHeight: 2000, clientHeight: 500 })).toBe(false);
+  });
+
+  it('catches the silent unpin: furniture grew, scrollTop never moved', () => {
+    // Same scrollTop before and after; only the scroller's own height changed.
+    const before = { scrollTop: 1500, scrollHeight: 2000, clientHeight: 500 };
+    const after = { scrollTop: 1500, scrollHeight: 2000, clientHeight: 500 - 186 };
+    expect(isAtBottom(before)).toBe(true);
+    expect(isAtBottom(after)).toBe(false);   // 186px of transcript now below the fold
+  });
+
+  it('agrees with nextStickToBottom rule 1 — one definition of "at the bottom"', () => {
+    for (const scrollTop of [0, 900, 1451, 1452, 1499, 1500]) {
+      const m = { scrollTop, scrollHeight: 2000, clientHeight: 500 };
+      expect(nextStickToBottom(false, { ...m, prevScrollTop: scrollTop, userDriven: false }))
+        .toBe(isAtBottom(m) ? true : false);
+    }
+  });
+});
+
+// ─── nextRestoreTop (what a re-home puts back for a view that is NOT at the bottom) ──
+
+describe('nextRestoreTop', () => {
+  const at = (scrollTop: number, prevScrollTop = scrollTop) => ({
+    scrollTop, scrollHeight: 2000, clientHeight: 500, prevScrollTop, userDriven: true,
+  });
+  const churn = (scrollTop: number, prevScrollTop = scrollTop) => ({
+    ...at(scrollTop, prevScrollTop), userDriven: false,
+  });
+
+  it('follows the reader wherever they scroll', () => {
+    expect(nextRestoreTop(0, at(900, 1400))).toBe(900);
+    expect(nextRestoreTop(900, at(1200, 900))).toBe(1200);
+  });
+
+  it('records a clamp too — the content moved the reader, and that IS where they are now', () => {
+    // A tool card collapsing under the view genuinely relocates it; coming back to the
+    // pre-clamp offset would scroll past content that no longer exists.
+    expect(nextRestoreTop(1400, churn(900, 1400))).toBe(900);
+  });
+
+  it('records a deliberate scroll to the very top', () => {
+    // The reader asked for the top (upward intent), so 0 is a real reading position.
+    expect(nextRestoreTop(900, at(0, 400))).toBe(0);
+  });
+
+  it('ignores a jump to 0 that no gesture asked for — that is a re-home reset', () => {
+    // `appendChild`-ing the session container into another slot zeroes `scrollTop`. Chromium
+    // dispatches no scroll event for it, but an engine that does must not be allowed to
+    // overwrite the reader's offset with the reset, or the restore would put back 0.
+    expect(nextRestoreTop(1441, churn(0, 1441))).toBe(1441);
+  });
+
+  it('keeps the last known offset for an unmeasurable (garaged) scroller', () => {
+    // A backgrounded tab's container is detached: 0 there means "cannot be measured", not
+    // "the reader is at the top". This is the state the whole restore exists to survive.
+    const garaged = {
+      scrollTop: 0, scrollHeight: 0, clientHeight: 0, prevScrollTop: 0, userDriven: false,
+    };
+    expect(nextRestoreTop(1441, garaged)).toBe(1441);
+  });
+
+  it('accepts 0 from a scroller whose content simply fits', () => {
+    // Short transcript, nothing to scroll: 0 is the only honest offset, and `prevScrollTop`
+    // being 0 keeps it out of the re-home guard.
+    expect(nextRestoreTop(1441, { scrollTop: 0, scrollHeight: 400, clientHeight: 500, prevScrollTop: 0, userDriven: false })).toBe(0);
+  });
+});
+
+// ─── Transcript window ──────────────────────────────────────────────────────────
+//
+// The window is what bounds a ChatPane's mounted DOM (and therefore its memory) no matter
+// how long a conversation runs. Its two invariants are asserted directly below, because
+// both are silent when broken: a window that slides while UNPINNED yanks content out from
+// above a reader mid-sentence, and a window that never slides while PINNED is just the
+// unbounded mount it replaced, wearing a slice.
+
+describe('nextFirstShown — pinned (following the conversation)', () => {
+  it('keeps exactly the last WINDOW_TAIL entries mounted', () => {
+    expect(nextFirstShown(0, { total: 500, pinned: true })).toBe(500 - WINDOW_TAIL);
+  });
+
+  it('slides forward as the conversation grows — the memory release valve', () => {
+    const a = nextFirstShown(0, { total: 200, pinned: true });
+    const b = nextFirstShown(a, { total: 260, pinned: true });
+    expect(b - a).toBe(60);
+    expect(260 - b).toBe(WINDOW_TAIL);   // still exactly a tail's worth mounted
+  });
+
+  it('mounts everything while the conversation is shorter than the window', () => {
+    expect(nextFirstShown(0, { total: 0, pinned: true })).toBe(0);
+    expect(nextFirstShown(0, { total: 1, pinned: true })).toBe(0);
+    expect(nextFirstShown(0, { total: WINDOW_TAIL, pinned: true })).toBe(0);
+    expect(nextFirstShown(0, { total: WINDOW_TAIL + 1, pinned: true })).toBe(1);
+  });
+
+  it('re-pinning after reading far back shrinks the window straight back to the tail', () => {
+    expect(nextFirstShown(0, { total: 400, pinned: true })).toBe(400 - WINDOW_TAIL);
+  });
+});
+
+describe('nextFirstShown — unpinned (someone is reading)', () => {
+  it('FREEZES the head: a growing conversation never moves it forward', () => {
+    const head = 120;
+    for (const total of [400, 401, 450, 900]) {
+      expect(nextFirstShown(head, { total, pinned: false })).toBe(head);
+    }
+  });
+
+  it('a whole streamed turn cannot take one entry off the top', () => {
+    let head = 300;
+    for (let total = 500; total < 600; total += 1) {
+      head = nextFirstShown(head, { total, pinned: false });
+    }
+    expect(head).toBe(300);
+  });
+
+  it('clamps a rewind (the one thing that shrinks total) to a still-populated window', () => {
+    const head = nextFirstShown(300, { total: 120, pinned: false });
+    expect(head).toBe(120 - WINDOW_TAIL);
+    expect(120 - head).toBe(WINDOW_TAIL);   // never an empty transcript
+  });
+
+  it('a rewind past the window size lands at the beginning', () => {
+    expect(nextFirstShown(300, { total: 10, pinned: false })).toBe(0);
+    expect(nextFirstShown(300, { total: 0, pinned: false })).toBe(0);
+  });
+
+  it('is idempotent — the render-time normalization converges in one pass', () => {
+    const once = nextFirstShown(77, { total: 500, pinned: false });
+    expect(nextFirstShown(once, { total: 500, pinned: false })).toBe(once);
+    const pinnedOnce = nextFirstShown(77, { total: 500, pinned: true });
+    expect(nextFirstShown(pinnedOnce, { total: 500, pinned: true })).toBe(pinnedOnce);
+  });
+});
+
+describe('nextFirstShown — reveal', () => {
+  it('steps back WINDOW_STEP at a time', () => {
+    const start = nextFirstShown(0, { total: 500, pinned: true });
+    const a = nextFirstShown(start, { total: 500, pinned: false, reveal: true });
+    const b = nextFirstShown(a, { total: 500, pinned: false, reveal: true });
+    expect(start - a).toBe(WINDOW_STEP);
+    expect(a - b).toBe(WINDOW_STEP);
+  });
+
+  it('stops at the beginning instead of going negative', () => {
+    expect(nextFirstShown(10, { total: 500, pinned: false, reveal: true })).toBe(0);
+    expect(nextFirstShown(0, { total: 500, pinned: false, reveal: true })).toBe(0);
+  });
+
+  it('reaches the beginning in ceil(total / WINDOW_STEP) steps and then stays there', () => {
+    let head = nextFirstShown(0, { total: 500, pinned: true });
+    let steps = 0;
+    while (head > 0 && steps < 100) {
+      head = nextFirstShown(head, { total: 500, pinned: false, reveal: true });
+      steps += 1;
+    }
+    expect(head).toBe(0);
+    expect(steps).toBe(Math.ceil((500 - WINDOW_TAIL) / WINDOW_STEP));
+  });
+
+  it('wins over the pinned rule — a reveal came from the user asking', () => {
+    const head = nextFirstShown(200, { total: 500, pinned: true, reveal: true });
+    expect(head).toBeLessThan(500 - WINDOW_TAIL);
+  });
+});
+
+describe('splitWindow', () => {
+  it('items only (a fresh conversation): the head indexes straight into items', () => {
+    expect(splitWindow(0, 100, 60)).toEqual({
+      hiddenCount: 60, historyFrom: 0, itemsFrom: 60, showsHistory: false,
+    });
+  });
+
+  it('history only (a resumed conversation with no new turn yet)', () => {
+    expect(splitWindow(100, 0, 60)).toEqual({
+      hiddenCount: 60, historyFrom: 60, itemsFrom: 0, showsHistory: true,
+    });
+  });
+
+  it('straddling: the window starts inside history and runs through into items', () => {
+    expect(splitWindow(100, 50, 80)).toEqual({
+      hiddenCount: 80, historyFrom: 80, itemsFrom: 0, showsHistory: true,
+    });
+  });
+
+  it('history entirely below the window: no divider, items sliced from their own offset', () => {
+    expect(splitWindow(100, 50, 120)).toEqual({
+      hiddenCount: 120, historyFrom: 100, itemsFrom: 20, showsHistory: false,
+    });
+  });
+
+  it('exactly at the history/items boundary hides all history and no items', () => {
+    expect(splitWindow(100, 50, 100)).toEqual({
+      hiddenCount: 100, historyFrom: 100, itemsFrom: 0, showsHistory: false,
+    });
+  });
+
+  it('a zero head shows everything, and the divider only when history exists', () => {
+    expect(splitWindow(0, 0, 0)).toEqual({
+      hiddenCount: 0, historyFrom: 0, itemsFrom: 0, showsHistory: false,
+    });
+    expect(splitWindow(3, 4, 0)).toEqual({
+      hiddenCount: 0, historyFrom: 0, itemsFrom: 0, showsHistory: true,
+    });
+  });
+
+  it('clamps a head past the end rather than producing negative slices', () => {
+    expect(splitWindow(10, 10, 999)).toEqual({
+      hiddenCount: 20, historyFrom: 10, itemsFrom: 10, showsHistory: false,
+    });
+  });
+});
+
+describe('revealScrollCorrection', () => {
+  it('corrects by exactly how far the anchor row moved', () => {
+    expect(revealScrollCorrection({ anchorTopBefore: 1200, anchorTopAfter: 6200 })).toBe(5000);
+  });
+
+  it('IGNORES an append that lands in the same commit — the regression this exists for', () => {
+    // One commit prepends 5000px of revealed entries ABOVE the reader and appends a 700px
+    // tool card BELOW them (a frame arriving while the reveal was still being scheduled).
+    // The anchor moved by the prepend alone; scrollHeight grew by prepend + append, and
+    // correcting by THAT would scroll the reader 700px past where they were reading.
+    const prepend = 5000;
+    const append = 700;
+    const byAnchor = revealScrollCorrection({ anchorTopBefore: 1200, anchorTopAfter: 1200 + prepend });
+    const byScrollHeight = (40_000 + prepend + append) - 40_000;
+    expect(byAnchor).toBe(prepend);
+    expect(byScrollHeight).toBe(prepend + append);
+    expect(byAnchor).not.toBe(byScrollHeight);
+  });
+
+  it('corrects nothing when the anchor did not move, or moved up', () => {
+    expect(revealScrollCorrection({ anchorTopBefore: 800, anchorTopAfter: 800 })).toBe(0);
+    // Only reachable if something else re-laid the transcript out; guessing would be worse.
+    expect(revealScrollCorrection({ anchorTopBefore: 800, anchorTopAfter: 400 })).toBe(0);
+  });
+
+  it('ANY surviving row below the prepend gives the same answer — why spare anchors work', () => {
+    // The captured anchors all sit below where the revealed entries land, so a prepend moves
+    // every one of them by the same amount. That is what lets the layout effect fall through
+    // to a spare when its first choice is unmounted by the commit (the combined SubAgentCard
+    // is keyed by the earliest suppressed tool item in the window, so a reveal that mounts an
+    // older fan-out migrates its key and replaces the node).
+    const prepend = 3200;
+    for (const before of [1200, 2100, 4800]) {
+      expect(revealScrollCorrection({ anchorTopBefore: before, anchorTopAfter: before + prepend }))
+        .toBe(prepend);
+    }
+  });
+
+  it('the "show earlier" button unmounting on the last reveal is absorbed automatically', () => {
+    // The final step reveals 900px of entries AND removes the 32px button above them, so the
+    // net movement is 868px. An anchor measure reports the net; a height measure would not.
+    expect(revealScrollCorrection({ anchorTopBefore: 1000, anchorTopAfter: 1868 })).toBe(868);
+  });
+});
+
+describe('transcript window ↔ stick-to-bottom', () => {
+  it('the reveal prepend, once compensated, does not read as the user scrolling up', () => {
+    // Reader parked 200px down; revealing older entries adds 5000px ABOVE them, and the
+    // layout effect adds the same 5000 to scrollTop. Both the position and the recorded
+    // previous position move together, so the resulting scroll event is a no-op.
+    const before = { scrollTop: 200, prevScrollTop: 200 };
+    const grown = 5000;
+    const m = {
+      scrollTop: before.scrollTop + grown,
+      scrollHeight: 20_000,
+      clientHeight: 600,
+      prevScrollTop: before.prevScrollTop + grown,   // written in the SAME layout effect
+      userDriven: true,
+    };
+    expect(nextStickToBottom(false, m)).toBe(false);   // still unpinned, not re-pinned
+    expect(nextRestoreTop(before.scrollTop, m)).toBe(m.scrollTop);
+  });
+
+  it('an UNcompensated prepend is what would strand the reader — the regression this guards', () => {
+    // Same reveal, but without the scrollTop write: prevScrollTop stays at the old value
+    // while the content above grew, so the reading position is recorded 5000px too high.
+    const m = {
+      scrollTop: 200, scrollHeight: 20_000, clientHeight: 600, prevScrollTop: 200, userDriven: true,
+    };
+    expect(nextRestoreTop(5200, m)).toBe(200);
+  });
+});
+
+// ─── clampLines (bounded card bodies) ───────────────────────────────────────────
+
+describe('clampLines', () => {
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i}`);
+
+  it('returns short input whole, with nothing hidden and an empty tail', () => {
+    expect(clampLines(lines(5), 20, 20)).toEqual({ head: lines(5), tail: [], hidden: 0 });
+    expect(clampLines([], 20, 20)).toEqual({ head: [], tail: [], hidden: 0 });
+  });
+
+  it('does not clamp at exactly head + tail', () => {
+    const input = lines(40);
+    expect(clampLines(input, 20, 20)).toEqual({ head: input, tail: [], hidden: 0 });
+  });
+
+  it('clamps one line past the budget', () => {
+    const r = clampLines(lines(41), 20, 20);
+    expect(r.hidden).toBe(1);
+    expect(r.head).toHaveLength(20);
+    expect(r.tail).toHaveLength(20);
+  });
+
+  it('keeps BOTH ends — a shell failure lives at the end, its command at the start', () => {
+    const r = clampLines(lines(1000), 20, 20);
+    expect(r.head[0]).toBe('line 0');
+    expect(r.head.at(-1)).toBe('line 19');
+    expect(r.tail[0]).toBe('line 980');
+    expect(r.tail.at(-1)).toBe('line 999');
+    expect(r.hidden).toBe(960);
+  });
+
+  it('accounts for every line: head + tail + hidden === input length', () => {
+    for (const n of [0, 1, 39, 40, 41, 500, 100_000]) {
+      const r = clampLines(lines(n), 20, 20);
+      expect(r.head.length + r.tail.length + r.hidden).toBe(n);
+    }
+  });
+
+  it('head-only (tail 0) is a plain truncation', () => {
+    const r = clampLines(lines(100), 10, 0);
+    expect(r.head).toHaveLength(10);
+    expect(r.tail).toEqual([]);
+    expect(r.hidden).toBe(90);
+  });
+
+  it('treats negative budgets as zero rather than producing reversed slices', () => {
+    const r = clampLines(lines(10), -5, -5);
+    expect(r).toEqual({ head: [], tail: [], hidden: 10 });
+  });
+});
+
+// ─── Prompt history (composer ↑/↓ recall) ───────────────────────────────────────
+
+const userMsg = (text: string) => ({ kind: 'user', text });
+const assistantMsg = (text: string) => ({ kind: 'text', text });
+
+describe('promptHistory', () => {
+  it('returns this conversation\'s prompts NEWEST first', () => {
+    const items = [userMsg('one'), assistantMsg('reply'), userMsg('two'), userMsg('three')];
+    expect(promptHistory([], items)).toEqual(['three', 'two', 'one']);
+  });
+
+  it('covers a RESUMED conversation: replayed history before live items', () => {
+    // The whole point of resuming is that the earlier turns are yours to re-run, and a resumed
+    // chat keeps them in `history`, separate from `items`.
+    expect(promptHistory([userMsg('old')], [userMsg('new')])).toEqual(['new', 'old']);
+  });
+
+  it('ignores everything that is not a user message', () => {
+    const items = [assistantMsg('a'), { kind: 'tool', text: 'Bash' }, { kind: 'thinking', text: 'hm' }];
+    expect(promptHistory([], items)).toEqual([]);
+  });
+
+  it('drops empty/whitespace prompts and trims what it keeps', () => {
+    expect(promptHistory([], [userMsg('  spaced  '), userMsg('   '), { kind: 'user' }]))
+      .toEqual(['spaced']);
+  });
+
+  it('collapses CONSECUTIVE duplicates — three "npm test"s cost one ↑, not three', () => {
+    const items = [userMsg('npm test'), userMsg('npm test'), userMsg('npm test')];
+    expect(promptHistory([], items)).toEqual(['npm test']);
+  });
+
+  it('keeps NON-adjacent duplicates: the positions between them are what make the walk legible', () => {
+    const items = [userMsg('build'), userMsg('fix'), userMsg('build')];
+    expect(promptHistory([], items)).toEqual(['build', 'fix', 'build']);
+  });
+
+  it('collapses a duplicate that straddles the history/items seam', () => {
+    expect(promptHistory([userMsg('go')], [userMsg('go')])).toEqual(['go']);
+  });
+});
+
+describe('canRecallHistory', () => {
+  it('recalls on an empty draft', () => {
+    expect(canRecallHistory('', 0, 0, NO_HISTORY_NAV)).toBe(true);
+  });
+
+  it('recalls from the very start of a non-empty draft (the shell rule)', () => {
+    expect(canRecallHistory('half typed', 0, 0, NO_HISTORY_NAV)).toBe(true);
+  });
+
+  it('does NOT hijack ↑ mid-draft — losing what you just typed is unrecoverable', () => {
+    expect(canRecallHistory('half typed', 4, 4, NO_HISTORY_NAV)).toBe(false);
+    expect(canRecallHistory('line one\nline two', 12, 12, NO_HISTORY_NAV)).toBe(false);
+  });
+
+  it('does not recall while text is selected from position 0 (that is a shift-select)', () => {
+    expect(canRecallHistory('half typed', 0, 4, NO_HISTORY_NAV)).toBe(false);
+  });
+
+  it('always recalls once a walk is in progress, wherever the caret sits', () => {
+    const walking: HistoryNav = { index: 0, stash: '' };
+    expect(canRecallHistory('a recalled prompt', 17, 17, walking)).toBe(true);
+  });
+});
+
+describe('stepHistory', () => {
+  const entries = ['newest', 'middle', 'oldest'];
+
+  it('the first ↑ recalls the newest prompt and stashes the draft', () => {
+    expect(stepHistory(entries, NO_HISTORY_NAV, 'back', 'wip')).toEqual({
+      nav: { index: 0, stash: 'wip' }, text: 'newest',
+    });
+  });
+
+  it('walks back through every entry, keeping the original stash', () => {
+    let nav: HistoryNav = NO_HISTORY_NAV;
+    const seen: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const step = stepHistory(entries, nav, 'back', 'wip');
+      expect(step).not.toBeNull();
+      nav = step!.nav;
+      seen.push(step!.text);
+    }
+    expect(seen).toEqual(entries);
+    expect(nav).toEqual({ index: 2, stash: 'wip' });
+  });
+
+  it('returns null at the oldest entry so the keystroke stays the textarea\'s', () => {
+    expect(stepHistory(entries, { index: 2, stash: 'wip' }, 'back', 'oldest')).toBeNull();
+  });
+
+  it('returns null for ↑ with no history at all', () => {
+    expect(stepHistory([], NO_HISTORY_NAV, 'back', '')).toBeNull();
+  });
+
+  it('↓ while not browsing is not a history key at all', () => {
+    expect(stepHistory(entries, NO_HISTORY_NAV, 'forward', 'wip')).toBeNull();
+  });
+
+  it('↓ walks forward towards the newest entry', () => {
+    expect(stepHistory(entries, { index: 2, stash: 'wip' }, 'forward', 'oldest')).toEqual({
+      nav: { index: 1, stash: 'wip' }, text: 'middle',
+    });
+  });
+
+  it('stepping forward past the newest restores the stashed draft VERBATIM and ends the walk', () => {
+    expect(stepHistory(entries, { index: 0, stash: 'half typed thing' }, 'forward', 'newest')).toEqual({
+      nav: NO_HISTORY_NAV, text: 'half typed thing',
+    });
+  });
+
+  it('restores an EMPTY stash (started from a blank composer) rather than leaving the prompt', () => {
+    expect(stepHistory(entries, { index: 0, stash: '' }, 'forward', 'newest')).toEqual({
+      nav: NO_HISTORY_NAV, text: '',
+    });
+  });
+
+  it('a fresh walk after a restore re-stashes whatever is in the box now', () => {
+    const restored = stepHistory(entries, { index: 0, stash: 'first draft' }, 'forward', 'newest')!;
+    expect(stepHistory(entries, restored.nav, 'back', 'second draft')).toEqual({
+      nav: { index: 0, stash: 'second draft' }, text: 'newest',
+    });
   });
 });

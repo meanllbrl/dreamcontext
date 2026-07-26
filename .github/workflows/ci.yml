@@ -43,6 +43,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The dashboard keeps its OWN package.json on purpose (React/Vite/TanStack are
+      # never root deps — see the "Dashboard deps are isolated" constraint), so a root
+      # `npm ci` does NOT provision it. That was fine while no test reached into
+      # dashboard/src, and stopped being fine the moment unit tests started importing
+      # its pure logic modules (chatViewSpec, chatEntities, checklistState, chatQueue):
+      # their transitive imports resolve react / marked / lz-string, and without this
+      # step the suite dies at COLLECT time with ERR_MODULE_NOT_FOUND — while a dev box
+      # stays green, because it has dashboard/node_modules left over from the last
+      # `npm run build`. Exactly the local-green/CI-red split this workflow exists to
+      # close.
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci
+
       # The integration suite spawns the COMPILED CLI at dist/index.js
       # (tests/integration/*.test.ts and a few unit tests do
       # `const CLI = join(__dirname, '..', '..', 'dist', 'index.js')`), so the CLI
@@ -51,8 +65,8 @@ jobs:
       # CLI-integration suite fails ENOENT — which is exactly why main went red while
       # local stayed green. `build:cli` (tsup) is sufficient: it emits a
       # self-contained dist/index.js and copies templates/agents/skill-packs/hooks.
-      # The heavier dashboard build is skipped — no test reads dist/dashboard, and it
-      # would need the dashboard's own deps installed.
+      # The heavier dashboard BUILD is still skipped — no test reads dist/dashboard.
+      # (Its deps are installed above, but only so vitest can resolve imports.)
       - name: Build the CLI
         run: npm run build:cli
 

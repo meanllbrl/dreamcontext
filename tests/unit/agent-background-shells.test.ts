@@ -22,7 +22,10 @@ import {
   handleAgentBackgroundOutput, sanitizeBackgroundTaskId, backgroundOutputPath,
 } from '../../src/server/routes/agent-chat.js';
 import { toChatEvent } from '../../dashboard/src/lib/chatProtocol.js';
-import { runStatusFrom, isBackgroundShell, subAgentToolUseIds, summarizeBackgroundShells } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
+import {
+  runStatusFrom, isBackgroundShell, subAgentToolUseIds, summarizeBackgroundShells,
+  isShellVisible, FINISHED_SHELL_TTL_MS,
+} from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 import type { SubAgentRun } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 
 function makeRes() {
@@ -307,11 +310,89 @@ describe('shell vs agent partition', () => {
   it('summarizeBackgroundShells counts only running shells but keeps finished ones listed', () => {
     const s = summarizeBackgroundShells([
       run({ taskId: 'a', taskType: 'local_bash', status: 'running' }),
-      run({ taskId: 'b', taskType: 'local_bash', status: 'stopped' }),
+      run({ taskId: 'b', taskType: 'local_bash', status: 'stopped', endedAt: 1000 }),
       run({ taskId: 'c', taskType: 'local_agent', status: 'running' }),
-    ]);
+    ], 1000);
     expect(s.running).toBe(1);
     expect(s.total).toBe(2);
     expect(s.shells.map((r) => r.taskId)).toEqual(['a', 'b']);
+  });
+});
+
+// ─── Finished-shell eviction (the tray is PINNED, so its rows cost the transcript) ────
+//
+// The tray docks above the composer, outside the scroller, so every row it holds is height
+// the transcript does not get and cannot scroll past. Keeping every finished shell until the
+// conversation ended (what this shipped as) grew the strip past the pane in a long session and
+// buried the chat, the tray's own collapse header, and the composer with it (owner report
+// 07-25). A finished shell now holds its row for FINISHED_SHELL_TTL_MS and then goes.
+
+describe('isShellVisible', () => {
+  const shell = (over: Partial<SubAgentRun>) => run({ taskType: 'local_bash', ...over });
+
+  it('a RUNNING shell is always visible, however old', () => {
+    expect(isShellVisible(shell({ status: 'running', startedAt: 0 }), 10 * 60 * 1000)).toBe(true);
+  });
+
+  it('a finished shell holds its row for the whole window, then goes', () => {
+    const s = shell({ status: 'completed', endedAt: 1_000_000 });
+    expect(isShellVisible(s, 1_000_000)).toBe(true);                            // just landed
+    expect(isShellVisible(s, 1_000_000 + FINISHED_SHELL_TTL_MS - 1)).toBe(true); // last instant
+    expect(isShellVisible(s, 1_000_000 + FINISHED_SHELL_TTL_MS)).toBe(false);    // expired
+  });
+
+  it('every terminal status expires, not just the clean one', () => {
+    const late = 1_000_000 + FINISHED_SHELL_TTL_MS + 1;
+    for (const status of ['completed', 'error', 'stopped'] as const) {
+      expect(isShellVisible(shell({ status, endedAt: 1_000_000 }), late)).toBe(false);
+    }
+  });
+
+  it('a terminal run with NO endedAt keeps its row rather than vanishing', () => {
+    // No reducer arm can produce this (they all stamp an end time even when the CLI frame
+    // omitted one), so the unknown shape errs toward keeping the output readable.
+    expect(isShellVisible(shell({ status: 'completed' }), 10 * 60 * 1000)).toBe(true);
+  });
+});
+
+describe('summarizeBackgroundShells — eviction + next wake', () => {
+  const END = 1_000_000;
+
+  it('drops expired rows from shells/total, so the tray shrinks and eventually unmounts', () => {
+    const runs = [
+      run({ taskId: 'old', taskType: 'local_bash', status: 'completed', endedAt: END }),
+      run({ taskId: 'new', taskType: 'local_bash', status: 'completed', endedAt: END + 60_000 }),
+    ];
+    const mid = summarizeBackgroundShells(runs, END + FINISHED_SHELL_TTL_MS + 1);
+    expect(mid.shells.map((r) => r.taskId)).toEqual(['new']);
+    expect(mid.total).toBe(1);
+
+    const after = summarizeBackgroundShells(runs, END + 60_000 + FINISHED_SHELL_TTL_MS + 1);
+    expect(after.total).toBe(0);      // → the tray renders nothing at all
+    expect(after.nextExpiryAt).toBeUndefined();
+  });
+
+  it('nextExpiryAt is the SOONEST row to expire — the one frame the tray must wake for', () => {
+    const s = summarizeBackgroundShells([
+      run({ taskId: 'a', taskType: 'local_bash', status: 'completed', endedAt: END + 5_000 }),
+      run({ taskId: 'b', taskType: 'local_bash', status: 'error', endedAt: END }),
+      run({ taskId: 'c', taskType: 'local_bash', status: 'running' }),
+    ], END + 5_000);
+    expect(s.nextExpiryAt).toBe(END + FINISHED_SHELL_TTL_MS);
+  });
+
+  it('a running-only tray schedules no wake (nothing to expire)', () => {
+    const s = summarizeBackgroundShells([
+      run({ taskId: 'a', taskType: 'local_bash', status: 'running' }),
+    ], END);
+    expect(s.nextExpiryAt).toBeUndefined();
+  });
+
+  it('never derives an expiry from `now` — the value the tray schedules against is stable', () => {
+    // A stamp-less terminal run must not produce a moving expiry: the tray schedules its next
+    // render FROM this number, so a value that changes on every read is a render loop.
+    const runs = [run({ taskId: 'a', taskType: 'local_bash', status: 'completed' })];
+    expect(summarizeBackgroundShells(runs, END).nextExpiryAt).toBeUndefined();
+    expect(summarizeBackgroundShells(runs, END + 99_999).nextExpiryAt).toBeUndefined();
   });
 });

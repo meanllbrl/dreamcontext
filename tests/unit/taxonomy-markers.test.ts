@@ -89,6 +89,19 @@ describe('skill/SKILL.md markers', () => {
     expect(content).toContain("Don't rebuild what the brain already has.");
   });
 
+  // Insights shipped with a create-path router row but no READ-path rule, so
+  // agents kept answering metric questions by calling a billing MCP / writing a
+  // one-off script while the synced series sat in lab/cache. These markers pin
+  // the read ladder on both surfaces it has to appear on.
+  it("has the 'Insights before external fetch' operational rule", () => {
+    expect(content).toContain('Insights before external fetch');
+    expect(content).toContain('dreamcontext lab show <slug>');
+  });
+
+  it('routes metric READING through the Entity Router, not just creating', () => {
+    expect(content).toContain('The router governs READING too, not only creating.');
+  });
+
   // Issue #204: duplicate -N task mirrors from a corrupted sync ledger must
   // route to the repair verb, not a hand-rolled fix or a fresh task recreate.
   it('has the tasks dedup capabilities row', () => {
@@ -122,6 +135,13 @@ describe('skill/references lab doc markers', () => {
   it('tasks-and-features.md has the insight-capture protocol', () => {
     const content = readFileSync(join(ROOT, 'skill', 'references', 'tasks-and-features.md'), 'utf-8');
     expect(content).toContain('Insight capture (in-session — ASK, never auto-create)');
+  });
+
+  it('tasks-and-features.md leads the read ladder with lab show, not an external fetch', () => {
+    const content = readFileSync(join(ROOT, 'skill', 'references', 'tasks-and-features.md'), 'utf-8');
+    expect(content).toContain('How agents READ it');
+    expect(content).toContain('never fetches');
+    expect(content).toContain('a raw API call, or a hand-written script is the LAST resort');
   });
 
   it('documents the funnel-set payload contract (render: funnel)', () => {

@@ -138,6 +138,10 @@ Returns one of three answers depending on what the path resolves to (all under t
 
 **Outside-root files:** instead of a dead refusal, an outside-root path returns **403 with `error:'needs_grant'`**. The Chat card offers *Allow access* → `POST /api/agent/grant` (below).
 
+**Vault selection on GET may use `?vault=<name>` (2026-07-25).** Vault resolution is normally the `X-Dreamcontext-Vault` header, but a whole class of request cannot send one: a subresource the BROWSER fetches. `<img src>`, `<video src>` and `<audio src>` carry no custom headers, so in launcher mode (the desktop app's own server runs `dashboard --launcher`, nothing pinned) every inline picture and every clip in Chat answered **400 `no_vault`** — the media existed, the request simply had no way to say which project it belonged to. `requestedVaultName()` in `src/server/index.ts` now falls back to a `?vault=` query param, the same channel the chat/terminal WebSocket upgrade already uses (the browser's WS API can't set headers either).
+
+The containment is that the fallback is **GET-only**. A query param rides along on any cross-site navigation or form post, so allowing one to pick the vault for a MUTATING request would hand out the vault selector for free — and mutating requests never needed it, since the api client sets the header. Reads stay safe because the value is never used as a path: `resolveRequestVault()` accepts an **exact registered vault NAME** and rejects anything path-shaped (`[/\\:.\x00]`) or unregistered with 400, exactly as it does for the header. The URL builder is `agentFileUrl()` in `dashboard/src/api/client.ts` — anything that reaches this endpoint as an element `src` must be built there, never by hand.
+
 ### `/api/agent/grant` — explicit single-file consent
 
 Key file: `src/server/routes/agent-chat.ts`, `handleAgentGrant()`.
@@ -173,9 +177,11 @@ Requires:
 - Argv form (no shell)
 - File must exist (`existsSync` check)
 
+**Relative paths resolve under the project root (2026-07-25).** A transcript names files the way the agent writes them — project-relative — and handing that straight to `statSync` resolved it against the SERVER process's cwd, which for a desktop-spawned server is not the project. Every relative path 404'd, so the last-resort *Open ↗* on a file that couldn't be shown opened nothing. A relative path now goes through `safeChildPath(projectRootOf(contextRoot), …)` (traversal → 400); an **absolute** path is still passed through untouched, because reaching a file outside the project is this route's entire purpose.
+
 ### Tests
 
-`tests/unit/agent-reveal-grant.test.ts` (17 tests) covers: the desktop gate, body/existence guards, the open-vs-reveal decision per type (a `.sh` is never handed to the opener bare), reaching a file outside the project root (the route's whole purpose), and grant semantics end-to-end — refused → granted → served, with the sibling file still refused, plus idempotency.
+`tests/unit/agent-reveal-grant.test.ts` (21 tests) covers: the desktop gate, body/existence guards, the open-vs-reveal decision per type (a `.sh` is never handed to the opener bare), reaching a file outside the project root (the route's whole purpose), project-relative resolution plus its traversal refusal, and grant semantics end-to-end — refused → granted → served, with the sibling file still refused, plus idempotency. `tests/unit/request-vault-name.test.ts` (9 tests) pins the GET-only `?vault=` fallback, including that a mutating method never reads it.
 
 ## Sources
 

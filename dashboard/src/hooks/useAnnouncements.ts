@@ -8,6 +8,7 @@ import {
   readSeenIds,
   markAllSeen,
 } from '../lib/announcements';
+import { parseAnnouncementStory, type AnnouncementStory } from '../lib/announcementStory';
 
 /** Fired whenever markAllRead() runs, so every mounted useAnnouncementInbox()
  *  (Sidebar badge, popup, page) re-reads localStorage and drops in sync — a
@@ -47,27 +48,27 @@ export function useAnnouncements(): UseQueryResult<Announcement[], Error> {
 }
 
 /**
- * Fetch a single announcement board's raw `.excalidraw.md` text so
- * ExcalidrawPreview can render it. Same static-asset contract as
+ * Fetch and validate a single announcement STORY document — the JSON landing
+ * page rendered by `AnnouncementStory`. Same static-asset contract as
  * useAnnouncements: raw `fetch` (not `api.get`), server-revalidated rather than
- * version-keyed (a board is regenerated from its spec in place, so its URL
- * never changes when its bytes do), and never live-polled. Returns '' (not an
- * error) on any failure so the caller renders a graceful empty state rather
- * than throwing.
+ * version-keyed (a story is edited in place, so its URL never changes when its
+ * bytes do), and never live-polled. Returns null (not an error) on any failure
+ * so the caller renders a graceful empty state rather than throwing.
  */
-export function useAnnouncementBoard(board: string): UseQueryResult<string, Error> {
+export function useAnnouncementStory(story: string): UseQueryResult<AnnouncementStory | null, Error> {
   return useQuery({
-    queryKey: ['announcement-board', board],
+    queryKey: ['announcement-story', story],
     queryFn: async () => {
       try {
-        const res = await fetch(`/announcements/${board}`);
-        if (!res.ok) return '';
-        return await res.text();
+        const res = await fetch(`/announcements/${story}`);
+        if (!res.ok) return null;
+        const raw: unknown = await res.json();
+        return parseAnnouncementStory(raw);
       } catch {
-        return '';
+        return null;
       }
     },
-    enabled: !!board,
+    enabled: !!story,
     staleTime: Infinity,
     refetchInterval: false,
   });

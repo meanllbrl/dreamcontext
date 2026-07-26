@@ -3,6 +3,7 @@
  * (and `npm run build`, which has no Tauri runtime) never fails when the desktop
  * APIs are absent. Outside the desktop app these fall back to web behaviour.
  */
+import { checklistWindowLabel } from './checklistStore';
 
 /** True only inside the Tauri v2 webview (the desktop shell). */
 export function isDesktop(): boolean {
@@ -233,6 +234,20 @@ function awaitWindowCreated(win: CreatableWindow, what: string): Promise<void> {
 }
 
 /**
+ * Vault window label — single-sourced so a second caller can derive the SAME
+ * target a vault window was actually created under without duplicating the
+ * sanitizer (the checklist submit bridge does exactly this: it `emitTo`s a
+ * vault window by label, and drift here would make a submit miss silently).
+ *
+ * Deliberately LOSSY: `vault-a.b` and `vault-a-b` already collide for window
+ * REUSE, a pre-existing quirk of this sanitizer, not something to fix here —
+ * tightening it would orphan the label of every currently-open vault window.
+ */
+export function vaultWindowLabel(name: string): string {
+  return `vault-${name.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
+
+/**
  * Open a vault in its OWN window. Each project keeps a single persistent window:
  * if it's already open we FOCUS it (never spawn a duplicate), otherwise we build
  * it. Either way the caller's current window is left untouched — switching to
@@ -246,7 +261,7 @@ export async function openVaultWindow(name: string): Promise<void> {
     // Rust command — custom commands are rejected by the ACL on remote-loaded
     // pages ("not allowed by ACL"), but core permissions pass.
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-    const label = `vault-${name.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+    const label = vaultWindowLabel(name);
     const existing = await WebviewWindow.getByLabel(label);
     if (existing) {
       // Already open — surface the existing window instead of opening another.
@@ -274,6 +289,48 @@ export async function openVaultWindow(name: string): Promise<void> {
     return;
   }
   window.open(`/?vault=${encodeURIComponent(name)}`, '_blank');
+}
+
+/**
+ * Open the pinned checklist window for one project's checklist `id`. Mirrors
+ * `openVaultWindow` exactly: focus an already-open window instead of spawning a
+ * duplicate, otherwise build a new always-on-top window at the same dashboard
+ * origin. Runs under the narrow `checklist-window` capability (see
+ * `desktop/src-tauri/capabilities/checklist.json`), not the app-wide default —
+ * this is the one window that renders agent-authored markdown and can hold a
+ * pasted secret, so it gets none of the shell/global-shortcut permissions the
+ * default capability grants every other window.
+ *
+ * The window makes zero API calls and never calls `setActiveVault` — `vault`
+ * here is purely a storage-key / event-target selector, read back out of the
+ * URL by `ChecklistWindow` to look up its `ChecklistEnvelope` (checklistStore.ts).
+ */
+export async function openChecklistWindow(id: string, vault: string): Promise<void> {
+  if (isDesktop()) {
+    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+    const label = checklistWindowLabel(vault, id);
+    const existing = await WebviewWindow.getByLabel(label);
+    if (existing) {
+      await existing.setFocus();
+      return;
+    }
+    const win = new WebviewWindow(label, {
+      url: `${window.location.origin}/?checklist=${encodeURIComponent(id)}&vault=${encodeURIComponent(vault)}`,
+      title: 'dreamcontext — checklist',
+      width: 380,
+      height: 560,
+      minWidth: 300,
+      minHeight: 260,
+      alwaysOnTop: true,
+      resizable: true,
+      titleBarStyle: 'overlay',
+      hiddenTitle: true,
+      dragDropEnabled: false,
+    });
+    await awaitWindowCreated(win, `checklist "${id}"`);
+    return;
+  }
+  window.open(`/?checklist=${encodeURIComponent(id)}&vault=${encodeURIComponent(vault)}`, '_blank');
 }
 
 /**

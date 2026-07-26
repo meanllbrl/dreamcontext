@@ -980,10 +980,12 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                   </label>
                   <p className="settings-field-hint">{t('settings.agents.auto_title_hint')}</p>
 
-                  {/* Agent screen — Terminal vs Chat (BETA), a mutually-exclusive surface
-                      preference: the chosen one takes over every Claude entry point (＋ New,
-                      ⌘T/⌘D, reopened tabs, Sleep/delegate spawns). Stored as the same
-                      `chatView` boolean the beta checkbox used (agent-ui.json compat). */}
+                  {/* Agent screen — Chat (the standard surface) vs Terminal (legacy), a
+                      mutually-exclusive preference: the chosen one takes over every Claude
+                      entry point (＋ New, ⌘T/⌘D, reopened tabs, Sleep/delegate spawns).
+                      Chat is listed first because it is the default; Terminal stays here as
+                      the escape hatch back to the raw TUI. Stored as the same `chatView`
+                      boolean the original beta checkbox used (agent-ui.json compat). */}
                   <div className="settings-field-row">
                     <label>{t('settings.agents.screen')}</label>
                     <select
@@ -991,8 +993,8 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                       value={agentCfg.chatView ? 'chat' : 'terminal'}
                       onChange={(e) => updateAgentCfg({ ...agentCfg, chatView: e.target.value === 'chat' })}
                     >
-                      <option value="terminal">{t('settings.agents.screen.terminal')}</option>
                       <option value="chat">{t('settings.agents.screen.chat')}</option>
+                      <option value="terminal">{t('settings.agents.screen.terminal')}</option>
                     </select>
                   </div>
                   <p className="settings-field-hint">{t('settings.agents.screen_hint')}</p>

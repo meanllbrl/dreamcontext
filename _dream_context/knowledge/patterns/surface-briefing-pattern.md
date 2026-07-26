@@ -101,10 +101,27 @@ Any future non-TTY surface needs this pattern:
 4. Pin both in a shared test.
 5. Degrade gracefully (failed briefing → un-briefed spawn, not error).
 
-## Known Instances (as of 2026-07-25)
+## Known Instances (as of 2026-07-26)
 
-- `src/server/chat-surface.ts` — the Chat view briefing (boards, media, clickable paths, action buttons).
-- Pinned by `tests/unit/agent-board-assets.test.ts`, `tests/unit/chat-actions.test.ts`, `tests/unit/chat-clickable-paths.test.ts`.
+### Instance 1 — Chat view rich output (boards, media, paths, actions)
+- **Where:** `src/server/chat-surface.ts` — the Chat view briefing for non-`dream-view` capabilities.
+- **Shapes briefed:** `![board](x.excalidraw.md)` → inline pan/zoom canvas; `![](image)` / `[](video)` → inline media; backticked paths → clickable chips; ` ```dream-actions ` → button row.
+- **Parser:** `chatActions.ts` `parseChatActions()`.
+- **Pinned by:** `tests/unit/agent-board-assets.test.ts`, `tests/unit/chat-actions.test.ts`, `tests/unit/chat-clickable-paths.test.ts`.
+
+### Instance 2 — Chat view interactive answer objects (`dream-view`)
+- **Where:** `src/server/chat-surface.ts` — the Chat view briefing extension (2026-07-26).
+- **Shapes briefed:** ` ```dream-view ` fence with typed JSON → chart (line/bar/scatter/area/distribution), page (widgets: stack/rail/card/table/text/stat/image/divider), checklist (pinned window, vault+conversation scoped).
+- **Parser:** `chatViewSpec.ts` `parseViewBlock(json, toAction)`.
+- **Pinned by:** `tests/unit/chat-surface-lockstep.test.ts` — executes the briefing's own three fenced examples through the real parser AND asserts bidirectional coverage between the briefing's named types and `VIEW_TYPES`.
+- **Size budget enforced:** `CHAT_SURFACE_BRIEFING.length < 3000` (test assertion in `agent-board-assets.test.ts` — briefing landed at 2916/3000, ~180 tokens added for the three-type protocol).
+- **What makes this a distinct instance:** the brief promises structured JSON payloads the client validates per type (15 `MAX_*` caps, graceful degradation on invalid input, notices for dropped content), not markdown shapes the parser extracts. The briefing grew 955 chars and stayed under budget by trimming to a capability list — no examples for every widget, just the contract.
+
+## Two refinements learned from the `dream-view` addition (2026-07-26)
+
+**The briefing has a hard size budget, and it should be enforced by a test.** `agent-board-assets.test.ts` already asserted `CHAT_SURFACE_BRIEFING.length < 3000`. The base was 1961 chars, so the entire three-type `dream-view` protocol had to fit in ~1000 — it landed at 2916/3000 (~180 tokens added, against a ~560-token estimate). The budget did its job: it forced the briefing to stay a capability list rather than becoming documentation. **Set such a bound the moment a briefing exists**, because this file rides in the system prompt of *every* turn and there is no natural pressure against growth. When the bound binds, trim the briefing — never raise the bound to fit the prose.
+
+**Pin by executing the briefing's own examples, not by grepping it.** The lockstep test in §4 above checks that the briefing *contains* a shape and that the parser handles that shape — two assertions that can drift apart. Stronger: extract the briefing's own fenced examples and run them through the real parser. `chat-surface-lockstep.test.ts` does this — every `dream-view` example in the briefing is fed to `parseChatActions` → `parseViewBlock`, plus a bidirectional check that every `VIEW_TYPES` member is named in the briefing and vice versa. An example the UI cannot actually parse now turns the suite red, which is the file's own standing rule ("a capability named here that the view doesn't render is worse than one left unnamed") enforced mechanically instead of trusted.
 
 ## Anti-pattern: bloating the briefing
 

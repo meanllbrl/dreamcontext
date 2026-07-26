@@ -1,4 +1,5 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { agentFileUrl } from '../../../api/client';
 
 /**
  * Pure, framework-light logic shared by the Agent Chat (beta) redesign's card
@@ -266,6 +267,49 @@ export function classifyOutputLine(line: string): OutputTone {
   return 'plain';
 }
 
+// ─── Clamping an unbounded body (terminal output, a raw tool result) ──────────────
+
+/** Lines kept at each end of a clamped shell block. A failing test run puts its summary at
+ *  the END and its command context at the start; both ends are what a reader wants. */
+export const TERMINAL_HEAD_LINES = 20;
+export const TERMINAL_TAIL_LINES = 20;
+
+/** Characters of a raw tool result rendered before the "show all" cut. A `Read` of a large
+ *  file comes back whole, and painting megabytes of text into a `<pre>` costs both the nodes
+ *  and the layout pass on every re-render of the card. */
+export const GENERIC_RESULT_CHAR_CAP = 16 * 1024;
+
+export interface ClampedLines {
+  /** The first `head` lines (or ALL of them, when nothing was clamped). */
+  head: string[];
+  /** The last `tail` lines — empty when nothing was clamped. */
+  tail: string[];
+  /** How many lines fell between the two ends. `0` means the input is shown whole. */
+  hidden: number;
+}
+
+/**
+ * Keep the two ends of a long block and count what's between them.
+ *
+ * A tool result is unbounded: a `Bash` running a build, a `Read` of a generated file. The
+ * card used to render every line, which is thousands of DOM nodes for ONE call — mounted for
+ * as long as the conversation lives, and re-laid-out on every render of the card. Both ends
+ * are kept rather than just the head because a shell failure lives at the END (the summary,
+ * the stack, the exit line) while the command that produced it is at the start.
+ *
+ * Nothing is ever silently dropped: `hidden` is what the expander offers to show.
+ */
+export function clampLines(lines: string[], head: number, tail: number): ClampedLines {
+  const h = Math.max(0, head);
+  const t = Math.max(0, tail);
+  if (lines.length <= h + t) return { head: lines, tail: [], hidden: 0 };
+  return {
+    head: lines.slice(0, h),
+    tail: t > 0 ? lines.slice(lines.length - t) : [],
+    hidden: lines.length - h - t,
+  };
+}
+
 // ─── Sub-agent runs (state 9 — frame-driven, NOT parentToolUseId-driven) ──────────
 //
 // The type lives here (pure, unit-testable); the reduced STATE lives in
@@ -336,6 +380,53 @@ export function isBackgroundShell(run: SubAgentRun): boolean {
 }
 
 /**
+ * Fold a `task-started` frame into the run list — an UPSERT keyed by `task_id`, never a
+ * blind append.
+ *
+ * A BACKGROUNDED sub-agent (the Agent tool's default, and what every fan-out skill dispatches)
+ * is announced TWICE, and the roster comes first. Empirically, on a two-agent background
+ * fan-out:
+ *
+ *   system:background_tasks_changed  [{task_id: A, task_type: 'local_agent', description}]
+ *   system:task_started              {task_id: A, tool_use_id, subagent_type, description}
+ *   system:background_tasks_changed  [{task_id: A, …}, {task_id: B, …}]
+ *   system:task_started              {task_id: B, …}
+ *
+ * The roster arm adopts an unknown `task_id` (it must — that is how a resumed conversation
+ * picks up a run it never saw start), so by the time `task_started` lands the run ALREADY
+ * exists. Appending it a second time produced two rows per agent: every later frame patches
+ * by `findIndex`, so the adopted row collected all the activity/usage and the appended twin
+ * sat at "Working…" with nothing but a clock, forever. A two-agent fan-out read "4 agents
+ * running". A FOREGROUND agent emits no roster frame at all, which is why this only ever
+ * showed up on backgrounded dispatches.
+ *
+ * The merge treats the started frame as authoritative for IDENTITY (name, subagent type, task
+ * type, prompt, spawning tool_use_id — the roster carries none of the last four) and the
+ * existing entry as authoritative for everything LIVE (status, timings, activity, usage): a
+ * late/duplicate start must never reset a run that has already reported progress, or resurrect
+ * one that has already landed.
+ */
+export function startSubAgentRun(runs: SubAgentRun[], started: SubAgentRun): SubAgentRun[] {
+  const idx = runs.findIndex((r) => r.taskId === started.taskId);
+  if (idx === -1) return [...runs, started];
+  const cur = runs[idx];
+  const merged: SubAgentRun = {
+    ...cur,
+    name: started.name || cur.name,
+    toolUseId: started.toolUseId ?? cur.toolUseId,
+    subagentType: started.subagentType ?? cur.subagentType,
+    taskType: started.taskType ?? cur.taskType,
+    prompt: started.prompt ?? cur.prompt,
+    // The earlier of the two stamps: the roster is what actually told us first, and the row's
+    // clock should measure the run, not the frame that happened to name it.
+    startedAt: Math.min(cur.startedAt, started.startedAt),
+  };
+  const next = runs.slice();
+  next[idx] = merged;
+  return next;
+}
+
+/**
  * The status a `task_updated`/`task_notification` frame's own status string means, given what
  * the run is currently at. Pure and shared by both reducer arms so the two frames can never
  * disagree about the same vocabulary.
@@ -352,13 +443,54 @@ export function runStatusFrom(raw: string | undefined, current: SubAgentRun['sta
   return current;
 }
 
-/** Header data for the background-shells tray: how many are still going, and how many rows
- *  there are in total (a finished shell stays listed so its output remains readable). */
-export function summarizeBackgroundShells(runs: SubAgentRun[]): {
-  shells: SubAgentRun[]; running: number; total: number;
+/**
+ * How long a FINISHED background shell keeps its row in the tray after it exits.
+ *
+ * This surface originally kept every finished shell until the conversation ended, so its
+ * output stayed one click away. That is wrong for a PINNED strip: the tray sits above the
+ * composer, outside the scroller, so every row it holds is height the transcript does not
+ * get and cannot scroll past. A long session backgrounds dozens of commands, and the
+ * accumulated list grew taller than the pane — burying the transcript, the tray's own
+ * collapse header, and the composer with it, which left no way to read the chat OR to close
+ * the thing eating it.
+ *
+ * A shell's live output is worth a seat while it runs and for the moment after it lands
+ * ("what did that just do?"); past that it is history, and the command's own tool card is
+ * still in the transcript as the durable record. Two minutes is that moment.
+ */
+export const FINISHED_SHELL_TTL_MS = 2 * 60 * 1000;
+
+/** Does this shell still earn a row in the tray? Running ones always; finished ones until
+ *  {@link FINISHED_SHELL_TTL_MS} after they ended. Every reducer arm that moves a run to a
+ *  terminal status stamps `endedAt` even when the CLI frame omitted one, so a terminal run
+ *  without it is a shape we did not predict — treated as "just ended" rather than "long
+ *  expired", so the unknown case errs toward keeping the row instead of vanishing it. */
+export function isShellVisible(run: SubAgentRun, now: number): boolean {
+  if (run.status === 'running') return true;
+  return now - (run.endedAt ?? now) < FINISHED_SHELL_TTL_MS;
+}
+
+/** Header data for the background-shells tray: the rows that still earn a seat (see
+ *  {@link isShellVisible}), how many are still going, and `nextExpiryAt` — when the soonest
+ *  finished row falls out of the window, so the tray can wake exactly then instead of
+ *  holding a 1s interval open forever just in case. */
+export function summarizeBackgroundShells(runs: SubAgentRun[], now: number): {
+  shells: SubAgentRun[]; running: number; total: number; nextExpiryAt?: number;
 } {
-  const shells = runs.filter(isBackgroundShell);
-  return { shells, running: shells.filter((r) => r.status === 'running').length, total: shells.length };
+  const shells = runs.filter((r) => isBackgroundShell(r) && isShellVisible(r, now));
+  // Only a row with a real `endedAt` gets a scheduled expiry. Deriving one from `now` for the
+  // stamp-less case would make this value move every time it is read, and the tray schedules
+  // its next render FROM it — a self-feeding loop for the sake of a run shape that the
+  // reducer cannot actually produce.
+  const expiries = shells
+    .filter((r) => r.status !== 'running' && r.endedAt != null)
+    .map((r) => (r.endedAt as number) + FINISHED_SHELL_TTL_MS);
+  return {
+    shells,
+    running: shells.filter((r) => r.status === 'running').length,
+    total: shells.length,
+    nextExpiryAt: expiries.length ? Math.min(...expiries) : undefined,
+  };
 }
 
 /** Header data for the "N agents running" group card. `agents` counts only true sub-agent
@@ -555,6 +687,87 @@ export function turnHasVisibleProgress(items: ProgressProbe[], pendingCount = 0)
   ));
 }
 
+// ─── Prompt history (composer ↑/↓ recall) ─────────────────────────────────────────
+
+/** The subset of a transcript item {@link promptHistory} reads — structural for the same
+ *  reason as {@link ProgressProbe}: this module never imports chatSession.ts. */
+export interface PromptProbe { kind: string; text?: string }
+
+/**
+ * The prompts already sent in THIS conversation, NEWEST FIRST — what ↑ walks back through.
+ *
+ * Both lists are passed because a resumed chat keeps its replayed transcript in `history`,
+ * separate from the live `items` (see ConversationModel), and recall has to cover both: the
+ * whole point of resuming is that the earlier turns are yours to re-run.
+ *
+ * Consecutive duplicates collapse to one entry. A shell history does the same, and for the
+ * same reason: sending "npm test" three times in a row should cost one ↑, not three. Two
+ * NON-adjacent sends of the same text are kept — the positions between them are what make
+ * walking back through the conversation legible.
+ */
+export function promptHistory(history: PromptProbe[], items: PromptProbe[]): string[] {
+  const out: string[] = [];
+  for (const it of [...history, ...items]) {
+    if (it.kind !== 'user') continue;
+    const text = (it.text ?? '').trim();
+    if (!text) continue;
+    if (out[out.length - 1] === text) continue;
+    out.push(text);
+  }
+  return out.reverse();
+}
+
+/** Where the composer is in its walk back through {@link promptHistory}. `index === null`
+ *  means "not browsing — the textarea holds the user's own draft"; otherwise it is an index
+ *  into the newest-first entries list, and `stash` is the draft that was displaced when the
+ *  walk began (restored by stepping forward past the newest entry). */
+export interface HistoryNav { index: number | null; stash: string }
+
+export const NO_HISTORY_NAV: HistoryNav = { index: null, stash: '' };
+
+/**
+ * Whether ↑ should recall a past prompt rather than move the caret.
+ *
+ * Already browsing → always (that's the walk continuing). Otherwise the draft must be empty,
+ * or the caret parked at the very start with nothing selected — the shell/Claude Code rule.
+ * Without the caret clause, ↑ inside a half-written multi-line message would throw the
+ * message away to show an old one, which is the worse failure by far: recall is a
+ * convenience, losing what you just typed is not recoverable.
+ */
+export function canRecallHistory(
+  draft: string, caret: number, selectionEnd: number, nav: HistoryNav,
+): boolean {
+  if (nav.index !== null) return true;
+  if (!draft) return true;
+  return caret === 0 && selectionEnd === 0;
+}
+
+/**
+ * One ↑/↓ step through the history. Pure: returns the next nav state plus the text the
+ * textarea should show, or `null` when the step is a no-op (already at the oldest entry, ↓
+ * while not browsing, or no history at all) — the caller then leaves the keystroke alone
+ * instead of swallowing it.
+ *
+ * `draft` is the CURRENT textarea text, stashed on the first backward step so stepping
+ * forward past the newest entry hands it back verbatim.
+ */
+export function stepHistory(
+  entries: string[], nav: HistoryNav, dir: 'back' | 'forward', draft: string,
+): { nav: HistoryNav; text: string } | null {
+  if (dir === 'back') {
+    const next = nav.index === null ? 0 : nav.index + 1;
+    if (next >= entries.length) return null;
+    const stash = nav.index === null ? draft : nav.stash;
+    return { nav: { index: next, stash }, text: entries[next] };
+  }
+  if (nav.index === null) return null;
+  const next = nav.index - 1;
+  // Walked back out of the history: the draft that was displaced comes back, and the nav
+  // resets so the next ↑ starts a fresh walk (and re-stashes whatever is there by then).
+  if (next < 0) return { nav: NO_HISTORY_NAV, text: nav.stash };
+  return { nav: { index: next, stash: nav.stash }, text: entries[next] };
+}
+
 // ─── Stick-to-bottom (transcript auto-scroll) ─────────────────────────────────────
 
 /** How far from the bottom still counts as "at the bottom" — one short line of slack, so a
@@ -635,23 +848,211 @@ export interface ScrollMetrics {
  */
 export function nextStickToBottom(prev: boolean, m: ScrollMetrics): boolean {
   if (m.clientHeight === 0) return prev;
-  if (m.scrollHeight - m.scrollTop - m.clientHeight <= BOTTOM_SLACK) return true;
+  if (isAtBottom(m)) return true;
   if (!m.userDriven) return prev;
   if (m.scrollTop < m.prevScrollTop - 1) return false;
   return prev;
 }
+
+/**
+ * Is the view at the bottom (within {@link BOTTOM_SLACK})? The measurement half of
+ * "pinned" — {@link nextStickToBottom} rule 1, and the check the pin's own re-assert makes
+ * before writing again.
+ *
+ * Why a pinned view can be nowhere near the bottom, which is the whole reason this is
+ * exported: the pane docks furniture BELOW the scroller (the background-shells tray, the
+ * auto-growing composer). When one of those GROWS, the scroller shrinks under a view that is
+ * already at its maximum — `scrollTop` stays perfectly valid, the maximum moves out from under
+ * it, and the browser dispatches NO scroll event because nothing scrolled (measured in
+ * Chromium: a tray growing by 186px left 174px of transcript below the fold, silently). So
+ * the state "we believe we are pinned, and we are not" is reachable without a single event to
+ * notice it by — no scroll handler runs, and the Latest pill stays hidden because the view
+ * still thinks it is at the bottom. Only a re-measurement finds it.
+ */
+export function isAtBottom(m: Pick<ScrollMetrics, 'scrollTop' | 'scrollHeight' | 'clientHeight'>): boolean {
+  return m.scrollHeight - m.scrollTop - m.clientHeight <= BOTTOM_SLACK;
+}
+
+/**
+ * Where the reader is, so a re-home can put them back — the counterpart to
+ * {@link nextStickToBottom}, which only ever describes the PINNED case.
+ *
+ * `appendChild`-ing a session's container into another slot zeroes `scrollTop` on every
+ * scroller inside it and dispatches NO scroll event for it (measured in Chromium: garaging a
+ * chat tab takes the transcript 1441 → 0 with the handler never firing). So the offset has to
+ * be remembered while the view is still homed; the re-pin hook restores it. Without it a
+ * reader who had scrolled up came back to the TOP of the conversation, because the only
+ * restore that existed was "if you were stuck, go to the bottom" — the owner-reported
+ * "renaming a tab breaks the other sessions' scroll" (renaming double-clicks a tab, and the
+ * click half SELECTS it, which garages whatever was on screen).
+ *
+ * Two rules:
+ * 1. A scroller that measures nothing is parked in the detached garage — unmeasurable, not
+ *    "at the top". Keep the last offset we could actually trust.
+ * 2. A jump to exactly 0 that no gesture asked for is a re-home reset arriving as a scroll
+ *    event (engines differ on whether one is dispatched), never a reading position. Reaching
+ *    the top deliberately always carries upward intent, so this can't swallow a real one.
+ */
+export function nextRestoreTop(prev: number, m: ScrollMetrics): number {
+  if (m.clientHeight === 0) return prev;
+  if (m.scrollTop === 0 && m.prevScrollTop > 0 && !m.userDriven) return prev;
+  return m.scrollTop;
+}
+
+// ─── Transcript window (how much of the conversation is actually mounted) ─────────
+//
+// A long conversation used to mount every item it had ever had, forever: `history.map()`
+// plus `items.map()`, no ceiling. A few hundred tool cards, diffs, terminal blocks and
+// images is tens of thousands of DOM nodes per pane, which is what made the overlay's
+// open/close transform animate at a crawl and what kept the app's memory climbing for as
+// long as a session lived.
+//
+// So the transcript renders a WINDOW: the last {@link WINDOW_TAIL} entries, extended
+// upwards {@link WINDOW_STEP} at a time by scrolling to the top (or pressing "Show earlier
+// messages"). This is hand-rolled rather than react-window/virtua on purpose — those own
+// the scroller, and this pane's scroller is already the subject of a carefully-reasoned
+// stick-to-bottom state machine (see above) that a library's own scroll writes would fight.
+// It is also not `content-visibility: auto`: WKWebView's intrinsic-size ESTIMATES shift
+// `scrollHeight` mid-scroll, which is precisely the raced-measurement class those rules
+// exist to defend against.
+//
+// The window is an index into the CONCATENATION of `history` then `items` — one number for
+// what is really two arrays, so that a resumed conversation's replayed history and its live
+// items share a single ceiling instead of each having their own.
+
+/** How many entries stay mounted when the view is following the conversation. */
+export const WINDOW_TAIL = 40;
+
+/** How many more are revealed per "show earlier" step. */
+export const WINDOW_STEP = 40;
+
+/** How close to the top a reader must get before the next step is revealed for them. Big
+ *  enough that the reveal lands before they hit the ceiling, so scrolling up feels
+ *  continuous rather than like hitting a wall and waiting. */
+export const WINDOW_REVEAL_PX = 800;
+
+export interface WindowInput {
+  /** `history.length + items.length` — the whole conversation. */
+  total: number;
+  /** Is the view following the bottom? The single most important input: see rule 2. */
+  pinned: boolean;
+  /** This call is an explicit "show me more" (a button press, or scrolling to the top). */
+  reveal?: boolean;
+}
+
+/**
+ * The index of the first entry the transcript should mount, over `[...history, ...items]`.
+ *
+ * Four rules, in this order:
+ *
+ * 1. REVEAL steps the window {@link WINDOW_STEP} further back, clamped at the beginning.
+ *    It wins over everything, because it is the only input that came from the user asking.
+ * 2. PINNED slides the window forward to the last {@link WINDOW_TAIL} entries. This is the
+ *    memory release valve: a long busy session sheds old DOM continuously instead of only
+ *    ever growing, so a conversation that runs for an hour costs the same as one that just
+ *    started.
+ * 3. UNPINNED FREEZES the window's head. A reader who has scrolled up must never have
+ *    content taken out from ABOVE them while they read — that is a scroll jump with no
+ *    cause they can see, and it would happen on every streamed token. `Math.min` is what
+ *    guarantees it: the head can only ever move backwards (revealing more), never forwards.
+ * 4. …but never so far forward that fewer than {@link WINDOW_TAIL} entries are mounted,
+ *    which is what makes a REWIND (the one thing that shrinks `total`) land on a populated
+ *    transcript instead of an empty one.
+ */
+export function nextFirstShown(prev: number, input: WindowInput): number {
+  const total = Math.max(0, input.total);
+  const tail = Math.max(0, total - WINDOW_TAIL);
+  if (input.reveal) return Math.max(0, Math.min(prev, tail) - WINDOW_STEP);
+  if (input.pinned) return tail;
+  return Math.min(Math.max(0, prev), tail);
+}
+
+/** Where each array's rendered slice starts, and how much is hidden above it. */
+export interface WindowSplit {
+  /** Entries not mounted at all — what the "Show earlier messages (N)" button offers. */
+  hiddenCount: number;
+  /** `history.slice(historyFrom)`. Equal to `historyLen` when history is entirely hidden. */
+  historyFrom: number;
+  /** `items.slice(itemsFrom)`. Zero while any history is still on screen. */
+  itemsFrom: number;
+  /** Whether ANY history is mounted — i.e. whether the "earlier conversation ↑ · resumed"
+   *  divider has something above it to divide. */
+  showsHistory: boolean;
+}
+
+/** Where the reveal's anchor row sat before and after the commit, in the scroller's CONTENT
+ *  coordinate space (i.e. measured so that scrolling itself cannot change the number). */
+export interface RevealAnchorMetrics {
+  anchorTopBefore: number;
+  anchorTopAfter: number;
+}
+
+/**
+ * How far to push `scrollTop` down so a reveal's prepended entries don't move the row the
+ * reader was looking at.
+ *
+ * Measured from ONE STILL-MOUNTED ROW, never from the scroller's total height, and that is
+ * the whole point. A reveal is triggered from a scroll handler while a turn may still be
+ * streaming, so React is free to merge the window change and an arriving frame into a single
+ * commit — one that prepends 40 older entries ABOVE the reader and appends a new tool card
+ * BELOW them. `scrollHeight` grows by both, so compensating with it scrolls the reader down
+ * by the append's height as well: a spurious jump of hundreds of pixels mid-read, plus a
+ * corrupted `restoreTopRef` for the next re-home to restore to. The anchor moves by the
+ * prepend alone, whatever else the commit did.
+ *
+ * A reveal only ever ADDS entries above, so a non-positive delta means the anchor didn't
+ * move (or something else re-laid the transcript out) — correct nothing rather than guess.
+ */
+export function revealScrollCorrection(m: RevealAnchorMetrics): number {
+  const delta = m.anchorTopAfter - m.anchorTopBefore;
+  return delta > 0 ? delta : 0;
+}
+
+/** Project a combined-index window head onto the two arrays it actually spans. */
+export function splitWindow(historyLen: number, itemsLen: number, firstShown: number): WindowSplit {
+  const total = Math.max(0, historyLen) + Math.max(0, itemsLen);
+  const head = Math.min(Math.max(0, firstShown), total);
+  const historyFrom = Math.min(head, Math.max(0, historyLen));
+  return {
+    hiddenCount: head,
+    historyFrom,
+    itemsFrom: Math.max(0, head - Math.max(0, historyLen)),
+    showsHistory: historyFrom < Math.max(0, historyLen),
+  };
+}
+
+// ─── Decorating the rendered markdown (copy bars, media, path chips) ──────────────
+//
+// The three hooks below all do the same kind of work: walk the HTML `MarkdownPreview` just
+// wrote and turn parts of it into something better — a code block with a Copy bar, a media
+// reference into the picture or the player itself, a path into a chip you can click.
+//
+// They run after EVERY render, deliberately, and that is not the same as running once. The
+// markdown subtree is not React's to reconcile — `MarkdownPreview` writes it to the DOM
+// itself — so any markup it rewrites comes back undecorated, with no dependency change to
+// notice it happened. Keying these hooks to the message's own text (which is what they used
+// to do) meant a re-render driven by ANYTHING ELSE — another message streaming, a slide-over
+// opening, the working indicator ticking — silently reverted a whole answer to raw markdown.
+// A `<video>` became a bare `<a href="…mp4">` again, and following one of those in a window
+// with no back button IS the app closing (owner report 07-25).
+//
+// What a rewrite costs is now bounded: `MarkdownPreview` re-renders only the markdown BLOCKS
+// that changed (lib/markdownBlocks.ts), so a streamed token reaches the paragraph being typed
+// and nothing above it. These passes stay cheap either way — every one is guarded by a marker
+// attribute, so an already-decorated subtree costs two `querySelectorAll` calls and nothing
+// else. Running every time is what makes the decoration self-healing rather than a one-shot
+// that can be lost without a trace.
 
 // ─── Copyable code blocks (state 2 — fenced-code Copy button + language bar) ──────
 
 /**
  * Chat-local effect: injects a small header bar (language label + Copy button) above
  * every `pre > code` block inside `ref.current` that hasn't already been processed.
- * Scoped to this directory — `MarkdownPreview` itself is unchanged, so every OTHER
- * page that renders markdown (tasks, knowledge, core) is unaffected. Marks each
- * processed `pre` with `data-chat-copy` so re-renders (a still-streaming assistant
- * message re-running this effect on every token) never double-wrap it.
+ * Scoped to this directory — every OTHER page that renders markdown (tasks, knowledge,
+ * core) is unaffected. Marks each processed `pre` with `data-chat-copy` so the pass on
+ * every render (see this section's header) never double-wraps one.
  */
-export function useCopyableCodeBlocks(ref: RefObject<HTMLElement | null>, deps: unknown[]): void {
+export function useCopyableCodeBlocks(ref: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     const root = ref.current;
     if (!root) return;
@@ -687,7 +1088,7 @@ export function useCopyableCodeBlocks(ref: RefObject<HTMLElement | null>, deps: 
 
       pre.insertBefore(bar, pre.firstChild);
     });
-  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
+  }); // every render — see this section's header
 }
 
 // ─── Clickable file paths in an answer ───────────────────────────────────────────────
@@ -714,12 +1115,11 @@ export function looksLikePath(text: string): boolean {
  * have to go copy. Free for the agent — it is already how paths get written.
  *
  * Only INLINE code spans (never a `<pre>` block, where a path is part of a command or a
- * snippet and clicking it would be nonsense). Marks each processed node so the re-render on
- * every streamed token never double-binds one, exactly like the sibling effects here.
+ * snippet and clicking it would be nonsense). Marks each processed node so the pass on every
+ * render never double-binds one, exactly like the sibling effects here.
  */
 export function useClickablePaths(
   ref: RefObject<HTMLElement | null>,
-  deps: unknown[],
   onOpenPath: (path: string) => void,
 ): void {
   useEffect(() => {
@@ -739,7 +1139,7 @@ export function useClickablePaths(
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenPath(text); }
       });
     });
-  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
+  }); // every render — see this section's header
 }
 
 // ─── Inline media in an answer ───────────────────────────────────────────────────────
@@ -757,13 +1157,19 @@ export function inlineMediaKind(path: string): 'image' | 'video' | 'audio' | nul
   return (clean.includes('.') && MEDIA_KIND_BY_EXT[ext]) || null;
 }
 
+/** How many media elements ONE message keeps alive for re-use (see {@link useInlineMedia}). */
+const MEDIA_KEEP_MAX = 8;
+
 /** A path we should try to render ourselves, rather than leave as an ordinary link. */
 function isLocalRef(href: string): boolean {
   return !!href && !/^(https?:|data:|blob:|mailto:|#)/i.test(href) && !href.startsWith('/api/');
 }
 
+/** Bytes for a referenced path. Built through the api client, NOT by hand: the vault has to
+ *  ride in the URL because the browser fetches an element `src` itself and sends no headers
+ *  (see `agentFileUrl`). Hand-building this is what made every clip 400 in launcher mode. */
 function rawUrl(path: string): string {
-  return `/api/agent/file?path=${encodeURIComponent(path)}&raw=1`;
+  return agentFileUrl(path, { raw: true });
 }
 
 function basenameOf(path: string): string {
@@ -788,13 +1194,11 @@ function basenameOf(path: string): string {
  *   3. opens — if it still can't be shown (a format browsers won't play, a grant declined),
  *      one click hands it to the OS.
  *
- * Marks each processed node so the re-render on every streamed token never double-wraps one.
- * Scoped to this directory: `MarkdownPreview` is unchanged, so knowledge and task pages are
- * unaffected.
+ * Marks each processed node so the pass on every render never double-wraps one. Scoped to
+ * this directory, so knowledge and task pages are unaffected.
  */
 export function useInlineMedia(
   ref: RefObject<HTMLElement | null>,
-  deps: unknown[],
   handlers: {
     /** Open an image full-size (the existing lightbox). */
     onOpen?: (path: string) => void;
@@ -804,7 +1208,25 @@ export function useInlineMedia(
     onGrant?: (path: string) => Promise<boolean>;
   } = {},
 ): void {
-  useEffect(() => {
+  // The elements this pass has built, by path. A media element that is merely DETACHED still
+  // holds its decoded frames and its buffer, so putting the same one back is free where
+  // building a new one costs a fresh request for the whole clip. That is the difference the
+  // owner saw: a message still streaming under a clip re-created the `<video>` per frame
+  // (report 07-26). Block-level markdown rendering means most re-renders no longer reach a
+  // finished clip at all; this covers the ones that do — a reference in the paragraph still
+  // being typed, or a block whose markdown genuinely changed.
+  const cache = useRef<Map<string, HTMLElement>>(new Map());
+  // Listeners on a REUSED element were bound on an earlier render, so they must not close over
+  // that render's handlers.
+  const live = useRef(handlers);
+  live.current = handlers;
+
+  // A LAYOUT effect: the reinsert has to happen in the same task as the removal. A media
+  // element removed from the document is paused once the browser reaches a stable state, so
+  // waiting until after paint (a passive effect) would stop a playing clip every time the
+  // block around it was re-rendered. It also means no frame is ever painted showing the raw
+  // `<a href="…mp4">` this pass replaces.
+  useLayoutEffect(() => {
     const root = ref.current;
     if (!root) return;
 
@@ -832,7 +1254,7 @@ export function useInlineMedia(
         allow.addEventListener('click', () => {
           allow.disabled = true;
           allow.textContent = 'Allowing…';
-          void (handlers.onGrant?.(path) ?? Promise.resolve(false)).then((ok) => {
+          void (live.current.onGrant?.(path) ?? Promise.resolve(false)).then((ok) => {
             // Granted → swap the card back for the real thing, which now loads.
             if (ok) card.replaceWith(buildMedia(path));
             else { allow.disabled = false; allow.textContent = 'Allow access'; }
@@ -852,6 +1274,12 @@ export function useInlineMedia(
 
     /** The element a path deserves, wired to fall back to the card if it can't load. */
     const buildMedia = (path: string): HTMLElement => {
+      // Already built one for this path and it is off the page? Put THAT one back — same
+      // resource, same buffer, same playhead, no request. A still-connected one means the
+      // answer references the file twice, which needs a second element of its own.
+      const kept = cache.current.get(path);
+      if (kept && !kept.isConnected) return kept;
+
       const kind = inlineMediaKind(path);
       const el = kind === 'video' ? document.createElement('video')
         : kind === 'audio' ? document.createElement('audio')
@@ -862,9 +1290,18 @@ export function useInlineMedia(
         el.controls = true;
         el.preload = 'metadata';
       } else {
-        el.addEventListener('click', () => handlers.onOpen?.(path));
+        // An answer can reference a dozen screenshots, and a transcript scrolled away from
+        // holds every one of them decoded in memory. `lazy` defers the fetch until the image
+        // is near the viewport; `async` keeps the decode off the main thread so a large PNG
+        // landing mid-stream doesn't drop the frame the token was being painted in.
+        el.loading = 'lazy';
+        el.decoding = 'async';
+        el.addEventListener('click', () => live.current.onOpen?.(path));
       }
       el.addEventListener('error', () => {
+        // Never hand a failed element back out of the cache: its error listener is `once`, so
+        // a reused one would sit there broken instead of offering Allow/Open again.
+        if (cache.current.get(path) === el) cache.current.delete(path);
         // `<img>`/`<video>` only ever report "it failed" — ask the endpoint WHY, so a path
         // that merely needs consent offers Allow rather than a bare Open.
         // A ONE-BYTE ranged GET, not HEAD: the router serves GET only, and a HEAD would come
@@ -873,9 +1310,18 @@ export function useInlineMedia(
         void fetch(rawUrl(path), { headers: { Range: 'bytes=0-0' } })
           .then((r): 'grant' | 'open' => (r.status === 403 ? 'grant' : 'open'))
           .catch((): 'grant' | 'open' => 'open')
-          .then((reason) => el.replaceWith(buildFallback(path, reason)));
+          // The probe is async, and the block around a still-streaming reference re-renders in
+          // the meantime. Swapping a DETACHED element does nothing except drop the fallback on
+          // the floor, so only replace one that is still on the page; the next pass rebuilds it.
+          .then((reason) => { if (el.isConnected) el.replaceWith(buildFallback(path, reason)); });
       }, { once: true });
       el.src = rawUrl(path);
+      // Cap what a single message can keep alive: a detached clip still holds its buffer, and
+      // an answer with two dozen screenshots should not pin all of them off-screen. Oldest out.
+      if (cache.current.size >= MEDIA_KEEP_MAX) {
+        cache.current.delete(cache.current.keys().next().value as string);
+      }
+      cache.current.set(path, el);
       return el;
     };
 
@@ -883,7 +1329,6 @@ export function useInlineMedia(
     // rewrite even for images.
     root.querySelectorAll<HTMLImageElement>('img:not([data-chat-media])').forEach((img) => {
       const path = img.getAttribute('src') ?? '';
-      img.setAttribute('data-chat-media', '1');
       if (!isLocalRef(path)) return;
       img.replaceWith(buildMedia(path));
     });
@@ -893,17 +1338,24 @@ export function useInlineMedia(
     // beside it: its href is a filesystem path, so following it would navigate the view to
     // a route that doesn't exist and take the conversation with it. Absolute URLs are left
     // untouched — `installExternalLinkHandler` sends those to the default browser.
+    //
+    // The marker goes on only where this pass actually TOOK the node over. Marking first and
+    // deciding after — which is what this used to do — permanently blacklists any node the
+    // pass declined, and the pass runs against a half-written message on every streamed
+    // token: one look at an href that wasn't finished yet and the finished link could never
+    // be reconsidered, leaving a live `<a href="_dream_context/…">` in the transcript. In a
+    // window with no back button, following one of those IS the app closing.
     root.querySelectorAll<HTMLAnchorElement>('a:not([data-chat-media])').forEach((a) => {
       const href = a.getAttribute('href') ?? '';
-      a.setAttribute('data-chat-media', '1');
       if (!isLocalRef(href)) return;
       if (inlineMediaKind(href)) { a.replaceWith(buildMedia(href)); return; }
+      a.setAttribute('data-chat-media', '1');
       a.classList.add('chat-md-path');
       a.title = `Open ${href}`;
       a.addEventListener('click', (e) => {
         e.preventDefault();
-        handlers.onOpen?.(href);
+        live.current.onOpen?.(href);
       });
     });
-  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
+  }); // every render — see this section's header
 }

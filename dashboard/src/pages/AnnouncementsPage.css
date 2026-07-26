@@ -1,5 +1,7 @@
-/* News-index layout: one hero story (with an inert board teaser) followed by
-   compact headline rows. Nothing in the scroll path captures the wheel. */
+/* Version-history layout: the current release as a hero (with its cover
+   screenshot) followed by earlier releases as rows on a version rail. The
+   version number is the anchor of every entry. Nothing in the scroll path
+   captures the wheel. */
 .announcements-page {
   max-width: 1080px;
   margin: 0 auto;
@@ -40,13 +42,6 @@
   color: var(--color-text-tertiary);
 }
 
-.announcement-meta-version {
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-}
-
 .announcement-meta-new {
   padding: 2px 8px;
   border-radius: var(--radius-full);
@@ -55,19 +50,35 @@
   box-shadow: var(--shadow-glow);
 }
 
-/* ─── Hero: the latest story ─── */
+/* ─── Hero: the current release ─── */
 
 .announcements-hero {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-6);
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-8);
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-sm);
-  --board-preview-h: clamp(360px, 48vh, 520px);
+  --story-teaser-h: clamp(320px, 44vh, 480px);
+}
+
+.announcements-hero-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+/* The version, not the date, is the headline object of a release entry. */
+.announcements-hero-version {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.01em;
+  color: var(--color-accent);
 }
 
 .announcements-hero-title {
@@ -97,7 +108,7 @@
   color: var(--color-text-secondary);
 }
 
-/* ─── Archive: older stories as headline rows ─── */
+/* ─── Earlier releases: one row per version, on a version rail ─── */
 
 .announcements-archive {
   display: flex;
@@ -105,12 +116,24 @@
   gap: var(--space-3);
 }
 
+.announcements-archive-label {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
 .announcement-row {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
+  display: grid;
+  /* Version rail | story. The rail keeps every version number on one vertical
+     line, so the archive scans as a release history at a glance. */
+  grid-template-columns: 84px 1fr;
+  gap: var(--space-4);
+  align-items: start;
   width: 100%;
   padding: var(--space-4) var(--space-5);
   background: var(--color-bg-secondary);
@@ -125,6 +148,30 @@
 .announcement-row:focus-visible {
   border-color: var(--color-accent);
   box-shadow: var(--shadow-md);
+}
+
+.announcement-row-version {
+  padding-top: 1px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+
+.announcement-row-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .announcement-row {
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+  }
 }
 
 .announcement-row-title {

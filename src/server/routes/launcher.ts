@@ -855,9 +855,14 @@ interface AgentUiSettings {
   /** Terminal renderer: 'webgl' (GPU, smooth under heavy streams — default) or
    *  'dom' (native-text comfort rendering). Mirrors dashboard/src/lib/agentSettings. */
   renderer: AgentUiRenderer;
-  /** BETA — render Claude sessions as native chat UI. Off by default; discoverable
-   *  only via Settings → Agents. Mirrors dashboard/src/lib/agentSettings. */
+  /** Which surface a Claude session opens as: `true` = Chat (native chat UI — the
+   *  DEFAULT since 0.22), `false` = Terminal (legacy embedded TUI). Mirrors
+   *  dashboard/src/lib/agentSettings. */
   chatView: boolean;
+  /** One-time marker that this blob has been through the 0.22 "Chat is the default
+   *  screen" flip. A pre-flip blob carries `chatView:false` from the old opt-in default,
+   *  so an explicit `false` only counts once this is set. Mirrors the dashboard. */
+  screenMigrated: boolean;
   /** Remembered default permission mode for Chat (BETA) sessions: 'auto' (acceptEdits)
    *  or 'bypass' (bypassPermissions) — same mapping as permissionModeFor in
    *  agent-chat.ts. Mirrors dashboard/src/lib/agentSettings. */
@@ -870,7 +875,8 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   autoTitle: false,
   hotkey: 'Ctrl+A',
   renderer: 'webgl',
-  chatView: false,
+  chatView: true,
+  screenMigrated: true,
   chatPermissionMode: 'auto',
 };
 
@@ -891,8 +897,12 @@ function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettings {
     hotkey: typeof raw.hotkey === 'string' && raw.hotkey.trim() ? raw.hotkey.trim() : AGENT_UI_DEFAULTS.hotkey,
     // Only an explicit 'dom' opts back into comfort rendering; anything else → GPU default.
     renderer: raw.renderer === 'dom' ? 'dom' : AGENT_UI_DEFAULTS.renderer,
-    // Opt-in flag: default FALSE, only an explicit `true` enables the beta chat view.
-    chatView: raw.chatView === true,
+    // Agent screen: default TRUE (Chat is the standard surface), but an explicit `false`
+    // only counts on a blob that has been through the 0.22 flip — every pre-flip
+    // agent-ui.json carries `chatView:false` from the old opt-in default, so honouring it
+    // blindly would leave every existing user on the legacy terminal.
+    chatView: raw.screenMigrated === true ? raw.chatView !== false : true,
+    screenMigrated: true,
     // Only an explicit 'bypass' opts into the caution mode; anything else → 'auto' default.
     chatPermissionMode: raw.chatPermissionMode === 'bypass' ? 'bypass' : 'auto',
   };

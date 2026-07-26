@@ -1,0 +1,108 @@
+{
+  "hero": {
+    "eyebrow": "v0.18.0  ·  17 July 2026",
+    "headline": "Every task gets its own Claude",
+    "sub": "Open a task and a session is already sitting next to it — scoped to that one document, there to maintain it rather than to build it. And when you do want it built, one orchestrator takes it the whole way.",
+    "shot": {
+      "src": "shots/v0-18-0/pane.png",
+      "alt": "A task open in the dashboard with the Task Manager panel pinned beside it, showing a ready session and Revise, Summarize, Split and Status actions",
+      "caption": "The task on the left, its own session on the right — Revise, Summarize, Split, Status."
+    }
+  },
+  "blocks": [
+    {
+      "kind": "points",
+      "title": "Four things it does without being asked twice",
+      "items": [
+        {
+          "title": "Revise",
+          "text": "Sharpen the Why and the acceptance criteria until they say something testable instead of something vague."
+        },
+        {
+          "title": "Summarize",
+          "text": "Compress a task that grew a long tail of session logs back into the shape someone can read in ten seconds."
+        },
+        {
+          "title": "Split",
+          "text": "A task holding two jobs becomes two tasks, with the criteria distributed to the right one."
+        },
+        {
+          "title": "Status",
+          "text": "Reconcile what the document claims against what actually happened in the repo, and bump it."
+        }
+      ]
+    },
+    {
+      "kind": "split",
+      "title": "It maintains the task. It does not implement it.",
+      "body": "That separation is the whole point. The Task Manager session loads a skill that keeps it on documentation work, so it never quietly starts writing product code in the background. When you do want the work done, Delegate hands the task to a build session instead.",
+      "shot": {
+        "src": "shots/v0-18-0/detail.png",
+        "alt": "A task detail panel with its identity, workflow, timeline and ownership fields, and Task Manager and Delegate buttons in the header"
+      },
+      "side": "right"
+    },
+    {
+      "kind": "terminal",
+      "title": "The other half: goal-skill was rewritten end to end",
+      "lines": [
+        "$ claude  →  /goal-skill  add rate limiting to the public API",
+        "",
+        "  plan        1 planner        · file-by-file, grounded in the real routes",
+        "  review      2 lenses         · pragmatist + risk, in parallel  → SOLID",
+        "  implement   1 builder        · forked from the planner's context",
+        "  review      code             · clean context            → PASS",
+        "  validate    test suite       · the method you agreed to  → PASS",
+        "",
+        "  ✓ task updated, criteria ticked, progress logged"
+      ]
+    },
+    {
+      "kind": "points",
+      "title": "Why that run is cheaper and more honest",
+      "items": [
+        {
+          "title": "Builders fork and resume",
+          "text": "An implementer no longer re-explores the codebase from zero on every pass. It forks the session that already read it, so a second round costs a second round — not a second exploration."
+        },
+        {
+          "title": "Review stays independent",
+          "text": "Reviewers and validators are dispatched clean, every time. A judge that inherited the builder's context would be marking its own homework."
+        },
+        {
+          "title": "Ceremony scales to the goal",
+          "text": "A one-file fix does not get a planning phase, two plan reviewers and a validation gate. A migration does."
+        }
+      ]
+    },
+    {
+      "kind": "split",
+      "title": "Sleep stopped duplicating what it already knew",
+      "body": "Consolidation now reconciles against the knowledge that exists instead of appending a second file on the same topic every cycle. And a minimized agent keeps running in the corner: the chip reports live state, including a goal run's progress, and clicking it brings the pane back.",
+      "shot": {
+        "src": "shots/v0-18-0/sleep.png",
+        "alt": "The Sleep Cycle page showing an Alert state with debt, the last consolidation summary, work sessions and starred highlights — with two live agent chips docked in the corner",
+        "caption": "Sleep Cycle after a consolidation — and, bottom right, the dock keeping two sessions alive."
+      },
+      "side": "left"
+    },
+    {
+      "kind": "split",
+      "title": "Hand a task over from the card itself",
+      "body": "Delegate starts a build session straight from the board — no copying a slug into a terminal to get going. New projects got the same treatment: a repo can be cloned from GitHub inside the setup wizard instead of being a thing you go and do first.",
+      "shot": {
+        "src": "shots/v0-18-0/board.png",
+        "alt": "The task board in Kanban view with To Do, In Progress, In Review and Completed columns of task cards carrying version and tag chips"
+      },
+      "side": "right"
+    },
+    {
+      "kind": "note",
+      "text": "A validation that is flaky or skipped counts as FAIL. The validator reports the command it ran and its output, so a green result is evidence rather than a claim."
+    }
+  ],
+  "closer": {
+    "title": "How to start one",
+    "body": "Open any task and hit Task Manager to maintain it, or Delegate to have it built. From a terminal, /goal-skill with the goal in your own words does the whole run."
+  }
+}

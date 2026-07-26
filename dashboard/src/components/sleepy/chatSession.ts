@@ -1,11 +1,13 @@
 import { api, getActiveVault } from '../../api/client';
 import { playAskChime } from '../../lib/chime';
 import {
-  parseChatLine, buildQuestionAnswer,
+  parseChatLine, buildQuestionAnswer, isUrgentChatEvent,
   type ChatEvent, type QuestionSpec, type ClientControl,
 } from '../../lib/chatProtocol';
 import type { TermStatus } from './agentSession';
-import { runStatusFrom, type SubAgentRun } from './chat/chatEntities';
+import { runStatusFrom, startSubAgentRun, type SubAgentRun } from './chat/chatEntities';
+import * as queue from './chat/chatQueue';
+import { createNotifyCoalescer } from './chat/notifyCoalescer';
 
 /**
  * The imperative engine behind a Chat session (beta) — the headless stream-json peer of
@@ -97,9 +99,27 @@ export interface PendingQuestion {
   toolName: string;
   questions: QuestionSpec[];
 }
-/** A permission prompt or AskUserQuestion card awaiting the user's answer, keyed by the
- *  control channel's `requestId`. `session.asking` is true whenever this array is non-empty. */
-export type PendingItem = PendingPermission | PendingQuestion;
+/** ExitPlanMode's approval gate — the plan Claude wants to act on, awaiting an allow (leave
+ *  plan mode and build it) or a deny (keep planning). `input` is the original request payload,
+ *  echoed back verbatim on allow exactly as a permission answer does. */
+export interface PendingPlan {
+  kind: 'plan';
+  requestId: string;
+  toolName: string;
+  plan: string;
+  planFilePath?: string;
+  input: unknown;
+}
+/** A permission prompt, an AskUserQuestion card or a plan approval awaiting the user's answer,
+ *  keyed by the control channel's `requestId`. `session.asking` is true whenever this array is
+ *  non-empty. */
+export type PendingItem = PendingPermission | PendingQuestion | PendingPlan;
+
+/** One message the user submitted while a turn was already in flight — held client-side and
+ *  sent, in order, as each turn settles. The CLI's own readline does this for the terminal
+ *  surface; the headless engine has no equivalent, so the queue lives here. Re-exported from
+ *  chatQueue.ts (which owns the rules, testably) so consumers have one import for the model. */
+export type QueuedMessage = queue.QueuedMessage;
 
 export interface ChatResultInfo {
   success: boolean;
@@ -123,6 +143,16 @@ export interface ConversationModel {
    *  items. Rendered above `items` behind an "earlier conversation" divider. */
   history: ChatItem[];
   pending: PendingItem[];
+  /** Messages submitted while a turn was in flight, oldest first — drained one per turn by
+   *  `maybeFlushQueue`. Editable and removable until they go out (see {@link ChatSession.enqueue}).
+   *  Lives on the MODEL, not in the composer, so it survives minimize/restore and a re-home
+   *  exactly as the draft does, and so the flush can happen where the busy edge is observed. */
+  queued: QueuedMessage[];
+  /** The auto-drain is suspended: the user pressed Stop, and firing the next queued message
+   *  the instant that interrupt lands would read as "Stop didn't stop". The rows stay put and
+   *  the strip offers Send now / Clear — nothing is sent behind the user's back, and nothing
+   *  they typed is thrown away. Cleared by any deliberate send or an explicit resume. */
+  queuePaused?: boolean;
   lastResult?: ChatResultInfo;
   /** Set by a `_meta/error` relay frame (e.g. the child failed to spawn). Not cleared
    *  automatically — a fresh `send()` naturally supersedes it once real output arrives. */
@@ -228,6 +258,20 @@ export interface ChatSession {
   /** Submit a user message: sends the `user` control frame and appends it to the
    *  transcript optimistically (the protocol never echoes the user's own text back). */
   send: (text: string) => void;
+  /** Park a message for the NEXT turn (the composer's ⏎ while `busy`). Appends to
+   *  `conv.queued`; `maybeFlushQueue` sends it when the in-flight turn settles. Whitespace-only
+   *  text is ignored, exactly as `send` ignores it. */
+  enqueue: (text: string) => void;
+  /** Rewrite a queued message in place. Empty/whitespace text REMOVES the row — "select all,
+   *  delete, save" is how anyone expects to drop a message they no longer want, and a queue
+   *  holding an empty entry would send a frame the CLI rejects. */
+  editQueued: (id: string, text: string) => void;
+  /** Drop one queued message (its ✕), or every queued message when `id` is omitted. */
+  removeQueued: (id?: string) => void;
+  /** Resume a queue paused by `interrupt()` and drain it if the session is idle — the strip's
+   *  "Send now". A no-op while a turn is still running (the pause is lifted, and the normal
+   *  turn-settled drain takes it from there). */
+  flushQueue: () => void;
   /** Answer a pending permission request (or a plain non-question `can_use_tool` prompt). */
   answer: (requestId: string, opts: { behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }) => void;
   /** Answer a pending AskUserQuestion card — builds the load-bearing `{questions, answers}`
@@ -374,8 +418,10 @@ export function createChatSession(
   // auto-allowed; consulted ONLY by the `permission-request` reducer arm.
   const sessionAllow = new Set<string>();
 
+  let queuedSeq = 0;
+
   let conv: ConversationModel = {
-    items: [], history: [], pending: [], draft: '', draftEpoch: 0, capabilities: [], subAgents: [],
+    items: [], history: [], pending: [], queued: [], draft: '', draftEpoch: 0, capabilities: [], subAgents: [],
     // A server-submitted prompt (delegation, promptToken, sleep/brain spawns) means a turn is
     // ALREADY in flight before this client sends anything — see `busy` below.
     turnStartedAt: serverSubmitsPrompt ? Date.now() : undefined,
@@ -385,6 +431,10 @@ export function createChatSession(
   const fireSubscribers = () => {
     subscribers.forEach((cb) => { try { cb(); } catch { /* a broken subscriber must not kill the session */ } });
   };
+  /** At most one subscriber fire per animation frame for the high-frequency arms (see
+   *  notifyCoalescer.ts). Every OTHER path — user actions, and any urgent event — goes
+   *  through `.flush()`, which fires synchronously AND cancels whatever this had queued. */
+  const renderFlush = createNotifyCoalescer(fireSubscribers);
 
   let focusTarget: HTMLElement | null = null;
   let transcriptRepin: (() => void) | null = null;
@@ -414,6 +464,10 @@ export function createChatSession(
     subscribe,
     getModel: () => conv,
     send,
+    enqueue,
+    editQueued,
+    removeQueued,
+    flushQueue,
     answer,
     answerQuestion,
     interrupt,
@@ -433,7 +487,14 @@ export function createChatSession(
   function snapshot() {
     return { busy: session.busy, asking: session.asking, status: session.status, attention: session.attention };
   }
-  function applyAndNotify(mutate: () => void): void {
+  /**
+   * @param coalesce Whether this mutation may ride the next animation frame instead of
+   *   committing now. Only the socket's own reducer ever passes `true`, and only for an
+   *   event {@link isUrgentChatEvent} cleared as high-frequency — every user-initiated
+   *   mutation (send, answer, rewind, a dropped file) keeps the default and paints
+   *   synchronously, so an optimistic bubble is never a frame late.
+   */
+  function applyAndNotify(mutate: () => void, coalesce = false): void {
     const before = snapshot();
     mutate();
     // The turn clock starts on the busy edge and stops when the turn settles. Derived here
@@ -442,17 +503,41 @@ export function createChatSession(
     if (before.busy !== session.busy) {
       conv = { ...conv, turnStartedAt: session.busy ? Date.now() : undefined };
     }
-    fireSubscribers();
     const after = snapshot();
-    if (before.busy !== after.busy || before.asking !== after.asking
-      || before.status !== after.status || before.attention !== after.attention) {
-      notify();
-    }
+    const coarseChanged = before.busy !== after.busy || before.asking !== after.asking
+      || before.status !== after.status || before.attention !== after.attention;
+    // A coarse flip is the session becoming busy/idle/asking/closed — the surface's dock
+    // chips and the pane's own working indicator both turn on it, so it paints NOW no matter
+    // how the caller classified the event. This is also the backstop the urgency table
+    // leans on: an unrecognised high-frequency arm that nonetheless moves the turn's state
+    // can't be deferred, whatever `coalesce` says.
+    if (coalesce && !coarseChanged) renderFlush.schedule();
+    else renderFlush.flush();
+    if (coarseChanged) notify();
   }
 
   function subscribe(cb: () => void): () => void {
     subscribers.add(cb);
     return () => { subscribers.delete(cb); };
+  }
+
+  /**
+   * Push a card that ASKS the user something directly — a question or a plan to approve —
+   * onto `pending`, chiming only on the edge where none was pending before.
+   *
+   * `others` is `pending` already stripped of this `requestId` (a re-sent request replaces
+   * its own card rather than stacking a twin). Shared by both arms so the two can never
+   * drift on which edge counts: a plan landing while a question is open must not chime a
+   * second time, and vice versa — it is one interruption, not two.
+   */
+  function pushAsk(others: PendingItem[], entry: PendingQuestion | PendingPlan): void {
+    const hadAskBefore = conv.pending.some((p) => p.kind === 'question' || p.kind === 'plan');
+    conv = { ...conv, pending: [...others, entry] };
+    session.asking = conv.pending.length > 0;
+    if (!hadAskBefore) {
+      session.attention = true;
+      playAskChime();
+    }
   }
 
   function applyZoom(zoom: number): void {
@@ -466,7 +551,7 @@ export function createChatSession(
     // Safe because `syncDraft` keeps the model mirroring the textarea on every keystroke,
     // so append-then-adopt can never lose free-typed text.
     conv = { ...conv, draft: conv.draft + data, draftEpoch: conv.draftEpoch + 1 };
-    fireSubscribers();
+    renderFlush.flush();
   }
 
   function syncDraft(text: string): void {
@@ -647,8 +732,12 @@ export function createChatSession(
         return;
       }
       case 'task-started': {
-        // A dispatched sub-agent (state 9) — the ONLY frame that carries its start (its
-        // own text/thinking is never streamed to the parent; see the file header note).
+        // A dispatched sub-agent (state 9) — the frame that carries its IDENTITY (its own
+        // text/thinking is never streamed to the parent; see the file header note). Folded in
+        // as an upsert keyed by task_id, NOT appended: a backgrounded agent is announced by
+        // the `background_tasks_changed` roster FIRST, so the run usually already exists by
+        // now and a blind append showed every backgrounded agent twice (see
+        // `startSubAgentRun` for the captured frame order).
         session.busy = true;
         const run: SubAgentRun = {
           taskId: ev.taskId,
@@ -660,7 +749,7 @@ export function createChatSession(
           status: 'running',
           startedAt: Date.now(),
         };
-        conv = { ...conv, subAgents: [...conv.subAgents, run] };
+        conv = { ...conv, subAgents: startSubAgentRun(conv.subAgents, run) };
         return;
       }
       case 'task-updated': {
@@ -819,10 +908,13 @@ export function createChatSession(
         return;
       }
       case 'permission-request': {
-        if (sessionAllow.has(ev.toolName)) {
-          // "Always allow this session" (state 6) — auto-answer, no card ever pushed.
-          // This gate lives ONLY on this arm: a `question` event is a structurally
-          // distinct ChatEvent kind (its own case below) and never reaches here.
+        // "Always allow this session" (state 6) — auto-answer, no card ever pushed. This gate
+        // lives ONLY on this arm: `question`/`plan-review` are structurally distinct ChatEvent
+        // kinds (their own cases below) and never reach here. `requiresInteraction` is the
+        // third interactive shape — one this parser didn't recognize — and it is exempt for
+        // the same reason they are: the CLI asked for a person, so a remembered click on an
+        // earlier prompt for the same tool name must not answer on their behalf.
+        if (sessionAllow.has(ev.toolName) && !ev.requiresInteraction) {
           answer(ev.requestId, { behavior: 'allow', updatedInput: ev.input });
           return;
         }
@@ -836,19 +928,24 @@ export function createChatSession(
         return;
       }
       case 'question': {
-        // Attention/chime fire only on a FRESH question edge (0 pending questions -> 1+) —
-        // deliberately narrower than `asking` (which any pending permission also sets): a
-        // permission prompt is common in acceptEdits mode and would make the chime noisy;
-        // AskUserQuestion is the "the strongest 'needs you' there is" signal (AC5).
-        const hadQuestionBefore = conv.pending.some((p) => p.kind === 'question');
+        // Attention/chime fire only on a FRESH ask edge (0 pending asks -> 1+) — deliberately
+        // narrower than `asking` (which any pending permission also sets): a permission prompt
+        // is common in acceptEdits mode and would make the chime noisy; a direct question is
+        // the "the strongest 'needs you' there is" signal (AC5).
         const pending = conv.pending.filter((p) => p.requestId !== ev.requestId);
         const entry: PendingQuestion = { kind: 'question', requestId: ev.requestId, toolName: ev.toolName, questions: ev.questions };
-        conv = { ...conv, pending: [...pending, entry] };
-        session.asking = conv.pending.length > 0;
-        if (!hadQuestionBefore) {
-          session.attention = true;
-          playAskChime();
-        }
+        pushAsk(pending, entry);
+        return;
+      }
+      case 'plan-review': {
+        // The plan Claude wants to act on (ExitPlanMode). Chimes on the same edge a question
+        // does — it is the same interruption, and answering it is what leaves plan mode.
+        const pending = conv.pending.filter((p) => p.requestId !== ev.requestId);
+        const entry: PendingPlan = {
+          kind: 'plan', requestId: ev.requestId, toolName: ev.toolName,
+          plan: ev.plan, planFilePath: ev.planFilePath, input: ev.input,
+        };
+        pushAsk(pending, entry);
         return;
       }
       case 'result': {
@@ -906,7 +1003,13 @@ export function createChatSession(
     // Noise (hook chatter, status pings, rate-limit events) and unparseable lines touch
     // neither notification channel — nothing changed, so nothing re-renders.
     if (!ev || ev.kind === 'ignored') return;
-    applyAndNotify(() => applyEvent(ev));
+    // The ONE place coalescing is allowed: a socket frame nobody is waiting to act on can
+    // ride the next paint instead of forcing a React commit per streamed token.
+    applyAndNotify(() => applyEvent(ev), !isUrgentChatEvent(ev));
+    // Outside the reducer on purpose: draining the queue SENDS a frame and appends an item,
+    // which is a second mutation with its own notify — not something a reducer arm may do
+    // mid-event. Cheap on every frame (four flag reads and an array length).
+    maybeFlushQueue();
     // The turn just flushed to the transcript — backfill rewind-anchor uuids while idle.
     if (ev.kind === 'result') void syncTranscriptUuids();
   };
@@ -916,16 +1019,79 @@ export function createChatSession(
   ws.onclose = stopOnClose;
   ws.onerror = stopOnClose;
 
-  function send(text: string): void {
+  function send(text: string): boolean {
     const clean = text.trim();
-    if (!clean || ws.readyState !== WebSocket.OPEN) return;
+    if (!clean || ws.readyState !== WebSocket.OPEN) return false;
     const frame: ClientControl = { type: 'user', text: clean };
-    try { ws.send(JSON.stringify(frame)); } catch { return; }
+    try { ws.send(JSON.stringify(frame)); } catch { return false; }
     applyAndNotify(() => {
       const item: ChatUserItem = { kind: 'user', id: nextItemId(), text: clean, ts: Date.now() };
-      conv = { ...conv, items: [...conv.items, item], draft: '' };
+      // A deliberate send lifts a pause: the user has just said "carry on", so the queue behind
+      // this message is wanted again. (Held while busy — a queued message is not this edge.)
+      conv = { ...conv, items: [...conv.items, item], draft: '', queuePaused: undefined };
       session.busy = true;
     });
+    return true;
+  }
+
+  // ── Message queue (submitted while a turn was in flight) ──────────────────────────
+
+  function enqueue(text: string): void {
+    applyAndNotify(() => {
+      const next = queue.appendQueued(conv.queued, text, `q-${id}-${++queuedSeq}`, Date.now());
+      if (next !== conv.queued) conv = { ...conv, queued: next };
+    });
+  }
+
+  function editQueued(qid: string, text: string): void {
+    applyAndNotify(() => { setQueued(queue.editQueued(conv.queued, qid, text)); });
+  }
+
+  function removeQueued(qid?: string): void {
+    applyAndNotify(() => { setQueued(queue.removeQueued(conv.queued, qid)); });
+  }
+
+  /** Commit a new queue, dropping the pause with the last row: there is nothing left to hold
+   *  back, and a "paused" strip with no rows describes a state that no longer exists. */
+  function setQueued(queued: QueuedMessage[]): void {
+    conv = { ...conv, queued, queuePaused: queued.length > 0 ? conv.queuePaused : undefined };
+  }
+
+  function flushQueue(): void {
+    applyAndNotify(() => { conv = { ...conv, queuePaused: undefined }; });
+    maybeFlushQueue();
+  }
+
+  /**
+   * Send the next queued message if this is the moment for it. Called after every applied
+   * socket frame (i.e. wherever a busy→idle edge can be observed) rather than from inside the
+   * `result` arm, so a turn that ends any OTHER way — a relay error, an interrupt's result —
+   * drains the queue too, and so the reducer keeps its "one event, one mutation" shape.
+   *
+   * Deliberately one message per turn, not a concatenated batch: each queued message is its
+   * own instruction and deserves its own turn, which is also what makes the strip's ordering
+   * mean anything.
+   */
+  function maybeFlushQueue(): void {
+    const drainable = queue.shouldDrainQueue({
+      busy: session.busy,
+      asking: session.asking,
+      paused: conv.queuePaused,
+      // A dead or credential-less session must not silently swallow the queue: the rows stay,
+      // and Resume + "Send now" is the recovery path.
+      ended: !!conv.exited || !!conv.authRequired,
+      socketOpen: ws.readyState === WebSocket.OPEN,
+      queueLength: conv.queued.length,
+    });
+    if (!drainable) return;
+    const next = conv.queued[0];
+    if (!next) return;
+    // Dropped from the queue and appended as a real user item in one visible step — the
+    // restore below covers the one case `send` can still refuse (a socket that closed between
+    // the guard above and the write), so a message is never lost to a failed send.
+    const remaining = conv.queued.slice(1);
+    conv = { ...conv, queued: remaining };
+    if (!send(next.text)) conv = { ...conv, queued: [next, ...conv.queued] };
   }
 
   function answer(requestId: string, opts: { behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }): void {
@@ -938,6 +1104,9 @@ export function createChatSession(
       conv = { ...conv, pending: conv.pending.filter((p) => p.requestId !== requestId) };
       session.asking = conv.pending.length > 0;
     });
+    // Answering the last open card can itself be the moment the session becomes drainable (a
+    // card that outlived its turn's `result` frame) — normally the guard just returns.
+    maybeFlushQueue();
   }
 
   function answerQuestion(requestId: string, questions: QuestionSpec[], picked: Record<string, string>): void {
@@ -947,6 +1116,10 @@ export function createChatSession(
   function interrupt(): void {
     if (ws.readyState !== WebSocket.OPEN) return;
     try { ws.send(JSON.stringify({ type: 'interrupt' } as ClientControl)); } catch { /* best-effort */ }
+    // Stop means stop — including whatever was lined up behind this turn. The queue is held,
+    // not dropped: the interrupt's own `result` frame is a busy→idle edge, and without this the
+    // next queued message would go out in the same breath as the interrupt.
+    if (conv.queued.length > 0) applyAndNotify(() => { conv = { ...conv, queuePaused: true }; });
   }
 
   // ── Live model / effort switches ────────────────────────────────────────────────────
@@ -1205,6 +1378,10 @@ export function createChatSession(
   function dispose(): void {
     if (disposed) return;
     disposed = true;
+    // A queued trailing flush would otherwise fire into subscribers whose component is on
+    // its way out — and, worse, keep this whole closure alive for a frame after the pane
+    // that owned it stopped existing.
+    renderFlush.cancel();
     try { ws.close(); } catch { /* already closing */ }
     try { container.remove(); } catch { /* already detached */ }
   }

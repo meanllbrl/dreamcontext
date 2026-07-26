@@ -1,5 +1,5 @@
 import {
-  useEffect, useRef, useState, useReducer, useCallback, useLayoutEffect,
+  useEffect, useMemo, useRef, useState, useReducer, useCallback, useLayoutEffect,
 } from 'react';
 import { createPortal } from 'react-dom';
 import './AgentTerminal.css';
@@ -9,14 +9,14 @@ import {
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
 import { createChatSession, type ChatSession } from './chatSession';
-import { ChatPane } from './ChatPane';
+import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
   doubleTapToken, createDoubleTapMatcher,
   AGENT_SETTINGS_EVENT, type AgentSettings,
 } from '../../lib/agentSettings';
 import { deriveSessionStatus, type SessionRow } from './agentStatus';
-import { PaneFragment } from './PaneFragment';
+import { PaneFragment, type PaneActions } from './PaneFragment';
 import { AgentTabs, type PaneVM } from './AgentTabs';
 import { AgentDock } from './AgentDock';
 import { AgentFab } from './AgentFab';
@@ -38,6 +38,7 @@ import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
 import { pickFiles, pickFolders } from '../../lib/desktop';
+import { listenForChecklistSubmits, type ChecklistSubmitPayload } from '../../lib/checklistBridge';
 
 /**
  * Agent — the REAL interactive Claude Code, in-app, MULTI-SESSION. Each session is
@@ -224,9 +225,9 @@ export function AgentSurface() {
   const [sessionModel, setSessionModel] = useState<Record<string, string>>({});
   const [sessionEffort, setSessionEffort] = useState<Record<string, string>>({});
 
-  // ── Agent screen (Settings → Agents): Terminal vs Chat (BETA) — a SWAP, not a superset.
-  // `chatView` picks which surface a Claude session opens as, and the chosen one takes
-  // over EVERY entry point (＋ New, ⌘T/⌘D, empty state, tab restore/resume, Sleep /
+  // ── Agent screen (Settings → Agents): Chat (the default) vs Terminal (legacy) — a SWAP,
+  // not a superset. `chatView` picks which surface a Claude session opens as, and the chosen
+  // one takes over EVERY entry point (＋ New, ⌘T/⌘D, empty state, tab restore/resume, Sleep /
   // brain-resolve / delegate spawns): chat mode never opens a terminal Claude, terminal
   // mode never opens a chat. Plain shells (⌃`) are orthogonal and stay available in both.
   // Chat additionally needs the claude CLI; already-running sessions keep their surface —
@@ -313,12 +314,13 @@ export function AgentSurface() {
   // if the user turned "Reopen past tabs" OFF, we mark hydrated and skip the restore
   // entirely (a clean start), while still enabling the persist effect below.
   useEffect(() => {
-    // Chat (BETA) needs only the claude CLI, not node-pty (agent-terminal.ts's `embeddedTerminal`
+    // Chat needs only the claude CLI, not node-pty (agent-terminal.ts's `embeddedTerminal`
     // gate) — a saved chat tab must still restore on a node-pty-broken machine, so this gate
     // matches the same loosened predicate the body/menu/empty-state gates below use. Gated on
-    // `agentSettings.chatView` too: the beta flag being OFF must mean claudeCli alone can NEVER
-    // widen this gate — otherwise a plain terminal user on a pty-broken machine would get
-    // agent tabs auto-restored into doomed WS connections instead of the Prereqs panel.
+    // `agentSettings.chatView` too: someone who switched to Terminal (legacy) must mean
+    // claudeCli alone can NEVER widen this gate — otherwise a terminal user on a pty-broken
+    // machine would get agent tabs auto-restored into doomed WS connections instead of the
+    // Prereqs panel.
     if (hydratedRef.current || !(caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) || !settingsReady) return;
     if (!agentSettings.restoreTabs) { hydratedRef.current = true; return; }
     let cancelled = false;
@@ -923,6 +925,45 @@ export function AgentSurface() {
     };
   }, [taskManagerAgent]);
 
+  // ── Checklist submit bridge (T8, plan §1.11/§1.12) ────────────────────────────────
+  // The pinned checklist window is a SEPARATE OS window with no WebSocket of its own; its
+  // Submit reaches this surface via a targeted Tauri event (`checklistBridge.ts`) rather
+  // than the server, which keeps no session registry to route a submit through (a bare
+  // `liveConversations: Set<string>`, ids only). `AgentSurface` is the right home because
+  // it owns `sessions` for the app's lifetime — a `ChatPane` is per-visible-pane and can be
+  // garaged, so it cannot durably hold this listener.
+  //
+  // `sessionList` is keyed by INTERNAL session id (`chat-N`); `sessions.current` is a
+  // `Map<internal id, Session | ChatSession>` keyed the SAME way — NOT by `claudeId`. The
+  // submit payload's `conversationId` is a `claudeId`, so it has to be resolved through
+  // `sessionList` first (matching on `kind === 'chat'` AND `claudeId`) to get the internal
+  // id `sessions.current` actually indexes on. A literal `sessions.current.get(conversationId)`
+  // would miss on every single submit.
+  //
+  // The vault check (payload.vault vs. the window's own vault) lives in the BRIDGE, not
+  // here — `listenForChecklistSubmits` takes `vault` for exactly that belt-and-braces
+  // comparison, so this handler only ever sees submits already confirmed to belong to this
+  // window's vault.
+  const handleChecklistSubmit = useCallback((payload: ChecklistSubmitPayload): boolean => {
+    const entry = sessionList.find((m) => m.kind === 'chat' && m.claudeId === payload.conversationId);
+    const session = entry ? sessions.current.get(entry.id) : undefined;
+    if (!session || session.kind !== 'chat') return false;
+    const chat = session as ChatSession;
+    // `send`, not `sendText` — the owner's "Submit sends the filled-in list back as ONE
+    // message" means a real user turn, not a composer-draft append (`sendText` only
+    // appends to the draft). Mid-turn, queue it exactly like the composer's own
+    // ⏎-while-busy path (Composer.tsx: `busy ? session.enqueue(message) : session.send(message)`).
+    if (chat.busy) chat.enqueue(payload.markdown);
+    else chat.send(payload.markdown);
+    return true;
+  }, [sessionList]);
+
+  useEffect(() => {
+    const vault = getActiveVault();
+    if (!vault) return;
+    return listenForChecklistSubmits(vault, handleChecklistSubmit);
+  }, [handleChecklistSubmit]);
+
   // ── Task Manager composer: the SAME per-pane bar, portaled into the task page ────
   // The TM pane gets the exact `PaneComposer` strip an overlay pane has (files, skills,
   // live model/effort, context/cost readout) — one atomic component, not a re-implementation.
@@ -1221,6 +1262,56 @@ export function AgentSurface() {
   const setGroupTarget = useCallback((paneId: string) => {
     dropTargetRef.current = { kind: 'group', paneId };
   }, []);
+  // ── Stable dispatchers for the memoized children (PaneFragment, ChatPaneHost) ──────
+  //
+  // `bumpStatus` re-renders this whole component on ANY session's busy/asking/status/
+  // attention edge — which is to say constantly, for every session in the roster at once.
+  // That is what made a token arriving in one chat re-render its split neighbour's whole
+  // transcript (owner report 07-25, partially addressed then by keying ChatPane's scroll
+  // writes to its own model; this closes the render itself).
+  //
+  // `React.memo` on those children only helps if the callbacks they receive KEEP THEIR
+  // IDENTITY across such a render, and per-pane inline arrows never can. So each child gets
+  // ONE object whose identity never changes, whose methods take their target as an argument,
+  // and which reads this render's real closures through a ref the effect below keeps fresh.
+  // Actions are only ever invoked from event handlers — which run long after the effect that
+  // published them — so the ref can never be read stale.
+  const paneActionsImpl: PaneActions = {
+    setZoneTarget,
+    activate: (paneId) => { if (paneId !== activePaneId) setActivePaneId(paneId); },
+    resume: (sid) => resumeSession(sid),
+    close: (sid) => closeSessionById(sid),
+  };
+  const paneActionsRef = useRef(paneActionsImpl);
+  useEffect(() => { paneActionsRef.current = paneActionsImpl; });
+  const paneActions = useMemo<PaneActions>(() => ({
+    setZoneTarget: (paneId, zone) => paneActionsRef.current.setZoneTarget(paneId, zone),
+    activate: (paneId) => paneActionsRef.current.activate(paneId),
+    resume: (sid) => paneActionsRef.current.resume(sid),
+    close: (sid) => paneActionsRef.current.close(sid),
+  }), []);
+
+  const chatActionsImpl: ChatSurfaceActions = {
+    changeModel: changeChatModelFor,
+    changeEffort: changeChatEffortFor,
+    continueInTerminal: resumeChatInTerminal,
+    resumeChat: resumeChatSession,
+    changePermissionMode: changeChatPermissionMode,
+    openAppPage: onOpenAppPage,
+    signIn: signInToClaude,
+  };
+  const chatActionsRef = useRef(chatActionsImpl);
+  useEffect(() => { chatActionsRef.current = chatActionsImpl; });
+  const chatActions = useMemo<ChatSurfaceActions>(() => ({
+    changeModel: (sid, id) => chatActionsRef.current.changeModel(sid, id),
+    changeEffort: (sid, level) => chatActionsRef.current.changeEffort(sid, level),
+    continueInTerminal: (cs) => chatActionsRef.current.continueInTerminal(cs),
+    resumeChat: (cs) => chatActionsRef.current.resumeChat(cs),
+    changePermissionMode: (mode) => chatActionsRef.current.changePermissionMode(mode),
+    openAppPage: (page, id) => chatActionsRef.current.openAppPage(page, id),
+    signIn: () => chatActionsRef.current.signIn(),
+  }), []);
+
   const handleTabDragStart = useCallback((sid: string) => {
     draggedSidRef.current = sid;
     dropTargetRef.current = null;
@@ -1753,12 +1844,12 @@ export function AgentSurface() {
       <p style={subStyle}>The in-app Claude Code agent is a desktop-only feature — it runs a real, interactive Claude Code session scoped to this project. Use <strong>Ask</strong> here for read-only questions.</p>
     </Centered>;
   } else if (panesLive) {
-    // Chat (BETA) needs only the claude CLI — this pane body must render even on a
-    // node-pty-broken machine (agent-terminal.ts:37-40's real failure mode), or a spawned
-    // chat session would have nowhere to portal into. Gated on chatView too: claudeCli alone
-    // must never widen this while the beta flag is off (a plain terminal-only user on a
-    // pty-broken machine must still get the Prereqs recovery panel below, not a rendered
-    // tabs/panes UI with no working session behind it).
+    // Chat needs only the claude CLI — this pane body must render even on a node-pty-broken
+    // machine (agent-terminal.ts:37-40's real failure mode), or a spawned chat session would
+    // have nowhere to portal into. Gated on chatView too: claudeCli alone must never widen
+    // this for someone on Terminal (legacy) (a terminal-only user on a pty-broken machine
+    // must still get the Prereqs recovery panel below, not a rendered tabs/panes UI with no
+    // working session behind it).
     body = (
       <div className="agent-term">
         {/* Drop a PNG/JPG/GIF/WebP anywhere on a terminal OR chat pane to hand that
@@ -1779,6 +1870,8 @@ export function AgentSurface() {
               <PaneFragment
                 key={pane.id}
                 paneId={pane.id}
+                activeSessionId={pane.active}
+                actions={paneActions}
                 active={isActive}
                 dormant={activeMeta?.dormant}
                 dragging={draggingTab}
@@ -1797,10 +1890,6 @@ export function AgentSurface() {
                     onEffortChange={(level) => changeEffortFor(pane.active, level)}
                   />
                 )}
-                onZoneTarget={(zone) => setZoneTarget(pane.id, zone)}
-                onActivate={() => { if (pane.id !== activePaneId) setActivePaneId(pane.id); }}
-                onResume={() => resumeSession(pane.active)}
-                onClose={() => closeSessionById(pane.active)}
               />
             );
           })}
@@ -1816,9 +1905,20 @@ export function AgentSurface() {
         <BotMark />
         <h2 style={titleStyle}>Agent — real Claude Code</h2>
         <p style={subStyle}>
-          A full interactive Claude Code session running right here, scoped to this project —
-          or a <strong>plain terminal</strong> in the same window when you just need a shell.
-          Open as many as you need — each gets its own <strong>renameable</strong> tab, and you
+          {chatMode ? (
+            <>
+              A full Claude Code session running right here, scoped to this project, rendered as a
+              <strong> native conversation</strong> — boards, media and diffs appear inline, and its
+              questions become buttons you click. Or a <strong>plain terminal</strong> in the same
+              window when you just need a shell.
+            </>
+          ) : (
+            <>
+              A full interactive Claude Code session running right here, scoped to this project —
+              or a <strong>plain terminal</strong> in the same window when you just need a shell.
+            </>
+          )}
+          {' '}Open as many as you need — each gets its own <strong>renameable</strong> tab, and you
           can put them <strong>side by side</strong> (⌘D) to watch several at once.
         </p>
         <BypassToggle bypass={bypass} setBypass={setBypass} />
@@ -1826,7 +1926,7 @@ export function AgentSurface() {
           // The AGENT needs BOTH its renderer (node-pty) AND the `claude` binary it spawns.
           // A plain TERMINAL needs only the renderer — no `claude` — so it can start even
           // when the CLI is missing. Missing the renderer → show the in-app Setup panel.
-          // Chat (BETA) needs only the claude CLI + the Settings → Agents toggle — it can
+          // Chat needs only the claude CLI + the Settings → Agents screen preference — it can
           // start on a node-pty-broken machine where neither of the above can.
           // The Agent screen preference is a SWAP: exactly one Claude start button shows,
           // matching the chosen surface (chatMode folds in the claudeCli requirement).
@@ -1840,7 +1940,7 @@ export function AgentSurface() {
                   <button onClick={() => addSession('agent')} style={primaryBtn}>▸ Start agent in app</button>
                 )}
                 {chatReady && (
-                  <button onClick={() => addSession('chat')} style={primaryBtn}>◆ Start chat (beta)</button>
+                  <button onClick={() => addSession('chat')} style={primaryBtn}>◆ Start chat</button>
                 )}
                 {terminalReady && (
                   <button onClick={() => addSession('shell')} style={(agentReady || chatReady) ? secondaryBtn : primaryBtn}>&gt;_ Start terminal</button>
@@ -1912,9 +2012,9 @@ export function AgentSurface() {
             ))}
           </div>
           <div className="agent-overlay-controls">
-            {/* Chat (BETA) needs only the claude CLI (+ the Settings → Agents toggle), not
-                node-pty — loosened so the control cluster is reachable on a node-pty-broken
-                machine that can still run Chat. */}
+            {/* Chat needs only the claude CLI (+ the Settings → Agents screen preference),
+                not node-pty — loosened so the control cluster is reachable on a
+                node-pty-broken machine that can still run Chat. */}
             {started && (caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) && (
               <>
                 {/* Split button: the main face opens a Claude session in the CHOSEN Agent
@@ -1924,7 +2024,7 @@ export function AgentSurface() {
                 <div className="agent-new-split" ref={newSplitRef}>
                   <button
                     className="agent-add-btn"
-                    title={chatMode ? 'New chat (BETA) (⌘T) · side-by-side: ⌘D chat, ⌘⇧D terminal' : 'New agent (⌘T) · side-by-side: ⌘D agent, ⌘⇧D terminal'}
+                    title={chatMode ? 'New chat (⌘T) · side-by-side: ⌘D chat, ⌘⇧D terminal' : 'New agent (⌘T) · side-by-side: ⌘D agent, ⌘⇧D terminal'}
                     aria-label={chatMode ? 'New chat' : 'New agent'}
                     onClick={() => { setNewMenuOpen(false); addSession(claudeKind); }}
                   >
@@ -1959,7 +2059,7 @@ export function AgentSurface() {
                           onClick={() => { setNewMenuOpen(false); addSession('chat'); }}
                         >
                           <span className="agent-new-menu-glyph" aria-hidden>◆</span>
-                          <span className="agent-new-menu-label">New chat (BETA)</span>
+                          <span className="agent-new-menu-label">New chat</span>
                           <kbd className="agent-new-menu-kbd">⌘T</kbd>
                         </button>
                       )}
@@ -2052,23 +2152,20 @@ export function AgentSurface() {
           `/model`/`/effort` slash path — chatChangeModelFor/EffortFor just update the picker
           state for the NEXT resume; see the plan's scope call C). */}
       {chatPanes.map((cs) => createPortal(
-        <ChatPane
+        <ChatPaneHost
           key={cs.id}
           session={cs}
+          // ONE stable object instead of six per-session arrows — the memo boundary in
+          // ChatPaneHost is what keeps a token in one conversation from re-rendering
+          // another one's transcript. See the dispatcher's definition above.
+          actions={chatActions}
           modelConfig={modelConfig}
           // `||`, not `??`: a chat session's `model`/`effort` start as EMPTY STRINGS (they
           // are only filled once `system:init` reports what the CLI actually picked), and
           // `??` lets '' through — which is what left the composer's pill reading "—".
           model={sessionModel[cs.id] || cs.model || modelConfig.defaultModel}
           effort={sessionEffort[cs.id] || cs.effort || modelConfig.defaultEffort}
-          onModelChange={(id) => changeChatModelFor(cs.id, id)}
-          onEffortChange={(level) => changeChatEffortFor(cs.id, level)}
-          onContinueInTerminal={() => resumeChatInTerminal(cs)}
           permissionMode={agentSettings.chatPermissionMode}
-          onPermissionModeChange={changeChatPermissionMode}
-          onResume={() => resumeChatSession(cs)}
-          onOpenAppPage={onOpenAppPage}
-          onSignIn={signInToClaude}
           canSignInInApp={canSignInInApp}
           signInCommand={signInCommand}
         />,

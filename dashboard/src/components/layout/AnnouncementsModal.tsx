@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { useAnnouncementInbox } from '../../hooks/useAnnouncements';
-import { readSeenIds, unreadAnnouncements, type Announcement } from '../../lib/announcements';
-import { AnnouncementBoardPreview } from '../announcements/AnnouncementBoardPreview';
+import { formatVersion, readSeenIds, unreadAnnouncements, type Announcement } from '../../lib/announcements';
+import { AnnouncementStoryTeaser } from '../announcements/AnnouncementStoryTeaser';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
 import './AnnouncementsModal.css';
 
@@ -39,8 +39,8 @@ interface Props {
  * live `unread` on the same tick — otherwise it would flash and vanish.
  *
  * The body is content-first: headline + summary carry the message in text; the
- * board is an inert teaser (no scroll trap inside the modal) that opens the
- * full-screen reader on the Announcements page, where it's actually readable.
+ * story's cover screenshot is a teaser that opens the full-screen reader on the
+ * Announcements page, where the whole landing page is readable.
  */
 export function AnnouncementsModal({ onOpenPage }: Props) {
   const { t } = useI18n();
@@ -142,17 +142,13 @@ export function AnnouncementsModal({ onOpenPage }: Props) {
 
         <div className="announcements-modal-body">
           <div className="announcements-modal-meta">
+            <span className="announcements-modal-version">{formatVersion(hero.version)}</span>
             <span className="announcements-modal-date">{hero.date}</span>
-            {hero.version && (
-              <span className="announcements-modal-version">
-                {t('announcements.shippedIn').replace('{version}', hero.version)}
-              </span>
-            )}
           </div>
           <h3 className="announcements-modal-headline">{hero.title}</h3>
           <p className="announcements-modal-summary">{hero.summary}</p>
 
-          <AnnouncementBoardPreview board={hero.board} label={hero.title} onOpen={() => openStory(hero.id)} />
+          <AnnouncementStoryTeaser story={hero.story} label={hero.title} onOpen={() => openStory(hero.id)} />
 
           {pinned.length > 1 && (
             <div className="announcements-modal-also">
@@ -164,7 +160,7 @@ export function AnnouncementsModal({ onOpenPage }: Props) {
                   className="announcements-modal-also-row"
                   onClick={() => openStory(a.id)}
                 >
-                  <span className="announcements-modal-also-date">{a.date}</span>
+                  <span className="announcements-modal-also-date">{formatVersion(a.version)}</span>
                   <span className="announcements-modal-also-title">{a.title}</span>
                   <span className="announcements-modal-also-arrow" aria-hidden="true">→</span>
                 </button>

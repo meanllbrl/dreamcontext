@@ -3,7 +3,9 @@ import {
   StatusDot, StatusWord, ToolGlyph, ToolName, PathChip, Caret, CopyButton, TokenBadge,
   PillDivider, type ToolStatus,
 } from './atoms';
-import { classifyOutputLine, type EditDiff } from './chatEntities';
+import {
+  classifyOutputLine, clampLines, TERMINAL_HEAD_LINES, TERMINAL_TAIL_LINES, type EditDiff,
+} from './chatEntities';
 import './molecules.css';
 
 /**
@@ -112,6 +114,21 @@ export function CardHeader({
 
 // ─── Terminal block (always-dark shell surface) ────────────────────────────────────
 
+/** One run of output rows. Extracted only so the clamped block can render its head and its
+ *  tail with the same code; `offset` keeps the positional keys unique across the two. */
+function OutputLines({ lines, offset }: { lines: string[]; offset: number }) {
+  return (
+    <>
+      {lines.map((line, i) => (
+        // eslint-disable-next-line react/no-array-index-key -- output lines have no id; the array is replaced wholesale on every result
+        <div key={offset + i} className="chat-m-terminal-line" data-tone={classifyOutputLine(line)}>
+          {line || ' '}
+        </div>
+      ))}
+    </>
+  );
+}
+
 /**
  * A shell command and its output on a dark surface — the one place in chat that keeps a
  * fixed palette in both themes (documented exception, same rationale as the embedded
@@ -119,7 +136,15 @@ export function CardHeader({
  * {@link classifyOutputLine}, so a passing test run is legible at a glance.
  */
 export function TerminalBlock({ command, output }: { command?: string; output?: string }) {
+  const [showAll, setShowAll] = useState(false);
   const copyable = [command ? `$ ${command}` : '', output ?? ''].filter(Boolean).join('\n');
+  // Clamped by default, keeping BOTH ends — see `clampLines`. A build log or a test run is
+  // routinely thousands of lines, and every one of them used to become a DOM node that
+  // stayed mounted for the life of the conversation and was re-laid-out on every render of
+  // the card. Copy still copies the whole output; nothing is lost, only deferred.
+  const all = output ? output.split('\n') : [];
+  const clamped = clampLines(all, TERMINAL_HEAD_LINES, TERMINAL_TAIL_LINES);
+  const hidden = showAll ? 0 : clamped.hidden;
   if (!copyable) return null;
   return (
     <div className="chat-m-terminal">
@@ -133,12 +158,17 @@ export function TerminalBlock({ command, output }: { command?: string; output?: 
             {command}
           </div>
         )}
-        {output?.split('\n').map((line, i) => (
-          // eslint-disable-next-line react/no-array-index-key -- output lines have no id; the array is replaced wholesale on every result
-          <div key={i} className="chat-m-terminal-line" data-tone={classifyOutputLine(line)}>
-            {line || ' '}
-          </div>
-        ))}
+        {hidden === 0 ? (
+          <OutputLines lines={all} offset={0} />
+        ) : (
+          <>
+            <OutputLines lines={clamped.head} offset={0} />
+            <button type="button" className="chat-m-terminal-more" onClick={() => setShowAll(true)}>
+              ⋯ {hidden} more {hidden === 1 ? 'line' : 'lines'}
+            </button>
+            <OutputLines lines={clamped.tail} offset={all.length - clamped.tail.length} />
+          </>
+        )}
       </div>
     </div>
   );

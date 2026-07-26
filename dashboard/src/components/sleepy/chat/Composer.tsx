@@ -8,6 +8,9 @@ import {
 import {
   composerBodyHeight, composerHeightBounds, measureBodyChrome, measureFieldContent, readFieldMetrics,
 } from './composerHeight';
+import {
+  promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV, type HistoryNav,
+} from './chatEntities';
 import { Popover, SkillBrowser } from '../SkillPickerPopover';
 import { PermissionModeMenu } from './PermissionModeMenu';
 import { ContextReadout } from './ContextReadout';
@@ -36,6 +39,19 @@ import './composer.css';
  * path text directly into the draft): the redesign brief asks for a distinct attachments
  * row + an accent skill chip, and since this pane never unmounts while its session lives,
  * plain local state survives minimize/restore exactly like the draft does.
+ *
+ * ── Parity with the terminal's readline (07-26) ─────────────────────────────────────
+ * Two things the terminal pane gets free from the CLI's own readline, which a headless chat
+ * has to build, and whose absence made the DEFAULT surface worse than the fallback one:
+ *   QUEUE   — ⏎ while `busy` no longer no-ops. `submit` routes to `session.enqueue`, and the
+ *             message becomes an editable row in the strip above (QueuedMessages.tsx), sent
+ *             when the turn settles. The queue itself lives on the session model, not here,
+ *             so it survives minimize/restore and drains where the busy edge is observed.
+ *   HISTORY — ↑/↓ walk this conversation's own past prompts (`promptHistory`, newest first,
+ *             `history` + `items` so a RESUMED chat can re-run its earlier turns). The nav
+ *             state is local because it is a cursor into a view, not conversation state; the
+ *             rules that keep it from eating a half-typed draft are pure and tested in
+ *             chatEntities.ts (`canRecallHistory`, `stepHistory`).
  */
 
 interface Attachment {
@@ -104,8 +120,45 @@ export function Composer({
    *  nothing. The handler opens an interactive terminal Claude tab that CAN run the flow. */
   onSignIn: () => void;
 }) {
-  const [draft, setDraft] = useState(() => session.getModel().draft);
+  // Re-read on every render (the pane re-renders on every applied event — see ChatPane): this
+  // is the live conversation model, not a snapshot.
+  const conv = session.getModel();
+  const [draft, setDraft] = useState(() => conv.draft);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // ── Prompt history (↑/↓) ─────────────────────────────────────────────────────────
+  // The terminal pane gets this from the CLI's own readline; a headless chat has to build it,
+  // and the only honest source is what this conversation has already sent — including the
+  // replayed `history` of a resumed one, since re-running an earlier turn is half the point of
+  // resuming. Derived per render rather than held in state: it changes only when a message is
+  // sent, and a snapshot would go stale exactly then.
+  const historyEntries = promptHistory(conv.history, conv.items);
+  const [nav, setNav] = useState<HistoryNav>(NO_HISTORY_NAV);
+  // Mirrored in a ref because `syncSlash` runs in the SAME handler that ends a walk and has to
+  // see the new value, not the pre-update render's.
+  const navRef = useRef(nav);
+  const setNavBoth = (next: HistoryNav) => { navRef.current = next; setNav(next); };
+  /** Move the textarea (and the mirrored model draft) to a recalled prompt. */
+  const applyRecalled = (text: string) => {
+    setDraft(text);
+    session.syncDraft(text);
+    // Caret to the END of the recalled text: you recall a prompt to extend or re-send it, and
+    // a caret parked at 0 would also mean the next ↑ is read as "recall again" (see
+    // canRecallHistory) when the user meant to move within the line.
+    requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (!ta) return;
+      ta.setSelectionRange(text.length, text.length);
+      ta.scrollTop = ta.scrollHeight;
+    });
+  };
+  const recall = (dir: 'back' | 'forward'): boolean => {
+    const stepped = stepHistory(historyEntries, nav, dir, draft);
+    if (!stepped) return false;
+    setNavBoth(stepped.nav);
+    applyRecalled(stepped.text);
+    return true;
+  };
 
   // ── Preserved verbatim: focus-target registration ────────────────────────────────
   useEffect(() => {
@@ -118,6 +171,10 @@ export function Composer({
   useEffect(() => {
     if (draftEpoch > 0) {
       setDraft(session.getModel().draft);
+      // The session replaced the draft wholesale (a rewind prefill, a dropped file's path), so
+      // any history walk in progress is over — its stash describes a draft that no longer
+      // exists, and ↓ restoring it would throw the new text away.
+      setNavBoth(NO_HISTORY_NAV);
       taRef.current?.focus();
     }
   }, [session, draftEpoch]);
@@ -188,6 +245,8 @@ export function Composer({
   // command names `system:init` reported for this session (built-ins + this project's
   // `.claude/commands/` + plugin/skill commands). The query is derived from the caret on
   // every keystroke rather than held in state, so it can never disagree with the textarea.
+  // It opens at ANY token boundary, not only the first character — naming a skill on the
+  // third line of a prompt is as common as opening with a command.
   const commands = session.getModel().slashCommands ?? [];
   const [slashQuery, setSlashQuery] = useState<string | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
@@ -197,7 +256,12 @@ export function Composer({
 
   /** Re-derive the open/closed state from wherever the caret now is. */
   const syncSlash = (text: string, caret: number) => {
-    const q = slashQueryAt(text, caret);
+    // A prompt RECALLED from history was not typed, so a leading `/…` in it must not spring the
+    // command menu open — ⏎ would then COMPLETE the command instead of re-sending the prompt,
+    // which is the one thing the recall was for. (`setSelectionRange` fires `onSelect`, so
+    // suppressing it once at the recall site would not hold.) The first keystroke ends the walk
+    // and the menu behaves normally from there.
+    const q = navRef.current.index !== null ? null : slashQueryAt(text, caret);
     setSlashQuery(q);
     setSlashIndex(0);
   };
@@ -317,7 +381,6 @@ export function Composer({
   };
 
   // ── Context + cost readout (state 1/11) ──────────────────────────────────────────
-  const conv = session.getModel();
   const lastResult = conv.lastResult;
   // The STREAM is the primary source: Claude Code ≥2.1.x flushes a live session's transcript
   // only on exit/rotation, so `/agent/session-stats` (which reads that transcript) reports
@@ -343,7 +406,7 @@ export function Composer({
   const hasSendableContent = !!draft.trim() || pathAttachments.length > 0 || !!skillChip;
 
   const submit = () => {
-    if (busy || !connected || !hasSendableContent) return;
+    if (!connected || !hasSendableContent) return;
     const pathsText = pathAttachments.map((a) => quotePath(a.path ?? '')).join(' ');
     const bodyText = pathsText ? (draft.trim() ? `${draft.trim()} ${pathsText}` : pathsText) : draft.trim();
     const withSkill = skillChip ? `${skillChip}${bodyText}` : bodyText;
@@ -356,8 +419,15 @@ export function Composer({
     // draft: if the sign-in tab isn't what they wanted, their text is still here.
     if (isSignInCommand(message)) { onSignIn(); return; }
 
-    session.send(message);
+    // ⏎ while Claude is working QUEUES rather than doing nothing — the CLI's own readline does
+    // this for the terminal pane, and this composer used to hard-return on `busy`, which is
+    // what made "line up the next instruction while a long turn runs" impossible here. The
+    // message leaves the composer either way: it is committed, just not in flight yet, and it
+    // stays editable as a row in the queue strip above (QueuedMessages.tsx).
+    if (busy) session.enqueue(message);
+    else session.send(message);
     setDraft('');
+    setNavBoth(NO_HISTORY_NAV);
     setSlashQuery(null);
     setAttachments((prev) => {
       prev.forEach((a) => { if (a.kind === 'image' && a.url) URL.revokeObjectURL(a.url); });
@@ -458,12 +528,17 @@ export function Composer({
           <textarea
             ref={taRef}
             className="chat-cmp-input"
-            placeholder={!connected ? 'Connecting…' : busy ? 'Claude is working — draft your next message…' : 'Message Claude…'}
+            placeholder={!connected ? 'Connecting…' : busy ? 'Claude is working — ⏎ queues your next message…' : 'Message Claude…'}
             value={draft}
             disabled={disabled}
             onChange={(e) => {
               setDraft(e.target.value);
               session.syncDraft(e.target.value);
+              // Editing a recalled prompt ends the walk: the text is the user's own draft from
+              // here on, so ↓ must not silently discard the edit to go "forward" to it, and the
+              // next ↑ re-stashes what is actually in the box. BEFORE `syncSlash`, which reads
+              // the walk to decide whether a leading `/` may open the menu.
+              if (navRef.current.index !== null) setNavBoth(NO_HISTORY_NAV);
               syncSlash(e.target.value, e.target.selectionStart ?? e.target.value.length);
             }}
             // Moving the caret with the mouse or arrows can carry it into (or out of) a
@@ -493,6 +568,23 @@ export function Composer({
                   e.preventDefault();
                   e.stopPropagation();
                   setSlashQuery(null);
+                  return;
+                }
+              }
+              // Prompt history — AFTER the slash arm, which owns ↑/↓ while its menu is open.
+              if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                const el = e.currentTarget;
+                const caret = el.selectionStart ?? 0;
+                const end = el.selectionEnd ?? caret;
+                const recallable = e.key === 'ArrowDown'
+                  // ↓ is only ever a history key while a walk is in progress — otherwise it is
+                  // the caret moving down through a multi-line draft.
+                  ? nav.index !== null
+                  : canRecallHistory(draft, caret, end, nav);
+                // `recall` returns false at the end of the history, and then the keystroke is
+                // left to the textarea rather than swallowed.
+                if (recallable && recall(e.key === 'ArrowUp' ? 'back' : 'forward')) {
+                  e.preventDefault();
                   return;
                 }
               }
@@ -609,14 +701,30 @@ export function Composer({
         </Popover>
 
         {/* A round icon button, sized to sit level with the model/effort text beside it —
-            the label would only repeat what ⏎ already does. */}
-        {busy ? (
-          <button type="button" className="chat-cmp-btn chat-cmp-stop" title="Interrupt the in-flight turn" aria-label="Stop" onClick={() => session.interrupt()}>
+            the label would only repeat what ⏎ already does.
+
+            While a turn runs BOTH are offered, because both actions are live: Stop ends the
+            turn, and the send button becomes a queue button (⏎'s own behaviour — see `submit`).
+            Making the mouse path stop at Stop while ⏎ queued would leave the pointer user with
+            no way to reach the feature at all. The queue button appears only once there is
+            something to queue, so an idle-handed Stop stays the single obvious control. */}
+        {busy && (
+          <button type="button" className="chat-cmp-btn chat-cmp-stop" title="Interrupt the in-flight turn (⌃C)" aria-label="Stop" onClick={() => session.interrupt()}>
             <span aria-hidden>■</span>
           </button>
-        ) : (
-          <button type="button" className="chat-cmp-btn chat-cmp-send" disabled={!connected || !hasSendableContent} onClick={submit} title="Send (⏎)" aria-label="Send">
-            <span aria-hidden>↑</span>
+        )}
+        {(!busy || hasSendableContent) && (
+          <button
+            type="button"
+            className={`chat-cmp-btn chat-cmp-send${busy ? ' chat-cmp-queue' : ''}`}
+            disabled={!connected || !hasSendableContent}
+            onClick={submit}
+            title={busy ? 'Queue for the next turn (⏎)' : 'Send (⏎)'}
+            aria-label={busy ? 'Queue message' : 'Send'}
+          >
+            {/* A DASHED up arrow for the queue: same gesture as Send, deferred — and
+                monochrome, like every other glyph on this surface. */}
+            <span aria-hidden>{busy ? '⇡' : '↑'}</span>
           </button>
         )}
         </div>

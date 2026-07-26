@@ -41,14 +41,18 @@ body {
   background: var(--color-border-hover);
 }
 
-/* ─── Selection ─── */
+/* ─── Selection ───
+   Opaque on purpose. A translucent accent wash reads as "nothing happened" the
+   moment it lands on an already-tinted surface — Chat's violet user bubbles being
+   the worst case, where a 32%-alpha violet over violet is invisible. A solid
+   highlight is legible over every background we ship. */
 ::selection {
-  background: var(--color-accent-soft);
-  color: var(--color-text);
+  background: #c9c0ff;
+  color: #1a1a24;
 }
 
 [data-theme='dark'] ::selection {
-  background: rgba(157, 140, 255, 0.32);
+  background: #5b4bd6;
   color: var(--color-snow);
 }
 

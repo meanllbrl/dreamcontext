@@ -1,23 +1,14 @@
-import { useEffect } from 'react';
+import { ImageViewer } from '../../layout/ImageViewer';
 
 /**
- * Image lightbox overlay, state 4 — dark scrim, filename+dims caption, ✕, large
- * view. `src` is caller-built (typically `/api/agent/file?path=…&raw=1`).
+ * Image lightbox overlay, state 4 — an inline image or an image file reference
+ * opened at full size.
+ *
+ * It is the shared `ImageViewer`, not a chat-local one: the picture covers the
+ * whole window (not just this pane) and zooms to the pixel, which is the point
+ * of opening a screenshot the agent produced. `src` is caller-built (typically
+ * `/api/agent/file?path=…&raw=1`).
  */
 export function Lightbox({ src, caption, onClose }: { src: string; caption?: string; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
-
-  return (
-    <div className="chat-lightbox-scrim" onClick={onClose}>
-      <div className="chat-lightbox-frame" onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="chat-lightbox-close" onClick={onClose} aria-label="Close">✕</button>
-        <img className="chat-lightbox-img" src={src} alt={caption ?? ''} />
-        {caption && <div className="chat-lightbox-caption">{caption}</div>}
-      </div>
-    </div>
-  );
+  return <ImageViewer src={src} alt={caption ?? ''} caption={caption} onClose={onClose} />;
 }

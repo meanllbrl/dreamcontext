@@ -113,6 +113,13 @@
   display: flex;
   flex-direction: column;
   scrollbar-color: var(--color-border-hover) transparent;
+  /* The transcript does its OWN anchoring: revealing older entries prepends content, and a
+     layout effect subtracts the inserted height back out of `scrollTop` before paint (see
+     ChatPane's window section). Native scroll anchoring — on by default, and shipping in
+     Safari since 18.4 — would apply a second correction for the same insertion, moving the
+     view by roughly twice what it should. One or the other, and ours is the one that also
+     keeps the stick-to-bottom bookkeeping consistent. */
+  overflow-anchor: none;
 }
 /* The content column, and the ONE element the pane's ResizeObserver can watch for content
    height (the scroller's own box never changes when its content grows). `flex: 1 0 auto`
@@ -180,6 +187,24 @@
   content: '';
   flex: 1;
   border-top: 1px dashed var(--color-border);
+}
+
+/* ── The transcript window's ceiling (see ChatPane's window section) ───────────────── */
+
+.chat-window-more {
+  align-self: center;
+  padding: 4px 14px;
+  border-radius: var(--radius-full);
+  border: 1px dashed var(--color-border);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs, 11px);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.chat-window-more:hover {
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-hover);
 }
 
 /* ── Degraded AskUserQuestion card (AC5's capability-detection fallback — not one of

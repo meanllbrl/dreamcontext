@@ -224,14 +224,20 @@ export const CONTEXT_TIGHT_PCT = 90;
  * the caret isn't in one. Returns `''` for a bare `/`, which is a real state (offer every
  * command), so callers must test for `null`, not falsiness.
  *
- * Anchored at index 0 on purpose: Claude Code treats a slash command as the WHOLE message,
- * not something you can drop mid-sentence, so a `/` typed after any other text is just a
- * slash. Once the user types a space the command name is settled and the menu closes —
- * arguments are the command's business, not the picker's.
+ * Anchored at a TOKEN boundary — start of the message, or any whitespace/newline — so the
+ * menu also opens on the second line of a multi-line prompt and mid-sentence ("also run
+ * /verify after"). A `/` glued to the previous character is a path or a conjunction, never a
+ * command, so `src/lib` and `and/or` stay silent. Once the user types a space the command
+ * name is settled and the menu closes — arguments are the command's business, not the
+ * picker's.
+ *
+ * Only a LEADING slash is executed by the CLI itself (that's the form `/compact`, `/effort`
+ * need). Named mid-sentence, a command reaches the model as text — which is how skills get
+ * invoked — so offering the picker there completes a real name instead of a guessed one.
  */
 export function slashQueryAt(text: string, caret: number): string | null {
   const before = text.slice(0, Math.max(0, caret));
-  const m = /^\/([^\s]*)$/.exec(before);
+  const m = /(?:^|\s)\/([^\s]*)$/.exec(before);
   return m ? m[1] : null;
 }
 
@@ -253,10 +259,19 @@ export function filterSlashCommands(commands: string[], query: string): string[]
   return [...prefix, ...contains];
 }
 
-/** Replace the `/…` token at the caret with `/<command> `, and report the new caret. */
+/**
+ * Replace the `/…` token at the caret with `/<command> `, and report the new caret.
+ * Only that token is rewritten — whatever the user typed BEFORE it survives, which is what
+ * makes a mid-sentence pick usable. With no token at the caret the command is inserted there
+ * rather than swallowing the line.
+ */
 export function applySlashCommand(text: string, caret: number, command: string): { text: string; caret: number } {
-  const head = `/${command} `;
-  return { text: head + text.slice(Math.max(0, caret)), caret: head.length };
+  const at = Math.max(0, Math.min(caret, text.length));
+  const query = slashQueryAt(text, at);
+  // The token's `/` sits exactly one char before its query, which ends at the caret.
+  const start = query === null ? at : at - query.length - 1;
+  const head = `${text.slice(0, start)}/${command} `;
+  return { text: head + text.slice(at), caret: head.length };
 }
 
 /**
@@ -266,9 +281,9 @@ export function applySlashCommand(text: string, caret: number, command: string):
  * interactive TUI — so the chat composer intercepts it and opens a terminal session instead of
  * spending a turn to tell the user nothing.
  *
- * Deliberately narrow: the WHOLE message must be the command (Claude Code treats a slash
- * command as the entire message anyway — see {@link slashQueryAt}), optionally with arguments.
- * "how do I /login?" is a question about it and must still reach the model.
+ * Deliberately narrow: the WHOLE message must be the command, optionally with arguments —
+ * that leading form is the only one the CLI executes itself. "how do I /login?" is a question
+ * about it and must still reach the model.
  */
 export function isSignInCommand(message: string): boolean {
   return /^\/login(\s|$)/.test(message.trim());

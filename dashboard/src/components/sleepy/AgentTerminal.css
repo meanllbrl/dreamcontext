@@ -1024,8 +1024,24 @@
   bottom: var(--space-5);
   z-index: 18;
 }
-/* The minimized-sessions dock floats ABOVE the expanded overlay (z-index 20). */
-.agent-dock.agent-dock--floating { z-index: 25; }
+/* The minimized-sessions dock floats ABOVE the expanded overlay (z-index 20) — and with the
+   overlay open, the viewport's bottom-right corner is NOT empty page: it is the rightmost
+   pane's composer, whose corner-most control is Send/Stop. Fixed to the corner, the dock
+   landed exactly on that button. So while the overlay is open the dock is lifted clear of the
+   composer strip: ~116px is the strip at rest above the shared 20px inset (12 bottom padding +
+   43 toolbar + 57 two-line body + 10 drag handle + 8 top padding + borders). Autogrow and the
+   drag handle only ever grow the body UPWARD, so a taller composer can push its TEXT under the
+   dock but never its toolbar — the button stays uncovered at every composer height. */
+.agent-dock.agent-dock--floating {
+  --dock-lift: 116px;
+  z-index: 25;
+  bottom: calc(var(--space-5) + var(--dock-lift));
+}
+/* The stack grows upward from a raised floor, so its ceiling has to come down by the same
+   lift — otherwise a full dock runs off the top of the screen instead of scrolling. */
+.agent-dock.agent-dock--floating .agent-dock-tiles {
+  max-height: calc(100vh - var(--dock-lift) - 4 * var(--space-5));
+}
 .agent-dock {
   display: flex;
   flex-direction: column;

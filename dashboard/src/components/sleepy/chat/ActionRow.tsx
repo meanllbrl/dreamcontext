@@ -20,6 +20,7 @@ const ACTION_GLYPH: Record<ChatActionKind, string> = {
   board: '▦',
   reveal: '↗',
   ask: '▸',
+  url: '⇗',
 };
 
 export function ActionRow({

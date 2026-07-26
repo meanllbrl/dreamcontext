@@ -1,0 +1,163 @@
+/* The image viewer is the only surface in the app that deliberately covers the
+   whole window, header included: a screenshot is being examined, and every strip
+   of chrome left showing is a strip of the picture taken away. It sits above the
+   full-screen overlay (1100) because the announcement reader opens it from inside
+   one. The ✕ is top-RIGHT — top-left is where the desktop shell's traffic lights
+   live. */
+
+.image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(6, 6, 10, 0.94);
+  animation: image-viewer-in var(--transition-normal);
+}
+
+.image-viewer:focus { outline: none; }
+
+@keyframes image-viewer-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.image-viewer-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* The stage owns every gesture: without this, a touch pinch is the browser's
+     page zoom and a drag is a page scroll, and neither reaches the handlers. */
+  touch-action: none;
+  cursor: zoom-in;
+}
+
+.image-viewer-stage[data-zoomed] { cursor: grab; }
+.image-viewer-stage[data-grabbing] { cursor: grabbing; }
+
+.image-viewer-img {
+  /* Contain-fit is the ZERO of the zoom scale — see ImageViewer.tsx's `base`. */
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  transform-origin: center center;
+  /* No transition: the transform tracks a wheel/pinch continuously, and easing it
+     turns a live gesture into a rubbery lag. */
+  will-change: transform;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Controls float OVER the picture rather than taking a row from it, so "fits the
+   screen" really is the whole screen. The container is click-through; only the
+   controls themselves take the pointer. */
+.image-viewer-foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  pointer-events: none;
+}
+
+.image-viewer-caption {
+  max-width: min(72ch, 90vw);
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: var(--font-size-xs);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-full);
+  background: rgba(20, 20, 26, 0.82);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-xl);
+  pointer-events: auto;
+}
+
+.image-viewer-btn,
+.image-viewer-level {
+  height: 30px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.image-viewer-btn { width: 30px; }
+
+/* The readout is also the fit/100% toggle — the number tells you which one you
+   are at, so a separate button for it would be a second way to say the same. */
+.image-viewer-level {
+  min-width: 58px;
+  padding: 0 8px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.image-viewer-btn:hover:not(:disabled),
+.image-viewer-level:hover { background: rgba(255, 255, 255, 0.14); }
+
+.image-viewer-btn:disabled {
+  color: rgba(255, 255, 255, 0.28);
+  cursor: default;
+}
+
+/* Carries its own backdrop for the same reason the caption does: a full-bleed
+   viewer has no scrim left to sit on — the picture goes edge to edge, and plain
+   text over an arbitrary screenshot is a coin flip. */
+.image-viewer-hint {
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 11px;
+  letter-spacing: 0.01em;
+}
+
+.image-viewer-close {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.image-viewer-close:hover { background: rgba(255, 255, 255, 0.18); }
+
+@media (prefers-reduced-motion: reduce) {
+  .image-viewer { animation: none; }
+}
+
+/* On a phone the hint is describing gestures the viewer already reads natively,
+   and the bar has to clear the home indicator. */
+@media (max-width: 640px) {
+  .image-viewer-hint { display: none; }
+  .image-viewer-foot { bottom: max(var(--space-4), env(safe-area-inset-bottom)); }
+}

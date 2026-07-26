@@ -19,9 +19,15 @@ import {
  *
  * Why DOCKED rather than inline in the transcript: a background shell outlives the turn that
  * started it. An inline card scrolls away while the process keeps running, which is exactly
- * the state the user needs to stay aware of. Finished shells stay listed (their output is
- * still readable) until the conversation ends — but the list COLLAPSES to its header once the
- * last one exits, so persistent furniture stays the size of what is actually live.
+ * the state the user needs to stay aware of.
+ *
+ * Being pinned is also why the list is BOUNDED three ways — everything it holds is height the
+ * transcript does not get, and cannot scroll past: it collapses to its header once the last
+ * shell exits, a finished row is evicted `FINISHED_SHELL_TTL_MS` after it ends, and the rows
+ * that remain scroll inside their own capped box. Without the last two, a long session's
+ * dozens of finished shells grew the tray taller than the pane and buried the transcript, this
+ * header, and the composer — no way to read the chat, and no reachable control to close the
+ * thing eating it.
  */
 
 function statusWord(status: SubAgentRun['status']): string {
@@ -38,18 +44,28 @@ export function BackgroundShellsTray({
   onOpen: (run: SubAgentRun) => void;
   onStop: (run: SubAgentRun) => void;
 }) {
-  const { shells, running, total } = summarizeBackgroundShells(runs);
+  // `tick` is this surface's clock: it drives the live elapsed readouts AND the eviction of
+  // finished rows, so both read the same instant.
+  const [tick, setTick] = useState(() => Date.now());
+  const { shells, running, total, nextExpiryAt } = summarizeBackgroundShells(runs, tick);
   // Collapsed once nothing is running: a finished shell is reference material (its output is
   // still readable, one click away), a running one is live state worth having open. The
   // tray sits over the composer, so a list that never closes costs the transcript real
   // height for rows about processes that exited minutes ago.
   const { open: expanded, onToggle } = useGroupCollapse(shells);
-  const [tick, setTick] = useState(() => Date.now());
   useEffect(() => {
-    if (running === 0) return;
-    const t = setInterval(() => setTick(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [running]);
+    // Live: a 1s heartbeat for the clocks, which also expires rows as it goes.
+    if (running > 0) {
+      const t = setInterval(() => setTick(Date.now()), 1000);
+      return () => clearInterval(t);
+    }
+    // Nothing running: no clock to advance, so the only reason left to re-render is the next
+    // eviction. Wake exactly then rather than polling — and the re-render schedules the row
+    // after it, until the last one goes and the tray unmounts itself.
+    if (nextExpiryAt == null) return;
+    const t = setTimeout(() => setTick(Date.now()), Math.max(0, nextExpiryAt - Date.now()) + 50);
+    return () => clearTimeout(t);
+  }, [running, nextExpiryAt]);
 
   if (total === 0) return null;
 

@@ -16,13 +16,17 @@
  * `tool-result` event — see the dedicated describe block below.
  */
 import { describe, it, expect } from 'vitest';
-import { parseChatLine, buildQuestionAnswer, type QuestionSpec } from '../../dashboard/src/lib/chatProtocol.js';
+import {
+  parseChatLine, buildQuestionAnswer, isUrgentChatEvent,
+  type QuestionSpec, type ChatEvent,
+} from '../../dashboard/src/lib/chatProtocol.js';
 
 // ─── Fixture lines (realistic claude 2.1.218 stream-json frames) ──────────────────
 
 const SESSION_ID = '11111111-2222-3333-4444-555555555555';
 const PERMISSION_REQUEST_ID = '22222222-3333-4444-5555-666666666666';
 const QUESTION_REQUEST_ID = '33333333-4444-5555-6666-777777777777';
+const PLAN_REQUEST_ID = '44444444-5555-6666-7777-888888888888';
 const TOOL_USE_ID = 'toolu_01ABCDEF';
 
 const SYSTEM_INIT = JSON.stringify({
@@ -186,6 +190,36 @@ const CONTROL_REQUEST_QUESTION = JSON.stringify({
         },
       ],
     },
+  },
+});
+
+/** ExitPlanMode's approval gate, captured verbatim from CLI 2.1.220: the SAME
+ *  `requires_user_interaction` flag AskUserQuestion carries, over a wholly different input. */
+const CONTROL_REQUEST_PLAN = JSON.stringify({
+  type: 'control_request',
+  request_id: PLAN_REQUEST_ID,
+  request: {
+    subtype: 'can_use_tool',
+    tool_name: 'ExitPlanMode',
+    display_name: 'ExitPlanMode',
+    input: {
+      plan: '# Plan: Create hello.js\n\n## Approach\nAdd a single `hello()` function.\n',
+      planFilePath: '/Users/x/.claude/plans/tranquil-volcano.md',
+    },
+    tool_use_id: TOOL_USE_ID,
+    requires_user_interaction: true,
+  },
+});
+
+/** The third shape: flagged interactive, but neither a plan nor a parseable question. */
+const CONTROL_REQUEST_INTERACTIVE_UNKNOWN = JSON.stringify({
+  type: 'control_request',
+  request_id: PLAN_REQUEST_ID,
+  request: {
+    subtype: 'can_use_tool',
+    tool_name: 'SomeFutureAskingTool',
+    input: { somethingElse: true },
+    requires_user_interaction: true,
   },
 });
 
@@ -469,6 +503,54 @@ describe('parseChatLine — control_request (permission prompts + AskUserQuestio
     // parser keys off the flag, not off recognizing "AskUserQuestion" as a special name.
     expect(parseChatLine(CONTROL_REQUEST_PERMISSION)?.kind).toBe('permission-request');
     expect(parseChatLine(CONTROL_REQUEST_QUESTION)?.kind).toBe('question');
+  });
+
+  it('ExitPlanMode carries the SAME flag over a plan payload → plan-review, not an empty question', () => {
+    // The regression this exists for: the flag alone used to route every interactive request
+    // to the survey card, so a plan arrived as a `question` with zero questions and rendered
+    // a card with nothing in it and a dead Submit.
+    const ev = parseChatLine(CONTROL_REQUEST_PLAN);
+    expect(ev?.kind).toBe('plan-review');
+    if (ev?.kind !== 'plan-review') throw new Error('expected a plan-review event');
+    expect(ev.requestId).toBe(PLAN_REQUEST_ID);
+    expect(ev.toolName).toBe('ExitPlanMode');
+    expect(ev.plan).toContain('# Plan: Create hello.js');
+    expect(ev.planFilePath).toBe('/Users/x/.claude/plans/tranquil-volcano.md');
+    // The original input, echoed back verbatim on allow — that answer is what leaves plan mode.
+    expect(ev.input).toEqual({
+      plan: '# Plan: Create hello.js\n\n## Approach\nAdd a single `hello()` function.\n',
+      planFilePath: '/Users/x/.claude/plans/tranquil-volcano.md',
+    });
+  });
+
+  it('an interactive request that is NEITHER a plan nor a question stays answerable (permission card), never a dead survey', () => {
+    const ev = parseChatLine(CONTROL_REQUEST_INTERACTIVE_UNKNOWN);
+    expect(ev?.kind).toBe('permission-request');
+    if (ev?.kind !== 'permission-request') throw new Error('expected a permission-request event');
+    expect(ev.toolName).toBe('SomeFutureAskingTool');
+    expect(ev.input).toEqual({ somethingElse: true });
+    // Marked interactive so "always allow this session" can never answer it for the user.
+    expect(ev.requiresInteraction).toBe(true);
+  });
+
+  it('an AskUserQuestion whose questions are all malformed degrades to the answerable card too', () => {
+    const line = JSON.stringify({
+      type: 'control_request',
+      request_id: QUESTION_REQUEST_ID,
+      request: {
+        subtype: 'can_use_tool',
+        tool_name: 'AskUserQuestion',
+        requires_user_interaction: true,
+        input: { questions: [{ header: 'no question text' }, 'not an object'] },
+      },
+    });
+    expect(parseChatLine(line)?.kind).toBe('permission-request');
+  });
+
+  it('a plain permission request is NOT marked interactive', () => {
+    const ev = parseChatLine(CONTROL_REQUEST_PERMISSION);
+    if (ev?.kind !== 'permission-request') throw new Error('expected a permission-request event');
+    expect(ev.requiresInteraction).toBeUndefined();
   });
 });
 
@@ -837,5 +919,73 @@ describe('buildQuestionAnswer', () => {
         [multiSelect.question]: 'staging, dev',
       },
     });
+  });
+});
+
+// ─── isUrgentChatEvent (render coalescing) ───────────────────────────────────────
+//
+// The urgency table decides which frames may be batched into one React commit per
+// animation frame (see notifyCoalescer.ts). It is enumerated exhaustively here on purpose:
+// the safe default is URGENT, so the way this can regress is a NEW high-frequency kind
+// silently joining the coalescable set — or, worse, an interactive one being added to it.
+
+describe('isUrgentChatEvent', () => {
+  const urgent: ChatEvent[] = [
+    { kind: 'init', sessionId: 'a1b2' },
+    { kind: 'permission-request', requestId: 'r1', toolName: 'Bash', input: {} },
+    { kind: 'question', requestId: 'r2', toolName: 'AskUserQuestion', questions: [] },
+    { kind: 'plan-review', requestId: 'r3', toolName: 'ExitPlanMode', plan: '# Plan', input: {} },
+    { kind: 'result', success: true },
+    { kind: 'meta-exit', code: 0 },
+    { kind: 'meta-error', message: 'relay died' },
+    { kind: 'auth-required', text: 'Please run /login' },
+    { kind: 'prompt-echo', text: 'hello' },
+    { kind: 'control-ack', requestId: 'r4', ok: true },
+    { kind: 'assistant-text', text: 'pong', synthetic: false },
+    { kind: 'assistant-thinking', text: 'hmm' },
+    { kind: 'assistant-tool-use', toolUseId: 't1', name: 'Read', input: {} },
+    { kind: 'tool-result', toolUseId: 't1', content: 'ok', isError: false },
+    { kind: 'task-started', taskId: 'k1', description: 'scan' },
+    { kind: 'task-updated', taskId: 'k1', status: 'completed' },
+    { kind: 'task-notification', taskId: 'k1', status: 'completed' },
+    { kind: 'slash-commands', commands: ['/login'] },
+  ];
+  const coalescable: ChatEvent[] = [
+    { kind: 'text-delta', index: 0, text: 'to' },
+    { kind: 'thinking-delta', index: 0, text: 'ken' },
+    { kind: 'block-start', index: 0, blockType: 'text' },
+    { kind: 'block-stop', index: 0 },
+    { kind: 'task-progress', taskId: 'k1', activity: 'reading' },
+    { kind: 'background-tasks', tasks: [] },
+    { kind: 'ignored', rawType: 'system:status' },
+  ];
+
+  it.each(urgent.map((ev) => [ev.kind, ev] as const))(
+    '%s is urgent — the user is waiting to act on it, or the turn just changed shape',
+    (_kind, ev) => { expect(isUrgentChatEvent(ev)).toBe(true); },
+  );
+
+  it.each(coalescable.map((ev) => [ev.kind, ev] as const))(
+    '%s may be coalesced — high-frequency, nothing to act on',
+    (_kind, ev) => { expect(isUrgentChatEvent(ev)).toBe(false); },
+  );
+
+  it('covers every kind in the ChatEvent union (no arm left unclassified)', () => {
+    const covered = new Set([...urgent, ...coalescable].map((ev) => ev.kind));
+    // Every `kind` string literal in chatProtocol.ts's exported union, transcribed. A new
+    // arm added there without a decision here fails this test rather than defaulting in
+    // silence.
+    const allKinds: Array<ChatEvent['kind']> = [
+      'init', 'background-tasks', 'task-started', 'task-updated', 'task-progress',
+      'task-notification', 'block-start', 'text-delta', 'thinking-delta', 'block-stop',
+      'assistant-tool-use', 'assistant-text', 'assistant-thinking', 'auth-required',
+      'tool-result', 'control-ack', 'permission-request', 'question', 'plan-review',
+      'result', 'slash-commands', 'prompt-echo', 'meta-exit', 'meta-error', 'ignored',
+    ];
+    expect([...allKinds].sort()).toEqual([...covered].sort());
+  });
+
+  it('an unknown/future kind defaults to URGENT — coalescing is opt-in, never inferred', () => {
+    expect(isUrgentChatEvent({ kind: 'something-new' } as unknown as ChatEvent)).toBe(true);
   });
 });

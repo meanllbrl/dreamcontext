@@ -14,8 +14,8 @@ import { describe, it, expect } from 'vitest';
 import type { QuestionSpec } from '../../dashboard/src/lib/chatProtocol.js';
 import { buildQuestionAnswer } from '../../dashboard/src/lib/chatProtocol.js';
 import {
-  OTHER_TOKEN, allValues, answeredCount, isAnswered, isComplete, isOtherChosen,
-  resolveAnswers, resolveValues, setOtherText, togglePick, type SurveyPicks,
+  OTHER_TOKEN, allValues, answeredCount, firstUnansweredIndex, isAnswered, isComplete,
+  isOtherChosen, resolveAnswers, resolveValues, setOtherText, togglePick, type SurveyPicks,
 } from '../../dashboard/src/components/sleepy/chat/surveyAnswers.js';
 
 const single: QuestionSpec = {
@@ -148,6 +148,32 @@ describe('card-level readouts', () => {
 
   it('a card with no questions is never "complete" (nothing to submit)', () => {
     expect(isComplete([], empty)).toBe(false);
+  });
+});
+
+/* The card pages horizontally, so the unanswered question is usually OFF SCREEN — this
+   index is the only thing that can point at it (the "n left" jump, and ⌘↵'s target when
+   there is still something to answer). */
+describe('paging: where the next unanswered question is', () => {
+  it('points at the first gap, skipping questions already answered', () => {
+    expect(firstUnansweredIndex([single, multi], empty)).toBe(0);
+
+    const firstDone = togglePick(empty, single, 'Question card UI');
+    expect(firstUnansweredIndex([single, multi], firstDone)).toBe(1);
+  });
+
+  it('is -1 once every question is answered — nothing left to jump to', () => {
+    let picks = togglePick(empty, single, 'Question card UI');
+    picks = togglePick(picks, multi, 'Previews');
+    expect(firstUnansweredIndex([single, multi], picks)).toBe(-1);
+  });
+
+  it('treats a chosen-but-blank "Other" as the gap, not as an answer', () => {
+    // Selecting the free-text row without typing must keep pointing AT that question —
+    // the same rule that keeps Submit disabled.
+    const picks = togglePick(empty, single, OTHER_TOKEN);
+    expect(firstUnansweredIndex([single], picks)).toBe(0);
+    expect(firstUnansweredIndex([single], setOtherText(picks, single, 'a third lane'))).toBe(-1);
   });
 });
 

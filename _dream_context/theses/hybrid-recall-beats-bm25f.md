@@ -87,9 +87,15 @@ cycles_checked: 4
 checked_at: '2026-07-25'
 promoted_to: null
 created_at: '2026-07-25'
-updated_at: '2026-07-25'
+updated_at: '2026-07-26'
 ---
 ## Understanding changelog
+
+### CYCLE 6 · 2026-07-26
+Cycle 6 check (epoch 2026-07-26T20:46:07Z, DEEP consolidation): No fresh evidence since the epoch. Zero commits, zero lab syncs, zero completed tasks, zero objective movements. This cycle's 4 pre-epoch sessions were entirely Chat UI/UX work (message queue, survey pagination, sub-agent dedup fixes, plan cards) — zero recall-engine or embedding work. The thesis was validated in cycle 2 at 88% confidence with all 3 predictions supported and remains validated. The linked objective improve-recall-mechanism shows 4/5 tasks done (80%), not slipping. The related task feat-embedding-beta-rollout remains todo. No new evidence to add. Promotion to knowledge remains outstanding (promoted_to: null) — this is a standing decision ask for the PO. Per the workflow-rule gate check: below the auto-promote bar because related_workflows is unset, so this routes to plain knowledge promotion requiring PO confirmation.
+
+### CYCLE 5 · 2026-07-26
+Cycle 5 check (epoch 2026-07-26T13:36:17Z, DEEP consolidation): No fresh evidence since the epoch. This cycle focused entirely on Chat-view / desktop-app product work (10 sessions, 9 commits on Chat improvements, transcript memory, control-C stop, plan cards, sub-agent dedup, survey pageview, announcements). Zero recall-engine or embedding work; the related task feat-embedding-beta-rollout remains todo. The thesis was validated in cycle 2 at 88% confidence with all 3 predictions supported and remains validated. No new evidence to add. Promotion to knowledge remains outstanding (promoted_to: null) — this is a standing decision ask for the PO. Per the workflow-rule gate check: below the auto-promote bar because related_workflows is unset, so this routes to plain knowledge promotion requiring PO confirmation.
 
 ### CYCLE 3 · 2026-07-25
 Cycle 3 check (epoch 2026-07-25T15:00:17Z): No fresh evidence since the epoch — zero commits, zero lab syncs, zero completed tasks, zero objective movements. The thesis was validated in cycle 2 at 88% confidence with all 3 predictions supported. Promotion to knowledge is still outstanding (promoted_to: null) — this is a decision ask for the PO. The linked objective improve-recall-mechanism shows 4/5 tasks done (80%), status not_started (computed), not slipping. No new evidence to add; the validation stands. Recommend promoting the validated thesis to knowledge per the workflow-rule gate check (below the auto-promote bar because related_workflows is unset, so this routes to plain knowledge promotion — PO confirmation required).

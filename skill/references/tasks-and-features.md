@@ -166,7 +166,16 @@ An **insight** is a named, curated **metric backed by an external source** — "
 
 **Where it lives:** manifest at `_dream_context/lab/insights/<slug>.md` (frontmatter config + a `## Meaning` prose section that makes it recallable), cached series at `lab/cache/<slug>.json`, custom scripts at `lab/scripts/<slug>.mjs`, secrets in gitignored `lab/credentials.json`. Manifests + caches sync in the brain repo; only credentials stay local.
 
-**How agents see it:** the SessionStart snapshot renders a **Lab** section (title / latest value / staleness / group) — answer "what's our MRR?" from it without tool calls. Deeper: `dreamcontext lab show <slug>` (cache only, no fetch) and `memory recall "<meaning phrase>" --types insight`. The dashboard has a Lab page (number/line/pie/raw cards + funnel mini-table cards, per-insight refresh, sync-all, tweak editing).
+**How agents READ it — the ladder, before reaching anywhere else:**
+
+1. **Snapshot.** The SessionStart hook renders a **Lab** section (title / latest value / staleness / group). "What's our MRR?" is answered from it with **zero tool calls**.
+2. **`dreamcontext lab show <slug>`** — the manifest plus the **full cached series** (and per-funnel step tables for `render: funnel`), and it **never fetches**. This is the right call the moment the question needs more than the latest number: a breakdown, a trend, a month-over-month comparison, "which step leaks". The snapshot only carries the latest value, so *not knowing the series is not a reason to go outside* — it is a reason to run `lab show`.
+3. **Don't know the slug?** `dreamcontext lab list [--json]` (every insight + latest value + staleness) or `dreamcontext memory recall "<meaning phrase>" --types insight` — this is what the `## Meaning` section exists for.
+4. **Stale only:** `dreamcontext lab sync <slug>` when the cache is past TTL (`--force` to refetch a fresh one).
+
+**An MCP tool, a raw API call, or a hand-written script is the LAST resort.** If `lab/insights/` already holds the metric, fetching it another way bypasses the manifest, cache, tweaks and KR binding — and produces a number the next session cannot reproduce. A real past failure: an agent asked for revenue reached for a billing MCP while the synced Paddle series was already cached, and the project had to hand-write a memory note to stop it. When you genuinely must go outside (the insight doesn't exist, or the question needs a dimension the manifest doesn't carry), say so explicitly — and offer to `lab create` it if the user will want it again. Full rule: SKILL.md Operational Rule 13.
+
+The dashboard has a Lab page (number/line/pie/raw cards + funnel mini-table cards, per-insight refresh, sync-all, tweak editing).
 
 ```bash
 dreamcontext lab create <slug> --title "Weekly Active Users" [--render number|line|pie|raw|funnel] [--adapter http|script] [--category <tab>] [--group <section>] [--unit users] [--ttl 1440]

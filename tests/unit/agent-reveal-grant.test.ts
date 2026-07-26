@@ -188,6 +188,47 @@ describe('handleAgentReveal — open directly vs. reveal in the file manager', (
   });
 });
 
+// ─── relative paths ─────────────────────────────────────────────────────────────
+//
+// A transcript names files the way the AGENT writes them: project-relative. Handing that
+// straight to `statSync` resolved it against the SERVER process's cwd — which for a
+// desktop-spawned server is not the project — so every relative path 404'd and the
+// last-resort "Open ↗" on a can't-be-shown file opened nothing at all.
+
+describe('handleAgentReveal — project-relative paths', () => {
+  it('resolves a project-relative path under the project root', async () => {
+    const { res, status } = makeRes();
+    await handleAgentReveal(makePost({ path: 'shot.png' }), res, {}, contextRoot);
+    expect(status()).toBe(200);
+    expect(lastSpawn().args).toContain(join(projectRoot, 'shot.png'));
+  });
+
+  it('resolves a nested project-relative path — the shape an answer actually writes', async () => {
+    mkdirSync(join(projectRoot, '_dream_context', 'social'), { recursive: true });
+    const rel = '_dream_context/social/reel-sfx.mp4';
+    writeFileSync(join(projectRoot, rel), 'not really a video', 'utf-8');
+    const { res, status } = makeRes();
+    await handleAgentReveal(makePost({ path: rel }), res, {}, contextRoot);
+    expect(status()).toBe(200);
+    // Media opens in the default app rather than being revealed.
+    expect(lastSpawn().args).toEqual([join(projectRoot, rel)]);
+  });
+
+  it('400s a relative path that escapes the project root, and never spawns an opener', async () => {
+    const { res, status } = makeRes();
+    await handleAgentReveal(makePost({ path: '../dc-agent-outside-x/secret.txt' }), res, {}, contextRoot);
+    expect(status()).toBe(400);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('404s a project-relative path that does not exist', async () => {
+    const { res, status } = makeRes();
+    await handleAgentReveal(makePost({ path: 'nope.png' }), res, {}, contextRoot);
+    expect(status()).toBe(404);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('handleAgentGrant — consent for one file outside the project root', () => {
   it('403s when not in the desktop app', async () => {
     delete process.env.DREAMCONTEXT_DESKTOP;

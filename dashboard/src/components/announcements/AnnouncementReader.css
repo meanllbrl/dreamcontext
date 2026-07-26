@@ -1,6 +1,11 @@
-/* The article view — a meta strip + summary above a board stage that takes
-   every remaining pixel of the overlay. */
+/* The article view — a meta strip above a story that SCROLLS like a page.
+   `flex:1 / min-height:0` is stated here rather than left to the overlay's
+   `> :only-child` rule, so the column keeps its own scroll regardless of what
+   else the reader happens to render beside it. */
 .announcement-reader {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -19,11 +24,16 @@
   color: var(--color-text-tertiary);
 }
 
+/* The release this story announces — first in the strip and a size up, because
+   the story IS the version, not one item that happened to land in it. */
 .announcement-reader-version {
   padding: 2px 8px;
   border-radius: var(--radius-full);
   background: var(--color-accent-soft);
   color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
 
 .announcement-reader-tag {
@@ -33,28 +43,11 @@
   color: var(--color-text-tertiary);
 }
 
-.announcement-reader-summary {
-  margin: 0;
-  max-width: 880px;
-  font-size: var(--font-size-sm);
-  line-height: 1.6;
-  color: var(--color-text-secondary);
-}
-
-.announcement-reader-board {
-  flex: 1;
-  min-height: 0;
-}
-
-.announcement-reader-board .excalidraw-preview {
-  min-height: 0;
-}
-
 .announcement-reader-loading {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
+  min-height: 240px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg-secondary);
@@ -62,6 +55,30 @@
   font-size: var(--font-size-sm);
 }
 
+/* Story missing or malformed — the manifest copy still has to read as an
+   announcement rather than an empty overlay. */
+.announcement-reader-fallback {
+  max-width: 62ch;
+  margin: var(--space-6) auto 0;
+  text-align: center;
+}
+
+.announcement-reader-fallback h1 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.2;
+}
+
+.announcement-reader-fallback p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.65;
+  color: var(--color-text-secondary);
+}
+
+/* Lightbox — a clicked screenshot at full viewport size. Fixed (not absolute)
+   so it covers the overlay header too; the whole backdrop is the close target. */
 /* Newer / Older pager in the overlay header. */
 .announcement-reader-pager {
   display: flex;

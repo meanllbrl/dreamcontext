@@ -6,6 +6,11 @@
  * Unread state is a SET of seen announcement ids in localStorage, not a
  * lastSeenId watermark — ids are stable but dates can be backdated, and a
  * watermark would silently mis-count an entry inserted out of order.
+ *
+ * ONE ANNOUNCEMENT PER VERSION (since 0.22). The feed is a version history, not
+ * a feature stream: `version` is required and unique, so "what did 0.18 give
+ * me?" has exactly one answer. A version that shipped three things gets three
+ * BLOCKS in one story, not three entries. `parseAnnouncements` enforces it.
  */
 
 export interface Announcement {
@@ -14,12 +19,21 @@ export interface Announcement {
   title: string;
   summary: string;
   /**
-   * Filename of the git-tracked Excalidraw board that IS this announcement,
-   * served as a static asset from `/announcements/<board>`. Announcements are
-   * landing-page-style boards (rendered by ExcalidrawPreview), not markdown.
+   * Filename of the git-tracked story document that IS this announcement,
+   * served as a static asset from `/announcements/<story>`. A story is a JSON
+   * landing page — screenshots plus short copy, rendered by `AnnouncementStory`
+   * (see `announcementStory.ts`). It replaced the Excalidraw board format in
+   * 0.22: a board had to be panned and zoomed to read and could only ever draw
+   * a picture OF the product; a story shows the product.
    */
-  board: string;
-  version?: string;
+  story: string;
+  /**
+   * The release this story announces, e.g. `0.22.0` — REQUIRED, and unique
+   * across the feed. It is the announcement's real identity: the UI leads with
+   * it, and a second entry claiming the same version is dropped by
+   * `parseAnnouncements`. Stored bare (no `v`); render it via `formatVersion`.
+   */
+  version: string;
   tags?: string[];
 }
 
@@ -38,38 +52,63 @@ function isAnnouncement(v: unknown): v is Announcement {
     isNonEmptyString(r.date) &&
     isNonEmptyString(r.title) &&
     isNonEmptyString(r.summary) &&
-    isNonEmptyString(r.board)
+    isNonEmptyString(r.story) &&
+    isNonEmptyString(r.version)
   );
 }
 
 /** Drop optional fields that are present but malformed, rather than the whole entry. */
 function sanitizeOptional(a: Announcement): Announcement {
-  const out: Announcement = { id: a.id, date: a.date, title: a.title, summary: a.summary, board: a.board };
-  if (isNonEmptyString(a.version)) out.version = a.version;
+  const out: Announcement = {
+    id: a.id,
+    date: a.date,
+    title: a.title,
+    summary: a.summary,
+    story: a.story,
+    version: a.version,
+  };
   if (Array.isArray(a.tags) && a.tags.every((t) => typeof t === 'string')) out.tags = a.tags;
   return out;
 }
 
+/** `0.22.0` / `v0.22.0` / `V0.22.0` all render as `v0.22.0`. */
+export function formatVersion(version: string): string {
+  return /^v/i.test(version) ? `v${version.slice(1)}` : `v${version}`;
+}
+
 /**
- * Validate + drop malformed entries + dedupe by id (keep first) + sort
- * newest-first. Returns [] for any non-array input (covers the SPA-fallback
- * HTML and 404-as-text cases). Never throws.
+ * Validate + drop malformed entries + sort newest-first + collapse to ONE entry
+ * per version (and per id). Returns [] for any non-array input (covers the
+ * SPA-fallback HTML and 404-as-text cases). Never throws.
+ *
+ * Sorting happens BEFORE deduping so "which duplicate survives" is a property of
+ * the content, not of the file: the newest-dated entry for a version wins, and
+ * same-date ties fall back to source order (Array.prototype.sort is stable,
+ * ES2019+). Versions are compared normalized, so `0.22.0` and `v0.22.0` are the
+ * same release rather than two entries for it.
  */
 export function parseAnnouncements(raw: unknown): Announcement[] {
   if (!Array.isArray(raw)) return [];
 
-  const seen = new Set<string>();
   const valid: Announcement[] = [];
   for (const entry of raw) {
     if (!isAnnouncement(entry)) continue;
-    if (seen.has(entry.id)) continue;
-    seen.add(entry.id);
     valid.push(sanitizeOptional(entry));
   }
 
-  // Array.prototype.sort is stable (ES2019+), so entries with equal dates
-  // keep their source-file order.
-  return valid.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  valid.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+
+  const seenIds = new Set<string>();
+  const seenVersions = new Set<string>();
+  const out: Announcement[] = [];
+  for (const entry of valid) {
+    const version = formatVersion(entry.version);
+    if (seenIds.has(entry.id) || seenVersions.has(version)) continue;
+    seenIds.add(entry.id);
+    seenVersions.add(version);
+    out.push(entry);
+  }
+  return out;
 }
 
 /** Announcements whose id is not in `seen`, preserving the input order. */

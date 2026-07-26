@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-07-25'
+updated: '2026-07-26'
 released_version: v0.19.0
 tags:
   - frontend
@@ -20,6 +20,10 @@ related_tasks:
     collapse-the-feature-entity-into-typed-knowledge-knowledge-features-type-feature
   - announcements-whats-new
   - author-a-task-via-a-claude-agent-from-the-new-task-button
+  - >-
+    announcements-become-screenshot-driven-landing-pages-instead-of-excalidraw-boards
+  - announcements-become-one-story-per-version-titled-by-version
+  - announcements-can-hold-video-not-just-screenshots
 type: feature
 name: web-dashboard
 description: ''
@@ -109,10 +113,13 @@ Users need a visual interface to manage agent context without using the terminal
 
 - [x] As a user, I can discover newly shipped features through an "Announcements / What's New" page in the dashboard, so I never miss flagship releases like goal-skill v2.
 - [x] As a user, I see an unread-count badge on the Announcements sidebar entry when hand-authored product news exists that I haven't read yet, so new features surface without me hunting through the changelog.
-- [x] As a user, a centered modal popup appears on dashboard load when unread announcements exist, showing all unread items as rendered Excalidraw landing pages, so I'm immediately aware of what's new without navigating.
+- [x] As a user, a centered modal popup appears on dashboard load when unread announcements exist, leading with the newest story and its cover screenshot, so I'm immediately aware of what's new without navigating.
 - [x] As a user, dismissing the announcements popup (via "Got it", "See all", Escape, or backdrop click) marks all shown announcements as read and clears the sidebar badge, so the notification never nags after I've seen it.
-- [x] As a user, announcements content ships with the npm package (in `dashboard/public/announcements.json` + `dashboard/public/announcements/*.excalidraw.md` boards) and refreshes on every `dreamcontext upgrade`, so I receive product news without the dashboard needing a server route or per-vault storage.
+- [x] As a user, announcements content ships with the npm package (in `dashboard/public/announcements.json` + `dashboard/public/announcements/<id>.json` stories + their screenshots under `shots/`) and refreshes on every `dreamcontext upgrade`, so I receive product news without the dashboard needing a server route or per-vault storage.
+- [x] As a user, an announcement SHOWS me what shipped — real screenshots of the app in a scrolling landing page, any of which I can click to fill the screen — instead of a diagram I have to pan and zoom to read.
 
+- [x] As a user, each announcement is a screenshot story (one per version) with hero + blocks (split/shot/points/stats/terminal/note kinds), click-to-zoom lightbox, and video support (mp4/webm with poster), so I see what shipped not a board to pan.
+- [x] As a user, the full-window ImageViewer (edge-to-edge, wheel/pinch zoom, drag-pan, Esc/double-click) opens inline images and announcement screenshots portalled to body, so I can look at the image without fighting a cramped lightbox.
 ## Acceptance Criteria
 
 ### Origin Setup & Cloud Sync (v0.19.0)
@@ -215,6 +222,15 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] `I18nContext.tsx` adds to `translations.en`: `nav.announcements`, `announcements.title`, `announcements.subtitle`, `announcements.empty`, `announcements.new`, `announcements.whatsNew`, `announcements.gotIt`, `announcements.seeAll`, `announcements.dismiss`, `announcements.shippedIn`, `announcements.moreUnread`.
 - [x] `tests/unit/announcements.test.ts` (root Vitest) covers `parseAnnouncements` (valid/non-array/malformed drop/duplicate-id/sort), `unreadAnnouncements`, and `readSeenIds`/`writeSeenIds`/`markAllSeen` against stubbed/throwing localStorage.
 - [x] Seeded with 4 announcements: visual-announcements (v0.19.0 self-demonstrating the feature itself), task-manager (v0.18.0), dashboard-highlights-0-17-0-18, goal-skill-v2 — all as hand-drawn Excalidraw landing pages.
+
+#### Format change: boards → screenshot stories (v0.22.0)
+- [x] An announcement is now a **story document** — `dashboard/public/announcements/<id>.json`, referenced by the manifest's `story` field (the `board` field and every `.excalidraw.md` board are gone, as is `dashboard/scripts/announcements/generate.cjs`). Rationale: a board could only ever draw a picture OF the product, and had to be panned and zoomed to read; a story shows the product.
+- [x] `dashboard/src/lib/announcementStory.ts` (React-free, Vitest-importable) defines the document and validates it: `hero {eyebrow?, headline, sub?, shot?}` + `blocks[]` + `closer?`. Block kinds: `split` (copy + shot, `side`), `shot` (full width), `points` (2–4 cards), `stats` (measured numbers), `terminal` (monospace transcript for UI-less features), `note` (one highlighted sentence). Malformed blocks and unknown kinds are DROPPED, never thrown — only a missing headline kills the document.
+- [x] `storyAssetUrl()` confines every image to the `/announcements/` asset root: absolute paths, `://` URLs (incl. `data:` and protocol-relative) and `..` traversal all return null, so a story can never point the reader at a remote image. A shot without `alt` is dropped — the screenshot IS the content here.
+- [x] `AnnouncementStory.tsx/.css` renders the page on a 920px measure with fixed per-kind layout (no geometry in the document); shots carry app-window chrome by default (`frame: 'plain'` for crops); a broken image collapses its frame instead of leaving a torn placeholder. `AnnouncementStoryTeaser` (replacing `AnnouncementBoardPreview`) shows the cover shot as a plain `<img>` — no canvas to mount, no wheel-trap to defend against.
+- [x] `AnnouncementReader` renders the story in the full-screen overlay with a click-to-zoom lightbox (Esc closes the lightbox first, then the reader), and falls back to the manifest title/summary if the story document is missing or malformed.
+- [x] Screenshots are captured by DRIVING the real app (`e2e/announce-shots*.mjs`, Playwright): pages/panels/menus deterministically, plus live-Claude scenes that cost a real turn. Learned constraints, encoded in the skill: back up `_dream_context/state/.agent-sessions.json` first (driving the agent surface rewrites the user's roster), scope agent selectors with `:visible` (other sessions' panes stay mounted in the off-screen garage and match otherwise), wait on the DOM not a stopwatch (a first turn includes the SessionStart brain preload, 90s+ on a real vault), crop shots destined for a `split`, and downscale to 1600px because these ship in the bundle.
+- [x] All five prior announcements rewritten as stories with real screenshots; `chat-is-the-default` (v0.22.0) added. `tests/unit/announcement-story.test.ts` covers the parser, the asset-root confinement and the cover-shot fallback.
 
 ### Tasks Board Redesign — Saved Views + Shared/Local Preferences (v0.10.x)
 - [x] Board rebuilt to the violet design language (from `Board.dc.html`): saved-view tab bar, a combined two-pane Filter menu (per-field include `✓` / exclude `✕`), View-type chip, Group + sub-group chip, Sort chip + direction, Versions **popover** (popup, not a dropdown), and a card Properties chip (toggle which fields show on cards).

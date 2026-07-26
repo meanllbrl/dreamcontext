@@ -29,6 +29,7 @@ import { AboutPage } from './pages/AboutPage';
 import { TaxonomyPage } from './pages/TaxonomyPage';
 import { AnnouncementsPage } from './pages/AnnouncementsPage';
 import { AnnouncementsModal } from './components/layout/AnnouncementsModal';
+import { ChecklistWindow } from './components/checklist/ChecklistWindow';
 import type { Page } from './components/layout/Sidebar';
 import './styles/global.css';
 
@@ -185,6 +186,7 @@ const params = new URLSearchParams(window.location.search);
 const initialVault = params.get('vault');
 const captureMode = params.get('capture') === '1';
 const perchMode = params.get('perch') === '1';
+const checklistId = params.get('checklist');
 if (initialVault) {
   setActiveVault(initialVault);
 }
@@ -226,6 +228,21 @@ export function App() {
     return (
       <ErrorBoundary>
         <SleepyPerch />
+      </ErrorBoundary>
+    );
+  }
+
+  // The pinned checklist window (`?checklist=<id>`) — a separate, narrow-capability OS
+  // window (plan §1.9). `ThemeProvider` is mandatory here, not decorative: it is what writes
+  // `data-theme` onto <html>, which the whole dark palette (and `MarkdownPreview`, which
+  // renders item text) is keyed off. This window makes zero API calls and never pins an
+  // active vault — `vault` is read straight off the URL and passed through as a plain prop.
+  if (checklistId) {
+    return (
+      <ErrorBoundary>
+        <ThemeProvider>
+          <ChecklistWindow id={checklistId} vault={params.get('vault')} />
+        </ThemeProvider>
       </ErrorBoundary>
     );
   }
