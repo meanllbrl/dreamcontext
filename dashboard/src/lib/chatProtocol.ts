@@ -170,8 +170,17 @@ export type ChatEvent =
    *  `payload` is the CLI's nested `response` object when present (e.g. rewind's
    *  `{rewound, prefillText, precedingAssistantUuid, error?}`). */
   | { kind: 'control-ack'; requestId: string; ok: boolean; payload?: Record<string, unknown>; error?: string }
-  | { kind: 'permission-request'; requestId: string; toolName: string; displayName?: string; input: unknown; description?: string; suggestions?: unknown[]; toolUseId?: string }
+  /** `requiresInteraction` marks a request the CLI flagged `requires_user_interaction` that
+   *  nonetheless carried NEITHER a plan nor a single parseable question — the answerable
+   *  fallback (see {@link fromControlRequest}). It is what tells the session never to
+   *  auto-allow this one from "always allow this session": the CLI asked for a person. */
+  | { kind: 'permission-request'; requestId: string; toolName: string; displayName?: string; input: unknown; description?: string; suggestions?: unknown[]; toolUseId?: string; requiresInteraction?: boolean }
   | { kind: 'question'; requestId: string; toolName: string; questions: QuestionSpec[] }
+  /** ExitPlanMode's approval gate — a `can_use_tool` request flagged
+   *  `requires_user_interaction` whose input is `{plan, planFilePath}` rather than
+   *  `{questions}` (captured on CLI 2.1.220). Answering it `allow` is what actually leaves
+   *  plan mode: the very next tool call writes to disk. */
+  | { kind: 'plan-review'; requestId: string; toolName: string; plan: string; planFilePath?: string; input: unknown }
   | { kind: 'result'; success: boolean; text?: string; costUsd?: number; usage?: Record<string, unknown>; numTurns?: number; permissionDenials?: unknown[] }
   /** The server's cached slash-command list for this project, sent at connect. Carries the
    *  same payload `init.slashCommands` does; whichever arrives later wins. */
@@ -627,13 +636,15 @@ function fromUserFrame(obj: Record<string, unknown>): ChatEvent {
 // ─── control_request (permission prompts + AskUserQuestion) ───────────────────────
 
 /**
- * The question/permission discriminator: `requires_user_interaction === true` on the
- * request payload is what marks a `can_use_tool` request as AskUserQuestion rather than
- * a plain tool-permission prompt (verified empirically — the field is absent/false on
- * ordinary Write/Bash/etc. prompts). A malformed `questions` array (missing/non-array,
- * or an entry missing `question`/`options`) is dropped from the list rather than
- * throwing; an empty resulting list still surfaces as a `question` event so the UI can
- * show the degrade path (AC5) instead of silently losing the turn.
+ * The interaction discriminator: `requires_user_interaction === true` on the request payload
+ * marks a `can_use_tool` request the CLI wants a PERSON to answer, rather than a plain
+ * tool-permission prompt (verified empirically — the field is absent/false on ordinary
+ * Write/Bash/etc. prompts). It does NOT mean "AskUserQuestion": ExitPlanMode carries the
+ * same flag with a wholly different payload (see {@link parsePlan}), so the flag selects the
+ * INTERACTIVE family and the input's shape picks the member.
+ *
+ * A malformed `questions` array (missing/non-array, or an entry missing `question`/
+ * `options`) is dropped from the list rather than throwing.
  */
 function parseQuestions(input: unknown): QuestionSpec[] {
   if (!isRecord(input) || !Array.isArray(input.questions)) return [];
@@ -651,6 +662,18 @@ function parseQuestions(input: unknown): QuestionSpec[] {
   return out;
 }
 
+/**
+ * ExitPlanMode's payload — `{plan: "<markdown>", planFilePath: "~/.claude/plans/….md"}`,
+ * captured verbatim from CLI 2.1.220. Shape-keyed rather than name-keyed, for the same
+ * reason the question/permission split is: the flag names the family, the payload names the
+ * member, and a future interactive tool that presents a plan gets the right card for free.
+ */
+function parsePlan(input: unknown): { plan: string; planFilePath?: string } | null {
+  if (!isRecord(input)) return null;
+  const plan = str(input.plan);
+  return plan ? { plan, planFilePath: str(input.planFilePath) } : null;
+}
+
 function fromControlRequest(obj: Record<string, unknown>): ChatEvent {
   const requestId = str(obj.request_id) ?? '';
   const request = isRecord(obj.request) ? obj.request : {};
@@ -659,8 +682,18 @@ function fromControlRequest(obj: Record<string, unknown>): ChatEvent {
 
   const toolName = str(request.tool_name) ?? '';
   const input = request.input;
-  if (bool(request.requires_user_interaction)) {
-    return { kind: 'question', requestId, toolName, questions: parseQuestions(input) };
+  const interactive = bool(request.requires_user_interaction);
+  if (interactive) {
+    const plan = parsePlan(input);
+    if (plan) return { kind: 'plan-review', requestId, toolName, plan: plan.plan, planFilePath: plan.planFilePath, input };
+    const questions = parseQuestions(input);
+    if (questions.length) return { kind: 'question', requestId, toolName, questions };
+    // Neither shape. This USED to emit a `question` with an empty list, which rendered a
+    // survey card with no question, no options and a dead Submit — the turn could not be
+    // answered from Chat at all (owner report 07-26: ExitPlanMode, before it had a card of
+    // its own, landed here). Falling through to the permission card instead means the
+    // worst case for ANY future interactive tool this parser doesn't know is a card that
+    // still shows the raw request and can still answer it, never a card that strands the turn.
   }
   return {
     kind: 'permission-request',
@@ -671,6 +704,7 @@ function fromControlRequest(obj: Record<string, unknown>): ChatEvent {
     description: str(request.description),
     suggestions: Array.isArray(request.permission_suggestions) ? request.permission_suggestions : undefined,
     toolUseId: str(request.tool_use_id),
+    requiresInteraction: interactive || undefined,
   };
 }
 

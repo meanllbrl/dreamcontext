@@ -23,6 +23,7 @@ import { parseChatLine, buildQuestionAnswer, type QuestionSpec } from '../../das
 const SESSION_ID = '11111111-2222-3333-4444-555555555555';
 const PERMISSION_REQUEST_ID = '22222222-3333-4444-5555-666666666666';
 const QUESTION_REQUEST_ID = '33333333-4444-5555-6666-777777777777';
+const PLAN_REQUEST_ID = '44444444-5555-6666-7777-888888888888';
 const TOOL_USE_ID = 'toolu_01ABCDEF';
 
 const SYSTEM_INIT = JSON.stringify({
@@ -186,6 +187,36 @@ const CONTROL_REQUEST_QUESTION = JSON.stringify({
         },
       ],
     },
+  },
+});
+
+/** ExitPlanMode's approval gate, captured verbatim from CLI 2.1.220: the SAME
+ *  `requires_user_interaction` flag AskUserQuestion carries, over a wholly different input. */
+const CONTROL_REQUEST_PLAN = JSON.stringify({
+  type: 'control_request',
+  request_id: PLAN_REQUEST_ID,
+  request: {
+    subtype: 'can_use_tool',
+    tool_name: 'ExitPlanMode',
+    display_name: 'ExitPlanMode',
+    input: {
+      plan: '# Plan: Create hello.js\n\n## Approach\nAdd a single `hello()` function.\n',
+      planFilePath: '/Users/x/.claude/plans/tranquil-volcano.md',
+    },
+    tool_use_id: TOOL_USE_ID,
+    requires_user_interaction: true,
+  },
+});
+
+/** The third shape: flagged interactive, but neither a plan nor a parseable question. */
+const CONTROL_REQUEST_INTERACTIVE_UNKNOWN = JSON.stringify({
+  type: 'control_request',
+  request_id: PLAN_REQUEST_ID,
+  request: {
+    subtype: 'can_use_tool',
+    tool_name: 'SomeFutureAskingTool',
+    input: { somethingElse: true },
+    requires_user_interaction: true,
   },
 });
 
@@ -469,6 +500,54 @@ describe('parseChatLine — control_request (permission prompts + AskUserQuestio
     // parser keys off the flag, not off recognizing "AskUserQuestion" as a special name.
     expect(parseChatLine(CONTROL_REQUEST_PERMISSION)?.kind).toBe('permission-request');
     expect(parseChatLine(CONTROL_REQUEST_QUESTION)?.kind).toBe('question');
+  });
+
+  it('ExitPlanMode carries the SAME flag over a plan payload → plan-review, not an empty question', () => {
+    // The regression this exists for: the flag alone used to route every interactive request
+    // to the survey card, so a plan arrived as a `question` with zero questions and rendered
+    // a card with nothing in it and a dead Submit.
+    const ev = parseChatLine(CONTROL_REQUEST_PLAN);
+    expect(ev?.kind).toBe('plan-review');
+    if (ev?.kind !== 'plan-review') throw new Error('expected a plan-review event');
+    expect(ev.requestId).toBe(PLAN_REQUEST_ID);
+    expect(ev.toolName).toBe('ExitPlanMode');
+    expect(ev.plan).toContain('# Plan: Create hello.js');
+    expect(ev.planFilePath).toBe('/Users/x/.claude/plans/tranquil-volcano.md');
+    // The original input, echoed back verbatim on allow — that answer is what leaves plan mode.
+    expect(ev.input).toEqual({
+      plan: '# Plan: Create hello.js\n\n## Approach\nAdd a single `hello()` function.\n',
+      planFilePath: '/Users/x/.claude/plans/tranquil-volcano.md',
+    });
+  });
+
+  it('an interactive request that is NEITHER a plan nor a question stays answerable (permission card), never a dead survey', () => {
+    const ev = parseChatLine(CONTROL_REQUEST_INTERACTIVE_UNKNOWN);
+    expect(ev?.kind).toBe('permission-request');
+    if (ev?.kind !== 'permission-request') throw new Error('expected a permission-request event');
+    expect(ev.toolName).toBe('SomeFutureAskingTool');
+    expect(ev.input).toEqual({ somethingElse: true });
+    // Marked interactive so "always allow this session" can never answer it for the user.
+    expect(ev.requiresInteraction).toBe(true);
+  });
+
+  it('an AskUserQuestion whose questions are all malformed degrades to the answerable card too', () => {
+    const line = JSON.stringify({
+      type: 'control_request',
+      request_id: QUESTION_REQUEST_ID,
+      request: {
+        subtype: 'can_use_tool',
+        tool_name: 'AskUserQuestion',
+        requires_user_interaction: true,
+        input: { questions: [{ header: 'no question text' }, 'not an object'] },
+      },
+    });
+    expect(parseChatLine(line)?.kind).toBe('permission-request');
+  });
+
+  it('a plain permission request is NOT marked interactive', () => {
+    const ev = parseChatLine(CONTROL_REQUEST_PERMISSION);
+    if (ev?.kind !== 'permission-request') throw new Error('expected a permission-request event');
+    expect(ev.requiresInteraction).toBeUndefined();
   });
 });
 

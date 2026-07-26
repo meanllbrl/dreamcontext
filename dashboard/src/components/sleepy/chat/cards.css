@@ -271,6 +271,29 @@
   overflow: auto;
 }
 
+/* Plan body (ExitPlanMode) — a document, not a data dump */
+.chat-toolcard-plan { padding: var(--space-3) var(--space-4); }
+.chat-toolcard-plan .md-preview {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+}
+.chat-toolcard-plan .markdown-body { font-size: var(--font-size-sm); line-height: 1.6; }
+.chat-toolcard-plan .markdown-body h1,
+.chat-toolcard-plan .markdown-body h2 { font-size: var(--font-size-base); margin: var(--space-3) 0 var(--space-1); }
+.chat-toolcard-plan .markdown-body h3 { font-size: var(--font-size-sm); margin: var(--space-3) 0 var(--space-1); }
+.chat-toolcard-plan .markdown-body > :first-child { margin-top: 0; }
+.chat-toolcard-planresult {
+  margin: var(--space-3) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+}
+
 /* ── Survey card (state 5) ────────────────────────────────────────────────────────── */
 
 .chat-surveycard {
@@ -519,6 +542,69 @@
   font-size: var(--font-size-xs);
 }
 .chat-permcard[data-mode='bypass'] .chat-permcard-explainer { color: var(--color-warning); }
+
+/* ── Plan card (ExitPlanMode's approval gate) ─────────────────────────────────────── */
+
+/* Accent-edged like the survey card, not neutral like a permission prompt: this is Claude
+   asking, and it must read as the thing to act on rather than as another tool receipt. */
+.chat-plancard {
+  align-self: flex-start;
+  width: 100%;
+  max-width: var(--chat-card-width, min(680px, 100%));
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  border: 1px solid var(--color-accent-soft);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.chat-plancard-tool {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.chat-plancard-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+/* The one card that TELLS at length before it ASKS. Bounded + scrollable so a long plan
+   never pushes its own buttons off the pane — the same reason the survey card pages. */
+.chat-plancard-plan {
+  max-height: min(46vh, 420px);
+  overflow: auto;
+  padding-right: var(--space-2);
+}
+.chat-plancard-plan .md-preview {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+}
+.chat-plancard-plan .markdown-body {
+  font-size: var(--chat-text, var(--font-size-base));
+  line-height: 1.6;
+}
+/* A plan's first heading is its title, and it arrives as an h1/h2 sized for a document.
+   Inside a card it only has to outrank the body. */
+.chat-plancard-plan .markdown-body h1,
+.chat-plancard-plan .markdown-body h2 { font-size: var(--font-size-base); margin: var(--space-3) 0 var(--space-1); }
+.chat-plancard-plan .markdown-body h3 { font-size: var(--font-size-sm); margin: var(--space-3) 0 var(--space-1); }
+.chat-plancard-plan .markdown-body > :first-child { margin-top: 0; }
+.chat-plancard-decide {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.chat-plancard-note {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+.chat-plancard-actions { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }
 
 /* ── Bypass notice (state 6's informational twin — nothing to decide) ─────────────── */
 

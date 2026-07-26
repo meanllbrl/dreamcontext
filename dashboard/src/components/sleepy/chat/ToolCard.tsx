@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { parseEditDiff, deriveDiffStartLine } from './chatEntities';
 import { Duration, DiffStat, MetaText, CopyButton } from './atoms';
 import { ToolHeader, TerminalBlock, DiffView } from './molecules';
@@ -61,6 +62,23 @@ function resultText(result: unknown): string {
   return safeStringify(result);
 }
 
+/**
+ * ExitPlanMode's body: the plan as markdown, not as a JSON dump. Its input is one long
+ * markdown string, so the generic body rendered it with every newline escaped — a wall of
+ * `\n`s that was, until the plan got a card of its own, the only place the plan could be
+ * read at all (owner report 07-26). The decision itself lives in `PlanCard`; this is the
+ * receipt you re-open afterwards.
+ */
+function PlanBody({ plan, result }: { plan: string; result: unknown }) {
+  const text = result !== undefined ? resultText(result) : '';
+  return (
+    <div className="chat-toolcard-plan">
+      <MarkdownPreview content={plan} />
+      {text && <p className="chat-toolcard-planresult">{text}</p>}
+    </div>
+  );
+}
+
 function GenericBody({ item }: { item: ChatToolItem }) {
   const input = safeStringify(item.input);
   const result = item.result !== undefined ? safeStringify(item.result) : '';
@@ -93,7 +111,8 @@ export function ToolCard({ item, onOpenFile }: { item: ChatToolItem; onOpenFile:
   const [override, setOverride] = useState<boolean | null>(null);
 
   const isBash = item.name === 'Bash';
-  const diff = isBash ? null : parseEditDiff(item.input);
+  const plan = item.name === 'ExitPlanMode' ? inputString(item.input, 'plan') : undefined;
+  const diff = isBash || plan ? null : parseEditDiff(item.input);
   const path = primaryPath(item.input);
   const lineCount = resultLineCount(item.result);
   const duration = item.endedAt != null ? item.endedAt - item.startedAt : null;
@@ -129,6 +148,8 @@ export function ToolCard({ item, onOpenFile }: { item: ChatToolItem; onOpenFile:
               command={inputString(item.input, 'command')}
               output={item.result !== undefined ? resultText(item.result) : undefined}
             />
+          ) : plan ? (
+            <PlanBody plan={plan} result={item.result} />
           ) : diff ? (
             <DiffView diff={diff} startLine={deriveDiffStartLine(item.result, diff.added[0])} />
           ) : (

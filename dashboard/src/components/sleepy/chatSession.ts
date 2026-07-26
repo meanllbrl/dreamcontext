@@ -97,9 +97,21 @@ export interface PendingQuestion {
   toolName: string;
   questions: QuestionSpec[];
 }
-/** A permission prompt or AskUserQuestion card awaiting the user's answer, keyed by the
- *  control channel's `requestId`. `session.asking` is true whenever this array is non-empty. */
-export type PendingItem = PendingPermission | PendingQuestion;
+/** ExitPlanMode's approval gate — the plan Claude wants to act on, awaiting an allow (leave
+ *  plan mode and build it) or a deny (keep planning). `input` is the original request payload,
+ *  echoed back verbatim on allow exactly as a permission answer does. */
+export interface PendingPlan {
+  kind: 'plan';
+  requestId: string;
+  toolName: string;
+  plan: string;
+  planFilePath?: string;
+  input: unknown;
+}
+/** A permission prompt, an AskUserQuestion card or a plan approval awaiting the user's answer,
+ *  keyed by the control channel's `requestId`. `session.asking` is true whenever this array is
+ *  non-empty. */
+export type PendingItem = PendingPermission | PendingQuestion | PendingPlan;
 
 export interface ChatResultInfo {
   success: boolean;
@@ -453,6 +465,25 @@ export function createChatSession(
   function subscribe(cb: () => void): () => void {
     subscribers.add(cb);
     return () => { subscribers.delete(cb); };
+  }
+
+  /**
+   * Push a card that ASKS the user something directly — a question or a plan to approve —
+   * onto `pending`, chiming only on the edge where none was pending before.
+   *
+   * `others` is `pending` already stripped of this `requestId` (a re-sent request replaces
+   * its own card rather than stacking a twin). Shared by both arms so the two can never
+   * drift on which edge counts: a plan landing while a question is open must not chime a
+   * second time, and vice versa — it is one interruption, not two.
+   */
+  function pushAsk(others: PendingItem[], entry: PendingQuestion | PendingPlan): void {
+    const hadAskBefore = conv.pending.some((p) => p.kind === 'question' || p.kind === 'plan');
+    conv = { ...conv, pending: [...others, entry] };
+    session.asking = conv.pending.length > 0;
+    if (!hadAskBefore) {
+      session.attention = true;
+      playAskChime();
+    }
   }
 
   function applyZoom(zoom: number): void {
@@ -823,10 +854,13 @@ export function createChatSession(
         return;
       }
       case 'permission-request': {
-        if (sessionAllow.has(ev.toolName)) {
-          // "Always allow this session" (state 6) — auto-answer, no card ever pushed.
-          // This gate lives ONLY on this arm: a `question` event is a structurally
-          // distinct ChatEvent kind (its own case below) and never reaches here.
+        // "Always allow this session" (state 6) — auto-answer, no card ever pushed. This gate
+        // lives ONLY on this arm: `question`/`plan-review` are structurally distinct ChatEvent
+        // kinds (their own cases below) and never reach here. `requiresInteraction` is the
+        // third interactive shape — one this parser didn't recognize — and it is exempt for
+        // the same reason they are: the CLI asked for a person, so a remembered click on an
+        // earlier prompt for the same tool name must not answer on their behalf.
+        if (sessionAllow.has(ev.toolName) && !ev.requiresInteraction) {
           answer(ev.requestId, { behavior: 'allow', updatedInput: ev.input });
           return;
         }
@@ -840,19 +874,24 @@ export function createChatSession(
         return;
       }
       case 'question': {
-        // Attention/chime fire only on a FRESH question edge (0 pending questions -> 1+) —
-        // deliberately narrower than `asking` (which any pending permission also sets): a
-        // permission prompt is common in acceptEdits mode and would make the chime noisy;
-        // AskUserQuestion is the "the strongest 'needs you' there is" signal (AC5).
-        const hadQuestionBefore = conv.pending.some((p) => p.kind === 'question');
+        // Attention/chime fire only on a FRESH ask edge (0 pending asks -> 1+) — deliberately
+        // narrower than `asking` (which any pending permission also sets): a permission prompt
+        // is common in acceptEdits mode and would make the chime noisy; a direct question is
+        // the "the strongest 'needs you' there is" signal (AC5).
         const pending = conv.pending.filter((p) => p.requestId !== ev.requestId);
         const entry: PendingQuestion = { kind: 'question', requestId: ev.requestId, toolName: ev.toolName, questions: ev.questions };
-        conv = { ...conv, pending: [...pending, entry] };
-        session.asking = conv.pending.length > 0;
-        if (!hadQuestionBefore) {
-          session.attention = true;
-          playAskChime();
-        }
+        pushAsk(pending, entry);
+        return;
+      }
+      case 'plan-review': {
+        // The plan Claude wants to act on (ExitPlanMode). Chimes on the same edge a question
+        // does — it is the same interruption, and answering it is what leaves plan mode.
+        const pending = conv.pending.filter((p) => p.requestId !== ev.requestId);
+        const entry: PendingPlan = {
+          kind: 'plan', requestId: ev.requestId, toolName: ev.toolName,
+          plan: ev.plan, planFilePath: ev.planFilePath, input: ev.input,
+        };
+        pushAsk(pending, entry);
         return;
       }
       case 'result': {

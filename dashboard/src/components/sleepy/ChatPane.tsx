@@ -11,6 +11,7 @@ import {
 import { ItemView } from './chat/TranscriptItem';
 import { SurveyCard } from './chat/SurveyCard';
 import { PermissionCard } from './chat/PermissionCard';
+import { PlanCard } from './chat/PlanCard';
 import { BypassNoticeCard } from './chat/BypassNoticeCard';
 import { SubAgentCard, SubAgentRail } from './chat/SubAgentCard';
 import { BackgroundShellsTray } from './chat/BackgroundShellsTray';
@@ -25,7 +26,7 @@ import { Composer } from './chat/Composer';
 import './chat/cards.css';
 import './chat/overlays.css';
 import type {
-  ChatSession, ChatItem, ChatUserItem, ChatToolItem, PendingPermission, PendingQuestion,
+  ChatSession, ChatItem, ChatUserItem, ChatToolItem, PendingPermission, PendingQuestion, PendingPlan,
 } from './chatSession';
 import './ChatPane.css';
 
@@ -723,6 +724,9 @@ export function ChatPane({
             {conv.pending
               .filter((p): p is PendingQuestion => p.kind === 'question')
               .map((p) => <SurveyCard key={p.requestId} item={p} session={session} />)}
+            {conv.pending
+              .filter((p): p is PendingPlan => p.kind === 'plan')
+              .map((p) => <PlanCard key={p.requestId} item={p} session={session} />)}
             {stuckQuestion && <DegradedQuestionCard item={stuckQuestion} onContinueInTerminal={onContinueInTerminal} />}
             {conv.lastError && <StreamErrorBanner message={conv.lastError} onRetry={retryLastMessage} />}
             {working && (
