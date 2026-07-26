@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   storyAssetUrl,
   type AnnouncementStory as Story,
   type StoryBlock,
+  type StoryClip,
   type StoryShot,
 } from '../../lib/announcementStory';
 import './AnnouncementStory.css';
@@ -31,7 +32,9 @@ export function AnnouncementStory({ story, onShotClick }: {
         {story.hero.eyebrow && <p className="ann-story-eyebrow">{story.hero.eyebrow}</p>}
         <h1 className="ann-story-headline">{story.hero.headline}</h1>
         {story.hero.sub && <p className="ann-story-sub">{story.hero.sub}</p>}
-        {story.hero.shot && <Shot shot={story.hero.shot} hero onClick={onShotClick} />}
+        {story.hero.clip
+          ? <Clip clip={story.hero.clip} hero />
+          : story.hero.shot && <Shot shot={story.hero.shot} hero onClick={onShotClick} />}
       </header>
 
       {story.blocks.map((block, i) => (
@@ -83,6 +86,15 @@ function Block({ block, onShotClick }: { block: StoryBlock; onShotClick?: (shot:
         </section>
       );
 
+    case 'video':
+      return (
+        <section className="ann-story-shotblock">
+          {block.title && <h2 className="ann-story-block-title">{block.title}</h2>}
+          {block.body && <p className="ann-story-block-body">{block.body}</p>}
+          <Clip clip={block.clip} />
+        </section>
+      );
+
     case 'points':
       return (
         <section className="ann-story-points">
@@ -119,6 +131,81 @@ function Block({ block, onShotClick }: { block: StoryBlock; onShotClick?: (shot:
         </section>
       );
   }
+}
+
+/**
+ * True while the viewer has asked their OS for reduced motion. Read live (not
+ * once at mount) so toggling the setting takes effect without a reload.
+ */
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    if (!mq) return;
+    const onChange = () => setReduced(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return reduced;
+}
+
+/**
+ * One clip, framed exactly like a screenshot so a story mixing the two reads as
+ * one page.
+ *
+ * A silent clip behaves like the GIF it replaces: muted, looping, autoplaying,
+ * no controls — motion that explains itself while you read the copy beside it.
+ * Two things override that. A clip declaring `sound` gets controls and never
+ * autoplays, because audio that starts on its own is a hostile surprise in an
+ * app you left open. And a viewer who asked for reduced motion gets the poster
+ * with controls instead of anything that moves by itself — the caption and alt
+ * text carry the same claim, so nothing is lost by not playing it.
+ *
+ * `preload="metadata"` keeps a release page from pulling every clip's bytes on
+ * open; a failed decode collapses the figure to the poster rather than leaving a
+ * black rectangle, and if the poster is gone too the block disappears entirely
+ * (the same contract as a broken screenshot).
+ */
+function Clip({ clip, hero }: { clip: StoryClip; hero?: boolean }) {
+  const [failed, setFailed] = useState(false);
+  const reducedMotion = usePrefersReducedMotion();
+  const url = storyAssetUrl(clip.src);
+  const posterUrl = storyAssetUrl(clip.poster);
+  if (!url || !posterUrl) return null;
+
+  const autoplays = !clip.sound && !reducedMotion;
+
+  return (
+    <figure className={`ann-story-shot ann-story-clip${hero ? ' hero' : ''}${clip.frame === 'plain' ? ' plain' : ''}`}>
+      <div className="ann-story-shot-frame">
+        {clip.frame !== 'plain' && (
+          <div className="ann-story-shot-chrome" aria-hidden="true">
+            <span /><span /><span />
+          </div>
+        )}
+        {failed ? (
+          <img className="ann-story-shot-img" src={posterUrl} alt={clip.alt} loading="lazy" decoding="async" />
+        ) : (
+          <video
+            className="ann-story-shot-img"
+            src={url}
+            poster={posterUrl}
+            aria-label={clip.alt}
+            preload="metadata"
+            playsInline
+            muted={!clip.sound}
+            autoPlay={autoplays}
+            loop={autoplays}
+            controls={!autoplays}
+            onError={() => setFailed(true)}
+          />
+        )}
+      </div>
+      {clip.caption && <figcaption className="ann-story-shot-caption">{clip.caption}</figcaption>}
+    </figure>
+  );
 }
 
 /**

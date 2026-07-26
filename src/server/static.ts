@@ -1,6 +1,7 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
+import { mediaContentType, serveMedia } from './media.js';
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -21,10 +22,11 @@ const MIME_TYPES: Record<string, string> = {
 
 /**
  * Hand-authored content assets that ship under the SPA root but are NOT
- * content-hashed build artifacts: the announcements manifest and its boards.
- * They are authored between releases (add an entry, regenerate a board), so
- * their URL stays byte-identical while their bytes change — `immutable` would
- * pin a stale copy in the browser for a year with no way to revalidate.
+ * content-hashed build artifacts: the announcements manifest, its stories, and
+ * their screenshots and clips. They are authored between releases (add an entry,
+ * re-shoot a screenshot, re-record a clip), so their URL stays byte-identical
+ * while their bytes change — `immutable` would pin a stale copy in the browser
+ * for a year with no way to revalidate.
  */
 function isAuthoredContent(pathname: string): boolean {
   return pathname === '/announcements.json' || pathname.startsWith('/announcements/');
@@ -60,14 +62,27 @@ export function serveStatic(
   }
 
   // Serve the file if it exists
-  if (existsSync(filePath) && statSync(filePath).isFile()) {
+  const stat = existsSync(filePath) ? statSync(filePath) : null;
+  if (stat?.isFile()) {
     const ext = extname(filePath);
-    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+    const cacheControl = cacheControlFor(url.pathname, ext);
+
+    // Video and audio are STREAMED with byte ranges, never read whole. A
+    // `<video>` seeks by issuing Range requests, and a 200-with-everything
+    // answer leaves the clip unseekable — WKWebView (the desktop app's engine)
+    // refuses to play it at all. An announcement clip that shows a dead player
+    // is exactly the silent failure this avoids.
+    const mediaType = mediaContentType(ext);
+    if (mediaType) {
+      serveMedia(req, res, filePath, stat.size, mediaType, cacheControl);
+      return;
+    }
+
     const content = readFileSync(filePath);
     res.writeHead(200, {
-      'Content-Type': contentType,
+      'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
       'Content-Length': content.length,
-      'Cache-Control': cacheControlFor(url.pathname, ext),
+      'Cache-Control': cacheControl,
     });
     res.end(content);
     return;

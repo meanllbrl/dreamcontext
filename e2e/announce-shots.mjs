@@ -43,7 +43,7 @@ await page.waitForTimeout(1600);
 // ── The task board (dashboard highlights + task manager context) ─────────────
 console.log('tasks');
 await nav('Tasks');
-await shot('dashboard-highlights/board.png');
+await shot('v0-18-0/board.png');
 
 // ── Task detail + its pinned Task Manager session ────────────────────────────
 // The Task Manager button boots a real Claude session scoped to that task — it
@@ -54,12 +54,12 @@ const card = page.locator('.bd-card').first();
 if (await card.count()) {
   await card.click();
   await page.waitForTimeout(1600);
-  await shot('task-manager/detail.png');
+  await shot('v0-18-0/detail.png');
   const tmBtn = page.locator('.detail-header-actions button', { hasText: 'Task Manager' }).first();
   if (await tmBtn.count()) {
     await tmBtn.click();
     await page.waitForTimeout(6000);
-    await shot('task-manager/pane.png');
+    await shot('v0-18-0/pane.png');
   }
 }
 await page.locator('.modal-close').first().click();
@@ -68,7 +68,7 @@ await page.waitForTimeout(900);
 // ── Sleep Cycle ──────────────────────────────────────────────────────────────
 console.log('sleep');
 await nav('Sleep Cycle');
-await shot('dashboard-highlights/sleep.png');
+await shot('v0-18-0/sleep.png');
 
 // ── Settings → Agents: the Chat/Terminal(legacy) screen picker ───────────────
 console.log('settings → agents');
@@ -78,7 +78,7 @@ await nav('Settings');
 // anchor on the label so the picker section is the one that actually opens.
 await page.locator('.settings-nav-item').filter({ hasText: /^Agents/ }).first().click();
 await page.waitForTimeout(1000);
-await shot('chat-is-the-default/settings.png');
+await shot('v0-22-0/settings.png');
 
 await b.close();
 console.log('done');

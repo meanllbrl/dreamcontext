@@ -120,6 +120,15 @@
   background: transparent;
 }
 
+/* A clip reuses the shot frame so a story mixing stills and motion reads as one
+   page. `.ann-story-shot-img` already sizes it; the only clip-specific need is a
+   backdrop for the moment before the poster paints, and controls that don't
+   inherit the zoom cursor a clickable screenshot uses. */
+.ann-story-clip .ann-story-shot-img {
+  background: var(--color-bg-tertiary);
+  cursor: default;
+}
+
 .ann-story-shot-caption {
   font-size: var(--font-size-xs);
   line-height: 1.5;

@@ -19,6 +19,12 @@ import {
  */
 
 const shot = (over: Record<string, unknown> = {}) => ({ src: 'shots/x/hero.png', alt: 'A screenshot', ...over });
+const clip = (over: Record<string, unknown> = {}) => ({
+  src: 'clips/x/demo.mp4',
+  poster: 'clips/x/demo.png',
+  alt: 'A clip of the app',
+  ...over,
+});
 
 describe('storyAssetUrl', () => {
   it('resolves a relative path under the announcements asset root', () => {
@@ -143,6 +149,68 @@ describe('parseAnnouncementStory', () => {
   });
 });
 
+/**
+ * Clips carry one requirement a shot doesn't: a poster. Three surfaces render a
+ * story as a still image (the feed teaser, the popup, the frame before the bytes
+ * arrive), and none of them can run a video — so a clip with no poster is a hole
+ * in all three and is dropped at parse time.
+ */
+describe('parseAnnouncementStory — video blocks', () => {
+  it('parses a video block with its clip', () => {
+    const story = parseAnnouncementStory({
+      hero: { headline: 'H' },
+      blocks: [{ kind: 'video', title: 'T', body: 'B', clip: clip({ caption: 'C', frame: 'plain', sound: true }) }],
+    });
+    expect(story?.blocks).toEqual([
+      {
+        kind: 'video',
+        title: 'T',
+        body: 'B',
+        clip: { src: 'clips/x/demo.mp4', poster: 'clips/x/demo.png', alt: 'A clip of the app', caption: 'C', frame: 'plain', sound: true },
+      },
+    ]);
+  });
+
+  it('defaults to a silent looping clip (sound is opt-in)', () => {
+    const story = parseAnnouncementStory({ hero: { headline: 'H' }, blocks: [{ kind: 'video', clip: clip() }] });
+    expect(story?.blocks[0]).toMatchObject({ kind: 'video' });
+    expect((story?.blocks[0] as { clip: { sound?: boolean } }).clip.sound).toBeUndefined();
+  });
+
+  it.each([
+    ['no poster', { poster: undefined }],
+    ['blank poster', { poster: '  ' }],
+    ['no alt', { alt: undefined }],
+    ['a src that escapes the asset root', { src: 'https://evil.example/x.mp4' }],
+    ['a poster that escapes the asset root', { poster: '../../secret.png' }],
+    ['an extension the player cannot decode', { src: 'clips/x/demo.mkv' }],
+    ['an image masquerading as a clip', { src: 'clips/x/demo.png' }],
+  ])('drops a video block with %s', (_label, over) => {
+    const story = parseAnnouncementStory({
+      hero: { headline: 'H' },
+      blocks: [{ kind: 'video', clip: clip(over) }, { kind: 'note', text: 'survives' }],
+    });
+    expect(story?.blocks).toEqual([{ kind: 'note', text: 'survives' }]);
+  });
+
+  it('accepts webm as well as mp4', () => {
+    const story = parseAnnouncementStory({
+      hero: { headline: 'H' },
+      blocks: [{ kind: 'video', clip: clip({ src: 'clips/x/demo.webm' }) }],
+    });
+    expect(story?.blocks).toHaveLength(1);
+  });
+
+  it('lets a release lead with a clip, and prefers it over a hero shot', () => {
+    const story = parseAnnouncementStory({
+      hero: { headline: 'H', shot: shot({ alt: 'still' }), clip: clip({ alt: 'moving' }) },
+      blocks: [],
+    });
+    expect(story?.hero.clip?.alt).toBe('moving');
+    expect(story?.hero.shot?.alt).toBe('still');
+  });
+});
+
 describe('storyCoverShot', () => {
   it('prefers the hero shot', () => {
     const story = parseAnnouncementStory({
@@ -162,6 +230,29 @@ describe('storyCoverShot', () => {
       ],
     });
     expect(storyCoverShot(story)?.alt).toBe('split shot');
+  });
+
+  // The teaser and the popup render an `<img>`, so a story that leads with
+  // motion still has to hand them a still — the clip's poster, wearing the
+  // clip's own alt text.
+  it('uses the hero clip’s poster as the cover, over a hero shot', () => {
+    const story = parseAnnouncementStory({
+      hero: { headline: 'H', shot: shot({ alt: 'still' }), clip: clip({ alt: 'moving', caption: 'cap' }) },
+      blocks: [],
+    });
+    expect(storyCoverShot(story)).toEqual({ src: 'clips/x/demo.png', alt: 'moving', caption: 'cap' });
+  });
+
+  it('falls back to a video block’s poster when nothing earlier carries an image', () => {
+    const story = parseAnnouncementStory({
+      hero: { headline: 'H' },
+      blocks: [
+        { kind: 'note', text: 'no image here' },
+        { kind: 'video', clip: clip({ alt: 'the clip' }) },
+        { kind: 'shot', shot: shot({ alt: 'later' }) },
+      ],
+    });
+    expect(storyCoverShot(story)?.alt).toBe('the clip');
   });
 
   it('returns null for a story with no images at all (a CLI release)', () => {

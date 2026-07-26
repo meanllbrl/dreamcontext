@@ -1,0 +1,75 @@
+{
+  "hero": {
+    "eyebrow": "v0.20.0  ·  22 July 2026",
+    "headline": "The brain starts forming opinions",
+    "sub": "A thesis is a claim your project makes about itself — falsifiable, with its predictions written down before the evidence arrives. The brain stops only remembering what happened and starts holding a position on what is true.",
+    "shot": {
+      "src": "shots/v0-20-0/thesis.png",
+      "alt": "A validated thesis open: the claim, 88% confidence with a supporting/contradicting/no-signal breakdown, three ticked pre-registered predictions, and a dated evidence ledger citing the task and changelog entries behind them",
+      "caption": "88%, three predictions that held, and every entry in the ledger naming where it came from."
+    }
+  },
+  "blocks": [
+    {
+      "kind": "points",
+      "title": "How a thesis earns its confidence",
+      "items": [
+        {
+          "title": "The claim is falsifiable",
+          "text": "\"Hybrid recall beats BM25F on the gold set by enough margin to ship it on by default\" can be wrong. \"Recall feels better\" cannot, so it isn't a thesis."
+        },
+        {
+          "title": "Predictions come first",
+          "text": "You register what you expect to see BEFORE looking — precision at least 5 points higher, zero regressions, no threshold changes. Each one ends up supported, contradicted, or still open."
+        },
+        {
+          "title": "Evidence is a cited ledger",
+          "text": "Every entry names its source — a changelog line, a task, a run — and carries a verdict: supports, contradicts, or no-signal. A no-signal entry counts as work done and nothing learned."
+        },
+        {
+          "title": "Confidence is arithmetic",
+          "text": "It is derived from the ledger, not felt. When it crosses the line, the thesis flips to validated or invalidated with a prediction check written into the record."
+        }
+      ]
+    },
+    {
+      "kind": "split",
+      "title": "Re-tested while you sleep",
+      "body": "Theses move across a board — draft, open, validated, invalidated — and open ones are re-tested every sleep cycle against whatever evidence arrived since the last one. A position you took in June has to keep surviving July, and the cycle that flips one also records which predictions held.",
+      "shot": {
+        "src": "shots/v0-20-0/hypotheses.png",
+        "alt": "The Hypotheses board with Draft, Open, Validated and Invalidated columns, a summary strip counting each state, and a stamp reading when the last learning cycle checked them"
+      },
+      "side": "right"
+    },
+    {
+      "kind": "shot",
+      "title": "Funnels in Lab, not in a spreadsheet",
+      "body": "Insights gained a funnel view: an all-funnels comparison table, a per-funnel step lane with drop badges, click any two steps for their A→B conversion, plus filters, breakdowns and compare. On long funnels, every step whose change isn't significant can fold away, so what's left on screen is what moved.",
+      "shot": {
+        "src": "shots/v0-20-0/funnel.png",
+        "alt": "A funnel's step lane: session start through sign-up, onboarding, paywall view and trial start, each step showing its share of the top and the drop to the next, with a metrics panel alongside",
+        "frame": "plain",
+        "caption": "Every step carries its own drop — the −69% into Trial start is where this funnel actually breaks."
+      }
+    },
+    {
+      "kind": "split",
+      "title": "And release notes moved into the app",
+      "body": "What's New shipped in this version: a page in the sidebar, a once-only popup on the launch after something lands, and unread tracked per release rather than by a watermark. This page you are reading is that feature.",
+      "shot": {
+        "src": "shots/v0-20-0/reader.png",
+        "alt": "A release opened in the full-screen reader, showing its version, headline, cover screenshot and the newer/older pager"
+      },
+      "side": "right"
+    },
+    {
+      "kind": "note",
+      "text": "Theses are opt-in — `dreamcontext theses enable`. Left off, the sleep cycle behaves exactly as it did before, and the Hypotheses page stays out of your way."
+    }
+  ],
+  "closer": {
+    "title": "Try it on something you argue about",
+    "body": "Write down the claim you keep re-litigating and the two or three things you'd expect to see if it were true. From then on every sleep cycle checks it for you."
+  }
+}

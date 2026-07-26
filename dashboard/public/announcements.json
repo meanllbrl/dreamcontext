@@ -1,56 +1,38 @@
 [
   {
-    "id": "chat-is-the-default",
+    "id": "v0-22-0",
     "date": "2026-07-26",
     "version": "0.22.0",
-    "title": "Chat is the agent now — the embedded terminal moves to legacy",
-    "summary": "The native Chat screen becomes the default for every Claude session, on new installs and existing ones alike. The embedded terminal is still here as Terminal (legacy), one dropdown away in Settings → Agents, and a deliberate switch back sticks.",
-    "tags": ["agent", "chat", "settings"],
-    "story": "chat-is-the-default.json"
+    "title": "Chat is the agent now — and What's New becomes a release history",
+    "summary": "The native Chat screen becomes the default for every Claude session, on new installs and existing ones alike; the embedded terminal stays as Terminal (legacy), one dropdown away in Settings → Agents. What's New is now one page per release, led by its version number and built from real screenshots of the app.",
+    "tags": ["agent", "chat", "announcements"],
+    "story": "v0-22-0.json"
   },
   {
-    "id": "native-agent-chat",
+    "id": "v0-21-0",
     "date": "2026-07-25",
     "version": "0.21.0",
     "title": "Your agent, as an app — the in-app agent is no longer a terminal",
-    "summary": "The Chat view renders the same Claude Code engine as native app UI instead of scrollback: permission asks, questions, sub-agent groups, diffs and images each become a card you can act on, and chat and terminal resume the same conversation both ways.",
+    "summary": "The Chat view renders the same Claude Code engine as native app UI instead of scrollback: permission asks, questions, sub-agent groups, diffs and images each become a card you can act on. Chat and terminal resume the same conversation both ways.",
     "tags": ["agent", "chat", "dashboard"],
-    "story": "native-agent-chat.json"
+    "story": "v0-21-0.json"
   },
   {
-    "id": "visual-announcements",
-    "date": "2026-07-19",
-    "version": "0.19.0",
-    "title": "What's New, inside the app — release notes you don't have to go looking for",
-    "summary": "Every update is a page in the dashboard: a feed in the sidebar footer, a once-only popup on the launch after something ships, and per-story unread tracking. Since 0.22 the pages are built from real screenshots of the app.",
-    "tags": ["dashboard", "announcements"],
-    "story": "visual-announcements.json"
+    "id": "v0-20-0",
+    "date": "2026-07-22",
+    "version": "0.20.0",
+    "title": "The brain starts forming opinions — falsifiable theses, re-tested every sleep cycle",
+    "summary": "The proactive learning layer lands: claims your project makes about itself, with predictions registered before the evidence arrives, a cited evidence ledger, and a confidence derived by arithmetic rather than felt. Alongside it, funnel analytics in Lab — and What's New itself.",
+    "tags": ["hypotheses", "sleep", "lab", "announcements"],
+    "story": "v0-20-0.json"
   },
   {
-    "id": "goal-skill-v2",
-    "date": "2026-07-18",
-    "version": "0.18.0",
-    "title": "Goal-Skill v2 — fork the builders, keep the judges clean",
-    "summary": "The goal orchestrator was rewritten end to end: builder sessions now fork and resume instead of re-exploring, review and validation stay independent, and ceremony scales to the size of the goal.",
-    "tags": ["goal-skill", "orchestration"],
-    "story": "goal-skill-v2.json"
-  },
-  {
-    "id": "task-manager",
+    "id": "v0-18-0",
     "date": "2026-07-17",
     "version": "0.18.0",
-    "title": "The Task Manager — every task gets its own live Claude session",
-    "summary": "Open a task and a dedicated Claude Code session is pinned right inside the task view — it maintains the document for you: revises, summarizes, splits, and reconciles status against what actually happened.",
-    "tags": ["tasks", "task-manager", "agent"],
-    "story": "task-manager.json"
-  },
-  {
-    "id": "dashboard-highlights-0-17-0-18",
-    "date": "2026-07-16",
-    "version": "0.18.0",
-    "title": "A living dock, a smarter sleep, and one-click task delegation",
-    "summary": "Recent quality-of-life drops across the dashboard and launcher: minimized agent sessions live in a dock, sleep consolidation stopped duplicating knowledge, tasks can be handed to Claude straight from the board, and new projects can be cloned from GitHub inside the onboarding wizard.",
-    "tags": ["dashboard", "launcher", "sleep"],
-    "story": "dashboard-highlights-0-17-0-18.json"
+    "title": "Every task gets its own Claude — and goal-skill takes the build the whole way",
+    "summary": "Open a task and a dedicated Claude Code session is pinned inside the task view, maintaining the document rather than implementing it. The goal orchestrator was rewritten around it — builders fork and resume, judges stay clean — plus a live agent dock, sleep that stopped duplicating knowledge, and one-click delegation from the board.",
+    "tags": ["tasks", "task-manager", "goal-skill", "dashboard"],
+    "story": "v0-18-0.json"
   }
 ]

@@ -10,6 +10,7 @@ import {
   realpathSync, openSync, readSync, closeSync,
 } from 'node:fs';
 import { sendJson, sendError } from '../middleware.js';
+import { serveMedia } from '../media.js';
 import { isDesktop } from '../desktop.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
@@ -1049,50 +1050,6 @@ function sendDirListing(res: ServerResponse, rawPath: string, abs: string): void
   sendJson(res, 200, { path: rawPath, type: 'dir', entries, truncated: names.length > MAX_ENTRIES, total: names.length });
 }
 
-/**
- * Stream `abs` with byte-range support. `<video>`/`<audio>` seek by issuing Range requests,
- * and a server that answers 200-with-everything makes a clip unseekable (Safari refuses to
- * play at all) — so `Accept-Ranges` and a correct 206 are load-bearing here, not an
- * optimisation. Streaming also keeps a 40MB capture off the heap.
- */
-function serveMedia(req: IncomingMessage, res: ServerResponse, abs: string, size: number, contentType: string): void {
-  const common = { 'Content-Type': contentType, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' };
-  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
-
-  let start = 0;
-  let end = size - 1;
-  if (range) {
-    const [, rawStart, rawEnd] = range;
-    if (rawStart === '' && rawEnd === '') { sendError(res, 416, 'bad_range', 'Malformed Range header.'); return; }
-    if (rawStart === '') {
-      // `bytes=-N` — the trailing N bytes.
-      start = Math.max(0, size - Number(rawEnd));
-    } else {
-      start = Number(rawStart);
-      if (rawEnd !== '') end = Math.min(end, Number(rawEnd));
-    }
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) {
-      res.writeHead(416, { ...common, 'Content-Range': `bytes */${size}` });
-      res.end();
-      return;
-    }
-  }
-
-  const length = end - start + 1;
-  res.writeHead(range ? 206 : 200, {
-    ...common,
-    'Content-Length': length,
-    ...(range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}),
-  });
-  if (req.method === 'HEAD') { res.end(); return; }
-
-  const stream = createReadStream(abs, { start, end });
-  stream.on('error', () => { res.destroy(); });
-  // A viewer that seeks away (or a closed pane) aborts the response — release the fd rather
-  // than reading the rest of a large file into a socket nobody is listening to.
-  res.on('close', () => stream.destroy());
-  stream.pipe(res);
-}
 
 /**
  * GET /api/agent/board-assets?path=<board> — the images an Excalidraw board named in the

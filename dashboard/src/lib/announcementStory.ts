@@ -34,6 +34,33 @@ export interface StoryShot {
   frame?: 'window' | 'plain';
 }
 
+/**
+ * A short video of the product — for the things whose value IS motion (a pane
+ * opening, an agent working, a transition) and which a still can only describe.
+ *
+ * A clip carries a `poster` because it has three jobs a video element can't do
+ * on its own: fill the frame before the bytes arrive, stand in when decoding
+ * fails, and BE the story's cover in the feed teaser and the popup (both of
+ * which render an image, not a player). A clip without one is dropped.
+ */
+export interface StoryClip {
+  /** Path relative to the announcements asset root, e.g. `clips/v0-22-0/chat.mp4`. */
+  src: string;
+  /** Still frame for the same path. Required — see above. */
+  poster: string;
+  /** What the clip SHOWS, for anyone who can't watch it. Required, like a shot's. */
+  alt: string;
+  caption?: string;
+  /** Frame treatment, same vocabulary as a shot. */
+  frame?: 'window' | 'plain';
+  /**
+   * True when the clip has meaningful audio: it then gets controls and does NOT
+   * autoplay. Silent product loops (the default) autoplay muted and loop, the
+   * way a GIF used to — motion that explains itself without asking for a click.
+   */
+  sound?: boolean;
+}
+
 /** A row of 2–4 headline numbers. Use for proof, not decoration. */
 export interface StatsBlock {
   kind: 'stats';
@@ -54,6 +81,14 @@ export interface SplitBlock {
 export interface ShotBlock {
   kind: 'shot';
   shot: StoryShot;
+  title?: string;
+  body?: string;
+}
+
+/** A full-width clip with an optional title/body above it — `shot`, in motion. */
+export interface VideoBlock {
+  kind: 'video';
+  clip: StoryClip;
   title?: string;
   body?: string;
 }
@@ -79,7 +114,14 @@ export interface NoteBlock {
   text: string;
 }
 
-export type StoryBlock = StatsBlock | SplitBlock | ShotBlock | PointsBlock | TerminalBlock | NoteBlock;
+export type StoryBlock =
+  | StatsBlock
+  | SplitBlock
+  | ShotBlock
+  | VideoBlock
+  | PointsBlock
+  | TerminalBlock
+  | NoteBlock;
 
 export interface StoryHero {
   /** Small line above the headline — conventionally `v0.22.0 · 25 July 2026`. */
@@ -88,6 +130,12 @@ export interface StoryHero {
   /** One sentence: the promise, not the mechanism. */
   sub?: string;
   shot?: StoryShot;
+  /**
+   * A clip instead of a still. `clip` wins if both are given — a release that
+   * recorded its headline moment should lead with it, and the clip's poster
+   * still covers every surface that needs an image.
+   */
+  clip?: StoryClip;
 }
 
 export interface AnnouncementStory {
@@ -135,6 +183,32 @@ function parseShot(v: unknown): StoryShot | null {
   return shot;
 }
 
+/** Extensions the announcement player will accept. Both are `<video>`-native. */
+const CLIP_EXTENSIONS = ['.mp4', '.webm'];
+
+function parseClip(v: unknown): StoryClip | null {
+  if (typeof v !== 'object' || v === null) return null;
+  const r = v as Record<string, unknown>;
+  const src = str(r.src);
+  const poster = str(r.poster);
+  const alt = str(r.alt);
+  // Same contract as a shot — no alt is a hole for anyone who can't watch it,
+  // an escaping src is a dead player — plus a poster, because three other
+  // surfaces render this clip as a still image.
+  if (!src || !poster || !alt) return null;
+  if (!storyAssetUrl(src) || !storyAssetUrl(poster)) return null;
+  // A path the browser can't decode is worse than no clip: it renders as a
+  // black rectangle with no error anywhere.
+  if (!CLIP_EXTENSIONS.some((ext) => src.toLowerCase().endsWith(ext))) return null;
+
+  const clip: StoryClip = { src, poster, alt };
+  const caption = str(r.caption);
+  if (caption) clip.caption = caption;
+  if (r.frame === 'plain' || r.frame === 'window') clip.frame = r.frame;
+  if (r.sound === true) clip.sound = true;
+  return clip;
+}
+
 /** Keep only entries that survive `pick`, and only if at least `min` remain. */
 function pickList<T>(v: unknown, pick: (item: unknown) => T | null, min: number): T[] | null {
   if (!Array.isArray(v)) return null;
@@ -174,6 +248,16 @@ function parseBlock(v: unknown): StoryBlock | null {
       const shot = parseShot(r.shot);
       if (!shot) return null;
       const block: ShotBlock = { kind: 'shot', shot };
+      const title = str(r.title);
+      const body = str(r.body);
+      if (title) block.title = title;
+      if (body) block.body = body;
+      return block;
+    }
+    case 'video': {
+      const clip = parseClip(r.clip);
+      if (!clip) return null;
+      const block: VideoBlock = { kind: 'video', clip };
       const title = str(r.title);
       const body = str(r.body);
       if (title) block.title = title;
@@ -231,9 +315,11 @@ export function parseAnnouncementStory(raw: unknown): AnnouncementStory | null {
   const eyebrow = str(heroRaw.eyebrow);
   const sub = str(heroRaw.sub);
   const heroShot = parseShot(heroRaw.shot);
+  const heroClip = parseClip(heroRaw.clip);
   if (eyebrow) hero.eyebrow = eyebrow;
   if (sub) hero.sub = sub;
   if (heroShot) hero.shot = heroShot;
+  if (heroClip) hero.clip = heroClip;
 
   const blocks: StoryBlock[] = [];
   if (Array.isArray(r.blocks)) {
@@ -255,15 +341,27 @@ export function parseAnnouncementStory(raw: unknown): AnnouncementStory | null {
   return story;
 }
 
+/** A clip standing in as a still: its poster, carrying the clip's own alt text. */
+function clipCover(clip: StoryClip): StoryShot {
+  const cover: StoryShot = { src: clip.poster, alt: clip.alt };
+  if (clip.caption) cover.caption = clip.caption;
+  if (clip.frame) cover.frame = clip.frame;
+  return cover;
+}
+
 /**
- * The one image that represents a story in a teaser (feed hero card, What's New
- * popup): the hero shot, or the first shot-bearing block if the hero has none.
+ * The one IMAGE that represents a story wherever a teaser is rendered (feed hero
+ * card, What's New popup): the hero clip's poster, the hero shot, or the first
+ * block that carries either. Always a still — those surfaces are lists, and a
+ * list that autoplays video is a list nobody can read.
  */
 export function storyCoverShot(story: AnnouncementStory | null | undefined): StoryShot | null {
   if (!story) return null;
+  if (story.hero.clip) return clipCover(story.hero.clip);
   if (story.hero.shot) return story.hero.shot;
   for (const b of story.blocks) {
     if (b.kind === 'split' || b.kind === 'shot') return b.shot;
+    if (b.kind === 'video') return clipCover(b.clip);
   }
   return null;
 }

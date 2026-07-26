@@ -1,7 +1,7 @@
 /* The article view — a meta strip above a story that SCROLLS like a page.
-   `flex:1 / min-height:0` is stated here rather than inherited from the
-   overlay's `> :only-child` rule, because the reader stops being an only child
-   the moment a shot is zoomed (the lightbox mounts as a sibling). */
+   `flex:1 / min-height:0` is stated here rather than left to the overlay's
+   `> :only-child` rule, so the column keeps its own scroll regardless of what
+   else the reader happens to render beside it. */
 .announcement-reader {
   flex: 1;
   min-height: 0;
@@ -24,11 +24,16 @@
   color: var(--color-text-tertiary);
 }
 
+/* The release this story announces — first in the strip and a size up, because
+   the story IS the version, not one item that happened to land in it. */
 .announcement-reader-version {
   padding: 2px 8px;
   border-radius: var(--radius-full);
   background: var(--color-accent-soft);
   color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
 
 .announcement-reader-tag {
@@ -74,44 +79,6 @@
 
 /* Lightbox — a clicked screenshot at full viewport size. Fixed (not absolute)
    so it covers the overlay header too; the whole backdrop is the close target. */
-.announcement-reader-lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-6);
-  background: rgba(0, 0, 0, 0.82);
-  cursor: zoom-out;
-}
-
-.announcement-reader-lightbox img {
-  max-width: 100%;
-  max-height: 100%;
-  border-radius: var(--radius-md);
-  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.8);
-}
-
-.announcement-reader-lightbox-close {
-  position: absolute;
-  top: var(--space-4);
-  right: var(--space-4);
-  width: 32px;
-  height: 32px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: var(--radius-full);
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.announcement-reader-lightbox-close:hover {
-  background: rgba(0, 0, 0, 0.75);
-}
-
 /* Newer / Older pager in the overlay header. */
 .announcement-reader-pager {
   display: flex;

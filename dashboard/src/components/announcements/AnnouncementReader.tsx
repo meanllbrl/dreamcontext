@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { useAnnouncementStory } from '../../hooks/useAnnouncements';
-import type { Announcement } from '../../lib/announcements';
+import { formatVersion, type Announcement } from '../../lib/announcements';
 import { storyAssetUrl, type StoryShot } from '../../lib/announcementStory';
 import { AnnouncementStory } from './AnnouncementStory';
 import { FullscreenOverlay } from '../layout/FullscreenOverlay';
+import { ImageViewer } from '../layout/ImageViewer';
 import './AnnouncementReader.css';
 
 interface Props {
@@ -18,9 +19,9 @@ interface Props {
 /**
  * The "article view": one announcement opened full screen as a landing page —
  * hero, screenshots, proof, closer — scrolling in a single column. Any shot can
- * be clicked to fill the viewport, because a screenshot scaled into a 920px
- * column can still hide the detail the story is about. Newer/Older controls page
- * through the feed without leaving the reader.
+ * be clicked into the full-window `ImageViewer` and zoomed to the pixel, because
+ * a screenshot scaled into a 920px column can still hide the detail the story is
+ * about. Newer/Older controls page through the feed without leaving the reader.
  */
 export function AnnouncementReader({ announcement, all, onNavigate, onClose }: Props) {
   const { t } = useI18n();
@@ -31,25 +32,13 @@ export function AnnouncementReader({ announcement, all, onNavigate, onClose }: P
   const newer = index > 0 ? all[index - 1] : null;
   const older = index >= 0 && index < all.length - 1 ? all[index + 1] : null;
 
-  // Paging to another story must not leave the previous story's lightbox open
-  // over it — the zoomed shot belongs to the announcement, not to the reader.
+  // Paging to another story must not leave the previous story's viewer open over
+  // it — the zoomed shot belongs to the announcement, not to the reader.
   useEffect(() => { setZoomed(null); }, [announcement.id]);
 
-  // Esc closes the lightbox FIRST (and only then, on a second press, the reader
-  // via FullscreenOverlay's own handler) — capture-phase + stopImmediatePropagation
-  // is what orders the two, mirroring the overlay-stack contract used elsewhere.
+  // Esc ordering (viewer first, reader only on a second press) lives inside
+  // `ImageViewer`, which swallows the key while it is the topmost layer.
   const closeZoom = useCallback(() => setZoomed(null), []);
-  useEffect(() => {
-    if (!zoomed) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      closeZoom();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [zoomed, closeZoom]);
 
   const actions = all.length > 1 && (
     <div className="announcement-reader-pager">
@@ -81,12 +70,8 @@ export function AnnouncementReader({ announcement, all, onNavigate, onClose }: P
     <FullscreenOverlay label={announcement.title} actions={actions || undefined} onClose={onClose}>
       <div className="announcement-reader">
         <div className="announcement-reader-meta">
+          <span className="announcement-reader-version">{formatVersion(announcement.version)}</span>
           <span className="announcement-reader-date">{announcement.date}</span>
-          {announcement.version && (
-            <span className="announcement-reader-version">
-              {t('announcements.shippedIn').replace('{version}', announcement.version)}
-            </span>
-          )}
           {announcement.tags?.map((tag) => (
             <span key={tag} className="announcement-reader-tag">
               {tag}
@@ -109,23 +94,12 @@ export function AnnouncementReader({ announcement, all, onNavigate, onClose }: P
       </div>
 
       {zoomed && zoomUrl && (
-        <div
-          className="announcement-reader-lightbox"
-          role="dialog"
-          aria-modal="true"
-          aria-label={zoomed.alt}
-          onClick={closeZoom}
-        >
-          <img src={zoomUrl} alt={zoomed.alt} />
-          <button
-            type="button"
-            className="announcement-reader-lightbox-close"
-            onClick={closeZoom}
-            aria-label={t('announcements.dismiss')}
-          >
-            ✕
-          </button>
-        </div>
+        <ImageViewer
+          src={zoomUrl}
+          alt={zoomed.alt}
+          caption={zoomed.caption ?? zoomed.alt}
+          onClose={closeZoom}
+        />
       )}
     </FullscreenOverlay>
   );

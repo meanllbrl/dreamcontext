@@ -86,11 +86,16 @@
   color: var(--color-text-tertiary);
 }
 
+/* Leads the meta strip: the popup announces a RELEASE, so the version is the
+   first thing read, not a footnote after the date. */
 .announcements-modal-version {
   padding: 2px 8px;
   border-radius: var(--radius-full);
   background: var(--color-accent-soft);
   color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
 
 .announcements-modal-headline {

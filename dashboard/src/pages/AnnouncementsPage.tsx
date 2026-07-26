@@ -3,7 +3,7 @@ import { useI18n } from '../context/I18nContext';
 import { useAnnouncementInbox } from '../hooks/useAnnouncements';
 import { AnnouncementStoryTeaser } from '../components/announcements/AnnouncementStoryTeaser';
 import { AnnouncementReader } from '../components/announcements/AnnouncementReader';
-import type { Announcement } from '../lib/announcements';
+import { formatVersion, type Announcement } from '../lib/announcements';
 import './AnnouncementsPage.css';
 
 interface Props {
@@ -12,10 +12,12 @@ interface Props {
 }
 
 /**
- * News-index model: the newest announcement is a hero card showing its cover
- * screenshot; every older one is a compact headline row. Clicking any story
- * opens the full-screen AnnouncementReader, where the landing page — hero,
- * screenshots, proof — gets the whole viewport.
+ * Version-history model: one story per release, newest first. The current
+ * version is a hero card showing its cover screenshot; every release before it
+ * is a row on a version rail. The version — not the date — is what the eye lands
+ * on, because the feed answers "what did 0.18 give me?" rather than "what got
+ * built lately". Clicking any release opens the full-screen AnnouncementReader,
+ * where the landing page — hero, screenshots, proof — gets the whole viewport.
  */
 export function AnnouncementsPage({ focus }: Props): React.ReactElement {
   const { t } = useI18n();
@@ -48,11 +50,6 @@ export function AnnouncementsPage({ focus }: Props): React.ReactElement {
   const meta = (a: Announcement) => (
     <div className="announcement-meta">
       <span className="announcement-meta-date">{a.date}</span>
-      {a.version && (
-        <span className="announcement-meta-version">
-          {t('announcements.shippedIn').replace('{version}', a.version)}
-        </span>
-      )}
       {isNew(a) && <span className="announcement-meta-new">{t('announcements.new')}</span>}
     </div>
   );
@@ -69,7 +66,10 @@ export function AnnouncementsPage({ focus }: Props): React.ReactElement {
       ) : (
         <>
           <article className="announcements-hero">
-            {meta(hero)}
+            <div className="announcements-hero-head">
+              <span className="announcements-hero-version">{formatVersion(hero.version)}</span>
+              {meta(hero)}
+            </div>
             <button type="button" className="announcements-hero-title" onClick={() => setOpenId(hero.id)}>
               {hero.title}
             </button>
@@ -83,6 +83,7 @@ export function AnnouncementsPage({ focus }: Props): React.ReactElement {
 
           {rest.length > 0 && (
             <div className="announcements-archive">
+              <h2 className="announcements-archive-label">{t('announcements.earlierReleases')}</h2>
               {rest.map((a) => (
                 <button
                   key={a.id}
@@ -90,11 +91,14 @@ export function AnnouncementsPage({ focus }: Props): React.ReactElement {
                   className="announcement-row"
                   onClick={() => setOpenId(a.id)}
                 >
-                  {meta(a)}
-                  <span className="announcement-row-title">{a.title}</span>
-                  <span className="announcement-row-summary">{a.summary}</span>
-                  <span className="announcement-row-open" aria-hidden="true">
-                    {t('announcements.readStory')} →
+                  <span className="announcement-row-version">{formatVersion(a.version)}</span>
+                  <span className="announcement-row-body">
+                    {meta(a)}
+                    <span className="announcement-row-title">{a.title}</span>
+                    <span className="announcement-row-summary">{a.summary}</span>
+                    <span className="announcement-row-open" aria-hidden="true">
+                      {t('announcements.readStory')} →
+                    </span>
                   </span>
                 </button>
               ))}

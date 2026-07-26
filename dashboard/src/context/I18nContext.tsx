@@ -26,16 +26,16 @@ const translations: Record<string, Record<string, string>> = {
     'nav.expand': 'Expand',
     // ─── Announcements — What's New page + unread popup ──────────────────────
     'announcements.title': "What's New",
-    'announcements.subtitle': 'Hand-picked updates on what shipped in dreamcontext.',
+    'announcements.subtitle': 'One page per release — what shipped, shown in the app itself.',
     'announcements.empty': 'No announcements yet — check back after the next release.',
     'announcements.new': 'New',
     'announcements.whatsNew': "What's New",
     'announcements.gotIt': 'Got it',
     'announcements.seeAll': 'See all announcements',
     'announcements.dismiss': 'Dismiss',
-    'announcements.shippedIn': 'Shipped in v{version}',
     'announcements.readStory': 'Read the full story',
     'announcements.alsoNew': 'Also new',
+    'announcements.earlierReleases': 'Earlier releases',
     'announcements.newer': 'Newer',
     'announcements.older': 'Older',
     // ─── Lab (Insights) — missing-credentials banner ─────────────────────────
@@ -490,6 +490,13 @@ const translations: Record<string, Record<string, string>> = {
     'common.empty': 'Nothing here yet.',
     'common.close': 'Close',
     'common.cancel': 'Cancel',
+    // ─── Full-screen image viewer ───────────────────────────────────────────
+    'imageViewer.label': 'Image',
+    'imageViewer.zoomIn': 'Zoom in',
+    'imageViewer.zoomOut': 'Zoom out',
+    'imageViewer.fit': 'Fit to screen',
+    'imageViewer.actual': 'Zoom to actual size',
+    'imageViewer.hint': 'Scroll or pinch to zoom · drag to pan · double-click to fit',
     // ─── Brain repo (GitHub cloud sync) ─────────────────────────────────────
     'brain.sidebar.connect': 'Connect GitHub',
     'brain.sidebar.setup': 'Set up team sync',

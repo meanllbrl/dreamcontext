@@ -34,7 +34,7 @@ await page.locator('.sidebar-item', { hasText: 'Settings' }).first().click();
 await page.waitForTimeout(1000);
 await page.locator('.settings-nav-item').filter({ hasText: /^Agents/ }).first().click();
 await page.waitForTimeout(1000);
-await shot('chat-is-the-default/settings.png', page.locator('.settings-section').first());
+await shot('v0-22-0/settings.png', page.locator('.settings-section').first());
 
 // The ＋ New menu, cropped to the split button and its open menu.
 for (let i = 0; i < 2; i++) {

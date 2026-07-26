@@ -70,7 +70,7 @@ console.log('sent — waiting on the DOM');
 
 await until('tool card', '.chat-pane:visible .chat-toolcard', 300_000);
 await page.waitForTimeout(3000);
-await shot('native-agent-chat/tools.png');
+await shot('v0-21-0/tools.png');
 
 // The inline image — the surface-briefing payoff: the agent EMBEDS what it
 // references instead of naming a path you then have to go open.
@@ -78,9 +78,9 @@ if (await until('inline image', '.chat-pane:visible .chat-msg-assistant-body img
   await page.waitForTimeout(2500);
   await page.locator('.chat-pane:visible .chat-msg-assistant-body img').first().scrollIntoViewIfNeeded();
   await page.waitForTimeout(1200);
-  await shot('native-agent-chat/inline-media.png');
+  await shot('v0-21-0/inline-media.png');
 }
 
-await shot('native-agent-chat/answer.png');
+await shot('v0-21-0/answer.png');
 await b.close();
 console.log('done');

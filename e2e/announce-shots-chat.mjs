@@ -71,7 +71,7 @@ const caret = page.locator('.agent-add-caret').first();
 if (await caret.count()) {
   await caret.click();
   await page.waitForTimeout(600);
-  await shot('chat-is-the-default/new-menu.png');
+  await shot('v0-22-0/new-menu.png');
   await page.keyboard.press('Escape');
   await page.waitForTimeout(400);
 }
@@ -80,7 +80,7 @@ if (await caret.count()) {
 console.log('starting a chat session');
 await page.locator('.agent-add-btn').first().click();
 await page.waitForTimeout(4000);
-await shot('native-agent-chat/empty.png');
+await shot('v0-21-0/empty.png');
 
 const composer = page.locator('.chat-pane textarea').first();
 await composer.click();
@@ -92,26 +92,26 @@ console.log('sent — waiting on the DOM');
 // Milestone 1: the first tool card (the engine is running and rendering natively).
 await until('first tool card', '.chat-toolcard', 240_000);
 await page.waitForTimeout(2500);
-await shot('native-agent-chat/tools.png');
+await shot('v0-21-0/tools.png');
 
 // Milestone 2: prose from Claude.
 await until('assistant prose', '.chat-msg-assistant-body', 180_000);
 await page.waitForTimeout(2000);
-await shot('native-agent-chat/answer.png');
+await shot('v0-21-0/answer.png');
 
 // Milestone 3: the question card — the headline claim of the whole view.
 if (await until('question card', '.chat-surveycard', 240_000)) {
   await page.locator('.chat-surveycard').first().scrollIntoViewIfNeeded();
   await page.waitForTimeout(1200);
-  await shot('native-agent-chat/question.png');
-  await shot('chat-is-the-default/chat.png');
+  await shot('v0-21-0/question.png');
+  await shot('v0-22-0/chat.png');
 } else {
-  await shot('chat-is-the-default/chat.png');
+  await shot('v0-22-0/chat.png');
 }
 
 // A close crop of the question card alone, for a split block.
 const card = page.locator('.chat-surveycard').first();
-if (await card.count()) await shot('native-agent-chat/question-card.png', card);
+if (await card.count()) await shot('v0-21-0/question-card.png', card);
 
 await b.close();
 console.log('done');

@@ -4,7 +4,7 @@
     "headline": "Your agent, as an app",
     "sub": "The same Claude Code engine, rendered as the app instead of as scrollback. What it makes, it shows you — right where you're already looking.",
     "shot": {
-      "src": "shots/native-agent-chat/inline-media.png",
+      "src": "shots/v0-21-0/inline-media.png",
       "alt": "A chat turn showing git log output in a code block and an image the agent embedded inline with a caption underneath",
       "caption": "Command output as a code block, and the picture the agent referenced rendered in place."
     }
@@ -15,7 +15,7 @@
       "title": "Questions become buttons",
       "body": "When Claude asks something — a choice, a permission, a survey — it stops being a line of text you have to answer by typing the right thing. It becomes a card with the options on it, and your click is the answer.",
       "shot": {
-        "src": "shots/native-agent-chat/question-card.png",
+        "src": "shots/v0-21-0/question-card.png",
         "alt": "A native survey card: the question, four described options with radio buttons, a selected count and a Submit button",
         "frame": "plain"
       },
@@ -26,7 +26,7 @@
       "title": "Tools show their work",
       "body": "Every tool call is its own card with a one-line description of what it's doing and a live status. Expand one to see the detail; leave them collapsed and the conversation stays a conversation instead of a wall of output.",
       "shot": {
-        "src": "shots/native-agent-chat/tools.png",
+        "src": "shots/v0-21-0/tools.png",
         "alt": "A chat turn with a Bash tool card labelled with what the command does and a running status"
       },
       "side": "left"
