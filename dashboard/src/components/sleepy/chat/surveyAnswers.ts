@@ -101,6 +101,15 @@ export function isComplete(questions: QuestionSpec[], picks: SurveyPicks): boole
   return questions.length > 0 && questions.every((q) => isAnswered(q, picks));
 }
 
+/**
+ * Index of the first still-unanswered question, or -1 when there is none. The paged card
+ * shows one question at a time, so "what's left" is no longer visible on screen — this is
+ * what the "n left" affordance jumps to, and where ⌘↵ goes instead of submitting.
+ */
+export function firstUnansweredIndex(questions: QuestionSpec[], picks: SurveyPicks): number {
+  return questions.findIndex((q) => !isAnswered(q, picks));
+}
+
 /** Every resolved value across the card — the "n selected" readout and the receipt line. */
 export function allValues(questions: QuestionSpec[], picks: SurveyPicks): string[] {
   return questions.flatMap((q) => resolveValues(q, picks));
