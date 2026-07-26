@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { api, agentFileUrl } from '../../../api/client';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { ItemView } from './TranscriptItem';
-import { BoardCanvas } from './BoardEmbed';
 import { inlineMediaKind, type Reference, type SubAgentRun } from './chatEntities';
 import type { ChatItem } from '../chatSession';
 
@@ -92,25 +91,21 @@ function FileSlideOver({ path, reference, onClose, onNavApp }: SlideOverFileProp
   const [state, setState] = useState<{ loading: boolean; data: FileContent | null; error: string | null }>(
     { loading: true, data: null, error: null },
   );
-  // A board is DRAWN here, not dumped: its file body is a scene JSON blob, so the generic
-  // text/markdown preview below would show the source rather than the picture. BoardCanvas
-  // owns its own fetch, so skip this one entirely for a board.
-  const isBoard = reference.kind === 'board';
   // A clip PLAYS here and a picture is SHOWN here. Asking the text endpoint for a 44-second
   // video answered "File exceeds the preview size cap" — technically true of the JSON text
   // preview, useless as an answer to "open the reel" (owner report 07-25). Media never goes
   // through that branch: it streams from the raw endpoint, with byte ranges, so it seeks.
-  const mediaKind = isBoard ? null : inlineMediaKind(path);
+  const mediaKind = inlineMediaKind(path);
 
   useEffect(() => {
-    if (isBoard || mediaKind) return;
+    if (mediaKind) return;
     let cancelled = false;
     setState({ loading: true, data: null, error: null });
     api.get<FileContent>(`/agent/file?path=${encodeURIComponent(path)}`)
       .then((data) => { if (!cancelled) setState({ loading: false, data, error: null }); })
       .catch((err: Error) => { if (!cancelled) setState({ loading: false, data: null, error: err.message || 'Failed to load file.' }); });
     return () => { cancelled = true; };
-  }, [path, isBoard, mediaKind]);
+  }, [path, mediaKind]);
 
   const copyPath = () => { void navigator.clipboard?.writeText(path).catch(() => {}); };
 
@@ -135,8 +130,8 @@ function FileSlideOver({ path, reference, onClose, onNavApp }: SlideOverFileProp
           <span aria-hidden>⧉</span> Copy path
         </button>
       </div>
-      <div className="chat-slideover-body" data-board={isBoard || undefined} data-media={mediaKind ?? undefined}>
-        {isBoard ? <BoardCanvas path={path} /> : mediaKind ? (
+      <div className="chat-slideover-body" data-media={mediaKind ?? undefined}>
+        {mediaKind ? (
           <MediaPreview path={path} kind={mediaKind} />
         ) : (
           <>

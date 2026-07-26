@@ -16,7 +16,8 @@ import {
   isAgentRun, runDurationMs, formatModelName, runMetaChips,
   isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote, startSubAgentRun,
   nextFirstShown, splitWindow, revealScrollCorrection, WINDOW_TAIL, WINDOW_STEP, clampLines,
-  type SubAgentRun, type ProgressProbe,
+  promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV,
+  type SubAgentRun, type ProgressProbe, type HistoryNav,
 } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 
 // ─── toolGlyph ──────────────────────────────────────────────────────────────────
@@ -1127,5 +1128,131 @@ describe('clampLines', () => {
   it('treats negative budgets as zero rather than producing reversed slices', () => {
     const r = clampLines(lines(10), -5, -5);
     expect(r).toEqual({ head: [], tail: [], hidden: 10 });
+  });
+});
+
+// ─── Prompt history (composer ↑/↓ recall) ───────────────────────────────────────
+
+const userMsg = (text: string) => ({ kind: 'user', text });
+const assistantMsg = (text: string) => ({ kind: 'text', text });
+
+describe('promptHistory', () => {
+  it('returns this conversation\'s prompts NEWEST first', () => {
+    const items = [userMsg('one'), assistantMsg('reply'), userMsg('two'), userMsg('three')];
+    expect(promptHistory([], items)).toEqual(['three', 'two', 'one']);
+  });
+
+  it('covers a RESUMED conversation: replayed history before live items', () => {
+    // The whole point of resuming is that the earlier turns are yours to re-run, and a resumed
+    // chat keeps them in `history`, separate from `items`.
+    expect(promptHistory([userMsg('old')], [userMsg('new')])).toEqual(['new', 'old']);
+  });
+
+  it('ignores everything that is not a user message', () => {
+    const items = [assistantMsg('a'), { kind: 'tool', text: 'Bash' }, { kind: 'thinking', text: 'hm' }];
+    expect(promptHistory([], items)).toEqual([]);
+  });
+
+  it('drops empty/whitespace prompts and trims what it keeps', () => {
+    expect(promptHistory([], [userMsg('  spaced  '), userMsg('   '), { kind: 'user' }]))
+      .toEqual(['spaced']);
+  });
+
+  it('collapses CONSECUTIVE duplicates — three "npm test"s cost one ↑, not three', () => {
+    const items = [userMsg('npm test'), userMsg('npm test'), userMsg('npm test')];
+    expect(promptHistory([], items)).toEqual(['npm test']);
+  });
+
+  it('keeps NON-adjacent duplicates: the positions between them are what make the walk legible', () => {
+    const items = [userMsg('build'), userMsg('fix'), userMsg('build')];
+    expect(promptHistory([], items)).toEqual(['build', 'fix', 'build']);
+  });
+
+  it('collapses a duplicate that straddles the history/items seam', () => {
+    expect(promptHistory([userMsg('go')], [userMsg('go')])).toEqual(['go']);
+  });
+});
+
+describe('canRecallHistory', () => {
+  it('recalls on an empty draft', () => {
+    expect(canRecallHistory('', 0, 0, NO_HISTORY_NAV)).toBe(true);
+  });
+
+  it('recalls from the very start of a non-empty draft (the shell rule)', () => {
+    expect(canRecallHistory('half typed', 0, 0, NO_HISTORY_NAV)).toBe(true);
+  });
+
+  it('does NOT hijack ↑ mid-draft — losing what you just typed is unrecoverable', () => {
+    expect(canRecallHistory('half typed', 4, 4, NO_HISTORY_NAV)).toBe(false);
+    expect(canRecallHistory('line one\nline two', 12, 12, NO_HISTORY_NAV)).toBe(false);
+  });
+
+  it('does not recall while text is selected from position 0 (that is a shift-select)', () => {
+    expect(canRecallHistory('half typed', 0, 4, NO_HISTORY_NAV)).toBe(false);
+  });
+
+  it('always recalls once a walk is in progress, wherever the caret sits', () => {
+    const walking: HistoryNav = { index: 0, stash: '' };
+    expect(canRecallHistory('a recalled prompt', 17, 17, walking)).toBe(true);
+  });
+});
+
+describe('stepHistory', () => {
+  const entries = ['newest', 'middle', 'oldest'];
+
+  it('the first ↑ recalls the newest prompt and stashes the draft', () => {
+    expect(stepHistory(entries, NO_HISTORY_NAV, 'back', 'wip')).toEqual({
+      nav: { index: 0, stash: 'wip' }, text: 'newest',
+    });
+  });
+
+  it('walks back through every entry, keeping the original stash', () => {
+    let nav: HistoryNav = NO_HISTORY_NAV;
+    const seen: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const step = stepHistory(entries, nav, 'back', 'wip');
+      expect(step).not.toBeNull();
+      nav = step!.nav;
+      seen.push(step!.text);
+    }
+    expect(seen).toEqual(entries);
+    expect(nav).toEqual({ index: 2, stash: 'wip' });
+  });
+
+  it('returns null at the oldest entry so the keystroke stays the textarea\'s', () => {
+    expect(stepHistory(entries, { index: 2, stash: 'wip' }, 'back', 'oldest')).toBeNull();
+  });
+
+  it('returns null for ↑ with no history at all', () => {
+    expect(stepHistory([], NO_HISTORY_NAV, 'back', '')).toBeNull();
+  });
+
+  it('↓ while not browsing is not a history key at all', () => {
+    expect(stepHistory(entries, NO_HISTORY_NAV, 'forward', 'wip')).toBeNull();
+  });
+
+  it('↓ walks forward towards the newest entry', () => {
+    expect(stepHistory(entries, { index: 2, stash: 'wip' }, 'forward', 'oldest')).toEqual({
+      nav: { index: 1, stash: 'wip' }, text: 'middle',
+    });
+  });
+
+  it('stepping forward past the newest restores the stashed draft VERBATIM and ends the walk', () => {
+    expect(stepHistory(entries, { index: 0, stash: 'half typed thing' }, 'forward', 'newest')).toEqual({
+      nav: NO_HISTORY_NAV, text: 'half typed thing',
+    });
+  });
+
+  it('restores an EMPTY stash (started from a blank composer) rather than leaving the prompt', () => {
+    expect(stepHistory(entries, { index: 0, stash: '' }, 'forward', 'newest')).toEqual({
+      nav: NO_HISTORY_NAV, text: '',
+    });
+  });
+
+  it('a fresh walk after a restore re-stashes whatever is in the box now', () => {
+    const restored = stepHistory(entries, { index: 0, stash: 'first draft' }, 'forward', 'newest')!;
+    expect(stepHistory(entries, restored.nav, 'back', 'second draft')).toEqual({
+      nav: { index: 0, stash: 'second draft' }, text: 'newest',
+    });
   });
 });

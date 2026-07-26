@@ -9,8 +9,10 @@
  *     clicks, so a malformed entry must be dropped rather than rendered inert.
  */
 import { describe, it, expect } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
-  parseChatActions, parseActionBlock,
+  parseChatActions, parseActionBlock, toAction,
 } from '../../dashboard/src/components/sleepy/chat/chatActions.js';
 
 const fence = (json: string) => '```dream-actions\n' + json + '\n```';
@@ -142,6 +144,64 @@ describe('parseChatActions — boards', () => {
 
 describe('parseChatActions — empty input', () => {
   it('returns empties for an empty message rather than throwing', () => {
-    expect(parseChatActions('')).toEqual({ body: '', actions: [], boards: [] });
+    expect(parseChatActions('')).toEqual({
+      body: '', actions: [], boards: [], views: [], notices: [], pendingView: false,
+    });
+  });
+});
+
+describe('toAction — url kind', () => {
+  it('accepts an https: URL', () => {
+    expect(toAction({ label: 'Listing', action: 'url', url: 'https://example.com/car/1' }))
+      .toEqual({ label: 'Listing', action: 'url', url: 'https://example.com/car/1' });
+  });
+
+  it('rejects http:, javascript:, data: and file: URLs', () => {
+    for (const url of [
+      'http://example.com',
+      'javascript:alert(1)',
+      'data:text/html,<script>alert(1)</script>',
+      'file:///etc/passwd',
+    ]) {
+      expect(toAction({ label: 'x', action: 'url', url }), url).toBeNull();
+    }
+  });
+
+  it('rejects a url action with no url, or an unparseable one', () => {
+    expect(toAction({ label: 'x', action: 'url' })).toBeNull();
+    expect(toAction({ label: 'x', action: 'url', url: 'not a url' })).toBeNull();
+  });
+
+  it('a dream-actions fence honours a valid url button and drops an unsafe one', () => {
+    const r = parseChatActions(fence(JSON.stringify([
+      { label: 'Open listing', action: 'url', url: 'https://example.com' },
+      { label: 'Steal cookies', action: 'url', url: 'javascript:alert(document.cookie)' },
+    ])));
+    expect(r.actions).toEqual([{ label: 'Open listing', action: 'url', url: 'https://example.com' }]);
+  });
+});
+
+describe('BoardCanvas — fully removed (Capability 3, criterion 10)', () => {
+  /** Every text file under `dashboard/src/`, recursing manually rather than relying on
+   *  `readdirSync`'s `recursive` option — that option needs Node 20.1+/18.17+, and this
+   *  repo's `engines.node` floor is `>=18`. */
+  function collectFiles(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules') continue;
+        out.push(...collectFiles(full));
+      } else {
+        out.push(full);
+      }
+    }
+    return out;
+  }
+
+  it('dashboard/src contains no reference to BoardCanvas', () => {
+    const root = new URL('../../dashboard/src', import.meta.url).pathname;
+    const offenders = collectFiles(root).filter((f) => readFileSync(f, 'utf-8').includes('BoardCanvas'));
+    expect(offenders).toEqual([]);
   });
 });

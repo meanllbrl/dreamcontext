@@ -687,6 +687,87 @@ export function turnHasVisibleProgress(items: ProgressProbe[], pendingCount = 0)
   ));
 }
 
+// ─── Prompt history (composer ↑/↓ recall) ─────────────────────────────────────────
+
+/** The subset of a transcript item {@link promptHistory} reads — structural for the same
+ *  reason as {@link ProgressProbe}: this module never imports chatSession.ts. */
+export interface PromptProbe { kind: string; text?: string }
+
+/**
+ * The prompts already sent in THIS conversation, NEWEST FIRST — what ↑ walks back through.
+ *
+ * Both lists are passed because a resumed chat keeps its replayed transcript in `history`,
+ * separate from the live `items` (see ConversationModel), and recall has to cover both: the
+ * whole point of resuming is that the earlier turns are yours to re-run.
+ *
+ * Consecutive duplicates collapse to one entry. A shell history does the same, and for the
+ * same reason: sending "npm test" three times in a row should cost one ↑, not three. Two
+ * NON-adjacent sends of the same text are kept — the positions between them are what make
+ * walking back through the conversation legible.
+ */
+export function promptHistory(history: PromptProbe[], items: PromptProbe[]): string[] {
+  const out: string[] = [];
+  for (const it of [...history, ...items]) {
+    if (it.kind !== 'user') continue;
+    const text = (it.text ?? '').trim();
+    if (!text) continue;
+    if (out[out.length - 1] === text) continue;
+    out.push(text);
+  }
+  return out.reverse();
+}
+
+/** Where the composer is in its walk back through {@link promptHistory}. `index === null`
+ *  means "not browsing — the textarea holds the user's own draft"; otherwise it is an index
+ *  into the newest-first entries list, and `stash` is the draft that was displaced when the
+ *  walk began (restored by stepping forward past the newest entry). */
+export interface HistoryNav { index: number | null; stash: string }
+
+export const NO_HISTORY_NAV: HistoryNav = { index: null, stash: '' };
+
+/**
+ * Whether ↑ should recall a past prompt rather than move the caret.
+ *
+ * Already browsing → always (that's the walk continuing). Otherwise the draft must be empty,
+ * or the caret parked at the very start with nothing selected — the shell/Claude Code rule.
+ * Without the caret clause, ↑ inside a half-written multi-line message would throw the
+ * message away to show an old one, which is the worse failure by far: recall is a
+ * convenience, losing what you just typed is not recoverable.
+ */
+export function canRecallHistory(
+  draft: string, caret: number, selectionEnd: number, nav: HistoryNav,
+): boolean {
+  if (nav.index !== null) return true;
+  if (!draft) return true;
+  return caret === 0 && selectionEnd === 0;
+}
+
+/**
+ * One ↑/↓ step through the history. Pure: returns the next nav state plus the text the
+ * textarea should show, or `null` when the step is a no-op (already at the oldest entry, ↓
+ * while not browsing, or no history at all) — the caller then leaves the keystroke alone
+ * instead of swallowing it.
+ *
+ * `draft` is the CURRENT textarea text, stashed on the first backward step so stepping
+ * forward past the newest entry hands it back verbatim.
+ */
+export function stepHistory(
+  entries: string[], nav: HistoryNav, dir: 'back' | 'forward', draft: string,
+): { nav: HistoryNav; text: string } | null {
+  if (dir === 'back') {
+    const next = nav.index === null ? 0 : nav.index + 1;
+    if (next >= entries.length) return null;
+    const stash = nav.index === null ? draft : nav.stash;
+    return { nav: { index: next, stash }, text: entries[next] };
+  }
+  if (nav.index === null) return null;
+  const next = nav.index - 1;
+  // Walked back out of the history: the draft that was displaced comes back, and the nav
+  // resets so the next ↑ starts a fresh walk (and re-stashes whatever is there by then).
+  if (next < 0) return { nav: NO_HISTORY_NAV, text: nav.stash };
+  return { nav: { index: next, stash: nav.stash }, text: entries[next] };
+}
+
 // ─── Stick-to-bottom (transcript auto-scroll) ─────────────────────────────────────
 
 /** How far from the bottom still counts as "at the bottom" — one short line of slack, so a

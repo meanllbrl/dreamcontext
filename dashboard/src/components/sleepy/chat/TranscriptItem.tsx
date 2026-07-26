@@ -5,6 +5,7 @@ import { useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateToken
 import { parseChatActions, type ChatAction } from './chatActions';
 import { ActionRow } from './ActionRow';
 import { BoardEmbed } from './BoardEmbed';
+import { ChatViews } from './ChatViews';
 import { IconButton } from './atoms';
 import { HoverActions, ConfirmPrompt, ThinkingPill } from './molecules';
 import { ToolCard } from './ToolCard';
@@ -80,7 +81,7 @@ function UserMessage({
 // ─── Assistant message (full-width, NO avatar) ─────────────────────────────────────
 
 function AssistantMessage({
-  item, session, onQuote, onOpenFile, onOpenBoard, onAction, readOnly,
+  item, session, onQuote, onOpenFile, onOpenBoard, onAction, conversationId, readOnly,
 }: {
   item: ChatTextItem;
   session?: ChatSession;
@@ -92,15 +93,24 @@ function AssistantMessage({
   onOpenBoard?: (path: string) => void;
   /** Run one of the buttons the answer asked for — `ChatPane` decides what each does. */
   onAction?: (action: ChatAction) => void;
+  /** This conversation's id — required by `ChatViews` (a checklist's Submit has to land
+   *  somewhere). Omitted for a read-only drill-in (SlideOver's sub-agent transcript), which
+   *  is why it's optional here rather than on `ChatViews` itself: `<ChatViews>` only ever
+   *  renders under `{onAction && conversationId && …}`, so a drill-in — which passes no
+   *  `onAction` either — renders no views, exactly like it renders no `ActionRow` today. */
+  conversationId?: string;
   readOnly: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
-  // What the answer asked the view to render (buttons, boards) versus what it asked it to
-  // READ. Re-derived per token while streaming — parseChatActions is pure and cheap, and
-  // hides a half-written fence rather than flashing raw JSON.
-  const { body, actions, boards } = useMemo(() => parseChatActions(item.text), [item.text]);
+  // What the answer asked the view to render (buttons, boards, charts/pages/checklists)
+  // versus what it asked it to READ. Re-derived per token while streaming —
+  // parseChatActions is pure and cheap, and hides a half-written fence rather than
+  // flashing raw JSON.
+  const { body, actions, boards, views, notices, pendingView } = useMemo(
+    () => parseChatActions(item.text), [item.text],
+  );
 
   // No dependency list on purpose: these decorate the HTML `MarkdownPreview` wrote, and that
   // subtree can be re-written out from under them by any commit. See the section header in
@@ -111,9 +121,14 @@ function AssistantMessage({
   useClickablePaths(bodyRef, (path) => onOpenFile?.(path));
 
   // Nothing left to show: an empty finished text block, or one that was ONLY a fence/board
-  // reference whose rendering is handled below.
+  // reference/view whose rendering is handled below. A degraded block that produced only a
+  // notice (no view survived validation) still counts as something to show — the
+  // degradation contract requires every drop to stay visible, never silently vanish with
+  // the rest of an otherwise-empty message.
   if (!item.text && item.done) return null;
-  if (item.done && !body && !actions.length && !boards.length) return null;
+  if (item.done && !body && !actions.length && !boards.length && !views.length && !notices.length && !pendingView) {
+    return null;
+  }
 
   return (
     <div className="chat-msg-assistant-row" data-done={item.done}>
@@ -121,6 +136,16 @@ function AssistantMessage({
         <MarkdownPreview content={body || (item.done ? '' : '…')} />
         {!item.done && <span className="chat-msg-caret" aria-hidden />}
       </div>
+      {onAction && conversationId && (
+        <ChatViews
+          views={views}
+          notices={notices}
+          pendingView={pendingView}
+          conversationId={conversationId}
+          onAction={onAction}
+          onOpenFile={onOpenFile}
+        />
+      )}
       {/* Drawn, not linked: the board the answer just made, in the conversation. Only once
           it has stopped streaming — a path still being typed points at nothing. */}
       {item.done && onOpenBoard && boards.map((path) => (
@@ -168,7 +193,7 @@ function ThinkingBlock({ item }: { item: ChatThinkingItem }) {
 // ─── Dispatcher ─────────────────────────────────────────────────────────────────────
 
 function ItemViewInner({
-  item, session, onOpenFile, onOpenBoard, onAction, onQuote, readOnly = false,
+  item, session, onOpenFile, onOpenBoard, onAction, conversationId, onQuote, readOnly = false,
 }: {
   item: ChatItem;
   /** The live session backing this item — omitted for a read-only drill-in transcript
@@ -180,6 +205,9 @@ function ItemViewInner({
   onOpenBoard?: (path: string) => void;
   /** Run a `dream-actions` button. Omitted (the drill-in) means the row isn't offered. */
   onAction?: (action: ChatAction) => void;
+  /** This conversation's id, for `ChatViews`' checklist card. Optional — the read-only
+   *  drill-in passes neither this nor `onAction`, so it renders no views (plan §T6). */
+  conversationId?: string;
   onQuote?: (text: string) => void;
   /** Suppresses the mutating hover actions (edit/retry/quote) — Copy always stays,
    *  since it never mutates anything. Used by the sub-agent drill-in. */
@@ -197,6 +225,7 @@ function ItemViewInner({
           onOpenFile={onOpenFile}
           onOpenBoard={onOpenBoard}
           onAction={onAction}
+          conversationId={conversationId}
           readOnly={readOnly}
         />
       );

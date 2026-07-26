@@ -1172,3 +1172,113 @@
 .chat-bgshells-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 .chat-bgshells-btn.danger { border-color: var(--color-error); color: var(--color-error); }
 .chat-bgshells-btn.danger:hover { background: var(--color-error-subtle); color: var(--color-error); }
+
+/* ── Message queue (QueuedMessages) ─────────────────────────────────────────────────
+   Sits between the shells tray and the composer, on the same chrome scale: it is pending
+   input, not a message, so it reads as furniture attached to the composer rather than as a
+   transcript card. Accent-tinted while it is going to fire on its own; the tint drops when
+   the queue is paused, because "waiting its turn" and "held back" must not look alike. */
+
+.chat-queue {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 8%, transparent));
+}
+.chat-queue[data-paused] { background: var(--color-bg-secondary); }
+.chat-queue-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.chat-queue-glyph { font-size: 11px; color: var(--color-accent); }
+.chat-queue[data-paused] .chat-queue-glyph { color: var(--color-warning); }
+.chat-queue-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-queue-when { font-weight: var(--font-weight-normal); color: var(--color-text-tertiary); }
+
+/* Capped and scrolling inside itself, for the reason the shells tray is: docked furniture
+   takes its height out of the transcript, and nothing bounds how many messages get queued. */
+.chat-queue-rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: min(200px, 28vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--color-border-hover) transparent;
+}
+.chat-queue-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-4) var(--space-1) var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+.chat-queue-num {
+  flex: 0 0 auto;
+  min-width: 14px;
+  padding-top: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
+  text-align: right;
+}
+/* Two lines, then ellipsis: enough to recognise the message, not enough for one long queued
+   paragraph to own the strip. The full text is one click away in the editor. */
+.chat-queue-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-1) 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 12.5px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: text;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-queue-text:hover { color: var(--color-accent); }
+.chat-queue-text:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+.chat-queue-edit {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: none;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-focus);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.chat-queue-edit:focus { outline: none; }
+.chat-queue-actions { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--space-2); padding-top: 2px; }
+.chat-queue-btn {
+  padding: 3px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chat-queue-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.chat-queue-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+/* Accent as an OUTLINE, not a fill: `--color-accent-text` is white in both themes (it is the
+   text colour for a solid accent) and would be unreadable over this strip's own accent tint. */
+.chat-queue-btn.accent { border-color: var(--color-accent); color: var(--color-accent); }
+.chat-queue-btn.accent:hover { background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent)); color: var(--color-accent); }

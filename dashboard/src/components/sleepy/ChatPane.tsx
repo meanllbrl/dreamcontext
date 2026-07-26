@@ -16,10 +16,12 @@ import { PlanCard } from './chat/PlanCard';
 import { BypassNoticeCard } from './chat/BypassNoticeCard';
 import { SubAgentCard, SubAgentRail } from './chat/SubAgentCard';
 import { BackgroundShellsTray } from './chat/BackgroundShellsTray';
+import { QueuedMessages } from './chat/QueuedMessages';
 import { SlideOver } from './chat/SlideOver';
 import { Lightbox } from './chat/Lightbox';
-import { BoardEmbed } from './chat/BoardEmbed';
+import { BoardEmbed, BoardFullscreen } from './chat/BoardEmbed';
 import type { ChatAction } from './chat/chatActions';
+import { openExternalUrl } from '../../lib/desktop';
 import {
   EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, SignInBanner, WorkingIndicator,
 } from './chat/Banners';
@@ -289,6 +291,11 @@ export function ChatPane({
 
   const [slideOver, setSlideOver] = useState<SlideOverState>(null);
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
+  /** A board opened genuinely fullscreen (§1.7) — the ONLY overlay a board ever renders in
+   *  now. Owned here, not by `SlideOver`, because a board has four entry points spread
+   *  across this file, `BoardEmbed` and `TranscriptItem`, and a single owner is what makes
+   *  all four converge on the same overlay instead of drifting back apart. */
+  const [boardFull, setBoardFull] = useState<string | null>(null);
   const [replyQuote, setReplyQuote] = useState<string | null>(null);
 
   // ── Transcript scroll: one scroller, one session, one stick-to-bottom state ──────────
@@ -685,13 +692,18 @@ export function ChatPane({
   // per mounted pane.
   const handleOpenFile = useCallback((path: string) => {
     const ref = classifyReference(path);
+    // A board is DRAWN fullscreen, never in the slide-over — see BoardFullscreen's own
+    // doc-comment for why the panel was wrong for a canvas. Checked before the image
+    // branch: `classifyReference` never marks a board `isImage`, but this keeps the
+    // routing decision in one place rather than relying on that being true forever.
+    if (ref.kind === 'board') { setBoardFull(path); return; }
     if (ref.isImage) {
       setLightbox({ src: agentFileUrl(path, { raw: true }), caption: ref.label });
       return;
     }
     setSlideOver({ mode: 'file', path });
   }, []);
-  const handleOpenBoard = useCallback((path: string) => setSlideOver({ mode: 'file', path }), []);
+  const handleOpenBoard = useCallback((path: string) => setBoardFull(path), []);
   const handleDrillIn = useCallback((run: SubAgentRun) => setSlideOver({ mode: 'subagent', run }), []);
   const handleOpenShell = useCallback((run: SubAgentRun) => setSlideOver({ mode: 'shell', run }), []);
   const handleStopShell = useCallback((run: SubAgentRun) => session.stopTask(run.taskId), [session]);
@@ -720,6 +732,9 @@ export function ChatPane({
       case 'ask':
         session.sendText(action.text!);
         session.focus();
+        break;
+      case 'url':
+        void openExternalUrl(action.url!);
         break;
     }
   }, [handleNavApp, handleOpenFile, session]);
@@ -760,6 +775,7 @@ export function ChatPane({
         onOpenFile={handleOpenFile}
         onOpenBoard={handleOpenBoard}
         onAction={handleAction}
+        conversationId={session.claudeId}
         onQuote={handleQuote}
       />
     );
@@ -955,6 +971,10 @@ export function ChatPane({
         onOpen={handleOpenShell}
         onStop={handleStopShell}
       />
+      {/* Nearest the composer, and OUTSIDE the needsSignIn/ended branch below on purpose: these
+          rows are the only copy of text the user has already committed to sending, so they must
+          survive the composer being replaced by a banner (see QueuedMessages.tsx). */}
+      <QueuedMessages session={session} />
       {needsSignIn ? (
         <SignInBanner
           canSignInInApp={canSignInInApp}
@@ -1018,6 +1038,7 @@ export function ChatPane({
         />
       )}
       {lightbox && <Lightbox src={lightbox.src} caption={lightbox.caption} onClose={() => setLightbox(null)} />}
+      {boardFull && <BoardFullscreen path={boardFull} onClose={() => setBoardFull(null)} />}
     </div>
   );
 }

@@ -1,0 +1,274 @@
+/* ChecklistWindow — the pinned always-on-top checklist window (chat-interactive-views plan
+   §1.9/§1.13). This window has no native chrome to speak of (titleBarStyle: 'overlay' +
+   hiddenTitle: true, same as every other app window), so this file draws the title bar,
+   content area and footer. Tokens only — every value below is a token from tokens.css, so
+   light/dark theming is automatic (this window is wrapped in <ThemeProvider> by App.tsx).
+   Sized for the window's 380×560 default, but flexible down to its 300×260 minimum. */
+
+.checklist-window {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+}
+
+/* ── title bar ─────────────────────────────────────────────────────────────────────────── */
+
+.checklist-titlebar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 36px;
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  user-select: none;
+}
+.checklist-titlebar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+.checklist-pin,
+.checklist-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.checklist-pin:hover,
+.checklist-close:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.checklist-pin.is-on { color: var(--color-accent); }
+
+/* ── unavailable state — the security-boundary refusal, not politeness ───────────────────── */
+
+.checklist-gone {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+/* ── content ───────────────────────────────────────────────────────────────────────────── */
+
+.checklist-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4);
+}
+.checklist-intro {
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.checklist-progress {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+.checklist-notes-hint {
+  margin: 0 0 var(--space-3);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.checklist-items {
+  display: flex;
+  flex-direction: column;
+}
+.checklist-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.checklist-item:last-child { border-bottom: none; }
+.checklist-item.is-done .checklist-item-text {
+  color: var(--color-text-tertiary);
+  text-decoration: line-through;
+}
+
+.checklist-item-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.checklist-item-row input[type='checkbox'] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+.checklist-item-text {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  color: var(--color-text);
+}
+.checklist-item-hint {
+  margin: 0 0 0 24px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.checklist-item-note {
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  resize: vertical;
+}
+.checklist-item-note::placeholder { color: var(--color-text-tertiary); }
+
+.checklist-attach-btn,
+.checklist-secret-toggle {
+  align-self: flex-start;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.checklist-attach-btn:hover,
+.checklist-secret-toggle:hover { background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
+
+.checklist-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+.checklist-file-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+}
+.checklist-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+.checklist-file-remove {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+.checklist-file-remove:hover { color: var(--color-error); }
+
+/* ── secret field — hardened against the OS/WebKit credential manager (plan §1.13.5) ─────
+   `type="text"` (never "password") plus `-webkit-text-security` masks the glyphs visually
+   without ever telling the credential manager this field holds a secret. */
+
+.checklist-secret-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.checklist-secret-input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  -webkit-text-security: disc;
+}
+.checklist-secret-input.is-revealed { -webkit-text-security: none; }
+.checklist-secret-note {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+/* ── footer ────────────────────────────────────────────────────────────────────────────── */
+
+.checklist-footer {
+  flex: 0 0 auto;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+.checklist-fail-strip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+}
+.checklist-fail-strip p { margin: 0; }
+.checklist-copy-btn {
+  align-self: flex-start;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+.checklist-copy-btn:hover { background: var(--color-error-subtle); }
+
+.checklist-submit-btn {
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  transition: filter var(--transition-fast), opacity var(--transition-fast);
+}
+.checklist-submit-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.checklist-submit-btn:disabled { opacity: 0.6; cursor: default; }

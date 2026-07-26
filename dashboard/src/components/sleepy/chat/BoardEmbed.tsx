@@ -5,14 +5,15 @@ import { ExcalidrawPreview } from '../../core/ExcalidrawPreview';
 import { FullscreenOverlay } from '../../layout/FullscreenOverlay';
 
 /**
- * An Excalidraw board the answer named, DRAWN — in the transcript ({@link BoardEmbed}) and
- * in the file panel ({@link BoardCanvas}).
+ * An Excalidraw board the answer named, DRAWN — inline as a transcript card
+ * ({@link BoardEmbed}) and, from every entry point, genuinely fullscreen
+ * ({@link BoardFullscreen}, portaled to `document.body`). There is no side-panel board view
+ * any more: a board is a canvas, and a canvas wants the window, not a cramped panel.
  *
  * The whole point of the Chat view: an agent that just built a board should be able to show
  * it, not tell you where it is. Both render the same live canvas the Knowledge page uses
  * (`ExcalidrawPreview` — pan/zoom, crisp at any scale, lazy-loaded), so a board made two
- * seconds ago is visible without leaving the conversation. Before this, a board reference
- * bottomed out in the slide-over's numbered-text view, i.e. the scene JSON as source.
+ * seconds ago is visible without leaving the conversation.
  *
  * Two fetches, because a board is two things — see {@link useBoardScene}.
  */
@@ -70,14 +71,6 @@ export function boardName(path: string): string {
   return (i === -1 ? clean : clean.slice(i + 1)).replace(/\.excalidraw(\.md)?$/i, '');
 }
 
-/** The canvas alone — for a surface that supplies its own chrome (the file slide-over). */
-export function BoardCanvas({ path }: { path: string }) {
-  const { content, assets, assetsLoading, failed } = useBoardScene(path);
-  if (failed) return <p className="chat-slideover-status error">Couldn't read this board.</p>;
-  if (content === null) return <div className="chat-board-loading">Loading board…</div>;
-  return <ExcalidrawPreview content={content} boardKey={path} assets={assets} assetsLoading={assetsLoading} />;
-}
-
 /**
  * The board filling the window. PORTALED to `document.body` because `.agent-surface` sets
  * `contain: layout paint`, which makes it the containing block for `position: fixed` — an
@@ -88,7 +81,7 @@ export function BoardCanvas({ path }: { path: string }) {
  * its own `boardKey` suffix, so opening full-screen fits the board to the big viewport and
  * closing leaves the card exactly where the reader had panned it.
  */
-function BoardFullscreen({ path, onClose }: { path: string; onClose: () => void }) {
+export function BoardFullscreen({ path, onClose }: { path: string; onClose: () => void }) {
   const { content, assets, assetsLoading, failed } = useBoardScene(path);
   return createPortal(
     <FullscreenOverlay label={boardName(path)} onClose={onClose}>
@@ -109,11 +102,10 @@ export function BoardEmbed({
   path, onOpenBoard,
 }: {
   path: string;
-  /** Open the board's own full-height panel — the "bigger" affordance. */
+  /** Open this board fullscreen — the "bigger" affordance. */
   onOpenBoard: (path: string) => void;
 }) {
   const { content, assets, assetsLoading, failed } = useBoardScene(path);
-  const [full, setFull] = useState(false);
 
   if (failed) {
     return (
@@ -133,15 +125,11 @@ export function BoardEmbed({
         <span className="chat-board-name"><span aria-hidden>▦</span> {boardName(path)}</span>
         <button
           type="button"
-          className="chat-board-full-btn"
-          onClick={() => setFull(true)}
-          title="Full screen"
+          className="chat-board-open"
+          onClick={() => onOpenBoard(path)}
           aria-label={`Open ${boardName(path)} full screen`}
         >
-          <span aria-hidden>⛶</span>
-        </button>
-        <button type="button" className="chat-board-open" onClick={() => onOpenBoard(path)}>
-          Open <span aria-hidden>↗</span>
+          Full screen <span aria-hidden>⛶</span>
         </button>
       </div>
       <div className="chat-board-canvas">
@@ -149,7 +137,6 @@ export function BoardEmbed({
           ? <div className="chat-board-loading">Loading board…</div>
           : <ExcalidrawPreview content={content} boardKey={path} assets={assets} assetsLoading={assetsLoading} />}
       </div>
-      {full && <BoardFullscreen path={path} onClose={() => setFull(false)} />}
     </div>
   );
 }

@@ -25,8 +25,11 @@
  *   • media + boards        — `chat/chatEntities.ts` (`useInlineMedia`) and `chat/BoardEmbed.tsx`
  *   • `dream-actions`       — `chat/chatActions.ts` (`parseChatActions`) + `chat/ActionRow.tsx`
  *   • backticked paths      — `chat/chatEntities.ts` (`useClickablePaths`)
+ *   • `dream-view`          — `lib/chatViewSpec.ts` (`parseViewBlock`, the schema + caps) and
+ *                             `chat/ChatViews.tsx` (the chart/page/checklist renderer)
  * A capability named here that the view doesn't render is worse than one left unnamed: the
- * agent writes a promise the UI then breaks. Change one, change the other.
+ * agent writes a promise the UI then breaks. Change one, change the other. Mechanically
+ * pinned by `tests/unit/chat-surface-lockstep.test.ts`.
  */
 export const CHAT_SURFACE_BRIEFING = `# Surface: dreamcontext Chat (not a terminal)
 
@@ -59,6 +62,28 @@ click of consent, then works the same).
   \`task\` / \`knowledge\` / \`core\` take an \`id\` (the dreamcontext slug) and navigate the app.
   \`file\` / \`board\` take a \`path\` and open a preview. \`reveal\` takes a \`path\` and hands it
   to the OS. \`ask\` takes \`text\` and loads it into the composer for the user to send.
+
+- **A chart, a page, or a checklist** — a fenced \`dream-view\` block (one JSON object, a
+  \`type\`) becomes a real object; a still-open one stays hidden.
+
+\`\`\`dream-view
+{"type":"chart","render":"line","series":[{"name":"daily","points":[{"t":"07-01","v":12}]}]}
+\`\`\`
+  \`render\`: \`line\`|\`pie\`|\`number\`|\`funnel\`|\`table\`. Max 8 series, 365 pts each.
+
+\`\`\`dream-view
+{"type":"page","body":[{"kind":"card","title":"Golf GTI"}]}
+\`\`\`
+  To compare things, not prose: \`rail\` scrolls sideways (leaves only); widgets \`card\`/
+  \`table\`/\`text\`/\`stat\`/\`image\`/\`divider\`, max 60. Card \`actions\` also take \`url\`
+  (https-only); images lose their query string.
+
+\`\`\`dream-view
+{"type":"checklist","id":"x","title":"…","items":[{"id":"1","text":"…","wants":"secret"}]}
+\`\`\`
+  Always-on-top window for a procedure in ANOTHER app — user ticks/notes/attaches, Submit
+  sends it back as one message. \`wants\`: \`note\`|\`file\`|\`secret\`; max 40 items, re-send the
+  same \`id\` to update.
 
 Only name paths that exist — a wrong one renders as a dead card. At most ~4 buttons, and
 only when there is a real next step. Don't narrate the mechanism ("I'll add a button"),

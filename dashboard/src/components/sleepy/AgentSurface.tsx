@@ -38,6 +38,7 @@ import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
 import { pickFiles, pickFolders } from '../../lib/desktop';
+import { listenForChecklistSubmits, type ChecklistSubmitPayload } from '../../lib/checklistBridge';
 
 /**
  * Agent — the REAL interactive Claude Code, in-app, MULTI-SESSION. Each session is
@@ -923,6 +924,45 @@ export function AgentSurface() {
       window.removeEventListener(TASK_MANAGER_SEND_EVENT, onSend);
     };
   }, [taskManagerAgent]);
+
+  // ── Checklist submit bridge (T8, plan §1.11/§1.12) ────────────────────────────────
+  // The pinned checklist window is a SEPARATE OS window with no WebSocket of its own; its
+  // Submit reaches this surface via a targeted Tauri event (`checklistBridge.ts`) rather
+  // than the server, which keeps no session registry to route a submit through (a bare
+  // `liveConversations: Set<string>`, ids only). `AgentSurface` is the right home because
+  // it owns `sessions` for the app's lifetime — a `ChatPane` is per-visible-pane and can be
+  // garaged, so it cannot durably hold this listener.
+  //
+  // `sessionList` is keyed by INTERNAL session id (`chat-N`); `sessions.current` is a
+  // `Map<internal id, Session | ChatSession>` keyed the SAME way — NOT by `claudeId`. The
+  // submit payload's `conversationId` is a `claudeId`, so it has to be resolved through
+  // `sessionList` first (matching on `kind === 'chat'` AND `claudeId`) to get the internal
+  // id `sessions.current` actually indexes on. A literal `sessions.current.get(conversationId)`
+  // would miss on every single submit.
+  //
+  // The vault check (payload.vault vs. the window's own vault) lives in the BRIDGE, not
+  // here — `listenForChecklistSubmits` takes `vault` for exactly that belt-and-braces
+  // comparison, so this handler only ever sees submits already confirmed to belong to this
+  // window's vault.
+  const handleChecklistSubmit = useCallback((payload: ChecklistSubmitPayload): boolean => {
+    const entry = sessionList.find((m) => m.kind === 'chat' && m.claudeId === payload.conversationId);
+    const session = entry ? sessions.current.get(entry.id) : undefined;
+    if (!session || session.kind !== 'chat') return false;
+    const chat = session as ChatSession;
+    // `send`, not `sendText` — the owner's "Submit sends the filled-in list back as ONE
+    // message" means a real user turn, not a composer-draft append (`sendText` only
+    // appends to the draft). Mid-turn, queue it exactly like the composer's own
+    // ⏎-while-busy path (Composer.tsx: `busy ? session.enqueue(message) : session.send(message)`).
+    if (chat.busy) chat.enqueue(payload.markdown);
+    else chat.send(payload.markdown);
+    return true;
+  }, [sessionList]);
+
+  useEffect(() => {
+    const vault = getActiveVault();
+    if (!vault) return;
+    return listenForChecklistSubmits(vault, handleChecklistSubmit);
+  }, [handleChecklistSubmit]);
 
   // ── Task Manager composer: the SAME per-pane bar, portaled into the task page ────
   // The TM pane gets the exact `PaneComposer` strip an overlay pane has (files, skills,
