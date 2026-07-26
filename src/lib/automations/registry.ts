@@ -267,7 +267,7 @@ export function checkApproval(projectRoot: string, m: AutomationManifest, home?:
 
 /** Record approval of `m` as it stands right now. Called by `create` (the
  *  local human just authored it — auto-approve) and by `approve` (after the
- *  human reviews the 5-field diff). `now` is injected for determinism. */
+ *  human reviews every hashed field). `now` is injected for determinism. */
 export function approveAutomation(projectRoot: string, m: AutomationManifest, now: Date, home?: string): ApprovalEntry {
   const entry: ApprovalEntry = {
     manifestSha256: manifestHash(m),

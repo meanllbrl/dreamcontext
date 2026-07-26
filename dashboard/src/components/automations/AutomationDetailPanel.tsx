@@ -7,7 +7,7 @@ import './AutomationDetailPanel.css';
 /**
  * AutomationDetailPanel — the modal that opens when you click an automation
  * card. Three things live here that don't fit on a dense card: the full
- * five-field approval review (mirrors the CLI's `approve` — see its comment:
+ * full-field approval review (mirrors the CLI's `approve` — see its comment:
  * the registry stores only a sha256, never prior field values, so this is a
  * complete review every time, not an old-vs-new diff), the orphaned-run
  * warning with the exact `kill` command, and the bounded run history.
@@ -218,6 +218,15 @@ export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }
                   <div className="adp-detail-row">
                     <span className="adp-detail-label">Model</span>
                     <span className="adp-detail-value">{automation?.model ?? 'default'}</span>
+                  </div>
+                  {/* Effort is approval-hashed just like Model, so it MUST be visible
+                      here — this table IS the full-field review the human approves
+                      from, and a hashed field they cannot see changes the hash
+                      invisibly. Same `?? 'default'` shape as Model: null means
+                      `claude` picks, not "unset". */}
+                  <div className="adp-detail-row">
+                    <span className="adp-detail-label">Effort</span>
+                    <span className="adp-detail-value">{automation?.effort ?? 'default'}</span>
                   </div>
                   <div className="adp-detail-row">
                     <span className="adp-detail-label">Timeout</span>

@@ -29,6 +29,7 @@ import { Router } from '../../src/server/router.js';
 import { killTrackedChildren } from '../../src/server/lifecycle.js';
 import { createAutomation } from '../../src/lib/automations/store.js';
 import { approveAutomation } from '../../src/lib/automations/registry.js';
+import { APPROVAL_DIFF_FIELDS } from '../../src/lib/automations/types.js';
 import {
   handleAutomationsList,
   handleAutomationsRunStatus,
@@ -202,6 +203,43 @@ describe('GET /api/automations/:slug', () => {
       automation: { slug: 'eod-digest', prompt: 'do the thing' },
       approved: true,
     });
+  });
+
+  /**
+   * REGRESSION LOCK (the real one). `effort` shipped into the manifest and the
+   * approval hash but never into this payload, so the dashboard's approval review
+   * rendered five of the six hashed fields and a reviewer could not see `effort`
+   * at all. Enumerating APPROVAL_DIFF_FIELDS instead of listing names by hand
+   * means the NEXT field added to the hash fails here until it is surfaced too —
+   * a hardcoded list would have to be remembered, which is exactly what failed.
+   */
+  it('exposes EVERY approval-hashed field, so the dashboard review can never show a subset', async () => {
+    makeAutomation('full-field-review', { approve: true });
+    const { res, status, body } = makeRes();
+    await handleAutomationsShow(getReq, res, { slug: 'full-field-review' }, contextRoot);
+    expect(status()).toBe(200);
+    const automation = body().automation as Record<string, unknown>;
+    for (const field of APPROVAL_DIFF_FIELDS) {
+      expect(
+        Object.prototype.hasOwnProperty.call(automation, field),
+        `the detail payload omits approval-hashed field "${field}" — the dashboard cannot review what it never receives`,
+      ).toBe(true);
+    }
+  });
+
+  it('carries a non-null effort through verbatim, not just the key', async () => {
+    const manifest = createAutomation(contextRoot, {
+      slug: 'effort-carrier',
+      title: 'Effort carrier',
+      days: 'daily',
+      at: '18:00',
+      prompt: 'do the thing',
+      effort: 'high',
+    });
+    approveAutomation(projectRoot, manifest, new Date('2026-07-25T12:00:00.000Z'));
+    const { res, body } = makeRes();
+    await handleAutomationsShow(getReq, res, { slug: 'effort-carrier' }, contextRoot);
+    expect((body().automation as Record<string, unknown>).effort).toBe('high');
   });
 });
 

@@ -134,6 +134,13 @@ export async function handleAutomationsShow(
         schedule: manifest.schedule,
         scheduleLabel: formatSchedule(manifest.schedule),
         model: manifest.model,
+        // `effort` belongs here for the same reason `model` does: this payload is
+        // what the dashboard's full-field approval review renders, and approve MUST
+        // show every APPROVAL_DIFF_FIELDS entry, never a subset — a reviewer who
+        // cannot see a hashed field approves a manifest whose changed field is
+        // invisible to them. Ordered between `model` and `timeoutMinutes` to mirror
+        // canonicalApprovalPayload.
+        effort: manifest.effort,
         timeoutMinutes: manifest.timeoutMinutes,
         catchupHours: manifest.catchupHours,
         outputDir: manifest.outputDir,
@@ -178,7 +185,7 @@ export async function handleAutomationsRunNow(
 /**
  * POST /api/automations/:slug/approve — record approval of the manifest as it
  * stands right now (the same primitive the CLI's `approve -y` calls after the
- * human reviews the 5-field diff; rendering that diff is a dashboard-side
+ * human reviews every hashed field; rendering that diff is a dashboard-side
  * concern against the fields already exposed by `GET /api/automations/:slug`).
  */
 export async function handleAutomationsApprove(

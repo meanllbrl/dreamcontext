@@ -32,6 +32,19 @@ const CLI_REFERENCE_MD = readFileSync(join(ROOT, 'skill', 'references', 'cli-ref
 const SLEEP_MD = readFileSync(join(ROOT, 'skill', 'references', 'sleep.md'), 'utf-8');
 const SLEEP_PRODUCT_MD = readFileSync(join(ROOT, 'agents', 'sleep-product.md'), 'utf-8');
 
+// The DASHBOARD approval-review surface. Added after `effort` shipped into the
+// manifest and the approval hash but into neither the detail route, the dashboard
+// types, nor the panel — so the dashboard rendered five of six hashed fields and
+// the earlier completeness gate, scoped to `skill/` only, could not see it. The
+// gate's scope now follows the CLAIM wherever it is made, not one directory.
+const USE_AUTOMATIONS_TS = readFileSync(join(ROOT, 'dashboard', 'src', 'hooks', 'useAutomations.ts'), 'utf-8');
+const DETAIL_PANEL_TSX = readFileSync(
+  join(ROOT, 'dashboard', 'src', 'components', 'automations', 'AutomationDetailPanel.tsx'),
+  'utf-8',
+);
+const SHOW_ROUTE_TS = readFileSync(join(ROOT, 'src', 'server', 'routes', 'automations.ts'), 'utf-8');
+const REGISTRY_TS = readFileSync(join(ROOT, 'src', 'lib', 'automations', 'registry.ts'), 'utf-8');
+
 const NUMBER_WORDS: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
   nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
@@ -254,18 +267,79 @@ describe('approval surface — six hashed fields, everywhere it is claimed', () 
     ]);
   });
 
-  it('the automations skill-doc surface contains no stale "five hashed fields" claim', () => {
+  it('no surface that CLAIMS a hashed-field count still says five — docs, dashboard, or route', () => {
     // Bound to the CLAIM ("N hashed fields" / "all N"), not the bare numeral — the
     // five SHARE states and the dispatcher's five-minute tick are legitimate,
     // unrelated uses of "five" on this same surface and must not trip this gate.
-    const HASHED_FIELD_COUNT_CLAIM = /(five|5)\s+(\w+\s+)?(hashed|approval-hashed)/i;
+    //
+    // Scope deliberately spans skill docs AND code: the count was restated in
+    // `useAutomations.ts` three times, and a gate that only read `skill/` reported
+    // green while the dashboard shipped the stale claim and the missing field.
+    //
+    // The alternation also admits the bare word "field", because the FIRST version
+    // of this gate matched only "N hashed" and so read green over three surviving
+    // "the 5-field diff" / "five-field approval review" comments — including one in
+    // `registry.ts`, the very module that owns the hash. Hyphen is a separator here
+    // for the same reason. "five share states" and "every five minutes" still pass:
+    // neither is followed by `hashed` or `field`.
+    const HASHED_FIELD_COUNT_CLAIM = /(five|5)[\s-]+(\w+[\s-]+)?(hashed|approval-hashed|field)/i;
     const ALL_FIVE_CLAIM = /all\s+(five|5)\b/i;
     for (const [name, content] of [
       ['skill/references/automations.md', AUTOMATIONS_MD],
       ['skill/references/cli-reference.md', CLI_REFERENCE_MD],
+      ['dashboard/src/hooks/useAutomations.ts', USE_AUTOMATIONS_TS],
+      ['dashboard/src/components/automations/AutomationDetailPanel.tsx', DETAIL_PANEL_TSX],
+      ['src/server/routes/automations.ts', SHOW_ROUTE_TS],
+      ['src/lib/automations/registry.ts', REGISTRY_TS],
     ] as const) {
       expect(content, `${name} contains a stale hashed-field-count claim`).not.toMatch(HASHED_FIELD_COUNT_CLAIM);
       expect(content, `${name} contains a stale "all five" claim`).not.toMatch(ALL_FIVE_CLAIM);
+    }
+  });
+});
+
+/**
+ * The dashboard's approval review is a SECOND approval surface next to the CLI's
+ * `approve` diff, and it had no completeness lock of its own. `effort` proved why
+ * that matters: it was hashed, so changing it invalidated approval, but it was
+ * invisible in the panel, so the human re-approving could not see the field that
+ * had changed. These assertions are source scans rather than a render test because
+ * what must be pinned is that each field REACHES the surface at all — the runtime
+ * proof that the payload carries them lives in `automations-route.test.ts`.
+ */
+describe('dashboard approval-review surface — every hashed field reaches the human', () => {
+  it('the detail response type declares every approval-hashed field', () => {
+    const detailType = USE_AUTOMATIONS_TS.slice(
+      USE_AUTOMATIONS_TS.indexOf('interface AutomationManifestDetail'),
+    ).split('}')[0];
+    for (const field of APPROVAL_DIFF_FIELDS) {
+      expect(
+        detailType,
+        `AutomationManifestDetail omits hashed field "${field}" — the panel cannot render what the type drops`,
+      ).toContain(field);
+    }
+  });
+
+  it('the detail panel references every approval-hashed field', () => {
+    for (const field of APPROVAL_DIFF_FIELDS) {
+      expect(
+        DETAIL_PANEL_TSX,
+        `AutomationDetailPanel never mentions hashed field "${field}" — it would be reviewed blind`,
+      ).toContain(field);
+    }
+  });
+
+  it('the panel gives effort a labelled row, not just a reference in passing', () => {
+    expect(DETAIL_PANEL_TSX).toMatch(/adp-detail-label">Effort</);
+    expect(DETAIL_PANEL_TSX).toMatch(/automation\?\.effort/);
+  });
+
+  it('the detail route passes every approval-hashed field straight off the manifest', () => {
+    for (const field of APPROVAL_DIFF_FIELDS) {
+      expect(
+        SHOW_ROUTE_TS,
+        `the detail route does not forward hashed field "${field}"`,
+      ).toContain(`${field}: manifest.${field}`);
     }
   });
 });

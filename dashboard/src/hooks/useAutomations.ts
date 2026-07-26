@@ -82,10 +82,12 @@ export interface AutomationCache {
   history: AutomationRunEvent[];
 }
 
-/** The exact five fields the approval hash covers — what `automation` on the
- *  detail response exposes for a full-field review (see `approve`'s CLI
- *  comment: the registry stores only a sha256, never prior values, so this is
- *  a full-field review every time, not an old-vs-new diff). */
+/** All SIX fields the approval hash covers (`APPROVAL_DIFF_FIELDS`) — what
+ *  `automation` on the detail response exposes for a full-field review (see
+ *  `approve`'s CLI comment: the registry stores only a sha256, never prior
+ *  values, so this is a full-field review every time, not an old-vs-new diff).
+ *  Every hashed field MUST appear here and be rendered: a field the reviewer
+ *  cannot see is a field that changes the hash invisibly. */
 export interface AutomationManifestDetail {
   slug: string;
   title: string;
@@ -93,6 +95,9 @@ export interface AutomationManifestDetail {
   schedule: AutomationSchedule | null;
   scheduleLabel: string;
   model: string | null;
+  /** Hashed alongside `model` — both are execution-envelope levers on an
+   *  already-approved prompt. `null` ⇒ `claude` picks its own default. */
+  effort: string | null;
   timeoutMinutes: number;
   catchupHours: number;
   outputDir: string | null;
@@ -140,7 +145,7 @@ export function useAutomations() {
   });
 }
 
-/** Full manifest (all 5 hashed fields for review) + approval state + cache/history. */
+/** Full manifest (every hashed field for review) + approval state + cache/history. */
 export function useAutomation(slug: string | null) {
   return useQuery({
     queryKey: ['automations', slug],
@@ -179,7 +184,7 @@ export function useRunAutomation() {
 }
 
 /** Approve the manifest as it currently stands (the same primitive the CLI's
- *  `approve -y` calls after the human reviews all five hashed fields in full —
+ *  `approve -y` calls after the human reviews every hashed field in full —
  *  see `AutomationDetailPanel`, which renders that same review before this
  *  fires). */
 export function useApproveAutomation() {
