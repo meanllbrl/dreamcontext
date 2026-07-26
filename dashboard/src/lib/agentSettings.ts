@@ -43,13 +43,22 @@ export interface AgentSettings {
    *  native-text comfort rendering. Applied live to open sessions. */
   renderer: AgentRenderer;
   /** The "Agent screen" preference (Settings → Agents): which surface a Claude session
-   *  opens as. `false` = Terminal (the classic embedded TUI, the default); `true` = Chat
-   *  (BETA) — the SAME engine rendered as native chat UI (markdown bubbles, tool cards,
-   *  question/permission cards). Mutually exclusive by design: the chosen surface takes
-   *  over every Claude entry point (＋ New, ⌘T/⌘D, tab restore/resume, Sleep/delegate
-   *  spawns); running sessions keep their surface. Key name kept from the original beta
-   *  checkbox for agent-ui.json compatibility. */
+   *  opens as. `true` = Chat — the SAME engine rendered as native chat UI (markdown
+   *  bubbles, tool cards, question/permission cards) and the DEFAULT since 0.22;
+   *  `false` = Terminal (legacy) — the classic embedded TUI, kept for anyone who wants
+   *  the raw surface back. Mutually exclusive by design: the chosen surface takes over
+   *  every Claude entry point (＋ New, ⌘T/⌘D, tab restore/resume, Sleep/delegate spawns);
+   *  running sessions keep their surface. Key name kept from the original beta checkbox
+   *  for agent-ui.json compatibility. */
   chatView: boolean;
+  /** One-time marker that this blob has been through the "Chat is the default screen"
+   *  flip (0.22). Before the flip, `chatView:false` was written into EVERY persisted
+   *  blob as the old opt-out default, so a raw `false` is not evidence anybody chose
+   *  Terminal — it is just the old default. Until this marker is present, `chatView`
+   *  is forced TRUE regardless of what is on disk, which is what moves existing users
+   *  onto Chat; from the first coerce onward the marker rides along, so a DELIBERATE
+   *  switch back to Terminal (legacy) in Settings sticks forever after. */
+  screenMigrated: boolean;
   /** Remembered default permission mode for Chat (BETA) sessions (redesign task
    *  agent-chat-view-beta-…, state 6's top-right dropdown): `'auto'` maps to the CLI's
    *  `acceptEdits` mode, `'bypass'` to `bypassPermissions` — identical mapping to
@@ -66,14 +75,17 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   autoTitle: false,
   hotkey: 'Ctrl+A',
   renderer: 'webgl',
-  chatView: false,
+  chatView: true,
+  screenMigrated: true,
   chatPermissionMode: 'auto',
 };
 
 /** Coerce an arbitrary blob to a valid AgentSettings (defaults fill gaps). `enabled`
  *  and `restoreTabs` default TRUE (only an explicit `false` disables, so a missing key
  *  never silently hides the surface); `autoTitle` defaults FALSE (opt-in — only an
- *  explicit `true` turns tab auto-naming on). */
+ *  explicit `true` turns tab auto-naming on); `chatView` defaults TRUE but honours an
+ *  explicit `false` only on a `screenMigrated` blob (see the field docs above — that
+ *  gate is the one-time move of existing users onto the Chat surface). */
 export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefined): AgentSettings {
   const r = raw ?? {};
   return {
@@ -85,8 +97,12 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     // Only an explicit 'dom' opts back into comfort rendering; anything else
     // (absent key, old blob, garbage) lands on the smooth GPU default.
     renderer: r.renderer === 'dom' ? 'dom' : DEFAULT_AGENT_SETTINGS.renderer,
-    // Opt-in flag: default FALSE, only an explicit `true` enables the beta chat view.
-    chatView: r.chatView === true,
+    // Agent screen. Chat is the standard surface, so this is a default-TRUE flag — but an
+    // explicit `false` only counts once the blob has been through the 0.22 flip, because
+    // every pre-flip blob carries `chatView:false` from the old opt-in default. Un-migrated
+    // blob → Chat (that IS the migration); migrated blob → whatever the user picked.
+    chatView: r.screenMigrated === true ? r.chatView !== false : true,
+    screenMigrated: true,
     // Only an explicit 'bypass' opts into the caution mode; anything else (absent key,
     // old blob, garbage) lands on the safer 'auto' default.
     chatPermissionMode: r.chatPermissionMode === 'bypass' ? 'bypass' : 'auto',

@@ -224,9 +224,9 @@ export function AgentSurface() {
   const [sessionModel, setSessionModel] = useState<Record<string, string>>({});
   const [sessionEffort, setSessionEffort] = useState<Record<string, string>>({});
 
-  // ── Agent screen (Settings → Agents): Terminal vs Chat (BETA) — a SWAP, not a superset.
-  // `chatView` picks which surface a Claude session opens as, and the chosen one takes
-  // over EVERY entry point (＋ New, ⌘T/⌘D, empty state, tab restore/resume, Sleep /
+  // ── Agent screen (Settings → Agents): Chat (the default) vs Terminal (legacy) — a SWAP,
+  // not a superset. `chatView` picks which surface a Claude session opens as, and the chosen
+  // one takes over EVERY entry point (＋ New, ⌘T/⌘D, empty state, tab restore/resume, Sleep /
   // brain-resolve / delegate spawns): chat mode never opens a terminal Claude, terminal
   // mode never opens a chat. Plain shells (⌃`) are orthogonal and stay available in both.
   // Chat additionally needs the claude CLI; already-running sessions keep their surface —
@@ -313,12 +313,13 @@ export function AgentSurface() {
   // if the user turned "Reopen past tabs" OFF, we mark hydrated and skip the restore
   // entirely (a clean start), while still enabling the persist effect below.
   useEffect(() => {
-    // Chat (BETA) needs only the claude CLI, not node-pty (agent-terminal.ts's `embeddedTerminal`
+    // Chat needs only the claude CLI, not node-pty (agent-terminal.ts's `embeddedTerminal`
     // gate) — a saved chat tab must still restore on a node-pty-broken machine, so this gate
     // matches the same loosened predicate the body/menu/empty-state gates below use. Gated on
-    // `agentSettings.chatView` too: the beta flag being OFF must mean claudeCli alone can NEVER
-    // widen this gate — otherwise a plain terminal user on a pty-broken machine would get
-    // agent tabs auto-restored into doomed WS connections instead of the Prereqs panel.
+    // `agentSettings.chatView` too: someone who switched to Terminal (legacy) must mean
+    // claudeCli alone can NEVER widen this gate — otherwise a terminal user on a pty-broken
+    // machine would get agent tabs auto-restored into doomed WS connections instead of the
+    // Prereqs panel.
     if (hydratedRef.current || !(caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) || !settingsReady) return;
     if (!agentSettings.restoreTabs) { hydratedRef.current = true; return; }
     let cancelled = false;
@@ -1753,12 +1754,12 @@ export function AgentSurface() {
       <p style={subStyle}>The in-app Claude Code agent is a desktop-only feature — it runs a real, interactive Claude Code session scoped to this project. Use <strong>Ask</strong> here for read-only questions.</p>
     </Centered>;
   } else if (panesLive) {
-    // Chat (BETA) needs only the claude CLI — this pane body must render even on a
-    // node-pty-broken machine (agent-terminal.ts:37-40's real failure mode), or a spawned
-    // chat session would have nowhere to portal into. Gated on chatView too: claudeCli alone
-    // must never widen this while the beta flag is off (a plain terminal-only user on a
-    // pty-broken machine must still get the Prereqs recovery panel below, not a rendered
-    // tabs/panes UI with no working session behind it).
+    // Chat needs only the claude CLI — this pane body must render even on a node-pty-broken
+    // machine (agent-terminal.ts:37-40's real failure mode), or a spawned chat session would
+    // have nowhere to portal into. Gated on chatView too: claudeCli alone must never widen
+    // this for someone on Terminal (legacy) (a terminal-only user on a pty-broken machine
+    // must still get the Prereqs recovery panel below, not a rendered tabs/panes UI with no
+    // working session behind it).
     body = (
       <div className="agent-term">
         {/* Drop a PNG/JPG/GIF/WebP anywhere on a terminal OR chat pane to hand that
@@ -1816,9 +1817,20 @@ export function AgentSurface() {
         <BotMark />
         <h2 style={titleStyle}>Agent — real Claude Code</h2>
         <p style={subStyle}>
-          A full interactive Claude Code session running right here, scoped to this project —
-          or a <strong>plain terminal</strong> in the same window when you just need a shell.
-          Open as many as you need — each gets its own <strong>renameable</strong> tab, and you
+          {chatMode ? (
+            <>
+              A full Claude Code session running right here, scoped to this project, rendered as a
+              <strong> native conversation</strong> — boards, media and diffs appear inline, and its
+              questions become buttons you click. Or a <strong>plain terminal</strong> in the same
+              window when you just need a shell.
+            </>
+          ) : (
+            <>
+              A full interactive Claude Code session running right here, scoped to this project —
+              or a <strong>plain terminal</strong> in the same window when you just need a shell.
+            </>
+          )}
+          {' '}Open as many as you need — each gets its own <strong>renameable</strong> tab, and you
           can put them <strong>side by side</strong> (⌘D) to watch several at once.
         </p>
         <BypassToggle bypass={bypass} setBypass={setBypass} />
@@ -1826,7 +1838,7 @@ export function AgentSurface() {
           // The AGENT needs BOTH its renderer (node-pty) AND the `claude` binary it spawns.
           // A plain TERMINAL needs only the renderer — no `claude` — so it can start even
           // when the CLI is missing. Missing the renderer → show the in-app Setup panel.
-          // Chat (BETA) needs only the claude CLI + the Settings → Agents toggle — it can
+          // Chat needs only the claude CLI + the Settings → Agents screen preference — it can
           // start on a node-pty-broken machine where neither of the above can.
           // The Agent screen preference is a SWAP: exactly one Claude start button shows,
           // matching the chosen surface (chatMode folds in the claudeCli requirement).
@@ -1840,7 +1852,7 @@ export function AgentSurface() {
                   <button onClick={() => addSession('agent')} style={primaryBtn}>▸ Start agent in app</button>
                 )}
                 {chatReady && (
-                  <button onClick={() => addSession('chat')} style={primaryBtn}>◆ Start chat (beta)</button>
+                  <button onClick={() => addSession('chat')} style={primaryBtn}>◆ Start chat</button>
                 )}
                 {terminalReady && (
                   <button onClick={() => addSession('shell')} style={(agentReady || chatReady) ? secondaryBtn : primaryBtn}>&gt;_ Start terminal</button>
@@ -1912,9 +1924,9 @@ export function AgentSurface() {
             ))}
           </div>
           <div className="agent-overlay-controls">
-            {/* Chat (BETA) needs only the claude CLI (+ the Settings → Agents toggle), not
-                node-pty — loosened so the control cluster is reachable on a node-pty-broken
-                machine that can still run Chat. */}
+            {/* Chat needs only the claude CLI (+ the Settings → Agents screen preference),
+                not node-pty — loosened so the control cluster is reachable on a
+                node-pty-broken machine that can still run Chat. */}
             {started && (caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) && (
               <>
                 {/* Split button: the main face opens a Claude session in the CHOSEN Agent
@@ -1924,7 +1936,7 @@ export function AgentSurface() {
                 <div className="agent-new-split" ref={newSplitRef}>
                   <button
                     className="agent-add-btn"
-                    title={chatMode ? 'New chat (BETA) (⌘T) · side-by-side: ⌘D chat, ⌘⇧D terminal' : 'New agent (⌘T) · side-by-side: ⌘D agent, ⌘⇧D terminal'}
+                    title={chatMode ? 'New chat (⌘T) · side-by-side: ⌘D chat, ⌘⇧D terminal' : 'New agent (⌘T) · side-by-side: ⌘D agent, ⌘⇧D terminal'}
                     aria-label={chatMode ? 'New chat' : 'New agent'}
                     onClick={() => { setNewMenuOpen(false); addSession(claudeKind); }}
                   >
@@ -1959,7 +1971,7 @@ export function AgentSurface() {
                           onClick={() => { setNewMenuOpen(false); addSession('chat'); }}
                         >
                           <span className="agent-new-menu-glyph" aria-hidden>◆</span>
-                          <span className="agent-new-menu-label">New chat (BETA)</span>
+                          <span className="agent-new-menu-label">New chat</span>
                           <kbd className="agent-new-menu-kbd">⌘T</kbd>
                         </button>
                       )}

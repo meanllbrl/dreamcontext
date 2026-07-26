@@ -99,7 +99,7 @@ export function AgentTabs({
   onReorderHover: (targetPaneId: string, beforeSid: string) => void;
   /** Hovering a pane's tab-group padding → record "combine the dragged session into it". */
   onGroupHover: (targetPaneId: string) => void;
-  /** Gate for the per-tab "Open in Chat (BETA)" action (Settings → Agents chatView ON
+  /** Gate for the per-tab "Open in Chat" action (Settings → Agents on the Chat screen
    *  and the Claude CLI present) — optional/defaulted so a caller written before this
    *  prop existed keeps compiling and simply never shows the action. */
   chatConvertEnabled?: boolean;
@@ -166,7 +166,7 @@ export function AgentTabs({
                   data-session-kind={tab.sessionKind}
                   title={
                     tab.sessionKind === 'shell' ? 'Terminal (login shell)'
-                      : tab.sessionKind === 'chat' ? 'Claude Code chat (beta)'
+                      : tab.sessionKind === 'chat' ? 'Claude Code chat'
                         : 'Claude Code agent'
                   }
                   aria-hidden
@@ -202,7 +202,7 @@ export function AgentTabs({
                     type="button"
                     className="agent-tab-btn open-in-chat"
                     tabIndex={-1}
-                    title="Open in Chat (BETA) — reopens this conversation as a native chat pane"
+                    title="Open in Chat — reopens this conversation as a native chat pane"
                     aria-label={`Open ${tab.title} in Chat`}
                     onMouseDown={stop}
                     onClick={(e) => { e.stopPropagation(); onOpenInChat(tab.id); }}

@@ -26,6 +26,8 @@ related_tasks:
   - >-
     chat-view-polish-board-zoom-fullscreen-collapsed-background-agents-autogrow-composer
   - chat-view-a-sub-agent-s-tool-calls-must-not-leak-into-the-main-transcript
+  - >-
+    chat-becomes-the-standard-agent-screen-the-embedded-terminal-becomes-terminal-legacy
 type: feature
 name: in-app-agent-terminal
 description: ''
@@ -36,6 +38,8 @@ date: '2026-06-28'
 ## Why
 
 Developers using the dreamcontext desktop app need to run Claude Code interactively without leaving the app or opening a separate terminal window. The in-app Agent terminal embeds a full Claude Code TUI session directly in the Sleepy/Agent screen — full session parity (slash menu, skills, sub-agents, reasoning effort, real permission prompts) because it IS the client. In-app prerequisite detection and installation (node-pty, claude CLI) eliminate setup friction so the feature works out of the box.
+
+As of 0.22 the TUI is no longer what you land in. The native **Chat** screen — the same engine rendered as app UI — is the default surface for every user, and the embedded terminal is kept as **Terminal (legacy)** behind Settings → Agents → "Agent screen". The flip includes a one-time migration: every pre-0.22 `agent-ui.json` carries `chatView:false` from the old opt-in default, so that value is only honoured once the blob has been stamped `screenMigrated` — which is what moves existing users onto Chat without overriding anyone who deliberately picks the terminal afterwards.
 
 ## User Stories
 
@@ -58,7 +62,7 @@ Developers using the dreamcontext desktop app need to run Claude Code interactiv
 - [x] As a developer, a new session's tab is auto-titled from my first message (via a cheap one-shot Haiku call), so I don't have to manually rename "Agent 1"/"Agent 2" tabs to tell them apart.
 - [x] As a developer, I can toggle the whole Agents (beta) surface on/off, toggle tab-restore-on-launch, toggle auto-title, and set a custom in-app hotkey to open/close the Agents overlay, from Settings → Agents, so the surface fits how I actually work.
 - [x] As a developer, when I open a task's in-pane agent session (Task Manager), the session boots idle with the pin prompt deferred to my first message, so I can type my question immediately instead of waiting for an auto-submitted prompt to complete.
-- [x] As a developer, I can converse with Claude in a native Chat view (BETA) that renders boards inline, plays media in place, makes file paths clickable, and shows action buttons — not just a terminal transcript — so I stay in one surface instead of jumping to search/preview for every artifact Claude makes.
+- [x] As a developer, I can converse with Claude in a native Chat view that renders boards inline, plays media in place, makes file paths clickable, and shows action buttons — not just a terminal transcript — so I stay in one surface instead of jumping to search/preview for every artifact Claude makes.
 - [x] As a developer, the Chat view lets me sign in to Claude directly from an auth-required banner that opens a shell tab with the correct login command, so I never hit a "run /login" dead-end in the headless surface.
 - [x] As a developer, goal-skill and council live panels render above the Chat transcript (not just the terminal), so orchestrated runs show the same progress no matter which surface I picked.
 - [x] As a developer, the Chat view shows a working indicator (dots + elapsed clock) before the CLI's first frame and in every gap between tool results, so "nothing on screen yet" reads as "working" rather than "stuck".
@@ -66,7 +70,8 @@ Developers using the dreamcontext desktop app need to run Claude Code interactiv
 - [x] As a developer, the Chat composer stays single-row at every pane width via a stage-driven context/usage readout (full → % only → bare bar → portaled card), so Send is always in the card and the toolbar never wraps.
 - [x] As a developer, the Chat slash menu and skill picker match the terminal's (shared SkillPickerPopover), so I discover commands the same way in both surfaces instead of having to remember syntax.
 - [x] As a developer, tool cards in Chat collapse by default (except Edit/Write, which open automatically), so I see what changed in my files without scrolling past hundreds of lines of shell output.
-- [x] As a developer, I can switch Settings → Agents → "Agent screen" between Terminal and Chat (BETA), so the surface fits how I work — and already-running sessions keep their surface while new ones follow the setting.
+- [x] As a developer, I can switch Settings → Agents → "Agent screen" between Chat (the default) and Terminal (legacy), so the surface fits how I work — and already-running sessions keep their surface while new ones follow the setting.
+- [x] As a developer upgrading from an older version, my next launch opens Chat even though I never enabled the beta — the one-time move happens once, and if I deliberately pick Terminal (legacy) afterwards it sticks.
 
 ## Acceptance Criteria
 
@@ -131,7 +136,7 @@ Developers using the dreamcontext desktop app need to run Claude Code interactiv
 - [x] Chat live rail: goal-skill + council live panels render above the Chat transcript (same components the terminal uses, same feeds scoped by conversation id), plus the linked-task chip. Rail collapses when nothing is live. Both panels now theme-aware (token-driven palettes, light+dark tested, no hardcoded dark-only hex).
 - [x] Chat auto-scroll: stick-to-bottom keys on the session's conversation-model identity (not "every render"), so activity in one chat never moves a split neighbour. Unsticking requires actual upward user scroll (content growing under a pinned view can't kill the pin). ResizeObserver re-sticks after height changes React never rendered (image load, composer resize, split/move, pane re-homing). Sending re-arms sticking; while unstuck, a "↓ Latest" pill floats.
 - [x] Chat auto-scroll RE-MEASURES one frame after every pin (`isAtBottom`, `requestAnimationFrame` in `scrollToBottom`), because `scrollTop = scrollHeight` is only true at the instant it is written. Docked furniture BELOW the scroller (shells tray, auto-growing composer) growing shrinks the scroller under a view already at its maximum: `scrollTop` stays valid, the maximum moves away from it, and NO scroll event is dispatched — measured in Chromium, a tray growing 186px silently left 174px of transcript below the fold with the view still believing it was pinned (so no "↓ Latest" pill either). The ResizeObserver also no longer re-subscribes on `syncRail` identity (which follows `subAgentCardEl`), closing the teardown window where such a change went unseen.
-- [x] Chat composer: single-row toolbar at every width via staged context/usage readout (wide → counts drop → cost drops → bare 22px bar left-docked → permission chip icon-only, model/effort ellipsise), portaled hover card for full reading when narrow. Settings → Agents → "Agent screen" picker (Terminal/Chat BETA) swaps the surface for every entry point; already-running sessions keep theirs.
+- [x] Chat composer: single-row toolbar at every width via staged context/usage readout (wide → counts drop → cost drops → bare 22px bar left-docked → permission chip icon-only, model/effort ellipsise), portaled hover card for full reading when narrow. Settings → Agents → "Agent screen" picker (Chat default / Terminal legacy) swaps the surface for every entry point; already-running sessions keep theirs.
 - [x] Chat slash menu: typing `/` at draft start opens the shared `SkillPickerPopover` (same as terminal), so skills/commands are discoverable instead of remembered. Composer also intercepts a submitted `/login` → sign-in flow.
 - [x] Chat tool cards collapse by default except Edit/Write (open automatically), so you see file changes without scrolling past shell output.
 - [x] Chat survey cards gained an "Other" row (free-text answer) that opens an autofocus textarea on select; `⌘/Ctrl+Enter` submits; the model sees the typed text, not "Other".

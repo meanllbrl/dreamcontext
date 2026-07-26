@@ -1,5 +1,20 @@
 [
   {
+    "date": "2026-07-26",
+    "type": "feat",
+    "scope": "agent",
+    "description": "The Chat screen becomes the default surface for every Claude session and the embedded terminal is relabelled Terminal (legacy). The hard part was the EXISTING user: every agent-ui.json written before the flip carries chatView:false from the old opt-in default, so honouring an explicit false blindly would have left everyone who never found the beta toggle on the TUI. Both coercers (dashboard lib/agentSettings.ts and the server's private mirror in routes/launcher.ts) now honour chatView:false only on a blob stamped screenMigrated:true, and stamp that marker on every coerce — so the move happens exactly once and a deliberate switch back to Terminal sticks forever after. Proven end to end against a scratch HOME: a pre-flip blob GETs chatView:true; a POST with screenMigrated:true and chatView:false round-trips as terminal. Every Claude entry point already routed through claudeKind, so the flip covers ＋New, ⌘T/⌘D, restored tabs and Sleep/brain/delegate spawns without touching them. BETA labels dropped from the chat UI; Settings lists Chat (default) first, Terminal (legacy) second.",
+    "breaking": false,
+    "summary": "Chat is the default agent screen for everyone; the embedded terminal becomes Terminal (legacy)",
+    "references": [
+      "file:dashboard/src/lib/agentSettings.ts",
+      "file:src/server/routes/launcher.ts",
+      "file:dashboard/src/pages/SettingsPage.tsx",
+      "file:tests/unit/agent-settings.test.ts",
+      "task:chat-becomes-the-standard-agent-screen-the-embedded-terminal-becomes-terminal-legacy"
+    ]
+  },
+  {
     "date": "2026-07-25",
     "type": "feat",
     "scope": "dashboard",
