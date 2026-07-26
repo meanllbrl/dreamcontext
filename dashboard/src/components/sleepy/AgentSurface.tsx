@@ -1,5 +1,5 @@
 import {
-  useEffect, useRef, useState, useReducer, useCallback, useLayoutEffect,
+  useEffect, useMemo, useRef, useState, useReducer, useCallback, useLayoutEffect,
 } from 'react';
 import { createPortal } from 'react-dom';
 import './AgentTerminal.css';
@@ -9,14 +9,14 @@ import {
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
 import { createChatSession, type ChatSession } from './chatSession';
-import { ChatPane } from './ChatPane';
+import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
   doubleTapToken, createDoubleTapMatcher,
   AGENT_SETTINGS_EVENT, type AgentSettings,
 } from '../../lib/agentSettings';
 import { deriveSessionStatus, type SessionRow } from './agentStatus';
-import { PaneFragment } from './PaneFragment';
+import { PaneFragment, type PaneActions } from './PaneFragment';
 import { AgentTabs, type PaneVM } from './AgentTabs';
 import { AgentDock } from './AgentDock';
 import { AgentFab } from './AgentFab';
@@ -1222,6 +1222,56 @@ export function AgentSurface() {
   const setGroupTarget = useCallback((paneId: string) => {
     dropTargetRef.current = { kind: 'group', paneId };
   }, []);
+  // ── Stable dispatchers for the memoized children (PaneFragment, ChatPaneHost) ──────
+  //
+  // `bumpStatus` re-renders this whole component on ANY session's busy/asking/status/
+  // attention edge — which is to say constantly, for every session in the roster at once.
+  // That is what made a token arriving in one chat re-render its split neighbour's whole
+  // transcript (owner report 07-25, partially addressed then by keying ChatPane's scroll
+  // writes to its own model; this closes the render itself).
+  //
+  // `React.memo` on those children only helps if the callbacks they receive KEEP THEIR
+  // IDENTITY across such a render, and per-pane inline arrows never can. So each child gets
+  // ONE object whose identity never changes, whose methods take their target as an argument,
+  // and which reads this render's real closures through a ref the effect below keeps fresh.
+  // Actions are only ever invoked from event handlers — which run long after the effect that
+  // published them — so the ref can never be read stale.
+  const paneActionsImpl: PaneActions = {
+    setZoneTarget,
+    activate: (paneId) => { if (paneId !== activePaneId) setActivePaneId(paneId); },
+    resume: (sid) => resumeSession(sid),
+    close: (sid) => closeSessionById(sid),
+  };
+  const paneActionsRef = useRef(paneActionsImpl);
+  useEffect(() => { paneActionsRef.current = paneActionsImpl; });
+  const paneActions = useMemo<PaneActions>(() => ({
+    setZoneTarget: (paneId, zone) => paneActionsRef.current.setZoneTarget(paneId, zone),
+    activate: (paneId) => paneActionsRef.current.activate(paneId),
+    resume: (sid) => paneActionsRef.current.resume(sid),
+    close: (sid) => paneActionsRef.current.close(sid),
+  }), []);
+
+  const chatActionsImpl: ChatSurfaceActions = {
+    changeModel: changeChatModelFor,
+    changeEffort: changeChatEffortFor,
+    continueInTerminal: resumeChatInTerminal,
+    resumeChat: resumeChatSession,
+    changePermissionMode: changeChatPermissionMode,
+    openAppPage: onOpenAppPage,
+    signIn: signInToClaude,
+  };
+  const chatActionsRef = useRef(chatActionsImpl);
+  useEffect(() => { chatActionsRef.current = chatActionsImpl; });
+  const chatActions = useMemo<ChatSurfaceActions>(() => ({
+    changeModel: (sid, id) => chatActionsRef.current.changeModel(sid, id),
+    changeEffort: (sid, level) => chatActionsRef.current.changeEffort(sid, level),
+    continueInTerminal: (cs) => chatActionsRef.current.continueInTerminal(cs),
+    resumeChat: (cs) => chatActionsRef.current.resumeChat(cs),
+    changePermissionMode: (mode) => chatActionsRef.current.changePermissionMode(mode),
+    openAppPage: (page, id) => chatActionsRef.current.openAppPage(page, id),
+    signIn: () => chatActionsRef.current.signIn(),
+  }), []);
+
   const handleTabDragStart = useCallback((sid: string) => {
     draggedSidRef.current = sid;
     dropTargetRef.current = null;
@@ -1780,6 +1830,8 @@ export function AgentSurface() {
               <PaneFragment
                 key={pane.id}
                 paneId={pane.id}
+                activeSessionId={pane.active}
+                actions={paneActions}
                 active={isActive}
                 dormant={activeMeta?.dormant}
                 dragging={draggingTab}
@@ -1798,10 +1850,6 @@ export function AgentSurface() {
                     onEffortChange={(level) => changeEffortFor(pane.active, level)}
                   />
                 )}
-                onZoneTarget={(zone) => setZoneTarget(pane.id, zone)}
-                onActivate={() => { if (pane.id !== activePaneId) setActivePaneId(pane.id); }}
-                onResume={() => resumeSession(pane.active)}
-                onClose={() => closeSessionById(pane.active)}
               />
             );
           })}
@@ -2064,23 +2112,20 @@ export function AgentSurface() {
           `/model`/`/effort` slash path — chatChangeModelFor/EffortFor just update the picker
           state for the NEXT resume; see the plan's scope call C). */}
       {chatPanes.map((cs) => createPortal(
-        <ChatPane
+        <ChatPaneHost
           key={cs.id}
           session={cs}
+          // ONE stable object instead of six per-session arrows — the memo boundary in
+          // ChatPaneHost is what keeps a token in one conversation from re-rendering
+          // another one's transcript. See the dispatcher's definition above.
+          actions={chatActions}
           modelConfig={modelConfig}
           // `||`, not `??`: a chat session's `model`/`effort` start as EMPTY STRINGS (they
           // are only filled once `system:init` reports what the CLI actually picked), and
           // `??` lets '' through — which is what left the composer's pill reading "—".
           model={sessionModel[cs.id] || cs.model || modelConfig.defaultModel}
           effort={sessionEffort[cs.id] || cs.effort || modelConfig.defaultEffort}
-          onModelChange={(id) => changeChatModelFor(cs.id, id)}
-          onEffortChange={(level) => changeChatEffortFor(cs.id, level)}
-          onContinueInTerminal={() => resumeChatInTerminal(cs)}
           permissionMode={agentSettings.chatPermissionMode}
-          onPermissionModeChange={changeChatPermissionMode}
-          onResume={() => resumeChatSession(cs)}
-          onOpenAppPage={onOpenAppPage}
-          onSignIn={signInToClaude}
           canSignInInApp={canSignInInApp}
           signInCommand={signInCommand}
         />,

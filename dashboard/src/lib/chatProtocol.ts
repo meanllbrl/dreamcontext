@@ -193,6 +193,43 @@ export type ChatEvent =
   | { kind: 'meta-error'; message: string }
   | { kind: 'ignored'; rawType: string };
 
+// ─── Render urgency ───────────────────────────────────────────────────────────────
+
+/**
+ * The event kinds a renderer may safely COALESCE into one commit per frame — the
+ * high-frequency arms that carry a fraction of a message each. Everything not listed is
+ * urgent by construction, which is the load-bearing default: a kind added to `ChatEvent`
+ * later must delay nothing until somebody has decided it is safe to delay.
+ */
+const COALESCABLE_KINDS: ReadonlySet<ChatEvent['kind']> = new Set<ChatEvent['kind']>([
+  // One per streamed token.
+  'text-delta',
+  'thinking-delta',
+  // Block framing brackets those deltas — same rate, same nothing-to-act-on.
+  'block-start',
+  'block-stop',
+  // A fan-out of sub-agents emits these continuously for the whole run.
+  'task-progress',
+  'background-tasks',
+  // Noise the reducer discards anyway.
+  'ignored',
+]);
+
+/**
+ * Does this event need to reach the screen THIS tick, or may it ride the next frame?
+ *
+ * Urgent means "the user is waiting to act on it, or the turn's shape just changed": a
+ * permission card, a question, a plan to approve, the result frame, the process exiting, a
+ * missing credential. Delaying any of those by even a frame is user-visible latency on an
+ * interaction — the exact thing coalescing must never buy performance with.
+ *
+ * Pure, and deliberately kind-only: the decision must not depend on session state, so the
+ * same frame always answers the same way.
+ */
+export function isUrgentChatEvent(ev: ChatEvent): boolean {
+  return !COALESCABLE_KINDS.has(ev.kind);
+}
+
 // ─── Client → server control frames ───────────────────────────────────────────────
 
 export type ClientControl =

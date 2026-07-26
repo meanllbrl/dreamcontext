@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { memo, useMemo, useRef, useState } from 'react';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { api } from '../../../api/client';
 import { useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens } from './chatEntities';
@@ -167,7 +167,7 @@ function ThinkingBlock({ item }: { item: ChatThinkingItem }) {
 
 // ─── Dispatcher ─────────────────────────────────────────────────────────────────────
 
-export function ItemView({
+function ItemViewInner({
   item, session, onOpenFile, onOpenBoard, onAction, onQuote, readOnly = false,
 }: {
   item: ChatItem;
@@ -208,3 +208,18 @@ export function ItemView({
       return null;
   }
 }
+
+/**
+ * MEMOIZED. A streamed token replaces exactly ONE entry in `ConversationModel.items` (the
+ * reducer's `items.slice()` + replace-one-index keeps every other item's reference), so a
+ * transcript of N items can re-render O(1) of them per frame instead of N — provided the
+ * callbacks below stay referentially stable. `ChatPane` holds every one of them in a
+ * `useCallback`; do not pass an inline arrow to this component.
+ *
+ * The decoration hooks inside `AssistantMessage` are unaffected: memo only skips renders in
+ * which NOTHING about the item changed, and a skipped render leaves the DOM (and therefore
+ * every decoration on it) exactly as it was. See chatEntities.ts's decorating section — the
+ * hazard there is a re-render that REWRITES the markdown subtree, which is precisely what a
+ * skipped render doesn't do.
+ */
+export const ItemView = memo(ItemViewInner);

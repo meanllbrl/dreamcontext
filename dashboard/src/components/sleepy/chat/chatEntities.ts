@@ -267,6 +267,49 @@ export function classifyOutputLine(line: string): OutputTone {
   return 'plain';
 }
 
+// ─── Clamping an unbounded body (terminal output, a raw tool result) ──────────────
+
+/** Lines kept at each end of a clamped shell block. A failing test run puts its summary at
+ *  the END and its command context at the start; both ends are what a reader wants. */
+export const TERMINAL_HEAD_LINES = 20;
+export const TERMINAL_TAIL_LINES = 20;
+
+/** Characters of a raw tool result rendered before the "show all" cut. A `Read` of a large
+ *  file comes back whole, and painting megabytes of text into a `<pre>` costs both the nodes
+ *  and the layout pass on every re-render of the card. */
+export const GENERIC_RESULT_CHAR_CAP = 16 * 1024;
+
+export interface ClampedLines {
+  /** The first `head` lines (or ALL of them, when nothing was clamped). */
+  head: string[];
+  /** The last `tail` lines — empty when nothing was clamped. */
+  tail: string[];
+  /** How many lines fell between the two ends. `0` means the input is shown whole. */
+  hidden: number;
+}
+
+/**
+ * Keep the two ends of a long block and count what's between them.
+ *
+ * A tool result is unbounded: a `Bash` running a build, a `Read` of a generated file. The
+ * card used to render every line, which is thousands of DOM nodes for ONE call — mounted for
+ * as long as the conversation lives, and re-laid-out on every render of the card. Both ends
+ * are kept rather than just the head because a shell failure lives at the END (the summary,
+ * the stack, the exit line) while the command that produced it is at the start.
+ *
+ * Nothing is ever silently dropped: `hidden` is what the expander offers to show.
+ */
+export function clampLines(lines: string[], head: number, tail: number): ClampedLines {
+  const h = Math.max(0, head);
+  const t = Math.max(0, tail);
+  if (lines.length <= h + t) return { head: lines, tail: [], hidden: 0 };
+  return {
+    head: lines.slice(0, h),
+    tail: t > 0 ? lines.slice(lines.length - t) : [],
+    hidden: lines.length - h - t,
+  };
+}
+
 // ─── Sub-agent runs (state 9 — frame-driven, NOT parentToolUseId-driven) ──────────
 //
 // The type lives here (pure, unit-testable); the reduced STATE lives in
@@ -775,6 +818,128 @@ export function nextRestoreTop(prev: number, m: ScrollMetrics): number {
   return m.scrollTop;
 }
 
+// ─── Transcript window (how much of the conversation is actually mounted) ─────────
+//
+// A long conversation used to mount every item it had ever had, forever: `history.map()`
+// plus `items.map()`, no ceiling. A few hundred tool cards, diffs, terminal blocks and
+// images is tens of thousands of DOM nodes per pane, which is what made the overlay's
+// open/close transform animate at a crawl and what kept the app's memory climbing for as
+// long as a session lived.
+//
+// So the transcript renders a WINDOW: the last {@link WINDOW_TAIL} entries, extended
+// upwards {@link WINDOW_STEP} at a time by scrolling to the top (or pressing "Show earlier
+// messages"). This is hand-rolled rather than react-window/virtua on purpose — those own
+// the scroller, and this pane's scroller is already the subject of a carefully-reasoned
+// stick-to-bottom state machine (see above) that a library's own scroll writes would fight.
+// It is also not `content-visibility: auto`: WKWebView's intrinsic-size ESTIMATES shift
+// `scrollHeight` mid-scroll, which is precisely the raced-measurement class those rules
+// exist to defend against.
+//
+// The window is an index into the CONCATENATION of `history` then `items` — one number for
+// what is really two arrays, so that a resumed conversation's replayed history and its live
+// items share a single ceiling instead of each having their own.
+
+/** How many entries stay mounted when the view is following the conversation. */
+export const WINDOW_TAIL = 40;
+
+/** How many more are revealed per "show earlier" step. */
+export const WINDOW_STEP = 40;
+
+/** How close to the top a reader must get before the next step is revealed for them. Big
+ *  enough that the reveal lands before they hit the ceiling, so scrolling up feels
+ *  continuous rather than like hitting a wall and waiting. */
+export const WINDOW_REVEAL_PX = 800;
+
+export interface WindowInput {
+  /** `history.length + items.length` — the whole conversation. */
+  total: number;
+  /** Is the view following the bottom? The single most important input: see rule 2. */
+  pinned: boolean;
+  /** This call is an explicit "show me more" (a button press, or scrolling to the top). */
+  reveal?: boolean;
+}
+
+/**
+ * The index of the first entry the transcript should mount, over `[...history, ...items]`.
+ *
+ * Four rules, in this order:
+ *
+ * 1. REVEAL steps the window {@link WINDOW_STEP} further back, clamped at the beginning.
+ *    It wins over everything, because it is the only input that came from the user asking.
+ * 2. PINNED slides the window forward to the last {@link WINDOW_TAIL} entries. This is the
+ *    memory release valve: a long busy session sheds old DOM continuously instead of only
+ *    ever growing, so a conversation that runs for an hour costs the same as one that just
+ *    started.
+ * 3. UNPINNED FREEZES the window's head. A reader who has scrolled up must never have
+ *    content taken out from ABOVE them while they read — that is a scroll jump with no
+ *    cause they can see, and it would happen on every streamed token. `Math.min` is what
+ *    guarantees it: the head can only ever move backwards (revealing more), never forwards.
+ * 4. …but never so far forward that fewer than {@link WINDOW_TAIL} entries are mounted,
+ *    which is what makes a REWIND (the one thing that shrinks `total`) land on a populated
+ *    transcript instead of an empty one.
+ */
+export function nextFirstShown(prev: number, input: WindowInput): number {
+  const total = Math.max(0, input.total);
+  const tail = Math.max(0, total - WINDOW_TAIL);
+  if (input.reveal) return Math.max(0, Math.min(prev, tail) - WINDOW_STEP);
+  if (input.pinned) return tail;
+  return Math.min(Math.max(0, prev), tail);
+}
+
+/** Where each array's rendered slice starts, and how much is hidden above it. */
+export interface WindowSplit {
+  /** Entries not mounted at all — what the "Show earlier messages (N)" button offers. */
+  hiddenCount: number;
+  /** `history.slice(historyFrom)`. Equal to `historyLen` when history is entirely hidden. */
+  historyFrom: number;
+  /** `items.slice(itemsFrom)`. Zero while any history is still on screen. */
+  itemsFrom: number;
+  /** Whether ANY history is mounted — i.e. whether the "earlier conversation ↑ · resumed"
+   *  divider has something above it to divide. */
+  showsHistory: boolean;
+}
+
+/** Where the reveal's anchor row sat before and after the commit, in the scroller's CONTENT
+ *  coordinate space (i.e. measured so that scrolling itself cannot change the number). */
+export interface RevealAnchorMetrics {
+  anchorTopBefore: number;
+  anchorTopAfter: number;
+}
+
+/**
+ * How far to push `scrollTop` down so a reveal's prepended entries don't move the row the
+ * reader was looking at.
+ *
+ * Measured from ONE STILL-MOUNTED ROW, never from the scroller's total height, and that is
+ * the whole point. A reveal is triggered from a scroll handler while a turn may still be
+ * streaming, so React is free to merge the window change and an arriving frame into a single
+ * commit — one that prepends 40 older entries ABOVE the reader and appends a new tool card
+ * BELOW them. `scrollHeight` grows by both, so compensating with it scrolls the reader down
+ * by the append's height as well: a spurious jump of hundreds of pixels mid-read, plus a
+ * corrupted `restoreTopRef` for the next re-home to restore to. The anchor moves by the
+ * prepend alone, whatever else the commit did.
+ *
+ * A reveal only ever ADDS entries above, so a non-positive delta means the anchor didn't
+ * move (or something else re-laid the transcript out) — correct nothing rather than guess.
+ */
+export function revealScrollCorrection(m: RevealAnchorMetrics): number {
+  const delta = m.anchorTopAfter - m.anchorTopBefore;
+  return delta > 0 ? delta : 0;
+}
+
+/** Project a combined-index window head onto the two arrays it actually spans. */
+export function splitWindow(historyLen: number, itemsLen: number, firstShown: number): WindowSplit {
+  const total = Math.max(0, historyLen) + Math.max(0, itemsLen);
+  const head = Math.min(Math.max(0, firstShown), total);
+  const historyFrom = Math.min(head, Math.max(0, historyLen));
+  return {
+    hiddenCount: head,
+    historyFrom,
+    itemsFrom: Math.max(0, head - Math.max(0, historyLen)),
+    showsHistory: historyFrom < Math.max(0, historyLen),
+  };
+}
+
 // ─── Decorating the rendered markdown (copy bars, media, path chips) ──────────────
 //
 // The three hooks below all do the same kind of work: walk the HTML `MarkdownPreview` just
@@ -1017,6 +1182,12 @@ export function useInlineMedia(
         el.controls = true;
         el.preload = 'metadata';
       } else {
+        // An answer can reference a dozen screenshots, and a transcript scrolled away from
+        // holds every one of them decoded in memory. `lazy` defers the fetch until the image
+        // is near the viewport; `async` keeps the decode off the main thread so a large PNG
+        // landing mid-stream doesn't drop the frame the token was being painted in.
+        el.loading = 'lazy';
+        el.decoding = 'async';
         el.addEventListener('click', () => handlers.onOpen?.(path));
       }
       el.addEventListener('error', () => {

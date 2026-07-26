@@ -15,6 +15,7 @@ import {
   wheelIntent, keyIntent, touchIntent,
   isAgentRun, runDurationMs, formatModelName, runMetaChips,
   isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote, startSubAgentRun,
+  nextFirstShown, splitWindow, revealScrollCorrection, WINDOW_TAIL, WINDOW_STEP, clampLines,
   type SubAgentRun, type ProgressProbe,
 } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 
@@ -857,5 +858,274 @@ describe('nextRestoreTop', () => {
     // Short transcript, nothing to scroll: 0 is the only honest offset, and `prevScrollTop`
     // being 0 keeps it out of the re-home guard.
     expect(nextRestoreTop(1441, { scrollTop: 0, scrollHeight: 400, clientHeight: 500, prevScrollTop: 0, userDriven: false })).toBe(0);
+  });
+});
+
+// ─── Transcript window ──────────────────────────────────────────────────────────
+//
+// The window is what bounds a ChatPane's mounted DOM (and therefore its memory) no matter
+// how long a conversation runs. Its two invariants are asserted directly below, because
+// both are silent when broken: a window that slides while UNPINNED yanks content out from
+// above a reader mid-sentence, and a window that never slides while PINNED is just the
+// unbounded mount it replaced, wearing a slice.
+
+describe('nextFirstShown — pinned (following the conversation)', () => {
+  it('keeps exactly the last WINDOW_TAIL entries mounted', () => {
+    expect(nextFirstShown(0, { total: 500, pinned: true })).toBe(500 - WINDOW_TAIL);
+  });
+
+  it('slides forward as the conversation grows — the memory release valve', () => {
+    const a = nextFirstShown(0, { total: 200, pinned: true });
+    const b = nextFirstShown(a, { total: 260, pinned: true });
+    expect(b - a).toBe(60);
+    expect(260 - b).toBe(WINDOW_TAIL);   // still exactly a tail's worth mounted
+  });
+
+  it('mounts everything while the conversation is shorter than the window', () => {
+    expect(nextFirstShown(0, { total: 0, pinned: true })).toBe(0);
+    expect(nextFirstShown(0, { total: 1, pinned: true })).toBe(0);
+    expect(nextFirstShown(0, { total: WINDOW_TAIL, pinned: true })).toBe(0);
+    expect(nextFirstShown(0, { total: WINDOW_TAIL + 1, pinned: true })).toBe(1);
+  });
+
+  it('re-pinning after reading far back shrinks the window straight back to the tail', () => {
+    expect(nextFirstShown(0, { total: 400, pinned: true })).toBe(400 - WINDOW_TAIL);
+  });
+});
+
+describe('nextFirstShown — unpinned (someone is reading)', () => {
+  it('FREEZES the head: a growing conversation never moves it forward', () => {
+    const head = 120;
+    for (const total of [400, 401, 450, 900]) {
+      expect(nextFirstShown(head, { total, pinned: false })).toBe(head);
+    }
+  });
+
+  it('a whole streamed turn cannot take one entry off the top', () => {
+    let head = 300;
+    for (let total = 500; total < 600; total += 1) {
+      head = nextFirstShown(head, { total, pinned: false });
+    }
+    expect(head).toBe(300);
+  });
+
+  it('clamps a rewind (the one thing that shrinks total) to a still-populated window', () => {
+    const head = nextFirstShown(300, { total: 120, pinned: false });
+    expect(head).toBe(120 - WINDOW_TAIL);
+    expect(120 - head).toBe(WINDOW_TAIL);   // never an empty transcript
+  });
+
+  it('a rewind past the window size lands at the beginning', () => {
+    expect(nextFirstShown(300, { total: 10, pinned: false })).toBe(0);
+    expect(nextFirstShown(300, { total: 0, pinned: false })).toBe(0);
+  });
+
+  it('is idempotent — the render-time normalization converges in one pass', () => {
+    const once = nextFirstShown(77, { total: 500, pinned: false });
+    expect(nextFirstShown(once, { total: 500, pinned: false })).toBe(once);
+    const pinnedOnce = nextFirstShown(77, { total: 500, pinned: true });
+    expect(nextFirstShown(pinnedOnce, { total: 500, pinned: true })).toBe(pinnedOnce);
+  });
+});
+
+describe('nextFirstShown — reveal', () => {
+  it('steps back WINDOW_STEP at a time', () => {
+    const start = nextFirstShown(0, { total: 500, pinned: true });
+    const a = nextFirstShown(start, { total: 500, pinned: false, reveal: true });
+    const b = nextFirstShown(a, { total: 500, pinned: false, reveal: true });
+    expect(start - a).toBe(WINDOW_STEP);
+    expect(a - b).toBe(WINDOW_STEP);
+  });
+
+  it('stops at the beginning instead of going negative', () => {
+    expect(nextFirstShown(10, { total: 500, pinned: false, reveal: true })).toBe(0);
+    expect(nextFirstShown(0, { total: 500, pinned: false, reveal: true })).toBe(0);
+  });
+
+  it('reaches the beginning in ceil(total / WINDOW_STEP) steps and then stays there', () => {
+    let head = nextFirstShown(0, { total: 500, pinned: true });
+    let steps = 0;
+    while (head > 0 && steps < 100) {
+      head = nextFirstShown(head, { total: 500, pinned: false, reveal: true });
+      steps += 1;
+    }
+    expect(head).toBe(0);
+    expect(steps).toBe(Math.ceil((500 - WINDOW_TAIL) / WINDOW_STEP));
+  });
+
+  it('wins over the pinned rule — a reveal came from the user asking', () => {
+    const head = nextFirstShown(200, { total: 500, pinned: true, reveal: true });
+    expect(head).toBeLessThan(500 - WINDOW_TAIL);
+  });
+});
+
+describe('splitWindow', () => {
+  it('items only (a fresh conversation): the head indexes straight into items', () => {
+    expect(splitWindow(0, 100, 60)).toEqual({
+      hiddenCount: 60, historyFrom: 0, itemsFrom: 60, showsHistory: false,
+    });
+  });
+
+  it('history only (a resumed conversation with no new turn yet)', () => {
+    expect(splitWindow(100, 0, 60)).toEqual({
+      hiddenCount: 60, historyFrom: 60, itemsFrom: 0, showsHistory: true,
+    });
+  });
+
+  it('straddling: the window starts inside history and runs through into items', () => {
+    expect(splitWindow(100, 50, 80)).toEqual({
+      hiddenCount: 80, historyFrom: 80, itemsFrom: 0, showsHistory: true,
+    });
+  });
+
+  it('history entirely below the window: no divider, items sliced from their own offset', () => {
+    expect(splitWindow(100, 50, 120)).toEqual({
+      hiddenCount: 120, historyFrom: 100, itemsFrom: 20, showsHistory: false,
+    });
+  });
+
+  it('exactly at the history/items boundary hides all history and no items', () => {
+    expect(splitWindow(100, 50, 100)).toEqual({
+      hiddenCount: 100, historyFrom: 100, itemsFrom: 0, showsHistory: false,
+    });
+  });
+
+  it('a zero head shows everything, and the divider only when history exists', () => {
+    expect(splitWindow(0, 0, 0)).toEqual({
+      hiddenCount: 0, historyFrom: 0, itemsFrom: 0, showsHistory: false,
+    });
+    expect(splitWindow(3, 4, 0)).toEqual({
+      hiddenCount: 0, historyFrom: 0, itemsFrom: 0, showsHistory: true,
+    });
+  });
+
+  it('clamps a head past the end rather than producing negative slices', () => {
+    expect(splitWindow(10, 10, 999)).toEqual({
+      hiddenCount: 20, historyFrom: 10, itemsFrom: 10, showsHistory: false,
+    });
+  });
+});
+
+describe('revealScrollCorrection', () => {
+  it('corrects by exactly how far the anchor row moved', () => {
+    expect(revealScrollCorrection({ anchorTopBefore: 1200, anchorTopAfter: 6200 })).toBe(5000);
+  });
+
+  it('IGNORES an append that lands in the same commit — the regression this exists for', () => {
+    // One commit prepends 5000px of revealed entries ABOVE the reader and appends a 700px
+    // tool card BELOW them (a frame arriving while the reveal was still being scheduled).
+    // The anchor moved by the prepend alone; scrollHeight grew by prepend + append, and
+    // correcting by THAT would scroll the reader 700px past where they were reading.
+    const prepend = 5000;
+    const append = 700;
+    const byAnchor = revealScrollCorrection({ anchorTopBefore: 1200, anchorTopAfter: 1200 + prepend });
+    const byScrollHeight = (40_000 + prepend + append) - 40_000;
+    expect(byAnchor).toBe(prepend);
+    expect(byScrollHeight).toBe(prepend + append);
+    expect(byAnchor).not.toBe(byScrollHeight);
+  });
+
+  it('corrects nothing when the anchor did not move, or moved up', () => {
+    expect(revealScrollCorrection({ anchorTopBefore: 800, anchorTopAfter: 800 })).toBe(0);
+    // Only reachable if something else re-laid the transcript out; guessing would be worse.
+    expect(revealScrollCorrection({ anchorTopBefore: 800, anchorTopAfter: 400 })).toBe(0);
+  });
+
+  it('ANY surviving row below the prepend gives the same answer — why spare anchors work', () => {
+    // The captured anchors all sit below where the revealed entries land, so a prepend moves
+    // every one of them by the same amount. That is what lets the layout effect fall through
+    // to a spare when its first choice is unmounted by the commit (the combined SubAgentCard
+    // is keyed by the earliest suppressed tool item in the window, so a reveal that mounts an
+    // older fan-out migrates its key and replaces the node).
+    const prepend = 3200;
+    for (const before of [1200, 2100, 4800]) {
+      expect(revealScrollCorrection({ anchorTopBefore: before, anchorTopAfter: before + prepend }))
+        .toBe(prepend);
+    }
+  });
+
+  it('the "show earlier" button unmounting on the last reveal is absorbed automatically', () => {
+    // The final step reveals 900px of entries AND removes the 32px button above them, so the
+    // net movement is 868px. An anchor measure reports the net; a height measure would not.
+    expect(revealScrollCorrection({ anchorTopBefore: 1000, anchorTopAfter: 1868 })).toBe(868);
+  });
+});
+
+describe('transcript window ↔ stick-to-bottom', () => {
+  it('the reveal prepend, once compensated, does not read as the user scrolling up', () => {
+    // Reader parked 200px down; revealing older entries adds 5000px ABOVE them, and the
+    // layout effect adds the same 5000 to scrollTop. Both the position and the recorded
+    // previous position move together, so the resulting scroll event is a no-op.
+    const before = { scrollTop: 200, prevScrollTop: 200 };
+    const grown = 5000;
+    const m = {
+      scrollTop: before.scrollTop + grown,
+      scrollHeight: 20_000,
+      clientHeight: 600,
+      prevScrollTop: before.prevScrollTop + grown,   // written in the SAME layout effect
+      userDriven: true,
+    };
+    expect(nextStickToBottom(false, m)).toBe(false);   // still unpinned, not re-pinned
+    expect(nextRestoreTop(before.scrollTop, m)).toBe(m.scrollTop);
+  });
+
+  it('an UNcompensated prepend is what would strand the reader — the regression this guards', () => {
+    // Same reveal, but without the scrollTop write: prevScrollTop stays at the old value
+    // while the content above grew, so the reading position is recorded 5000px too high.
+    const m = {
+      scrollTop: 200, scrollHeight: 20_000, clientHeight: 600, prevScrollTop: 200, userDriven: true,
+    };
+    expect(nextRestoreTop(5200, m)).toBe(200);
+  });
+});
+
+// ─── clampLines (bounded card bodies) ───────────────────────────────────────────
+
+describe('clampLines', () => {
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i}`);
+
+  it('returns short input whole, with nothing hidden and an empty tail', () => {
+    expect(clampLines(lines(5), 20, 20)).toEqual({ head: lines(5), tail: [], hidden: 0 });
+    expect(clampLines([], 20, 20)).toEqual({ head: [], tail: [], hidden: 0 });
+  });
+
+  it('does not clamp at exactly head + tail', () => {
+    const input = lines(40);
+    expect(clampLines(input, 20, 20)).toEqual({ head: input, tail: [], hidden: 0 });
+  });
+
+  it('clamps one line past the budget', () => {
+    const r = clampLines(lines(41), 20, 20);
+    expect(r.hidden).toBe(1);
+    expect(r.head).toHaveLength(20);
+    expect(r.tail).toHaveLength(20);
+  });
+
+  it('keeps BOTH ends — a shell failure lives at the end, its command at the start', () => {
+    const r = clampLines(lines(1000), 20, 20);
+    expect(r.head[0]).toBe('line 0');
+    expect(r.head.at(-1)).toBe('line 19');
+    expect(r.tail[0]).toBe('line 980');
+    expect(r.tail.at(-1)).toBe('line 999');
+    expect(r.hidden).toBe(960);
+  });
+
+  it('accounts for every line: head + tail + hidden === input length', () => {
+    for (const n of [0, 1, 39, 40, 41, 500, 100_000]) {
+      const r = clampLines(lines(n), 20, 20);
+      expect(r.head.length + r.tail.length + r.hidden).toBe(n);
+    }
+  });
+
+  it('head-only (tail 0) is a plain truncation', () => {
+    const r = clampLines(lines(100), 10, 0);
+    expect(r.head).toHaveLength(10);
+    expect(r.tail).toEqual([]);
+    expect(r.hidden).toBe(90);
+  });
+
+  it('treats negative budgets as zero rather than producing reversed slices', () => {
+    const r = clampLines(lines(10), -5, -5);
+    expect(r).toEqual({ head: [], tail: [], hidden: 10 });
   });
 });

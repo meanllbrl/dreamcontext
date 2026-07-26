@@ -16,7 +16,10 @@
  * `tool-result` event — see the dedicated describe block below.
  */
 import { describe, it, expect } from 'vitest';
-import { parseChatLine, buildQuestionAnswer, type QuestionSpec } from '../../dashboard/src/lib/chatProtocol.js';
+import {
+  parseChatLine, buildQuestionAnswer, isUrgentChatEvent,
+  type QuestionSpec, type ChatEvent,
+} from '../../dashboard/src/lib/chatProtocol.js';
 
 // ─── Fixture lines (realistic claude 2.1.218 stream-json frames) ──────────────────
 
@@ -916,5 +919,73 @@ describe('buildQuestionAnswer', () => {
         [multiSelect.question]: 'staging, dev',
       },
     });
+  });
+});
+
+// ─── isUrgentChatEvent (render coalescing) ───────────────────────────────────────
+//
+// The urgency table decides which frames may be batched into one React commit per
+// animation frame (see notifyCoalescer.ts). It is enumerated exhaustively here on purpose:
+// the safe default is URGENT, so the way this can regress is a NEW high-frequency kind
+// silently joining the coalescable set — or, worse, an interactive one being added to it.
+
+describe('isUrgentChatEvent', () => {
+  const urgent: ChatEvent[] = [
+    { kind: 'init', sessionId: 'a1b2' },
+    { kind: 'permission-request', requestId: 'r1', toolName: 'Bash', input: {} },
+    { kind: 'question', requestId: 'r2', toolName: 'AskUserQuestion', questions: [] },
+    { kind: 'plan-review', requestId: 'r3', toolName: 'ExitPlanMode', plan: '# Plan', input: {} },
+    { kind: 'result', success: true },
+    { kind: 'meta-exit', code: 0 },
+    { kind: 'meta-error', message: 'relay died' },
+    { kind: 'auth-required', text: 'Please run /login' },
+    { kind: 'prompt-echo', text: 'hello' },
+    { kind: 'control-ack', requestId: 'r4', ok: true },
+    { kind: 'assistant-text', text: 'pong', synthetic: false },
+    { kind: 'assistant-thinking', text: 'hmm' },
+    { kind: 'assistant-tool-use', toolUseId: 't1', name: 'Read', input: {} },
+    { kind: 'tool-result', toolUseId: 't1', content: 'ok', isError: false },
+    { kind: 'task-started', taskId: 'k1', description: 'scan' },
+    { kind: 'task-updated', taskId: 'k1', status: 'completed' },
+    { kind: 'task-notification', taskId: 'k1', status: 'completed' },
+    { kind: 'slash-commands', commands: ['/login'] },
+  ];
+  const coalescable: ChatEvent[] = [
+    { kind: 'text-delta', index: 0, text: 'to' },
+    { kind: 'thinking-delta', index: 0, text: 'ken' },
+    { kind: 'block-start', index: 0, blockType: 'text' },
+    { kind: 'block-stop', index: 0 },
+    { kind: 'task-progress', taskId: 'k1', activity: 'reading' },
+    { kind: 'background-tasks', tasks: [] },
+    { kind: 'ignored', rawType: 'system:status' },
+  ];
+
+  it.each(urgent.map((ev) => [ev.kind, ev] as const))(
+    '%s is urgent — the user is waiting to act on it, or the turn just changed shape',
+    (_kind, ev) => { expect(isUrgentChatEvent(ev)).toBe(true); },
+  );
+
+  it.each(coalescable.map((ev) => [ev.kind, ev] as const))(
+    '%s may be coalesced — high-frequency, nothing to act on',
+    (_kind, ev) => { expect(isUrgentChatEvent(ev)).toBe(false); },
+  );
+
+  it('covers every kind in the ChatEvent union (no arm left unclassified)', () => {
+    const covered = new Set([...urgent, ...coalescable].map((ev) => ev.kind));
+    // Every `kind` string literal in chatProtocol.ts's exported union, transcribed. A new
+    // arm added there without a decision here fails this test rather than defaulting in
+    // silence.
+    const allKinds: Array<ChatEvent['kind']> = [
+      'init', 'background-tasks', 'task-started', 'task-updated', 'task-progress',
+      'task-notification', 'block-start', 'text-delta', 'thinking-delta', 'block-stop',
+      'assistant-tool-use', 'assistant-text', 'assistant-thinking', 'auth-required',
+      'tool-result', 'control-ack', 'permission-request', 'question', 'plan-review',
+      'result', 'slash-commands', 'prompt-echo', 'meta-exit', 'meta-error', 'ignored',
+    ];
+    expect([...allKinds].sort()).toEqual([...covered].sort());
+  });
+
+  it('an unknown/future kind defaults to URGENT — coalescing is opt-in, never inferred', () => {
+    expect(isUrgentChatEvent({ kind: 'something-new' } as unknown as ChatEvent)).toBe(true);
   });
 });

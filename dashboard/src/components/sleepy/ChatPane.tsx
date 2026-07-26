@@ -6,6 +6,7 @@ import type { ModelConfig } from '../../lib/agentComposer';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
   nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent,
+  nextFirstShown, splitWindow, revealScrollCorrection, WINDOW_REVEAL_PX,
   type SubAgentRun, type ScrollIntent,
 } from './chat/chatEntities';
 import { ItemView } from './chat/TranscriptItem';
@@ -63,6 +64,20 @@ const RAIL_CLEARANCE = 64;
 
 /** How long a jumped-to sub-agent row stays flashed. */
 const FLASH_MS = 1600;
+
+/** How many candidate anchor rows a reveal captures to measure its own prepend against.
+ *  One would do for every row keyed by `item.id`; the spares exist because the combined
+ *  `SubAgentCard`'s key can migrate on the very reveal being measured — see `revealEarlier`. */
+const ANCHOR_CANDIDATES = 5;
+
+/** An element's offset inside the scroller's CONTENT box. Deliberately not `offsetTop`
+ *  (whose `offsetParent` sits outside the scroller, so a growing composer moves it) and
+ *  deliberately scroll-invariant: `rect.top` falls by exactly what `scrollTop` rises by, so
+ *  the sum is the same number before and after any scroll — including the browser's own
+ *  clamp during the commit being measured. */
+function contentTopOf(node: Element, scroller: HTMLElement): number {
+  return node.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+}
 
 function safeStringify(v: unknown): string {
   if (v === undefined) return '';
@@ -382,6 +397,117 @@ export function ChatPane({
     window.addEventListener('pointercancel', release);
   };
 
+  // ── Transcript window: how much of the conversation is actually mounted ─────────────
+  //
+  // See chatEntities' window section for the rules. Here is the WIRING, and its two
+  // load-bearing halves:
+  //
+  //   • the head is normalized DURING RENDER, because the slice below needs the answer for
+  //     THIS paint — deriving it in an effect would mount the wrong window first and then
+  //     correct it, i.e. a visible flash on every event. `nextFirstShown` is idempotent
+  //     under a repeat application, so the render this schedules converges at once (React
+  //     supports exactly this "adjust state while rendering" shape);
+  //   • the pin state is read from `stickRef`, NOT from the `pinned` render mirror, because
+  //     the ref is updated synchronously inside the scroll handler while the mirror lands a
+  //     render later. In that gap an arriving token would otherwise still see "pinned" and
+  //     slide the window forward — pulling content out from above a reader who has just
+  //     this instant scrolled up, which is the one thing rule 3 exists to prevent.
+  const [firstShownState, setFirstShownState] = useState(0);
+  const windowTotal = conv.history.length + conv.items.length;
+  const firstShown = nextFirstShown(firstShownState, { total: windowTotal, pinned: stickRef.current });
+  if (firstShown !== firstShownState) setFirstShownState(firstShown);
+  const { hiddenCount, historyFrom, itemsFrom, showsHistory } = splitWindow(
+    conv.history.length, conv.items.length, firstShown,
+  );
+
+  /** What a pending reveal captured to measure itself against: the rows it is about to push
+   *  down, nearest the reader first, plus a last-resort total height. `null` = the next
+   *  window change is not a reveal, so nothing should be compensated for it. */
+  const preRevealAnchorRef = useRef<
+    { candidates: Array<{ node: Element; top: number }>; scrollHeight: number } | null
+  >(null);
+
+  const revealEarlier = useCallback(() => {
+    const next = nextFirstShown(firstShown, { total: windowTotal, pinned: false, reveal: true });
+    // Nothing left to reveal → don't arm the compensation, or the NEXT window change (a
+    // pinned slide) would be handed a stale anchor to correct against.
+    if (next === firstShown) return;
+    // Asking for older messages is explicit intent to go and read them — so it releases
+    // stick-to-bottom. Without this the render below would re-normalize under the pinned
+    // rule and slide the window straight back to the tail, making the button do nothing.
+    setStick(false);
+    const el = scrollRef.current;
+    const inner = contentRef.current;
+    if (!el || !inner) { preRevealAnchorRef.current = null; setFirstShownState(next); return; }
+    // SEVERAL candidate anchors, not one, and only rows the reader can actually see.
+    //
+    // Visible, because holding still a row that is above the fold is not the same as holding
+    // the VIEW still: a block between it and the viewport can grow a line in the same commit
+    // while a turn streams, and the reader would drift by that. Whatever a visible row moves
+    // by is, by definition, what the reader experiences.
+    //
+    // Several, because one of these nodes can be REPLACED rather than moved by the very
+    // reveal being measured. Ordinary rows are keyed by `item.id` and survive a prepend, but
+    // the one combined `SubAgentCard` is keyed by the EARLIEST suppressed tool item in the
+    // window — so a reveal that mounts an older fan-out migrates its key, React unmounts the
+    // card, and an anchor that happened to BE that card would leave the correction with
+    // nothing to measure and the reader jumped by the whole prepend. The spares make that
+    // unreachable without this code having to know anything about SubAgentCard.
+    const fold = el.getBoundingClientRect().top;
+    const candidates: Array<{ node: Element; top: number }> = [];
+    for (const node of Array.from(inner.children)) {
+      if (node.classList.contains('chat-window-more')) continue;
+      if (node.getBoundingClientRect().bottom <= fold) continue;
+      candidates.push({ node, top: contentTopOf(node, el) });
+      if (candidates.length >= ANCHOR_CANDIDATES) break;
+    }
+    preRevealAnchorRef.current = { candidates, scrollHeight: el.scrollHeight };
+    setFirstShownState(next);
+  }, [firstShown, windowTotal, setStick]);
+
+  // Scroll anchoring for a PREPEND. Revealing older entries inserts content ABOVE the
+  // reader, which moves everything they were looking at down the scroller by exactly the
+  // height of what was inserted — so `scrollTop` is pushed back by the same amount, here, in
+  // a LAYOUT effect: after React has mutated the DOM (so the anchor's new position is the
+  // real one) and before the browser paints (so no intermediate position is ever seen).
+  //
+  // Measured off an ANCHOR ROW, not off `scrollHeight`. A reveal is triggered from a scroll
+  // handler while a turn may still be streaming, so React can merge the window change and an
+  // arriving frame into ONE commit — prepending 40 entries above the reader AND appending a
+  // materializing tool card below them. `scrollHeight` grew by both; correcting by that sum
+  // would scroll the reader down by the append's height too. See `revealScrollCorrection`.
+  // Any of the captured rows will do: they all sit below the prepend, so they all move by
+  // the same amount, which is why the spares can stand in for a replaced first choice.
+  //
+  // `prevTopRef`/`restoreTopRef` are updated in the same breath, and that ordering is the
+  // point: the compensating write dispatches its own scroll event, and a handler that saw
+  // the OLD `prevScrollTop` would read this as a large downward jump. Writing them here
+  // means the handler sees a consistent pair. (It moves the view DOWN, so
+  // `nextStickToBottom`'s rule 3 can't misread it as the user leaving either way — but
+  // `nextRestoreTop` would happily record the un-compensated offset as the reading position.)
+  useLayoutEffect(() => {
+    const pending = preRevealAnchorRef.current;
+    preRevealAnchorRef.current = null;
+    if (!pending) return;
+    const el = scrollRef.current;
+    if (!el || el.clientHeight === 0) return;
+    const anchor = pending.candidates.find((c) => c.node.isConnected);
+    const delta = anchor
+      ? revealScrollCorrection({
+        anchorTopBefore: anchor.top,
+        anchorTopAfter: contentTopOf(anchor.node, el),
+      })
+      // Nothing the reader was looking at survived the commit — a rewind truncating the
+      // transcript underneath the reveal. Total height is the WRONG measure (a streamed
+      // append lands in it too, which is the whole reason for the anchors) but being off by
+      // one card beats being off by the entire prepend, which is what doing nothing costs.
+      : revealScrollCorrection({ anchorTopBefore: pending.scrollHeight, anchorTopAfter: el.scrollHeight });
+    if (delta <= 0) return;
+    el.scrollTop += delta;
+    prevTopRef.current = el.scrollTop;
+    restoreTopRef.current = el.scrollTop;
+  }, [firstShown]);
+
   // A LAYOUT effect, not a passive one, and that is the whole race: React has just mutated
   // the DOM, so the browser is holding a scroll event for whatever `scrollTop` clamp that
   // mutation forced. Re-pinning here — synchronously, before paint — means the handler sees
@@ -520,29 +646,37 @@ export function ChatPane({
   //    file SlideOver (everything else, including a board — no rasterizer exists, so a
   //    board's "Open board ↗" degrades to the same numbered text preview; see chatEntities'
   //    Reference/classifyReference and the plan's board-thumbnail resolution). ──────────
-  const handleOpenFile = (path: string) => {
+  //
+  // Every one of these is a `useCallback` because they are the props `ItemView`/`ToolCard`
+  // are MEMOIZED on: an inline arrow here is a new function identity on every render, which
+  // would defeat the memo for the whole transcript and put us back to re-rendering N items
+  // per streamed token. Their dependency sets are all stable (`setState` setters, the
+  // session object, one memoized surface callback), so in practice they are created once
+  // per mounted pane.
+  const handleOpenFile = useCallback((path: string) => {
     const ref = classifyReference(path);
     if (ref.isImage) {
       setLightbox({ src: agentFileUrl(path, { raw: true }), caption: ref.label });
       return;
     }
     setSlideOver({ mode: 'file', path });
-  };
-  const handleOpenBoard = (path: string) => setSlideOver({ mode: 'file', path });
-  const handleDrillIn = (run: SubAgentRun) => setSlideOver({ mode: 'subagent', run });
-  const handleOpenShell = (run: SubAgentRun) => setSlideOver({ mode: 'shell', run });
-  const handleStopShell = (run: SubAgentRun) => session.stopTask(run.taskId);
-  const handleNavApp = (page: 'tasks' | 'knowledge' | 'core', id: string) => {
+  }, []);
+  const handleOpenBoard = useCallback((path: string) => setSlideOver({ mode: 'file', path }), []);
+  const handleDrillIn = useCallback((run: SubAgentRun) => setSlideOver({ mode: 'subagent', run }), []);
+  const handleOpenShell = useCallback((run: SubAgentRun) => setSlideOver({ mode: 'shell', run }), []);
+  const handleStopShell = useCallback((run: SubAgentRun) => session.stopTask(run.taskId), [session]);
+  const handleQuote = useCallback((text: string) => setReplyQuote(text), []);
+  const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core', id: string) => {
     setSlideOver(null);
     onOpenAppPage?.(page, id);
-  };
+  }, [onOpenAppPage]);
 
   // ── The buttons an answer asked for (`dream-actions`). Every one of them lands on a
   //    surface this pane ALREADY owns — the slide-over, the lightbox, the app's navigation,
   //    the composer — so an answer can never reach further than the user already could by
   //    clicking around this same view. `ask` deliberately LOADS the composer instead of
   //    sending: the agent proposes the follow-up, the user still sends it. ────────────────
-  const handleAction = (action: ChatAction) => {
+  const handleAction = useCallback((action: ChatAction) => {
     switch (action.action) {
       case 'task': case 'knowledge': case 'core':
         handleNavApp(action.action === 'task' ? 'tasks' : action.action, action.id!);
@@ -558,7 +692,7 @@ export function ChatPane({
         session.focus();
         break;
     }
-  };
+  }, [handleNavApp, handleOpenFile, session]);
 
   // ── Transcript pass: skip the spawning Agent/Task tool's OWN card (state 9 — it's
   //    already represented by ONE combined SubAgentCard, rendered at the position of the
@@ -596,7 +730,7 @@ export function ChatPane({
         onOpenFile={handleOpenFile}
         onOpenBoard={handleOpenBoard}
         onAction={handleAction}
-        onQuote={(text) => setReplyQuote(text)}
+        onQuote={handleQuote}
       />
     );
     // Under bypass the CLI never asks — so the guarded commands it ran anyway get the
@@ -616,11 +750,16 @@ export function ChatPane({
     return view;
   };
 
-  const historyNodes = conv.history.map(itemNode);
-  const liveNodes = conv.items.map(itemNode);
+  // Only the WINDOW is mapped — see the window section above. Everything older than
+  // `firstShown` is not rendered at all (not hidden with CSS: not mounted), which is what
+  // bounds this pane's DOM and its memory regardless of how long the conversation runs.
+  const historyNodes = conv.history.slice(historyFrom).map(itemNode);
+  const liveNodes = conv.items.slice(itemsFrom).map(itemNode);
   // A sub-agent run whose spawning tool call never appeared as its own ChatToolItem (an
   // edge case in raw frame ordering) still needs its card SOMEWHERE — append it once, after
-  // the live transcript, rather than silently dropping the whole group.
+  // the live transcript, rather than silently dropping the whole group. This ALSO covers the
+  // case where the spawning tool item is simply older than the window: the group card falls
+  // back to trailing the transcript instead of vanishing with the item that anchored it.
   const trailingSubAgentCard = !subAgentCardShown && conv.subAgents.length > 0
     ? <SubAgentCard key="subagents-trailing" runs={conv.subAgents} onDrillIn={handleDrillIn} rootRef={setSubAgentCardEl} highlightRunId={jumped?.id ?? null} />
     : null;
@@ -686,6 +825,18 @@ export function ChatPane({
             restoreTopRef.current = nextRestoreTop(restoreTopRef.current, metrics);
             prevTopRef.current = el.scrollTop;
             syncRail();
+            // Reading upwards past the window's ceiling extends it, so scrolling back
+            // through a long conversation feels continuous rather than like hitting a wall.
+            //
+            // `userDriving()` is not optional here. This pane's `scrollTop` is written by
+            // things that are not the user constantly — the re-home restore, a clamp when a
+            // block shrinks, the pin's own re-assert — and several of those land at or near
+            // 0. Without the gate, one of them would trip a reveal, whose prepend would
+            // land near 0 again, and the whole conversation would unspool in a few frames:
+            // exactly the unbounded mount this window exists to prevent.
+            if (hiddenCount > 0 && el.scrollTop < WINDOW_REVEAL_PX && metrics.userDriven) {
+              revealEarlier();
+            }
           }}
           onWheel={(e) => markIntent(wheelIntent(e.deltaY))}
           onTouchStart={(e) => { touchYRef.current = e.touches[0]?.clientY ?? 0; }}
@@ -710,7 +861,15 @@ export function ChatPane({
               when its content grows, so content height needs an element of its own. */}
           <div className="chat-scroll-inner" ref={contentRef}>
             {isEmpty && <EmptyState />}
-            {conv.history.length > 0 && (
+            {/* The window's ceiling, made visible and operable. Scrolling to the top does
+                this for you (see the scroll handler); the button is what makes the omission
+                honest for a reader who hasn't scrolled yet. */}
+            {hiddenCount > 0 && (
+              <button type="button" className="chat-window-more" onClick={revealEarlier}>
+                ↑ Show earlier messages ({hiddenCount})
+              </button>
+            )}
+            {showsHistory && (
               <>
                 {historyNodes}
                 <div className="chat-history-divider" aria-hidden>earlier conversation ↑ · resumed</div>

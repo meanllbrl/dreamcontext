@@ -137,6 +137,25 @@
 .chat-m-terminal-cmd { color: var(--term-fg); font-weight: var(--font-weight-medium); }
 .chat-m-terminal-prompt { color: var(--term-prompt); margin-right: var(--space-2); }
 
+/* The clamp between a long output's head and its tail (see TerminalBlock). Sits INSIDE the
+   dark surface, so it borrows the terminal palette rather than the card's. */
+.chat-m-terminal-more {
+  display: block;
+  width: 100%;
+  margin: var(--space-2) 0;
+  padding: 2px 0;
+  border: none;
+  border-top: 1px dashed var(--term-border);
+  border-bottom: 1px dashed var(--term-border);
+  background: transparent;
+  color: var(--term-dim);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.chat-m-terminal-more:hover { color: var(--term-fg); }
+
 /* ── Diff ────────────────────────────────────────────────────────────────────────── */
 
 .chat-m-diff {

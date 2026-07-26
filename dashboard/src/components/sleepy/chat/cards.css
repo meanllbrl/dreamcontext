@@ -233,6 +233,13 @@
   box-shadow: var(--shadow-sm);
   overflow: hidden;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  /* A tool card's insides never affect anything outside it (it already clips its own
+     overflow and its height is its content's), so the engine may skip its subtree when
+     laying out or painting the rest of the transcript. `content`, not `content-visibility`:
+     containment is a promise about scope, whereas content-visibility makes the browser
+     ESTIMATE the box's size, which shifts `scrollHeight` mid-scroll — the exact raced
+     measurement the stick-to-bottom rules are built to survive. */
+  contain: content;
 }
 .chat-toolcard:hover { border-color: var(--color-border-hover); }
 .chat-toolcard[data-status='error'] { border-color: var(--color-error); }
@@ -270,6 +277,18 @@
   max-height: 320px;
   overflow: auto;
 }
+
+/* The truncation notice under an over-budget raw result (see GenericBody). */
+.chat-toolcard-more {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.chat-toolcard-more:hover { color: var(--color-text-secondary); }
 
 /* Plan body (ExitPlanMode) — a document, not a data dump */
 .chat-toolcard-plan { padding: var(--space-3) var(--space-4); }

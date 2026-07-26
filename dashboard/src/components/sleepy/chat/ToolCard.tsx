@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
-import { parseEditDiff, deriveDiffStartLine } from './chatEntities';
+import { parseEditDiff, deriveDiffStartLine, GENERIC_RESULT_CHAR_CAP } from './chatEntities';
 import { Duration, DiffStat, MetaText, CopyButton } from './atoms';
 import { ToolHeader, TerminalBlock, DiffView } from './molecules';
 import type { ChatToolItem } from '../chatSession';
@@ -42,6 +42,13 @@ function inputString(input: unknown, key: string): string | undefined {
   return typeof v === 'string' && v ? v : undefined;
 }
 
+/** How big the untruncated result is, for the expander's label. */
+function formatByteCount(chars: number): string {
+  if (chars < 1024) return `${chars} characters`;
+  if (chars < 1024 * 1024) return `${Math.round(chars / 1024)} KB`;
+  return `${(chars / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /** A short "N lines" meta label for a string result — omitted for anything else. */
 function resultLineCount(result: unknown): number | null {
   return typeof result === 'string' && result.length ? result.split('\n').length : null;
@@ -80,8 +87,15 @@ function PlanBody({ plan, result }: { plan: string; result: unknown }) {
 }
 
 function GenericBody({ item }: { item: ChatToolItem }) {
+  const [showAll, setShowAll] = useState(false);
   const input = safeStringify(item.input);
   const result = item.result !== undefined ? safeStringify(item.result) : '';
+  // A `Read` comes back WHOLE — a large generated file is megabytes of text, and dropping
+  // all of it into a `<pre>` costs the string, the text node, and a layout pass over it
+  // every time the card renders. Truncated to a budget with the rest one click away; Copy
+  // still hands over the complete result.
+  const overBudget = !showAll && result.length > GENERIC_RESULT_CHAR_CAP;
+  const shownResult = overBudget ? result.slice(0, GENERIC_RESULT_CHAR_CAP) : result;
   return (
     <div className="chat-toolcard-generic">
       <div className="chat-toolcard-section">
@@ -94,14 +108,19 @@ function GenericBody({ item }: { item: ChatToolItem }) {
             <span className="chat-toolcard-label">Result</span>
             <CopyButton text={result} />
           </div>
-          <pre>{result}</pre>
+          <pre>{shownResult}</pre>
+          {overBudget && (
+            <button type="button" className="chat-toolcard-more" onClick={() => setShowAll(true)}>
+              ⋯ show all {formatByteCount(result.length)}
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-export function ToolCard({ item, onOpenFile }: { item: ChatToolItem; onOpenFile: (path: string) => void }) {
+function ToolCardInner({ item, onOpenFile }: { item: ChatToolItem; onOpenFile: (path: string) => void }) {
   // Only an EDIT opens on its own: what changed in your files is the one tool body you
   // always want to see. Everything else — Bash above all — stays a one-line receipt you
   // can open (owner call 07-25: an agent turn is mostly shell calls, and their expanded
@@ -160,3 +179,8 @@ export function ToolCard({ item, onOpenFile }: { item: ChatToolItem; onOpenFile:
     </div>
   );
 }
+
+/** MEMOIZED for the same reason `ItemView` is — a finished tool card is the single most
+ *  expensive thing in the transcript (a diff, a terminal block, a JSON dump) and it never
+ *  changes again once its result lands. See `ItemView`'s note on callback stability. */
+export const ToolCard = memo(ToolCardInner);

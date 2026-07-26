@@ -1,11 +1,12 @@
 import { api, getActiveVault } from '../../api/client';
 import { playAskChime } from '../../lib/chime';
 import {
-  parseChatLine, buildQuestionAnswer,
+  parseChatLine, buildQuestionAnswer, isUrgentChatEvent,
   type ChatEvent, type QuestionSpec, type ClientControl,
 } from '../../lib/chatProtocol';
 import type { TermStatus } from './agentSession';
 import { runStatusFrom, startSubAgentRun, type SubAgentRun } from './chat/chatEntities';
+import { createNotifyCoalescer } from './chat/notifyCoalescer';
 
 /**
  * The imperative engine behind a Chat session (beta) — the headless stream-json peer of
@@ -397,6 +398,10 @@ export function createChatSession(
   const fireSubscribers = () => {
     subscribers.forEach((cb) => { try { cb(); } catch { /* a broken subscriber must not kill the session */ } });
   };
+  /** At most one subscriber fire per animation frame for the high-frequency arms (see
+   *  notifyCoalescer.ts). Every OTHER path — user actions, and any urgent event — goes
+   *  through `.flush()`, which fires synchronously AND cancels whatever this had queued. */
+  const renderFlush = createNotifyCoalescer(fireSubscribers);
 
   let focusTarget: HTMLElement | null = null;
   let transcriptRepin: (() => void) | null = null;
@@ -445,7 +450,14 @@ export function createChatSession(
   function snapshot() {
     return { busy: session.busy, asking: session.asking, status: session.status, attention: session.attention };
   }
-  function applyAndNotify(mutate: () => void): void {
+  /**
+   * @param coalesce Whether this mutation may ride the next animation frame instead of
+   *   committing now. Only the socket's own reducer ever passes `true`, and only for an
+   *   event {@link isUrgentChatEvent} cleared as high-frequency — every user-initiated
+   *   mutation (send, answer, rewind, a dropped file) keeps the default and paints
+   *   synchronously, so an optimistic bubble is never a frame late.
+   */
+  function applyAndNotify(mutate: () => void, coalesce = false): void {
     const before = snapshot();
     mutate();
     // The turn clock starts on the busy edge and stops when the turn settles. Derived here
@@ -454,12 +466,17 @@ export function createChatSession(
     if (before.busy !== session.busy) {
       conv = { ...conv, turnStartedAt: session.busy ? Date.now() : undefined };
     }
-    fireSubscribers();
     const after = snapshot();
-    if (before.busy !== after.busy || before.asking !== after.asking
-      || before.status !== after.status || before.attention !== after.attention) {
-      notify();
-    }
+    const coarseChanged = before.busy !== after.busy || before.asking !== after.asking
+      || before.status !== after.status || before.attention !== after.attention;
+    // A coarse flip is the session becoming busy/idle/asking/closed — the surface's dock
+    // chips and the pane's own working indicator both turn on it, so it paints NOW no matter
+    // how the caller classified the event. This is also the backstop the urgency table
+    // leans on: an unrecognised high-frequency arm that nonetheless moves the turn's state
+    // can't be deferred, whatever `coalesce` says.
+    if (coalesce && !coarseChanged) renderFlush.schedule();
+    else renderFlush.flush();
+    if (coarseChanged) notify();
   }
 
   function subscribe(cb: () => void): () => void {
@@ -497,7 +514,7 @@ export function createChatSession(
     // Safe because `syncDraft` keeps the model mirroring the textarea on every keystroke,
     // so append-then-adopt can never lose free-typed text.
     conv = { ...conv, draft: conv.draft + data, draftEpoch: conv.draftEpoch + 1 };
-    fireSubscribers();
+    renderFlush.flush();
   }
 
   function syncDraft(text: string): void {
@@ -949,7 +966,9 @@ export function createChatSession(
     // Noise (hook chatter, status pings, rate-limit events) and unparseable lines touch
     // neither notification channel — nothing changed, so nothing re-renders.
     if (!ev || ev.kind === 'ignored') return;
-    applyAndNotify(() => applyEvent(ev));
+    // The ONE place coalescing is allowed: a socket frame nobody is waiting to act on can
+    // ride the next paint instead of forcing a React commit per streamed token.
+    applyAndNotify(() => applyEvent(ev), !isUrgentChatEvent(ev));
     // The turn just flushed to the transcript — backfill rewind-anchor uuids while idle.
     if (ev.kind === 'result') void syncTranscriptUuids();
   };
@@ -1248,6 +1267,10 @@ export function createChatSession(
   function dispose(): void {
     if (disposed) return;
     disposed = true;
+    // A queued trailing flush would otherwise fire into subscribers whose component is on
+    // its way out — and, worse, keep this whole closure alive for a frame after the pane
+    // that owned it stopped existing.
+    renderFlush.cancel();
     try { ws.close(); } catch { /* already closing */ }
     try { container.remove(); } catch { /* already detached */ }
   }
