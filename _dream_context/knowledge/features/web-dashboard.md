@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-07-25'
+updated: '2026-07-26'
 released_version: v0.19.0
 tags:
   - frontend
@@ -22,6 +22,8 @@ related_tasks:
   - author-a-task-via-a-claude-agent-from-the-new-task-button
   - >-
     announcements-become-screenshot-driven-landing-pages-instead-of-excalidraw-boards
+  - announcements-become-one-story-per-version-titled-by-version
+  - announcements-can-hold-video-not-just-screenshots
 type: feature
 name: web-dashboard
 description: ''
@@ -116,6 +118,8 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] As a user, announcements content ships with the npm package (in `dashboard/public/announcements.json` + `dashboard/public/announcements/<id>.json` stories + their screenshots under `shots/`) and refreshes on every `dreamcontext upgrade`, so I receive product news without the dashboard needing a server route or per-vault storage.
 - [x] As a user, an announcement SHOWS me what shipped — real screenshots of the app in a scrolling landing page, any of which I can click to fill the screen — instead of a diagram I have to pan and zoom to read.
 
+- [x] As a user, each announcement is a screenshot story (one per version) with hero + blocks (split/shot/points/stats/terminal/note kinds), click-to-zoom lightbox, and video support (mp4/webm with poster), so I see what shipped not a board to pan.
+- [x] As a user, the full-window ImageViewer (edge-to-edge, wheel/pinch zoom, drag-pan, Esc/double-click) opens inline images and announcement screenshots portalled to body, so I can look at the image without fighting a cramped lightbox.
 ## Acceptance Criteria
 
 ### Origin Setup & Cloud Sync (v0.19.0)

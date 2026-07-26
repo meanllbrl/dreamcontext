@@ -5,12 +5,15 @@
       "domain:database",
       "domain:security",
       "domain:knowledge",
-      "domain:recall"
+      "domain:recall",
+      "domain:infrastructure",
+      "domain:quality"
     ],
     "layer": [
       "layer:frontend",
       "layer:backend",
-      "layer:devops"
+      "layer:devops",
+      "layer:testing"
     ],
     "kind": [
       "kind:architecture",
@@ -18,7 +21,8 @@
       "kind:testing",
       "kind:design",
       "kind:decisions",
-      "kind:onboarding"
+      "kind:onboarding",
+      "kind:pattern"
     ],
     "topic": [
       "topic:recall",
@@ -43,7 +47,9 @@
       "topic:pm",
       "topic:roadmap",
       "topic:embeddings",
-      "topic:lab"
+      "topic:lab",
+      "topic:macos",
+      "topic:automations"
     ]
   },
   "bareTags": [

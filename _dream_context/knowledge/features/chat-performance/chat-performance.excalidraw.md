@@ -1,17 +1,21 @@
 ---
-
 name: chat-performance-windowed-transcript
 description: >-
-  Measured before/after for the Agent Chat performance work: a tail-windowed transcript, memoized
-  transcript items, a memo boundary between AgentSurface and each pane, per-frame notification
-  coalescing, and clamped card bodies. Same 500-item conversation measured both ways in one
-  browser — transcript DOM nodes 9,533 to 764 (-92%), scroll height 105,456px to 8,415px, mounted
-  rows 502 to 43, JS heap 12.3MB to 9.9MB with 10.3MB reclaimed on return to the tail. Live
-  streaming turn: rows bounded 14-41, React commits capped at the frame rate instead of the token
-  rate, permission cards still painting mid-stream, no dropped deltas.
-tags: [performance, agents, frontend, excalidraw]
+  Measured before/after for the Agent Chat performance work: a tail-windowed
+  transcript, memoized transcript items, a memo boundary between AgentSurface
+  and each pane, per-frame notification coalescing, and clamped card bodies.
+  Same 500-item conversation measured both ways in one browser — transcript DOM
+  nodes 9,533 to 764 (-92%), scroll height 105,456px to 8,415px, mounted rows
+  502 to 43, JS heap 12.3MB to 9.9MB with 10.3MB reclaimed on return to the
+  tail. Live streaming turn: rows bounded 14-41, React commits capped at the
+  frame rate instead of the token rate, permission cards still painting
+  mid-stream, no dropped deltas.
+tags:
+  - performance
+  - 'topic:agents'
+  - frontend
+  - 'topic:excalidraw'
 excalidraw-plugin: parsed
-
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 

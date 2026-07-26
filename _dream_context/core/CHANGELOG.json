@@ -1,6 +1,284 @@
 [
   {
     "date": "2026-07-26",
+    "type": "test",
+    "scope": "e2e",
+    "description": "Add five new e2e screenshot-capture scripts: reel-shots-app.mjs, reel-shots-chat-live.mjs, reel-shots-chat.mjs, reel-shots-roadmap.mjs, reel-shots-tutorial.mjs. These scripts drive the dashboard in headless Playwright to capture high-fidelity screenshots for announcements/video production. Work uncommitted.",
+    "breaking": false,
+    "summary": "Five new reel-shots e2e scripts for dashboard page screenshots (uncommitted)",
+    "references": [
+      "file:e2e/reel-shots-app.mjs",
+      "file:e2e/reel-shots-chat-live.mjs",
+      "file:e2e/reel-shots-chat.mjs",
+      "file:e2e/reel-shots-roadmap.mjs",
+      "file:e2e/reel-shots-tutorial.mjs"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "docs",
+    "scope": "knowledge",
+    "description": "Add four new knowledge files: (1) features/automations-scheduled-headless-claude-jobs.md (feature PRD for the launchd-scheduled headless jobs subsystem), (2) macos-launchd-scheduler-constraints.md (platform knowledge), (3) patterns/build-and-propagate-pattern.md (the skill source-editing → npm run build → peer vault propagation pattern), (4) patterns/test-isolation-injectable-home.md (the injectable HOME + isolated vault + scripted CLI stand-in pattern for Playwright tests). Work uncommitted.",
+    "breaking": false,
+    "summary": "Four new knowledge files: automations feature, launchd constraints, two patterns (uncommitted)",
+    "references": [
+      "file:_dream_context/knowledge/features/automations-scheduled-headless-claude-jobs.md",
+      "file:_dream_context/knowledge/macos-launchd-scheduler-constraints.md",
+      "file:_dream_context/knowledge/patterns/build-and-propagate-pattern.md",
+      "file:_dream_context/knowledge/patterns/test-isolation-injectable-home.md"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "chore",
+    "scope": "desktop",
+    "description": "Built v0.21.0 desktop app on macOS (dreamcontext-beta.app + dreamcontext-beta_0.21.0_aarch64.dmg). Bundle contains dist/index.js, dist/dashboard/, agents, skill-packs, sleepy, askpass.cjs executable, and the checklist.json Tauri capability (vault-scoped windows, no shell/global-shortcut). Verified bundle completeness via grep (dream-view surface gate present in dashboard bundle, skill/SKILL.md includes the mid-build edit). Mid-build edit hazard discovered and solved: skill/SKILL.md was edited WHILE Tauri was packaging skill/ as an app resource — the fix was to stop reasoning about timing and make the ordering explicit (edit BEFORE build start, not during). Five peer vaults updated to the new skill version. App and .dmg built but NOT published (npm still at 0.20.1). Work uncommitted.",
+    "breaking": false,
+    "summary": "v0.21.0 desktop app built (dreamcontext-beta.app + .dmg) — not yet published (uncommitted)",
+    "references": [
+      "file:desktop/src-tauri/tauri.conf.json"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "feat",
+    "scope": "agent",
+    "description": "Add five new rich-answer surfaces to Chat view, all data-driven (agent writes JSON, UI renders interactively). (1) Inline interactive charts: reuses Lab chart components (line/bar/number/funnel) so the agent can render a live chart directly in the transcript from an inline dream-view fence payload — click to open fullscreen with the same zoom/pan/filter affordances Lab has. (2) Boards open genuinely fullscreen (covering the whole app window, not just the chat pane) from every entry point — backticked path, board action button, file action, and the inline board embed's Full screen button all converge on one BoardFullscreen overlay portaled to document.body. The side-panel board view is gone. (3) Custom widget pageviews: when the answer is a research result (araba araştır), the reply is a horizontally-scrollable set of custom widgets (stack/rail/card/table/text/stat/image/divider) instead of text-heavy prose — think product comparison cards with badges, specs, images, and action buttons. Vertical scrolling for depth, horizontal for survey. (4) A pinned always-on-top checklist window (macOS NSPanel): the agent writes a to-do list (e.g., 'generate an App Store Connect API key'), the user walks the steps in a separate OS window that stays visible while they work in Safari, ticks items, adds notes, attaches files/secrets, submits, and the whole filled-in list travels to chat as one message. Vault + conversation scoped, debounced localStorage persistence with TTL, narrow Tauri capability (no shell/global-shortcut access), secret fields with reveal toggle. (5) url action buttons: dream-actions fence can now emit url-kind buttons that open https: links in the default browser (http/javascript/data/file rejected). New modules: chatViewSpec.ts (parseViewBlock validation with 15 MAX_* caps), ChartView/PageView/ChatViews components, QueuedMessages + chatQueue, checklistStore/State/Markdown + ChecklistWindow/Body components, checklistBridge, chat-surface.ts briefing (teaches chat-spawned agents what the surface can render), 6 new test files (chat-view-spec, chat-surface-lockstep, chat-queue, checklist-{state,markdown,store}) with 51+58+32 assertions green. ActionRow gained url:'⇗' glyph. BoardEmbed exported BoardFullscreen, deleted BoardCanvas + local fullscreen state. SlideOver removed board branch. ChatPane owns boardFull overlay state. Built in wave-parallel via goal-skill (T1/T2/T3/T7/T9 implementers + goal-planner + 3-reviewer adversarial plan review). Work uncommitted.",
+    "breaking": false,
+    "summary": "Chat answers become interactive inline charts, fullscreen boards, widget pageviews, and a pinned checklist window (uncommitted)",
+    "references": [
+      "file:dashboard/src/lib/chatViewSpec.ts",
+      "file:dashboard/src/components/sleepy/chat/ChartView.tsx",
+      "file:dashboard/src/components/sleepy/chat/PageView.tsx",
+      "file:dashboard/src/components/sleepy/chat/ChatViews.tsx",
+      "file:dashboard/src/components/sleepy/chat/QueuedMessages.tsx",
+      "file:dashboard/src/components/sleepy/chat/chatQueue.ts",
+      "file:dashboard/src/components/checklist/ChecklistWindow.tsx",
+      "file:dashboard/src/lib/checklistStore.ts",
+      "file:dashboard/src/lib/checklistState.ts",
+      "file:dashboard/src/lib/checklistMarkdown.ts",
+      "file:desktop/src-tauri/capabilities/checklist.json",
+      "file:src/server/chat-surface.ts",
+      "file:tests/unit/chat-view-spec.test.ts",
+      "file:tests/unit/chat-surface-lockstep.test.ts",
+      "file:tests/unit/chat-queue.test.ts",
+      "file:tests/unit/checklist-state.test.ts",
+      "file:tests/unit/checklist-markdown.test.ts",
+      "file:tests/unit/checklist-store.test.ts",
+      "task:chat-answers-become-interactive-inline-charts-fullscreen-boards-widget-pageviews-and-a-pinned-checklist-window"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "fix",
+    "scope": "agent",
+    "description": "Fix ::selection colors being nearly invisible when selecting text over Chat's violet user bubbles or assistant cards. Changed from translucent accent wash (32% alpha in dark, 12% in light) to opaque high-contrast colors: light mode #c9c0ff background + dark text, dark mode #5b4bd6 background + white text. The wash was invisible over already-tinted surfaces (violet-on-violet). One global rule in global.css, no chat-CSS overrides. Work uncommitted.",
+    "breaking": false,
+    "summary": "Text selection colors are now opaque and visible everywhere (uncommitted)",
+    "references": [
+      "file:dashboard/src/styles/global.css"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "feat",
+    "scope": "skill",
+    "description": "Add SKILL.md Operational Rule 13 'Insights before external fetch': when the user asks for a metric (MRR, WAU, signups, revenue), the answer comes from the brain FIRST — snapshot Lab section (zero tool calls) → lab show <slug> (full cached series, never fetches) → lab list / recall --types insight → lab sync <slug> only when TTL-stale. An MCP tool, raw API request, or hand-written script is the LAST resort. Add Entity Router paragraph routing metric READING through the same ladder (not just creating). Extend tasks-and-features.md with a 4-step numbered read ladder emphasizing lab show never fetches. Add 3 marker tests pinning the rule, router paragraph, and read ladder (feature-integration-pattern.md mandate). Old rule 13 (connected projects) renumbered to 14. Root cause this fixes: a real past failure where agents answered metric questions via MCP/ad-hoc scripts while the synced series sat in lab/cache — the Tilki vault had to hand-write a Paddle memory note as a workaround. Work uncommitted.",
+    "breaking": false,
+    "summary": "Insights before external fetch — the READ path, not just the create path (uncommitted)",
+    "references": [
+      "file:skill/SKILL.md",
+      "file:skill/references/tasks-and-features.md",
+      "file:tests/unit/taxonomy-markers.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "fix",
+    "scope": "agent",
+    "description": "Fix the message hover bar reserving vertical space even when hidden, creating a dead band under every transcript item that blocked text selection and made the transcript feel vertically loose. The hover bar now uses position:absolute (removed from flow) + pointer-events:none when hidden, so it reserves space only when visible. Text selection and click targets work correctly across the full message body.",
+    "breaking": false,
+    "summary": "The message hover bar stops reserving a dead band under every message",
+    "references": [
+      "commit:4d931e9",
+      "file:dashboard/src/components/sleepy/chat/TranscriptItem.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "perf",
+    "scope": "agent",
+    "description": "Fix a React re-render loop where every NDJSON stream frame rebuilt the same inline video element by memoizing ItemView's inline media references. Before: a 500-line transcript with 3 inline clips triggered 500+ video element reconstructs during one streaming turn. After: the video element is created once and reused across renders. The fix applies React.memo to ItemView with stabilized callbacks and memoizes the inline media reference array.",
+    "breaking": false,
+    "summary": "A clip mid-answer stops being rebuilt on every stream event",
+    "references": [
+      "commit:eb4a0d4",
+      "file:dashboard/src/components/sleepy/chat/TranscriptItem.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "feat",
+    "scope": "agent",
+    "description": "Add full-window lightbox (ImageViewer, portaled to document.body) for inline images in Chat transcripts. Click an inline image or a file action pointing at an image to open it fullscreen with 3 zoom levels (fit-width, fit-height, 1:1 pixel-perfect), pan-while-zoomed, Esc/click-backdrop to close, focus trap, and restored focus on close. Replaces the cramped slide-over image preview. The viewer portals to document.body to escape the .agent-surface contain:layout clip boundary. Inline images still render as small previews in the transcript; the viewer is the 'bigger' affordance.",
+    "breaking": false,
+    "summary": "Chat images open in the full-window viewer, zoomable to the pixel",
+    "references": [
+      "commit:f8e6220",
+      "file:dashboard/src/components/sleepy/chat/Lightbox.tsx",
+      "file:dashboard/src/components/sleepy/ChatPane.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "feat",
+    "scope": "agent",
+    "description": "Add message queue to Chat composer: ⏎ while Claude is working now queues instead of dropping the input. Queued messages dock as a numbered strip above the composer — editable in place (click text or Edit; ⏎ saves, ⇧⏎ newlines, Esc cancels), one per turn in order (not concatenated), Stop pauses the queue (offers Send now / Clear), dead sessions keep their rows. While a turn runs you get Stop AND an accent-outlined queue button. Also add prompt history: ↑/↓ walk this conversation's past prompts newest first, consecutive duplicates collapsed, including resumed conversations. Validated in Playwright against real server and real chat WS route (isolated vault, fake HOME, scripted CLI stand-in): 32 assertions green in both light and dark. Work uncommitted.",
+    "breaking": false,
+    "summary": "Chat message queue with editable entries + arrow-key prompt history (uncommitted)",
+    "references": [
+      "file:dashboard/src/components/sleepy/chat/QueuedMessages.tsx",
+      "file:dashboard/src/components/sleepy/chat/chatQueue.ts",
+      "file:dashboard/src/components/sleepy/chat/Composer.tsx",
+      "file:tests/unit/chat-queue.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "feat",
+    "scope": "agent",
+    "description": "Multi-question AskUserQuestion cards now page: one question owns the card, the track slides by whole viewport widths. Viewport height is OBSERVED (not measured once) from the active page so it grows as the Other textarea opens. Off-screen pages are inert (keyboard tabs don't reach invisible questions). Chrome shows answered/current dots, n-left readout (button only when gap is off-screen), primary action flips to Submit on completeness (not position), ⌘↵ submits when complete or jumps to gap, ←/→ page (suppressed in textarea). Single-question cards render as before. Verified under Playwright: per-page heights differ (card not sized by tallest question), inert tracks visibility.",
+    "breaking": false,
+    "summary": "Survey questions page horizontally, one question per view",
+    "references": [
+      "commit:58836c1",
+      "file:dashboard/src/components/sleepy/chat/SurveyCard.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "fix",
+    "scope": "agent",
+    "description": "Fix backgrounded sub-agents appearing as duplicate rows. A backgrounded dispatch is announced twice (background_tasks_changed → task_started), and the roster arm was adopting unknown task_ids without checking for duplicates. task_started is now an upsert keyed by task_id (startSubAgentRun): start frame is authoritative for identity (name, type, prompt, spawning tool_use_id); existing entry is authoritative for live state; earlier startedAt wins. A late or duplicate start can no longer reset progress or resurrect finished runs. Verified on two-agent background fan-out: 4 rows → 2 rows.",
+    "breaking": false,
+    "summary": "Backgrounded sub-agent stops appearing twice in the Chat card",
+    "references": [
+      "commit:de2ef92",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts",
+      "file:tests/unit/chat-entities.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "fix",
+    "scope": "agent",
+    "description": "Fix ExitPlanMode approval showing as an empty Survey card. The parser now selects the INTERACTIVE FAMILY by flag and picks the member by payload shape: parsePlan → plan-review event → PlanCard (markdown-rendered plan with Approve & build / Keep planning buttons); neither plan nor parseable question → answerable permission card. ExitPlanMode tool card body now renders the plan instead of JSON. Deny carries its own message stating the plan wasn't approved (not an abort). Verified end-to-end in app against real CLI 2.1.220.",
+    "breaking": false,
+    "summary": "Exit plan mode gets a real card in Chat, not an empty survey",
+    "references": [
+      "commit:f10c1e1",
+      "file:dashboard/src/components/sleepy/chat/PlanCard.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "perf",
+    "scope": "agent",
+    "description": "Five independent performance fixes: (1) React.memo on ItemView/ToolCard with stabilized callbacks; (2) memoized ChatPaneHost + PaneFragment to stop cross-pane rerenders; (3) rAF notify coalescer (one commit per frame instead of per NDJSON frame, with explicit COALESCABLE set); (4) tail window over last 40 entries, extended upward on demand, pinned slides the head forward, unpinned freezes it, scroll-anchored reveals; (5) bounded card bodies (TerminalBlock keeps head 20 + tail 20, 16KB budget on raw tool results, lazy/async images, contain:content). Measured on a 500-item conversation: transcript DOM nodes 9,533 → 764 (-92%), overlay animation stutter eliminated.",
+    "breaking": false,
+    "summary": "Chat transcript stops growing without bound — windowed rendering + memoization + coalesced streaming",
+    "references": [
+      "commit:e4d9e0c",
+      "file:dashboard/src/components/sleepy/ChatPane.tsx",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "feat",
+    "scope": "agent",
+    "description": "Add keyboard interrupt to Chat pane. ⌃C now resolves to session.interrupt() (same as the ■ button), bound on the pane root in capture phase to scope it to the focused pane. Deliberately does NOT claim ⌃C with text selected (platform copy on Windows/Linux) or on idle sessions (would destroy drafts with no undo). Pure decision rule in chat/interruptKey.ts with 11 unit tests; button tooltip updated to show the chord.",
+    "breaking": false,
+    "summary": "⌃C stops the turn in Chat view, not just in the terminal",
+    "references": [
+      "commit:e181e51",
+      "file:dashboard/src/components/sleepy/chat/interruptKey.ts",
+      "file:tests/unit/chat-interrupt-key.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "fix",
+    "scope": "agent",
+    "description": "Fix 784px² overlap between the floating dock and the composer's Stop/Send button when the overlay is open. The dock is now lifted clear of the composer strip (the button stays uncovered at every composer height); the tile stack ceiling comes down by the same lift. Verified against real dashboard: overlap went from 784px² to 0 in both dock states.",
+    "breaking": false,
+    "summary": "Minimized-sessions dock no longer covers Chat's Stop button",
+    "references": [
+      "commit:d533268",
+      "file:dashboard/src/components/sleepy/AgentTerminal.css"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "feat",
+    "scope": "announcements",
+    "description": "Refactored What's New from a feature stream (six entries across four versions) into a release history — one announcement per version, enforcing  as required and unique. Every surface leads with the version number (feed hero, 84px archive rail, reader meta). Six announcements collapsed to four; folder structure renamed to version slugs. Release pages can now show video: a  block or hero  plays mp4/webm with a required poster. Silent clips autoplay muted and loop;  gets controls and never autoplays. The server gained shared range-streaming () wired into serveStatic — WKWebView refuses clips without byte-range support. Proof:  validates the shipped manifest (one entry per version, all assets on disk, 3MB clip ceiling).",
+    "breaking": false,
+    "summary": "What's New is now one page per release (version-led history), and release pages can embed video",
+    "references": [
+      "commit:794b53c",
+      "file:dashboard/public/announcements.json",
+      "file:src/server/media.ts",
+      "file:tests/unit/announcements.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "feat",
+    "scope": "marketing",
+    "description": "Built a gitignored inheritance pattern (.claude/skills/dreamcontext-reel/) that reads a peer vault's video production line at runtime instead of copying it, plus federation read-edges to that vault. Produced the first video off it: an okr-roadmap feature explainer, 1920x1080/30fps/37.1s, English ElevenLabs VO (one file per line, silence-trimmed, durations embedded), word-synced kinetic hook, and REAL captured dashboard UI (no mockups). Every spoken number traced to GET /api/roadmap. QA passed in 2 rounds. Publication blocked on the announcements-video task (no video mime type / byte ranges yet).",
+    "breaking": false,
+    "summary": "First dreamcontext feature video: roadmap explainer (16:9, English VO, 37s), from the new gitignored dreamcontext-reel inheritance skill",
+    "references": [
+      "feature:okr-roadmap",
+      "task:announcements-can-hold-video-not-just-screenshots"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "feat",
+    "scope": "automations",
+    "description": "Supersedes the earlier '(uncommitted)' entry: the work is now committed as 4e507a3 on branch worktree-automations and pushed. 60 files, 12862 insertions.\n\nTwo rounds, both validated. Round 1 shipped the feature: manifest store, structured schedule with a watermark plus catch-up dueness model, the machine-local sha256 approval registry, the launchd dispatcher behind a generated wrapper, the runner, the tick, the snapshot section, a 13-verb CLI, the server route with a run-now job, and a dashboard page. Round 2 added the three owner-requested changes: a per-automation effort field promoted to a HASHED field (so the approval surface is six fields, not five), manifests private by default with opt-in sharing via a shared flag plus CLI-managed gitignore negations, and sleep reading and distilling automation output bounded by a new SleepState.last_consolidated_at boundary.\n\nSkill-doc wiring in the same commit: skill/references/automations.md gained the Sharing section, the six-item security stance, the non-retroactive unshare warning and the private-output-to-synced-knowledge caveat; skill/references/sleep.md was rewritten from 'automations are not a sleep responsibility' into a three-part rule (never executes, never owns, but does read output); agents/sleep-product.md gained the consumption contract with its caps and the never-one-knowledge-file-per-output-per-day hard rule plus the private-derivation marker obligation; SKILL.md's capability and Entity Router rows now say scheduled prompts are private by default; and the marker test's completeness gate binds the numeral to the hashed-field claim rather than grepping a bare word, because the earlier bare-word version could not match 'one of the five approval-hashed fields' and would have passed while two stale comments survived.\n\nValidation: build clean, 4859 tests (from a 4452 baseline), clean code and security reviews after fixes, CLI end-to-end across both rounds, and a real launchd install with two observed scheduled fires. Worth recording that the most serious defect of the entire build was found only by that real install and by no test: tick --all required a _dream_context in the working directory, but the dispatcher runs with none, so it would have exited 1 every five minutes forever and no automation would ever have run.\n\nNot shipped: nothing is merged, and the dashboard page has never been visually verified by a human.",
+    "breaking": false,
+    "summary": "Automations committed and pushed to worktree-automations (4e507a3); skill-doc wiring, private-by-default sharing, effort, and sleep output consumption all landed",
+    "references": [
+      "commit:4e507a3",
+      "file:src/lib/automations/",
+      "file:src/cli/commands/automations.ts",
+      "file:src/server/routes/automations.ts",
+      "file:skill/references/automations.md",
+      "file:skill/references/sleep.md",
+      "file:agents/sleep-product.md",
+      "file:skill/SKILL.md",
+      "task:automations-scheduled-headless-claude-jobs",
+      "feature:automations-scheduled-headless-claude-jobs"
+    ],
+    "supersedes": "2026-07-26|automations"
+  },
+  {
+    "date": "2026-07-26",
+    "type": "feat",
+    "scope": "automations",
+    "description": "Automations: user-defined, launchd-scheduled jobs that run headless claude sessions (claude -p --permission-mode bypassPermissions) to produce recurring outputs (daily digest, weekly report, scheduled research). Manifests in _dream_context/automations/<slug>.md with structured schedule (days + at), prompt, and output instructions. One global launchd dispatcher ticks every 5 min; dueness is watermark-based; machine-local sha256 approval tripwire gates every run. Ships fully disabled — nothing installs until explicit 'automations install' and per-automation approve. Round 1 (7 implementation waves): complete CLI (create/list/show/run/tick/enable/disable/approve/remove/install/uninstall/logs/kill), store/schedule/registry/runner/launchd/snapshot sections, 4727 tests PASS, clean code + security review. Round 2 (waves 1-2 complete): per-automation effort field, manifests private-by-default with opt-in sharing, sleep consuming automation output, 4821 tests PASS. All work uncommitted on worktree branch worktree-automations; task in_review status. NOT YET SHIPPED.",
+    "breaking": false,
+    "summary": "Automations feature built and validated (uncommitted) — launchd-scheduled headless claude jobs with approval tripwire",
+    "references": [
+      "task:automations-scheduled-headless-claude-jobs",
+      "file:skill/references/automations.md"
+    ]
+  },
+  {
+    "date": "2026-07-26",
     "type": "feat",
     "scope": "dashboard",
     "description": "Announcements stopped being Excalidraw boards and became screenshot-driven landing pages. A board could only ever draw a picture OF the product and had to be panned and zoomed to read; a story is a JSON document (hero + blocks + closer, block kinds split/shot/points/stats/terminal/note) rendered as a scrolling page of REAL app screenshots on a 920px measure, with click-to-zoom. The parser drops malformed blocks instead of throwing (a typo in one card can't blank an announcement), requires alt text on every shot, and confines image paths to the /announcements/ asset root — absolute paths, :// URLs and .. traversal are all rejected. The manifest's board field became story; the boards and dashboard/scripts/announcements/generate.cjs are deleted; AnnouncementBoardPreview became AnnouncementStoryTeaser (a plain <img>, so no canvas to mount and no wheel-trap to defend). All five prior announcements were rewritten with screenshots captured by driving the real dashboard under Playwright, including two live Claude turns for the chat scenes, and chat-is-the-default (0.22.0) was added.",
@@ -28,6 +306,57 @@
       "file:dashboard/src/pages/SettingsPage.tsx",
       "file:tests/unit/agent-settings.test.ts",
       "task:chat-becomes-the-standard-agent-screen-the-embedded-terminal-becomes-terminal-legacy"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "fix",
+    "scope": "agent",
+    "description": "Two defects, one root cause: pane docks furniture BELOW the transcript scroller with nothing capping it. (1) Background-shells tray grew unbounded because finished shells were never evicted — FINISHED_SHELL_TTL_MS (2 min) + a single scheduled wake at the soonest expiry (deliberately NOT derived from now) + the rows list scrolls inside max-height: min(240px, 32vh). Measured: 44 live rows → tray 271px instead of ~1400px. (2) When docked furniture GROWS, the scroller shrinks under a view already at its maximum: scrollTop stays valid, the max moves out from under it, and NO scroll event fires because nothing scrolled. A 186px tray growth left 174px of transcript below the fold while the view still believed it was pinned. Fix: scrollToBottom re-measures one frame later and re-pins if the bottom moved; the ResizeObserver stopped tearing down/re-subscribing on every fan-out card mount. Found by rebuilding the pane's real flex column + CSS in headless Chromium and probing the geometry.",
+    "breaking": false,
+    "summary": "Background-shells tray stops growing unbounded; scroll re-pins when docked furniture shrinks the transcript",
+    "references": [
+      "commit:6d64e08",
+      "file:dashboard/src/components/sleepy/chat/BackgroundShellsTray.tsx",
+      "file:dashboard/src/components/sleepy/ChatPane.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "fix",
+    "scope": "agent",
+    "description": "React compares dangerouslySetInnerHTML by object identity and silently wipes DOM decorations added outside React on every re-render — a video reference became raw markdown, a path became a clickable <a> that navigated the whole app. Fixed by memoizing the __html object and making decoration hooks run on every render (marker-guarded, so already-decorated is a no-op). Inline media URLs carry ?vault= for launcher mode (query param for GET-only vault resolution, never for mutating requests). Element URLs built by agentFileUrl. Document-relative hrefs are contained at document level (isContainedHref). Slide-over plays media via /agent/reveal project-relative resolution. Renaming a tab no longer resets scroll (nextRestoreTop keeps last trustworthy offset).",
+    "breaking": false,
+    "summary": "Inline media in Chat survives re-render, file links can't navigate the app away, slide-over plays media",
+    "references": [
+      "commit:a7e8b0e",
+      "file:dashboard/src/components/core/MarkdownPreview.tsx",
+      "file:src/server/routes/agent-chat.ts",
+      "file:dashboard/src/lib/externalLinks.ts"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "docs",
+    "scope": "agent",
+    "description": "The 'One chat, one scroll' paragraph credited the ResizeObserver with recovering from a re-home. That was exactly the bug: re-homing zeroes scrollTop without changing any box, so an observer keyed on size cannot fire. Rewritten to describe what the code now does: a layout-effect re-pin (scroll events fire before ResizeObserver callbacks), the observer for height changes React never rendered, and setTranscriptRepin via fitAndResize for the re-home case no observer can see. Applies the feature-integration pattern: the skill's description of a surface is the main agent's only interface to it.",
+    "breaking": false,
+    "summary": "Chat scroll clause corrected: three mechanisms (layout-effect re-pin, ResizeObserver, setTranscriptRepin), not one",
+    "references": [
+      "commit:5718336",
+      "file:skill/references/integrations.md"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "fix",
+    "scope": "agent",
+    "description": "Scroll events fire BEFORE ResizeObserver callbacks in the same frame, so a post-paint re-pin could only clean up after a wrong decision. useLayoutEffect closes that ordering: the write lands synchronously after React's mutation and before the browser dispatches the scroll event, so the handler sees the pinned position instead of the clamp. The shrink-then-regrow sequence a finishing turn produces (running cards collapsing, working indicator unmounting) can no longer read as 'the user scrolled up'. Also drops the frame of visible lag behind every streamed token.",
+    "breaking": false,
+    "summary": "Chat scroll pins before paint (useLayoutEffect), not after — no visible lag or wrong-direction unpin",
+    "references": [
+      "commit:381444b",
+      "file:dashboard/src/components/sleepy/ChatPane.tsx"
     ]
   },
   {
