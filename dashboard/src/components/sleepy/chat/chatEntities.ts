@@ -337,6 +337,53 @@ export function isBackgroundShell(run: SubAgentRun): boolean {
 }
 
 /**
+ * Fold a `task-started` frame into the run list — an UPSERT keyed by `task_id`, never a
+ * blind append.
+ *
+ * A BACKGROUNDED sub-agent (the Agent tool's default, and what every fan-out skill dispatches)
+ * is announced TWICE, and the roster comes first. Empirically, on a two-agent background
+ * fan-out:
+ *
+ *   system:background_tasks_changed  [{task_id: A, task_type: 'local_agent', description}]
+ *   system:task_started              {task_id: A, tool_use_id, subagent_type, description}
+ *   system:background_tasks_changed  [{task_id: A, …}, {task_id: B, …}]
+ *   system:task_started              {task_id: B, …}
+ *
+ * The roster arm adopts an unknown `task_id` (it must — that is how a resumed conversation
+ * picks up a run it never saw start), so by the time `task_started` lands the run ALREADY
+ * exists. Appending it a second time produced two rows per agent: every later frame patches
+ * by `findIndex`, so the adopted row collected all the activity/usage and the appended twin
+ * sat at "Working…" with nothing but a clock, forever. A two-agent fan-out read "4 agents
+ * running". A FOREGROUND agent emits no roster frame at all, which is why this only ever
+ * showed up on backgrounded dispatches.
+ *
+ * The merge treats the started frame as authoritative for IDENTITY (name, subagent type, task
+ * type, prompt, spawning tool_use_id — the roster carries none of the last four) and the
+ * existing entry as authoritative for everything LIVE (status, timings, activity, usage): a
+ * late/duplicate start must never reset a run that has already reported progress, or resurrect
+ * one that has already landed.
+ */
+export function startSubAgentRun(runs: SubAgentRun[], started: SubAgentRun): SubAgentRun[] {
+  const idx = runs.findIndex((r) => r.taskId === started.taskId);
+  if (idx === -1) return [...runs, started];
+  const cur = runs[idx];
+  const merged: SubAgentRun = {
+    ...cur,
+    name: started.name || cur.name,
+    toolUseId: started.toolUseId ?? cur.toolUseId,
+    subagentType: started.subagentType ?? cur.subagentType,
+    taskType: started.taskType ?? cur.taskType,
+    prompt: started.prompt ?? cur.prompt,
+    // The earlier of the two stamps: the roster is what actually told us first, and the row's
+    // clock should measure the run, not the frame that happened to name it.
+    startedAt: Math.min(cur.startedAt, started.startedAt),
+  };
+  const next = runs.slice();
+  next[idx] = merged;
+  return next;
+}
+
+/**
  * The status a `task_updated`/`task_notification` frame's own status string means, given what
  * the run is currently at. Pure and shared by both reducer arms so the two frames can never
  * disagree about the same vocabulary.

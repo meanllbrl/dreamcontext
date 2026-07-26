@@ -5,7 +5,7 @@ import {
   type ChatEvent, type QuestionSpec, type ClientControl,
 } from '../../lib/chatProtocol';
 import type { TermStatus } from './agentSession';
-import { runStatusFrom, type SubAgentRun } from './chat/chatEntities';
+import { runStatusFrom, startSubAgentRun, type SubAgentRun } from './chat/chatEntities';
 
 /**
  * The imperative engine behind a Chat session (beta) — the headless stream-json peer of
@@ -647,8 +647,12 @@ export function createChatSession(
         return;
       }
       case 'task-started': {
-        // A dispatched sub-agent (state 9) — the ONLY frame that carries its start (its
-        // own text/thinking is never streamed to the parent; see the file header note).
+        // A dispatched sub-agent (state 9) — the frame that carries its IDENTITY (its own
+        // text/thinking is never streamed to the parent; see the file header note). Folded in
+        // as an upsert keyed by task_id, NOT appended: a backgrounded agent is announced by
+        // the `background_tasks_changed` roster FIRST, so the run usually already exists by
+        // now and a blind append showed every backgrounded agent twice (see
+        // `startSubAgentRun` for the captured frame order).
         session.busy = true;
         const run: SubAgentRun = {
           taskId: ev.taskId,
@@ -660,7 +664,7 @@ export function createChatSession(
           status: 'running',
           startedAt: Date.now(),
         };
-        conv = { ...conv, subAgents: [...conv.subAgents, run] };
+        conv = { ...conv, subAgents: startSubAgentRun(conv.subAgents, run) };
         return;
       }
       case 'task-updated': {

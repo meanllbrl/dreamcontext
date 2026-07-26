@@ -14,7 +14,7 @@ import {
   turnHasVisibleProgress, nextStickToBottom, nextRestoreTop, isAtBottom, BOTTOM_SLACK,
   wheelIntent, keyIntent, touchIntent,
   isAgentRun, runDurationMs, formatModelName, runMetaChips,
-  isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote,
+  isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote, startSubAgentRun,
   type SubAgentRun, type ProgressProbe,
 } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 
@@ -163,6 +163,75 @@ describe('summarizeSubAgents', () => {
   it('an all-completed set still reports total + earliestStart with running:0', () => {
     const runs = [run({ status: 'completed', startedAt: 500 }), run({ status: 'error', startedAt: 700 })];
     expect(summarizeSubAgents(runs)).toEqual({ running: 0, total: 2, agents: 2, earliestStart: 500 });
+  });
+});
+
+// ─── startSubAgentRun (the double-row regression) ────────────────────────────────
+//
+// Captured live from the CLI on a two-agent BACKGROUND fan-out (the Agent tool's default,
+// and what every fan-out skill dispatches): the `background_tasks_changed` roster announces
+// each agent BEFORE its own `task_started` frame arrives —
+//
+//   roster [A] → task_started A → roster [A,B] → task_started B
+//
+// so the roster arm has already adopted the run by the time the start frame lands. When that
+// arm appended blindly, every backgrounded agent got two rows: the adopted one collected all
+// the progress (each later frame patches the FIRST match by task_id) and its twin sat at
+// "Working…" with only a clock, so a 2-agent fan-out's card read "4 agents running".
+// A FOREGROUND agent emits no roster frame at all — which is why this only ever showed up on
+// backgrounded dispatches.
+
+describe('startSubAgentRun', () => {
+  it('a task_started for a task the roster already adopted MERGES — one row, not two', () => {
+    // What the roster arm builds: name + taskType, and nothing else the roster doesn't carry.
+    const adopted = run({ taskId: 'a5e40', name: 'Review round-2 plan — security lens', taskType: 'local_agent', startedAt: 1000 });
+    const started = run({
+      taskId: 'a5e40', name: 'Review round-2 plan — security lens', taskType: 'local_agent',
+      toolUseId: 'toolu_01', subagentType: 'goal-plan-reviewer', prompt: 'Review the plan…', startedAt: 1200,
+    });
+    const next = startSubAgentRun([adopted], started);
+    expect(next).toHaveLength(1);
+    // Identity comes from the start frame — the roster carries none of these.
+    expect(next[0].toolUseId).toBe('toolu_01');
+    expect(next[0].subagentType).toBe('goal-plan-reviewer');
+    expect(next[0].prompt).toBe('Review the plan…');
+    // The clock measures the run, so the EARLIER of the two stamps wins.
+    expect(next[0].startedAt).toBe(1000);
+  });
+
+  it('a start frame never resets live state a progress frame already wrote', () => {
+    const live = run({
+      taskId: 'a5e40', taskType: 'local_agent', status: 'completed', endedAt: 9000,
+      activity: 'Running grep', summary: 'Found 2 issues', usage: { totalTokens: 79000, toolUses: 13 },
+    });
+    const next = startSubAgentRun([live], run({ taskId: 'a5e40', subagentType: 'goal-plan-reviewer', startedAt: 5000 }));
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({
+      status: 'completed', endedAt: 9000, activity: 'Running grep', summary: 'Found 2 issues',
+      subagentType: 'goal-plan-reviewer',
+    });
+    expect(next[0].usage).toEqual({ totalTokens: 79000, toolUses: 13 });
+  });
+
+  it('an unknown task_id is appended — a foreground agent has no roster frame to be adopted by', () => {
+    const existing = run({ taskId: 'a5e40' });
+    const next = startSubAgentRun([existing], run({ taskId: 'a85d4', name: 'critic lens' }));
+    expect(next.map((r) => r.taskId)).toEqual(['a5e40', 'a85d4']);
+  });
+
+  it('the whole captured background fan-out reduces to exactly one row per agent', () => {
+    // roster [A] → started A → roster [A,B] → started B, with the roster arm's own adopt rule.
+    const adopt = (runs: SubAgentRun[], taskId: string, name: string): SubAgentRun[] => (
+      runs.some((r) => r.taskId === taskId) ? runs : [...runs, run({ taskId, name, taskType: 'local_agent' })]
+    );
+    let runs: SubAgentRun[] = [];
+    runs = adopt(runs, 'A', 'security lens');
+    runs = startSubAgentRun(runs, run({ taskId: 'A', name: 'security lens', taskType: 'local_agent', toolUseId: 'toolu_a', subagentType: 'goal-plan-reviewer' }));
+    runs = adopt(runs, 'A', 'security lens');
+    runs = adopt(runs, 'B', 'critic lens');
+    runs = startSubAgentRun(runs, run({ taskId: 'B', name: 'critic lens', taskType: 'local_agent', toolUseId: 'toolu_b', subagentType: 'goal-plan-reviewer' }));
+    expect(summarizeSubAgents(runs)).toMatchObject({ running: 2, total: 2, agents: 2 });
+    expect(subAgentToolUseIds(runs)).toEqual(new Set(['toolu_a', 'toolu_b']));
   });
 });
 
