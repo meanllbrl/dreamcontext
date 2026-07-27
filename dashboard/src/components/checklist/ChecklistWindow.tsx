@@ -17,7 +17,9 @@ interface Props {
   vault: string | null;
 }
 
-type SubmitPhase = 'idle' | 'sending' | 'failed';
+/** `sent`/`closing` are the two states in which this window is on its way out. They exist
+ *  because CLOSING IS NOT FREE — see `useDeferredClose`. */
+type SubmitPhase = 'idle' | 'sending' | 'failed' | 'sent' | 'closing';
 
 /** Never actually rendered — only backs the reducer's type while `envelope` is null, so
  *  hooks stay unconditional even for the "this checklist is no longer available" branch. */
@@ -26,6 +28,47 @@ const EMPTY_SPEC: ChecklistViewSpec = { type: 'checklist', id: '', title: '', it
 function loadEnvelope(id: string | null, vault: string | null): ChecklistEnvelope | null {
   if (!id || !vault) return null;
   return readEnvelope(vault, id);
+}
+
+/**
+ * Close the OS window a couple of frames AFTER the render that took the scroller down, never
+ * in the same tick as the action that asked for it.
+ *
+ * Issue #234: submitting a checklist whose item list had grown scrollable (expanded note +
+ * file rows) segfaulted the WHOLE app — `EXC_BAD_ACCESS` in
+ * `WebCore::ScrollingTree::takePendingScrollUpdates()`, reached from
+ * `RemoteLayerTreeDrawingAreaProxy::didRefreshDisplay()`. No app frames in the stack: WebKit
+ * servicing a display-link refresh against a webview that was already being destroyed. The
+ * non-scrollable case submitted cleanly, which is what points at the scrolling tree.
+ *
+ * So the fix is a sequencing one, and it has two halves — the caller flips to a phase that
+ * UNMOUNTS the scrollable list (removing the scrolling node from the layer tree), and this
+ * hook then lets a couple of display-link cycles service that update before the window goes
+ * away. The timeout is not belt-and-braces: an occluded or backgrounded window throttles
+ * `requestAnimationFrame` to a crawl or stops it entirely, and a checklist window that never
+ * closes would be a worse bug than the one being fixed.
+ *
+ * Honest limitation: the fault is inside WebKit's own teardown, so this removes the
+ * documented trigger rather than proving the race can never be lost.
+ */
+function useDeferredClose(armed: boolean): void {
+  useEffect(() => {
+    if (!armed) return;
+    let done = false;
+    const frames: number[] = [];
+    const close = () => {
+      if (done) return;
+      done = true;
+      void closeCurrentWindow();
+    };
+    frames.push(requestAnimationFrame(() => { frames.push(requestAnimationFrame(close)); }));
+    const timer = window.setTimeout(close, 400);
+    return () => {
+      done = true;
+      frames.forEach(cancelAnimationFrame);
+      window.clearTimeout(timer);
+    };
+  }, [armed]);
 }
 
 /**
@@ -123,7 +166,9 @@ export function ChecklistWindow({ id, vault }: Props) {
   }, [pinned]);
 
   const handleSubmit = useCallback(async () => {
-    if (!valid || !envelope || phase === 'sending') return;
+    // Only an idle or previously-failed checklist may be sent: `sending` is in flight, and
+    // `sent`/`closing` belong to a window that is already on its way out.
+    if (!valid || !envelope || (phase !== 'idle' && phase !== 'failed')) return;
     setPhase('sending');
     const markdown = buildSubmitMarkdown(envelope.spec, state, secrets);
     const ok = await submitChecklist({
@@ -134,7 +179,10 @@ export function ChecklistWindow({ id, vault }: Props) {
     });
     if (ok) {
       clearChecklist(envelope.vault, envelope.spec.id);
-      void closeCurrentWindow();
+      // NOT `closeCurrentWindow()` here: the submit succeeded, and killing the webview in the
+      // same tick is what segfaulted the whole app (#234). `sent` unmounts the scroller and
+      // the close happens a couple of frames later — see `useDeferredClose`.
+      setPhase('sent');
       return;
     }
     // Nothing the user typed is lost: the failure strip stays up with the exact markdown one
@@ -142,6 +190,15 @@ export function ChecklistWindow({ id, vault }: Props) {
     setFailedMarkdown(markdown);
     setPhase('failed');
   }, [valid, envelope, state, secrets, phase]);
+
+  /** The ✕ takes the same road as a successful submit. The crash in #234 was not about
+   *  submitting — it was about closing a window whose list had been scrolled, and the title
+   *  bar's ✕ can do that just as easily. */
+  const requestClose = useCallback(() => {
+    setPhase((p) => (p === 'sent' || p === 'closing' ? p : 'closing'));
+  }, []);
+
+  useDeferredClose(phase === 'sent' || phase === 'closing');
 
   const copyMarkdown = useCallback(async () => {
     try {
@@ -174,7 +231,7 @@ export function ChecklistWindow({ id, vault }: Props) {
         <button
           type="button"
           className="checklist-close"
-          onClick={() => void closeCurrentWindow()}
+          onClick={requestClose}
           title="Close"
           aria-label="Close"
         >
@@ -182,7 +239,13 @@ export function ChecklistWindow({ id, vault }: Props) {
         </button>
       </div>
 
-      {!valid || !envelope ? (
+      {phase === 'sent' || phase === 'closing' ? (
+        // The scroller is GONE from this render on purpose (see `useDeferredClose`) — this is
+        // the state the window dies in, and it must hold no scrollable content.
+        <div className="checklist-gone">
+          <p>{phase === 'sent' ? 'Sent ✓' : 'Closing…'}</p>
+        </div>
+      ) : !valid || !envelope ? (
         <div className="checklist-gone">
           <p>This checklist is no longer available.</p>
         </div>
