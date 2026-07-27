@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import {
   NOTIFIER_BUNDLE_ID,
   buildNotifierApp,
@@ -45,6 +45,38 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
+});
+
+/**
+ * PROOF OF ISOLATION (test-isolation-injectable-home). Green tests are not
+ * evidence: a leak here writes an app bundle into the developer's real
+ * ~/.dreamcontext/bin and registers it with LaunchServices, which no assertion
+ * about temp directories would notice. Compares before/after rather than
+ * asserting absence: the developer may legitimately have run
+ * `automations install`, and a test must never fail because the feature under
+ * test is in use.
+ */
+const realPlist = join(homedir(), '.dreamcontext', 'bin', 'dc-notify.app', 'Contents', 'Info.plist');
+const realQueue = join(homedir(), '.dreamcontext', 'bin', 'notify-queue');
+/** MTIME, not existence and not content. Two dead ends were tried first, and
+ *  both report clean while the real bundle is being replaced: existence, because
+ *  `buildNotifierApp` rebuilds IN PLACE on a machine that has already run
+ *  `automations install`; and content, because the build is deterministic, so a
+ *  rebuilt Info.plist is byte-identical to the one it replaced. The write time
+ *  is the only thing that actually changes. `null` covers "not installed". */
+const snap = (p: string): number | null => (existsSync(p) ? statSync(p).mtimeMs : null);
+const realPlistBefore = snap(realPlist);
+const realQueueBefore = existsSync(realQueue);
+
+afterAll(() => {
+  expect(
+    snap(realPlist),
+    'this suite rebuilt or removed the REAL notifier bundle — a home injection was missed',
+  ).toBe(realPlistBefore);
+  expect(
+    existsSync(realQueue),
+    'this suite touched the REAL notify queue — a home injection was missed',
+  ).toBe(realQueueBefore);
 });
 
 describe('paths and packaging', () => {

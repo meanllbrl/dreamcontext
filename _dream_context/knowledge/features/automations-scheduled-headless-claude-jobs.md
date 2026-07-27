@@ -1,22 +1,28 @@
 ---
-id: "feat_iixpNXAm"
-type: "feature"
-name: "automations-scheduled-headless-claude-jobs"
-description: "User-defined, launchd-scheduled jobs that run headless Claude sessions (bypassPermissions) to produce recurring outputs—daily digests, weekly reports, research runs—driven by markdown manifests, gated by machine-local SHA256 approval tripwire, ships fully disabled until explicitly installed and approved."
+id: feat_iixpNXAm
+type: feature
+name: automations-scheduled-headless-claude-jobs
+description: >-
+  User-defined, launchd-scheduled jobs that run headless Claude sessions
+  (bypassPermissions) to produce recurring outputs—daily digests, weekly
+  reports, research runs—driven by markdown manifests, gated by machine-local
+  SHA256 approval tripwire, ships fully disabled until explicitly installed and
+  approved.
 pinned: false
-date: "2026-07-26"
-status: "in_review"
-created: "2026-07-26"
-updated: "2026-07-26"
+date: '2026-07-26'
+status: in_review
+created: '2026-07-26'
+updated: '2026-07-27'
 released_version: null
 tags:
-  - topic:agents
-  - layer:backend
-  - domain:security
-  - topic:cli
-  - topic:desktop
+  - 'topic:agents'
+  - 'layer:backend'
+  - 'domain:security'
+  - 'topic:cli'
+  - 'topic:desktop'
 related_tasks:
   - automations-scheduled-headless-claude-jobs
+  - automations-branded-audible-completion-notifications
 ---
 
 ## Why
