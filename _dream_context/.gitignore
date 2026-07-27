@@ -1,0 +1,8 @@
+
+# dreamcontext automations — machine-local run state (never commit)
+automations/cache/*.lock
+automations/cache/*.run.json
+automations/cache/*.run.json.tmp
+automations/*.md
+automations/cache/*.json
+automations/output/*/*

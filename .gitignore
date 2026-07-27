@@ -77,3 +77,11 @@ _dream_context/tmp/
 
 # Generated example boards — build artifacts, fully derived from examples/*.js (run them to regenerate)
 skill-packs/excalidraw/examples/*.excalidraw.md
+
+# dreamcontext automations — machine-local run state (never commit)
+_dream_context/automations/cache/*.lock
+_dream_context/automations/cache/*.run.json
+_dream_context/automations/cache/*.run.json.tmp
+_dream_context/automations/*.md
+_dream_context/automations/cache/*.json
+_dream_context/automations/output/*/*
