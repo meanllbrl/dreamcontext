@@ -220,6 +220,19 @@ describe('skill/references/automations.md — Sharing section (private by defaul
     expect(content).toMatch(/only the literal value `false` silences it/i);
     expect(content).toMatch(/not an approval-hashed field/i);
   });
+
+  it('documents the two macOS gates that make a working notifier look broken', () => {
+    // These two cost hours to find, and neither announces itself: macOS accepts
+    // an unauthorised notification and files it with `visibility: []` rather
+    // than erroring, and the sound is a SEPARATE switch that allowing alerts
+    // does not turn on. An agent that does not know both will diagnose a
+    // correctly-working notifier as broken code — which is exactly what
+    // happened before they were written down. Pinned so they cannot be edited
+    // out as prose tidying.
+    expect(content).toMatch(/filed silently and never appear on screen/i);
+    expect(content).toMatch(/sound is a\s+\*\*separate\*\*\s+switch/i);
+    expect(content).toMatch(/allowing alerts does not turn it on/i);
+  });
 });
 
 describe('skill/references/cli-reference.md — share/unshare verbs and the six-field diff', () => {
