@@ -55,7 +55,13 @@ import {
   uninstallDispatcher,
   type InstallCheck,
 } from '../../lib/automations/launchd.js';
-import { buildNotifierApp, inspectNotifier, notifyViaBundle, removeNotifierApp } from '../../lib/automations/notifier.js';
+import {
+  buildNotifierApp,
+  inspectNotifier,
+  notifyViaBundle,
+  removeNotifierApp,
+  NOTIFY_SOUND_OK,
+} from '../../lib/automations/notifier.js';
 
 /**
  * `dreamcontext automations` — the scheduled-headless-claude-run CLI. Mirrors
@@ -929,9 +935,16 @@ export function registerAutomationsCommand(program: Command): void {
           // invisibly, so without this step the first real failure of an
           // unattended run is a notification that never appears and never
           // explains itself.
-          notifyViaBundle('dreamcontext', 'Notifications are set up. Allow them if macOS just asked.');
+          notifyViaBundle('dreamcontext', 'Notifications are set up. Allow them if macOS just asked.', undefined, {
+            sound: NOTIFY_SOUND_OK,
+          });
           console.log(chalk.dim('  A test notification was sent. If macOS asked for permission, choose Allow —'));
           console.log(chalk.dim('  until you do, notifications are filed silently and never appear on screen.'));
+          // Allowing notifications and hearing them are two different switches,
+          // and the second one is easy to spend an afternoon on: the sound IS
+          // attached to the notification, macOS just declines to play it.
+          console.log(chalk.dim('  Sound is a separate switch: System Settings > Notifications > dreamcontext'));
+          console.log(chalk.dim('  > "Play sound for notifications". Allowing alerts does not turn it on.'));
         }
       } catch (err) {
         handleAutomationsError(err);

@@ -43,6 +43,15 @@ import { findPackageDir } from '../catalog.js';
 export const NOTIFIER_BUNDLE_ID = 'com.dreamcontext.notify';
 const MAX_QUEUE_DRAIN = 20;
 
+/**
+ * Sounds for the two outcomes. Names come from `/System/Library/Sounds`, which
+ * every macOS install has — no audio asset to ship, nothing to go missing.
+ * `Basso` is what macOS itself uses for errors, so a failed unattended run is
+ * audibly different from a successful one without anyone reading a word.
+ */
+export const NOTIFY_SOUND_OK = 'Glass';
+export const NOTIFY_SOUND_FAILED = 'Basso';
+
 export function notifierAppPath(home: string = homedir()): string {
   return join(home, '.dreamcontext', 'bin', 'dc-notify.app');
 }
@@ -67,8 +76,8 @@ export function notifierIconPath(): string | null {
  * instead of replaying it on every subsequent launch.
  *
  * Payload format is deliberately not JSON — AppleScript has no JSON parser, and
- * shelling out to one would add a dependency for no gain. First line is the
- * title, every remaining line is the body.
+ * shelling out to one would add a dependency for no gain. Line 1 is the title,
+ * line 2 is the sound name (empty ⇒ silent), everything after is the body.
  */
 export function renderNotifierScript(queueDir: string): string {
   const q = queueDir.endsWith('/') ? queueDir : `${queueDir}/`;
@@ -87,11 +96,12 @@ export function renderNotifierScript(queueDir: string): string {
     '\t\t\t\tset raw to do shell script "cat " & quoted form of p',
     '\t\t\t\tdo shell script "rm -f " & quoted form of p',
     '\t\t\t\tset payloadLines to paragraphs of raw',
-    '\t\t\t\tif (count of payloadLines) > 0 then',
+    '\t\t\t\tif (count of payloadLines) > 1 then',
     '\t\t\t\t\tset t to item 1 of payloadLines',
+    '\t\t\t\t\tset snd to item 2 of payloadLines',
     '\t\t\t\t\tset b to ""',
-    '\t\t\t\t\tif (count of payloadLines) > 1 then',
-    '\t\t\t\t\t\trepeat with i from 2 to count of payloadLines',
+    '\t\t\t\t\tif (count of payloadLines) > 2 then',
+    '\t\t\t\t\t\trepeat with i from 3 to count of payloadLines',
     '\t\t\t\t\t\t\tif b is "" then',
     '\t\t\t\t\t\t\t\tset b to item i of payloadLines',
     '\t\t\t\t\t\t\telse',
@@ -99,7 +109,13 @@ export function renderNotifierScript(queueDir: string): string {
     '\t\t\t\t\t\t\tend if',
     '\t\t\t\t\t\tend repeat',
     '\t\t\t\t\tend if',
-    '\t\t\t\t\tdisplay notification b with title t',
+    // `sound name ""` is not silence, it is an invalid sound — the clause has
+    // to be absent entirely, so this branches rather than interpolating.
+    '\t\t\t\t\tif snd is "" then',
+    '\t\t\t\t\t\tdisplay notification b with title t',
+    '\t\t\t\t\telse',
+    '\t\t\t\t\t\tdisplay notification b with title t sound name snd',
+    '\t\t\t\t\tend if',
     '\t\t\t\tend if',
     '\t\t\tend try',
     '\t\tend if',
@@ -207,7 +223,7 @@ export function notifyViaBundle(
   title: string,
   body: string,
   home: string = homedir(),
-  openImpl: OpenImpl = realOpen,
+  opts: { sound?: string; openImpl?: OpenImpl } = {},
 ): boolean {
   if (process.platform !== 'darwin') return false;
   const appPath = notifierAppPath(home);
@@ -215,12 +231,14 @@ export function notifyViaBundle(
   try {
     const queueDir = notifyQueueDir(home);
     mkdirSync(queueDir, { recursive: true });
-    // Newline is the record separator, so it cannot appear in the title.
+    // Newline is the record separator, so it can appear in neither the title
+    // nor the sound name — both are single-line fields by construction.
     const oneLineTitle = title.replace(/[\r\n]+/g, ' ');
-    const payload = `${oneLineTitle}\n${body}`;
+    const sound = (opts.sound ?? '').replace(/[\r\n]+/g, ' ');
+    const payload = `${oneLineTitle}\n${sound}\n${body}`;
     const name = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}.txt`;
     writeFileSync(join(queueDir, name), payload, 'utf-8');
-    openImpl(appPath);
+    (opts.openImpl ?? realOpen)(appPath);
     return true;
   } catch {
     return false;

@@ -89,6 +89,14 @@ describe('renderNotifierScript', () => {
     expect(script).toMatch(/head -\d+/);
   });
 
+  it('omits the sound clause entirely when the sound line is empty', () => {
+    // `sound name ""` is an INVALID sound, not silence — passing it fails the
+    // whole notification. So the script must branch, not interpolate.
+    expect(script).toContain('if snd is "" then');
+    expect(script).toContain('display notification b with title t sound name snd');
+    expect(script).toMatch(/display notification b with title t\n/); // the soundless branch
+  });
+
   it('names no variable after an AppleScript element term', () => {
     // A real bug, and a nasty one. `set lines to paragraphs of raw` COMPILES
     // fine and fails only at run time with "Can't set every line to …", because
@@ -122,41 +130,55 @@ describe('notifyViaBundle', () => {
   it('returns false and writes NOTHING when the bundle is absent', () => {
     // The fallback contract. A caller that gets `false` must be free to use
     // osascript; queueing a payload no applet will ever drain would strand it.
-    expect(notifyViaBundle('t', 'b', home, noOpen)).toBe(false);
+    expect(notifyViaBundle('t', 'b', home, { openImpl: noOpen })).toBe(false);
     expect(existsSync(notifyQueueDir(home))).toBe(false);
     // Nothing queued AND nothing launched: the absent path must be inert, not
     // merely unsuccessful.
     expect(opened).toEqual([]);
   });
 
-  it('queues title and body as a first-line/rest payload once a bundle exists', () => {
+  it('queues title, sound, then body — in that order', () => {
     mkdirSync(notifierAppPath(home), { recursive: true }); // stand-in for a built bundle
-    expect(notifyViaBundle('dreamcontext', 'line one\nline two', home, noOpen)).toBe(true);
+    expect(notifyViaBundle('dreamcontext', 'line one\nline two', home, { sound: 'Glass', openImpl: noOpen })).toBe(true);
     const files = readdirSync(notifyQueueDir(home));
     expect(files).toHaveLength(1);
     const raw = readFileSync(join(notifyQueueDir(home), files[0]), 'utf-8');
     expect(raw.split('\n')[0]).toBe('dreamcontext');
-    expect(raw.split('\n').slice(1).join('\n')).toBe('line one\nline two');
+    expect(raw.split('\n')[1]).toBe('Glass');
+    expect(raw.split('\n').slice(2).join('\n')).toBe('line one\nline two');
     // The payload alone announces nothing — the applet has to be launched to
     // drain it, so the launch is part of the contract, not an afterthought.
     expect(opened).toEqual([notifierAppPath(home)]);
   });
 
-  it('flattens newlines in the TITLE — the newline is the record separator', () => {
+  it('leaves the sound line EMPTY when no sound is asked for, never omits it', () => {
+    // The line has to exist even when unused: the applet addresses the body as
+    // "line 3 onward", so dropping the sound line would silently shift the
+    // first body line into the sound slot and lose it.
     mkdirSync(notifierAppPath(home), { recursive: true });
-    notifyViaBundle('two\nlines', 'body', home, noOpen);
+    notifyViaBundle('dreamcontext', 'body text', home, { openImpl: noOpen });
+    const files = readdirSync(notifyQueueDir(home));
+    const raw = readFileSync(join(notifyQueueDir(home), files[0]), 'utf-8');
+    expect(raw.split('\n')[1]).toBe('');
+    expect(raw.split('\n')[2]).toBe('body text');
+  });
+
+  it('flattens newlines in the TITLE and the SOUND — both are single-line fields', () => {
+    mkdirSync(notifierAppPath(home), { recursive: true });
+    notifyViaBundle('two\nlines', 'body', home, { sound: 'Gl\nass', openImpl: noOpen });
     const files = readdirSync(notifyQueueDir(home));
     const raw = readFileSync(join(notifyQueueDir(home), files[0]), 'utf-8');
     expect(raw.split('\n')[0]).toBe('two lines');
-    expect(raw.split('\n')[1]).toBe('body');
+    expect(raw.split('\n')[1]).toBe('Gl ass');
+    expect(raw.split('\n')[2]).toBe('body');
   });
 
   it('gives concurrent notifications distinct files — one must not overwrite the other', () => {
     // Two automations finishing in the same tick is ordinary, not exotic: the
     // dispatcher runs every due slug in one pass.
     mkdirSync(notifierAppPath(home), { recursive: true });
-    notifyViaBundle('a', 'first', home, noOpen);
-    notifyViaBundle('b', 'second', home, noOpen);
+    notifyViaBundle('a', 'first', home, { openImpl: noOpen });
+    notifyViaBundle('b', 'second', home, { openImpl: noOpen });
     expect(readdirSync(notifyQueueDir(home))).toHaveLength(2);
   });
 });
@@ -240,7 +262,7 @@ describe.skipIf(process.platform !== 'darwin')('buildNotifierApp (real osacompil
 
   it('after a build, notifyViaBundle queues rather than falling back', () => {
     buildNotifierApp(home, { register: false });
-    expect(notifyViaBundle('dreamcontext', 'queued', home, noOpen)).toBe(true);
+    expect(notifyViaBundle('dreamcontext', 'queued', home, { openImpl: noOpen })).toBe(true);
     expect(inspectNotifier(home).queuedPayloads).toBe(1);
   });
 });
