@@ -7,6 +7,7 @@ const translations: Record<string, Record<string, string>> = {
     'nav.roadmap': 'Roadmap',
     'nav.hypotheses': 'Hypotheses',
     'nav.labpage': 'Insights',
+    'nav.automations': 'Automations',
     'nav.core': 'Core',
     'nav.knowledge': 'Knowledge',
     'nav.sleep': 'Sleep Cycle',

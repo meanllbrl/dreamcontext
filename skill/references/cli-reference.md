@@ -97,6 +97,31 @@ Curated metrics synced from HTTP APIs or local scripts into `_dream_context/lab/
 
 ---
 
+## Automations
+
+Scheduled headless `claude` runs, user-authored, ships completely disabled until the dispatcher is installed and each automation is approved on this machine. Full protocol, security stance, and manifest reference: [automations.md](automations.md).
+
+| Command | Description |
+|---|---|
+| `automations create <slug>` | Scaffold a new automation manifest, private and auto-approved on this machine. `--title <title>` (required), `--days <daily\|mon,wed>` (required, schedule days), `--at <HH:MM>` (required, 24h local), `--model <model>` (default: let claude pick), `--effort <level>` (`low\|medium\|high\|xhigh\|max`, default: let claude pick), `--timeout <minutes>` (1-60, default 15), `--catchup <hours>` (1-168, default 6), `--prompt-file <path>` (read the `## Prompt` body from this file instead of the scaffold stub), `--shared` (publish the manifest, cache, and output immediately instead of staying private), `--no-notify` (stay silent when a scheduled run finishes; notifies on completion by default), `--disabled` (create with `enabled: false`). |
+| `automations list` | List automations with schedule, approval, sharing state, and last-run status. `--json`. |
+| `automations show <slug>` | Show one automation's manifest, cache, approval, sharing state, and orphan state. `--json`, `--history <n>` (default 5). |
+| `automations run <slug>` | Run one automation now. `-f/--force` bypasses dueness and sleep-deference only, never approval and never the orphan guard. |
+| `automations tick [slug]` | Simulate a dispatcher tick: evaluate dueness and run whatever is due (never forces). `[slug]` ticks only that automation in the current project; omit for the whole project. `-a/--all` ticks every project registered on this machine. `--json`. |
+| `automations enable <slug>` / `automations disable <slug>` | Enable (tick considers it again) or disable (tick skips it; approval untouched) an automation. |
+| `automations approve <slug>` | Review and approve an automation to run on this machine, diffing every hashed field (prompt, output instructions, model, effort, timeout, output directory) against the last approval. `-y/--yes` skips the interactive confirmation. |
+| `automations share <slug>` | Publish this automation: flips `shared` to `true` and publishes its manifest, cache, and output together. |
+| `automations unshare <slug>` | Stop publishing this automation from this machine. Prints a warning that this is not retroactive: anything already committed and pushed stays in git history. `-y/--yes` skips the interactive confirmation. |
+| `automations kill <slug>` | Kill a previous run's orphaned process group, read from its recorded sidecar. Never guesses with `pgrep`/`pkill`. `-y/--yes` skips confirmation, `--force` kills even when the sidecar is old enough that its process-group id may have been recycled. |
+| `automations remove <slug>` | Delete an automation manifest and its machine-local cache/lock/sidecar (approval revoked, sharing negations removed too). `-y/--yes`, `--purge-output` (also delete this automation's output directory). |
+| `automations install` | Install the launchd dispatcher (ticks every 5 minutes). `--check` inspects only and writes nothing. `-f/--force` installs even if the resolved CLI does not match the one running this command. |
+| `automations uninstall` | Remove the launchd dispatcher. Registry approvals are left untouched. `-y/--yes`. |
+| `automations logs` | Tail the dispatcher log. `-n/--lines <n>` (default 50). |
+
+**Nothing about this feature runs until both an explicit `automations install` and a per-automation approval have happened on this machine.** All job semantics live in the manifest's `## Prompt` prose; the CLI carries only schedule, model, effort, and timeout. Every automation is **private to this machine by default** — sharing is a separate, explicit step. See [automations.md](automations.md) for the capture protocol and the full security stance (what approval covers, sharing and its five states, output scrub coverage, and how to stop a running automation).
+
+---
+
 ## Theses (Hypotheses)
 
 Opt-in proactive learning layer (`learning.enabled`, default OFF). Falsifiable claims validated/invalidated across sleep cycles in `_dream_context/theses/`; dashboard label is "Hypotheses", code/CLI say theses throughout. Commands stay callable when the layer is off (a dim hint prints first). See [learning.md](learning.md) for the full lifecycle, derived-confidence formula, and sleep-learn contract.

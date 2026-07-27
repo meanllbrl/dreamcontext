@@ -4,6 +4,7 @@ import {
   consolidationDepth,
   isDestructiveAllowed,
   inspectSleepLock,
+  finalizeSleepState,
   SLEEP_LOCK_STALE_MS,
 } from '../../src/lib/sleep-consolidation.js';
 import type { SleepState } from '../../src/lib/sleep-consolidation.js';
@@ -11,6 +12,29 @@ import type { SleepState } from '../../src/lib/sleep-consolidation.js';
 /** Minimal SleepState carrying only the field inspectSleepLock reads. */
 function lockState(sleep_started_at: string | null): SleepState {
   return { sleep_started_at } as unknown as SleepState;
+}
+
+/** Full SleepState fixture (cloneState reads every array/object field, so a
+ *  partial `as unknown as SleepState` would throw inside finalizeSleepState). */
+function finalizeInput(over: Partial<SleepState> = {}): SleepState {
+  return {
+    debt: 12,
+    last_sleep: null,
+    last_sleep_summary: null,
+    sleep_started_at: '2026-07-01T18:00:00.000Z',
+    last_consolidated_at: null,
+    sessions_since_last_sleep: 3,
+    sessions: [],
+    bookmarks: [],
+    triggers: [],
+    knowledge_access: {},
+    dashboard_changes: [],
+    compaction_log: [],
+    recall_mode: 'haiku',
+    consolidation_depth: 'standard',
+    pendingMigrationNotices: [],
+    ...over,
+  };
 }
 
 /**
@@ -151,5 +175,30 @@ describe('inspectSleepLock — the consolidation mutex', () => {
     expect(lock.locked).toBe(true);
     expect(lock.ageMs).toBe(Infinity);
     expect(lock.stale).toBe(true);
+  });
+});
+
+describe('finalizeSleepState — last_consolidated_at', () => {
+  it('stamps last_consolidated_at from the injected nowISO, verbatim', () => {
+    const finalized = finalizeSleepState(finalizeInput(), 'did stuff', '2026-07-01', '2026-07-01T18:05:00.000Z');
+    expect(finalized.last_consolidated_at).toBe('2026-07-01T18:05:00.000Z');
+  });
+
+  it('still clears sleep_started_at (the lock) in the same call', () => {
+    const finalized = finalizeSleepState(finalizeInput(), 'did stuff', '2026-07-01', '2026-07-01T18:05:00.000Z');
+    expect(finalized.sleep_started_at).toBeNull();
+  });
+
+  it('overwrites a prior last_consolidated_at — each completed cycle re-stamps the boundary', () => {
+    const input = finalizeInput({ last_consolidated_at: '2026-06-01T00:00:00.000Z' });
+    const finalized = finalizeSleepState(input, 'did stuff', '2026-07-01', '2026-07-01T18:05:00.000Z');
+    expect(finalized.last_consolidated_at).toBe('2026-07-01T18:05:00.000Z');
+  });
+
+  it('leaves the input state untouched (operates on a clone, like every other field it sets)', () => {
+    const input = finalizeInput();
+    finalizeSleepState(input, 'did stuff', '2026-07-01', '2026-07-01T18:05:00.000Z');
+    expect(input.last_consolidated_at).toBeNull();
+    expect(input.sleep_started_at).toBe('2026-07-01T18:00:00.000Z');
   });
 });

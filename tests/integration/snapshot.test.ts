@@ -432,4 +432,75 @@ describe('snapshot (integration)', () => {
     const output = runSnapshot(tmpDir);
     expect(output).not.toContain('## Extended Core Files');
   });
+
+  describe('Automations section (T9 — wiring only; renderer itself is tested in automations-snapshot-section.test.ts)', () => {
+    // A rich-ish scaffold (soul + task + changelog + features) so the byte-identical
+    // assertions below are not trivially true of an almost-empty snapshot.
+    function scaffoldRich(root: string) {
+      const ctx = scaffold(root);
+      writeFileSync(join(ctx, 'core', '0.soul.md'), '---\nname: test\n---\n\nTest project.\n');
+      writeFileSync(
+        join(ctx, 'state', 'my-task.md'),
+        '---\nstatus: active\npriority: high\nupdated_at: "2026-02-24"\n---\n\n## Description\n\nDo the thing.\n',
+      );
+      writeFileSync(
+        join(ctx, 'core', 'CHANGELOG.json'),
+        JSON.stringify([{ date: '2026-02-24', type: 'feat', scope: 'core', description: 'Shipped X' }]),
+      );
+      return ctx;
+    }
+
+    it('does not add an "## Automations" heading for a clean brain (no automations/ dir at all)', () => {
+      scaffoldRich(tmpDir);
+      const output = runSnapshot(tmpDir);
+      expect(output).not.toContain('## Automations');
+    });
+
+    it('is byte-identical whether or not an EMPTY automations/ directory exists — the mechanical "ships fully disabled" proof', () => {
+      const ctx = scaffoldRich(tmpDir);
+      const before = runSnapshot(tmpDir);
+
+      // Presence of the (empty) directory alone — no manifest, no cache, no
+      // registry entry — must not change a single byte of the snapshot.
+      mkdirSync(join(ctx, 'automations'), { recursive: true });
+      const after = runSnapshot(tmpDir);
+
+      expect(after).toBe(before);
+      expect(after).not.toContain('## Automations');
+    });
+
+    it('surfaces a blocked-pending-approval automation with the exact approve command, and nothing for a clean brain otherwise', () => {
+      const ctx = scaffoldRich(tmpDir);
+      mkdirSync(join(ctx, 'automations'), { recursive: true });
+      writeFileSync(
+        join(ctx, 'automations', 'eod-digest.md'),
+        [
+          '---',
+          'id: auto_test1234',
+          'title: EOD Digest',
+          'enabled: true',
+          'schedule:',
+          '  days: daily',
+          '  at: "18:00"',
+          'model: null',
+          'timeout_minutes: 15',
+          'catchup_hours: 6',
+          '---',
+          '',
+          '## Prompt',
+          '',
+          'Summarize today.',
+          '',
+        ].join('\n'),
+      );
+      // No approval registry entry anywhere on this machine for this fixture's
+      // HOME, so checkApproval reports 'never-approved' — this is the ONLY
+      // signal that can fire with no cache record at all (T7's design note).
+      const output = runSnapshot(tmpDir);
+      expect(output).toContain('## Automations');
+      expect(output).toContain('eod-digest');
+      expect(output).toContain('blocked pending approval');
+      expect(output).toContain('dreamcontext automations approve eod-digest');
+    });
+  });
 });

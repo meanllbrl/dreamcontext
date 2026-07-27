@@ -38,6 +38,12 @@ import { readDedupDigest, renderDedupDigest } from '../../lib/embeddings/dedup-l
 import { scanDigests, planDigestGc, runDigestGc } from '../../lib/session-digest.js';
 import { collectBrainDirty, renderBrainDirtyWarning } from '../../lib/brain-dirty.js';
 import {
+  pendingOutputsSince,
+  readPrivateDerivationMarker,
+  clearPrivateDerivationMarker,
+} from '../../lib/automations/consumption.js';
+import { listAutomations } from '../../lib/automations/store.js';
+import {
   sleepinessLevel,
   sleepinessRange,
   applyConsolidation,
@@ -79,6 +85,7 @@ const DEFAULT_SLEEP_STATE: SleepState = {
   last_sleep: null,
   last_sleep_summary: null,
   sleep_started_at: null,
+  last_consolidated_at: null,
   sessions_since_last_sleep: 0,
   sessions: [],
   bookmarks: [],
@@ -113,6 +120,7 @@ function freshDefaults(): SleepState {
     last_sleep: null,
     last_sleep_summary: null,
     sleep_started_at: null,
+    last_consolidated_at: null,
     sessions_since_last_sleep: 0,
     sessions: [],
     bookmarks: [],
@@ -340,8 +348,21 @@ export function registerSleepCommand(program: Command): void {
     .description('Mark beginning of consolidation (sets epoch for safe clearing)')
     .option('--deep', 'Force a deep consolidation (authorizes destructive knowledge ops)')
     .option('--force', 'Take over an in-progress consolidation lock (a stuck or parallel sleep)')
-    .action((opts: { deep?: boolean; force?: boolean }) => {
+    .option('--json', 'Emit as JSON (suppresses the human-readable lines below)')
+    .action((opts: { deep?: boolean; force?: boolean; json?: boolean }) => {
       const root = ensureContextRoot();
+      // --json mirrors the `automations tick --json` convention elsewhere in
+      // this CLI: suppress the human-readable success/info/warn lines below and
+      // emit exactly one JSON object at the end, so a script parsing stdout
+      // never has to pick a JSON blob out of interleaved chalk text. Refusal
+      // paths (`error(...)`, below) are UNCHANGED regardless of --json — they
+      // return before anything worth JSON-ifying has been computed.
+      const asJson = !!opts.json;
+      const say = {
+        success: (m: string) => { if (!asJson) success(m); },
+        info: (m: string) => { if (!asJson) info(m); },
+        warn: (m: string) => { if (!asJson) warn(m); },
+      };
 
       // STAMP MUTEX: `sleep start` reads state, runs migrations, then stamps the
       // epoch — a check-then-write that two simultaneous starts could both pass,
@@ -386,13 +407,13 @@ export function registerSleepCommand(program: Command): void {
         }
         if (lock.locked && lock.stale) {
           const ageMin = Math.round(lock.ageMs / 60000);
-          warn(
+          say.warn(
             `Reclaiming a stale consolidation lock (started ${lock.startedAt}, ~${ageMin}m ago — ` +
               `exceeds the ${SLEEP_LOCK_STALE_MS / 60000}m TTL). The previous sleep likely crashed ` +
               `without \`sleep done\`. Taking over.`,
           );
         } else if (lock.locked && opts.force) {
-          warn(`--force: taking over an in-progress consolidation lock (started ${lock.startedAt}).`);
+          say.warn(`--force: taking over an in-progress consolidation lock (started ${lock.startedAt}).`);
         }
 
         // ALWAYS compute + persist the consolidation depth so it never holds a
@@ -421,7 +442,7 @@ export function registerSleepCommand(program: Command): void {
         const codeNotices: string[] = [];
         for (const entry of migResult.applied) {
           if (entry.executor === 'code') {
-            success(`Migration ${entry.version}/${entry.step}: ${entry.summary}`);
+            say.success(`Migration ${entry.version}/${entry.step}: ${entry.summary}`);
             codeNotices.push(`${entry.version} ${entry.step}: ${entry.summary}`);
           }
         }
@@ -431,7 +452,7 @@ export function registerSleepCommand(program: Command): void {
 
         // Surface pending agent task instructions
         for (const pat of migResult.pendingAgentTasks) {
-          info(
+          say.info(
             `Migration ${pat.version} has a pending agent task (${pat.agentTask.id}). ` +
             `Run \`dreamcontext migrations pending\` for instructions.`,
           );
@@ -439,13 +460,61 @@ export function registerSleepCommand(program: Command): void {
 
         state.sleep_started_at = new Date().toISOString();
         writeSleepState(root, state);
-        success(`Consolidation epoch set: ${state.sleep_started_at}`);
-        info(`Consolidation depth: ${decision.depth} (source: ${decision.source}) — ${decision.reason}`);
+        say.success(`Consolidation epoch set: ${state.sleep_started_at}`);
+        say.info(`Consolidation depth: ${decision.depth} (source: ${decision.source}) — ${decision.reason}`);
         if (decision.cappedByCatchup) {
-          info('Auto-deep prevented: most of this debt arrived in a catch-up batch. Re-run with `--deep` to authorize destructive ops anyway.');
+          say.info('Auto-deep prevented: most of this debt arrived in a catch-up batch. Re-run with `--deep` to authorize destructive ops anyway.');
         }
         if (decision.depth !== 'deep') {
-          info('Light/standard consolidation: do NOT merge/summarize-replace/delete knowledge — flag candidates in the report instead.');
+          say.info('Light/standard consolidation: do NOT merge/summarize-replace/delete knowledge — flag candidates in the report instead.');
+        }
+
+        // Change C — a NEW cycle supersedes any previous cycle's pending
+        // private-derivation disclosure. This is the one genuine wedge (a
+        // marker stranded by a crashed cycle, with no `sleep done` ever
+        // reaching the ack) closed WITHOUT a bypass flag: the disclosure it
+        // guarded is superseded, not silently discarded, because a fresh
+        // cycle is what makes it stale. Deliberately placed here (after the
+        // epoch is durably stamped above), not on any refusal path above —
+        // a REFUSED start means no new cycle actually began, so a prior
+        // cycle's still-pending disclosure must survive to be acted on.
+        clearPrivateDerivationMarker(root);
+
+        // Change C — surface pending automation output as part of the SAME
+        // dispatch signal the main agent's inline brief already reads, so
+        // consolidating it costs no extra tool call. `pendingOutputsSince`
+        // never reads manifests (see consumption.ts's module doc — it must
+        // stay import-free of ./store.js to avoid a same-wave cross-import
+        // during its own wave), so `shared` is attached HERE by
+        // cross-referencing `listAutomations()`, now that the store module
+        // has landed.
+        const pending = pendingOutputsSince(root, state.last_consolidated_at);
+        const sharedBySlug = new Map(listAutomations(root).map((m) => [m.slug, m.shared]));
+        const automationOutputs = {
+          outputs: pending.outputs.map((o) => ({ ...o, shared: sharedBySlug.get(o.slug) ?? false })),
+          skipped: pending.skipped,
+          totalBytes: pending.totalBytes,
+        };
+        if (automationOutputs.outputs.length > 0 || automationOutputs.skipped.length > 0) {
+          const slugs = [...new Set(automationOutputs.outputs.map((o) => o.slug))].sort();
+          const slugSuffix = slugs.length > 0 ? ` (${slugs.join(', ')})` : '';
+          say.info(`Automation outputs pending consolidation: ${automationOutputs.outputs.length}${slugSuffix}.`);
+          // No silent caps: every dropped file is named, never just absent.
+          for (const s of automationOutputs.skipped) {
+            say.warn(`  skipped ${s.slug} (${s.reason}): ${s.path}`);
+          }
+        }
+
+        if (asJson) {
+          console.log(JSON.stringify({
+            epoch: state.sleep_started_at,
+            depth: decision.depth,
+            depthSource: decision.source,
+            depthReason: decision.reason,
+            cappedByCatchup: decision.cappedByCatchup,
+            migrations: codeNotices,
+            automationOutputs,
+          }, null, 2));
         }
       } finally {
         // Release the stamp mutex the moment the stamp completes (success, refuse,
@@ -469,7 +538,11 @@ export function registerSleepCommand(program: Command): void {
       (value: string, previous: string[]) => previous.concat([value]),
       [] as string[],
     )
-    .action(async (summaryParts: string[], opts: { flag: string[] }) => {
+    .option(
+      '--ack-private-derivation',
+      'Acknowledge that private automation output was distilled into synced knowledge this cycle (required to proceed while that disclosure is pending)',
+    )
+    .action(async (summaryParts: string[], opts: { flag: string[]; ackPrivateDerivation?: boolean }) => {
       const summary = summaryParts.join(' ');
       if (!summary.trim()) {
         error('Summary is required.');
@@ -478,6 +551,49 @@ export function registerSleepCommand(program: Command): void {
 
       const root = ensureContextRoot();
       const state = readSleepState(root);
+
+      // Change C privacy gate — MUST run here, before ANY write (the next
+      // statement, writeSleepHistory, is the first mutation `sleep done`
+      // makes). A marker means sleep-product derived knowledge from a
+      // PRIVATE automation's output this cycle: knowledge files are
+      // brain-synced, so that derivation republishes private material
+      // through a different door. Refusing BEFORE any mutation means a
+      // refused `sleep done` leaves `sleep_started_at`/`last_consolidated_at`
+      // untouched and creates no history entry and no commit — the cycle is
+      // exactly as it was, safe to retry once acknowledged. A refusal placed
+      // any later (e.g. after finalizeSleepState) would half-close the cycle
+      // AND advance the very consumption boundary that would have
+      // re-surfaced the material next time.
+      //
+      // Deliberately NO -y/--yes alias: acknowledging that a SPECIFIC
+      // disclosure was seen and decided is not the same act as "yes to
+      // everything", and folding it into a general flag is exactly the
+      // reflexive-approval pattern this whole design argues against. There is
+      // also no discard flag — the marker names every derived knowledge file,
+      // so a user who does not want the material published edits or deletes
+      // those files FIRST, then acks. A bare discard would be an unguarded
+      // bypass wearing a different name.
+      const privateDerivation = readPrivateDerivationMarker(root);
+      if (privateDerivation && !opts.ackPrivateDerivation) {
+        error(
+          'Refusing to consolidate: private automation output was distilled into synced knowledge this cycle.',
+          'Review the knowledge files below — private prompt/output content may now be published through them ' +
+            'on the next brain sync. Edit or delete anything you do not want published, THEN re-run ' +
+            '`dreamcontext sleep done` with --ack-private-derivation to proceed.',
+        );
+        for (const d of privateDerivation.derivedFrom) {
+          warn(`  from private automation \`${d.slug}\` (${d.outputPath})`);
+        }
+        for (const k of privateDerivation.knowledgePaths) {
+          warn(`    → ${k}`);
+        }
+        process.exitCode = 1;
+        return;
+      }
+      // Acknowledged (or nothing pending — idempotent either way): clear so
+      // the marker never outlives the decision point it exists to gate.
+      clearPrivateDerivationMarker(root);
+
       // Capture previousDebt BEFORE consolidating; feed it to buildHistoryEntry.
       // applyConsolidation is pure (works on a clone), so the read-modify-write
       // happens exactly ONCE below — no two-write pattern that could clobber a
@@ -494,7 +610,7 @@ export function registerSleepCommand(program: Command): void {
       writeSleepHistory(root, history);
 
       // Finalize and persist the new state exactly once.
-      const finalState = finalizeSleepState(result.state, summary, today_);
+      const finalState = finalizeSleepState(result.state, summary, today_, new Date().toISOString());
       writeSleepState(root, finalState);
 
       if (epoch && finalState.sessions.length > 0) {

@@ -1,0 +1,138 @@
+/* AutomationDetailPanel — mirrors InsightDetailPanel's centered-modal shell
+   (idp-*) with automations-specific content (adp-*): the approval review,
+   orphan warning, and run history. */
+
+.adp-overlay { position: fixed; inset: 0; background: rgba(8, 10, 14, 0.6); z-index: 30; animation: adp-fade 0.16s ease; }
+@keyframes adp-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.adp-panel {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(1060px, 94vw); height: min(760px, 92vh);
+  background: var(--color-bg-elevated); border: 1px solid var(--color-border);
+  border-radius: var(--radius-2xl); box-shadow: var(--shadow-xl, 0 32px 80px -24px rgba(0, 0, 0, 0.7));
+  z-index: 31; overflow: hidden;
+  display: flex; flex-direction: column; animation: adp-pop 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes adp-pop {
+  from { transform: translate(-50%, -50%) scale(0.97); opacity: 0.4; }
+  to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+
+.adp-head { flex: 0 0 auto; padding: 20px 20px 16px; border-bottom: 1px solid var(--color-border); }
+.adp-head-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.adp-spacer { flex: 1; }
+
+.adp-run {
+  border: 1px solid var(--color-border); background: transparent; color: var(--color-text-secondary);
+  border-radius: 7px; padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.adp-run:hover:not(:disabled) { background: var(--color-accent-soft); color: var(--color-accent); border-color: var(--color-accent); }
+.adp-run:disabled { cursor: default; opacity: 0.5; }
+
+.adp-close {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  border-radius: 8px; cursor: pointer; color: var(--color-text-tertiary); font-size: 15px; transition: all var(--transition-fast);
+}
+.adp-close:hover { background: var(--color-bg-secondary); color: var(--color-text); }
+
+.adp-title { font-family: var(--font-family-display); font-weight: 700; font-size: 19px; color: var(--color-text); letter-spacing: -0.015em; line-height: 1.25; }
+.adp-slug { font-family: var(--font-mono); font-size: 11.5px; color: var(--color-text-tertiary); margin-top: 7px; }
+
+.adp-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px 26px; }
+.adp-loading { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; text-align: center; }
+
+.adp-columns { display: grid; grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr); gap: 28px; align-items: start; }
+@media (max-width: 900px) { .adp-columns { grid-template-columns: 1fr; } }
+
+.adp-danger-banner, .adp-warn-banner {
+  display: flex; gap: 11px; align-items: flex-start; padding: 12px 14px; border-radius: 11px; margin-bottom: 18px;
+}
+.adp-danger-banner {
+  background: var(--color-error-subtle); border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
+}
+.adp-warn-banner {
+  background: var(--color-warning-subtle); border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+.adp-danger-glyph { font-size: 14px; line-height: 1.3; color: var(--color-error); }
+.adp-warn-glyph { font-size: 14px; line-height: 1.3; color: var(--color-warning); }
+.adp-danger-title { font-weight: 700; font-size: 13px; margin-bottom: 4px; color: var(--color-error); }
+.adp-danger-sub, .adp-warn-sub { font-size: 12px; color: var(--color-text-secondary); line-height: 1.45; }
+.adp-danger-cmd {
+  display: inline-block; margin-top: 8px; padding: 4px 8px; border-radius: 6px;
+  background: var(--color-bg-tertiary); font-family: var(--font-mono); font-size: 12px; color: var(--color-text);
+}
+
+.adp-section-label {
+  display: flex; align-items: center; gap: 7px;
+  font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--color-text-tertiary); margin-bottom: 10px;
+}
+
+.adp-review { border: 1px solid var(--color-border); border-radius: 11px; overflow: hidden; margin-bottom: 16px; }
+.adp-review-row { padding: 8px 12px; }
+.adp-review-row + .adp-review-row { border-top: 1px solid var(--color-border); }
+.adp-review-row:not(.adp-review-row--block) { display: flex; align-items: baseline; gap: 12px; }
+.adp-review-label {
+  flex: 0 0 140px; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--color-text-tertiary); display: block; margin-bottom: 4px;
+}
+.adp-review-row:not(.adp-review-row--block) .adp-review-label { margin-bottom: 0; }
+.adp-review-value { font-size: 12.5px; color: var(--color-text); word-break: break-word; }
+.adp-review-block {
+  margin: 0; padding: 10px; background: var(--color-bg-secondary); border-radius: 8px;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.5; color: var(--color-text);
+  white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto;
+}
+.adp-review-block--static { margin-bottom: 18px; }
+
+.adp-approve-btn {
+  border: none; border-radius: var(--radius-md); padding: 9px 18px; font-size: 13px; font-weight: 600;
+  cursor: pointer; background: var(--gradient-brand); color: var(--color-text-on-brand);
+}
+.adp-approve-btn:disabled { cursor: default; opacity: 0.65; }
+
+.adp-details {
+  display: flex; flex-direction: column; border: 1px solid var(--color-border);
+  border-radius: 11px; overflow: hidden; margin-bottom: 22px;
+}
+.adp-detail-row { display: flex; align-items: baseline; gap: 12px; padding: 8px 12px; }
+.adp-detail-row + .adp-detail-row { border-top: 1px solid var(--color-border); }
+.adp-detail-label {
+  flex: 0 0 90px; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--color-text-tertiary);
+}
+.adp-detail-value { font-size: 12.5px; color: var(--color-text); word-break: break-word; }
+.adp-detail-value--mono { font-family: var(--font-mono); font-size: 11.5px; }
+
+.adp-history { display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: 11px; overflow: hidden; }
+.adp-history-row { display: flex; align-items: center; gap: 8px; padding: 7px 12px; font-size: 12px; flex-wrap: wrap; }
+.adp-history-row + .adp-history-row { border-top: 1px solid var(--color-border); }
+.adp-history-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.adp-history-dot--ok { background: var(--color-success); }
+.adp-history-dot--failed, .adp-history-dot--timeout { background: var(--color-error); }
+.adp-history-dot--blocked { background: var(--color-warning); }
+.adp-history-dot--orphaned { background: var(--color-error); }
+.adp-history-dot--deferred { background: var(--color-text-tertiary); }
+.adp-history-when { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary); flex: 0 0 auto; }
+.adp-history-status { font-weight: 600; font-size: 11.5px; color: var(--color-text); text-transform: capitalize; }
+.adp-history-duration { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary); }
+.adp-history-cost { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary); }
+.adp-history-denials { font-size: 11px; color: var(--color-warning); }
+.adp-history-error {
+  color: var(--color-error); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; max-width: 100%; flex-basis: 100%;
+}
+.adp-history-count {
+  font-family: var(--font-family-text); font-size: 10px; font-weight: 600;
+  background: var(--color-bg-tertiary); color: var(--color-text-secondary);
+  padding: 1px 6px; border-radius: var(--radius-full);
+}
+.adp-history-empty { font-size: 12.5px; color: var(--color-text-tertiary); padding: 4px 0 8px; }
+
+/* Badge variants not already covered by AutomationCard.css (approved-state only
+   appears in this panel's header). */
+.auto-badge--approved {
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+}

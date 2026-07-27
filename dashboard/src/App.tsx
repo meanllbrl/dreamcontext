@@ -17,6 +17,7 @@ import { TasksPage } from './pages/TasksPage';
 import { RoadmapPage } from './pages/RoadmapPage';
 import { HypothesesPage } from './pages/HypothesesPage';
 import { LabPage } from './pages/LabPage';
+import { AutomationsPage } from './pages/AutomationsPage';
 import { SleepPage } from './pages/SleepPage';
 import { CorePage } from './pages/CorePage';
 import { KnowledgePage } from './pages/KnowledgePage';
@@ -128,6 +129,8 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
       return <HypothesesPage focus={focus} />;
     case 'lab':
       return <LabPage />;
+    case 'automations':
+      return <AutomationsPage />;
     case 'sleep':
       return <SleepPage />;
     case 'core':
