@@ -1,5 +1,22 @@
 [
   {
+    "date": "2026-07-27",
+    "type": "fix",
+    "scope": "agent-chat",
+    "description": "The Chat surface's Auto permission mode mapped to the CLI's `acceptEdits`, which auto-approves file edits ONLY, so every build/test/git/fetch command raised a permission card. The composer's Auto card promised 'edits auto-approved, risky commands still ask' — that is the CLI's separate `auto` mode, which the embedded terminal had already moved to (agent-terminal.ts:209/1148) while the chat route had not. Verified on CLI 2.1.220 with the route's own flags: under acceptEdits, 'npm --version' and a curl each raised can_use_tool; under auto, none of four commands did. permissionModeFor now returns 'auto' for no-bypass; client mirrors (chatSession ack, chatProtocol/agentSettings/launcher docs) and skill/references/integrations.md updated in lockstep; the unit test asserts 'auto' and that neither arm can return acceptEdits. Runtime-verified through the real /api/agent/chat WS against a scratch vault: an Auto session boots on permissionMode auto and runs `npm --version` with zero can_use_tool frames, and bypass=1 still boots on bypassPermissions. Two findings the run added: the live set_permission_mode switch is ASYMMETRIC — switching back to 'auto' lands (ack success + re-emitted init), but every switch INTO bypass is refused by 2.1.220 ('the session was not launched with --dangerously-skip-permissions'), so the client's --resume respawn fallback is load-bearing for that direction (driven end to end: the respawn does land on bypassPermissions); and 'auto' is more permissive than the composer card claims (rm -rf outside the project, sudo, recursive chmod all ran unprompted) — owner decided to leave the card copy as is.",
+    "breaking": false,
+    "summary": "Chat Auto mode ran the CLI's acceptEdits, so every non-edit command asked for permission; now it runs auto",
+    "references": [
+      "file:src/server/routes/agent-chat.ts",
+      "file:dashboard/src/components/sleepy/chatSession.ts",
+      "feature:in-app-agent-terminal"
+    ],
+    "authors": [
+      "mehmet",
+      "agent"
+    ]
+  },
+  {
     "date": "2026-07-26",
     "type": "chore",
     "scope": "release",

@@ -87,11 +87,22 @@ const liveConversations = new Set<string>();
 
 // ─── Permission mode (identical rule to the terminal — agent-terminal.ts:1206) ────────
 
-/** No-bypass chat maps to Auto (`acceptEdits`); bypass maps to `bypassPermissions` —
- *  the same two-mode contract the embedded terminal uses. Exported pure so it is
- *  unit-testable in isolation (AC11's permission-mode mapping test). */
-export function permissionModeFor(bypass: boolean): 'bypassPermissions' | 'acceptEdits' {
-  return bypass ? 'bypassPermissions' : 'acceptEdits';
+/** No-bypass chat maps to Auto (`auto`); bypass maps to `bypassPermissions` — the same
+ *  two-mode contract the embedded terminal uses (agent-terminal.ts:209/1148).
+ *
+ *  It must be `auto`, NOT `acceptEdits`. They are different modes on the CLI's list
+ *  (2.1.220: acceptEdits | auto | bypassPermissions | manual | dontAsk | plan) and only
+ *  `auto` means what the composer's Auto card promises ("edits auto-approved, risky
+ *  commands still ask"). Verified against 2.1.220 in a stream-json session with
+ *  `--permission-prompt-tool stdio`: under `acceptEdits`, `npm --version` and a `curl`
+ *  each raised a `can_use_tool` prompt (only the file-writing command went through
+ *  unasked); under `auto` the same four commands ran with no prompt at all. Chat shipped
+ *  `acceptEdits` while the terminal had already moved to `auto`, so Auto chats asked for
+ *  approval on essentially every non-edit command.
+ *
+ *  Exported pure so it is unit-testable in isolation (AC11's permission-mode mapping test). */
+export function permissionModeFor(bypass: boolean): 'bypassPermissions' | 'auto' {
+  return bypass ? 'bypassPermissions' : 'auto';
 }
 
 /** Whether a path may be interpolated into the login-shell command string the spawn builds
@@ -479,12 +490,18 @@ function startChatSession(
       return;
     }
 
-    // Live permission-mode switch → `set_permission_mode` control_request. The CLI (2.1.220)
-    // validates the mode string against its own list and acks; both modes we can ask for
-    // (`acceptEdits`/`bypassPermissions`) are on it. This is what lets Auto↔Bypass take
-    // effect on the RUNNING conversation instead of only on the next spawn — the client
-    // falls back to resuming the same conversation id if the ack comes back rejected (an
-    // older CLI answers "not supported in this context").
+    // Live permission-mode switch → `set_permission_mode` control_request, so Auto↔Bypass can
+    // take effect on the RUNNING conversation instead of only on the next spawn. The two
+    // directions are NOT symmetric on 2.1.220, both measured through this route:
+    //   • →`auto` LANDS: acks `{subtype:'success', response:{mode:'auto'}}` and the next turn's
+    //     `system:init` reports `permissionMode: auto`.
+    //   • →`bypassPermissions` is REFUSED: `{subtype:'error', error:"Cannot set permission mode
+    //     to bypassPermissions because the session was not launched with
+    //     --dangerously-skip-permissions"}` — a process that booted without that flag can never
+    //     be talked into bypass, whatever it was launched with.
+    // So the client's rejection fallback (respawn this conversation with `--resume` under the
+    // new mode) is LOAD-BEARING for every switch INTO bypass, not just a courtesy for an older
+    // CLI. Verified end to end: the respawned `--resume` session boots on `bypassPermissions`.
     if (msg.type === 'setPermissionMode' && (msg.mode === 'auto' || msg.mode === 'bypass')) {
       const requestId = sanitizeControlId(msg.requestId) || randomUUID();
       writeStdin({

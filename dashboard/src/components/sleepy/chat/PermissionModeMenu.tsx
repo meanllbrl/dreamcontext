@@ -3,9 +3,11 @@ import { Popover } from '../SkillPickerPopover';
 /**
  * The remembered permission-mode DROPDOWN (not a settings checkbox), reusing the same
  * viewport-clamped `Popover` the terminal's skill picker uses. `mode` is the REMEMBERED
- * default (`agentSettings.chatPermissionMode`, T2/T7-wired) — changing it applies from
- * the next chat session, not necessarily this one; see `AgentSurface`'s centralized
- * `spawn()` bypass resolution (plan rev.3 §2 T7).
+ * default (`agentSettings.chatPermissionMode`, T2/T7-wired) — changing it applies to every
+ * RUNNING chat conversation (`changeChatPermissionMode` → `set_permission_mode`, with a
+ * `--resume` respawn as the fallback) as well as to the next one; see `AgentSurface`'s
+ * centralized `spawn()` bypass resolution (plan rev.3 §2 T7). Auto is the CLI's `auto`
+ * mode, not `acceptEdits` — see `permissionModeFor` in `src/server/routes/agent-chat.ts`.
  *
  * It lives at the LEFT END OF THE COMPOSER TOOLBAR (owner reference 07-25), no longer
  * floating over the pane's top-right corner — so the trigger is a checkbox-style chip
@@ -34,7 +36,7 @@ export function PermissionModeMenu({
           className={`chat-permmode-chip${open ? ' open' : ''}`}
           data-mode={mode}
           onClick={toggle}
-          title="Permission mode for future chat sessions"
+          title="Permission mode for this and future chat sessions"
           aria-haspopup="menu"
           aria-expanded={open}
         >

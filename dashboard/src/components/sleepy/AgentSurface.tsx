@@ -598,7 +598,7 @@ export function AgentSurface() {
   //   1. remembered      — persisted, so every FUTURE chat spawns under it (`spawn`'s chat arm),
   //   2. applied now     — every LIVE chat conversation switches without being restarted
   //                        (`set_permission_mode`), because a chip that reads "bypass" while
-  //                        the running process is still on acceptEdits is simply lying,
+  //                        the running process is still on `auto` is simply lying,
   //   3. or else resumed — if a CLI rejects the live switch, that conversation is respawned
   //                        with `--resume` under the new mode, which reaches the same end
   //                        state at the cost of a process restart.

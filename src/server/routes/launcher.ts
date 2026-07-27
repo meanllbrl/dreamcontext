@@ -863,8 +863,8 @@ interface AgentUiSettings {
    *  screen" flip. A pre-flip blob carries `chatView:false` from the old opt-in default,
    *  so an explicit `false` only counts once this is set. Mirrors the dashboard. */
   screenMigrated: boolean;
-  /** Remembered default permission mode for Chat (BETA) sessions: 'auto' (acceptEdits)
-   *  or 'bypass' (bypassPermissions) — same mapping as permissionModeFor in
+  /** Remembered default permission mode for Chat (BETA) sessions: 'auto' (the CLI's `auto`
+   *  mode) or 'bypass' (bypassPermissions) — same mapping as permissionModeFor in
    *  agent-chat.ts. Mirrors dashboard/src/lib/agentSettings. */
   chatPermissionMode: 'auto' | 'bypass';
 }

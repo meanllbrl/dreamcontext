@@ -61,10 +61,11 @@ export interface AgentSettings {
   screenMigrated: boolean;
   /** Remembered default permission mode for Chat (BETA) sessions (redesign task
    *  agent-chat-view-beta-…, state 6's top-right dropdown): `'auto'` maps to the CLI's
-   *  `acceptEdits` mode, `'bypass'` to `bypassPermissions` — identical mapping to
-   *  `permissionModeFor` in `src/server/routes/agent-chat.ts`. Selecting a mode here
-   *  applies to the NEXT chat session spawned (new, split, resume, sleep/brain/delegate,
-   *  skill-insert fallback) — a running session keeps the mode it started with. */
+   *  `auto` mode (NOT `acceptEdits` — that one asks on every non-edit command), `'bypass'`
+   *  to `bypassPermissions` — identical mapping to `permissionModeFor` in
+   *  `src/server/routes/agent-chat.ts`. Selecting a mode here applies to the NEXT chat
+   *  session spawned (new, split, resume, sleep/brain/delegate, skill-insert fallback) AND
+   *  to every running one (`changeChatPermissionMode` → `set_permission_mode`). */
   chatPermissionMode: 'auto' | 'bypass';
 }
 

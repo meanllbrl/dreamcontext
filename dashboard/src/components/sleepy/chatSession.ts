@@ -286,13 +286,15 @@ export interface ChatSession {
   /** Live effort switch (a `/effort <level>` user frame — no effort control request exists
    *  on 2.1.218). The CLI answers with a synthetic "Set effort level to <level>" bubble. */
   setEffort: (level: string) => void;
-  /** Flip THIS running conversation between Auto (`acceptEdits`) and Bypass
+  /** Flip THIS running conversation between Auto (`auto`) and Bypass
    *  (`bypassPermissions`) without restarting it — a `set_permission_mode` control request
    *  (present on CLI 2.1.220's headless engine; the CLI validates the mode string and acks).
    *
    *  `onFail` fires when the switch demonstrably did NOT land: the socket is closed, or the
-   *  CLI rejected the request (an older CLI that never registered the handler answers
-   *  "set_permission_mode is not supported in this context"). The caller's fallback is to
+   *  CLI rejected the request. Rejection is the NORMAL case in one direction, not an
+   *  older-CLI edge: 2.1.220 refuses every live switch INTO bypass ("the session was not
+   *  launched with --dangerously-skip-permissions"), while a switch back to `auto` lands.
+   *  So this fallback is what actually delivers Bypass on a running chat. The caller's is to
    *  respawn this SAME conversation id with `--resume` under the new mode — see
    *  AgentSurface's `changeChatPermissionMode`. It is never called on success, so a caller
    *  that respawns unconditionally would be throwing away a working live switch. */
@@ -930,7 +932,7 @@ export function createChatSession(
       case 'question': {
         // Attention/chime fire only on a FRESH ask edge (0 pending asks -> 1+) — deliberately
         // narrower than `asking` (which any pending permission also sets): a permission prompt
-        // is common in acceptEdits mode and would make the chime noisy; a direct question is
+        // is common even in Auto mode and would make the chime noisy; a direct question is
         // the "the strongest 'needs you' there is" signal (AC5).
         const pending = conv.pending.filter((p) => p.requestId !== ev.requestId);
         const entry: PendingQuestion = { kind: 'question', requestId: ev.requestId, toolName: ev.toolName, questions: ev.questions };
@@ -1175,7 +1177,9 @@ export function createChatSession(
         // mode, so the session's own flag must agree — a later resume/"continue in terminal"
         // reads `bypass` from here, and a stale value would silently downgrade the mode.
         session.bypass = modeReq.mode === 'bypass';
-        conv = { ...conv, permissionMode: modeReq.mode === 'bypass' ? 'bypassPermissions' : 'acceptEdits' };
+        // Mirror the server's `permissionModeFor` exactly — Auto is the CLI's `auto` mode,
+        // NOT `acceptEdits` (which asks on every non-edit command).
+        conv = { ...conv, permissionMode: modeReq.mode === 'bypass' ? 'bypassPermissions' : 'auto' };
         return;
       }
       // Rejected (an older CLI with no `set_permission_mode` handler). Say nothing in the

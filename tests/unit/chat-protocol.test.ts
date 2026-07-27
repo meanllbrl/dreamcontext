@@ -34,7 +34,7 @@ const SYSTEM_INIT = JSON.stringify({
   subtype: 'init',
   session_id: SESSION_ID,
   model: 'claude-sonnet-5',
-  permissionMode: 'acceptEdits',
+  permissionMode: 'auto',
   capabilities: ['interrupt_receipt_v1', 'partial_messages_v1'],
   claude_code_version: '2.1.218',
 });
@@ -272,7 +272,7 @@ describe('parseChatLine — system frames', () => {
       kind: 'init',
       sessionId: SESSION_ID,
       model: 'claude-sonnet-5',
-      permissionMode: 'acceptEdits',
+      permissionMode: 'auto',
       capabilities: ['interrupt_receipt_v1', 'partial_messages_v1'],
       version: '2.1.218',
     });

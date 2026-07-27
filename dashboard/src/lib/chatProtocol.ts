@@ -245,7 +245,7 @@ export type ClientControl =
    *  and yields a synthetic assistant "Set effort level to <level>" echo). */
   | { type: 'setEffort'; effort: string }
   /** Live permission-mode switch — the server translates this into a `set_permission_mode`
-   *  control_request (`mode: 'acceptEdits' | 'bypassPermissions'`). Present on CLI 2.1.220's
+   *  control_request (`mode: 'auto' | 'bypassPermissions'`). Present on CLI 2.1.220's
    *  headless engine; the ack (matched by this CLIENT-generated `requestId`) is what tells
    *  the caller whether the switch actually landed, so a rejection can fall back to
    *  respawning the same conversation in the new mode. */
