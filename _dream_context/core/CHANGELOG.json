@@ -1,6 +1,14 @@
 [
   {
     "date": "2026-07-27",
+    "type": "note",
+    "scope": "quick",
+    "summary": "KNOWN ISSUE (2026-07-27, ★★★ silent data loss): `dreamcontext tasks sync pull` with the GitHub backend STRIPS the local-only `objectives:` frontmatter from every mirrored task — 72 task→objective l...",
+    "description": "KNOWN ISSUE (2026-07-27, ★★★ silent data loss): `dreamcontext tasks sync pull` with the GitHub backend STRIPS the local-only `objectives:` frontmatter from every mirrored task — 72 task→objective links lost in one command, violating the 2026-07-02 'objectives is local-only, never mapped by remote backends' decision. Silent: the pull reports success and the only symptom is the roadmap board rewriting to 'no tasks yet' with false SLIPPING flags. Unrecoverable by design (state/ is gitignored); this time the links were rebuilt only from the previously committed auto-generated board.md. Until fixed: before any `tasks sync pull`, make sure `knowledge/roadmap/board.md` is committed — it is the only snapshot of the links. Tracked as task github-task-sync-pull-silently-wipes-the-local-only-objectives-field-on-every-mirrored-task.",
+    "breaking": false
+  },
+  {
+    "date": "2026-07-27",
     "type": "fix",
     "scope": "lab",
     "description": "GitHub issue #235: changing a range-enum tweak on Lab number cards saved but never re-synced, so the tile kept rendering the pre-tweak cache until a manual refresh or TTL expiry — reported as 'day filters don't work' across 30+ tiles. InsightCard and InsightDetailPanel PATCHed /lab/:slug/tweaks and toasted 'tweaks saved.'; the funnel views had always chained PATCH -> POST /lab/sync. Both generic surfaces now run the same chain through a shared runSync(okMessage, failPrefix) that also surfaces a per-insight failed[] row (a sync can answer 200 and still have failed for that slug), and the toast distinguishes 'could not save tweaks' from 'tweaks saved, but the refresh failed'. Rule recorded in the feature PRD: a control that changes what the data MEANS must re-fetch, or say out loud that it hasn't. Guard: tests/unit/lab-tweak-resync.test.ts walks every updateTweaks.mutate call site across the four Lab surfaces and fails if one saves without chaining the sync.",

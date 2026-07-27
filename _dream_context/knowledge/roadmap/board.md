@@ -7,12 +7,12 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-07-26'
+date: '2026-07-27'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-07-26 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-07-27 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### ⚪ **improve-recall-mechanism** — Improve Recall Mechanism · 4/6 done (67%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
@@ -25,7 +25,7 @@ date: '2026-07-26'
 
 ### 🔵 **improve-sleep-quality** — Improve sleep quality · 6/9 done (67%) · target 2026-08-02 · forecast 2026-08-02 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
-  - automations-scheduled-headless-claude-jobs (in_review) · 0.21.0
+  - automations-scheduled-headless-claude-jobs (in_progress) · 0.21.0
   - feat-sleep-semantic-dedup-nearest-neighbor-merge-instead-of-duplicate (completed) · 0.18.0
   - goal-skill-pack-headless-permission-flags-and-report-vs-work-gate (completed) · 0.20.0
   - improve-sleep-quality (completed) · 0.20.0 · 2026-07-18 → …
@@ -39,10 +39,11 @@ date: '2026-07-26'
   Unblocks: hello-world-pr, make-it-a-business
   - spike-codex-opencode-re-addition-scoping (todo) · BACKLOG
 
-### 🟢 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 13/13 done (100%) · target 2026-07-12 · forecast 2026-07-12 ✓ on track
+### ⚪ **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 15/17 done (88%) · target 2026-07-12 · forecast 2026-07-12 ✓ on track
   Unblocks: make-it-a-business
   - brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings (completed) · v0.14.1
   - clickup-sync-integrity-provenance-version-round-trip-consolidates-177-178-179 (completed) · 0.20.0
+  - clickup-task-sync-creates-duplicate-local-tasks-2-3-4-suffix-instead-of-matching-existing-task-by-name-id (completed) · 0.19.0
   - cloud-sync-connected-origin-is-invisible-unmanageable-once-set-no-view-edit-remove (completed) · 0.17.0
   - cloud-sync-origin-setup-create-attach-github-repo-ui (completed) · 2026-07-08 → …
   - cloud-sync-reports-false-sync-failed-github-sign-in-expired-while-git-is-fully-in-sync-and-settings-shows-a-valid-session (completed) · 0.17.1
@@ -50,10 +51,13 @@ date: '2026-07-26'
   - feat-dashboard-live-sleep-debt-tracker-header-widget (completed) · 0.10.7 · 2026-07-04 → …
   - feat-linked-repos-shared-brain-governs-bare-code-repos-machine-local-path-registry-link-cli-trust-gated-clone-dashboard (completed) · 0.21.0 · 2026-07-09 → …
   - feat-okr-key-result-metric-outcome-based-progress (completed) · 0.10.7
+  - fix-clickup-sync-duplicate-tasks-204 (completed) · 0.19.0 · 2026-07-22 → …
   - github-cloud-collaboration-brain-repo-sync (completed) · v0.13.0 · 2026-07-04 → …
+  - github-task-sync-pull-silently-wipes-the-local-only-objectives-field-on-every-mirrored-task (todo)
   - interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel (completed) · v0.10.5
   - multi-person-sync-my-own-push-advances-my-pull-watermark-silently-hiding-a-teammate-s-earlier-task-forever (completed) · 0.20.0
   - repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror (completed) · 0.20.0
+  - untrack-legacy-tracked-task-mirrors-remote-backend (todo) · 0.19.0
 
 ### 🟡 **simplified-ux** — Simplified UX · 35/41 done (85%) · target 2026-07-31 · forecast 2026-07-31 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
