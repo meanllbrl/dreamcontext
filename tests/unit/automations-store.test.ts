@@ -391,6 +391,7 @@ describe('readAutomationFile — lenient (never throws on a malformed sub-block)
         'output:',
         '  dir: 42',
         'shared: "yes"', // not the literal boolean true — must read as private
+        'notify: "no"', // not the literal boolean false — must read as NOTIFY
         '---',
         '',
         'no headings at all',
@@ -411,6 +412,10 @@ describe('readAutomationFile — lenient (never throws on a malformed sub-block)
     expect(m.catchupHours).toBe(6); // non-numeric ⇒ default
     expect(m.outputDir).toBe('42'); // coerced to a string
     expect(m.shared).toBe(false); // anything but the literal boolean true ⇒ private
+    // The two boolean flags fail toward OPPOSITE states, deliberately: an
+    // over-share is a leak, an un-announced run is a silent loss. So the same
+    // malformed-string shape that silences `shared` must NOT silence `notify`.
+    expect(m.notify).toBe(true); // anything but the literal boolean false ⇒ notify
     expect(m.prompt).toBe('');
     expect(m.outputInstructions).toBe('');
   });

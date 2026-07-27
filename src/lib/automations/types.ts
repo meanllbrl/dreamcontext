@@ -66,6 +66,15 @@ export interface AutomationManifest {
    *  WHERE the manifest goes, never what the prompt does, and two machines
    *  may legitimately disagree about local publishing intent. */
   shared: boolean;
+  /** Send a desktop notification when a scheduled run finishes, success or
+   *  failure. Defaults to TRUE, and reads fail-safe in the OPPOSITE direction
+   *  from `shared`: only the literal `false` silences it. An unattended run
+   *  nobody is told about is a silent loss, whereas an over-share is a leak, so
+   *  the two flags fail toward opposite states on purpose.
+   *
+   *  NOT a hashed field, same reasoning as `shared`: it changes whether you are
+   *  TOLD about a run, never what the run does. */
+  notify: boolean;
   prompt: string;
   outputInstructions: string;
   path: string;

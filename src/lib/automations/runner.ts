@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { ensureGitignoreEntries } from '../gitignore.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
@@ -378,8 +378,24 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     };
     const cache = recordRun(contextRoot, slug, event, { advanceWatermark: params.advanceWatermark });
     logFn(`automation "${slug}": ${params.status}${params.error ? ` — ${params.error}` : ''}`);
-    if (params.notify && params.status !== 'ok') {
-      notifyFn('dreamcontext automation failed', `"${manifest.title}" ${params.status}${params.error ? `: ${params.error}` : ''}`);
+    // Notify on COMPLETION, success included. A silent success defeats the point
+    // of the feature: the run happened with nobody at the keyboard, so "your
+    // digest is ready" is the whole payload. `params.notify` stays the gate for
+    // whether a run HAPPENED at all — the blocked/deferred/orphan-guard paths
+    // pass false and must stay silent, or a still-due automation would fire a
+    // notification every 5 minutes for as long as it stays blocked.
+    if (params.notify && manifest.notify) {
+      if (params.status === 'ok') {
+        notifyFn(
+          'dreamcontext automation done',
+          `"${manifest.title}"${params.outputPath ? ` → ${basename(params.outputPath)}` : ''}`,
+        );
+      } else {
+        notifyFn(
+          'dreamcontext automation failed',
+          `"${manifest.title}" ${params.status}${params.error ? `: ${params.error}` : ''}`,
+        );
+      }
     }
     return {
       slug,

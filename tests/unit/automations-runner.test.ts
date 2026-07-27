@@ -16,6 +16,7 @@ import {
 } from '../../src/lib/automations/runner.js';
 import {
   createAutomation,
+  getAutomation,
   lockPathFor,
   readAutomationCache,
   readRunSidecar,
@@ -428,6 +429,94 @@ describe('runAutomation — step 8: spawn failure', () => {
     const notify = vi.fn();
     await runAutomation(contextRoot, manifest.slug, { now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify });
     expect(notify).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Completion notifications. The original implementation notified only when
+ * `status !== 'ok'`, so the case the whole feature exists for — a run that
+ * succeeded while nobody was at the keyboard — was the one case that stayed
+ * silent. These pin both directions, plus the two ways silence is still correct:
+ * an explicit `notify: false` manifest, and any path where nothing actually ran.
+ */
+describe('runAutomation — completion notifications', () => {
+  const runToSuccess = async (slug: string, notify: (t: string, b: string) => void) => {
+    const manifest = createApproved(slug);
+    const { child, emitClose, emitStdout } = makeFakeChild(4321);
+    const runPromise = runAutomation(contextRoot, manifest.slug, {
+      now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify,
+    });
+    emitStdout(CLAUDE_JSON_OK);
+    emitClose(0);
+    return runPromise;
+  };
+
+  it('notifies on SUCCESS, naming the automation and its output file', async () => {
+    const notify = vi.fn();
+    const outcome = await runToSuccess('notify-on-ok', notify);
+    expect(outcome.status).toBe('ok');
+    expect(notify).toHaveBeenCalledTimes(1);
+    const [title, body] = notify.mock.calls[0];
+    expect(title).toMatch(/done/i);
+    expect(title).not.toMatch(/fail/i);
+    expect(body).toContain('notify-on-ok'); // createApproved titles the manifest after the slug
+    // The body carries the BASENAME, never the absolute path — an output path can
+    // sit under a private brain and a notification is the least private surface
+    // there is (it renders on a possibly-shared screen, and macOS keeps it in
+    // Notification Centre afterwards).
+    expect(body).toMatch(/\.md$/);
+    expect(body).not.toContain(contextRoot);
+  });
+
+  it('a manifest with notify: false stays silent on success AND on failure', async () => {
+    const silent = createApproved('silent-one', { notify: false });
+    expect(silent.notify).toBe(false);
+
+    const notify = vi.fn();
+    const { child, emitClose, emitStdout } = makeFakeChild(4322);
+    const runPromise = runAutomation(contextRoot, silent.slug, {
+      now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify,
+    });
+    emitStdout(CLAUDE_JSON_OK);
+    emitClose(0);
+    expect((await runPromise).status).toBe('ok');
+
+    const { child: child2 } = makeFakeChild(undefined); // spawn failure
+    await runAutomation(contextRoot, silent.slug, {
+      now: () => NOW, home, spawnImpl: makeSpawnImpl(child2), notify,
+    });
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('an omitted notify field reads as notify — every manifest written before the field existed', () => {
+    const manifest = createApproved('legacy-manifest');
+    // Simulate a manifest authored before `notify` existed by stripping the line.
+    const raw = readFileSync(manifest.path, 'utf-8');
+    expect(raw).toContain('notify:');
+    writeFileSync(manifest.path, raw.replace(/^notify:.*\n/m, ''));
+    const reread = getAutomation(contextRoot, manifest.slug);
+    expect(reread?.notify).toBe(true);
+  });
+
+  it('never notifies for a run that did not happen — an unapproved slug stays silent every tick', async () => {
+    const manifest = createAutomation(contextRoot, {
+      slug: 'unapproved-silent',
+      title: 'Unapproved',
+      days: 'daily',
+      at: '18:00',
+      prompt: 'do the thing',
+    });
+    expect(manifest.notify).toBe(true); // the gate below is the run-happened gate, not the flag
+    const notify = vi.fn();
+    const spawnImpl = vi.fn();
+    const outcome = await runAutomation(contextRoot, manifest.slug, {
+      now: () => NOW, home, spawnImpl: spawnImpl as unknown as SpawnImpl, notify,
+    });
+    expect(outcome.status).toBe('blocked');
+    expect(spawnImpl).not.toHaveBeenCalled();
+    // The dispatcher re-evaluates every 5 minutes and a blocked automation stays
+    // due, so notifying here would be a notification every 5 minutes, forever.
+    expect(notify).not.toHaveBeenCalled();
   });
 });
 

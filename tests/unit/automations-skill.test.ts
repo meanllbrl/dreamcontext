@@ -209,6 +209,17 @@ describe('skill/references/automations.md — Sharing section (private by defaul
     expect(content).toContain('dreamcontext automations share');
     expect(content).toContain('dreamcontext automations unshare');
   });
+
+  it('documents the notify flag, its default, and that it is not hashed', () => {
+    // Both halves matter. The default, because an agent that reads "there is a
+    // notify field" without reading "it defaults to true" will offer to turn on
+    // something already on. And the not-hashed part, because otherwise an agent
+    // would warn the user that flipping it costs a re-approval, which it doesn't.
+    expect(content).toMatch(/\|\s*`notify`\s*\|/);
+    expect(content).toMatch(/defaults to `true`/i);
+    expect(content).toMatch(/only the literal value `false` silences it/i);
+    expect(content).toMatch(/not an approval-hashed field/i);
+  });
 });
 
 describe('skill/references/cli-reference.md — share/unshare verbs and the six-field diff', () => {

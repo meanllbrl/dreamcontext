@@ -205,6 +205,11 @@ export function readAutomationFile(filePath: string): AutomationManifest {
     // safe state, so a manifest written before this field existed (or written
     // by hand with a typo) can never accidentally become shared.
     shared: data.shared === true,
+    // Mirror image of `shared`'s strictness, pointed the other way: only the
+    // literal `false` silences notifications. Missing (every manifest written
+    // before this field existed), `"no"`, `0`, or any malformed value reads as
+    // notify. A run nobody hears about is the failure mode worth avoiding here.
+    notify: data.notify !== false,
     prompt: extractSection(content, 'Prompt'),
     outputInstructions: extractSection(content, 'Output instructions'),
     path: filePath,
@@ -375,6 +380,8 @@ export interface CreateAutomationInput {
    *  a boolean has no invalid values; the store's write path never touches
    *  `.gitignore` for this flag (that is `sharing.ts`'s domain). */
   shared?: boolean;
+  /** Omitted ⇒ notify. Only an explicit `false` writes `notify: false`. */
+  notify?: boolean;
 }
 
 /**
@@ -480,6 +487,7 @@ export function createAutomation(contextRoot: string, i: CreateAutomationInput):
     catchup_hours: numberOrDefault(i.catchupHours, DEFAULT_CATCHUP_HOURS, 1, MAX_CATCHUP_HOURS),
     output: { dir: i.outputDir ?? null },
     shared: i.shared ?? false,
+    notify: i.notify ?? true,
   };
 
   const body = [

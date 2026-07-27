@@ -319,9 +319,10 @@ export function registerAutomationsCommand(program: Command): void {
     .option('--prompt-file <path>', 'Read the ## Prompt body from this file instead of the scaffold stub')
     .option('--disabled', 'Create disabled (enabled: false)')
     .option('--shared', 'Publish this automation (manifest, cache, output) to the synced brain — private by default')
+    .option('--no-notify', 'Stay silent when a scheduled run finishes (notifies on completion by default)')
     .action((slug: string, opts: {
       title: string; days: string; at: string; model?: string; effort?: string; timeout?: string;
-      catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean;
+      catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean; notify?: boolean;
     }) => {
       const root = ensureContextRoot();
       try {
@@ -346,6 +347,11 @@ export function registerAutomationsCommand(program: Command): void {
           prompt,
           enabled: !opts.disabled,
           shared: !!opts.shared,
+          // Commander sets `notify: false` for `--no-notify` and leaves it
+          // `true` otherwise, so pass it through rather than coercing — `!!` here
+          // would be identical today but would silently flip the default if the
+          // flag were ever renamed to a plain `--notify`.
+          notify: opts.notify,
         });
 
         const projectRoot = projectRootFor(root);
@@ -462,6 +468,7 @@ export function registerAutomationsCommand(program: Command): void {
       console.log(`  model: ${manifest.model ?? '(default)'}`);
       console.log(`  effort: ${manifest.effort ?? '(default)'}`);
       console.log(`  timeout: ${manifest.timeoutMinutes}m · catchup: ${manifest.catchupHours}h`);
+      console.log(`  notify: ${manifest.notify ? 'on completion' : chalk.dim('off')}`);
       console.log(`  approval: ${approval.approved ? chalk.green('approved') : chalk.red(`NOT approved (${approval.reason})`)}`);
       {
         const { badge, warning } = describeShareState(shareState, slug);
