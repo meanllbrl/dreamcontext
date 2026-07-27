@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { pickFiles, pickFolders } from '../../../lib/desktop';
+import { uploadAgentFile } from '../../../lib/agentDrop';
 import { useAgentSessionStats } from '../../../hooks/useAgentCapabilities';
 import {
   effortLabel, modelLabelFor, quotePath, isSignInCommand,
@@ -58,14 +59,21 @@ interface Attachment {
   id: string;
   kind: 'image' | 'file' | 'folder';
   name: string;
-  /** Image attachments only — an object URL for a paste/drag `File` blob; revoked on
-   *  removal and on unmount. There is no upload channel for raw image bytes over the
-   *  text-only chat protocol, so an image attachment is a visual-only preview in this
-   *  beta and is dropped (not embedded) from the outgoing message text. */
+  /** Image attachments only — an object URL for the pasted `File` blob, so the chip shows
+   *  the picture itself while its bytes are still on their way to disk; revoked on removal
+   *  and on unmount. The preview is NOT what gets sent (see `path`). */
   url?: string;
-  /** File/folder attachments only — a real path from the native picker (`pickFiles`/
-   *  `pickFolders`), quoted into the outgoing message text on submit. */
+  /** The absolute path the outgoing message quotes — a real path from the native picker
+   *  (`pickFiles`/`pickFolders`) for a file/folder, and for a pasted image the path the
+   *  vault temp dir got when its bytes were uploaded (`uploadAgentFile`). The chat protocol
+   *  is text-only, so this path IS the attachment as far as the agent is concerned. */
   path?: string;
+  /** Image attachments only — bytes still in flight, so there is no `path` to send yet.
+   *  `submit` waits for these rather than sending a message that references nothing. */
+  uploading?: boolean;
+  /** Image attachments only — the upload was refused (not the desktop app, over the 25 MB
+   *  cap, unwritable temp dir). The chip says so instead of pretending it will be sent. */
+  failed?: boolean;
 }
 
 function basenameOf(path: string): string {
@@ -217,6 +225,15 @@ export function Composer({
 
   // Clipboard-paste image capture (drag/drop of real files is handled at the surface
   // level — see composer.css's header note — so only paste needs a local handler here).
+  //
+  // A pasted image has BYTES and no path, and the chat protocol carries text only — so the
+  // bytes go straight to the vault's gitignored temp dir and the chip holds the path that
+  // comes back. This is the same channel a dropped file uses (`POST /api/agent/drop`); the
+  // beta shipped without it, which is what made a pasted screenshot a picture the user could
+  // see and the agent never received (owner report 07-27).
+  /** Upload jobs still running. `submit` awaits these so ⌘V then ⏎ sends the picture. */
+  const uploadsRef = useRef<Set<Promise<void>>>(new Set());
+
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -226,11 +243,28 @@ export function Composer({
       if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
       const file = item.getAsFile();
       if (!file) continue;
+      const id = `att-${++attSeqRef.current}`;
+      const name = file.name || 'Pasted image';
       const url = URL.createObjectURL(file);
-      setAttachments((prev) => [
-        ...prev,
-        { id: `att-${++attSeqRef.current}`, kind: 'image', url, name: file.name || 'Pasted image' },
-      ]);
+      const chip: Attachment = { id, kind: 'image', url, name, uploading: true };
+      // Ref first, state second — same reason as the settle below: the ref is what `submit`
+      // and the unmount cleanup read, and it must know about this chip before the next render.
+      attachmentsRef.current = [...attachmentsRef.current, chip];
+      setAttachments((prev) => [...prev, chip]);
+      const job = uploadAgentFile(file, name).then((path) => {
+        const settle = (list: Attachment[]) => list.map((a) => (a.id === id
+          ? { ...a, path: path ?? undefined, uploading: false, failed: !path }
+          : a));
+        // Written STRAIGHT to the ref as well as to state, because `submit` can read it in
+        // the same microtask batch this resolved in — before React has re-rendered and
+        // re-pointed the ref. Without this the path would depend on flush ordering, which is
+        // exactly the kind of "works on my machine" the send path must not rest on. The next
+        // render overwrites the ref with the same value.
+        attachmentsRef.current = settle(attachmentsRef.current);
+        setAttachments(settle);
+      });
+      uploadsRef.current.add(job);
+      void job.finally(() => uploadsRef.current.delete(job));
       addedImage = true;
     }
     if (addedImage) e.preventDefault(); // don't also paste raw image bytes as garbage text
@@ -402,15 +436,33 @@ export function Composer({
   };
 
   // ── Submit ────────────────────────────────────────────────────────────────────────
-  const pathAttachments = attachments.filter((a) => a.kind !== 'image');
-  const hasSendableContent = !!draft.trim() || pathAttachments.length > 0 || !!skillChip;
+  // Every attachment reaches the agent the same way: as a path in the message text. A
+  // file/folder pick has one from the native picker; a pasted image has one once its bytes
+  // land in the vault temp dir. An image whose upload FAILED has none, so it is not sendable
+  // content and (unlike everything else) survives the submit — the chip stays, saying it
+  // wasn't sent, rather than disappearing as if it had been.
+  const sendableAttachments = attachments.filter((a) => !!a.path);
+  const uploadingCount = attachments.filter((a) => a.uploading).length;
+  const hasSendableContent = !!draft.trim() || sendableAttachments.length > 0
+    || uploadingCount > 0 || !!skillChip;
 
-  const submit = () => {
-    if (!connected || !hasSendableContent) return;
-    const pathsText = pathAttachments.map((a) => quotePath(a.path ?? '')).join(' ');
-    const bodyText = pathsText ? (draft.trim() ? `${draft.trim()} ${pathsText}` : pathsText) : draft.trim();
-    const withSkill = skillChip ? `${skillChip}${bodyText}` : bodyText;
-    const message = quote ? `> ${quote}\n\n${withSkill}` : withSkill;
+  /** Everything `commit` builds the message from, re-read AFTER the await below — this
+   *  render's closure would be stale by then (the user keeps typing; the turn can flip
+   *  busy) and the message has to be the one that was actually in the box. */
+  const liveRef = useRef({ draft, busy, connected, quote, skillChip });
+  liveRef.current = { draft, busy, connected, quote, skillChip };
+  /** Guards the window between "⏎ pressed" and "upload settled" against a second submit. */
+  const sendingRef = useRef(false);
+  const [awaitingUpload, setAwaitingUpload] = useState(false);
+
+  const commit = () => {
+    const { draft: text, busy: isBusy, connected: isConnected, quote: liveQuote, skillChip: skill } = liveRef.current;
+    if (!isConnected) return;
+    const pathsText = attachmentsRef.current.filter((a) => !!a.path)
+      .map((a) => quotePath(a.path ?? '')).join(' ');
+    const bodyText = pathsText ? (text.trim() ? `${text.trim()} ${pathsText}` : pathsText) : text.trim();
+    const withSkill = skill ? `${skill}${bodyText}` : bodyText;
+    const message = liveQuote ? `> ${liveQuote}\n\n${withSkill}` : withSkill;
     if (!message.trim()) return;
 
     // `/login` is the one command this surface must not forward. The headless engine replies
@@ -424,17 +476,39 @@ export function Composer({
     // what made "line up the next instruction while a long turn runs" impossible here. The
     // message leaves the composer either way: it is committed, just not in flight yet, and it
     // stays editable as a row in the queue strip above (QueuedMessages.tsx).
-    if (busy) session.enqueue(message);
+    if (isBusy) session.enqueue(message);
     else session.send(message);
     setDraft('');
+    session.syncDraft('');
     setNavBoth(NO_HISTORY_NAV);
     setSlashQuery(null);
-    setAttachments((prev) => {
-      prev.forEach((a) => { if (a.kind === 'image' && a.url) URL.revokeObjectURL(a.url); });
-      return [];
+    // Sent chips go (their previews with them); a chip that could NOT be attached stays, so
+    // the row keeps saying "not sent" instead of implying it went with the message. Ref and
+    // state together, for the same reason the paste path writes both.
+    const kept = attachmentsRef.current.filter((a) => a.failed);
+    attachmentsRef.current.forEach((a) => {
+      if (!a.failed && a.kind === 'image' && a.url) URL.revokeObjectURL(a.url);
     });
+    attachmentsRef.current = kept;
+    setAttachments(kept);
     setSkillChip(null);
     onClearQuote();
+  };
+
+  const submit = () => {
+    if (!connected || !hasSendableContent || sendingRef.current) return;
+    // Nothing in flight — the common case, and it stays synchronous.
+    if (uploadsRef.current.size === 0) { commit(); return; }
+    // A screenshot pasted and sent in the same breath: the message can only name the file
+    // once the path exists, so hold the submit for the upload rather than sending a message
+    // that references nothing. Loopback write of a clipboard image — milliseconds.
+    sendingRef.current = true;
+    setAwaitingUpload(true);
+    void Promise.allSettled([...uploadsRef.current]).then(() => {
+      sendingRef.current = false;
+      setAwaitingUpload(false);
+      commit();
+    });
   };
 
   // ONLY disconnection disables the textarea — it must stay focusable while Claude
@@ -511,13 +585,24 @@ export function Composer({
         {attachments.length > 0 && (
           <div className="chat-cmp-attachments">
             {attachments.map((a) => (
-              <div key={a.id} className={`chat-cmp-attachment chat-cmp-attachment-${a.kind}`}>
+              <div
+                key={a.id}
+                className={`chat-cmp-attachment chat-cmp-attachment-${a.kind}`}
+                data-state={a.uploading ? 'uploading' : a.failed ? 'failed' : 'ready'}
+              >
                 {a.kind === 'image' ? (
                   <img src={a.url} alt={a.name} className="chat-cmp-thumb" />
                 ) : (
                   <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : '📄'}</span>
                 )}
-                <span className="chat-cmp-attachment-name">{a.name}</span>
+                {/* An attachment says what will happen to it. A picture that can't be sent
+                    must never look like one that can — that is the whole bug this row grew
+                    a state for (a pasted screenshot the agent never received). */}
+                <span className="chat-cmp-attachment-name">
+                  {a.name}
+                  {a.uploading && <span className="chat-cmp-attachment-note">attaching…</span>}
+                  {a.failed && <span className="chat-cmp-attachment-note">couldn't attach — not sent</span>}
+                </span>
                 <button type="button" className="chat-cmp-chip-x" aria-label={`Remove ${a.name}`} onClick={() => removeAttachment(a.id)}>✕</button>
               </div>
             ))}
@@ -717,9 +802,11 @@ export function Composer({
           <button
             type="button"
             className={`chat-cmp-btn chat-cmp-send${busy ? ' chat-cmp-queue' : ''}`}
-            disabled={!connected || !hasSendableContent}
+            // Held (not dropped) while a pasted image finishes attaching — `submit` is
+            // already waiting on it, so a second press would only be a double-send.
+            disabled={!connected || !hasSendableContent || awaitingUpload}
             onClick={submit}
-            title={busy ? 'Queue for the next turn (⏎)' : 'Send (⏎)'}
+            title={awaitingUpload ? 'Attaching the pasted image…' : busy ? 'Queue for the next turn (⏎)' : 'Send (⏎)'}
             aria-label={busy ? 'Queue message' : 'Send'}
           >
             {/* A DASHED up arrow for the queue: same gesture as Send, deferred — and

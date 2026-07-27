@@ -153,6 +153,40 @@
   word-break: break-word;
 }
 
+/* What the user ATTACHED, above their own words — a sent screenshot has to be visible as a
+   screenshot, not as the path the message quoted for the agent's benefit. */
+.chat-msg-user-media {
+  align-self: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  max-width: 100%;
+}
+.chat-msg-user-media-el {
+  max-width: min(320px, 100%);
+  max-height: 240px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  object-fit: cover;
+  cursor: zoom-in;
+  display: block;
+}
+video.chat-msg-user-media-el { cursor: default; }
+.chat-msg-user-media-gone {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.chat-msg-user-media-gone:hover { color: var(--color-text); }
+
 /* ── Assistant message — FULL-WIDTH, NO AVATAR GUTTER (hard rule 1) ──────────────── */
 
 .chat-msg-assistant-row {

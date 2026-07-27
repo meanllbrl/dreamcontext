@@ -1,5 +1,26 @@
 [
   {
+    "date": "2026-07-27",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Two bugs from one owner report (Anil, Slack 07-27, thread p1785160587027509). (1) PASTE: Composer.onPaste built an object-URL preview and submit() filtered image attachments out of the outgoing message — the chip confirmed an attachment the agent never received ('copy paste atinca okumadi, ama add file diyince okudu'). The upload channel had existed since drag-drop shipped; paste now uses it via the extracted lib/agentDrop.ts uploadAgentFile (POST /api/agent/drop -> absolute path in the gitignored vault temp dir), shared with AgentSurface.deliverDrops. Chips carry honest state (attaching… / couldn't attach — not sent); submit awaits in-flight uploads behind a single-flight guard and commit re-reads draft/busy/quote from a live ref; a failed image is not sendable content and survives the submit. (2) TRANSCRIPT: UserMessage rendered item.text as plain text, so an attached image arrived in the user's own bubble as the absolute path quoted for the agent. New pure splitUserMedia lifts the trailing attachment paths out of the displayed text and the bubble draws them (image click-to-lightbox, video/audio player, pruned file -> named chip that opens in the OS). Narrow by design: only absolute or quoted paths count and only the trailing run leaves the text, so prose mentioning shot.png is never rewritten; item.text stays the real message for copy/quote/rewind. Verified: 11 new unit tests, drop->serve probed end-to-end against the real server (identical bytes back through /api/agent/file?raw=1), 4803 tests pass, build clean.",
+    "breaking": false,
+    "summary": "A pasted image now reaches Claude (uploaded via /api/agent/drop), and every attached image renders in the sender's own bubble",
+    "references": [
+      "task:chat-a-pasted-image-must-reach-claude-and-every-attached-image-must-be-visible-in-the-transcript",
+      "feature:in-app-agent-terminal",
+      "file:dashboard/src/lib/agentDrop.ts",
+      "file:dashboard/src/components/sleepy/chat/Composer.tsx",
+      "file:dashboard/src/components/sleepy/chat/TranscriptItem.tsx",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts",
+      "url:https://nativeminds.slack.com/archives/C0B8ZH7N7LN/p1785160587027509"
+    ],
+    "authors": [
+      "mehmet",
+      "anil"
+    ]
+  },
+  {
     "date": "2026-07-26",
     "type": "chore",
     "scope": "release",

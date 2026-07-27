@@ -1,7 +1,10 @@
 import { memo, useMemo, useRef, useState } from 'react';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
-import { api } from '../../../api/client';
-import { useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens } from './chatEntities';
+import { api, agentFileUrl } from '../../../api/client';
+import {
+  useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens,
+  inlineMediaKind, splitUserMedia,
+} from './chatEntities';
 import { parseChatActions, type ChatAction } from './chatActions';
 import { ActionRow } from './ActionRow';
 import { BoardEmbed } from './BoardEmbed';
@@ -43,18 +46,73 @@ function grantFile(path: string): Promise<boolean> {
 
 // ─── User message ───────────────────────────────────────────────────────────────────
 
+/**
+ * One picture (or clip) the user attached, drawn above their message.
+ *
+ * The bytes reach the page the same way an answer's inline media does — `GET /api/agent/file`
+ * (a filesystem path is not something a browser can load). A file that has since gone (the
+ * drop dir prunes after ~7 days) degrades to a named chip that still opens, never a broken
+ * image icon.
+ */
+function UserMediaItem({ path, onOpenFile }: { path: string; onOpenFile?: (path: string) => void }) {
+  const [failed, setFailed] = useState(false);
+  const kind = inlineMediaKind(path);
+  const name = path.replace(/\/+$/, '').split('/').pop() || path;
+
+  if (failed) {
+    return (
+      <button type="button" className="chat-msg-user-media-gone" onClick={() => revealFile(path)} title={path}>
+        <span aria-hidden>{kind === 'video' ? '🎬' : kind === 'audio' ? '🎵' : '🖼'}</span> {name}
+      </button>
+    );
+  }
+  if (kind === 'video' || kind === 'audio') {
+    return (
+      <video
+        className="chat-msg-user-media-el"
+        src={agentFileUrl(path, { raw: true })}
+        controls
+        preload="metadata"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return (
+    <img
+      className="chat-msg-user-media-el"
+      src={agentFileUrl(path, { raw: true })}
+      alt={name}
+      title={name}
+      loading="lazy"
+      decoding="async"
+      onClick={() => onOpenFile?.(path)}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 function UserMessage({
-  item, session, onQuote, readOnly,
+  item, session, onQuote, onOpenFile, readOnly,
 }: {
   item: ChatUserItem;
   session?: ChatSession;
   onQuote?: (text: string) => void;
+  /** Open an attached image full-size (the same lightbox an answer's image uses). */
+  onOpenFile?: (path: string) => void;
   readOnly: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
+  // What was attached is drawn; what was typed stays in the bubble. Copy/quote/rewind all
+  // keep `item.text` — the real message, paths and all, is what was sent.
+  const { text, media } = useMemo(() => splitUserMedia(item.text), [item.text]);
   return (
     <div className="chat-msg-user-row">
-      <div className="chat-msg-user-bubble">{item.text}</div>
+      {media.length > 0 && (
+        <div className="chat-msg-user-media">
+          {media.map((p) => <UserMediaItem key={p} path={p} onOpenFile={onOpenFile} />)}
+        </div>
+      )}
+      {text && <div className="chat-msg-user-bubble">{text}</div>}
       {!readOnly && (
         <HoverActions>
           <IconButton label="Copy" onClick={() => copyText(item.text)}>⧉</IconButton>
@@ -215,7 +273,15 @@ function ItemViewInner({
 }) {
   switch (item.kind) {
     case 'user':
-      return <UserMessage item={item} session={session} onQuote={onQuote} readOnly={readOnly} />;
+      return (
+        <UserMessage
+          item={item}
+          session={session}
+          onQuote={onQuote}
+          onOpenFile={onOpenFile}
+          readOnly={readOnly}
+        />
+      );
     case 'text':
       return (
         <AssistantMessage
