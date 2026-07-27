@@ -1,6 +1,8 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { notifyViaBundle } from './notifier.js';
 import { ensureGitignoreEntries } from '../gitignore.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
@@ -172,8 +174,15 @@ function escapeForAppleScript(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
-function defaultNotify(title: string, body: string): void {
+/**
+ * Branded bundle first, `osascript` second. The fallback is not decoration: the
+ * bundle only exists after `automations install`, and a notification that says
+ * the wrong thing about who sent it still beats no notification at all. See
+ * `notifier.ts` for why the bundle is needed to get an icon in the first place.
+ */
+function defaultNotify(title: string, body: string, home?: string): void {
   if (process.platform !== 'darwin') return;
+  if (notifyViaBundle(title, body, home ?? homedir())) return;
   try {
     const appleScript = `display notification "${escapeForAppleScript(body)}" with title "${escapeForAppleScript(title)}"`;
     nodeSpawn('osascript', ['-e', appleScript], { stdio: 'ignore' }).on('error', () => { /* best-effort */ });
@@ -323,7 +332,9 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   const spawnFn: SpawnImpl = opts.spawnImpl ?? nodeSpawn;
   const killFn: KillImpl = opts.killImpl ?? ((pid, signal) => { process.kill(pid, signal); });
   const logFn = opts.log ?? (() => {});
-  const notifyFn = opts.notify ?? defaultNotify;
+  // `opts.home` is threaded through so a test that does NOT inject `notify`
+  // still cannot reach into the developer's real ~/.dreamcontext.
+  const notifyFn = opts.notify ?? ((t: string, b: string) => defaultNotify(t, b, opts.home));
   const fireAt = opts.fireAt ?? nowFn();
   const home = opts.home;
 
