@@ -1013,6 +1013,9 @@ export function ChatPane({
           reference={classifyReference(slideOver.path)}
           onClose={() => setSlideOver(null)}
           onNavApp={handleNavApp}
+          // A row of a folder's listing goes back through the pane's own routing, so a
+          // subfolder re-opens this panel and a picture still lands in the lightbox.
+          onOpenPath={handleOpenFile}
         />
       )}
       {slideOver?.mode === 'subagent' && (

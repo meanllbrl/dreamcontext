@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react';
+import { Component, useEffect, useState, type ReactNode } from 'react';
 import { api, agentFileUrl } from '../../../api/client';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { ItemView } from './TranscriptItem';
-import { inlineMediaKind, type Reference, type SubAgentRun } from './chatEntities';
+import {
+  inlineMediaKind, joinChildPath, formatEntrySize, dirTruncationNote,
+  type Reference, type SubAgentRun,
+} from './chatEntities';
 import type { ChatItem } from '../chatSession';
 
 /**
@@ -22,6 +25,10 @@ export interface SlideOverFileProps {
   reference: Reference;
   onClose: () => void;
   onNavApp: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
+  /** Open another path from inside this panel — a row of a folder's listing. Routed through
+   *  the pane's own `handleOpenFile`, so a subfolder re-enters here and a file/image/board
+   *  lands wherever that path would have landed from the transcript. */
+  onOpenPath?: (path: string) => void;
 }
 export interface SlideOverSubAgentProps {
   mode: 'subagent';
@@ -42,9 +49,23 @@ export type SlideOverProps = SlideOverFileProps | SlideOverSubAgentProps | Slide
 
 // ─── File mode ──────────────────────────────────────────────────────────────────────
 
-interface FileContent { path: string; type: 'text' | 'markdown'; content: string }
+/**
+ * What `GET /api/agent/file` actually answers with. The `dir` arm is not an edge case: the
+ * route has always answered a folder with its listing ("a folder named in the transcript is
+ * something to look inside"), and this panel used to model only the text arms — so a folder
+ * reached `NumberedText` with `content: undefined`, threw during render, and took the whole
+ * chat view down with it (issue #236 — reported as a WebContent crash; it was an uncaught
+ * render throw, which looks identical from the host side).
+ */
+interface DirEntry { name: string; kind: 'dir' | 'file'; size: number | null }
+type FileContent =
+  | { path: string; type: 'text' | 'markdown'; content: string }
+  | { path: string; type: 'dir'; entries: DirEntry[]; truncated?: boolean; total?: number };
 
 function NumberedText({ content }: { content: string }) {
+  // Defensive on purpose: this component renders whatever a network payload said it was, and
+  // a render throw here is not a broken preview, it is a blank conversation.
+  if (typeof content !== 'string') return <p className="chat-slideover-status">Nothing to show.</p>;
   const lines = content.split('\n');
   return (
     <div className="chat-slideover-numbered">
@@ -87,7 +108,46 @@ function MediaPreview({ path, kind }: { path: string; kind: 'image' | 'video' | 
   return <img className="chat-slideover-media" src={src} alt={path} onError={() => setFailed(true)} />;
 }
 
-function FileSlideOver({ path, reference, onClose, onNavApp }: SlideOverFileProps) {
+/**
+ * A folder, looked inside. Rows are the server's own order (folders first, then files by
+ * name) and each one opens: a subfolder re-enters this panel on its listing, a file opens
+ * exactly as a path chip in the transcript would. That is the whole point of clicking a
+ * folder chip — the alternative was a dead end, and briefly a blank conversation.
+ */
+function DirListing({
+  path, entries, truncated, total, onOpenPath,
+}: {
+  path: string;
+  entries: DirEntry[];
+  truncated?: boolean;
+  total?: number;
+  onOpenPath?: (path: string) => void;
+}) {
+  const rows = Array.isArray(entries) ? entries : [];
+  const note = dirTruncationNote(rows.length, total, truncated);
+  if (!rows.length) return <p className="chat-slideover-status">This folder is empty.</p>;
+  return (
+    <div className="chat-slideover-dir">
+      {rows.map((e) => (
+        <button
+          type="button"
+          key={e.name}
+          className="chat-slideover-direntry"
+          data-kind={e.kind}
+          onClick={() => onOpenPath?.(joinChildPath(path, e.name))}
+          title={joinChildPath(path, e.name)}
+        >
+          <span className="chat-slideover-dirglyph" aria-hidden>{e.kind === 'dir' ? '📁' : '📄'}</span>
+          <span className="chat-slideover-dirname">{e.name}</span>
+          <span className="chat-slideover-dirsize">{e.kind === 'dir' ? '' : formatEntrySize(e.size)}</span>
+        </button>
+      ))}
+      {note && <p className="chat-slideover-status">{note}</p>}
+    </div>
+  );
+}
+
+function FileSlideOver({ path, reference, onClose, onNavApp, onOpenPath }: SlideOverFileProps) {
   const [state, setState] = useState<{ loading: boolean; data: FileContent | null; error: string | null }>(
     { loading: true, data: null, error: null },
   );
@@ -108,6 +168,7 @@ function FileSlideOver({ path, reference, onClose, onNavApp }: SlideOverFileProp
   }, [path, mediaKind]);
 
   const copyPath = () => { void navigator.clipboard?.writeText(path).catch(() => {}); };
+  const revealPath = () => { void api.post('/agent/reveal', { path }).catch(() => { /* not desktop, or gone */ }); };
 
   return (
     <>
@@ -126,6 +187,14 @@ function FileSlideOver({ path, reference, onClose, onNavApp }: SlideOverFileProp
             onClick={() => { onNavApp(reference.appNav!.page, reference.appNav!.id); onClose(); }}
           >Open in app <span aria-hidden>↗</span></button>
         )}
+        {state.data?.type === 'dir' && (
+          // The issue's own expected behaviour: a folder should OPEN. In-app listing below,
+          // and this hands the same folder to Finder (`/agent/reveal` opens folders; it only
+          // ever reveals executables rather than launching them).
+          <button type="button" className="chat-btn" onClick={revealPath}>
+            <span aria-hidden>↗</span> Reveal in Finder
+          </button>
+        )}
         <button type="button" className="chat-btn" onClick={copyPath}>
           <span aria-hidden>⧉</span> Copy path
         </button>
@@ -137,11 +206,17 @@ function FileSlideOver({ path, reference, onClose, onNavApp }: SlideOverFileProp
           <>
             {state.loading && <p className="chat-slideover-status">Loading…</p>}
             {state.error && <p className="chat-slideover-status error">Couldn't load this file — {state.error}</p>}
-            {state.data && (
-              state.data.type === 'markdown'
-                ? <MarkdownPreview content={state.data.content} />
-                : <NumberedText content={state.data.content} />
+            {state.data?.type === 'dir' && (
+              <DirListing
+                path={path}
+                entries={state.data.entries}
+                truncated={state.data.truncated}
+                total={state.data.total}
+                onOpenPath={onOpenPath}
+              />
             )}
+            {state.data?.type === 'markdown' && <MarkdownPreview content={state.data.content} />}
+            {state.data?.type === 'text' && <NumberedText content={state.data.content} />}
           </>
         )}
       </div>
@@ -372,13 +447,53 @@ function ShellSlideOver({ run, conversationId, onStop, onClose }: SlideOverShell
 
 // ─── Shell ──────────────────────────────────────────────────────────────────────────
 
+/**
+ * A failure INSIDE the panel stays inside the panel.
+ *
+ * The class-lesson from issue #236: a preview render threw on a payload shape it didn't model
+ * and, with no boundary between it and the conversation, React unmounted the tree — the whole
+ * chat view went blank and looked to the reporter (reasonably) like a renderer crash. The
+ * panel is a peripheral surface over a live conversation that may hold the only copy of an
+ * hour's work; it may fail, but it may not take that with it. Closing is always offered,
+ * because a stuck scrim over the transcript is its own dead end.
+ */
+class PanelBoundary extends Component<{ onClose: () => void; children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) { return { error }; }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <>
+          <div className="chat-slideover-head">
+            <div className="chat-slideover-head-text">
+              <span className="chat-slideover-name">Couldn't show this</span>
+              <span className="chat-slideover-path">{this.state.error.message}</span>
+            </div>
+            <button type="button" className="chat-slideover-close" onClick={this.props.onClose} aria-label="Close">✕</button>
+          </div>
+          <div className="chat-slideover-body">
+            <p className="chat-slideover-status error">
+              The panel failed to render this. Your conversation is untouched — close this and carry on.
+            </p>
+          </div>
+        </>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export function SlideOver(props: SlideOverProps) {
   return (
     <div className="chat-slideover-scrim" onClick={props.onClose}>
       <div className="chat-slideover-panel" onClick={(e) => e.stopPropagation()}>
-        {props.mode === 'file' && <FileSlideOver {...props} />}
-        {props.mode === 'subagent' && <SubAgentSlideOver {...props} />}
-        {props.mode === 'shell' && <ShellSlideOver {...props} />}
+        <PanelBoundary onClose={props.onClose}>
+          {props.mode === 'file' && <FileSlideOver {...props} />}
+          {props.mode === 'subagent' && <SubAgentSlideOver {...props} />}
+          {props.mode === 'shell' && <ShellSlideOver {...props} />}
+        </PanelBoundary>
       </div>
     </div>
   );
