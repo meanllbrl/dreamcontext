@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-07-23'
+updated: '2026-07-27'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -15,6 +15,8 @@ related_tasks:
   - feat-lab-analytics-insights-subsystem
   - lab-funnel-analytics
   - insights-category-side-menu-on-the-lab-board
+  - >-
+    lab-card-edit-tweaks-saves-but-does-not-re-sync-tile-silently-keeps-the-stale-window
 type: feature
 name: lab-analytics-insights
 description: >-
@@ -134,6 +136,10 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 ## Constraints & Decisions
 <!-- LIFO: newest at top -->
+
+### Data follows the control — a saved tweak always re-fetches (2026-07-27, issue #235)
+
+A tweak is not a preference, it is part of the QUESTION the tile answers: change the range enum and the number on the card is computed over a different window. So a surface that PATCHes `/lab/:slug/tweaks` and stops there leaves the tile rendering the pre-tweak cache — the control moved, the number didn't, and the tile says nothing about it. That is how "day filters don't work" got reported against 30+ tiles: the save had worked perfectly, and only the refresh was missing. The funnel views had always chained PATCH → `POST /lab/sync` for exactly this reason; the generic card and the detail panel only toasted "tweaks saved." Rule for every future Lab surface: **a control that changes what the data MEANS must re-fetch, or say out loud that it hasn't** (a stale badge). The toast now distinguishes the two failure modes — "could not save tweaks" vs "tweaks saved, but the refresh failed" — because those need different next actions from the user. Pinned by `tests/unit/lab-tweak-resync.test.ts`, which fails if any Lab surface saves tweaks without chaining the sync.
 
 ### Funnel analytics (2026-07-21, in_review)
 
@@ -258,6 +264,12 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-27 — Saving a tweak re-fetches the tile (issue #235)
+
+- **Report:** a range-enum tweak changed on 30+ NeonBI tiles saved fine and the cards kept showing the old window's value — "day filters don't work". The gap was one link in the chain: `InsightCard`/`InsightDetailPanel` PATCHed `/lab/:slug/tweaks` and toasted "tweaks saved.", with no `POST /lab/sync` behind it, so the tile rendered the pre-tweak cache until a manual refresh or TTL expiry — and nothing marked it stale.
+- **Fix:** both surfaces now run the same PATCH → sync chain the funnel views always ran, through a shared `runSync(okMessage, failPrefix)` that also reports a per-insight `failed[]` row (a sync can answer 200 and still have failed for THIS slug). The toast distinguishes "could not save tweaks" from "tweaks saved, but the refresh failed" — different problems, different next actions.
+- **Guard:** `tests/unit/lab-tweak-resync.test.ts` walks every `updateTweaks.mutate` call site across the four Lab surfaces and fails if one of them saves without chaining the re-fetch.
 
 ### 2026-07-23 — Category side menu shipped (v0.21.0)
 - Extended PRD to document category organization (top-level side-menu tabs above existing group sections): new user story, 7 acceptance criteria (all shipped), manifest schema update (`category` field), CLI (`--category` flag), and LabBoard rendering (sticky side menu with All/Other views, clickable headlines in All view, prefs-persisted selection, backward-compatible zero-category layout). Shipped in v0.21.0. Task `insights-category-side-menu-on-the-lab-board` completed. PRD `updated` → 2026-07-23, `released_version` → v0.21.0, `related_tasks` += insights-category-side-menu-on-the-lab-board.
