@@ -55,6 +55,13 @@ import {
   uninstallDispatcher,
   type InstallCheck,
 } from '../../lib/automations/launchd.js';
+import {
+  buildNotifierApp,
+  inspectNotifier,
+  notifyViaBundle,
+  removeNotifierApp,
+  NOTIFY_SOUND_OK,
+} from '../../lib/automations/notifier.js';
 
 /**
  * `dreamcontext automations` — the scheduled-headless-claude-run CLI. Mirrors
@@ -298,6 +305,26 @@ function printInstallCheck(check: InstallCheck): void {
     `  last tick completed: ${hb.lastTickCompletedAt ?? '(never)'}` +
       (hb.lastTickDurationMs !== null ? ` (${hb.lastTickDurationMs}ms)` : ''),
   );
+
+  // Notifier state, reported the same way as the heartbeat: facts, no verdict.
+  // Whether macOS has GRANTED notification permission is deliberately NOT
+  // claimed — that lives in a container this process cannot read, and an
+  // unauthorised notification is filed silently rather than erroring, so any
+  // guess here would be exactly the kind of confident-and-wrong signal that
+  // made this problem hard to find in the first place.
+  const n = inspectNotifier();
+  if (!n.supported) {
+    console.log(`  notifier: ${chalk.dim('n/a (macOS only)')}`);
+  } else if (n.bundlePresent) {
+    console.log(`  notifier: present at ${n.bundlePath}`);
+    if (n.queuedPayloads > 0) {
+      console.log(chalk.dim(`    ${n.queuedPayloads} queued payload(s) not yet drained`));
+    }
+    console.log(chalk.dim('    if notifications never appear, allow "dreamcontext" in System Settings > Notifications'));
+  } else {
+    console.log(`  notifier: ${chalk.dim('absent')} — automations fall back to a generic system icon`);
+    if (!n.iconPackaged) console.log(chalk.dim('    (assets/notify-icon.icns missing from this install)'));
+  }
 }
 
 export function registerAutomationsCommand(program: Command): void {
@@ -893,6 +920,32 @@ export function registerAutomationsCommand(program: Command): void {
           return;
         }
         success(`Dispatcher installed (${result.method}) — logs at ${result.check.logPath}`);
+
+        // Notifier setup rides `install` rather than the run path: building a
+        // bundle means osacompile + codesign + lsregister, which has no business
+        // running while an automation is trying to finish. A failure here is not
+        // fatal — runs fall back to a generic system icon and still notify.
+        const built = buildNotifierApp();
+        if (!built.built) {
+          warn(`Branded notifications unavailable (${built.reason}) — runs will notify with a generic system icon.`);
+        } else {
+          success('Notifier installed — automations will notify as "dreamcontext".');
+          // Prime the permission prompt NOW, while a human is watching. macOS
+          // does not error on an unauthorised notification: it files it away
+          // invisibly, so without this step the first real failure of an
+          // unattended run is a notification that never appears and never
+          // explains itself.
+          notifyViaBundle('dreamcontext', 'Notifications are set up. Allow them if macOS just asked.', undefined, {
+            sound: NOTIFY_SOUND_OK,
+          });
+          console.log(chalk.dim('  A test notification was sent. If macOS asked for permission, choose Allow —'));
+          console.log(chalk.dim('  until you do, notifications are filed silently and never appear on screen.'));
+          // Allowing notifications and hearing them are two different switches,
+          // and the second one is easy to spend an afternoon on: the sound IS
+          // attached to the notification, macOS just declines to play it.
+          console.log(chalk.dim('  Sound is a separate switch: System Settings > Notifications > dreamcontext'));
+          console.log(chalk.dim('  > "Play sound for notifications". Allowing alerts does not turn it on.'));
+        }
       } catch (err) {
         handleAutomationsError(err);
       }
@@ -917,7 +970,15 @@ export function registerAutomationsCommand(program: Command): void {
       }
       try {
         const result = await uninstallDispatcher();
+        const n = removeNotifierApp();
         success(`Dispatcher removed (booted out: ${result.bootedOut}, plist removed: ${result.removedPlist}, wrapper removed: ${result.removedWrapper}).`);
+        if (n.removedBundle) {
+          success(`Notifier removed${n.removedPayloads > 0 ? ` (${n.removedPayloads} undrained payload(s) discarded)` : ''}.`);
+          // Said plainly instead of quietly left behind: the grant is not ours
+          // to revoke, so the honest move is to point at where it lives.
+          console.log(chalk.dim('  macOS keeps its own notification permission for "dreamcontext" —'));
+          console.log(chalk.dim('  remove it in System Settings > Notifications if you want it gone too.'));
+        }
       } catch (err) {
         handleAutomationsError(err);
       }

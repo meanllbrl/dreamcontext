@@ -24,6 +24,7 @@ import {
 } from '../../src/lib/automations/store.js';
 import { approveAutomation } from '../../src/lib/automations/registry.js';
 import { MAX_PROMPT_BYTES, type AutomationManifest } from '../../src/lib/automations/types.js';
+import { NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from '../../src/lib/automations/notifier.js';
 import { writeSleepState } from '../../src/cli/commands/sleep.js';
 import type { SleepState } from '../../src/lib/sleep-consolidation.js';
 
@@ -423,12 +424,13 @@ describe('runAutomation — step 8: spawn failure', () => {
     expect(readAutomationCache(contextRoot, manifest.slug)?.lastFireAt).toBeNull();
   });
 
-  it('notifies on spawn failure', async () => {
+  it('notifies on spawn failure, with the failure sound', async () => {
     const manifest = createApproved('spawn-fails-notify');
     const { child } = makeFakeChild(undefined);
     const notify = vi.fn();
     await runAutomation(contextRoot, manifest.slug, { now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify });
     expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0][2]).toBe(NOTIFY_SOUND_FAILED);
   });
 });
 
@@ -456,9 +458,13 @@ describe('runAutomation — completion notifications', () => {
     const outcome = await runToSuccess('notify-on-ok', notify);
     expect(outcome.status).toBe('ok');
     expect(notify).toHaveBeenCalledTimes(1);
-    const [title, body] = notify.mock.calls[0];
+    const [title, body, sound] = notify.mock.calls[0];
     expect(title).toMatch(/done/i);
     expect(title).not.toMatch(/fail/i);
+    // Success and failure must not sound alike: nobody is watching when these
+    // fire, so the sound is the only signal that arrives before you look.
+    expect(sound).toBe(NOTIFY_SOUND_OK);
+    expect(NOTIFY_SOUND_OK).not.toBe(NOTIFY_SOUND_FAILED);
     expect(body).toContain('notify-on-ok'); // createApproved titles the manifest after the slug
     // The body carries the BASENAME, never the absolute path — an output path can
     // sit under a private brain and a notification is the least private surface
