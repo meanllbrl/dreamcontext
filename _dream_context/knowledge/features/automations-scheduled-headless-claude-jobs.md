@@ -23,6 +23,8 @@ tags:
 related_tasks:
   - automations-scheduled-headless-claude-jobs
   - automations-branded-audible-completion-notifications
+  - >-
+    automations-learn-from-every-run-show-their-session-and-say-what-happened-in-the-notification
 ---
 
 ## Why
@@ -35,6 +37,9 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 - [x] As a user, my automations run on schedule with the app and terminal closed, and I find the outputs as dated markdown files (and a one-line status in my next session's snapshot).
 - [x] As a user, nothing ever runs unless I explicitly opted in on THIS machine: installed the dispatcher and approved each automation.
 - [x] As a teammate on a synced brain, I can see automation manifests and run history, but a manifest I edited never executes on someone else's machine until they re-approve it.
+- [x] As a user, my automations learn from every run—a bounded pattern (playbook + lessons) lives in the manifest and improves each time, so a job doesn't repeat its mistakes forever.
+- [x] As a user, I can replay the exact claude session a run actually had—turns, tool calls, failures, cost—so I understand what a headless run did, not just its conclusion.
+- [x] As a user, the completion notification tells me what the run found (not just that a file exists), and clicking it opens the output document.
 
 ## Acceptance Criteria
 
@@ -50,9 +55,30 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 - [x] Docs lockstep: skill/SKILL.md Entity Router row, new skill/references/automations.md (capture protocol + security stance), skill/references/cli-reference.md, README.md.
 - [x] Tests green: schedule, store, registry/approval, launchd (mocked ExecRunner—never real launchd in tests), runner (fake spawn + one real process-group test), CLI integration (tmp dir + fake HOME).
 - [x] V2 surfaces: server routes (`/api/automations`, `/:slug/run`, `/:slug/approve`), dashboard Automations page with failure/blocked/orphaned badges, private-by-default manifests with `shared` flag + gitignore negation, sleep consumes automation output (bounded: mtime ≥ boundary, ≤20 files, ≤200KB total, skip-by-default with hard rule against one knowledge file per output per day).
+- [x] Every automation carries a bounded pattern (playbook + 20-lesson LIFO ledger) it reads before a run and appends to after one, via `automations learn <slug> --lesson|--playbook`.
+- [x] The pattern reaches the run as untrusted notes ordered after the approved prompt, and never as instructions that can override it. `learning` frontmatter flag is approval-hashed in the ON direction only, so upgrading never silently blocks an existing automation.
+- [x] `automations session <slug> [--run N] [--path|--json|--limit]` replays the claude session a run actually had. `GET /api/automations/:slug/session` and dashboard run-history session drill-in show turns, tool calls with arguments, failures, cost.
+- [x] Completion notification body carries the run's own opening sentence (a `## Notification`/`## Bildirim` section wins if present), titled by the automation, with click-to-open the output document.
+- [x] Automations nav icon (alarm clock) in dashboard. `dreamcontext upgrade` refreshes a stale notifier bundle; `automations install --check` reports notifier currency.
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-07-28 — Dashboard zero-state joins the Lab explainer family
+
+- **The Automations zero-state is now an explainer, not a notice.** It previously shipped "deliberately plain" (a heading, a paragraph, a CLI command) on the reasoning that density beats theatricality. That reasoning holds for a POPULATED board; it is wrong for a zero-state, where there is no density to protect and the page's whole job is to teach what it is for. Rebuilt on the same anatomy Council and Lab already use — brand mark · kicker · gradient heading · lead · animated stage · CLI scaffold · footnote — so the three Lab-chipped surfaces read as one family (`AutomationsEmptyState.tsx`, `AutomationsShowcase.tsx`, `automationsFlowSpec.ts`).
+- **Its signature diagram is a pipe that feeds back into itself**, deliberately distinct in shape from its siblings (Council = round table, Lab = straight pipe): manifests → dispatcher → run → output/notify, with the pattern loop drawn as two opposed arcs under the run (`learns` / `reads`). The approval tripwire is drawn as a label ON the dispatcher→run wire rather than as its own station, because an unapproved manifest does not reach a gate and wait — it simply never crosses.
+- **`agent` (flat onyx) is the wrong variant for a node that must carry a dark stage.** The run node read as a black slab in light mode and sank into the stage's own dark panel at night; `hook` (gradient fill + accent stroke + glow) holds its weight in both themes. Applies to any future FlowDiagram node placed on the gradient stage card.
+
+### 2026-07-27 — Round 3: pattern learning, session visibility, notification content
+
+- **Pattern learning loop.** Each automation carries a `## Pattern` section in its manifest: a curated playbook plus a newest-first, 20-entry lesson ledger (each lesson capped at 200 chars). The run READS it before starting (injected as UNTRUSTED NOTES, ordered AFTER the approved prompt, explicitly told the instructions always win) and WRITES to it via `dreamcontext automations learn <slug> --lesson "<text>" | --playbook "<text>"`. Playbook rewrites whole, lessons prepend. Both writes are byte-surgical: frontmatter never touched, content outside `## Pattern` byte-identical before and after. Caps enforced on write, not read.
+- **`learning` approval-hashed asymmetrically.** The switch that admits the pattern is hashed (APPROVAL_DIFF_FIELDS bumped to seven); the pattern CONTENT is deliberately NOT hashed (it changes every run; hashing it would block daily and train reflexive approval). Hashing is ON-direction-only: `learning: true` requires approval; omitting it (or `learning: false`) hashes exactly as manifests written before the field existed, so an upgrade never silently blocks a working automation. The pattern is unreviewed input, mitigated by: bounded size, single CLI write path, untrusted-notes framing, ordered after approved prompt, and rendered inside the pre-approval review in the dashboard (because the approval moment is exactly when a human must see it).
+- **Notification now carries run CONTENT to screen.** Deliberate reversal of earlier privacy choice. Body is the run's own opening sentence (`extractNotificationSummary` skips headings/tables/fences/frontmatter; `## Notification` or `## Bildirim` section wins if present), title is automation name, click target is output file. `notify: false` per automation silences it; `--no-notify` at create time writes it.
+- **Session visibility.** `automations session <slug> [--run N]` (N is 1-based, newest-first; defaults to last run that had a session), `GET /api/automations/:slug/session`, and dashboard per-run drill-in all reuse `parseTranscriptHistory` (extracted to `lib/transcript-history.ts`). Shows turns, tool calls with arguments, cost, failures. `sessionId` flows from cache to filesystem path—whitelisted (alphanum + dash only) before fs, pinned with traversal regression cases.
+- **CRITICAL defect found by runtime dogfooding: `upsertSection` whole-file normalization rewrote approved prompt.** `upsertSection` ended with `.replace(/\n{3,}/g, '\n\n')`, which collapsed blank lines inside `## Prompt` too. The prompt IS hashed (`normalizeText` only strips `\r` and trims), so the SECOND lesson an automation recorded (first takes append branch) rewrote its own approved prompt → failed next approval check → blocked (and blocked runs notify nobody). Exactly the failure the design claimed impossible. Fixed: `upsertSection` is now byte-surgical everywhere outside its section; pinned by 6-lesson hash-stability regression test. **Pattern candidate:** "a helper that edits one section of a hashed document must be byte-surgical everywhere else" is a recurring constraint whenever part of a file is integrity-checked (applies beyond automations: any manifest/config with approval/signature/hash where mutable content coexists with verified fields).
+- **Pattern visibility in pre-approval review.** The dashboard approval dialog rendered the pattern ONLY after approval, while the review text said "every run reads the pattern below" with no pattern below—asking the reviewer to admit a self-written notes file into a `bypassPermissions` run blind. Fixed: pattern now renders inside the review dialog, labelled as not covered by the approval hash.
+- **Notifier currency and self-healing upgrade.** The notifier applet is compiled only at `automations install`, so a shipped applet fix sat on npm forever while every already-installed machine kept the old one, with nothing reporting it. `inspectNotifier` now carries `scriptCurrent` (sha256 of rendered applescript stamped into `Info.plist`); `install --check` reports STALE loudly. `dreamcontext upgrade` runs `maybeRefreshNotifier()` (rebuilds only when bundle is PRESENT and NOT current; never installs for someone who skipped automations; failed rebuild reported, never thrown).
 
 ### 2026-07-26 — Round 2: effort, sharing, sleep consumption
 - **Per-automation effort** (`low|medium|high|xhigh|max`). Effort IS hashed (same class as model and timeoutMinutes) since it changes cost and execution envelope by ~10× for an already-approved prompt. Approval surface became SIX fields. `APPROVAL_PAYLOAD_VERSION` stayed `v1` (no approvals exist in the wild, so no migration).
@@ -131,9 +157,9 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 
 **Watermark invariant:** advances **iff child process actually started**. `ok`/`timeout` always; `failed` only when spawn succeeded; `blocked`/`deferred`/`orphaned` never.
 
-### Key files (3704 lines across library)
+### Key files (4100+ lines across library)
 
-- `src/lib/automations/types.ts` (337 lines) — contract root, pure, zero I/O. `RUN_STATUSES`, `WEEKDAYS`, `EFFORT_LEVELS`, `Schedule`, `AutomationManifest`, `RunEvent`, `AutomationCache`, `RunSidecar`, `ApprovalPayloadFields`, constants.
+- `src/lib/automations/types.ts` (370+ lines) — contract root, pure, zero I/O. `RUN_STATUSES`, `WEEKDAYS`, `EFFORT_LEVELS`, `Schedule`, `AutomationManifest` (now includes `learning: boolean` and `notify: boolean`), `RunEvent`, `AutomationCache`, `RunSidecar`, `ApprovalPayloadFields` (seven-tuple: prompt, outputInstructions, model, effort, timeoutMinutes, outputDir, learning), constants.
 - `src/lib/automations/schedule.ts` (174 lines) — pure predicates: `parseSchedule`, `mostRecentFire`, `nextFire`, `isDue`, `formatSchedule`. Local wall-clock, DST-tested.
 - `src/lib/automations/store.ts` (662 lines) — mirrors `lab/store.ts`. Lenient reads, strict writes, atomic cache. `resolveOutputDir` strict-subdirectory containment (no brain root, no escape). `readRunSidecar` validates content (`Number.isInteger(pgid) && pgid > 1`), returns `null` if corrupt/planted (inert not lethal). `recordRun` sole writer of `lastFireAt`.
 - `src/lib/automations/registry.ts` (358 lines) — machine-local, never-throw reads, atomic writes, injectable home. `canonicalApprovalPayload`, `manifestHash`, `checkApproval`, `approveAutomation`. Heartbeat in own file `~/.dreamcontext/automations-tick.json` (removes lost-update race by construction).
@@ -143,10 +169,12 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 - `src/lib/automations/tick.ts` (192 lines) — `tickProject`, `tickAll`. Sequential. Empty registry ⇒ silent no-op. Rotates log >1 MB. Writes both heartbeat timestamps every tick.
 - `src/lib/automations/snapshot.ts` (160 lines) — pure renderer. `buildAutomationsSnapshot`, `renderAutomationsSection`. Returns `[]` when nothing to say. Plain text, no chalk. Surfaces never-approved automations (reads registry) + live-orphan lines (sidecar + signal-0 probes).
 - `src/lib/automations/consumption.ts` (232 lines, Round 2) — `pendingOutputsSince`, `consumeAutomationOutputs`. Bounded: mtime ≥ `SleepState.last_consolidated_at`, ≤20 files, ≤200KB total, 50KB per file. Over-cap files skipped wholesale. Skip-by-default.
-- `src/cli/commands/automations.ts` — 13 verbs: create, list, show, run, tick, enable, disable, approve, kill, remove, install, uninstall, logs. `approve` diffs all six hashed fields, refuses without `-y`. `kill` confirms before group SIGKILL.
-- `src/server/routes/automations.ts` + `src/server/automation-job.ts` (Round 1 V2) — `/api/automations`, `/:slug/run`, `/:slug/approve`. Job: one per contextRoot, pruned after 1h. `registerChild: (killGroup) => trackChild(killGroup)` callback form.
-- `dashboard/src/hooks/useAutomations.ts` + `components/automations/**` + `pages/AutomationsPage.tsx` (Round 1 V2) — card grid, failure/blocked/orphaned badges (keyed off `status`, never `error != null`).
-- `skill/references/automations.md` — capture protocol + full seven-item security stance verbatim.
+- `src/lib/automations/pattern.ts` (Round 3) — `upsertSection` (byte-surgical section editor: reads whole file, rewrites only the target section, preserves everything else byte-identical including frontmatter), `extractPattern`, `extractNotificationSummary`. Caps: playbook unlimited (but practically capped by approved-prompt context window), lessons ≤20 entries × 200 chars each.
+- `src/lib/transcript-history.ts` (Round 3) — `parseTranscriptHistory` (reads `~/.claude/projects/<project>/<session>/transcript.json`, returns turns with tool calls, cost, failures), `resolveRunSession` (maps `--run N` to Nth-newest session from cache history).
+- `src/cli/commands/automations.ts` — 16 verbs: create, list, show, run, tick, enable, disable, approve, share, unshare, kill, remove, install, uninstall, logs, **learn** (Round 3: `--lesson "<text>"` or `--playbook "<text>"`), **session** (Round 3: `[--run N] [--path|--json|--limit]`), **pattern** (Round 3: read-only view of an automation's pattern). `approve` diffs all **seven** hashed fields (added `learning` in Round 3), refuses without `-y`. `kill` confirms before group SIGKILL.
+- `src/server/routes/automations.ts` + `src/server/automation-job.ts` (Round 1 V2, extended Round 3) — `/api/automations`, `/:slug/run`, `/:slug/approve`, **`/:slug/session`** (Round 3: returns parsed transcript with whitelisted sessionId). Job: one per contextRoot, pruned after 1h. `registerChild: (killGroup) => trackChild(killGroup)` callback form.
+- `dashboard/src/hooks/useAutomations.ts` + `components/automations/**` + `pages/AutomationsPage.tsx` (Round 1 V2, extended Round 3) — card grid, failure/blocked/orphaned badges (keyed off `status`, never `error != null`), **pattern rendering in pre-approval review** (Round 3), **per-run session drill-in** (Round 3: shows turns, tool calls, failures), **alarm-clock nav icon** (Round 3).
+- `skill/references/automations.md` — capture protocol + full seven-item security stance + pattern learning section + session visibility + notification content (fully updated Round 3).
 
 ### Validation results
 
@@ -188,6 +216,14 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-27 - Round 3 shipped and dogfooded
+- Four-part extension: (1) **Pattern learning** — playbook + 20-lesson LIFO ledger in `## Pattern`, read before run as untrusted notes, written via `automations learn`; `learning` approval-hashed ON-direction-only so upgrade never blocks existing automations. (2) **Session visibility** — `automations session <slug> [--run N]`, `GET /api/automations/:slug/session`, dashboard drill-in; all reuse `parseTranscriptHistory` from new `lib/transcript-history.ts`. (3) **Notification content** — body carries run's opening sentence (`## Notification`/`## Bildirim` wins), click-to-open output. (4) **Automations nav icon** (alarm clock).
+- Plus: `dreamcontext upgrade` refreshes stale notifier bundle via `maybeRefreshNotifier()`; `automations install --check` reports notifier currency via `scriptCurrent` hash in `Info.plist`.
+- CRITICAL defect found by runtime dogfooding: `upsertSection` whole-file `.replace(/\n{3,}/g, '\n\n')` collapsed blank lines inside `## Prompt` → rewrote approved prompt → blocked on second lesson. Fixed: byte-surgical section editing, pinned by 6-lesson hash-stability regression. Pattern candidate flagged: "section editor on hashed doc must be byte-surgical everywhere else."
+- Two other findings: (1) pattern rendered ONLY after approval (pre-approval review said "reads pattern below" with nothing below) → now renders inside review, labelled as unhashed. (2) `sessionId` flows to fs path unvalidated → whitelisted alphanum+dash, pinned with traversal cases.
+- Dogfooded on live `insight-guncelle` automation: real headless run read empty pattern, hit deliberate failure, called `automations learn` itself unprompted, recorded durable lesson; run #2 read lesson back and stayed approved (would have blocked if upsertSection bug unfixed); dispatcher tick evaluates all automations cleanly; dashboard renders pattern, run history newest-first, session drill-in with failed tool calls marked red.
+- 5338 tests green (CI-mode suite after review fixes).
 
 ### 2026-07-26 - Round 2 waves 1-2 gated
 - TA1 (contract root extended): `APPROVAL_DIFF_FIELDS` six-tuple, four PURE order-aware sharing predicates in types.ts.

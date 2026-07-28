@@ -1,6 +1,6 @@
 {
   "slug": "demo-traffic-sources",
-  "fetchedAt": "2026-07-06T11:33:02.954Z",
+  "fetchedAt": "2026-07-27T15:11:50.512Z",
   "tweaks": {},
   "granularity": "daily",
   "unit": null,
@@ -9,7 +9,7 @@
       "name": "Organic Search",
       "points": [
         {
-          "t": "2026-07-06",
+          "t": "2026-07-27",
           "v": 420
         }
       ]
@@ -18,7 +18,7 @@
       "name": "Paid Ads",
       "points": [
         {
-          "t": "2026-07-06",
+          "t": "2026-07-27",
           "v": 260
         }
       ]
@@ -27,7 +27,7 @@
       "name": "Referral",
       "points": [
         {
-          "t": "2026-07-06",
+          "t": "2026-07-27",
           "v": 140
         }
       ]
@@ -36,7 +36,7 @@
       "name": "Direct",
       "points": [
         {
-          "t": "2026-07-06",
+          "t": "2026-07-27",
           "v": 95
         }
       ]
@@ -45,7 +45,7 @@
       "name": "Social",
       "points": [
         {
-          "t": "2026-07-06",
+          "t": "2026-07-27",
           "v": 60
         }
       ]
@@ -58,6 +58,34 @@
   "history": [
     {
       "at": "2026-07-06T11:33:02.954Z",
+      "status": "ok",
+      "latest": 420,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T13:41:27.189Z",
+      "status": "ok",
+      "latest": 420,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T13:49:20.708Z",
+      "status": "ok",
+      "latest": 420,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T15:08:37.840Z",
+      "status": "ok",
+      "latest": 420,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T15:11:50.512Z",
       "status": "ok",
       "latest": 420,
       "granularity": "daily",

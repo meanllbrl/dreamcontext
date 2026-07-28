@@ -87,9 +87,12 @@ cycles_checked: 4
 checked_at: '2026-07-25'
 promoted_to: null
 created_at: '2026-07-25'
-updated_at: '2026-07-26'
+updated_at: '2026-07-28'
 ---
 ## Understanding changelog
+
+### CYCLE 7 · 2026-07-28
+Cycle 7 check (epoch 2026-07-28T10:54:59.989Z, DEEP consolidation): No fresh evidence for this thesis since the epoch. Commit 1852869 and task recall-indexes-and-returns-automations-insights-theses-and-objectives-on-every-surface-with-an-importance-level-filter (moved to in_review 2026-07-28) expanded recall to all nine channels (automations, insights, theses, objectives) with a --level importance filter — this advances the linked objective improve-recall-mechanism but is NOT evidence for THIS thesis's claim (hybrid vs BM25F algorithm performance, already validated). The thesis was validated in cycle 2 at 88% confidence with all 3 predictions supported and remains validated. The linked objective improve-recall-mechanism shows 4/7 tasks done (57%), status review, not slipping. The related task feat-embedding-beta-rollout remains todo. No new evidence to add. Promotion to knowledge remains outstanding (promoted_to: null) — this is a standing decision ask for the PO (raised continuously since cycle 3). Per the workflow-rule gate check: below the auto-promote bar because related_workflows is unset, so this routes to plain knowledge promotion requiring PO confirmation.
 
 ### CYCLE 6 · 2026-07-26
 Cycle 6 check (epoch 2026-07-26T20:46:07Z, DEEP consolidation): No fresh evidence since the epoch. Zero commits, zero lab syncs, zero completed tasks, zero objective movements. This cycle's 4 pre-epoch sessions were entirely Chat UI/UX work (message queue, survey pagination, sub-agent dedup fixes, plan cards) — zero recall-engine or embedding work. The thesis was validated in cycle 2 at 88% confidence with all 3 predictions supported and remains validated. The linked objective improve-recall-mechanism shows 4/5 tasks done (80%), not slipping. The related task feat-embedding-beta-rollout remains todo. No new evidence to add. Promotion to knowledge remains outstanding (promoted_to: null) — this is a standing decision ask for the PO. Per the workflow-rule gate check: below the auto-promote bar because related_workflows is unset, so this routes to plain knowledge promotion requiring PO confirmation.

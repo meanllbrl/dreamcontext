@@ -13,13 +13,13 @@ impact: 5
 effort: 4
 status: null
 created_at: '2026-07-04'
-updated_at: '2026-07-06'
+updated_at: '2026-07-27'
 metric:
   label: MRR
   unit: $
   baseline: 0
   target: 2000
-  current: 857
+  current: 856
 ---
 ## Why
 

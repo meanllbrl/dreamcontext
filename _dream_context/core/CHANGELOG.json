@@ -2,6 +2,46 @@
   {
     "date": "2026-07-28",
     "type": "fix",
+    "scope": "chat",
+    "description": "The composer's context bar divided by 200K unless the model id carried Claude Code's [1m] marker. That marker never arrives: message.model is always the bare id (claude-opus-5) even when the session runs the [1m] variant, so the check was dead and every session was pinned at 200K — a ~104k-token conversation read '52%' of a window it was nowhere near. Inverted the rule: 1M is the default and 200K the exception (the Haiku line, and the Opus/Sonnet generations before 4.6). Every model the CLI offers today (Opus 4.6+/5, Sonnet 4.6+/5, Fable, Mythos) ships 1M, and an unknown id is far more likely to be a NEW model than a retired one, so unknown resolves to 1M. The [1m] marker is still honored, and the observed footprint still promotes: a session cannot be at 130% of its window, so exceeding 200K is evidence of the larger one. Promotion only ever goes up. contextLimitFor now lives in one place per side (dashboard/src/lib/agentComposer.ts + mirrored server twin in agent-terminal.ts), replacing the local copy in chatSession.ts and three ?? 200_000 fallbacks scattered across the composers. Known trade-off: a session genuinely running a 200K variant now reads emptier than it is, so the ⚠ /compact may not appear before Claude Code's own auto-compact — no on-disk source for the real window (not in transcript, not in ~/.claude.json caches). 6 new tests; suite 5382 green.",
+    "breaking": false,
+    "summary": "Context gauge sized to the model's real window (1M default) instead of assuming 200K",
+    "references": [
+      "commit:d6070ed",
+      "file:dashboard/src/lib/agentComposer.ts",
+      "file:src/server/routes/agent-terminal.ts"
+    ]
+  },
+  {
+    "date": "2026-07-28",
+    "type": "fix",
+    "scope": "chat",
+    "description": "A reference in a chat answer is a name the model typed, and its ../.. counting is the least reliable part. An answer wrote ![…](../../tmp/dc-verify-auto/automations-light.png) for a screenshot at /tmp/dc-verify-auto/automations-light.png. Anchored at the project root that climbed to ~/tmp/…, which is nowhere — /agent/file refused it 400, the picture could not be drawn, and the fallback card's 'Open ↗' button posted to /agent/reveal, got the same 400, and swallowed it (did nothing, said nothing). New resolveChatReference (src/server/chat-reference-path.ts) reads a transcript path the way a person would: literally first, then by matching its TAIL against a fixed list of roots (the project, its tmp/drop/asset dirs, system temp dirs), longest tail first. Two containment rules: outside a project-scoped root a tail must carry a directory segment (no bare notes.txt matching /tmp/notes.txt), and / is not a search root. Resolving is not permission — an outside file still needs the user's per-file grant to be served. Consequently the FILE decides, not the notation: ../../etc/passwd, /tmp/../etc/passwd and /etc/passwd now get one answer (403 needs_grant) where the first two used to 400 purely for how they were written. The 403 now carries the RESOLVED path so 'Allow access' grants the file, not the notation. Client half: one revealPath() behind all four 'Open ↗'/'Reveal in Finder' call sites returns the reason instead of .catch(() => {}), and the surfaces show it in quiet tertiary. Verified against real dashboard; 27 new tests.",
+    "breaking": false,
+    "summary": "File references resolved by what they name, not by where their ../ counting points",
+    "references": [
+      "commit:7bd78b2",
+      "file:src/server/chat-reference-path.ts",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/242"
+    ]
+  },
+  {
+    "date": "2026-07-28",
+    "type": "fix",
+    "scope": "chat",
+    "description": "CSS auto table layout shrinks EVERY column in proportion, so one long prose column dragged short ones into wrapping: a Task column that needed 102px was given 95px and wrapped 'context gauge' while the prose beside it held 683px. Tables wider than the card painted past its border with no way to reach cut-off columns. Fixed per CELL (a column is only as rigid as its widest short value): a cell short enough to be a label/id/status/number holds its width and never wraps; prose columns absorb the squeeze. Longer cells break mid-token via overflow-wrap: anywhere (the only value that lowers the min-content width table layout reads). Legitimately-wide tables (e.g. 12-column grids) get a horizontal scroller inside the card. Marks are positive (data-fit / data-wrap), never :not() complement, so an unmarked cell renders exactly as today. Applies to markdown tables an answer writes and to dream-view table widgets. Verified in browser at 1120px and 700px panes; 11 new tests.",
+    "breaking": false,
+    "summary": "Chat tables width-share by column demand — short cells hold width, prose wraps; over-wide gets scroller",
+    "references": [
+      "commit:3a90d4e",
+      "file:dashboard/src/components/core/MarkdownPreview.tsx",
+      "file:dashboard/src/components/sleepy/chat/PageView.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-28",
+    "type": "fix",
     "scope": "lab",
     "description": "GitHub #242: `lab sync` cache-busted only the ENTRY script module. The entry's own `import './lib-*.mjs'` resolved to an unqueried URL and stayed pinned in Node's ESM registry for the life of the process, so an edit to a shared helper was silently ignored until the host restarted. Invisible in the CLI (fresh process per command); in the desktop app the reported case was a lib-neonbi.mjs fix applied at 11:34 that every DietPal tile kept failing against with the PRE-fix ENOENT until relaunch. The loud failure was the lucky one — a corrected formula or unit conversion in a shared lib would publish stale, wrong numbers under a green 'synced' checkmark indefinitely, and insight tiles are read as ground truth for spend/revenue decisions. Fixed by running each script in a short-lived node --input-type=module --eval child (src/lib/lab/adapters/script-child.ts): payload in on stdin, JSON result out on fd 3 (keeping the result channel clear of the script's console output, which is forwarded live), child closes fd 3 right after emitting so the host settles without waiting on keep-alive sockets, then reaps SIGTERM/SIGKILL. A fresh process has an empty module registry by construction, so the stale-module class is impossible rather than patched. Bonus: a script that hangs (killed at 120s), crashes, or calls process.exit can no longer take the host down, and credentials travel on stdin rather than argv or the environment. Error and redaction contracts unchanged. 8 new tests + a falsification check; suite 5450 green.",
     "breaking": false,
@@ -18,6 +58,101 @@
       "task:recall-indexes-and-returns-automations-insights-theses-and-objectives-on-every-surface-with-an-importance-level-filter",
       "feature:memory-recall-bm25",
       "decision:recall-engine-v2"
+    ]
+  },
+  {
+    "date": "2026-07-28",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "The Automations page's empty state was a plain heading + paragraph + CLI command. It now uses the same anatomy Council and Lab already use — brand mark, kicker, gradient headline, lead, animated stage, CLI scaffold, footnote — so the three Lab-chipped surfaces read as one family. New AUTOMATIONS_SHOWCASE FlowDiagram spec draws the cadence: three example manifests feed one dispatcher (every 5 min, what's due), an approval label gates the wire into a headless claude -p run, which writes output.md and a notification, and records what it learned in a bounded pattern the next run reads back (two opposed arcs, learns/reads). The run node uses the hook variant rather than agent, because the flat onyx fill sank into the stage's own dark panel in dark mode. Verified by driving the real dashboard against an isolated scratch vault in both themes, plus a short-viewport scroll check and a populated-board regression check.",
+    "breaking": false,
+    "summary": "Automations zero-state rebuilt on the Council/Lab explainer pattern, with its own animated cadence diagram",
+    "references": [
+      "file:dashboard/src/components/automations/AutomationsEmptyState.tsx",
+      "file:dashboard/src/components/automations/automationsFlowSpec.ts",
+      "feature:automations-scheduled-headless-claude-jobs"
+    ]
+  },
+  {
+    "date": "2026-07-27",
+    "type": "fix",
+    "scope": "automations",
+    "description": "The upsertSection helper (used by 'automations learn' to append lessons to ## Pattern) ended with a whole-file .replace(/\\n{3,}/g, '\\n\\n') normalization pass that reached OUTSIDE its target section and rewrote the approval-hashed ## Prompt, changing the manifest's hash and blocking the automation on the second recorded lesson (the first lesson took the append branch, so the bug hid until a second write). Fix: removed the trailing normalization — section-editing helpers must be byte-surgical everywhere else, and any write path that can touch hashed content needs a hash-stability test across MULTIPLE writes (a single-write test passed because it never hit the rewrite branch). Caught by runtime verification: a test automation blocked itself after recording one lesson.",
+    "breaking": false,
+    "summary": "upsertSection whole-file normalization reached outside its section and rewrote approval-hashed prompt, blocking the automation on its SECOND lesson",
+    "references": [
+      "file:src/lib/automations/store.ts",
+      "task:automations-learn-from-every-run-show-their-session-and-say-what-happened-in-the-notification"
+    ]
+  },
+  {
+    "date": "2026-07-27",
+    "type": "feat",
+    "scope": "upgrade",
+    "description": "The notifier applet (dreamcontext-notify.app, compiled once by 'automations install' and never touched again) is now sha-stamped and versioned. 'dreamcontext upgrade' detects a stale bundle (when the CLI's embedded script differs from the installed applet's) and rebuilds it on the spot. 'dreamcontext automations install --check' reports notifier currency ('CURRENT' / 'STALE' / 'NOT_INSTALLED') without mutating anything. Before this, an applet bug fix shipped to npm never reached machines that had already run 'automations install' — the bundle sat stale until a manual re-install.",
+    "breaking": false,
+    "summary": "dreamcontext upgrade refreshes stale notifier bundle; install --check reports notifier currency",
+    "references": [
+      "file:src/cli/commands/upgrade.ts",
+      "file:src/cli/commands/automations.ts",
+      "file:src/lib/automations/notifier.ts",
+      "task:automations-learn-from-every-run-show-their-session-and-say-what-happened-in-the-notification"
+    ]
+  },
+  {
+    "date": "2026-07-27",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "The Automations board now has a sidebar nav icon (alarm clock SVG in NavIcons.tsx). Completes the icon set for all major subsystems (Tasks, Knowledge, Lab, Roadmap, Automations, Sleep).",
+    "breaking": false,
+    "summary": "Automations nav icon (alarm clock) in sidebar",
+    "references": [
+      "file:dashboard/src/components/layout/NavIcons.tsx",
+      "file:dashboard/src/components/automations/AutomationsBoard.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-27",
+    "type": "feat",
+    "scope": "automations",
+    "description": "Automation completion notifications now carry the run's actual result in the body (the session's last assistant message, capped at ~200 chars) and are titled by the automation's display name (not a generic 'Automation completed'). Clicking the notification opens the run's output document. The click handler is armed only when a notification was actually POSTED (an armed timestamp set immediately after osascript returns), closing the race where two notification posters can both see an empty queue and both conclude 'the user clicked' — acting on an empty queue with no armed timestamp is a no-op, preventing unbidden document opens.",
+    "breaking": false,
+    "summary": "Notification body carries the run's own result sentence; click-to-open with armed-timestamp race gate",
+    "references": [
+      "file:src/lib/automations/notifier.ts",
+      "file:src/lib/automations/runner.ts",
+      "task:automations-learn-from-every-run-show-their-session-and-say-what-happened-in-the-notification"
+    ]
+  },
+  {
+    "date": "2026-07-27",
+    "type": "feat",
+    "scope": "automations",
+    "description": "New 'dreamcontext automations session <slug> [--run N]' replays the claude session a run actually had (prints the full transcript from the cached .jsonl file; --run selects by index, defaults to latest). 'dreamcontext automations pattern <slug>' pretty-prints the pattern section (playbook + lessons). GET /api/automations/:slug/session endpoint surfaces the transcript to the dashboard. AutomationDetailPanel gains a per-run drill-in (Runs tab lists all cached runs with timestamp + status; clicking one shows the full transcript in a scrollable pane). Transcript parser (formerly inline in agent-chat.ts) extracted to src/lib/transcript-history.ts and reused across the chat route, the automations session command, and the dashboard session endpoint — single source of truth for JSONL transcript parsing.",
+    "breaking": false,
+    "summary": "Session replay: automations session/pattern CLI, GET endpoint, dashboard drill-in, transcript parser extraction",
+    "references": [
+      "file:src/lib/transcript-history.ts",
+      "file:src/cli/commands/automations.ts",
+      "file:src/server/routes/automations.ts",
+      "file:dashboard/src/components/automations/AutomationDetailPanel.tsx",
+      "task:automations-learn-from-every-run-show-their-session-and-say-what-happened-in-the-notification"
+    ]
+  },
+  {
+    "date": "2026-07-27",
+    "type": "feat",
+    "scope": "automations",
+    "description": "Each automation manifest now carries a ## Pattern section: a bounded playbook (user-written guidance that persists across runs) plus a 20-lesson LIFO ledger written exclusively via 'dreamcontext automations learn <slug> --lesson \"...\"' — the run itself appends what it learned after finishing its work. The pattern is read BEFORE every run as UNTRUSTED NOTES (ordered after the approval-hashed prompt, never mixed into it), so an automation gets more accurate the longer it runs without requiring prompt edits or re-approval. New 'learning' frontmatter flag (defaults true for new automations, omitted-from-payload when false so legacy manifests hash byte-identically and never re-block). The pattern itself is NOT approval-hashed (hashing self-modifying content would block daily and train reflexive approval); only the 'learning: true/false' SWITCH is hashed, and only in the ON direction (OFF manifests hash as if the field never existed, so defaulting it ON for legacy would have re-blocked every working automation = silent outage). Adds 'dreamcontext automations pattern <slug>' CLI (pretty-prints the pattern section).",
+    "breaking": false,
+    "summary": "Automations learn from every run: 20-lesson pattern ledger, approval-hashed learning switch, read before each run",
+    "references": [
+      "file:src/lib/automations/store.ts",
+      "file:src/cli/commands/automations.ts",
+      "task:automations-learn-from-every-run-show-their-session-and-say-what-happened-in-the-notification"
+    ],
+    "authors": [
+      "mehmet"
     ]
   },
   {

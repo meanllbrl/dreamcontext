@@ -1,6 +1,6 @@
 {
   "slug": "demo-funnels",
-  "fetchedAt": "2026-07-23T18:42:19.289Z",
+  "fetchedAt": "2026-07-27T15:11:50.495Z",
   "tweaks": {
     "range": "last_28_days"
   },
@@ -164,6 +164,34 @@
   "history": [
     {
       "at": "2026-07-23T18:42:19.289Z",
+      "status": "ok",
+      "latest": 4820,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T13:41:27.173Z",
+      "status": "ok",
+      "latest": 4820,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T13:49:20.644Z",
+      "status": "ok",
+      "latest": 4820,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T15:08:37.823Z",
+      "status": "ok",
+      "latest": 4820,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T15:11:50.495Z",
       "status": "ok",
       "latest": 4820,
       "granularity": "daily",
@@ -1637,8 +1665,8 @@
     },
     "notices": [],
     "range": {
-      "fromISO": "2026-06-25",
-      "toISO": "2026-07-23"
+      "fromISO": "2026-06-29",
+      "toISO": "2026-07-27"
     }
   },
   "funnelHistory": [
@@ -1647,6 +1675,798 @@
       "range": {
         "fromISO": "2026-06-25",
         "toISO": "2026-07-23"
+      },
+      "funnels": [
+        {
+          "id": "onb-a",
+          "metrics": {
+            "users": 4820,
+            "spend": 3140,
+            "cpm": 651.45,
+            "trial_rate": 11.7,
+            "finish_rate": 4.46,
+            "cac": 14.6
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4820
+            },
+            {
+              "key": "signup",
+              "users": 2988
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 2120
+            },
+            {
+              "key": "paywall_view",
+              "users": 1823
+            },
+            {
+              "key": "trial_start",
+              "users": 564
+            },
+            {
+              "key": "subscribe",
+              "users": 215
+            }
+          ]
+        },
+        {
+          "id": "onb-b",
+          "metrics": {
+            "users": 4610,
+            "spend": 3050,
+            "cpm": 661.61,
+            "trial_rate": 18.24,
+            "finish_rate": 7.48,
+            "cac": 8.84
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4610
+            },
+            {
+              "key": "signup",
+              "users": 2951
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 2597
+            },
+            {
+              "key": "paywall_view",
+              "users": 2337
+            },
+            {
+              "key": "trial_start",
+              "users": 841
+            },
+            {
+              "key": "subscribe",
+              "users": 345
+            }
+          ]
+        },
+        {
+          "id": "onb-c",
+          "metrics": {
+            "users": 4390,
+            "spend": 3320,
+            "cpm": 756.26,
+            "trial_rate": 5.47,
+            "finish_rate": 2.16,
+            "cac": 34.95
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4390
+            },
+            {
+              "key": "signup",
+              "users": 2546
+            },
+            {
+              "key": "video_watch",
+              "users": 1070
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 868
+            },
+            {
+              "key": "paywall_view",
+              "users": 729
+            },
+            {
+              "key": "trial_start",
+              "users": 240
+            },
+            {
+              "key": "subscribe",
+              "users": 95
+            }
+          ]
+        },
+        {
+          "id": "onb-d",
+          "metrics": {
+            "users": 4152,
+            "spend": 2890,
+            "cpm": 696.05,
+            "trial_rate": 6.6,
+            "finish_rate": 3.61,
+            "cac": 19.27
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4152
+            },
+            {
+              "key": "signup",
+              "users": 2534
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 2358
+            },
+            {
+              "key": "paywall_view",
+              "users": 2287
+            },
+            {
+              "key": "trial_start",
+              "users": 274
+            },
+            {
+              "key": "subscribe",
+              "users": 150
+            }
+          ]
+        },
+        {
+          "id": "tr-516",
+          "metrics": {
+            "users": 28,
+            "spend": 96,
+            "cpm": 3428.57,
+            "trial_rate": 7.14,
+            "finish_rate": 7.14,
+            "cac": 48
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 28
+            },
+            {
+              "key": "signup",
+              "users": 13
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 9
+            },
+            {
+              "key": "paywall_view",
+              "users": 8
+            },
+            {
+              "key": "trial_start",
+              "users": 2
+            },
+            {
+              "key": "subscribe",
+              "users": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-07-27T13:41:27.173Z",
+      "range": {
+        "fromISO": "2026-06-29",
+        "toISO": "2026-07-27"
+      },
+      "funnels": [
+        {
+          "id": "onb-a",
+          "metrics": {
+            "users": 4820,
+            "spend": 3140,
+            "cpm": 651.45,
+            "trial_rate": 11.7,
+            "finish_rate": 4.46,
+            "cac": 14.6
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4820
+            },
+            {
+              "key": "signup",
+              "users": 2988
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 2120
+            },
+            {
+              "key": "paywall_view",
+              "users": 1823
+            },
+            {
+              "key": "trial_start",
+              "users": 564
+            },
+            {
+              "key": "subscribe",
+              "users": 215
+            }
+          ]
+        },
+        {
+          "id": "onb-b",
+          "metrics": {
+            "users": 4610,
+            "spend": 3050,
+            "cpm": 661.61,
+            "trial_rate": 18.24,
+            "finish_rate": 7.48,
+            "cac": 8.84
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4610
+            },
+            {
+              "key": "signup",
+              "users": 2951
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 2597
+            },
+            {
+              "key": "paywall_view",
+              "users": 2337
+            },
+            {
+              "key": "trial_start",
+              "users": 841
+            },
+            {
+              "key": "subscribe",
+              "users": 345
+            }
+          ]
+        },
+        {
+          "id": "onb-c",
+          "metrics": {
+            "users": 4390,
+            "spend": 3320,
+            "cpm": 756.26,
+            "trial_rate": 5.47,
+            "finish_rate": 2.16,
+            "cac": 34.95
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4390
+            },
+            {
+              "key": "signup",
+              "users": 2546
+            },
+            {
+              "key": "video_watch",
+              "users": 1070
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 868
+            },
+            {
+              "key": "paywall_view",
+              "users": 729
+            },
+            {
+              "key": "trial_start",
+              "users": 240
+            },
+            {
+              "key": "subscribe",
+              "users": 95
+            }
+          ]
+        },
+        {
+          "id": "onb-d",
+          "metrics": {
+            "users": 4152,
+            "spend": 2890,
+            "cpm": 696.05,
+            "trial_rate": 6.6,
+            "finish_rate": 3.61,
+            "cac": 19.27
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4152
+            },
+            {
+              "key": "signup",
+              "users": 2534
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 2358
+            },
+            {
+              "key": "paywall_view",
+              "users": 2287
+            },
+            {
+              "key": "trial_start",
+              "users": 274
+            },
+            {
+              "key": "subscribe",
+              "users": 150
+            }
+          ]
+        },
+        {
+          "id": "tr-516",
+          "metrics": {
+            "users": 28,
+            "spend": 96,
+            "cpm": 3428.57,
+            "trial_rate": 7.14,
+            "finish_rate": 7.14,
+            "cac": 48
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 28
+            },
+            {
+              "key": "signup",
+              "users": 13
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 9
+            },
+            {
+              "key": "paywall_view",
+              "users": 8
+            },
+            {
+              "key": "trial_start",
+              "users": 2
+            },
+            {
+              "key": "subscribe",
+              "users": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-07-27T13:49:20.644Z",
+      "range": {
+        "fromISO": "2026-06-29",
+        "toISO": "2026-07-27"
+      },
+      "funnels": [
+        {
+          "id": "onb-a",
+          "metrics": {
+            "users": 4820,
+            "spend": 3140,
+            "cpm": 651.45,
+            "trial_rate": 11.7,
+            "finish_rate": 4.46,
+            "cac": 14.6
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4820
+            },
+            {
+              "key": "signup",
+              "users": 2988
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 2120
+            },
+            {
+              "key": "paywall_view",
+              "users": 1823
+            },
+            {
+              "key": "trial_start",
+              "users": 564
+            },
+            {
+              "key": "subscribe",
+              "users": 215
+            }
+          ]
+        },
+        {
+          "id": "onb-b",
+          "metrics": {
+            "users": 4610,
+            "spend": 3050,
+            "cpm": 661.61,
+            "trial_rate": 18.24,
+            "finish_rate": 7.48,
+            "cac": 8.84
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4610
+            },
+            {
+              "key": "signup",
+              "users": 2951
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 2597
+            },
+            {
+              "key": "paywall_view",
+              "users": 2337
+            },
+            {
+              "key": "trial_start",
+              "users": 841
+            },
+            {
+              "key": "subscribe",
+              "users": 345
+            }
+          ]
+        },
+        {
+          "id": "onb-c",
+          "metrics": {
+            "users": 4390,
+            "spend": 3320,
+            "cpm": 756.26,
+            "trial_rate": 5.47,
+            "finish_rate": 2.16,
+            "cac": 34.95
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4390
+            },
+            {
+              "key": "signup",
+              "users": 2546
+            },
+            {
+              "key": "video_watch",
+              "users": 1070
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 868
+            },
+            {
+              "key": "paywall_view",
+              "users": 729
+            },
+            {
+              "key": "trial_start",
+              "users": 240
+            },
+            {
+              "key": "subscribe",
+              "users": 95
+            }
+          ]
+        },
+        {
+          "id": "onb-d",
+          "metrics": {
+            "users": 4152,
+            "spend": 2890,
+            "cpm": 696.05,
+            "trial_rate": 6.6,
+            "finish_rate": 3.61,
+            "cac": 19.27
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4152
+            },
+            {
+              "key": "signup",
+              "users": 2534
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 2358
+            },
+            {
+              "key": "paywall_view",
+              "users": 2287
+            },
+            {
+              "key": "trial_start",
+              "users": 274
+            },
+            {
+              "key": "subscribe",
+              "users": 150
+            }
+          ]
+        },
+        {
+          "id": "tr-516",
+          "metrics": {
+            "users": 28,
+            "spend": 96,
+            "cpm": 3428.57,
+            "trial_rate": 7.14,
+            "finish_rate": 7.14,
+            "cac": 48
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 28
+            },
+            {
+              "key": "signup",
+              "users": 13
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 9
+            },
+            {
+              "key": "paywall_view",
+              "users": 8
+            },
+            {
+              "key": "trial_start",
+              "users": 2
+            },
+            {
+              "key": "subscribe",
+              "users": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-07-27T15:08:37.823Z",
+      "range": {
+        "fromISO": "2026-06-29",
+        "toISO": "2026-07-27"
+      },
+      "funnels": [
+        {
+          "id": "onb-a",
+          "metrics": {
+            "users": 4820,
+            "spend": 3140,
+            "cpm": 651.45,
+            "trial_rate": 11.7,
+            "finish_rate": 4.46,
+            "cac": 14.6
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4820
+            },
+            {
+              "key": "signup",
+              "users": 2988
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 2120
+            },
+            {
+              "key": "paywall_view",
+              "users": 1823
+            },
+            {
+              "key": "trial_start",
+              "users": 564
+            },
+            {
+              "key": "subscribe",
+              "users": 215
+            }
+          ]
+        },
+        {
+          "id": "onb-b",
+          "metrics": {
+            "users": 4610,
+            "spend": 3050,
+            "cpm": 661.61,
+            "trial_rate": 18.24,
+            "finish_rate": 7.48,
+            "cac": 8.84
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4610
+            },
+            {
+              "key": "signup",
+              "users": 2951
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 2597
+            },
+            {
+              "key": "paywall_view",
+              "users": 2337
+            },
+            {
+              "key": "trial_start",
+              "users": 841
+            },
+            {
+              "key": "subscribe",
+              "users": 345
+            }
+          ]
+        },
+        {
+          "id": "onb-c",
+          "metrics": {
+            "users": 4390,
+            "spend": 3320,
+            "cpm": 756.26,
+            "trial_rate": 5.47,
+            "finish_rate": 2.16,
+            "cac": 34.95
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4390
+            },
+            {
+              "key": "signup",
+              "users": 2546
+            },
+            {
+              "key": "video_watch",
+              "users": 1070
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 868
+            },
+            {
+              "key": "paywall_view",
+              "users": 729
+            },
+            {
+              "key": "trial_start",
+              "users": 240
+            },
+            {
+              "key": "subscribe",
+              "users": 95
+            }
+          ]
+        },
+        {
+          "id": "onb-d",
+          "metrics": {
+            "users": 4152,
+            "spend": 2890,
+            "cpm": 696.05,
+            "trial_rate": 6.6,
+            "finish_rate": 3.61,
+            "cac": 19.27
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 4152
+            },
+            {
+              "key": "signup",
+              "users": 2534
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 2358
+            },
+            {
+              "key": "paywall_view",
+              "users": 2287
+            },
+            {
+              "key": "trial_start",
+              "users": 274
+            },
+            {
+              "key": "subscribe",
+              "users": 150
+            }
+          ]
+        },
+        {
+          "id": "tr-516",
+          "metrics": {
+            "users": 28,
+            "spend": 96,
+            "cpm": 3428.57,
+            "trial_rate": 7.14,
+            "finish_rate": 7.14,
+            "cac": 48
+          },
+          "steps": [
+            {
+              "key": "session_start",
+              "users": 28
+            },
+            {
+              "key": "signup",
+              "users": 13
+            },
+            {
+              "key": "onboarding_complete",
+              "users": 9
+            },
+            {
+              "key": "paywall_view",
+              "users": 8
+            },
+            {
+              "key": "trial_start",
+              "users": 2
+            },
+            {
+              "key": "subscribe",
+              "users": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-07-27T15:11:50.495Z",
+      "range": {
+        "fromISO": "2026-06-29",
+        "toISO": "2026-07-27"
       },
       "funnels": [
         {

@@ -1,6 +1,6 @@
 {
   "slug": "demo-raw-events",
-  "fetchedAt": "2026-07-06T11:33:02.952Z",
+  "fetchedAt": "2026-07-27T15:11:50.507Z",
   "tweaks": {},
   "granularity": "daily",
   "unit": null,
@@ -9,41 +9,41 @@
       "name": "events",
       "points": [
         {
-          "t": "2026-06-29",
-          "v": 10
+          "t": "2026-07-20",
+          "v": 15
         },
         {
-          "t": "2026-06-30",
-          "v": 21
+          "t": "2026-07-21",
+          "v": 28
         },
         {
-          "t": "2026-07-01",
-          "v": 11
+          "t": "2026-07-22",
+          "v": 27
         },
         {
-          "t": "2026-07-02",
-          "v": 29
+          "t": "2026-07-23",
+          "v": 25
         },
         {
-          "t": "2026-07-03",
-          "v": 14
-        },
-        {
-          "t": "2026-07-04",
-          "v": 19
-        },
-        {
-          "t": "2026-07-05",
+          "t": "2026-07-24",
           "v": 12
         },
         {
-          "t": "2026-07-06",
-          "v": 11
+          "t": "2026-07-25",
+          "v": 29
+        },
+        {
+          "t": "2026-07-26",
+          "v": 19
+        },
+        {
+          "t": "2026-07-27",
+          "v": 15
         }
       ]
     }
   ],
-  "latest": 11,
+  "latest": 15,
   "error": null,
   "errorAt": null,
   "scriptHash": "1c532389e7eeae32135b32f6368de6b73e8f3477a055a1d7557f361b7d62dc6e",
@@ -52,6 +52,34 @@
       "at": "2026-07-06T11:33:02.952Z",
       "status": "ok",
       "latest": 11,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T13:41:27.185Z",
+      "status": "ok",
+      "latest": 22,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T13:49:20.688Z",
+      "status": "ok",
+      "latest": 13,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T15:08:37.837Z",
+      "status": "ok",
+      "latest": 17,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T15:11:50.507Z",
+      "status": "ok",
+      "latest": 15,
       "granularity": "daily",
       "error": null
     }

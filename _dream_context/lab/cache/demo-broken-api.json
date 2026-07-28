@@ -7,7 +7,7 @@
   "series": [],
   "latest": null,
   "error": "HTTP GET http://127.0.0.1:9/nope failed",
-  "errorAt": "2026-07-06T11:36:56.096Z",
+  "errorAt": "2026-07-27T15:11:43.456Z",
   "scriptHash": null,
   "history": [
     {
@@ -26,6 +26,34 @@
     },
     {
       "at": "2026-07-06T11:36:56.096Z",
+      "status": "failed",
+      "latest": null,
+      "granularity": null,
+      "error": "HTTP GET http://127.0.0.1:9/nope failed"
+    },
+    {
+      "at": "2026-07-27T13:41:20.134Z",
+      "status": "failed",
+      "latest": null,
+      "granularity": null,
+      "error": "HTTP GET http://127.0.0.1:9/nope failed"
+    },
+    {
+      "at": "2026-07-27T13:49:13.510Z",
+      "status": "failed",
+      "latest": null,
+      "granularity": null,
+      "error": "HTTP GET http://127.0.0.1:9/nope failed"
+    },
+    {
+      "at": "2026-07-27T15:08:30.779Z",
+      "status": "failed",
+      "latest": null,
+      "granularity": null,
+      "error": "HTTP GET http://127.0.0.1:9/nope failed"
+    },
+    {
+      "at": "2026-07-27T15:11:43.456Z",
       "status": "failed",
       "latest": null,
       "granularity": null,

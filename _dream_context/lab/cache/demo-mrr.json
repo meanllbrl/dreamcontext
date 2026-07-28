@@ -1,6 +1,6 @@
 {
   "slug": "demo-mrr",
-  "fetchedAt": "2026-07-06T11:33:02.949Z",
+  "fetchedAt": "2026-07-27T15:11:50.502Z",
   "tweaks": {},
   "granularity": "daily",
   "unit": "$",
@@ -9,33 +9,33 @@
       "name": "mrr",
       "points": [
         {
-          "t": "2026-06-01",
-          "v": 503
-        },
-        {
-          "t": "2026-06-08",
-          "v": 580
-        },
-        {
-          "t": "2026-06-15",
-          "v": 656
-        },
-        {
           "t": "2026-06-22",
-          "v": 716
+          "v": 507
         },
         {
           "t": "2026-06-29",
-          "v": 796
+          "v": 576
         },
         {
           "t": "2026-07-06",
-          "v": 857
+          "v": 642
+        },
+        {
+          "t": "2026-07-13",
+          "v": 718
+        },
+        {
+          "t": "2026-07-20",
+          "v": 787
+        },
+        {
+          "t": "2026-07-27",
+          "v": 856
         }
       ]
     }
   ],
-  "latest": 857,
+  "latest": 856,
   "error": null,
   "errorAt": null,
   "scriptHash": "ec7504f0ac371e33ff7ed335698e059e57d6592078bf7e89ee4630a18b91a63a",
@@ -44,6 +44,34 @@
       "at": "2026-07-06T11:33:02.949Z",
       "status": "ok",
       "latest": 857,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T13:41:27.180Z",
+      "status": "ok",
+      "latest": 867,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T13:49:20.667Z",
+      "status": "ok",
+      "latest": 862,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T15:08:37.831Z",
+      "status": "ok",
+      "latest": 857,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-07-27T15:11:50.502Z",
+      "status": "ok",
+      "latest": 856,
       "granularity": "daily",
       "error": null
     }
