@@ -128,6 +128,9 @@ export function AutomationsBoard() {
 
       {openSummary && (
         <AutomationDetailPanel
+          // Keyed by slug so the panel's own state (which run's session is
+          // open) can never carry over from one automation to another.
+          key={openSummary.slug}
           summary={openSummary}
           runningSlug={runningSlug}
           onClose={() => setOpenSlug(null)}

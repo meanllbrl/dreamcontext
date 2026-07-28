@@ -1,6 +1,11 @@
-import { useEffect } from 'react';
-import type { AutomationRunEvent, AutomationSummary } from '../../hooks/useAutomations';
-import { useApproveAutomation, useAutomation, useRunAutomation } from '../../hooks/useAutomations';
+import { useEffect, useState } from 'react';
+import type { AutomationPattern, AutomationRunEvent, AutomationSummary } from '../../hooks/useAutomations';
+import {
+  useApproveAutomation,
+  useAutomation,
+  useAutomationSession,
+  useRunAutomation,
+} from '../../hooks/useAutomations';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
 import './AutomationDetailPanel.css';
 
@@ -35,7 +40,15 @@ function fmtDuration(ms: number): string {
   return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 }
 
-function HistoryRow({ event }: { event: AutomationRunEvent }) {
+function HistoryRow({
+  event,
+  runNumber,
+  onOpenSession,
+}: {
+  event: AutomationRunEvent;
+  runNumber: number;
+  onOpenSession: (runNumber: number) => void;
+}) {
   return (
     <div className="adp-history-row">
       <span className={`adp-history-dot adp-history-dot--${event.status}`} />
@@ -48,6 +61,18 @@ function HistoryRow({ event }: { event: AutomationRunEvent }) {
           ⚠ {event.permissionDenials}
         </span>
       )}
+      {/* Only offered when a session was actually recorded — a blocked or
+          deferred run never reached one, and a button that opens an empty
+          drawer teaches the user to stop pressing it. */}
+      {event.sessionId && (
+        <button
+          className="adp-history-session"
+          onClick={() => onOpenSession(runNumber)}
+          title="What this run's claude session actually did"
+        >
+          session
+        </button>
+      )}
       {event.error && (
         <span className="adp-history-error" title={event.error}>{event.error}</span>
       )}
@@ -55,10 +80,112 @@ function HistoryRow({ event }: { event: AutomationRunEvent }) {
   );
 }
 
+/** What the automation has learned, newest lesson first. Shown read-only: the
+ *  pattern is written by the runs themselves (`automations learn`), and a
+ *  hand-edit here would silently diverge from what the next run reads. */
+function PatternBlock({ pattern }: { pattern: AutomationPattern }) {
+  const empty = !pattern.playbook && pattern.lessons.length === 0;
+  if (empty) {
+    return (
+      <div className="adp-pattern-empty">
+        Nothing learned yet. After a run finds something worth remembering, it records a line here
+        and reads it back on every later run.
+      </div>
+    );
+  }
+  return (
+    <div className="adp-pattern">
+      {pattern.playbook && <pre className="adp-review-block adp-review-block--static">{pattern.playbook}</pre>}
+      {pattern.lessons.length > 0 && (
+        <ul className="adp-lessons">
+          {pattern.lessons.map((l, i) => (
+            <li key={`${l.date}-${i}`} className="adp-lesson">
+              <span className="adp-lesson-date">{l.date}</span>
+              <span className="adp-lesson-text">{l.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** The run drill-in: the turns, tool calls and failures of one headless
+ *  session. Renders as a flat list rather than a chat replay on purpose — the
+ *  question this answers is "what did it do", and a scannable sequence answers
+ *  it faster than styled bubbles. */
+function SessionView({ slug, runNumber, onClose }: { slug: string; runNumber: number; onClose: () => void }) {
+  const { data: session, isLoading, isError } = useAutomationSession(slug, runNumber);
+
+  return (
+    <div className="adp-session">
+      <div className="adp-session-head">
+        <span className="adp-section-label">Run #{runNumber} session</span>
+        <span className="adp-spacer" />
+        <span className="adp-close adp-close--sm" onClick={onClose} title="Back to history">✕</span>
+      </div>
+      {isLoading && <div className="adp-loading">Loading…</div>}
+      {isError && <div className="adp-session-empty">Could not read this run's session.</div>}
+      {session && (
+        <>
+          <div className="adp-session-meta">
+            {session.toolCalls} tool calls
+            {session.toolErrors > 0 && <span className="adp-session-failed"> · {session.toolErrors} failed</span>}
+            {session.numTurns !== null && <> · {session.numTurns} turns</>}
+            {session.costUsd !== null && <> · ${session.costUsd.toFixed(4)}</>}
+          </div>
+          {!session.transcriptPath && (
+            <div className="adp-session-empty">
+              No transcript on disk. Claude writes one only once a session has produced a turn, and
+              nothing here owns that file's lifetime.
+            </div>
+          )}
+          {session.items.length > 0 && (
+            <div className="adp-session-items">
+              {session.items.map((item, i) => (
+                <div key={i} className={`adp-session-item adp-session-item--${item.kind}`}>
+                  {item.kind === 'tool' ? (
+                    <>
+                      <span className={`adp-session-tool${item.status === 'error' ? ' adp-session-tool--error' : ''}`}>
+                        {item.name}
+                      </span>
+                      <span className="adp-session-tool-arg">{describeToolInput(item.input)}</span>
+                    </>
+                  ) : (
+                    <span className="adp-session-text">{item.text}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The one argument worth showing next to a tool name. Mirrors the CLI's
+ *  `toolCallLabel` — same handful of argument names, same degrade to nothing
+ *  rather than dumping raw JSON at the reader. */
+function describeToolInput(input: unknown): string {
+  if (!input || typeof input !== 'object') return '';
+  const rec = input as Record<string, unknown>;
+  for (const key of ['command', 'file_path', 'path', 'pattern', 'query', 'url', 'description']) {
+    const v = rec[key];
+    if (typeof v === 'string' && v.trim()) {
+      const flat = v.replace(/\s+/g, ' ').trim();
+      return flat.length > 120 ? `${flat.slice(0, 119)}…` : flat;
+    }
+  }
+  return '';
+}
+
 export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }: Props) {
   const detail = useAutomation(summary.slug);
   const runNow = useRunAutomation();
   const approve = useApproveAutomation();
+  /** Which run's session is open, 1-based newest-first. Null = the history list. */
+  const [openSession, setOpenSession] = useState<number | null>(null);
 
   useEffect(() => {
     const id = 'automation-detail-panel';
@@ -85,10 +212,12 @@ export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }
   const approved = detail.data?.approved ?? summary.approved;
   const approvalReason = detail.data?.approvalReason ?? summary.approvalReason;
   const cache = detail.data?.cache ?? null;
-  // Newest first — mirrors InsightDetailPanel's history ordering. The cache is
-  // brain-synced (user/agent-editable JSON) — a malformed history must not
-  // crash the panel.
-  const history = Array.isArray(cache?.history) ? [...cache.history].reverse() : [];
+  // Already newest-first as stored: `recordRun` PREPENDS each event. The
+  // `.reverse()` that used to be here was inverting it, so the panel showed the
+  // oldest run at the top while its own comment claimed newest-first. The cache
+  // is brain-synced (user/agent-editable JSON), so a malformed history must
+  // degrade to empty rather than crash the panel.
+  const history = Array.isArray(cache?.history) ? cache.history : [];
 
   const thisRunning = runningSlug === summary.slug;
   const otherRunning = runningSlug !== null && !thisRunning;
@@ -183,6 +312,38 @@ export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }
                         <span className="adp-review-label">outputDir</span>
                         <span className="adp-review-value">{automation.outputDir ?? <em>(default)</em>}</span>
                       </div>
+                      {/* Hashed, and the one on this list whose meaning is not
+                          self-evident from its name — so it is spelled out
+                          rather than printed as a bare boolean. */}
+                      <div className="adp-review-row">
+                        <span className="adp-review-label">learning</span>
+                        <span className="adp-review-value">
+                          {automation.learning ? (
+                            <>on — every run reads the pattern below and may add to it</>
+                          ) : (
+                            <em>off</em>
+                          )}
+                        </span>
+                      </div>
+                      {/* The pattern belongs IN the review, not after it. This
+                          is the moment a human decides whether to admit a
+                          self-written notes file into a bypassPermissions run;
+                          approving that blind is the one thing this screen
+                          exists to prevent. It is shown with its own caveat
+                          because, unlike everything else here, it is NOT frozen
+                          by the approval. */}
+                      {automation.learning && (
+                        <div className="adp-review-row adp-review-row--block">
+                          <span className="adp-review-label">pattern</span>
+                          <div className="adp-review-pattern">
+                            <div className="adp-review-pattern-note">
+                              Read by every run. NOT covered by the approval hash — it changes as runs
+                              record lessons, so what you see here is today's, not a frozen copy.
+                            </div>
+                            <PatternBlock pattern={automation.pattern} />
+                          </div>
+                        </div>
+                      )}
                       <div className="adp-review-row adp-review-row--block">
                         <span className="adp-review-label">prompt</span>
                         <pre className="adp-review-block">{automation.prompt}</pre>
@@ -206,6 +367,17 @@ export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }
                       <>
                         <div className="adp-section-label">Output instructions</div>
                         <pre className="adp-review-block adp-review-block--static">{automation.outputInstructions}</pre>
+                      </>
+                    )}
+                    {automation.learning && (
+                      <>
+                        <div className="adp-section-label">
+                          Pattern
+                          {automation.pattern.lessons.length > 0 && (
+                            <span className="adp-history-count">{automation.pattern.lessons.length}</span>
+                          )}
+                        </div>
+                        <PatternBlock pattern={automation.pattern} />
                       </>
                     )}
                   </>
@@ -254,18 +426,32 @@ export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }
                   )}
                 </div>
 
-                <div className="adp-section-label">
-                  Run history
-                  {history.length > 0 && <span className="adp-history-count">{history.length}</span>}
-                </div>
-                {history.length === 0 ? (
-                  <div className="adp-history-empty">No runs recorded yet.</div>
+                {openSession !== null ? (
+                  <SessionView slug={summary.slug} runNumber={openSession} onClose={() => setOpenSession(null)} />
                 ) : (
-                  <div className="adp-history">
-                    {history.map((event, i) => (
-                      <HistoryRow key={`${event.firedAt}-${i}`} event={event} />
-                    ))}
-                  </div>
+                  <>
+                    <div className="adp-section-label">
+                      Run history
+                      {history.length > 0 && <span className="adp-history-count">{history.length}</span>}
+                    </div>
+                    {history.length === 0 ? (
+                      <div className="adp-history-empty">No runs recorded yet.</div>
+                    ) : (
+                      <div className="adp-history">
+                        {history.map((event, i) => (
+                          // `i + 1` IS the run number: `history` was reversed to
+                          // newest-first above, which is the same 1-based
+                          // newest-first index `resolveRunSession` takes.
+                          <HistoryRow
+                            key={`${event.firedAt}-${i}`}
+                            event={event}
+                            runNumber={i + 1}
+                            onOpenSession={setOpenSession}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>

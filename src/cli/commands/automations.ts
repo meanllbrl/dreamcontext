@@ -14,6 +14,7 @@ import {
   MAX_TIMEOUT_MINUTES,
   DEFAULT_CATCHUP_HOURS,
   MAX_CATCHUP_HOURS,
+  PATTERN_LESSON_LIMIT,
   type Weekday,
   type EffortLevel,
   type AutomationManifest,
@@ -28,8 +29,11 @@ import {
   setAutomationShared,
   removeAutomation,
   shareStateFor,
+  readPattern,
+  recordLesson,
   type ShareState,
 } from '../../lib/automations/store.js';
+import { resolveRunSession, readSessionDigest, toolCallLabel } from '../../lib/automations/session.js';
 import {
   shareAutomation,
   unshareAutomation,
@@ -103,6 +107,14 @@ function requireAutomation(root: string, slug: string): AutomationManifest | nul
     return null;
   }
   return manifest;
+}
+
+/** One transcript item, one terminal line. A session replay is for scanning
+ *  what happened, so a wrapped 2,000-character assistant turn would bury the
+ *  tool call after it. */
+function truncateLine(s: string, max = 120): string {
+  const flat = s.replace(/\s+/g, ' ').trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
 }
 
 /** Signal-0 liveness probe — the exact semantics `killRunGroup`'s internal
@@ -316,7 +328,15 @@ function printInstallCheck(check: InstallCheck): void {
   if (!n.supported) {
     console.log(`  notifier: ${chalk.dim('n/a (macOS only)')}`);
   } else if (n.bundlePresent) {
-    console.log(`  notifier: present at ${n.bundlePath}`);
+    // Currency is reported for the SAME reason the wrapper and plist report it,
+    // and it was missing here: the bundle is rebuilt only by `automations
+    // install`, so a CLI upgrade that changes the applet leaves the old one
+    // running with nothing to say so — a notifier fix that outlives its own fix.
+    console.log(`  notifier: present${n.scriptCurrent ? ', current' : ''} at ${n.bundlePath}`);
+    if (!n.scriptCurrent) {
+      warn('  the installed notifier is STALE — it was built by an older dreamcontext.');
+      console.log(chalk.dim('    re-run `dreamcontext automations install` to rebuild it.'));
+    }
     if (n.queuedPayloads > 0) {
       console.log(chalk.dim(`    ${n.queuedPayloads} queued payload(s) not yet drained`));
     }
@@ -347,9 +367,11 @@ export function registerAutomationsCommand(program: Command): void {
     .option('--disabled', 'Create disabled (enabled: false)')
     .option('--shared', 'Publish this automation (manifest, cache, output) to the synced brain — private by default')
     .option('--no-notify', 'Stay silent when a scheduled run finishes (notifies on completion by default)')
+    .option('--no-learning', 'Do not keep a pattern — the run reads no notes and records no lessons (learns by default)')
     .action((slug: string, opts: {
       title: string; days: string; at: string; model?: string; effort?: string; timeout?: string;
       catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean; notify?: boolean;
+      learning?: boolean;
     }) => {
       const root = ensureContextRoot();
       try {
@@ -379,6 +401,10 @@ export function registerAutomationsCommand(program: Command): void {
           // would be identical today but would silently flip the default if the
           // flag were ever renamed to a plain `--notify`.
           notify: opts.notify,
+          // Same Commander shape as `notify`. Written EXPLICITLY into every new
+          // manifest rather than left to the read default, which is false — see
+          // the field's comment in types.ts for why those two differ.
+          learning: opts.learning,
         });
 
         const projectRoot = projectRootFor(root);
@@ -496,6 +522,26 @@ export function registerAutomationsCommand(program: Command): void {
       console.log(`  effort: ${manifest.effort ?? '(default)'}`);
       console.log(`  timeout: ${manifest.timeoutMinutes}m · catchup: ${manifest.catchupHours}h`);
       console.log(`  notify: ${manifest.notify ? 'on completion' : chalk.dim('off')}`);
+      {
+        const pattern = readPattern(manifest);
+        const learned = pattern.lessons.length;
+        const playbook = pattern.playbook ? 'playbook' : null;
+        const parts = [playbook, learned > 0 ? `${learned} lesson${learned === 1 ? '' : 's'}` : null].filter(Boolean);
+        console.log(
+          `  learning: ${manifest.learning
+            ? `on${parts.length > 0 ? ` · ${parts.join(', ')}` : chalk.dim(' · nothing learned yet')}`
+            : chalk.dim('off')}`,
+        );
+        if (manifest.learning && pattern.lessons.length > 0) {
+          console.log('  pattern:');
+          for (const lesson of pattern.lessons.slice(0, 3)) {
+            console.log(chalk.dim(`    [${lesson.date}] ${lesson.text}`));
+          }
+          if (pattern.lessons.length > 3) {
+            console.log(chalk.dim(`    … ${pattern.lessons.length - 3} more in automations/${slug}.md`));
+          }
+        }
+      }
       console.log(`  approval: ${approval.approved ? chalk.green('approved') : chalk.red(`NOT approved (${approval.reason})`)}`);
       {
         const { badge, warning } = describeShareState(shareState, slug);
@@ -535,6 +581,190 @@ export function registerAutomationsCommand(program: Command): void {
           warn(`a previous run's child group (pgid ${sidecar.childPgid}, started ${sidecar.startedAt}) is still alive — \`dreamcontext automations kill ${slug}\``);
         } else {
           console.log(chalk.dim(`  currently running (pgid ${sidecar.childPgid}, started ${sidecar.startedAt}) — not an orphan, leave it to finish.`));
+        }
+      }
+    });
+
+  automations
+    .command('pattern')
+    .argument('<slug>', 'Automation slug')
+    .description('Show what this automation has learned — its playbook and lesson ledger')
+    .option('--json', 'Emit as JSON')
+    .action((slug: string, opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const manifest = requireAutomation(root, slug);
+      if (!manifest) return;
+      const pattern = readPattern(manifest);
+
+      if (opts.json) {
+        console.log(JSON.stringify({ slug, learning: manifest.learning, ...pattern }, null, 2));
+        return;
+      }
+
+      console.log(header(`Pattern: ${slug}`));
+      if (!manifest.learning) {
+        console.log(chalk.dim('  learning is off — nothing reads or writes this pattern.'));
+      }
+      if (pattern.playbook) {
+        console.log(pattern.playbook.split('\n').map((l) => `  ${l}`).join('\n'));
+        console.log('');
+      }
+      if (pattern.lessons.length === 0) {
+        console.log(chalk.dim('  No lessons recorded yet.'));
+        return;
+      }
+      console.log(`  ${chalk.dim(`Lessons (${pattern.lessons.length}/${PATTERN_LESSON_LIMIT}, newest first)`)}`);
+      for (const lesson of pattern.lessons) {
+        console.log(`    ${chalk.dim(`[${lesson.date}]`)} ${lesson.text}`);
+      }
+    });
+
+  automations
+    .command('learn')
+    .argument('<slug>', 'Automation slug')
+    .description('Record what a run learned into this automation\'s pattern (the run calls this itself)')
+    .option('--lesson <text>', 'One line: what you learned that makes the next run more accurate')
+    .option('--playbook <text>', 'Replace the standing playbook (how this job is best done)')
+    .option('--playbook-file <path>', 'Read the playbook from a file instead')
+    .action((slug: string, opts: { lesson?: string; playbook?: string; playbookFile?: string }) => {
+      const root = ensureContextRoot();
+      try {
+        const manifest = requireAutomation(root, slug);
+        if (!manifest) return;
+        // Refusing when learning is off is the honest answer, not pedantry: a
+        // pattern nothing ever reads is a file that quietly accumulates while
+        // the operator believes the automation is improving.
+        if (!manifest.learning) {
+          warn(`"${slug}" has learning off — nothing would ever read this pattern.`);
+          console.log(chalk.dim(`  Set \`learning: true\` in automations/${slug}.md, then re-approve (it is a hashed field).`));
+          process.exitCode = 1;
+          return;
+        }
+        let playbook = opts.playbook;
+        if (opts.playbookFile) {
+          if (!existsSync(opts.playbookFile)) {
+            throw new AutomationError(`--playbook-file not found: ${opts.playbookFile}`);
+          }
+          playbook = readFileSync(opts.playbookFile, 'utf-8');
+        }
+        const updated = recordLesson(root, slug, { lesson: opts.lesson, playbook });
+        const pattern = readPattern(updated);
+        success(`Pattern updated for "${slug}".`);
+        if (opts.lesson) {
+          console.log(chalk.dim(`  lessons: ${pattern.lessons.length}/${PATTERN_LESSON_LIMIT}${pattern.lessons.length >= PATTERN_LESSON_LIMIT ? ' (oldest dropping off)' : ''}`));
+        }
+        if (playbook !== undefined) console.log(chalk.dim('  playbook rewritten.'));
+      } catch (err) {
+        handleAutomationsError(err);
+      }
+    });
+
+  automations
+    .command('session')
+    .argument('<slug>', 'Automation slug')
+    .description('Show the claude session a run actually had — its turns, tool calls, and errors')
+    .option('--run <n>', 'Which run, newest first (default: the most recent one that has a session)')
+    .option('--path', 'Print only the transcript path')
+    .option('--json', 'Emit the parsed session as JSON')
+    .option('-n, --limit <n>', 'Number of transcript items to show (default 40)')
+    .action((slug: string, opts: { run?: string; path?: boolean; json?: boolean; limit?: string }) => {
+      const root = ensureContextRoot();
+      const manifest = requireAutomation(root, slug);
+      if (!manifest) return;
+
+      const cache = readAutomationCache(root, slug);
+      const runNumber = opts.run ? Number(opts.run) : undefined;
+      if (runNumber !== undefined && (!Number.isInteger(runNumber) || runNumber < 1)) {
+        error('--run must be a positive integer (1 = most recent).');
+        process.exitCode = 1;
+        return;
+      }
+      const resolved = resolveRunSession(cache, { runNumber });
+      if (!resolved) {
+        if (runNumber !== undefined) {
+          // An explicitly-named run that does not exist is a user error, and
+          // exits like every other "no such thing" here (requireAutomation).
+          // "Never run at all" is not — it is a true, unremarkable answer.
+          error(`No run #${runNumber} for "${slug}" — \`dreamcontext automations show ${slug}\` lists its history.`);
+          process.exitCode = 1;
+          return;
+        }
+        console.log(chalk.dim(`  "${slug}" has never run.`));
+        return;
+      }
+
+      if (opts.path) {
+        if (resolved.transcriptPath) console.log(resolved.transcriptPath);
+        else process.exitCode = 1;
+        return;
+      }
+
+      const digest = resolved.transcriptPath ? readSessionDigest(resolved.transcriptPath) : null;
+
+      if (opts.json) {
+        console.log(JSON.stringify({
+          slug,
+          runNumber: resolved.runNumber,
+          event: resolved.event,
+          sessionId: resolved.sessionId,
+          transcriptPath: resolved.transcriptPath,
+          digest,
+        }, null, 2));
+        return;
+      }
+
+      const ev = resolved.event;
+      console.log(header(`Session: ${slug} · run #${resolved.runNumber}`));
+      console.log(`  fired: ${ev.firedAt} · status: ${ev.status}`);
+      if (ev.error) console.log(chalk.red(`  error: ${ev.error}`));
+      console.log(`  session: ${resolved.sessionId ?? chalk.dim('(none recorded — the run never reached a claude session)')}`);
+      if (ev.costUsd !== null || ev.numTurns !== null) {
+        const bits = [
+          ev.numTurns !== null ? `${ev.numTurns} turns` : null,
+          ev.costUsd !== null ? `$${ev.costUsd.toFixed(4)}` : null,
+          ev.permissionDenials > 0 ? chalk.yellow(`${ev.permissionDenials} permission denials`) : null,
+        ].filter(Boolean);
+        if (bits.length > 0) console.log(`  ${bits.join(' · ')}`);
+      }
+
+      if (!resolved.transcriptPath) {
+        // A missing transcript is normal, not a fault: `claude` writes one only
+        // once a session has produced a turn, and nothing in dreamcontext owns
+        // that file's lifetime.
+        console.log(chalk.dim('  transcript: not on disk (never written, or pruned by claude).'));
+        if (ev.outputPath) console.log(chalk.dim(`  output document: ${ev.outputPath}`));
+        return;
+      }
+      console.log(chalk.dim(`  transcript: ${resolved.transcriptPath}`));
+      if (!digest) {
+        console.log(chalk.dim('  transcript could not be read.'));
+        return;
+      }
+      const toolSummary = Object.entries(digest.toolCounts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, n]) => `${name}×${n}`)
+        .join(' ');
+      console.log(`  ${digest.toolCalls} tool calls${toolSummary ? ` (${toolSummary})` : ''}${digest.toolErrors > 0 ? chalk.yellow(` · ${digest.toolErrors} failed`) : ''}`);
+
+      // A non-numeric --limit must fall back to the default, not become NaN —
+      // `slice(-NaN)` is `slice(0)`, which silently dumps the whole transcript.
+      const parsedLimit = Number(opts.limit);
+      const limit = Number.isFinite(parsedLimit) && parsedLimit >= 1 ? Math.floor(parsedLimit) : 40;
+      const shown = digest.items.slice(-limit);
+      if (shown.length < digest.items.length) {
+        console.log(chalk.dim(`  … ${digest.items.length - shown.length} earlier items hidden (--limit ${digest.items.length} for all)`));
+      }
+      console.log('');
+      for (const item of shown) {
+        if (item.kind === 'user') {
+          console.log(chalk.dim(`  › ${truncateLine(item.text ?? '')}`));
+        } else if (item.kind === 'text') {
+          console.log(`  ${truncateLine(item.text ?? '')}`);
+        } else if (item.kind === 'thinking') {
+          console.log(chalk.dim(`  ~ ${truncateLine(item.text ?? '')}`));
+        } else if (item.kind === 'tool') {
+          const mark = item.status === 'error' ? chalk.red('✗') : chalk.dim('·');
+          console.log(`  ${mark} ${chalk.cyan(toolCallLabel(item))}`);
         }
       }
     });

@@ -1,24 +1,47 @@
+import { BrandMark } from '../brand/BrandMark';
+import { AutomationsShowcase } from './AutomationsShowcase';
 import './AutomationsEmptyState.css';
 
 /**
- * Zero-state: no automations exist yet. Kept deliberately plain — a short
- * explainer plus the exact CLI command to scaffold one. No brand mark, no
- * animation: density over theatricality, and there is nothing here that
- * encodes a state change worth animating.
+ * Automations' zero-state, built in the same shape as Council's and Lab's: with
+ * no automations to list, the board's chrome would be noise, so it shows a
+ * compact "What is Automations?" explainer instead — brand mark · kicker ·
+ * gradient heading · lead · the animated cadence stage — ending in the one thing
+ * a user can do about it, scaffolding their first automation from the CLI. The
+ * footnote carries the security stance, because the approval tripwire is the
+ * thing a first-time reader most needs to understand about this page.
  */
 export function AutomationsEmptyState() {
   return (
-    <div className="auto-empty">
-      <h2 className="auto-empty-title">No automations yet</h2>
-      <p className="auto-empty-lead">
-        Automations run headless <code>claude -p</code> sessions on a schedule — an end-of-day digest, a
-        weekly report, a research prompt on a chosen day. Ships fully disabled: nothing runs until you
-        install the dispatcher and approve each one on this machine.
+    <div className="auto-intro">
+      <div className="auto-intro-mark">
+        <BrandMark size={40} glow />
+      </div>
+
+      <p className="auto-intro-kicker">Lab · Automations</p>
+      <h2 className="auto-intro-title">
+        Put the brain <span>on a schedule</span>.
+      </h2>
+      <p className="auto-intro-lead">
+        Automations run headless <code>claude -p</code> sessions on a cadence you set — an
+        end-of-day digest, a Friday report, a research prompt on a chosen day. You describe
+        the job in plain language; one dispatcher wakes every five minutes, runs what is due,
+        writes a dated markdown file, and tells you what it found. Every run leaves a lesson
+        behind, so the next one starts smarter.
       </p>
-      <p className="auto-empty-scaffold">Scaffold one from the CLI:</p>
-      <code className="auto-empty-cmd">
-        dreamcontext automations create &lt;slug&gt; --title "…" --days daily --at 18:00
+
+      <AutomationsShowcase />
+
+      <p className="auto-intro-scaffold">Scaffold your first automation from the CLI:</p>
+      <code className="auto-intro-cmd">
+        dreamcontext automations create &lt;slug&gt; --title "Daily digest" --days daily --at 18:00
       </code>
+      <p className="auto-intro-foot">
+        Automations are experimental and ship fully disabled: nothing runs until you install
+        the dispatcher and approve each automation on this machine. Runs use{' '}
+        <code>bypassPermissions</code>, which is exactly why approval is pinned to a SHA256 of
+        the prompt — edit it, and the job stops until you approve it again.
+      </p>
     </div>
   );
 }

@@ -279,8 +279,8 @@ describe('agents/sleep-product.md — automation-output consumption contract', (
   });
 });
 
-describe('approval surface — six hashed fields, everywhere it is claimed', () => {
-  it('APPROVAL_DIFF_FIELDS is the six-tuple including effort', () => {
+describe('approval surface — seven hashed fields, everywhere it is claimed', () => {
+  it('APPROVAL_DIFF_FIELDS is the seven-tuple including effort and learning', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt',
       'outputInstructions',
@@ -288,6 +288,7 @@ describe('approval surface — six hashed fields, everywhere it is claimed', () 
       'effort',
       'timeoutMinutes',
       'outputDir',
+      'learning',
     ]);
   });
 

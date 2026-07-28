@@ -66,6 +66,9 @@ function makeManifest(overrides: Partial<AutomationManifest> = {}): AutomationMa
     catchupHours: 6,
     outputDir: null,
     shared: false,
+    notify: true,
+    learning: false,
+    pattern: '',
     prompt: 'Summarize what happened today.',
     outputInstructions: '',
     path: '/tmp/whatever/_dream_context/automations/eod-digest.md',
@@ -304,6 +307,7 @@ describe('approvalFields', () => {
       effort: 'medium',
       timeoutMinutes: 20,
       outputDir: 'automations/output/x',
+      learning: false,
     });
   });
 
@@ -313,9 +317,37 @@ describe('approvalFields', () => {
 });
 
 describe('APPROVAL_DIFF_FIELDS', () => {
-  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir, in that exact order', () => {
-    expect(APPROVAL_DIFF_FIELDS).toEqual(['prompt', 'outputInstructions', 'model', 'effort', 'timeoutMinutes', 'outputDir']);
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(6);
+  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir/learning, in that exact order', () => {
+    expect(APPROVAL_DIFF_FIELDS).toEqual([
+      'prompt', 'outputInstructions', 'model', 'effort', 'timeoutMinutes', 'outputDir', 'learning',
+    ]);
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(7);
+  });
+});
+
+describe('learning is hashed, but only when ON', () => {
+  it('a manifest with learning OFF hashes exactly as it did before the field existed', () => {
+    // The load-bearing property of the whole opt-in design: every automation
+    // written before `learning` existed reads false and must keep its approved
+    // hash byte-for-byte. If this ever fails, an upgrade silently blocks every
+    // working automation — and a blocked run notifies nobody, so the user finds
+    // out when they notice a digest stopped arriving.
+    const withField = canonicalApprovalPayload(makeManifest({ learning: false }));
+    const legacy = canonicalApprovalPayload(makeManifest({ learning: false }));
+    expect(withField).toBe(legacy);
+    expect(withField).not.toContain('learning');
+  });
+
+  it('turning learning ON changes the hash, so it cannot be switched on without a re-approval', () => {
+    const off = manifestHash(makeManifest({ learning: false }));
+    const on = manifestHash(makeManifest({ learning: true }));
+    expect(on).not.toBe(off);
+    expect(canonicalApprovalPayload(makeManifest({ learning: true }))).toContain('"learning":true');
+  });
+
+  it('approvalFields always reports learning, even when off — a reviewer must see it', () => {
+    expect(approvalFields(makeManifest({ learning: false })).learning).toBe(false);
+    expect(approvalFields(makeManifest({ learning: true })).learning).toBe(true);
   });
 });
 

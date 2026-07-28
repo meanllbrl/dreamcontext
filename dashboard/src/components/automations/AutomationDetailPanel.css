@@ -136,3 +136,76 @@
   background: var(--color-success-subtle);
   color: var(--color-success);
 }
+
+/* ── Pattern: what this automation has learned ───────────────────────────── */
+
+.adp-pattern { display: flex; flex-direction: column; gap: 10px; margin-bottom: 22px; }
+.adp-pattern-empty {
+  font-size: 12.5px; line-height: 1.5; color: var(--color-text-tertiary);
+  border: 1px dashed var(--color-border); border-radius: 11px; padding: 12px; margin-bottom: 22px;
+}
+.adp-lessons {
+  list-style: none; margin: 0; padding: 0;
+  border: 1px solid var(--color-border); border-radius: 11px; overflow: hidden;
+}
+.adp-lesson { display: flex; gap: 10px; padding: 8px 12px; font-size: 12.5px; line-height: 1.5; }
+.adp-lesson + .adp-lesson { border-top: 1px solid var(--color-border); }
+.adp-lesson-date {
+  flex: 0 0 auto; font-family: var(--font-mono); font-size: 11px;
+  color: var(--color-text-tertiary); padding-top: 1px;
+}
+.adp-lesson-text { color: var(--color-text); word-break: break-word; }
+
+/* ── Run session drill-in ────────────────────────────────────────────────── */
+
+.adp-history-session {
+  margin-left: auto; flex: 0 0 auto; font-family: var(--font-family-text); font-size: 10.5px;
+  background: none; border: 1px solid var(--color-border); border-radius: var(--radius-full);
+  color: var(--color-text-secondary); padding: 1px 8px; cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.adp-history-session:hover { border-color: var(--color-accent); color: var(--color-accent); }
+
+.adp-session { display: flex; flex-direction: column; }
+.adp-session-head { display: flex; align-items: center; gap: 8px; }
+.adp-close--sm { font-size: 12px; }
+.adp-session-meta {
+  font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary);
+  margin-bottom: 10px;
+}
+.adp-session-failed { color: var(--color-error); }
+.adp-session-empty {
+  font-size: 12.5px; line-height: 1.5; color: var(--color-text-tertiary);
+  border: 1px dashed var(--color-border); border-radius: 11px; padding: 12px;
+}
+.adp-session-items {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--color-border); border-radius: 11px; overflow: hidden;
+  /* The transcript is the long tail of this panel; capping it keeps the rail
+     scrollable rather than letting one chatty run own the whole column. */
+  max-height: 420px; overflow-y: auto;
+}
+.adp-session-item { display: flex; gap: 8px; padding: 6px 12px; font-size: 12px; line-height: 1.5; }
+.adp-session-item + .adp-session-item { border-top: 1px solid var(--color-border); }
+.adp-session-item--user { background: var(--color-bg-tertiary); }
+.adp-session-item--thinking { opacity: 0.62; font-style: italic; }
+.adp-session-tool {
+  flex: 0 0 auto; font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  color: var(--color-accent);
+}
+.adp-session-tool--error { color: var(--color-error); }
+.adp-session-tool-arg {
+  font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.adp-session-text { color: var(--color-text); word-break: break-word; }
+
+/* Pattern shown INSIDE the pre-approval review — see the panel's comment: the
+   review is the moment a self-written notes file is admitted to the run, so it
+   cannot be the one view that hides it. */
+.adp-review-pattern { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.adp-review-pattern-note {
+  font-size: 11.5px; line-height: 1.5; color: var(--color-warning);
+}
+.adp-review-pattern .adp-pattern,
+.adp-review-pattern .adp-pattern-empty { margin-bottom: 0; }

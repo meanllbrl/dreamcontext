@@ -186,12 +186,27 @@ function AnnouncementsIcon() {
   );
 }
 
+/** Automations — an alarm clock: work that goes off at a set time with nobody
+    there. The only circle-with-hands in the set, so it never reads as Insights'
+    bulb or Sleep's moon at 14px. */
+function AutomationsIcon() {
+  return (
+    <Svg>
+      <circle cx="12" cy="13.6" r="7.1" />
+      <path d="M12 9.9v3.7l2.5 1.5" />
+      <path d="M5.1 6.6a3.1 3.1 0 0 1 3.6-2.2" />
+      <path d="M18.9 6.6a3.1 3.1 0 0 0-3.6-2.2" />
+    </Svg>
+  );
+}
+
 /** Page → icon. Sleepy is handled separately (its animated eyes mark). */
 const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   tasks: TasksIcon,
   roadmap: RoadmapIcon,
   hypotheses: HypothesesIcon,
   lab: LabIcon,
+  automations: AutomationsIcon,
   council: CouncilIcon,
   core: CoreIcon,
   knowledge: KnowledgeIcon,

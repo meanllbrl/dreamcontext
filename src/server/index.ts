@@ -75,6 +75,7 @@ import {
   handleAutomationsShow,
   handleAutomationsRunNow,
   handleAutomationsApprove,
+  handleAutomationsSession,
 } from './routes/automations.js';
 import {
   handleThesesList,
@@ -419,6 +420,9 @@ function buildRouter(): Router {
   // inside `runAutomation`, not in these handlers.
   router.get('/api/automations', handleAutomationsList);
   router.get('/api/automations/runs', handleAutomationsRunStatus);
+  // Before `/:slug` — a literal sub-path registered after a param route is
+  // swallowed by it, the same ordering constraint `runs` above documents.
+  router.get('/api/automations/:slug/session', handleAutomationsSession);
   router.get('/api/automations/:slug', handleAutomationsShow);
   router.post('/api/automations/:slug/run', handleAutomationsRunNow);
   router.post('/api/automations/:slug/approve', handleAutomationsApprove);

@@ -8,8 +8,11 @@
   position: relative;
 }
 
+/* The zero-state owns its own scrolling (.auto-intro is the scroller), so the
+   board must not double up as one. */
 .auto-board--empty {
   padding: 0;
+  overflow: hidden;
 }
 
 .auto-board-loading,

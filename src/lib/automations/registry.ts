@@ -207,6 +207,17 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     ...(m.effort !== null ? { effort: m.effort } : {}),
     timeoutMinutes: m.timeoutMinutes,
     outputDir: m.outputDir,
+    // OMITTED when off, for the same byte-identity reason as `effort`: every
+    // manifest written before this field existed reads `learning: false`, so
+    // its already-approved hash must stay exactly what it was. An upgrade that
+    // re-blocked every working automation would be a silent outage — blocked
+    // runs notify nobody, by design (the blocked path passes notify: false, or
+    // a still-due automation would alarm every 5 minutes).
+    //
+    // When it IS on, the hash changes and approval is required. That is the
+    // point: turning it on lets the run read a file that rewrites itself, and
+    // the run's own recorded lessons are never re-reviewed afterwards.
+    ...(m.learning ? { learning: true } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -231,6 +242,11 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     effort: m.effort,
     timeoutMinutes: m.timeoutMinutes,
     outputDir: m.outputDir,
+    // Always present here (unlike the hash payload, which omits it when off):
+    // this shape is for DISPLAY, and a reviewer must be able to see that
+    // learning is on — that a run will read notes it wrote itself is the most
+    // consequential thing on this list to approve knowingly.
+    learning: m.learning,
   };
 }
 

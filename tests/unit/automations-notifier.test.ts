@@ -12,6 +12,8 @@ import {
   notifyViaBundle,
   removeNotifierApp,
   renderNotifierScript,
+  CLICK_ARM_DELAY_SECONDS,
+  notifyArmedPath,
 } from '../../src/lib/automations/notifier.js';
 
 /**
@@ -97,7 +99,7 @@ describe('paths and packaging', () => {
 });
 
 describe('renderNotifierScript', () => {
-  const script = renderNotifierScript('/tmp/some queue/');
+  const script = renderNotifierScript('/tmp/some queue/', '/tmp/target', '/tmp/armed');
 
   it('reads the queue instead of argv — argv never arrives through LaunchServices', () => {
     // The bug this pins: `open -a app --args` does NOT populate an applet's
@@ -114,7 +116,27 @@ describe('renderNotifierScript', () => {
   });
 
   it('normalises a directory given without a trailing slash', () => {
-    expect(renderNotifierScript('/tmp/q')).toContain('"/tmp/q/"');
+    expect(renderNotifierScript('/tmp/q', '/tmp/target', '/tmp/armed')).toContain('"/tmp/q/"');
+  });
+
+  it('opens the click target only when the queue was empty AND no enqueue just happened', () => {
+    // Empty queue alone is NOT sufficient. Two posters racing (A drains B's
+    // payload before B's own launch starts) leaves a launch with nothing to do
+    // and no human involved — acting on that would open a document unbidden,
+    // which is a genuinely alarming thing for a background job to do.
+    expect(script).toContain('if posted is 0 then');
+    expect(script).toContain('date +%s');
+    expect(script).toContain('armedFile');
+    expect(script).toContain(`if armedAgo > ${CLICK_ARM_DELAY_SECONDS} then`);
+    // The open must sit INSIDE the armed guard, not merely after the count check.
+    expect(script.indexOf(`if armedAgo > ${CLICK_ARM_DELAY_SECONDS} then`))
+      .toBeLessThan(script.indexOf('do shell script "open "'));
+  });
+
+  it('arms defensively — an unreadable stamp reads as "long ago", never as "just now"', () => {
+    // A missing armed file must not swallow every click forever; it must
+    // degrade to treating the launch as a click.
+    expect(script).toContain('set armedAgo to 9999');
   });
 
   it('caps the drain, so a stuck queue cannot become a notification storm', () => {
@@ -169,30 +191,36 @@ describe('notifyViaBundle', () => {
     expect(opened).toEqual([]);
   });
 
-  it('queues title, sound, then body — in that order', () => {
+  it('queues title, sound, click target, then body — in that order', () => {
     mkdirSync(notifierAppPath(home), { recursive: true }); // stand-in for a built bundle
-    expect(notifyViaBundle('dreamcontext', 'line one\nline two', home, { sound: 'Glass', openImpl: noOpen })).toBe(true);
+    expect(
+      notifyViaBundle('dreamcontext', 'line one\nline two', home, {
+        sound: 'Glass', openImpl: noOpen, openTarget: '/tmp/out/2026-07-27.md',
+      }),
+    ).toBe(true);
     const files = readdirSync(notifyQueueDir(home));
     expect(files).toHaveLength(1);
     const raw = readFileSync(join(notifyQueueDir(home), files[0]), 'utf-8');
     expect(raw.split('\n')[0]).toBe('dreamcontext');
     expect(raw.split('\n')[1]).toBe('Glass');
-    expect(raw.split('\n').slice(2).join('\n')).toBe('line one\nline two');
+    expect(raw.split('\n')[2]).toBe('/tmp/out/2026-07-27.md');
+    expect(raw.split('\n').slice(3).join('\n')).toBe('line one\nline two');
     // The payload alone announces nothing — the applet has to be launched to
     // drain it, so the launch is part of the contract, not an afterthought.
     expect(opened).toEqual([notifierAppPath(home)]);
   });
 
-  it('leaves the sound line EMPTY when no sound is asked for, never omits it', () => {
-    // The line has to exist even when unused: the applet addresses the body as
-    // "line 3 onward", so dropping the sound line would silently shift the
-    // first body line into the sound slot and lose it.
+  it('leaves the sound AND target lines EMPTY when unused, never omits them', () => {
+    // Both lines have to exist even when unused: the applet addresses the body
+    // as "line 4 onward", so dropping a fixed line would silently shift the
+    // first body line into it and lose it.
     mkdirSync(notifierAppPath(home), { recursive: true });
     notifyViaBundle('dreamcontext', 'body text', home, { openImpl: noOpen });
     const files = readdirSync(notifyQueueDir(home));
     const raw = readFileSync(join(notifyQueueDir(home), files[0]), 'utf-8');
     expect(raw.split('\n')[1]).toBe('');
-    expect(raw.split('\n')[2]).toBe('body text');
+    expect(raw.split('\n')[2]).toBe('');
+    expect(raw.split('\n')[3]).toBe('body text');
   });
 
   it('flattens newlines in the TITLE and the SOUND — both are single-line fields', () => {
@@ -202,7 +230,16 @@ describe('notifyViaBundle', () => {
     const raw = readFileSync(join(notifyQueueDir(home), files[0]), 'utf-8');
     expect(raw.split('\n')[0]).toBe('two lines');
     expect(raw.split('\n')[1]).toBe('Gl ass');
-    expect(raw.split('\n')[2]).toBe('body');
+    expect(raw.split('\n')[2]).toBe('');
+    expect(raw.split('\n')[3]).toBe('body');
+  });
+
+  it('stamps the armed file before launching, so the applet can tell a drain from a click', () => {
+    mkdirSync(notifierAppPath(home), { recursive: true });
+    notifyViaBundle('t', 'b', home, { openImpl: noOpen });
+    const stamped = Number(readFileSync(notifyArmedPath(home), 'utf-8'));
+    expect(Number.isFinite(stamped)).toBe(true);
+    expect(Math.abs(stamped - Math.floor(Date.now() / 1000))).toBeLessThan(5);
   });
 
   it('gives concurrent notifications distinct files — one must not overwrite the other', () => {

@@ -1,7 +1,8 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import { sendJson, sendError } from '../middleware.js';
-import { getAutomation, listAutomations, readAutomationCache } from '../../lib/automations/store.js';
+import { getAutomation, listAutomations, readAutomationCache, readPattern } from '../../lib/automations/store.js';
+import { resolveRunSession, readSessionDigest } from '../../lib/automations/session.js';
 import { checkApproval, approveAutomation } from '../../lib/automations/registry.js';
 import { formatSchedule } from '../../lib/automations/schedule.js';
 import { startAutomationJob, currentAutomationJob } from '../automation-job.js';
@@ -144,8 +145,18 @@ export async function handleAutomationsShow(
         timeoutMinutes: manifest.timeoutMinutes,
         catchupHours: manifest.catchupHours,
         outputDir: manifest.outputDir,
+        // Hashed, so it rides here for exactly the reason `effort` does: a
+        // reviewer approving from the dashboard must see every field the hash
+        // covers. This one carries the most weight of any of them — it is the
+        // switch that lets the run read notes it wrote itself.
+        learning: manifest.learning,
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
+        // NOT hashed and deliberately so (it changes every run), but shown:
+        // "what has this automation learned" is unanswerable from the prompt
+        // alone, and an unreviewable input the operator cannot even READ would
+        // be the worst of both worlds.
+        pattern: readPattern(manifest),
       },
       approved: approval.approved,
       approvalReason: approval.approved ? null : approval.reason,
@@ -153,6 +164,71 @@ export async function handleAutomationsShow(
     });
   } catch {
     sendError(res, 500, 'show_failed', 'Failed to read the automation.');
+  }
+}
+
+/**
+ * GET /api/automations/:slug/session[?run=N] — what the headless claude session
+ * for a run actually DID: its turns, tool calls, and failures.
+ *
+ * Read-only, and it reads a file OUTSIDE the project root
+ * (`~/.claude/projects/…`) — but never a caller-supplied path. The only input
+ * is `run`, an integer index into this automation's own recorded history; the
+ * session id comes from that record, and the path is derived from the id by
+ * scanning claude's own projects directory. There is no request field that can
+ * name a file, so path traversal has no surface here to begin with.
+ *
+ * MUST be registered before `/api/automations/:slug` for the same reason
+ * `runs` is — otherwise the sub-path is swallowed as a slug.
+ */
+export async function handleAutomationsSession(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const manifest = getAutomation(contextRoot, params.slug);
+    if (!manifest) {
+      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
+      return;
+    }
+    const url = new URL(req.url ?? '', 'http://localhost');
+    const rawRun = url.searchParams.get('run');
+    const runNumber = rawRun === null ? undefined : Number(rawRun);
+    if (runNumber !== undefined && (!Number.isInteger(runNumber) || runNumber < 1)) {
+      sendError(res, 400, 'bad_run', 'run must be a positive integer (1 = most recent).');
+      return;
+    }
+    const resolved = resolveRunSession(readAutomationCache(contextRoot, manifest.slug), { runNumber });
+    if (!resolved) {
+      sendJson(res, 200, { session: null });
+      return;
+    }
+    // A missing transcript is a normal state, not an error: claude writes one
+    // only once a session has produced a turn, and a run that never reached a
+    // session has no id at all. The client renders the difference.
+    const digest = resolved.transcriptPath ? readSessionDigest(resolved.transcriptPath) : null;
+    sendJson(res, 200, {
+      session: {
+        runNumber: resolved.runNumber,
+        firedAt: resolved.event.firedAt,
+        status: resolved.event.status,
+        error: resolved.event.error,
+        costUsd: resolved.event.costUsd,
+        numTurns: resolved.event.numTurns,
+        permissionDenials: resolved.event.permissionDenials,
+        outputPath: resolved.event.outputPath,
+        sessionId: resolved.sessionId,
+        transcriptPath: resolved.transcriptPath,
+        items: digest?.items ?? [],
+        toolCounts: digest?.toolCounts ?? {},
+        toolCalls: digest?.toolCalls ?? 0,
+        toolErrors: digest?.toolErrors ?? 0,
+      },
+    });
+  } catch {
+    sendError(res, 500, 'session_failed', 'Failed to read the run session.');
   }
 }
 

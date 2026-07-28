@@ -7,6 +7,7 @@ import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { listVaults } from '../../lib/vaults.js';
 import { UUID_RE } from '../../lib/agent-session-map.js';
+import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 
 /**
  * Shared trust-boundary primitives for the two loopback `claude`-spawning surfaces —
@@ -245,20 +246,7 @@ export function redeemPromptToken(raw: string | null, vault: string | null): str
  *  This sits behind polled per-tab endpoints, so the scan count matters. Returns the
  *  first candidate that has a transcript, else null. */
 export function findFirstTranscriptPath(ids: string[]): string | null {
-  const wanted = ids.filter(Boolean);
-  if (wanted.length === 0) return null;
-  try {
-    const base = join(homedir(), '.claude', 'projects');
-    if (!existsSync(base)) return null;
-    const dirs = readdirSync(base);
-    for (const id of wanted) {
-      for (const dir of dirs) {
-        const p = join(base, dir, `${id}.jsonl`);
-        if (existsSync(p)) return p;
-      }
-    }
-  } catch { /* ignore */ }
-  return null;
+  return findTranscriptBySessionId(ids);
 }
 
 /**

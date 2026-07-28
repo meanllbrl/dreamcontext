@@ -15,6 +15,7 @@
  */
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 export interface TranscriptLocation {
@@ -133,6 +134,47 @@ export function resolveTranscript(
   }
 
   return { mainPath: null, sessionDir: null, layout: 'none' };
+}
+
+/**
+ * Find a session's transcript knowing ONLY its id — no recorded path, no cwd.
+ *
+ * Claude Code files transcripts under `~/.claude/projects/<cwd-slug>/`, and the
+ * slug encoding is an implementation detail of a different program. Since the
+ * session id is a uuid and therefore globally unique, scanning the project dirs
+ * for `<id>.jsonl` gets the answer without reproducing that encoding, and keeps
+ * working if the encoding changes.
+ *
+ * Takes the ids in PRIORITY ORDER and pays for ONE directory listing across all
+ * of them — callers with a primary and a fallback id (and callers behind polled
+ * endpoints) would otherwise pay per candidate. Returns the first that exists,
+ * else null. Never throws.
+ */
+export function findTranscriptBySessionId(ids: string[], home: string = homedir()): string | null {
+  // Whitelist BEFORE the filesystem, the same ordering as `sanitizeSubagentId`
+  // and the sanitizeUuid family. This matters most for the automations caller:
+  // a run's `sessionId` is read from `automations/cache/<slug>.json`, which is
+  // brain-synced and hand-editable, so a teammate's edit (or a corrupted
+  // record) could otherwise put `../../..` into a path we join and read. The
+  // charset is deliberately broader than a UUID — claude's id format is its
+  // business, not ours — but contains no separator, no dot, and no NUL, so
+  // traversal is structurally impossible rather than merely unlikely.
+  const wanted = ids.filter((id) => id && /^[A-Za-z0-9_-]{1,128}$/.test(id));
+  if (wanted.length === 0) return null;
+  try {
+    const base = join(home, '.claude', 'projects');
+    if (!existsSync(base)) return null;
+    const dirs = readdirSync(base);
+    for (const id of wanted) {
+      for (const dir of dirs) {
+        const p = join(base, dir, `${id}.jsonl`);
+        if (existsSync(p)) return p;
+      }
+    }
+  } catch {
+    /* an unreadable projects dir is a "not found", never a throw */
+  }
+  return null;
 }
 
 /** Cap on subagent transcripts harvested per session. */

@@ -82,7 +82,15 @@ export interface AutomationCache {
   history: AutomationRunEvent[];
 }
 
-/** All SIX fields the approval hash covers (`APPROVAL_DIFF_FIELDS`) — what
+/** What an automation has LEARNED — mirrors `AutomationPattern`. Not hashed
+ *  (it changes every run by design), but rendered: an input the operator
+ *  cannot read would be the worst of both worlds. */
+export interface AutomationPattern {
+  playbook: string;
+  lessons: { date: string; text: string }[];
+}
+
+/** All SEVEN fields the approval hash covers (`APPROVAL_DIFF_FIELDS`) — what
  *  `automation` on the detail response exposes for a full-field review (see
  *  `approve`'s CLI comment: the registry stores only a sha256, never prior
  *  values, so this is a full-field review every time, not an old-vs-new diff).
@@ -101,8 +109,40 @@ export interface AutomationManifestDetail {
   timeoutMinutes: number;
   catchupHours: number;
   outputDir: string | null;
+  /** Hashed, and the heaviest of the seven to approve knowingly: it admits the
+   *  automation's own self-written pattern into the run's input. */
+  learning: boolean;
   prompt: string;
   outputInstructions: string;
+  pattern: AutomationPattern;
+}
+
+/** One item of a run's replayed session — mirrors `ChatHistoryItem`. */
+export interface AutomationSessionItem {
+  kind: 'user' | 'text' | 'thinking' | 'tool';
+  text?: string;
+  name?: string;
+  input?: unknown;
+  status?: 'done' | 'error';
+}
+
+/** GET /api/automations/:slug/session — what the headless run actually did. */
+export interface AutomationSession {
+  runNumber: number;
+  firedAt: string;
+  status: RunStatus;
+  error: string | null;
+  costUsd: number | null;
+  numTurns: number | null;
+  permissionDenials: number;
+  outputPath: string | null;
+  sessionId: string | null;
+  /** Null when claude never wrote one, or it was pruned — a normal state. */
+  transcriptPath: string | null;
+  items: AutomationSessionItem[];
+  toolCounts: Record<string, number>;
+  toolCalls: number;
+  toolErrors: number;
 }
 
 export interface AutomationDetail {
@@ -151,6 +191,27 @@ export function useAutomation(slug: string | null) {
     queryKey: ['automations', slug],
     queryFn: () => api.get<AutomationDetail>(`/automations/${slug}`),
     enabled: !!slug,
+    retry: 0,
+  });
+}
+
+/**
+ * The claude session one run actually had — its turns, tool calls and
+ * failures. `runNumber` is 1-based, newest first; null closes the drill-in.
+ *
+ * Not polled: a finished run's transcript never changes, and this reads a
+ * multi-hundred-KB file off disk. `staleTime: Infinity` makes reopening the
+ * same run free.
+ */
+export function useAutomationSession(slug: string | null, runNumber: number | null) {
+  return useQuery({
+    queryKey: ['automations', slug, 'session', runNumber],
+    queryFn: () =>
+      api
+        .get<{ session: AutomationSession | null }>(`/automations/${slug}/session?run=${runNumber}`)
+        .then((r) => r.session),
+    enabled: !!slug && runNumber !== null,
+    staleTime: Infinity,
     retry: 0,
   });
 }

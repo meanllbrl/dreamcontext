@@ -17,11 +17,19 @@ import {
   MAX_CATCHUP_HOURS,
   MAX_TIMEOUT_MINUTES,
   negationIsEffective,
+  PATTERN_HEADING,
+  PATTERN_LESSON_LIMIT,
+  PATTERN_LESSON_MAX_CHARS,
+  PATTERN_LESSONS_HEADING,
+  PATTERN_PLAYBOOK_MAX_CHARS,
+  PATTERN_SECTION_MAX_CHARS,
   RESERVED_SLUGS,
   sharedSlugNegations,
   type AutomationCache,
   type AutomationManifest,
+  type AutomationPattern,
   type EffortLevel,
+  type PatternLesson,
   type RunEvent,
   type RunSidecar,
   type Weekday,
@@ -210,11 +218,172 @@ export function readAutomationFile(filePath: string): AutomationManifest {
     // before this field existed), `"no"`, `0`, or any malformed value reads as
     // notify. A run nobody hears about is the failure mode worth avoiding here.
     notify: data.notify !== false,
+    // Strict-true, like `shared` and unlike `notify` — and for a reason closer
+    // to `shared`'s than to a display preference: this flag admits a
+    // self-rewritten file into the run's input. See the field's doc comment on
+    // AutomationManifest for why a missing value must read false rather than
+    // inheriting the new default.
+    learning: data.learning === true,
     prompt: extractSection(content, 'Prompt'),
     outputInstructions: extractSection(content, 'Output instructions'),
+    pattern: extractSection(content, PATTERN_HEADING),
     path: filePath,
     body: content.trim(),
   };
+}
+
+// ─── Pattern: parse, render, record ─────────────────────────────────────────
+//
+// The pattern is what makes a scheduled job get BETTER instead of repeating
+// the same mistake every day. It lives in the automation's own manifest rather
+// than a sidecar file for three reasons: the manifest is already covered by
+// the private-by-default `.gitignore` block and its share negations (a sidecar
+// would need a fourth base wildcard, and appending a wildcard below existing
+// negation lines silently disables them — see AUTOMATIONS_GITIGNORE_ENTRIES);
+// sharing then stays coherent by construction (a shared automation's pattern
+// travels with it, a private one's never leaves); and the human reading the
+// manifest sees the job's instructions and what it has learned side by side.
+//
+// It is NOT part of the approval hash. That is deliberate and is the single
+// most important thing to understand here: the pattern changes on its own
+// every run, so hashing it would block the automation daily and train the
+// operator to approve without reading. The switch that ADMITS the pattern
+// (`learning`) is hashed instead, and the runner injects the text framed as
+// untrusted notes that can never override the approved prompt.
+
+/** One `- **[YYYY-MM-DD]** text` ledger line. */
+const LESSON_LINE = /^-\s+\*\*\[(\d{4}-\d{2}-\d{2})\]\*\*\s+(.*)$/;
+
+function truncateChars(s: string, max: number): string {
+  const t = s.trim();
+  return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`;
+}
+
+/** Collapse to a single line: the ledger's grammar is one lesson per line, so
+ *  an embedded newline would silently split one lesson into an unparseable
+ *  fragment on the next read. */
+function oneLine(s: string): string {
+  return s.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+/**
+ * Parse a `## Pattern` section body into playbook + lessons. PURE, never
+ * throws: the section is markdown a human may also have edited by hand, so
+ * anything unparseable degrades to playbook prose rather than being dropped.
+ */
+export function parsePattern(section: string): AutomationPattern {
+  const lines = section.split('\n');
+  const headingIdx = lines.findIndex((l) => l.trim() === PATTERN_LESSONS_HEADING);
+  const playbookLines = headingIdx === -1 ? lines : lines.slice(0, headingIdx);
+  const lessonLines = headingIdx === -1 ? [] : lines.slice(headingIdx + 1);
+  const lessons: PatternLesson[] = [];
+  for (const raw of lessonLines) {
+    const m = LESSON_LINE.exec(raw.trim());
+    if (m) lessons.push({ date: m[1], text: m[2].trim() });
+  }
+  return { playbook: playbookLines.join('\n').trim(), lessons };
+}
+
+/** Render a pattern back to its `## Pattern` section body (heading excluded).
+ *  Enforces every cap at the point of WRITE, so an over-long pattern can never
+ *  reach the file, whatever the caller passed. */
+export function renderPattern(p: AutomationPattern): string {
+  const playbook = truncateChars(p.playbook, PATTERN_PLAYBOOK_MAX_CHARS);
+  const lessons = p.lessons
+    .slice(0, PATTERN_LESSON_LIMIT)
+    .map((l) => `- **[${l.date}]** ${truncateChars(oneLine(l.text), PATTERN_LESSON_MAX_CHARS)}`);
+  const parts: string[] = [];
+  if (playbook) parts.push(playbook);
+  if (lessons.length > 0) parts.push(PATTERN_LESSONS_HEADING, ...lessons);
+  return truncateChars(parts.join('\n\n'), PATTERN_SECTION_MAX_CHARS);
+}
+
+/** The automation's pattern, already parsed. Empty when it has never learned. */
+export function readPattern(m: AutomationManifest): AutomationPattern {
+  return parsePattern(m.pattern);
+}
+
+export interface RecordLessonInput {
+  /** Appended newest-first. Omit to revise only the playbook. */
+  lesson?: string;
+  /** Replaces the playbook wholesale. Omit to leave it untouched. */
+  playbook?: string;
+  /** Local date stamp for the lesson; injected for deterministic tests. */
+  now?: Date;
+}
+
+/**
+ * Append a lesson (and/or rewrite the playbook) in the automation's own
+ * manifest, LIFO, every cap enforced. Read-modify-write of one slug's own
+ * file: no cross-slug shared state, so no lock is needed here (contrast the
+ * shared-JSON write paths that do take one).
+ *
+ * Never touches frontmatter, so it can never change an approval-hashed field —
+ * a run recording what it learned must never be able to block itself.
+ */
+export function recordLesson(contextRoot: string, slug: string, input: RecordLessonInput): AutomationManifest {
+  const manifest = getAutomation(contextRoot, slug);
+  if (!manifest) throw new AutomationError(`No such automation: ${slug}`);
+  const lesson = input.lesson?.trim();
+  const playbook = input.playbook?.trim();
+  if (!lesson && playbook === undefined) {
+    throw new AutomationError('Nothing to record — pass a lesson, a playbook, or both.');
+  }
+
+  const current = parsePattern(manifest.pattern);
+  const next: AutomationPattern = {
+    playbook: playbook === undefined ? current.playbook : playbook,
+    lessons: lesson
+      ? [{ date: localDateStamp(input.now ?? new Date()), text: lesson }, ...current.lessons]
+      : current.lessons,
+  };
+
+  writeFileSync(manifest.path, upsertSection(readFileSync(manifest.path, 'utf-8'), PATTERN_HEADING, renderPattern(next)), 'utf-8');
+  return readAutomationFile(manifest.path);
+}
+
+/** `YYYY-MM-DD` in LOCAL time — schedules are machine-local wall-clock, so a
+ *  lesson stamped in UTC would disagree with the output file sitting next to
+ *  it on either side of midnight. */
+function localDateStamp(d: Date): string {
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${mo}-${day}`;
+}
+
+/**
+ * Replace a `## <heading>` section's body in RAW file text, appending the
+ * section at the end when absent. Operates on the whole file rather than
+ * gray-matter's parsed body so a rewrite can never reformat frontmatter that an
+ * approval hash or a human's own YAML style depends on.
+ *
+ * SURGICAL BY CONTRACT: every byte outside the target section is preserved
+ * exactly. No whole-file normalization, ever.
+ *
+ * An earlier version of this function finished with
+ * `.replace(/\n{3,}/g, '\n\n')` to tidy the result, and that one line was a
+ * silent-outage bug: it collapsed blank lines everywhere, including inside
+ * `## Prompt`, which IS approval-hashed (`normalizeText` only strips \r and
+ * trims — it does not collapse internal blank lines). So an automation whose
+ * prompt contained an ordinary two-blank-line gap would, on the SECOND lesson
+ * it recorded (the first takes the append branch above and never reached the
+ * regex), rewrite its own approved prompt, fail its next approval check, and
+ * stop running — and a blocked run notifies nobody, by design. The automation
+ * would simply go quiet. Do not reintroduce any whole-file rewrite here.
+ */
+export function upsertSection(raw: string, heading: string, body: string): string {
+  const marker = `## ${heading}`;
+  const block = [marker, '', body.trim(), ''];
+  const lines = raw.split('\n');
+  const startIdx = lines.findIndex((l) => l.trim() === marker);
+  if (startIdx === -1) {
+    return `${raw.replace(/\s+$/, '')}\n\n${block.join('\n')}`;
+  }
+  const rest = lines.slice(startIdx + 1);
+  const relEnd = rest.findIndex((l) => /^##\s/.test(l));
+  const tail = relEnd === -1 ? [] : rest.slice(relEnd);
+  return [...lines.slice(0, startIdx), ...block, ...tail].join('\n');
 }
 
 /** All automations, sorted by slug (stable). Missing directory ⇒ empty list. */
@@ -382,6 +551,12 @@ export interface CreateAutomationInput {
   shared?: boolean;
   /** Omitted ⇒ notify. Only an explicit `false` writes `notify: false`. */
   notify?: boolean;
+  /** Omitted ⇒ LEARNING ON for anything created from now on. Note this is the
+   *  opposite of how a MISSING frontmatter key reads (false): a manifest
+   *  written before the field existed must keep its old hash, but a manifest
+   *  written today should get the pattern loop, so `create` states it
+   *  explicitly rather than relying on the read default. */
+  learning?: boolean;
 }
 
 /**
@@ -488,6 +663,7 @@ export function createAutomation(contextRoot: string, i: CreateAutomationInput):
     output: { dir: i.outputDir ?? null },
     shared: i.shared ?? false,
     notify: i.notify ?? true,
+    learning: i.learning ?? true,
   };
 
   const body = [

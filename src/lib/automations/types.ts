@@ -75,10 +75,50 @@ export interface AutomationManifest {
    *  NOT a hashed field, same reasoning as `shared`: it changes whether you are
    *  TOLD about a run, never what the run does. */
   notify: boolean;
+  /**
+   * Does this automation carry a PATTERN — the `## Pattern` section it reads
+   * before running and appends to afterwards, so a job gets more accurate the
+   * longer it runs?
+   *
+   * Reads STRICT-TRUE, like `shared` and unlike `notify`, and it is the one
+   * flag here that IS approval-hashed. Both follow from the same fact: turning
+   * this on widens what the run READS to a file the run itself rewrites, and
+   * nothing re-reviews that file's contents (see the approval reference's
+   * "does not follow references inside the prompt"). So it must never switch
+   * itself on by accident, and a teammate's synced edit switching it on must
+   * block until a human re-approves.
+   *
+   * `create` writes `learning: true` explicitly for new automations, which is
+   * why strict-true costs nothing going forward: only a manifest written
+   * BEFORE this field existed reads as false, and that is exactly right —
+   * its approved hash then stays byte-identical (see canonicalApprovalPayload)
+   * so an upgrade never silently blocks a working automation. Opting an old
+   * one in is a manifest edit, which re-triggers approval on its own.
+   */
+  learning: boolean;
   prompt: string;
   outputInstructions: string;
+  /** The `## Pattern` section VERBATIM — what previous runs learned. Written
+   *  only by `automations learn`, never by hand-editing during a run, and
+   *  injected into the prompt as UNTRUSTED NOTES, never as instructions. */
+  pattern: string;
   path: string;
   body: string;
+}
+
+/** A pattern parsed into its two halves. `## Pattern` holds curated prose (the
+ *  playbook) followed by an optional `### Lessons` LIFO list; both are bounded
+ *  (see the PATTERN_* caps) because an unbounded pattern would grow until it
+ *  crowded out the prompt itself. */
+export interface AutomationPattern {
+  playbook: string;
+  lessons: PatternLesson[];
+}
+
+export interface PatternLesson {
+  /** Local calendar date the lesson was recorded, `YYYY-MM-DD`. */
+  date: string;
+  text: string;
 }
 
 /** One recorded attempt (or non-attempt) at a scheduled or manual run. Every
@@ -146,6 +186,11 @@ export interface ApprovalPayloadFields {
   effort: EffortLevel | null;
   timeoutMinutes: number;
   outputDir: string | null;
+  /** Hashed because it widens the run's INPUT surface to a self-rewritten
+   *  file. The pattern's CONTENTS are deliberately not hashed — they change
+   *  every run by design — which is precisely why the switch that admits them
+   *  has to be. */
+  learning: boolean;
 }
 
 /** Domain error for the automations subsystem — thrown only by strict
@@ -194,7 +239,34 @@ export const APPROVAL_DIFF_FIELDS = [
   'effort',
   'timeoutMinutes',
   'outputDir',
+  'learning',
 ] as const;
+
+// ─── Pattern caps ────────────────────────────────────────────────────────────
+//
+// A count cap is not a size cap (see the Lab review lesson that produced this
+// rule): a bounded list of unbounded strings still bloats without limit. Every
+// pattern dimension is capped BOTH ways, and the total is capped again on top,
+// because this text is prepended to every single run's prompt — an unbounded
+// pattern would quietly eat the context the actual job needs.
+
+/** Newest-first lesson ledger depth; older lessons fall off the end. */
+export const PATTERN_LESSON_LIMIT = 20;
+/** Per-lesson character ceiling — a lesson is one line, not an essay. */
+export const PATTERN_LESSON_MAX_CHARS = 300;
+/** Playbook prose ceiling. */
+export const PATTERN_PLAYBOOK_MAX_CHARS = 4_000;
+/** Belt-and-braces ceiling on the whole rendered `## Pattern` section. */
+export const PATTERN_SECTION_MAX_CHARS = 12_000;
+/** The manifest heading the pattern lives under. */
+export const PATTERN_HEADING = 'Pattern';
+/** The sub-heading its LIFO ledger lives under, inside `## Pattern`. */
+export const PATTERN_LESSONS_HEADING = '### Lessons';
+
+/** Ceiling on the notification body. macOS truncates a long banner itself, but
+ *  it does so mid-word with no ellipsis — capping here means the user sees a
+ *  deliberate end rather than a sentence cut in half. */
+export const NOTIFY_BODY_MAX_CHARS = 240;
 /** Beyond this age a sidecar's recorded PGID may have been recycled by the OS —
  *  `automations kill` requires --force past this window rather than trusting
  *  process-group identity blindly. */

@@ -227,7 +227,10 @@ describe('automations CLI (integration)', () => {
     // the CLI's loop reads.
     const yesOut = run(['automations', 'approve', 'weekly-report', '--yes'], projectDir, home);
     expect(yesOut.exitCode).toBe(0);
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(6);
+    // The count is a deliberate canary on top of the iteration: adding a hashed
+    // field must make a human look at this file rather than sail through green.
+    // 6 → 7 when `learning` joined.
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(7);
     for (const field of APPROVAL_DIFF_FIELDS) {
       expect(yesOut.stdout).toContain(field);
     }

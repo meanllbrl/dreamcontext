@@ -453,25 +453,52 @@ describe('runAutomation — completion notifications', () => {
     return runPromise;
   };
 
-  it('notifies on SUCCESS, naming the automation and its output file', async () => {
+  it('notifies on SUCCESS with the RESULT in the body, titled by the automation', async () => {
     const notify = vi.fn();
     const outcome = await runToSuccess('notify-on-ok', notify);
     expect(outcome.status).toBe('ok');
     expect(notify).toHaveBeenCalledTimes(1);
-    const [title, body, sound] = notify.mock.calls[0];
-    expect(title).toMatch(/done/i);
+    const [title, body, sound, target] = notify.mock.calls[0];
+    // The TITLE is the automation's own name. The bundle already renders
+    // "dreamcontext" above it, so a generic "automation done" title spent the
+    // one bold line saying nothing.
+    expect(title).toContain('notify-on-ok'); // createApproved titles the manifest after the slug
     expect(title).not.toMatch(/fail/i);
     // Success and failure must not sound alike: nobody is watching when these
     // fire, so the sound is the only signal that arrives before you look.
     expect(sound).toBe(NOTIFY_SOUND_OK);
     expect(NOTIFY_SOUND_OK).not.toBe(NOTIFY_SOUND_FAILED);
-    expect(body).toContain('notify-on-ok'); // createApproved titles the manifest after the slug
-    // The body carries the BASENAME, never the absolute path — an output path can
-    // sit under a private brain and a notification is the least private surface
-    // there is (it renders on a possibly-shared screen, and macOS keeps it in
-    // Notification Centre afterwards).
-    expect(body).toMatch(/\.md$/);
+    // The BODY is what the run actually found, lifted from the document it just
+    // wrote (fixture: "# Daily digest\n\nAll good."). Telling the user a file
+    // exists, when the job they asked for was "update the insights", withholds
+    // the whole answer one click away for no reason.
+    expect(body).toBe('All good.');
+    // Never the absolute path — an output path can sit under a private brain,
+    // and a notification is the least private surface there is (it renders on a
+    // possibly-shared screen and macOS keeps it in Notification Centre).
     expect(body).not.toContain(contextRoot);
+    // The path travels as the CLICK TARGET instead, which macOS never displays.
+    expect(target).toMatch(/\.md$/);
+  });
+
+  it('falls back to naming the output file when the document offers no summary', async () => {
+    const notify = vi.fn();
+    const manifest = createApproved('notify-no-summary');
+    const { child, emitClose, emitStdout } = makeFakeChild(4460);
+    const runPromise = runAutomation(contextRoot, manifest.slug, {
+      now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify,
+    });
+    // A document that is nothing but a heading and a table — the exact shape
+    // that used to notify "| a | b |" when the extractor was naive.
+    emitStdout(JSON.stringify({
+      session_id: 'sess_nosum', result: '# Report\n\n| a | b |\n| - | - |\n', is_error: false,
+      permission_denials: [], total_cost_usd: 0.01, num_turns: 2, duration_ms: 100, subtype: 'success',
+    }));
+    emitClose(0);
+    expect((await runPromise).status).toBe('ok');
+    const [, body] = notify.mock.calls[0];
+    expect(body).toMatch(/^→ .*\.md$/);
+    expect(body).not.toContain('|');
   });
 
   it('a manifest with notify: false stays silent on success AND on failure', async () => {

@@ -9,6 +9,12 @@ import { readVersionCache, writeVersionCache } from '../../lib/version-check.js'
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { listVaults, type Vault } from '../../lib/vaults.js';
 import { readAppManifest } from './app.js';
+import {
+  buildNotifierApp,
+  inspectNotifier,
+  type BuildNotifierResult,
+  type NotifierState,
+} from '../../lib/automations/notifier.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -41,6 +47,13 @@ export interface UpgradeOpts {
   appInstalledCheck?: () => boolean;
   /** Injected desktop-app updater (testing); defaults to spawning the upgraded CLI's `app update`. */
   appUpdater?: () => { ok: boolean; error?: string };
+  /** Injected notifier state (testing); defaults to inspectNotifier(). MUST be
+   *  injected by tests — the real one reads the developer's own ~/.dreamcontext. */
+  notifierState?: () => NotifierState;
+  /** Injected notifier rebuild (testing); defaults to buildNotifierApp(). MUST
+   *  be injected by tests: the real one COMPILES AND REPLACES the bundle in the
+   *  developer's home, which a unit test must never do. */
+  notifierBuilder?: () => BuildNotifierResult;
 }
 
 // ─── Default implementations ─────────────────────────────────────────────────
@@ -233,6 +246,38 @@ async function maybeUpdateAllProjects(opts?: UpgradeOpts): Promise<void> {
 
 // ─── Core logic (exported for testing) ───────────────────────────────────────
 
+/**
+ * Rebuild the automations notifier bundle when it is installed but was built by
+ * an older dreamcontext.
+ *
+ * `upgrade`'s whole job is "bring this machine current", and the notifier was
+ * the one installed artifact it did not reach: the bundle is compiled ONLY by
+ * `automations install`, so before this, a fix to the applet shipped to npm and
+ * then sat there — every machine that had already installed automations kept
+ * running the old applet forever, with nothing anywhere saying so. A notifier
+ * bug outliving its own fix is the failure this closes.
+ *
+ * Deliberately narrow on both sides. It never INSTALLS a notifier for someone
+ * who has not opted into automations (absent bundle ⇒ do nothing), and it never
+ * rebuilds one that is already current (so a normal upgrade stays silent). Both
+ * conditions come from `inspectNotifier`, the same state `install --check`
+ * reports. Failure is reported, never thrown: a notifier that could not be
+ * rebuilt must not fail the CLI upgrade that was the actual point of the
+ * command.
+ */
+function maybeRefreshNotifier(opts?: UpgradeOpts): void {
+  const state = (opts?.notifierState ?? inspectNotifier)();
+  if (!state.supported || !state.bundlePresent || state.scriptCurrent) return;
+  console.log(chalk.cyan('\n↻ Refreshing the automations notifier…'));
+  const built = (opts?.notifierBuilder ?? buildNotifierApp)();
+  if (built.built) {
+    console.log(chalk.green('✓ Notifier rebuilt — it was compiled by an older dreamcontext.'));
+  } else {
+    console.log(chalk.yellow(`  ⚠ Notifier refresh skipped: ${built.reason ?? 'failed'}`));
+    console.log(chalk.dim('    run `dreamcontext automations install` to rebuild it.'));
+  }
+}
+
 export async function runUpgrade(
   check: boolean,
   opts?: UpgradeOpts,
@@ -268,6 +313,7 @@ export async function runUpgrade(
   // run `app update` / `update` by hand (or ask the agent to).
   await maybeUpdateApp(opts);
   await maybeUpdateAllProjects(opts);
+  maybeRefreshNotifier(opts);
 
   console.log(chalk.dim('\nIn each project, the new files take effect next session (hooks re-read them).'));
 }

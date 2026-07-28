@@ -233,3 +233,87 @@ describe('runUpgrade — one command refreshes app + every project', () => {
     expect(attempted).toEqual(['alpha', 'beta']);
   });
 });
+
+describe('runUpgrade refreshes a stale automations notifier', () => {
+  /**
+   * The gap this closes: the notifier bundle is compiled ONLY by `automations
+   * install`, so before this, an applet fix shipped to npm and then sat there —
+   * every machine that had already installed automations kept running the old
+   * applet forever, with nothing anywhere reporting it. A notifier bug outliving
+   * its own fix.
+   *
+   * Every case here INJECTS both notifier hooks. The real ones read and RECOMPILE
+   * the bundle in the developer's own home, which a unit test must never touch.
+   */
+  const state = (over: Partial<{ supported: boolean; bundlePresent: boolean; scriptCurrent: boolean }> = {}) => () => ({
+    supported: true,
+    bundlePresent: true,
+    bundlePath: '/fake/dc-notify.app',
+    iconPackaged: true,
+    queuedPayloads: 0,
+    scriptCurrent: false,
+    ...over,
+  });
+  const base = {
+    installer: vi.fn(),
+    vaultLister: () => [],
+    appInstalledCheck: () => false,
+  };
+
+  it('rebuilds when the bundle is present but STALE', async () => {
+    const notifierBuilder = vi.fn(() => ({ built: true, path: '/fake', reason: null }));
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await runUpgrade(false, { ...base, installer: vi.fn(), notifierState: state(), notifierBuilder });
+      expect(notifierBuilder).toHaveBeenCalledTimes(1);
+    } finally { consoleSpy.mockRestore(); }
+  });
+
+  it('does NOTHING when the bundle is already current — a normal upgrade stays silent', async () => {
+    const notifierBuilder = vi.fn(() => ({ built: true, path: '/fake', reason: null }));
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await runUpgrade(false, {
+        ...base, installer: vi.fn(), notifierState: state({ scriptCurrent: true }), notifierBuilder,
+      });
+      expect(notifierBuilder).not.toHaveBeenCalled();
+    } finally { consoleSpy.mockRestore(); }
+  });
+
+  it('never INSTALLS a notifier for someone who never opted into automations', async () => {
+    // Absent bundle ⇒ the user has not run `automations install`. Upgrade must
+    // not quietly hand them a new app bundle they never asked for.
+    const notifierBuilder = vi.fn(() => ({ built: true, path: '/fake', reason: null }));
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await runUpgrade(false, {
+        ...base, installer: vi.fn(), notifierState: state({ bundlePresent: false }), notifierBuilder,
+      });
+      expect(notifierBuilder).not.toHaveBeenCalled();
+    } finally { consoleSpy.mockRestore(); }
+  });
+
+  it('skips on a non-macOS machine', async () => {
+    const notifierBuilder = vi.fn(() => ({ built: true, path: '/fake', reason: null }));
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await runUpgrade(false, {
+        ...base, installer: vi.fn(), notifierState: state({ supported: false }), notifierBuilder,
+      });
+      expect(notifierBuilder).not.toHaveBeenCalled();
+    } finally { consoleSpy.mockRestore(); }
+  });
+
+  it('reports a failed rebuild instead of throwing — it must never fail the CLI upgrade', async () => {
+    const notifierBuilder = vi.fn(() => ({ built: false, path: '/fake', reason: 'osacompile missing' }));
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await expect(
+        runUpgrade(false, { ...base, installer: vi.fn(), notifierState: state(), notifierBuilder }),
+      ).resolves.toBeUndefined();
+      const printed = consoleSpy.mock.calls.flat().join(' ');
+      expect(printed).toContain('osacompile missing');
+      expect(printed).toMatch(/automations install/);
+    } finally { consoleSpy.mockRestore(); }
+  });
+});
