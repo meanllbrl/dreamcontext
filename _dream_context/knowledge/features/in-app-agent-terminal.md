@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-07-27'
+updated: '2026-07-28'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -37,6 +37,8 @@ related_tasks:
     desktop-chat-cmd-clicking-a-directory-path-chip-blanks-the-chat-view-webcontent-process-crash
   - >-
     checklist-submit-segfaults-the-desktop-app-webkit-scrolling-tree-uaf-on-window-close
+  - >-
+    chat-transcript-holds-an-unpinned-reader-s-place-when-history-loads-above-them
 type: feature
 name: in-app-agent-terminal
 description: ''
@@ -83,6 +85,7 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - [x] As a developer, goal-skill and council live panels render above the Chat transcript (not just the terminal), so orchestrated runs show the same progress no matter which surface I picked.
 - [x] As a developer, the Chat view shows a working indicator (dots + elapsed clock) before the CLI's first frame and in every gap between tool results, so "nothing on screen yet" reads as "working" rather than "stuck".
 - [x] As a developer, auto-scroll in Chat sticks to the bottom through content-height changes (image loads, composer resize, split/move), not just new messages, so the answer stays in view instead of mysteriously scrolling off mid-turn.
+- [x] As a developer, scrolling back up through a long conversation keeps my place to the pixel — the window loading 40 more entries above me, an image in them decoding afterwards, or a card above me expanding or collapsing all leave the row I am reading exactly where it is on screen.
 - [x] As a developer, the Chat composer stays single-row at every pane width via a stage-driven context/usage readout (full → % only → bare bar → portaled card), so Send is always in the card and the toolbar never wraps.
 - [x] As a developer, the Chat slash menu and skill picker match the terminal's (shared SkillPickerPopover), so I discover commands the same way in both surfaces instead of having to remember syntax.
 - [x] As a developer, tool cards in Chat collapse by default (except Edit/Write, which open automatically), so I see what changed in my files without scrolling past hundreds of lines of shell output.

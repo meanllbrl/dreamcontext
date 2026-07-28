@@ -980,32 +980,50 @@ export interface WindowSplit {
   showsHistory: boolean;
 }
 
-/** Where the reveal's anchor row sat before and after the commit, in the scroller's CONTENT
+/** Where the held anchor row sat before and after a layout change, in the scroller's CONTENT
  *  coordinate space (i.e. measured so that scrolling itself cannot change the number). */
-export interface RevealAnchorMetrics {
+export interface AnchorHoldMetrics {
   anchorTopBefore: number;
   anchorTopAfter: number;
 }
 
+/** Sub-pixel noise floor. Zoom, fractional layout and `getBoundingClientRect` rounding make an
+ *  untouched row's content offset wobble by a fraction of a pixel; correcting for that would
+ *  write `scrollTop` on every frame of every stream for no visible reason. */
+export const ANCHOR_EPSILON = 0.5;
+
 /**
- * How far to push `scrollTop` down so a reveal's prepended entries don't move the row the
- * reader was looking at.
+ * How far to move `scrollTop` so the row the reader is looking at stays exactly where it is on
+ * screen, given where that row sat before and after a layout change.
  *
- * Measured from ONE STILL-MOUNTED ROW, never from the scroller's total height, and that is
- * the whole point. A reveal is triggered from a scroll handler while a turn may still be
- * streaming, so React is free to merge the window change and an arriving frame into a single
- * commit — one that prepends 40 older entries ABOVE the reader and appends a new tool card
- * BELOW them. `scrollHeight` grows by both, so compensating with it scrolls the reader down
- * by the append's height as well: a spurious jump of hundreds of pixels mid-read, plus a
- * corrupted `restoreTopRef` for the next re-home to restore to. The anchor moves by the
- * prepend alone, whatever else the commit did.
+ * This is scroll anchoring, done by hand, because nothing else will do it for us: the scroller
+ * sets `overflow-anchor: none` (native anchoring would double-correct the reveal below), and
+ * this app ships in a WKWebView where the feature is young at best. So EVERY height change
+ * above an unpinned reader is ours to absorb — and there are many more of them than the reveal
+ * this started as: an image or clip in a revealed message finishing its load, a code block
+ * growing its copy bar in a post-paint decoration pass, a tool card above the fold expanding
+ * or collapsing, a rewind truncating the transcript. Left alone, each one slides the reader
+ * off what they were reading (owner report 07-28: "I scroll up, you load the history, and the
+ * place I was at moves").
  *
- * A reveal only ever ADDS entries above, so a non-positive delta means the anchor didn't
- * move (or something else re-laid the transcript out) — correct nothing rather than guess.
+ * Measured from ONE STILL-MOUNTED ROW, never from the scroller's total height, and that is the
+ * whole point. A reveal is triggered from a scroll handler while a turn may still be streaming,
+ * so React is free to merge the window change and an arriving frame into a single commit — one
+ * that prepends 40 older entries ABOVE the reader and appends a new tool card BELOW them.
+ * `scrollHeight` grows by both, so compensating with it scrolls the reader down by the append's
+ * height as well: a spurious jump of hundreds of pixels mid-read, plus a corrupted
+ * `restoreTopRef` for the next re-home to restore to. The anchor moves by the prepend alone,
+ * whatever else the commit did.
+ *
+ * SIGNED, unlike the reveal-only correction it replaces. A reveal can only ever add entries
+ * above, so that one could treat a negative delta as "something else re-laid the transcript
+ * out, don't guess". A hold that survives for as long as the reader is unpinned sees the other
+ * direction for real — a card above them collapsing, an image failing and shrinking to its alt
+ * text — and following the row UP is just as much "hold still" as following it down.
  */
-export function revealScrollCorrection(m: RevealAnchorMetrics): number {
+export function anchorHoldCorrection(m: AnchorHoldMetrics): number {
   const delta = m.anchorTopAfter - m.anchorTopBefore;
-  return delta > 0 ? delta : 0;
+  return Math.abs(delta) < ANCHOR_EPSILON ? 0 : delta;
 }
 
 /** Project a combined-index window head onto the two arrays it actually spans. */

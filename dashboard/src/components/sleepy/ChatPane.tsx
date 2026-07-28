@@ -6,7 +6,7 @@ import type { ModelConfig } from '../../lib/agentComposer';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
   nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent,
-  nextFirstShown, splitWindow, revealScrollCorrection, WINDOW_REVEAL_PX, revealPath,
+  nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, revealPath,
   type SubAgentRun, type ScrollIntent,
 } from './chat/chatEntities';
 import { ItemView } from './chat/TranscriptItem';
@@ -429,93 +429,149 @@ export function ChatPane({
     conv.history.length, conv.items.length, firstShown,
   );
 
-  /** What a pending reveal captured to measure itself against: the rows it is about to push
-   *  down, nearest the reader first, plus a last-resort total height. `null` = the next
-   *  window change is not a reveal, so nothing should be compensated for it. */
-  const preRevealAnchorRef = useRef<
-    { candidates: Array<{ node: Element; top: number }>; scrollHeight: number } | null
+  // ── The hold: what keeps an unpinned reader exactly where they are ──────────────────
+  //
+  // While the view follows the bottom, the bottom IS the anchor and `scrollToBottom` is the
+  // whole story. The moment a reader scrolls up, that inverts: their scroll position is only
+  // meaningful relative to the CONTENT, and this transcript's content above them changes
+  // height constantly and asynchronously — an image or clip in a revealed message finishing
+  // its load, a code block growing its copy bar in a post-paint decoration pass, a tool card
+  // being expanded, a rewind truncating rows. Every one of those slides them off what they
+  // were reading, with no cause they can see.
+  //
+  // Nothing absorbs that for us. The scroller sets `overflow-anchor: none` (see ChatPane.css)
+  // and the app ships in a WKWebView, so the browser's own scroll anchoring is not the safety
+  // net it would be on the web. What used to exist here was narrower than the problem: an
+  // anchor armed for the duration of ONE reveal commit, released immediately after. It held
+  // the prepend and nothing else — so the reveal's own images, arriving a few hundred
+  // milliseconds later with nothing left watching, pushed the reader down anyway. That is the
+  // 07-28 report ("I scroll up, you suddenly load the history, and my place moves") and it is
+  // why the anchor below is HELD for as long as the reader is unpinned rather than armed per
+  // reveal.
+  //
+  /** The rows the view is held against, nearest the fold first, plus a last-resort total
+   *  height. `null` whenever the view is pinned (the bottom is its own anchor) or there is
+   *  nothing measurable to hold. `prepend` marks a hold armed by a reveal — the one case where
+   *  a large block of entries is KNOWN to be landing above the reader, and therefore the only
+   *  case where the height fallback in `holdAnchorSteady` is worth taking. */
+  const heldAnchorRef = useRef<
+    { candidates: Array<{ node: Element; top: number }>; scrollHeight: number; prepend: boolean } | null
   >(null);
+
+  /**
+   * Take a fresh hold on what the reader is looking at.
+   *
+   * SEVERAL candidate rows, not one, and only rows they can actually SEE.
+   *
+   * Visible, because holding still a row that is above the fold is not the same as holding the
+   * VIEW still: a block between it and the viewport can grow a line in the same commit while a
+   * turn streams, and the reader would drift by exactly that. Whatever a visible row moves by
+   * is, by definition, what the reader experiences.
+   *
+   * Several, because one of these nodes can be REPLACED rather than moved by the very commit
+   * being measured. Ordinary rows are keyed by `item.id` and survive a prepend, but the one
+   * combined `SubAgentCard` is keyed by the EARLIEST suppressed tool item in the window — so a
+   * reveal that mounts an older fan-out migrates its key, React unmounts the card, and a hold
+   * that happened to BE that card would leave the correction with nothing to measure and the
+   * reader jumped by the whole prepend. The spares make that unreachable without this code
+   * having to know anything about SubAgentCard.
+   */
+  const captureAnchor = useCallback((prepend = false) => {
+    const el = scrollRef.current;
+    const inner = contentRef.current;
+    if (!el || !inner || el.clientHeight === 0) { heldAnchorRef.current = null; return; }
+    const fold = el.getBoundingClientRect().top;
+    const candidates: Array<{ node: Element; top: number }> = [];
+    const rows = inner.children;
+    for (let i = 0; i < rows.length && candidates.length < ANCHOR_CANDIDATES; i += 1) {
+      const node = rows[i];
+      // Never the "show earlier" button: it is the one row a reveal can DELETE rather than
+      // move (the last step exhausts the window), so holding against it measures its own
+      // disappearance.
+      if (node.classList.contains('chat-window-more')) continue;
+      if (node.getBoundingClientRect().bottom <= fold) continue;
+      candidates.push({ node, top: contentTopOf(node, el) });
+    }
+    // A reveal keeps its hold even with no visible row to name (an empty or fully-clipped
+    // transcript), because the height fallback is better than nothing for a known prepend.
+    heldAnchorRef.current = candidates.length || prepend
+      ? { candidates, scrollHeight: el.scrollHeight, prepend }
+      : null;
+  }, []);
+
+  /**
+   * Put the reader back on their row if the content above them changed height. Called from
+   * everywhere such a change can surface: the layout effect after a reveal's commit (before
+   * paint, so no intermediate position is ever shown) and the ResizeObserver below (which is
+   * delivered after layout and before paint too, and is what catches every height change
+   * React never rendered — a decoded image, a decoration pass, a media element resolving).
+   *
+   * IDEMPOTENT, deliberately: it re-measures the hold against the layout it just produced, so
+   * a second call for the same change — the RO firing for a commit the layout effect already
+   * corrected — computes a zero delta instead of applying the correction twice. That is what
+   * makes it safe to call from both, and it is the same double-correction hazard that made us
+   * turn native `overflow-anchor` off.
+   *
+   * `prevTopRef`/`restoreTopRef` move in the same breath as `scrollTop`, and that ordering is
+   * the point: the compensating write dispatches its own scroll event, and a handler that saw
+   * the OLD `prevScrollTop` would read this as a jump the user made. Writing them here means
+   * the handler sees a consistent pair — and stops `nextRestoreTop` recording an offset the
+   * reader was never at as their reading position.
+   */
+  const holdAnchorSteady = useCallback(() => {
+    if (stickRef.current) return;
+    const held = heldAnchorRef.current;
+    const el = scrollRef.current;
+    if (!held || !el || el.clientHeight === 0) return;
+    const anchor = held.candidates.find((c) => c.node.isConnected);
+    const delta = anchor
+      ? anchorHoldCorrection({
+        anchorTopBefore: anchor.top,
+        anchorTopAfter: contentTopOf(anchor.node, el),
+      })
+      // Nothing the reader was looking at survived the commit — a rewind truncating the
+      // transcript underneath a reveal. Total height is the WRONG measure (a streamed append
+      // lands in it too, which is the whole reason for the anchors) but being off by one card
+      // beats being off by the entire prepend, which is what doing nothing costs. Only for a
+      // reveal: outside one, "every visible row was replaced" carries no promise about what
+      // happened above, and a streaming append would drag the reader down for nothing.
+      : held.prepend
+        ? anchorHoldCorrection({ anchorTopBefore: held.scrollHeight, anchorTopAfter: el.scrollHeight })
+        : 0;
+    held.prepend = false;
+    if (delta) {
+      el.scrollTop += delta;
+      prevTopRef.current = el.scrollTop;
+      restoreTopRef.current = el.scrollTop;
+    }
+    // Re-hold against the layout that now exists. `contentTopOf` is scroll-invariant, so a
+    // correction the scroller could not absorb (clamped at either end) and one that landed
+    // perfectly leave the SAME numbers here — this is the truth either way, and recording it
+    // is what makes the next call a no-op rather than a repeat of a correction already made.
+    if (anchor) {
+      for (const c of held.candidates) if (c.node.isConnected) c.top = contentTopOf(c.node, el);
+      held.scrollHeight = el.scrollHeight;
+    } else {
+      captureAnchor();
+    }
+  }, [captureAnchor]);
 
   const revealEarlier = useCallback(() => {
     const next = nextFirstShown(firstShown, { total: windowTotal, pinned: false, reveal: true });
-    // Nothing left to reveal → don't arm the compensation, or the NEXT window change (a
-    // pinned slide) would be handed a stale anchor to correct against.
+    // Nothing left to reveal → leave the hold as it is, rather than re-arming it as a prepend
+    // that is not coming.
     if (next === firstShown) return;
     // Asking for older messages is explicit intent to go and read them — so it releases
     // stick-to-bottom. Without this the render below would re-normalize under the pinned
     // rule and slide the window straight back to the tail, making the button do nothing.
     setStick(false);
-    const el = scrollRef.current;
-    const inner = contentRef.current;
-    if (!el || !inner) { preRevealAnchorRef.current = null; setFirstShownState(next); return; }
-    // SEVERAL candidate anchors, not one, and only rows the reader can actually see.
-    //
-    // Visible, because holding still a row that is above the fold is not the same as holding
-    // the VIEW still: a block between it and the viewport can grow a line in the same commit
-    // while a turn streams, and the reader would drift by that. Whatever a visible row moves
-    // by is, by definition, what the reader experiences.
-    //
-    // Several, because one of these nodes can be REPLACED rather than moved by the very
-    // reveal being measured. Ordinary rows are keyed by `item.id` and survive a prepend, but
-    // the one combined `SubAgentCard` is keyed by the EARLIEST suppressed tool item in the
-    // window — so a reveal that mounts an older fan-out migrates its key, React unmounts the
-    // card, and an anchor that happened to BE that card would leave the correction with
-    // nothing to measure and the reader jumped by the whole prepend. The spares make that
-    // unreachable without this code having to know anything about SubAgentCard.
-    const fold = el.getBoundingClientRect().top;
-    const candidates: Array<{ node: Element; top: number }> = [];
-    for (const node of Array.from(inner.children)) {
-      if (node.classList.contains('chat-window-more')) continue;
-      if (node.getBoundingClientRect().bottom <= fold) continue;
-      candidates.push({ node, top: contentTopOf(node, el) });
-      if (candidates.length >= ANCHOR_CANDIDATES) break;
-    }
-    preRevealAnchorRef.current = { candidates, scrollHeight: el.scrollHeight };
+    captureAnchor(true);
     setFirstShownState(next);
-  }, [firstShown, windowTotal, setStick]);
+  }, [firstShown, windowTotal, setStick, captureAnchor]);
 
-  // Scroll anchoring for a PREPEND. Revealing older entries inserts content ABOVE the
-  // reader, which moves everything they were looking at down the scroller by exactly the
-  // height of what was inserted — so `scrollTop` is pushed back by the same amount, here, in
-  // a LAYOUT effect: after React has mutated the DOM (so the anchor's new position is the
-  // real one) and before the browser paints (so no intermediate position is ever seen).
-  //
-  // Measured off an ANCHOR ROW, not off `scrollHeight`. A reveal is triggered from a scroll
-  // handler while a turn may still be streaming, so React can merge the window change and an
-  // arriving frame into ONE commit — prepending 40 entries above the reader AND appending a
-  // materializing tool card below them. `scrollHeight` grew by both; correcting by that sum
-  // would scroll the reader down by the append's height too. See `revealScrollCorrection`.
-  // Any of the captured rows will do: they all sit below the prepend, so they all move by
-  // the same amount, which is why the spares can stand in for a replaced first choice.
-  //
-  // `prevTopRef`/`restoreTopRef` are updated in the same breath, and that ordering is the
-  // point: the compensating write dispatches its own scroll event, and a handler that saw
-  // the OLD `prevScrollTop` would read this as a large downward jump. Writing them here
-  // means the handler sees a consistent pair. (It moves the view DOWN, so
-  // `nextStickToBottom`'s rule 3 can't misread it as the user leaving either way — but
-  // `nextRestoreTop` would happily record the un-compensated offset as the reading position.)
-  useLayoutEffect(() => {
-    const pending = preRevealAnchorRef.current;
-    preRevealAnchorRef.current = null;
-    if (!pending) return;
-    const el = scrollRef.current;
-    if (!el || el.clientHeight === 0) return;
-    const anchor = pending.candidates.find((c) => c.node.isConnected);
-    const delta = anchor
-      ? revealScrollCorrection({
-        anchorTopBefore: anchor.top,
-        anchorTopAfter: contentTopOf(anchor.node, el),
-      })
-      // Nothing the reader was looking at survived the commit — a rewind truncating the
-      // transcript underneath the reveal. Total height is the WRONG measure (a streamed
-      // append lands in it too, which is the whole reason for the anchors) but being off by
-      // one card beats being off by the entire prepend, which is what doing nothing costs.
-      : revealScrollCorrection({ anchorTopBefore: pending.scrollHeight, anchorTopAfter: el.scrollHeight });
-    if (delta <= 0) return;
-    el.scrollTop += delta;
-    prevTopRef.current = el.scrollTop;
-    restoreTopRef.current = el.scrollTop;
-  }, [firstShown]);
+  // The reveal's own commit: React has just prepended the entries, so the hold is settled here,
+  // synchronously, before the browser paints a single frame of the un-corrected position.
+  useLayoutEffect(() => { holdAnchorSteady(); }, [firstShown, holdAnchorSteady]);
 
   // A LAYOUT effect, not a passive one, and that is the whole race: React has just mutated
   // the DOM, so the browser is holding a scroll event for whatever `scrollTop` clamp that
@@ -604,12 +660,20 @@ export function ChatPane({
   // expanding, the composer growing a line (which SHRINKS the scroller), a split or window
   // resize, and the container being re-homed into another pane's slot — a re-parent resets
   // `scrollTop` to 0, which is the "splitting jumped the transcript to the top" symptom.
+  //
+  // Both branches below are the SAME instruction, told to the two states the view can be in:
+  // stay where you were. Pinned, that means the bottom; unpinned, it means the row the reader
+  // is on — and an unpinned reader used to get nothing here at all, which is why a revealed
+  // block's images could quietly push them off it long after the reveal itself was corrected.
+  // RO callbacks are delivered after layout and before paint, so neither correction costs a
+  // visibly wrong frame.
   useEffect(() => {
     const el = scrollRef.current;
     const content = contentRef.current;
     if (!el || !content || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => {
       if (stickRef.current) scrollToBottom();
+      else holdAnchorSteady();
       // Content growing ABOVE an unpinned view moves the card without a scroll event of
       // its own — the rail would otherwise still be showing a card that is back in view.
       syncRailRef.current();
@@ -617,7 +681,7 @@ export function ChatPane({
     ro.observe(el);
     ro.observe(content);
     return () => ro.disconnect();
-  }, [scrollToBottom]);
+  }, [scrollToBottom, holdAnchorSteady]);
 
   // The one height change the observer above CANNOT see: a re-home. `appendChild`-ing the
   // session's container into another slot zeroes `scrollTop` on every scroller inside it
@@ -642,14 +706,22 @@ export function ChatPane({
       // Guarded on the value actually differing so a `fitAndResize` for a move that scrolled
       // nothing (the common case — it fires on every layout change, not just re-homes) writes
       // nothing at all.
-      else if (el && el.clientHeight > 0 && el.scrollTop !== restoreTopRef.current) {
-        el.scrollTop = restoreTopRef.current;
-        prevTopRef.current = el.scrollTop;
+      else if (el && el.clientHeight > 0) {
+        if (el.scrollTop !== restoreTopRef.current) {
+          el.scrollTop = restoreTopRef.current;
+          prevTopRef.current = el.scrollTop;
+        }
+        // Re-take the hold rather than waiting for a scroll event to do it. A garaged scroller
+        // measures nothing, so whatever hold it had was dropped on the way out; and the branch
+        // above dispatches no scroll event at all when the offset came back unchanged — which
+        // is the common case, and would otherwise leave a re-homed reader unheld until they
+        // touched the wheel.
+        captureAnchor();
       }
       syncRail();
     });
     return () => session.setTranscriptRepin(null);
-  }, [session, scrollToBottom, syncRail]);
+  }, [session, scrollToBottom, syncRail, captureAnchor]);
 
   // ── ⌃C stops the turn — the terminal renderer's reflex, on this surface too ─────────
   // The rule itself (chord, "a live selection is a copy", "an idle session keeps ⌃C") lives
@@ -874,6 +946,29 @@ export function ChatPane({
             restoreTopRef.current = nextRestoreTop(restoreTopRef.current, metrics);
             prevTopRef.current = el.scrollTop;
             syncRail();
+            // The hold moves with the reader: wherever they have just come to rest is the new
+            // "don't move me from here". A pinned view needs no hold — the bottom is its own
+            // anchor, and `scrollToBottom` is what keeps it.
+            //
+            // SETTLE BEFORE RE-HOLDING, and that order is the entire correctness of this pair.
+            // A scroll event is not proof that the reader moved: this pane's `scrollTop` is
+            // written by the hold's own correction, by the re-home restore, and by the browser's
+            // clamp when a block shrinks. Worse, scroll events are delivered BEFORE
+            // ResizeObserver callbacks in the same frame — so a re-hold here always beats the
+            // observer to any height change that has landed since the last correction, and
+            // re-holding first would BAKE THAT CHANGE IN as though the reader had asked for it.
+            // Measured, before this line was split in two: a reveal was corrected exactly, then
+            // the post-paint decoration pass grew the entries above the fold by 478px, the
+            // correction's own scroll event re-held at the new layout, and the observer that
+            // followed found nothing left to fix — 478px of drift with a hold in place the
+            // whole time. Settling first makes the re-hold a no-op in that case, which is
+            // what it should have been.
+            //
+            // Cheap enough to do per event: both calls read rects on a scroller nothing has
+            // mutated, so they cost no layout, and the settle writes nothing unless something
+            // really moved.
+            if (stickRef.current) heldAnchorRef.current = null;
+            else { holdAnchorSteady(); captureAnchor(); }
             // Reading upwards past the window's ceiling extends it, so scrolling back
             // through a long conversation feels continuous rather than like hitting a wall.
             //

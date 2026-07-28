@@ -15,7 +15,7 @@ import {
   wheelIntent, keyIntent, touchIntent,
   isAgentRun, runDurationMs, formatModelName, runMetaChips,
   isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote, startSubAgentRun,
-  nextFirstShown, splitWindow, revealScrollCorrection, WINDOW_TAIL, WINDOW_STEP, clampLines,
+  nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_TAIL, WINDOW_STEP, clampLines,
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV,
   type SubAgentRun, type ProgressProbe, type HistoryNav,
 } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
@@ -1007,9 +1007,9 @@ describe('splitWindow', () => {
   });
 });
 
-describe('revealScrollCorrection', () => {
+describe('anchorHoldCorrection', () => {
   it('corrects by exactly how far the anchor row moved', () => {
-    expect(revealScrollCorrection({ anchorTopBefore: 1200, anchorTopAfter: 6200 })).toBe(5000);
+    expect(anchorHoldCorrection({ anchorTopBefore: 1200, anchorTopAfter: 6200 })).toBe(5000);
   });
 
   it('IGNORES an append that lands in the same commit — the regression this exists for', () => {
@@ -1019,17 +1019,45 @@ describe('revealScrollCorrection', () => {
     // correcting by THAT would scroll the reader 700px past where they were reading.
     const prepend = 5000;
     const append = 700;
-    const byAnchor = revealScrollCorrection({ anchorTopBefore: 1200, anchorTopAfter: 1200 + prepend });
+    const byAnchor = anchorHoldCorrection({ anchorTopBefore: 1200, anchorTopAfter: 1200 + prepend });
     const byScrollHeight = (40_000 + prepend + append) - 40_000;
     expect(byAnchor).toBe(prepend);
     expect(byScrollHeight).toBe(prepend + append);
     expect(byAnchor).not.toBe(byScrollHeight);
   });
 
-  it('corrects nothing when the anchor did not move, or moved up', () => {
-    expect(revealScrollCorrection({ anchorTopBefore: 800, anchorTopAfter: 800 })).toBe(0);
-    // Only reachable if something else re-laid the transcript out; guessing would be worse.
-    expect(revealScrollCorrection({ anchorTopBefore: 800, anchorTopAfter: 400 })).toBe(0);
+  it('corrects nothing when the anchor did not move', () => {
+    expect(anchorHoldCorrection({ anchorTopBefore: 800, anchorTopAfter: 800 })).toBe(0);
+  });
+
+  it('follows the row UP as well as down — the half a reveal-only correction never saw', () => {
+    // The hold outlives the reveal now, so it meets the other direction for real: a tool card
+    // above the reader collapsing to its done card, an image failing and shrinking to its alt
+    // text, a rewind dropping rows above them. Holding still means following the row up too;
+    // clamping at zero (which the reveal-only correction did, because a reveal can only ever
+    // ADD above) would leave the reader sitting exactly that far down the page from where
+    // they were.
+    expect(anchorHoldCorrection({ anchorTopBefore: 800, anchorTopAfter: 400 })).toBe(-400);
+    expect(anchorHoldCorrection({ anchorTopBefore: 6200, anchorTopAfter: 6060 })).toBe(-140);
+  });
+
+  it('ignores sub-pixel wobble, so a stream does not write scrollTop every frame', () => {
+    // Zoom and fractional layout make an untouched row's measured offset drift by fractions
+    // of a pixel. Correcting for those is invisible and endless.
+    expect(anchorHoldCorrection({ anchorTopBefore: 1000, anchorTopAfter: 1000.4 })).toBe(0);
+    expect(anchorHoldCorrection({ anchorTopBefore: 1000, anchorTopAfter: 999.6 })).toBe(0);
+    expect(anchorHoldCorrection({ anchorTopBefore: 1000, anchorTopAfter: 1000.5 })).toBe(0.5);
+  });
+
+  it('is idempotent once the hold is re-measured — why two callers cannot double-correct', () => {
+    // The reveal's layout effect and the ResizeObserver both fire for the same commit. The
+    // first applies the delta and re-measures the anchor against the layout it produced; the
+    // second therefore sees before === after and does nothing. Native `overflow-anchor` is off
+    // for exactly this reason (it would have been a third, uncoordinated corrector).
+    const before = 1200;
+    const after = 1200 + 5000;
+    expect(anchorHoldCorrection({ anchorTopBefore: before, anchorTopAfter: after })).toBe(5000);
+    expect(anchorHoldCorrection({ anchorTopBefore: after, anchorTopAfter: after })).toBe(0);
   });
 
   it('ANY surviving row below the prepend gives the same answer — why spare anchors work', () => {
@@ -1040,7 +1068,7 @@ describe('revealScrollCorrection', () => {
     // older fan-out migrates its key and replaces the node).
     const prepend = 3200;
     for (const before of [1200, 2100, 4800]) {
-      expect(revealScrollCorrection({ anchorTopBefore: before, anchorTopAfter: before + prepend }))
+      expect(anchorHoldCorrection({ anchorTopBefore: before, anchorTopAfter: before + prepend }))
         .toBe(prepend);
     }
   });
@@ -1048,7 +1076,17 @@ describe('revealScrollCorrection', () => {
   it('the "show earlier" button unmounting on the last reveal is absorbed automatically', () => {
     // The final step reveals 900px of entries AND removes the 32px button above them, so the
     // net movement is 868px. An anchor measure reports the net; a height measure would not.
-    expect(revealScrollCorrection({ anchorTopBefore: 1000, anchorTopAfter: 1868 })).toBe(868);
+    expect(anchorHoldCorrection({ anchorTopBefore: 1000, anchorTopAfter: 1868 })).toBe(868);
+  });
+
+  it('an image decoding LONG after the reveal is the same measurement — the 07-28 report', () => {
+    // The reveal itself was already corrected: 40 entries prepended, anchor moved 5000px,
+    // scrollTop pushed back by 5000. Three hundred milliseconds later two images inside those
+    // revealed entries finish decoding and grow 720px between them, above the reader. Nothing
+    // used to be holding by then (the anchor was released at the end of the reveal commit), so
+    // the reader travelled 720px down the transcript for no reason they could see. A held
+    // anchor measures it as the same kind of movement and absorbs it the same way.
+    expect(anchorHoldCorrection({ anchorTopBefore: 6200, anchorTopAfter: 6920 })).toBe(720);
   });
 });
 
