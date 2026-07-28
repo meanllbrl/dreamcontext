@@ -1492,6 +1492,49 @@ describe('hook user-prompt-submit (integration)', () => {
     expect(output).not.toContain('REVIEW the skills available');             // skills hook off → no skill bullet
   });
 
+  // ─── insight read-path directive (SKILL.md Operational Rule 13) ────────────
+
+  it('attaches the lab-show / do-not-fetch directive to an insight recall hit', () => {
+    const insights = join(ctx, 'lab', 'insights');
+    mkdirSync(insights, { recursive: true });
+    writeFileSync(join(insights, 'mrr.md'), [
+      '---',
+      'slug: mrr',
+      'title: Monthly Recurring Revenue',
+      'description: Monthly recurring revenue in USD, net of discounts',
+      '---',
+      '## Meaning',
+      'Monthly recurring revenue MRR revenue USD. Monthly recurring revenue MRR revenue USD.',
+    ].join('\n'));
+
+    const env = { ...process.env, DREAMCONTEXT_RECALL_MODE: 'raw', DREAMCONTEXT_SKILLS_HOOK: '0' };
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'monthly recurring revenue MRR in USD' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, env);
+    expect(output).toContain('[insight] lab/insights/mrr.md');   // the hit surfaced
+    expect(output).toContain('ALREADY TRACKED as an insight');    // the directive rode along
+    expect(output).toContain('dreamcontext lab show mrr');        // …naming the exact call
+    expect(output).toContain('Do NOT fetch this metric');         // …and the prohibition
+    expect(output).toContain('lab sync mrr');                     // …and the one legitimate fetch
+  });
+
+  it('leaves non-insight hits untouched (no lab directive on a knowledge doc)', () => {
+    const kdir = join(ctx, 'knowledge');
+    mkdirSync(kdir, { recursive: true });
+    writeFileSync(join(kdir, 'webhook-retry-policy.md'), [
+      '---',
+      'name: webhook-retry-policy',
+      'description: How we handle webhook retry idempotency and dedup',
+      '---',
+      'Webhook retry idempotency dedup. Webhook retry idempotency dedup.',
+    ].join('\n'));
+
+    const env = { ...process.env, DREAMCONTEXT_RECALL_MODE: 'raw', DREAMCONTEXT_SKILLS_HOOK: '0' };
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'webhook retry idempotency dedup policy' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, env);
+    expect(output).toContain('webhook-retry-policy.md');
+    expect(output).not.toContain('ALREADY TRACKED as an insight');
+  });
+
   it('no context gate when neither knowledge nor skills are relevant', () => {
     writeSleep(ctx, { debt: 8, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const env = { ...process.env, DREAMCONTEXT_RECALL_MODE: 'raw', DREAMCONTEXT_SKILLS_HOOK: '0' };

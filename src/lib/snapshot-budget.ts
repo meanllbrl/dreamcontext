@@ -13,7 +13,9 @@
  * references — and never below "referenced by path + recallable". Nothing is
  * ever raw-truncated, and never-evict sections (soul, user, warnings,
  * reminders) are untouchable. Demotion happens in waves, cheapest-loss
- * sections first, and stops the moment the snapshot fits.
+ * sections first, and stops the moment the snapshot fits. A section may also
+ * set a `maxDemotionLevel` floor when a deeper rung would technically fit but
+ * would strip the very content the section exists to carry (see Lab).
  *
  * Everything demoted stays reachable: the file paths are still printed, the
  * docs are still in the recall corpus, and the UserPromptSubmit recall hook
@@ -29,8 +31,27 @@ export interface BudgetSection {
    * complete replacement for `text` — a curated summary, never a slice.
    */
   demotions?: string[];
+  /**
+   * Deepest ladder rung this section may be taken to (1-based). Defaults to
+   * `demotions.length` — i.e. the whole ladder is fair game.
+   *
+   * A floor is for a section whose remaining CONTENT is the point, not its
+   * size: Lab must always name the metrics it tracks and their latest values,
+   * because a bare "N insight(s)" line leaves the agent unable to tell that a
+   * metric question is already answered in the brain — and it then goes and
+   * fetches the number from outside (SKILL.md Operational Rule 13). Cheaper
+   * sections absorb the pressure instead; if none can, the snapshot stays
+   * honestly over budget rather than blinding the agent to save ~1KB.
+   */
+  maxDemotionLevel?: number;
   /** Identity/warning tier — never demoted regardless of budget pressure. */
   neverEvict?: boolean;
+}
+
+/** Deepest rung the ladder may take a section to (floor-aware). */
+function deepestLevel(s: BudgetSection): number {
+  const available = s.demotions?.length ?? 0;
+  return s.maxDemotionLevel === undefined ? available : Math.min(available, Math.max(0, s.maxDemotionLevel));
 }
 
 /** ~4 chars per token for mixed EN/markdown — same estimate `snapshot --tokens` uses. */
@@ -103,12 +124,12 @@ export function applyBudget(
     return { text, demoted: [], estimatedTokens: estimateTokens(text), overBudget: false };
   }
 
-  const maxLevels = Math.max(0, ...sections.map((s) => s.demotions?.length ?? 0));
+  const maxLevels = Math.max(0, ...sections.map((s) => deepestLevel(s)));
   outer:
   for (let level = 1; level <= maxLevels; level++) {
     for (const s of sections) {
       if (s.neverEvict) continue;
-      if (!s.demotions || s.demotions.length < level) continue;
+      if (deepestLevel(s) < level) continue;
       levels.set(s.id, level);
       text = render(levels);
       if (estimateTokens(text) <= budgetTokens) break outer;

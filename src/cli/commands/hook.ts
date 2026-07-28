@@ -174,6 +174,31 @@ export function analyzeTranscript(transcriptPath: string): TranscriptAnalysis {
   }
 }
 
+/**
+ * The read-path directive attached to an `insight` recall hit.
+ *
+ * An insight hit is NOT a "go read this file" hit — the manifest's prose is
+ * only the meaning; the numbers live in `lab/cache/<slug>.json` and `lab show`
+ * is the only call that prints them. Without this line an insight renders
+ * exactly like a knowledge hit and the closing gate says "READ the related
+ * file(s)", which is the wrong instruction for a metric: the real past failure
+ * is an agent asked for revenue reaching for a billing MCP while the synced
+ * series was already in the brain (SKILL.md Operational Rule 13).
+ *
+ * This fires on EVERY prompt, so it is the one rung of the rule-13 ladder that
+ * does not depend on the skill body being loaded or on the snapshot surviving
+ * its budget — both of which can be absent exactly when the metric is asked for.
+ *
+ * `vault` set ⇒ the hit came from a federated peer, where `lab show` cannot
+ * reach: point at the peer's own vault instead of printing a command that fails.
+ */
+function insightReadDirective(slug: string, vault?: string): string {
+  const how = vault
+    ? `read \`${vault}\`'s \`lab/insights/${slug}.md\` + \`lab/cache/${slug}.json\` (or run \`lab show ${slug}\` in that vault)`
+    : `\`dreamcontext lab show ${slug}\` — cached series, never fetches`;
+  return `    → ALREADY TRACKED as an insight: ${how}. Do NOT fetch this metric from an API, an MCP tool, or a one-off script; only \`lab sync ${slug}\` when the cache is TTL-stale.`;
+}
+
 /** Extract the role of a transcript record, tolerating both flat and nested message shapes. */
 function recordRole(rec: object): string | null {
   const r = rec as { role?: unknown; message?: { role?: unknown } };
@@ -1581,6 +1606,7 @@ export function registerHookCommand(program: Command): void {
                   lines.push(`  [${h.doc.type}] ${h.doc.relPath}`);
                   if (h.snippet) lines.push(`    Why: ${h.snippet}`);
                   else if (h.doc.description) lines.push(`    ${h.doc.description}`);
+                  if (h.doc.type === 'insight') lines.push(insightReadDirective(h.doc.slug));
                   const excerpt = h.doc.body
                     .split('\n')
                     .map(l => l.trim())
@@ -1630,6 +1656,7 @@ export function registerHookCommand(program: Command): void {
                       lines.push(`  [${h.doc.type}] ${h.vault}::${h.doc.relPath}`);
                       if (h.snippet) lines.push(`    Why: ${h.snippet}`);
                       else if (h.doc.description) lines.push(`    ${h.doc.description}`);
+                      if (h.doc.type === 'insight') lines.push(insightReadDirective(h.doc.slug, h.vault));
                     }
                     lines.push(
                       '  (Live reference — recall the source vault directly with ' +

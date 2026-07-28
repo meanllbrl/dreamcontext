@@ -2,6 +2,34 @@
   {
     "date": "2026-07-28",
     "type": "fix",
+    "scope": "lab",
+    "description": "Two holes made SKILL.md Operational Rule 13 ('insights before external fetch') unenforceable in practice, so metric questions kept going to external APIs while the synced series sat in lab/cache.\n\n(1) RECALL HOOK. The UserPromptSubmit hook rendered an insight hit identically to a knowledge hit, and the closing context gate said 'READ the related knowledge/feature file(s)' — the wrong instruction for a metric, whose numbers live in lab/cache/<slug>.json, not in the manifest prose. Insight hits (local AND federated peer) now append a directive naming the exact call: 'ALREADY TRACKED as an insight: dreamcontext lab show <slug> — cached series, never fetches. Do NOT fetch this metric from an API, an MCP tool, or a one-off script; only lab sync <slug> when the cache is TTL-stale.' Peer hits point at the peer vault instead, since lab show cannot reach across vaults. This fires on EVERY prompt, so unlike rule 13 itself it does not depend on the skill body being loaded or on the snapshot surviving its budget — both of which can be absent exactly when a metric is asked for.\n\n(2) SNAPSHOT LADDER. The Lab section had a level-2 'N insight(s) — lab list for details' rung, and the budget ladder took it on BOTH live vaults: the agent saw '- 21 insight(s)' and nothing else, so it could not tell that 'what is our MRR?' was already answered in the brain. The rung saved ~1KB on a 100KB snapshot and cost the section its entire purpose. Rung deleted. Added a generic BudgetSection.maxDemotionLevel floor to snapshot-budget.ts (deepest rung a section may be taken to; cheaper sections absorb the pressure instead, and the snapshot stays honestly over budget rather than blinding the agent) and pinned Lab at 1. Measured on Tilki: +820 bytes on a 100KB snapshot, 21 metric names + latest values now visible.\n\nVerified live on both vaults and on the federated peer path. Tests: 4 unit tests for the floor mechanism (absorption, honest over-budget, level 0 pinning, clamping above available rungs), 1 end-to-end Lab test under forced budget pressure, 2 hook integration tests (insight directive present, non-insight hits untouched).\n\nNOT fixed here: the snapshot busts the 20,000-char harness limit even fully demoted (74KB here, 100KB on Tilki) because the never-evict tier alone is ~20.9KB — tracked separately.",
+    "breaking": false,
+    "summary": "Insight recall hits carry a lab-show/do-not-fetch directive; Lab snapshot section can no longer demote to a bare count",
+    "references": [
+      "file:src/cli/commands/hook.ts",
+      "file:src/lib/snapshot-budget.ts",
+      "file:src/cli/commands/snapshot.ts",
+      "task:the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview"
+    ]
+  },
+  {
+    "date": "2026-07-28",
+    "type": "fix",
+    "scope": "lab",
+    "description": "Rule 13 (insights before external fetch) shipped in 8b3a790 as documentation, but two of the three rungs it leans on were unreachable in practice.\n\n(1) The UserPromptSubmit recall hook rendered an insight hit identically to a knowledge hit — path, Why, excerpt — and the closing context gate then said 'READ the related knowledge/feature file(s)', which is the wrong instruction for a metric: the manifest holds the meaning, the numbers live in lab/cache/<slug>.json and only 'lab show' prints them. hook.ts now appends insightReadDirective() to every insight hit: the exact 'dreamcontext lab show <slug>' call, an explicit do-NOT-fetch-from-API/MCP/script line, and 'lab sync' as the only legitimate fetch. Federated peer hits get the vault-scoped variant (lab show cannot reach another vault). This fires on every prompt, so it is the one rung that does not depend on the skill body being loaded or on the snapshot surviving its budget.\n\n(2) renderLabSection had a level-2 rung that collapsed the whole section to '- N insight(s) - lab list for details', and on BOTH live vaults the budget ladder took it: the agent saw '7 insight(s)' / '21 insight(s)' and could not tell that a metric question was already answered in the brain. That rung is deleted, and snapshot-budget.ts gains a general BudgetSection.maxDemotionLevel floor (lab sets 1) so a future rung cannot re-introduce the blindness. Cheaper sections absorb the pressure instead; if none can, the snapshot stays honestly over budget rather than blinding the agent to save ~1KB. Live effect: Tilki 100,704 -> 101,524 chars (+0.8%) and all 21 metric names + latest values are back in context.\n\nNot fixed here: the snapshot is 74KB local / 100KB Tilki against a 20,000-char harness limit, so it is still persisted with a 2KB blind preview. Ladder fully exhausted on both vaults; the neverEvict soul tier alone is ~20KB. Filed as its own task.",
+    "breaking": false,
+    "summary": "Insight recall hits now carry a 'lab show, do not fetch' directive; Lab's snapshot section can no longer demote to a bare count.",
+    "references": [
+      "file:src/cli/commands/hook.ts",
+      "file:src/cli/commands/snapshot.ts",
+      "file:src/lib/snapshot-budget.ts",
+      "task:sessionstart-snapshot-busts-the-harness-limit-so-the-brain-loads-as-a-2kb-blind-preview"
+    ]
+  },
+  {
+    "date": "2026-07-28",
+    "type": "fix",
     "scope": "chat",
     "description": "The composer's context bar divided by 200K unless the model id carried Claude Code's [1m] marker. That marker never arrives: message.model is always the bare id (claude-opus-5) even when the session runs the [1m] variant, so the check was dead and every session was pinned at 200K — a ~104k-token conversation read '52%' of a window it was nowhere near. Inverted the rule: 1M is the default and 200K the exception (the Haiku line, and the Opus/Sonnet generations before 4.6). Every model the CLI offers today (Opus 4.6+/5, Sonnet 4.6+/5, Fable, Mythos) ships 1M, and an unknown id is far more likely to be a NEW model than a retired one, so unknown resolves to 1M. The [1m] marker is still honored, and the observed footprint still promotes: a session cannot be at 130% of its window, so exceeding 200K is evidence of the larger one. Promotion only ever goes up. contextLimitFor now lives in one place per side (dashboard/src/lib/agentComposer.ts + mirrored server twin in agent-terminal.ts), replacing the local copy in chatSession.ts and three ?? 200_000 fallbacks scattered across the composers. Known trade-off: a session genuinely running a 200K variant now reads emptier than it is, so the ⚠ /compact may not appear before Claude Code's own auto-compact — no on-disk source for the real window (not in transcript, not in ~/.claude.json caches). 6 new tests; suite 5382 green.",
     "breaking": false,

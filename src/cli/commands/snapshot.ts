@@ -629,9 +629,18 @@ function insightSnapshotLine(root: string, slug: string, title: string, group: s
 }
 
 /**
- * Lab (analytics insights) section: budget-demotable full → one-liners → count
- * line. Cache-only (never triggers a fetch). Must NEVER crash the snapshot on a
- * malformed manifest — every failure degrades to `null` (section omitted).
+ * Lab (analytics insights) section: budget-demotable full → one-liners. Cache-
+ * only (never triggers a fetch). Must NEVER crash the snapshot on a malformed
+ * manifest — every failure degrades to `null` (section omitted).
+ *
+ * The ladder deliberately stops at the one-liners (`maxDemotionLevel: 1` at the
+ * flush site). There used to be a level-2 "N insight(s) — `lab list` for
+ * details" rung, and on both live vaults the ladder took it: the agent saw
+ * `- 21 insight(s)` and nothing else, so it could not tell that "what's our
+ * MRR?" was already answered in the brain and went and fetched the number from
+ * outside — the exact failure SKILL.md Operational Rule 13 exists to prevent.
+ * The rung saved ~1KB on a 100KB snapshot and cost the section its whole
+ * purpose, so it is gone.
  */
 function renderLabSection(root: string): { full: string; demotions: string[] } | null {
   try {
@@ -644,9 +653,8 @@ function renderLabSection(root: string): { full: string; demotions: string[] } |
 
     const fullBody = [...headerLines, ...lines, '', 'Sync: `dreamcontext lab sync <slug>` or `--all`.', ''];
     const level1 = [...headerLines, ...lines, ''];
-    const level2 = [`## Lab (Analytics Insights)\n`, `- ${insights.length} insight(s) — \`dreamcontext lab list\` for details`, ''];
 
-    return { full: fullBody.join('\n'), demotions: [level1.join('\n'), level2.join('\n')] };
+    return { full: fullBody.join('\n'), demotions: [level1.join('\n')] };
   } catch {
     return null; // the snapshot must never crash on a malformed manifest
   }
@@ -1140,13 +1148,17 @@ export function generateSnapshot(rootOverride?: string): string {
   }
 
   // 7.7 Lab (analytics insights) — curated metrics synced from HTTP/scripts.
-  // Cache-only; budget-demotable full → one-liners → count line.
+  // Cache-only; budget-demotable full → one-liners, and NO further: the floor
+  // keeps every metric's name + latest value in context under any budget
+  // pressure, because that is what tells the agent a metric question is
+  // already answered here instead of at some external API (Rule 13).
   const labSection = renderLabSection(root);
   if (labSection) {
     sections.push({
       id: 'lab',
       text: labSection.full,
       demotions: labSection.demotions,
+      maxDemotionLevel: 1,
     });
   }
 

@@ -102,6 +102,15 @@ describe('skill/SKILL.md markers', () => {
     expect(content).toContain('The router governs READING too, not only creating.');
   });
 
+  // The rule's first rung (the snapshot Lab section) and the rule itself both
+  // depend on something that can be absent when a metric is asked for — the
+  // snapshot can be budget-demoted, the skill body may never load. The recall
+  // hook's per-hit directive is the rung that always fires, so the rule has to
+  // name it or a future session won't know it is authoritative.
+  it('points at the recall hook directive as the always-on rung', () => {
+    expect(content).toContain('ALREADY TRACKED as an insight');
+  });
+
   // Issue #204: duplicate -N task mirrors from a corrupted sync ledger must
   // route to the repair verb, not a hand-rolled fix or a fresh task recreate.
   it('has the tasks dedup capabilities row', () => {

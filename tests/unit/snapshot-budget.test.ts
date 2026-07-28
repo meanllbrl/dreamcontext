@@ -84,6 +84,57 @@ describe('applyBudget', () => {
     expect(res.text).toContain('memory recall');
   });
 
+  // ── maxDemotionLevel: the floor that keeps Lab's metric names + values in
+  //    context under any budget pressure (see snapshot.ts § renderLabSection).
+  const rung = (marker: string, chars: number): string => `${marker}\n${big(chars)}`;
+
+  it('stops at maxDemotionLevel and makes another section absorb the pressure', () => {
+    const sections: BudgetSection[] = [
+      // Floored at rung 1: rung 2 exists but is off-limits.
+      { id: 'lab', text: rung('LAB_FULL', 20_000), demotions: [rung('LAB_L1', 9000), rung('LAB_L2', 20)], maxDemotionLevel: 1 },
+      { id: 'features', text: rung('FEAT_FULL', 20_000), demotions: [rung('FEAT_L1', 9000), rung('FEAT_L2', 20)] },
+    ];
+    const res = applyBudget(sections, 3000);
+    expect(res.demoted.find((d) => d.id === 'lab')?.level).toBe(1);
+    expect(res.demoted.find((d) => d.id === 'features')?.level).toBe(2);
+    expect(res.text).toContain('LAB_L1');       // lab kept its rung-1 content…
+    expect(res.text).not.toContain('LAB_L2');   // …and never reached the floor-blocked rung
+    expect(res.text).toContain('FEAT_L2');      // the unfloored section absorbed the pressure
+    expect(res.overBudget).toBe(false);
+  });
+
+  it('honours the floor even when that means staying over budget', () => {
+    const sections: BudgetSection[] = [
+      { id: 'lab', text: rung('LAB_FULL', 40_000), demotions: [rung('LAB_L1', 30_000), rung('LAB_L2', 20)], maxDemotionLevel: 1 },
+    ];
+    const res = applyBudget(sections, 3000);
+    expect(res.demoted).toEqual([{ id: 'lab', level: 1 }]);
+    expect(res.text).toContain('LAB_L1');
+    expect(res.text).not.toContain('LAB_L2');
+    expect(res.overBudget).toBe(true); // honestly over budget, not blinded
+  });
+
+  it('maxDemotionLevel 0 pins a section to its full render without neverEvict', () => {
+    const sections: BudgetSection[] = [
+      { id: 'pinned', text: rung('PIN_FULL', 20_000), demotions: [rung('PIN_L1', 20)], maxDemotionLevel: 0 },
+      { id: 'other', text: rung('OTHER_FULL', 20_000), demotions: [rung('OTHER_L1', 20)] },
+    ];
+    const res = applyBudget(sections, 3000);
+    expect(res.demoted.map((d) => d.id)).toEqual(['other']);
+    expect(res.text).toContain('PIN_FULL');
+    expect(res.text).not.toContain('PIN_L1');
+  });
+
+  it('a floor above the available rungs is harmless (clamped to what exists)', () => {
+    const sections: BudgetSection[] = [
+      { id: 'a', text: rung('A_FULL', 20_000), demotions: [rung('A_L1', 20)], maxDemotionLevel: 9 },
+    ];
+    const res = applyBudget(sections, 3000);
+    expect(res.demoted).toEqual([{ id: 'a', level: 1 }]);
+    expect(res.text).toContain('A_L1');
+    expect(res.overBudget).toBe(false);
+  });
+
   it('drops empty sections from the render (matches legacy join behaviour)', () => {
     const sections: BudgetSection[] = [
       { id: 'a', text: 'A' },
