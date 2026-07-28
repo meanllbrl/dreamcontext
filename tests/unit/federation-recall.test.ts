@@ -55,6 +55,13 @@ function writeKnowledge(
   writeFileSync(path, `---\n${fmLines}\n---\n\n${body}\n`);
 }
 
+/** Write an automation manifest (`automations/<slug>.md`) into a vault. */
+function writeAutomation(projectRoot: string, slug: string, body: string): void {
+  const dir = join(projectRoot, '_dream_context', 'automations');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${slug}.md`), `---\nslug: ${slug}\ntitle: ${slug}\nenabled: true\n---\n\n${body}\n`);
+}
+
 describe('crossVaultRecall (federation P1.2/P1.3)', () => {
   let home: string;
   let base: string;
@@ -165,6 +172,45 @@ describe('crossVaultRecall (federation P1.2/P1.3)', () => {
     const slugs = hits.map((h) => h.doc.slug);
     expect(slugs).toContain('native');
     expect(slugs).not.toContain('ingested'); // federated doc NEVER served across the boundary
+  });
+
+  it('serves the CURRENT vault\'s automations but never a peer\'s', () => {
+    const cur = makeVault(base, 'cur', { home, shareable: false });
+    const peer = makeVault(base, 'peer', { home, shareable: true });
+    writeAutomation(cur, 'my-digest', 'nightly paddle revenue digest run');
+    writeAutomation(peer, 'their-digest', 'nightly paddle revenue digest run');
+
+    const { hits } = crossVaultRecall('nightly paddle revenue digest', {
+      vaults: [{ name: 'cur', current: true }, { name: 'peer' }],
+      home,
+      topK: 10,
+    });
+
+    const slugs = hits.map((h) => h.doc.slug);
+    // A manifest body IS the prompt a bypassPermissions session runs, and
+    // `shared` defaults false — so a peer's automations never cross the boundary.
+    expect(slugs).not.toContain('their-digest');
+    // …but the user's OWN automations must stay first-class: plain `memory recall`
+    // takes this federated path by default whenever any peer is connected.
+    expect(slugs).toContain('my-digest');
+  });
+
+  it('honours minLevel across vaults', () => {
+    const cur = makeVault(base, 'cur', { home, shareable: false });
+    const peer = makeVault(base, 'peer', { home, shareable: true });
+    writeKnowledge(cur, 'cur-pinned', 'kubernetes ingress rollout notes', { pinned: true });
+    writeKnowledge(cur, 'cur-plain', 'kubernetes ingress rollout notes');
+    writeKnowledge(peer, 'peer-pinned', 'kubernetes ingress rollout notes', { pinned: true });
+    writeKnowledge(peer, 'peer-plain', 'kubernetes ingress rollout notes');
+
+    const { hits } = crossVaultRecall('kubernetes ingress rollout', {
+      vaults: [{ name: 'cur', current: true }, { name: 'peer' }],
+      home,
+      topK: 10,
+      minLevel: 3,
+    });
+
+    expect(hits.map((h) => h.doc.slug).sort()).toEqual(['cur-pinned', 'peer-pinned']);
   });
 
   it('resolveAllShareableVaults spans current + shareable peers only', () => {

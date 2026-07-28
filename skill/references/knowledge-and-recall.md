@@ -48,7 +48,23 @@ It moves the file **and** rewrites every inbound `[[wikilink]]` in one atomic st
 
 ## Memory functions — what they are and how to use them
 
-The `memory` command group is your interface to the curated corpus: `knowledge/*` (`knowledge/features/*` loads as its own `feature` channel — `--types feature` vs `--types knowledge` — never double-counted), `state/*.md`, `core/2.memory.md` (Technical Decisions + Known Issues), every `core/CHANGELOG.json` entry, `core/objectives/*` (`objective` channel), and `lab/insights/*` (`insight` channel). No setup, no index file, no external service — rebuilt in memory each call (<100ms on ~130 docs).
+The `memory` command group is your interface to the curated corpus. **Nine channels, all indexed by default:**
+
+| `--types` | On disk | What it holds |
+|---|---|---|
+| `knowledge` | `knowledge/**/*.md` (excl. `features/`) | deep docs, decisions, patterns, boards |
+| `feature` | `knowledge/features/**` | feature PRDs (its OWN channel — never double-counted as knowledge) |
+| `task` | `state/*.md` + session digests | in-flight and closed work |
+| `memory` | `core/2.memory.md` + bookmarks | technical decisions, known issues, salient moments |
+| `changelog` | every `core/CHANGELOG.json` entry | ship history |
+| `objective` | `core/objectives/*.md` | roadmap OKR outcomes |
+| `insight` | `lab/insights/*.md` | curated analytics metrics (the `## Meaning` prose) |
+| `thesis` | `theses/*.md` | falsifiable hypotheses + their evidence ledger |
+| `automation` | `automations/*.md` + `automations/output/<slug>/*.md` | scheduled-job manifests, their learned `## Pattern` lessons, and what each run actually reported |
+
+No setup, no index file, no external service — rebuilt in memory each call (<100ms on ~130 docs).
+
+**Automations are local-only in recall.** Manifests are gitignored machine-local state, `shared` defaults false, and a manifest body IS the prompt a headless `bypassPermissions` session runs — so they are first-class in your own vault's recall but are **never** served across a vault boundary (neither cross-vault recall nor federation digests). Run outputs are `capture`-flagged (rank-penalised like session digests) and only the **30 most recent** are indexed, so a daily job can't crowd out curated knowledge.
 
 | Function | Use it to… | Command |
 |---|---|---|
@@ -62,7 +78,7 @@ The `memory` command group is your interface to the curated corpus: `knowledge/*
 
 ### recall — your first-line discovery tool
 
-**Run `memory recall` BEFORE grep or blind file reads** whenever the user asks "where did we decide X?", "have we discussed Y?", "what do we know about Z?", or before duplicating work. It ranks across knowledge + features + tasks + memory + changelog + objectives + insights in one shot.
+**Run `memory recall` BEFORE grep or blind file reads** whenever the user asks "where did we decide X?", "have we discussed Y?", "what do we know about Z?", or before duplicating work. It ranks across all nine channels in one shot.
 
 ```bash
 # Plain discovery — top 10 hits with snippets
@@ -74,6 +90,8 @@ dreamcontext memory recall "deprecated" --types changelog        # ship history
 dreamcontext memory recall "rate limit" --types task             # in-flight work
 dreamcontext memory recall "retention goal" --types objective    # roadmap objectives (OKR outcomes)
 dreamcontext memory recall "weekly active users" --types insight # lab insights (curated analytics metrics)
+dreamcontext memory recall "digests improve retention" --types thesis    # open/settled hypotheses
+dreamcontext memory recall "what did the nightly job find" --types automation  # manifests, lessons, run outputs
 
 # Tune result count / machine-readable output
 dreamcontext memory recall "rice prioritization" --top 3 --json
@@ -84,6 +102,28 @@ dreamcontext memory recall "<query>" --connected                 # + out/both pe
 dreamcontext memory recall "<query>" --vault other-project       # + one named peer (repeatable)
 ```
 Read the hit's `slug`/path from the output, then `Read` that file for full context. Hits are scored (higher = better); cross-vault hits are namespaced `<vault>::<type>/<slug>`.
+
+### `--level` — narrow by importance, not by type
+
+Every hit carries a derived importance level 1–3, rendered as the project's own `★`/`★★`/`★★★` notation and returned as `level` in `--json`. `--level <n>` keeps that level **and above**:
+
+| Level | Means | Examples |
+|---|---|---|
+| `★★★` 3 | someone deliberately marked it | `pinned: true` knowledge · a `★★`/`★★★` decision or footgun · a salience-3 bookmark · a validated/invalidated thesis · an insight bound to an objective's KR · `impact: 5` objective · explicit `level: 3` frontmatter |
+| `★★` 2 | normal curated content (**the default**) | most knowledge, feature PRDs, active tasks, open theses, enabled automations |
+| `★` 1 | pointers and logs | changelog entries · automation run outputs · draft/retired theses · `priority: low` tasks · disabled automations |
+
+```bash
+dreamcontext memory recall "notifier" --level 3   # only what's marked important
+dreamcontext memory recall "notifier" --level 2   # curated only — no changelog pointers, no run logs
+dreamcontext memory list --level 3               # everything the brain flags as important
+dreamcontext memory status                       # per-channel counts + the level histogram
+```
+
+Three things to know:
+- **It filters the corpus, it does not re-rank.** `--level` scopes what is searched (exactly like `--types`), so `hit.score` stays raw BM25 and the hook's gate thresholds are untouched.
+- **Task `priority` never promotes.** A `priority: high` task is scheduling urgency, not durable importance — most tasks are high, so counting it would turn `--level 3` into a task list. Priority only demotes (`low` → 1). A task that IS durably important earns level 3 through a `★★` marker in its body.
+- **To mark something important, use the marker its type already has** — pin the knowledge file, write `★★` in the decision, set `salience` on the bookmark. `level:` frontmatter is the explicit override when none of those fit.
 
 ### remember — quick capture mid-session
 

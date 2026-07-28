@@ -9,6 +9,7 @@ import type { RoadmapFilterField } from './RoadmapToolbar';
 import { buildForecasts } from './roadmap-forecast';
 import { useRoadmapPrefs } from '../../hooks/useRoadmapPrefs';
 import { useRoadmapItems } from '../../hooks/useRoadmapItems';
+import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
 import type { Page } from '../layout/Sidebar';
 import '../tasks/Board.css';
 import './RoadmapBoard.css';
@@ -34,9 +35,12 @@ interface RoadmapBoardProps {
    *  objective). Optional — ObjectiveDetailPanel no-ops the Learning section's
    *  navigation callbacks when this isn't wired. */
   onNavigate?: (page: Page, id?: string) => void;
+  /** Shell navigation focus: opens that objective's detail panel. Set when an
+   *  `objective` recall hit is opened from the ⌘K palette. */
+  focus?: FocusTarget;
 }
 
-export function RoadmapBoard({ onNavigate }: RoadmapBoardProps = {}) {
+export function RoadmapBoard({ onNavigate, focus }: RoadmapBoardProps = {}) {
   const { prefs, setSearch, setSort, toggleSortDir, setLayout, toggleCardProp, cycleFilter, clearAllFilters } = useRoadmapPrefs();
   const { search, sortBy, sortDir, layout, cardProps, filters } = prefs;
   const [openMenu, setOpenMenu] = useState<RoadmapMenuKey>(null);
@@ -44,6 +48,11 @@ export function RoadmapBoard({ onNavigate }: RoadmapBoardProps = {}) {
   const [selected, setSelected] = useState<string | null>(null);
   const [warnDismissed, setWarnDismissed] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+
+  // Opening an `objective` recall hit from the ⌘K palette lands here — open its
+  // detail panel rather than leaving the user on the bare board wondering which
+  // of 7 objectives the search meant.
+  useFocusTarget(focus, setSelected);
 
   const { items, warnings, isLoading } = useRoadmapItems();
 

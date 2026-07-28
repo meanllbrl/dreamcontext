@@ -124,11 +124,11 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
     case 'tasks':
       return <TasksPage focus={focus} />;
     case 'roadmap':
-      return <RoadmapPage onNavigate={(page, id) => nav.navigate(page, id ?? null)} />;
+      return <RoadmapPage onNavigate={(page, id) => nav.navigate(page, id ?? null)} focus={focus} />;
     case 'hypotheses':
       return <HypothesesPage focus={focus} />;
     case 'lab':
-      return <LabPage />;
+      return <LabPage focus={focus} />;
     case 'automations':
       return <AutomationsPage />;
     case 'sleep':

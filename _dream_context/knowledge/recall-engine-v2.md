@@ -253,6 +253,38 @@ The BM25 recall engine is now exposed over HTTP for dashboard consumers, making 
 
 Regression lock: `tests/unit/recall-capture-stress.test.ts` (values updated to reflect `0.4`); CI config: `.github/workflows/ci.yml`.
 
+## Update (2026-07-28) — Nine channels, one source of truth, and the `--level` importance filter
+
+### `CORPUS_TYPES` is now the single source of truth
+
+`export const CORPUS_TYPES` in `src/lib/recall.ts` lists every channel `buildCorpus` can produce. Everything else derives from it: `buildCorpus`'s default type set, the CLI's `parseTypes`, `TYPE_LABELS`, `memory list`/`memory status`, `/api/recall`'s `ALL_TYPES`, and `embed dedup`'s allow-list.
+
+**Why it exists — a real silent failure.** `objective`, `insight` and `thesis` shipped into `buildCorpus` and were live for weeks, but `src/server/routes/recall.ts` still carried a hand-written `ALL_TYPES = ['knowledge','feature','task','memory','changelog']`. Its `parseTypes` filtered any type not in that list out, and an empty result fell back to `null` = "all types" — so a dashboard request for `types=objective` returned everything **except** objectives. The dashboard's `RecallHit['type']` union and `recallNav.ts` were equally stale, so an objective hit rendered the knowledge book icon and navigated to the Core page with an empty slug. The lesson generalises: **a hand-written copy of a type union is a place a new member gets silently dropped.** Both the CLI's `TYPE_LABELS` and the dashboard's `BY_TYPE` icon map are now full `Record<CorpusType, …>` (never `Partial`), so the next channel is a compile error instead of a wrong glyph.
+
+### New `automation` channel
+
+Key file: `src/lib/recall.ts`, `loadAutomationRunDocs()`, `MAX_INDEXED_AUTOMATION_RUNS = 30`.
+
+Two doc kinds, one channel:
+- **Manifests** (`automations/<slug>.md`, loaded via `loadMarkdownDocs` with `['cache/**','output/**']` ignored) — the `## Prompt` plus the `## Pattern` playbook and lesson ledger the runs themselves write. Indexing this is what stops the lesson ledger being write-only: a session that never ran the job can find what a previous run learned.
+- **Run outputs** (`automations/output/<slug>/<date>.md`, slug `run#<automation>-<runId>`) — `capture: true` so they are rank-penalised like session digests (machine-generated, unreviewed), newest-first by mtime, capped at 30. A daily automation writes one file per run forever; without the cap the corpus grows unbounded and old run logs dilute IDF.
+
+**Federation exclusion, gated on `!isCurrent`.** Automations are excluded from cross-vault serving (`federation-recall.ts`) and from digests (`federation-digest.ts`): `automations/*.md` is gitignored machine-local state, `shared` defaults false, and a manifest body IS the prompt a `bypassPermissions` session runs. The gate matters — plain `memory recall` takes the federated path by default whenever any peer is connected, so an *unconditional* filter (the first version) made `--types automation` return nothing on exactly the machines that have automations. The two filters must not drift.
+
+**Capture-baseline note.** `recall-capture-stress.test.ts`'s `isCapture` predicate now tests `d.capture === true` first (slug prefixes kept as belt-and-braces). Automation run outputs live in the equally-gitignored `automations/output/`, so like session digests they appear on a dogfooding machine and not in CI — the baseline must strip them or the guard passes in CI and fails locally.
+
+### Derived importance level (`DocLevel` 1–3)
+
+`docLevel(doc)` returns 1–3, read from markers the brain **already** stores — nothing new to maintain: `pinned: true` (knowledge), `★`/`★★`/`★★★` body markers, bookmark `salience`, thesis status (validated/invalidated = settled), objective `impact`, insight→objective-KR binding, automation `enabled`, and an explicit `level:` frontmatter override that always wins. Stars can only RAISE a derived level, never lower it. Absent = `DEFAULT_DOC_LEVEL` (2).
+
+**It is a FILTER, never a ranking input.** `buildCorpus(root, { minLevel })` drops docs below the floor *before* scoring, exactly like `types`. Feeding it into `rankScore` would have made it a second, undocumented re-ranker; touching `score` would have broken the decoupling invariant and the hook's `>= 2.0` gate. `minLevel` is undefined by default, so every existing caller — hook, eval harness, snapshot — is byte-identical.
+
+**The calibration was measured, and the first attempt was wrong.** Mapping `priority: high` → 3 produced **151 of 172** level-3 docs as tasks (this brain carries 151 high-priority tasks), burying the 12 pinned/starred knowledge docs the filter exists to surface — `--level 3` became a task list. Fixes: task priority now only *demotes* (`low` → 1; a durably-important task still reaches 3 via a `★★` marker in its body), and objective promotion tightened from `impact >= 4` (4 of 7 — a majority) to `impact: 5`. Result: 21 level-3 docs, dominated by pinned/starred knowledge. **The general rule: a level signal that fires on most docs of its type makes the filter useless — level 3 must mean "someone deliberately marked this", not "this type is usually important".** Always measure the distribution (`memory list --plain --level 3 | awk '{print $1}' | sort | uniq -c`) before trusting a new signal.
+
+Surfaces: `--level <n>` on `memory recall` and `memory list`; `?level=` on `/api/recall` (part of the corpus cache key — a level-scoped corpus is a different corpus) and `/api/recall/haiku` (applied to Haiku's *result*, since Haiku has no level notion); `level` in every JSON payload; a `★` badge in CLI output; a 0→2→3 star dial in the ⌘K palette; a per-level histogram in `memory status`.
+
+Regression lock: `tests/unit/recall-automation-and-level.test.ts` (24 tests), plus automation/minLevel cases in `tests/unit/federation-recall.test.ts`.
+
 ## Last Verified
 
-2026-07-01 (CAPTURE_RANK_PENALTY retuned 0.5→0.4 + first CI gate added 2026-06-30; prior verification 2026-06-27).
+2026-07-28 (nine-channel coverage + `--level` shipped; 5007 unit + 401 integration tests green, capture guard 0 displacements, `/api/recall` runtime-verified. Prior: 2026-07-01 CAPTURE_RANK_PENALTY retune + first CI gate.)

@@ -145,8 +145,12 @@ describe('continuous-capture precision stress (STEP 1 measurement)', () => {
   // machine. Left in, they would pollute the N=0 baseline and fail the guard below
   // on a dev machine while passing in CI. Strip them so the baseline is
   // deterministically capture-free in every environment.
+  // `capture === true` is the authoritative flag (automation run outputs joined
+  // the capture family in the automation-channel change, and they live in the
+  // equally-gitignored `automations/output/`); the slug prefixes are kept as
+  // belt-and-braces for any doc that predates the flag.
   const isCapture = (d: CorpusDoc) =>
-    d.slug.startsWith('digest#') || d.slug.startsWith('bookmark#');
+    d.capture === true || d.slug.startsWith('digest#') || d.slug.startsWith('bookmark#');
   const baselineCorpus = realCorpus.filter((d) => !isCapture(d));
   const vocab = buildStressVocab(baselineCorpus, gold);
 

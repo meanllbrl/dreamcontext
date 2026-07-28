@@ -1,5 +1,18 @@
 [
   {
+    "date": "2026-07-28",
+    "type": "feat",
+    "scope": "recall",
+    "description": "Added the automation corpus channel (manifests + their ## Pattern lessons + run outputs, capture-flagged and capped at 30) and closed a silent gap where /api/recall hardcoded 5 types, so the dashboard, Cmd-K palette and Ask returned everything EXCEPT objectives/insights/theses even when asked for them. CORPUS_TYPES in src/lib/recall.ts is now the single source of truth for every consumer. New derived DocLevel 1-3 read from markers the brain already stores (pinned, star markers, bookmark salience, thesis status, objective impact, insight KR binding, explicit level: override), filterable via --level on the CLI, ?level= over HTTP, and a star dial in the palette; it filters the corpus BEFORE scoring so the score/rankScore decoupling invariant and the hook's 2.0 gate are untouched. Task priority deliberately only demotes: mapping high->3 made 151 of 172 level-3 docs tasks and buried the pinned knowledge the filter exists to surface. Dashboard recall hits now open the page that renders them (Roadmap/Insights/Hypotheses/Automations) instead of dead-ending on Core; Roadmap and Lab gained focus deep-linking. A peer's automations are never served across a vault boundary; the user's own stay first-class.",
+    "breaking": false,
+    "summary": "recall spans all nine channels (automations, insights, theses, objectives) with a --level importance filter",
+    "references": [
+      "task:recall-indexes-and-returns-automations-insights-theses-and-objectives-on-every-surface-with-an-importance-level-filter",
+      "feature:memory-recall-bm25",
+      "decision:recall-engine-v2"
+    ]
+  },
+  {
     "date": "2026-07-27",
     "type": "fix",
     "scope": "agent-chat",

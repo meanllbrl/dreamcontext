@@ -28,6 +28,16 @@ import './CommandPalette.css';
 
 const INTELLIGENT_PREF_KEY = 'dreamcontext.cmdk.intelligent';
 
+/**
+ * Tooltip per importance-dial position (indexed by minLevel; 1 is unreachable —
+ * `--level 1` and no filter return the same set, so the dial skips it).
+ */
+const LEVEL_LABELS: Record<number, string> = {
+  0: 'Searching everything — click to search only curated content (★★)',
+  2: 'Curated only: skipping changelog pointers and automation run logs — click for ★★★ only',
+  3: 'Marked-important only: pinned knowledge, ★★/★★★ decisions, high-priority tasks, settled hypotheses — click to clear',
+};
+
 function readIntelligentPref(): boolean {
   if (typeof window === 'undefined') return false;
   try {
@@ -82,6 +92,13 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
   const [intelliQuery, setIntelliQuery] = useState('');
   const [intelliMode, setIntelliMode] = useState<'haiku' | 'bm25'>('haiku');
 
+  // Minimum importance level (see DocLevel server-side): 0 = everything (the
+  // default), 2 = curated content only (drops changelog pointers and automation
+  // run logs), 3 = only what's explicitly marked important (pinned knowledge,
+  // ★★/★★★ decisions, high-priority tasks, settled hypotheses). Cycles on click
+  // rather than opening a menu — it's a 3-position dial, not a picker.
+  const [minLevel, setMinLevel] = useState(0);
+
   const trimmed = q.trim();
   // Debounce the server-bound query (typing stays instant), matching the other surfaces.
   useEffect(() => {
@@ -91,7 +108,7 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
 
   // Live BM25 — empty types = all corpora. Disabled while closed (stops polling)
   // and while Intelligent is armed (that path is submit-driven, not per-keystroke).
-  const { data, isFetching } = useRecall(open && !intelligent ? debouncedQ : '', [], 12);
+  const { data, isFetching } = useRecall(open && !intelligent ? debouncedQ : '', [], 12, minLevel || undefined);
   const bmHits = useMemo(() => data?.hits ?? [], [data]);
 
   // The non-empty `intelliQuery` guard matters for the close→reopen race: a Haiku
@@ -134,16 +151,24 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
     setIntelliState('thinking');
     setIntelliQuery(query);
     setFocused(0);
+    const level = minLevel || undefined;
     try {
-      const res = await haikuRecallOnce(query, []);
+      const res = await haikuRecallOnce(query, [], level);
       setIntelliHits(res.hits);
       setIntelliMode(res.mode);
     } catch {
-      try { setIntelliHits(await recallOnce(query, [], 12)); } catch { setIntelliHits([]); }
+      try { setIntelliHits(await recallOnce(query, [], 12, level)); } catch { setIntelliHits([]); }
       setIntelliMode('bm25');
     }
     setIntelliState('done');
-  }, [trimmed, setFocused]);
+  }, [trimmed, setFocused, minLevel]);
+
+  // 0 → 2 → 3 → 0. A 3-position dial, so clicking cycles rather than opening a menu.
+  const cycleLevel = useCallback(() => {
+    setMinLevel((l) => (l === 0 ? 2 : l === 2 ? 3 : 0));
+    setFocused(0);
+    if (intelligent) setIntelliState('idle');
+  }, [setFocused, intelligent]);
 
   const toggleIntelligent = useCallback(() => {
     setIntelligentPref((v) => {
@@ -207,6 +232,20 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
             onKeyDown={onKeyDown}
           />
           {!intelligent && isFetching && !!trimmed && <span className="cmdk-spin" aria-hidden="true" />}
+          {/* Importance dial — narrows the corpus to what the brain already marks
+              as important, rather than re-ranking. Off by default so the palette's
+              behaviour is unchanged until asked. */}
+          <button
+            type="button"
+            className={`cmdk-level${minLevel ? ' cmdk-level--on' : ''}`}
+            onClick={cycleLevel}
+            aria-label={LEVEL_LABELS[minLevel]}
+            title={LEVEL_LABELS[minLevel]}
+          >
+            <span className="cmdk-level-stars" aria-hidden="true">
+              {minLevel ? '★'.repeat(minLevel) : '★'}
+            </span>
+          </button>
           {/* Hybrid mode already does semantic recall locally — the Haiku toggle
               is redundant there, so it's hidden (per the recall-mode setting). */}
           {!hybridActive && (

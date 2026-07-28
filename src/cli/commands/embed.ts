@@ -15,8 +15,13 @@ import {
   type DedupCandidate,
 } from '../../lib/embeddings/dedup.js';
 
+// Semantic-dedup candidates are things a user/agent might re-create by accident.
+// `thesis` joins the list (a duplicate hypothesis is exactly the mistake
+// `theses create` recall-dedups against). `automation` and `skill` stay OUT:
+// automation slugs are already uniqueness-enforced by the store, and a run output
+// is machine-generated — "this run resembles last run" is expected, not a dupe.
 const VALID_DEDUP_TYPES: readonly CorpusType[] = [
-  'knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight',
+  'knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight', 'thesis',
 ];
 
 /**

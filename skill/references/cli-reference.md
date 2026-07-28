@@ -190,12 +190,12 @@ Sections for `features insert`: `changelog`, `notes`, `technical_details`, `cons
 
 | Command | Description |
 |---|---|
-| `memory recall <query...>` | Search the corpus (knowledge + features + tasks + memory + changelog + objectives + insights). `-t/--top <n>`, `--types <csv>`, `--json`, `--plain`, `--vault <name>` (repeatable), `--connected`, `--all-vaults`. |
+| `memory recall <query...>` | Search all nine channels (knowledge, feature, task, memory, changelog, objective, insight, thesis, automation). `-t/--top <n>`, `--types <csv>`, `--level 1\|2\|3` (min importance ★/★★/★★★), `--json`, `--plain`, `--vault <name>` (repeatable), `--connected`, `--all-vaults`. |
 | `memory remember <text...>` | Quick-append a CHANGELOG entry (`type=note`, `scope=quick`). `--summary`, `--type`, `--scope`, `--references <csv>`, `--person <csv>`. |
 | `memory update <slug>` | Update a knowledge file. `-d/--description`, `-t/--tags`, `-c/--content`, `--append <text>`, `--pin`, `--unpin`. |
 | `memory delete <slug>` | Delete a knowledge file (irreversible; recover via git). `-f/--force`. |
-| `memory list` | List the corpus by type. `--types <csv>`, `--plain`. |
-| `memory status` | Corpus size + breakdown by type. |
+| `memory list` | List the corpus by type. `--types <csv>`, `--level 1\|2\|3`, `--plain`. |
+| `memory status` | Corpus size + breakdown by type and importance level. |
 | `recall status\|on\|off\|raw\|hybrid` | Control recall mode: `on`=haiku (default, LLM picks docs), `raw`=BM25 only, `hybrid`=experimental BM25+local-embedding fusion (no LLM), `off`=disabled. |
 | `embed refresh` | Bring the hybrid-recall embedding index up to date (embeds only changed chunks). `--force` re-chunks everything; `--if-present` no-ops unless a cache already exists (cron/sleep-safe). |
 | `embed status` | Embedding cache presence, model, vector count, size. |

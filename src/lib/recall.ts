@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, basename, dirname, relative } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
@@ -15,7 +15,43 @@ import {
 
 // 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
 // intentionally excluded from buildCorpus defaults to avoid polluting haikuRecall.
-export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight' | 'thesis';
+export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight' | 'thesis' | 'automation';
+
+/**
+ * Every corpus type `buildCorpus` can produce, in snapshot/report order. The
+ * single source of truth for "which channels does recall span" — the CLI's
+ * `--types` parser, the HTTP route's filter, `memory list`/`memory status`, and
+ * the dedup allow-list all derive from this instead of re-listing the union
+ * (each re-listing was a place a new channel got silently dropped: `objective`,
+ * `insight` and `thesis` were live in the engine for weeks while
+ * `/api/recall` still filtered them out).
+ */
+export const CORPUS_TYPES: readonly CorpusType[] = [
+  'knowledge', 'feature', 'task', 'memory', 'changelog',
+  'objective', 'insight', 'thesis', 'automation',
+];
+
+/**
+ * Derived importance of a doc, 1–3, mirroring the project's own ★/★★/★★★
+ * salience convention:
+ *
+ *   3 = explicitly marked important (pinned knowledge, ★★/★★★ decisions,
+ *       high-priority tasks, high-impact objectives, a settled thesis,
+ *       an insight wired to a roadmap KR, a salience-3 bookmark)
+ *   2 = normal curated content (the default — most knowledge, features, tasks)
+ *   1 = low-signal pointers and logs (changelog entries, automation run outputs,
+ *       draft/retired theses, low-priority tasks, disabled automations)
+ *
+ * A FILTER signal only (`--level`/`?level=`), never a ranking input: the
+ * score/rankScore decoupling invariant means nothing derived may touch
+ * `hit.score`, and level would be a second, undocumented re-ranker if it fed
+ * `rankScore`. Filtering happens on the corpus before scoring — exactly like
+ * `--types` — so a level-scoped search is an honest search of a smaller corpus.
+ */
+export type DocLevel = 1 | 2 | 3;
+
+/** The level assigned when a doc carries no explicit importance marker. */
+export const DEFAULT_DOC_LEVEL: DocLevel = 2;
 
 export interface CorpusDoc {
   type: CorpusType;
@@ -50,6 +86,117 @@ export interface CorpusDoc {
   // sees content that merely passed through this one (transitive-leak guard).
   // Default/absent = false = native local doc.
   federated?: boolean;
+  // Derived importance 1–3 (see DocLevel). Optional so external CorpusDoc
+  // literals stay valid; absent reads as DEFAULT_DOC_LEVEL everywhere.
+  level?: DocLevel;
+}
+
+/** A doc's importance level, defaulting when the loader set none. */
+export function docLevel(doc: CorpusDoc): DocLevel {
+  return doc.level ?? DEFAULT_DOC_LEVEL;
+}
+
+// ─── Importance level derivation ────────────────────────────────────────────
+
+/**
+ * The project's own salience notation, used in `2.memory.md` decisions, bookmark
+ * summaries and knowledge bodies: `★★★` critical, `★★` reusable, `★` noted.
+ * Read the HIGHEST marker present, so one ★★★ bullet lifts the whole section.
+ */
+function starLevel(text: string): DocLevel | undefined {
+  if (text.includes('★★★')) return 3;
+  if (text.includes('★★')) return 3;
+  if (text.includes('★')) return 2;
+  return undefined;
+}
+
+/**
+ * Task priority as a level signal — it can only DEMOTE (`low` → 1), never
+ * promote. Measured on this project's own brain: 151 of 340 tasks carry
+ * `priority: high`, so mapping high → 3 turned `--level 3` into a high-priority
+ * task list (151 of 172 level-3 docs) and buried the 12 pinned/starred knowledge
+ * docs the filter exists to surface. Priority is scheduling urgency — "do this
+ * next" — not durable importance, and the two are not the same axis. A task that
+ * IS durably important still reaches level 3 through a ★★/★★★ marker in its body.
+ */
+function priorityLevel(value: unknown): DocLevel | undefined {
+  if (typeof value !== 'string') return undefined;
+  return value.trim().toLowerCase() === 'low' ? 1 : undefined;
+}
+
+/**
+ * Importance level for a frontmatter-bearing markdown doc, from the markers the
+ * brain ALREADY stores — nothing new to maintain, and no guessing: a doc with no
+ * marker stays at the default rather than being invented up or down.
+ *
+ * Per type, highest-confidence signal first:
+ *  - any type      `level: 1|2|3` frontmatter — an explicit override always wins
+ *  - knowledge     `pinned: true` → 3 (it loads in full every session by choice)
+ *  - task          `priority: low` → 1 (priority NEVER promotes — see priorityLevel)
+ *  - objective     `impact: 5` → 3, ≤ 1 → 1 (the PO's own RICE impact score)
+ *  - thesis        `status`: validated/invalidated → 3 (settled learning is the
+ *                  point of the layer), open → 2, draft/retired → 1
+ *  - insight       bound to an objective's KR → 3 (it moves the roadmap)
+ *  - automation    enabled → 2, disabled → 1
+ *  - feature       no marker → default
+ *
+ * Level 3 is meant to be RARE — "someone deliberately marked this", not "this
+ * type is usually important". Any signal that fires on most docs of its type
+ * makes the filter useless, so type-wide promotions are deliberately absent.
+ * Then, for every type, a ★ marker in title/description/body can only RAISE the
+ * result — a ★★★ note inside an unpinned knowledge file is still a ★★★ note.
+ */
+function deriveLevel(
+  type: CorpusType,
+  data: Record<string, unknown>,
+  text: string,
+): DocLevel {
+  const explicit = data.level;
+  if (explicit === 1 || explicit === 2 || explicit === 3) return explicit;
+
+  let base: DocLevel | undefined;
+  switch (type) {
+    case 'knowledge':
+      if (data.pinned === true) base = 3;
+      break;
+    case 'task':
+      base = priorityLevel(data.priority);
+      break;
+    case 'objective': {
+      // Top of the PO's 1-5 impact scale only. `>= 4` promoted 4 of this
+      // project's 7 objectives — a majority, which is the dilution this scale
+      // must avoid.
+      const impact = typeof data.impact === 'number' ? data.impact : undefined;
+      if (impact !== undefined) base = impact >= 5 ? 3 : impact <= 1 ? 1 : 2;
+      break;
+    }
+    case 'thesis': {
+      const status = typeof data.status === 'string' ? data.status.trim().toLowerCase() : '';
+      if (status === 'validated' || status === 'invalidated') base = 3;
+      else if (status === 'open') base = 2;
+      else if (status === 'draft' || status === 'retired') base = 1;
+      break;
+    }
+    case 'insight': {
+      const binding = data.binding;
+      const bound = !!binding && typeof binding === 'object'
+        && typeof (binding as Record<string, unknown>).objective === 'string'
+        && ((binding as Record<string, unknown>).objective as string).trim() !== '';
+      if (bound) base = 3;
+      break;
+    }
+    case 'automation':
+      base = data.enabled === false ? 1 : 2;
+      break;
+    default:
+      break;
+  }
+
+  const stars = starLevel(text);
+  const resolved = base ?? DEFAULT_DOC_LEVEL;
+  // Stars raise, never lower: a disabled automation whose playbook holds a ★★★
+  // lesson is still worth surfacing at --level 3.
+  return stars !== undefined && stars > resolved ? stars : resolved;
 }
 
 /**
@@ -374,6 +521,7 @@ function loadMarkdownDocs(
         product: productFromRelPath(relPath) ?? featureProductFromRelPath(relPath),
         // Federation: a doc ingested from a peer carries `federated: true`.
         federated: data.federated === true,
+        level: deriveLevel(type, data as Record<string, unknown>, `${title} ${description} ${body}`),
       });
     } catch {
       // skip malformed
@@ -436,6 +584,10 @@ function loadChangelogEntries(contextRoot: string): CorpusDoc[] {
       links: fields.links,
       identityTokens: [],
       updatedAt: date || undefined,
+      // A changelog entry is a one-line POINTER to work whose canonical doc sits
+      // elsewhere (same reasoning as CHANGELOG_RANK_FACTOR) — level 1, unless the
+      // entry itself is star-marked.
+      level: starLevel(`${summary} ${description}`) ?? 1,
     });
   }
   return out;
@@ -472,6 +624,9 @@ function loadMemoryFile(contextRoot: string): CorpusDoc[] {
       fieldLen: fields.fieldLen,
       links: fields.links,
       identityTokens: fields.identityTokens,
+      // `2.memory.md` sections hold the ★/★★/★★★ technical decisions — the
+      // highest marker in the section sets its level.
+      level: starLevel(`${title} ${body}`) ?? DEFAULT_DOC_LEVEL,
     });
   }
   return out;
@@ -526,7 +681,93 @@ export function loadBookmarkDocs(contextRoot: string): CorpusDoc[] {
       updatedAt: typeof b.created_at === 'string' ? b.created_at : undefined,
       // C2/C3: auto/explicit bookmarks are continuous captures → rank-penalised.
       capture: true,
+      // A bookmark's `salience` (1 noted / 2 decision / 3 critical) IS the level
+      // signal this scale was modelled on — read it straight through.
+      level: b.salience === 1 || b.salience === 2 || b.salience === 3
+        ? b.salience
+        : starLevel(message) ?? DEFAULT_DOC_LEVEL,
     });
+  }
+  return out;
+}
+
+/**
+ * Only the N most-recent automation run outputs are indexed per corpus build.
+ * Mirrors MAX_INDEXED_DIGESTS (session-digest.ts): a daily automation writes one
+ * output file per run forever, so without a cap the corpus grows without bound
+ * and old run logs dilute IDF against the curated brain. The newest runs are the
+ * ones a session asks about ("what did the digest find yesterday?"); older ones
+ * stay on disk and remain readable by path, just not indexed.
+ */
+export const MAX_INDEXED_AUTOMATION_RUNS = 30;
+
+/**
+ * Load automation run outputs (`automations/output/<slug>/<date>.md`) as
+ * `automation` corpus docs so "what did the daily digest actually find?" is
+ * recallable — the output IS the automation's product, and before this it was
+ * write-only: a file the notifier pointed at and nothing ever read back.
+ *
+ * Flagged `capture: true` (like session digests and auto-bookmarks): a run log is
+ * machine-generated, unreviewed output, so on an equal content match the curated
+ * manifest or knowledge file must win. Level 1 for the same reason.
+ *
+ * Newest-first by mtime, capped at MAX_INDEXED_AUTOMATION_RUNS.
+ */
+function loadAutomationRunDocs(contextRoot: string): CorpusDoc[] {
+  const outputRoot = join(contextRoot, 'automations', 'output');
+  if (!existsSync(outputRoot)) return [];
+  let files: string[];
+  try {
+    files = fg.sync('*/*.md', { cwd: outputRoot, absolute: true });
+  } catch {
+    return [];
+  }
+  // Sort newest-first before the cap so the cap keeps the RECENT runs.
+  const dated = files
+    .map((file) => {
+      try { return { file, mtime: statSync(file).mtimeMs }; } catch { return null; }
+    })
+    .filter((e): e is { file: string; mtime: number } => e !== null)
+    .sort((a, b) => b.mtime - a.mtime)
+    .slice(0, MAX_INDEXED_AUTOMATION_RUNS);
+
+  const out: CorpusDoc[] = [];
+  for (const { file, mtime } of dated) {
+    try {
+      const { data, content } = readFrontmatter(file);
+      const body = content.trim();
+      if (!body) continue;
+      const automationSlug = basename(dirname(file));
+      const runId = basename(file, '.md');
+      // Synthetic `run#<automation>-<date>` slug, namespaced like `digest#…` so
+      // the capture-free eval baselines can recognise and strip it.
+      const slug = `run#${automationSlug}-${runId}`;
+      const title = String(data.title ?? `${automationSlug} run ${runId}`);
+      const fields = buildFields({ title, description: '', tags: [automationSlug], body });
+      out.push({
+        type: 'automation',
+        path: file,
+        relPath: file.replace(contextRoot + '/', ''),
+        slug,
+        title,
+        description: '',
+        tags: [automationSlug],
+        body,
+        tokens: fields.tokens,
+        tokenSet: new Set(fields.tokens),
+        termFreq: fields.termFreq,
+        fieldFreq: fields.fieldFreq,
+        fieldLen: fields.fieldLen,
+        links: fields.links,
+        // Synthetic slug is not a canonical identity (mirrors changelog/bookmark).
+        identityTokens: [],
+        updatedAt: readUpdatedAt(data as Record<string, unknown>) ?? new Date(mtime).toISOString(),
+        capture: true,
+        level: 1,
+      });
+    } catch {
+      // skip malformed
+    }
   }
   return out;
 }
@@ -582,13 +823,23 @@ export function loadSkillDocs(skillsRoot: string): CorpusDoc[] {
 
 export interface BuildCorpusOptions {
   types?: CorpusType[];
+  /**
+   * Keep only docs whose derived importance is >= this (see DocLevel). Applied to
+   * the corpus BEFORE scoring, exactly like `types` — so a level-scoped query is
+   * an honest BM25 search of a smaller corpus, not a re-ranked full one, and the
+   * score/rankScore decoupling invariant is untouched.
+   *
+   * Undefined (the default) = no filter, so every existing caller — including the
+   * hook's `score >= 2.0` gate and the eval harness — is byte-identical.
+   */
+  minLevel?: number;
 }
 
 export function buildCorpus(
   contextRoot: string,
   opts: BuildCorpusOptions = {},
 ): CorpusDoc[] {
-  const types = new Set(opts.types ?? ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight', 'thesis']);
+  const types = new Set(opts.types ?? CORPUS_TYPES);
   const docs: CorpusDoc[] = [];
   if (types.has('knowledge')) {
     // Exclude knowledge/features/** — features are their own corpus type and are
@@ -628,6 +879,23 @@ export function buildCorpus(
   }
   if (types.has('changelog')) {
     docs.push(...loadChangelogEntries(contextRoot));
+  }
+  if (types.has('automation')) {
+    // Automation manifests are FLAT at `automations/<slug>.md` — the sibling
+    // `cache/` (machine-local run state) and `output/` (run products, loaded
+    // separately below with a recency cap) are excluded so a manifest is never
+    // double-counted and raw JSON cache never enters the corpus.
+    docs.push(...loadMarkdownDocs(
+      join(contextRoot, 'automations'),
+      'automation',
+      contextRoot,
+      ['cache/**', 'output/**'],
+    ));
+    docs.push(...loadAutomationRunDocs(contextRoot));
+  }
+  if (opts.minLevel !== undefined) {
+    const floor = opts.minLevel;
+    return docs.filter((doc) => docLevel(doc) >= floor);
   }
   return docs;
 }

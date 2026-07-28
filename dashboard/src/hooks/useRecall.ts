@@ -1,9 +1,18 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { api } from '../api/client';
 
-/** A single recall hit as returned by GET /api/recall. */
+/**
+ * A single recall hit as returned by GET /api/recall.
+ *
+ * `type` must list EVERY channel `CORPUS_TYPES` can produce (src/lib/recall.ts) —
+ * a missing member silently strands that channel: TypeScript stops complaining
+ * about the icon map and the nav switch, so an objective hit renders a knowledge
+ * icon and opens the Core page.
+ */
 export interface RecallHit {
-  type: 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog';
+  type:
+    | 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog'
+    | 'objective' | 'insight' | 'thesis' | 'automation';
   slug: string;
   title: string;
   path: string;
@@ -11,6 +20,8 @@ export interface RecallHit {
   tags: string[];
   snippet: string;
   body: string;
+  /** Derived importance 1-3 (★/★★/★★★) — what the `level` param filters on. */
+  level: 1 | 2 | 3;
   score: number;
   rankScore: number;
 }
@@ -33,14 +44,17 @@ export interface RecallResponse {
  * `keepPreviousData` keeps the last hits on screen while the next set loads so
  * the list doesn't flash empty between keystrokes.
  */
-export function useRecall(query: string, types: string[], topK = 12) {
+export function useRecall(query: string, types: string[], topK = 12, minLevel?: number) {
   const trimmed = query.trim();
   const typeParam = types.length ? types.join(',') : '';
   return useQuery<RecallResponse>({
-    queryKey: ['recall', trimmed, typeParam, topK],
+    // minLevel is part of the key: a level-scoped search is a different result
+    // set, so it must not read a cached unfiltered response.
+    queryKey: ['recall', trimmed, typeParam, topK, minLevel ?? 0],
     queryFn: () => {
       const params = new URLSearchParams({ q: trimmed, top: String(topK) });
       if (typeParam) params.set('types', typeParam);
+      if (minLevel) params.set('level', String(minLevel));
       return api.get<RecallResponse>(`/recall?${params.toString()}`);
     },
     enabled: trimmed.length > 0,
@@ -50,11 +64,12 @@ export function useRecall(query: string, types: string[], topK = 12) {
 }
 
 /** Imperative one-shot recall (used by Ask to ground an answer in top hits). */
-export async function recallOnce(query: string, types: string[], topK = 4): Promise<RecallHit[]> {
+export async function recallOnce(query: string, types: string[], topK = 4, minLevel?: number): Promise<RecallHit[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
   const params = new URLSearchParams({ q: trimmed, top: String(topK) });
   if (types.length) params.set('types', types.join(','));
+  if (minLevel) params.set('level', String(minLevel));
   const res = await api.get<RecallResponse>(`/recall?${params.toString()}`);
   return res.hits;
 }
@@ -77,10 +92,11 @@ export interface HaikuRecallResponse {
  * this costs a few seconds and tokens, so callers should show a loading state.
  * Falls back to BM25 server-side when the claude CLI isn't available.
  */
-export async function haikuRecallOnce(query: string, types: string[]): Promise<HaikuRecallResponse> {
+export async function haikuRecallOnce(query: string, types: string[], minLevel?: number): Promise<HaikuRecallResponse> {
   const trimmed = query.trim();
   if (!trimmed) return { query: '', mode: 'haiku', skip: false, tookMs: 0, hits: [] };
   const params = new URLSearchParams({ q: trimmed });
   if (types.length) params.set('types', types.join(','));
+  if (minLevel) params.set('level', String(minLevel));
   return api.get<HaikuRecallResponse>(`/recall/haiku?${params.toString()}`);
 }

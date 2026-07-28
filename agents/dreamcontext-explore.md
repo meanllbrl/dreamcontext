@@ -36,11 +36,13 @@ This project has an `_dream_context/` directory. Your Sub-agent Briefing (inject
 ### 0. Recall FIRST (before Glob/Grep/Read)
 
 **`dreamcontext memory recall` is your first-line tool.** It runs BM25 over the
-entire curated corpus (knowledge files, feature PRDs, task files, memory
-entries, and CHANGELOG history) and returns the top-N most relevant docs in
-<100ms with zero token overhead. For any "where did we decide X?", "what do we
-know about Y?", "is there prior design for Z?" type query, recall almost
-always beats blind exploration.
+entire curated corpus — knowledge files, feature PRDs, task files, memory
+entries, CHANGELOG history, roadmap objectives, Lab insights, hypotheses
+(theses), and automations (their prompts, the lessons their runs learned, and
+each run's output) — and returns the top-N most relevant docs in <100ms with
+zero token overhead. For any "where did we decide X?", "what do we know about
+Y?", "is there prior design for Z?" type query, recall almost always beats
+blind exploration.
 
 **Protocol:**
 
@@ -51,8 +53,13 @@ always beats blind exploration.
    fall back to Glob/Grep below.
 4. If recall returns "No hits", fall back to Glob/Grep below.
 5. When chaining recall into a script or programmatic step, use
-   `--json` instead of `--plain` for a machine-readable payload, and
-   `--types knowledge,feature,task,memory,changelog,objective` to scope by corpus type.
+   `--json` instead of `--plain` for a machine-readable payload, and `--types`
+   to scope by corpus type — any of
+   `knowledge,feature,task,memory,changelog,objective,insight,thesis,automation`.
+   Add `--level 3` when the question is "what matters here?" rather than "where
+   is X?": it searches only what the brain explicitly marks important (pinned
+   knowledge, ★★/★★★ decisions, settled hypotheses, KR-bound insights), and
+   `--level 2` drops changelog pointers and automation run logs.
 6. For "what are we trying to achieve / what's the roadmap / is X on track" questions:
    objectives live in `core/objectives/*.md` (recall `--types objective`), and
    `dreamcontext roadmap --json` returns the computed model — rollup progress,

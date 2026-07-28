@@ -2,7 +2,7 @@
 id: feat_mem0Recall1
 status: active
 created: '2026-05-23'
-updated: '2026-07-08'
+updated: '2026-07-28'
 released_version: v0.14.0
 tags:
   - 'domain:knowledge'
@@ -16,6 +16,8 @@ related_tasks:
   - feat-embedding-cache-engine-content-hash-chunk-cache-and-incremental-refresh
   - feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag
   - feat-embedding-ab-eval-harness-bm25-vs-hybrid-vs-dense-on-frozen-gold-set
+  - >-
+    recall-indexes-and-returns-automations-insights-theses-and-objectives-on-every-surface-with-an-importance-level-filter
 type: feature
 name: memory-recall-bm25
 description: ''
@@ -41,6 +43,15 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - [x] As a developer, auto-captured session content never crowds out curated knowledge files in recall results, thanks to the capture rank penalty.
 
 - [x] As a Turkish-speaking developer using v3 of the engine, my recall is dramatically more accurate (recall@1 TR 75.0→90%, paraphrase 66.7→91.7%) because two-hop TR morphology, directed synonym bridges, and EN -e fold fix address structural gaps from v2.
+
+### Full-channel coverage + importance level (2026-07-28)
+
+- [x] As a developer, `memory recall` spans **all nine** channels — knowledge, feature, task, memory, changelog, objective, insight, thesis, automation — and `--types` accepts every one of them.
+- [x] As a developer, I can ask what a scheduled automation does, what a previous run *learned* (`## Pattern` lessons), and what a run actually *reported*, because manifests and run outputs are both indexed.
+- [x] As a dashboard user, searching from the ⌘K palette returns objectives, insights, hypotheses and automations — and each hit opens the page that renders it (Roadmap / Insights / Hypotheses / Automations), not the Core page.
+- [x] As a developer, I can narrow recall by importance with `--level 2` (curated only) or `--level 3` (explicitly marked), on the CLI, over `/api/recall`, and via the ★ dial in the palette.
+- [x] As a developer, `memory status` shows per-channel counts plus a histogram of how many docs sit at each importance level.
+- [x] As a user with connected peer vaults, my own automations are recallable locally but a peer's automations are never served across the boundary — their manifest bodies are the prompts their headless sessions run.
 
 ### Hybrid/Embedding Layer (v0.14.0 experimental, opt-in)
 
@@ -260,6 +271,18 @@ Both tier sizes (3 detailed, 10 titles-only, ~300 char body cap) are configurabl
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-28 — Full-channel coverage + the `--level` importance filter
+
+**Closed a silent coverage gap.** `objective`, `insight` and `thesis` had been live in `buildCorpus` for weeks, but `src/server/routes/recall.ts` still hardcoded `ALL_TYPES = ['knowledge','feature','task','memory','changelog']`. Because `parseTypes` filtered a requested unknown type down to `null` and `null` fell back to "all types", asking the dashboard for `types=objective` returned everything *except* objectives. The dashboard `RecallHit` union and `recallNav` had no cases for them either, so an objective hit navigated to the Core page on an empty slug. Fix: one exported `CORPUS_TYPES` in `src/lib/recall.ts` is now the single source of truth, and the route, the CLI's `parseTypes`, `TYPE_LABELS`, `memory list`/`status`, and the dedup allow-list all derive from it. A `Record<CorpusType, …>` (not `Partial`) in the CLI labels and the dashboard icon map makes a future channel a build error rather than a silent omission.
+
+**New `automation` channel.** `automations/<slug>.md` manifests (prompt + the `## Pattern` playbook and lesson ledger the runs write) and run outputs (`automations/output/<slug>/*.md`) are indexed. Run outputs are `capture: true` (rank-penalised like session digests) and capped at the 30 most recent (`MAX_INDEXED_AUTOMATION_RUNS`) — a daily job would otherwise grow the corpus without bound. The lesson ledger stops being write-only: a session that never ran the job can find what a previous run learned. Automations are excluded from cross-vault serving and federation digests (gitignored, `shared: false` by default, and a manifest body IS a `bypassPermissions` prompt), gated on `!isCurrent` so the user's own automations stay first-class — plain `memory recall` takes the federated path whenever a peer is connected, so an unconditional filter would have hidden automations on exactly the machines that have them.
+
+**Derived importance level (`DocLevel` 1–3) + `--level` / `?level=`.** Read from markers the brain already stores: `pinned: true`, `★`/`★★`/`★★★` body markers, bookmark `salience`, thesis status, objective `impact`, insight→KR binding, automation `enabled`, explicit `level:` frontmatter. Filters the corpus **before** scoring (exactly like `--types`), so the score/rankScore decoupling invariant holds and the hook's `>= 2.0` gate is untouched; `minLevel` is undefined by default, making every existing call byte-identical.
+
+**Calibration was measured, not assumed.** The first pass mapped `priority: high` → 3, which made 151 of 172 level-3 docs tasks (this project carries 151 high-priority tasks) and buried the 12 pinned/starred knowledge docs the filter exists to surface. Priority now only *demotes* (`low` → 1); objective promotion tightened from `impact >= 4` (4 of 7 objectives — a majority) to `impact: 5`. Result: 21 level-3 docs, dominated by pinned/starred knowledge. Regression-locked in `tests/unit/recall-automation-and-level.test.ts`.
+
+**Verified**: 5007 unit + 401 integration tests green; capture guard still 0 displacements at every N; `/api/recall` confirmed at runtime returning all four previously-invisible channels with levels, in hybrid mode (automation docs surface through RRF even before `embed refresh` gives them dense vectors).
 
 ### 2026-07-07 - v0.14.0: Hybrid/Embedding Layer (experimental, opt-in)
 

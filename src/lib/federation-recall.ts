@@ -48,6 +48,8 @@ export interface CrossVaultRecallOptions {
   home?: string;
   topK?: number;
   types?: CorpusType[];
+  /** Minimum derived importance level (see DocLevel); undefined = no filter. */
+  minLevel?: number;
   /** Reference time for the recency multiplier (determinism in tests). */
   now?: Date;
 }
@@ -124,10 +126,21 @@ export function crossVaultRecall(
       if (!isShareable(projectRoot)) continue; // silently excluded — not warned
     }
 
-    const corpus = buildCorpus(contextRoot, opts.types ? { types: opts.types } : {})
+    const corpus = buildCorpus(contextRoot, {
+      ...(opts.types ? { types: opts.types } : {}),
+      ...(opts.minLevel !== undefined ? { minLevel: opts.minLevel } : {}),
+    })
       // Serving exclusion: ingested-from-peer docs are first-class locally but
       // must never be served across another vault boundary (transitive-leak).
-      .filter((doc) => !isFederated(doc));
+      .filter((doc) => !isFederated(doc))
+      // A PEER's automations are never read across the boundary: `automations/*.md`
+      // is gitignored (machine-local), `shared` defaults false, and a manifest body
+      // IS the prompt a bypassPermissions session runs. Gated on `!isCurrent` — the
+      // user's OWN automations stay first-class here, which matters because plain
+      // `memory recall` takes this federated path by default whenever any peer is
+      // connected, so an unconditional filter would have made `--types automation`
+      // return nothing on exactly the machines that have automations.
+      .filter((doc) => isCurrent || doc.type !== 'automation');
 
     const label = target.label ?? target.name;
     const vaultHits = bm25Search(query, corpus, topK, { now });

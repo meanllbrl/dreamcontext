@@ -98,12 +98,68 @@ export function SparkIcon(p: IconProps) {
   );
 }
 
+/** Objective — the Roadmap page's stacked objective bars + "today" marker. */
+export function ObjectiveIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <line x1="3" y1="4.5" x2="21" y2="4.5" />
+      <rect x="3" y="7.4" width="11" height="3.2" rx="1.2" />
+      <rect x="8" y="13.2" width="13" height="3.2" rx="1.2" />
+      <rect x="3" y="19" width="8" height="3.2" rx="1.2" />
+      <line x1="10" y1="3" x2="10" y2="21" strokeDasharray="1.6 2" opacity="0.55" />
+    </Svg>
+  );
+}
+
+/** Insight — the Insights page's lightbulb. */
+export function InsightIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M12 2.8a6 6 0 0 1 3.7 10.7c-.75.6-1.2 1.3-1.2 2.1v.9H9.5v-.9c0-.8-.45-1.5-1.2-2.1A6 6 0 0 1 12 2.8z" />
+      <line x1="9.8" y1="19.4" x2="14.2" y2="19.4" />
+      <line x1="10.6" y1="21.4" x2="13.4" y2="21.4" />
+    </Svg>
+  );
+}
+
+/** Thesis — the Hypotheses page's flask. */
+export function ThesisIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M9.5 3h5" />
+      <path d="M10.5 3v5.4L5.8 17a2 2 0 0 0 1.8 2.9h8.8a2 2 0 0 0 1.8-2.9L13.5 8.4V3" />
+      <path d="M7.8 14.5h8.4" />
+    </Svg>
+  );
+}
+
+/** Automation — the Automations page's alarm clock. */
+export function AutomationIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="12" cy="13.6" r="7.1" />
+      <path d="M12 9.9v3.7l2.5 1.5" />
+      <path d="M5.1 6.6a3.1 3.1 0 0 1 3.6-2.2" />
+      <path d="M18.9 6.6a3.1 3.1 0 0 0-3.6-2.2" />
+    </Svg>
+  );
+}
+
+// One entry per RecallHit['type'] — the Record (not Partial) is deliberate: a new
+// corpus channel must fail the build here rather than silently fall back to the
+// knowledge book, which is how objectives/insights/theses shipped wearing the
+// wrong glyph. Each mirrors its own page's sidebar icon so a hit reads as the
+// surface it opens.
 const BY_TYPE: Record<RecallHit['type'], (p: IconProps) => React.ReactElement> = {
   knowledge: KnowledgeIcon,
   feature: FeaturesIcon,
   task: TasksIcon,
   changelog: CoreIcon,
   memory: MemoryIcon,
+  objective: ObjectiveIcon,
+  insight: InsightIcon,
+  thesis: ThesisIcon,
+  automation: AutomationIcon,
 };
 
 /** Render the stroke icon for a recall type. */

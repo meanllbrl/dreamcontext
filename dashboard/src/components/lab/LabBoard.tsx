@@ -6,6 +6,7 @@ import { InsightDetailPanel } from './InsightDetailPanel';
 import { pushLabPath } from './funnel/labRoute';
 import { LabCredentialsBanner } from './LabCredentialsBanner';
 import { LabEmptyState } from './LabEmptyState';
+import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
 import './LabBoard.css';
 
 const UNGROUPED = 'Ungrouped';
@@ -99,7 +100,12 @@ function applyOrder<T extends { slug: string }>(items: T[], order: string[] | un
     .map((e) => e.item);
 }
 
-export function LabBoard() {
+interface LabBoardProps {
+  /** Shell navigation focus: opens that insight's detail panel (⌘K recall hit). */
+  focus?: FocusTarget;
+}
+
+export function LabBoard({ focus }: LabBoardProps = {}) {
   const { data: insights, isLoading, isError, error } = useLabInsights();
   const syncAll = useSyncAll();
   const { prefs, toggleCollapsed, setGroupOrder, setCategory, setCategoryOrder } = useLabPrefs();
@@ -113,6 +119,10 @@ export function LabBoard() {
   // Category tab being dragged (tab-bar reorder) and the tab it hovers.
   const [tabDrag, setTabDrag] = useState<string | null>(null);
   const [tabDragOver, setTabDragOver] = useState<string | null>(null);
+
+  // Opening an `insight` recall hit from the ⌘K palette lands here — open its
+  // detail panel instead of dropping the user on the tile grid.
+  useFocusTarget(focus, setOpenSlug);
 
   useEffect(() => {
     if (!toast) return;

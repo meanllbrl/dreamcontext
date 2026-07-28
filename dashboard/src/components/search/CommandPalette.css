@@ -119,6 +119,42 @@
 }
 .cmdk-intel-label { white-space: nowrap; }
 
+/* Importance dial (★ / ★★ / ★★★) — same chip family as .cmdk-intel, but fixed
+   width so cycling 1→2→3 stars never shifts the input's right edge. */
+.cmdk-level {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 30px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.cmdk-level:hover {
+  color: var(--color-text-secondary);
+  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+}
+.cmdk-level--on {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  /* Solid accent fill, so the white-in-both-themes accent-text token applies. */
+  color: var(--color-accent-text);
+}
+.cmdk-level--on:hover { color: var(--color-accent-text); }
+.cmdk-level-stars {
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: -0.5px;
+  white-space: nowrap;
+}
+/* Off state: one dim star reads as "the dial exists", not "★ is selected". */
+.cmdk-level:not(.cmdk-level--on) .cmdk-level-stars { opacity: 0.55; }
+
 /* Body: results list + preview */
 .cmdk-body {
   flex: 1;

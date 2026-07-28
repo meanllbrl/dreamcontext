@@ -5,7 +5,14 @@ import chalk from 'chalk';
 import { confirm, input } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { header, info, success, error } from '../../lib/format.js';
-import { buildCorpus, bm25Search, type CorpusType, type RecallHit } from '../../lib/recall.js';
+import {
+  buildCorpus,
+  bm25Search,
+  docLevel,
+  CORPUS_TYPES,
+  type CorpusType,
+  type RecallHit,
+} from '../../lib/recall.js';
 import { hybridSearch, hybridReady } from '../../lib/embeddings/hybrid.js';
 import { resolveRecallMode } from './sleep.js';
 import {
@@ -28,8 +35,26 @@ export const TYPE_LABELS: Record<CorpusType, string> = {
   objective: 'objective',
   insight: 'insight',
   thesis: 'thesis',
+  automation: 'automation',
   skill: 'skill', // never produced by buildCorpus; present only to satisfy the Record type
 };
+
+/**
+ * Parse `--level <n>` into a minimum importance level (see DocLevel). Anything
+ * outside 1–3 is ignored rather than clamped: `--level 9` most likely means the
+ * caller misunderstood the scale, and silently treating it as `--level 3` would
+ * return results they didn't ask for. Undefined = no level filter.
+ */
+export function parseLevel(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const n = Number.parseInt(value, 10);
+  return n === 1 || n === 2 || n === 3 ? n : undefined;
+}
+
+/** `★★★` / `★★` / `★` badge for a doc's derived importance level. */
+export function levelBadge(level: number): string {
+  return '★'.repeat(Math.max(1, Math.min(3, level)));
+}
 
 /** Commander accumulator for a repeatable `--vault <name>` option. */
 function collectVault(value: string, previous: string[]): string[] {
@@ -38,7 +63,7 @@ function collectVault(value: string, previous: string[]): string[] {
 
 export function parseTypes(value: string | undefined): CorpusType[] | undefined {
   if (!value) return undefined;
-  const valid: CorpusType[] = ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight', 'thesis'];
+  const valid = CORPUS_TYPES;
   const parts = value
     .split(',')
     .map((s) => s.trim().toLowerCase())
@@ -59,6 +84,7 @@ function recallFederated(
   query: string,
   topK: number,
   types: CorpusType[] | undefined,
+  minLevel: number | undefined,
   opts: { json?: boolean; plain?: boolean; vault?: string[]; connected?: boolean; allVaults?: boolean },
 ): void {
   const projectRoot = dirname(contextRoot);
@@ -80,6 +106,7 @@ function recallFederated(
     vaults: Array.from(byName.values()),
     topK,
     types,
+    minLevel,
   });
 
   if (opts.json) {
@@ -95,6 +122,8 @@ function recallFederated(
       // Path-derived product (single source of truth): present for per-product
       // knowledge and features nested under features/<product>/; omitted otherwise.
       product: h.doc.product,
+      // Derived importance 1-3 (see DocLevel) — what `--level` filters on.
+      level: docLevel(h.doc),
       score: Number(h.score.toFixed(4)),
       snippet: h.snippet,
     }));
@@ -115,7 +144,7 @@ function recallFederated(
       console.log(`No hits for "${query}".`);
     }
     for (const h of hits) {
-      console.log(`[${h.vault}::${TYPE_LABELS[h.doc.type]}] ${h.doc.slug}  (score ${h.score.toFixed(3)})`);
+      console.log(`[${h.vault}::${TYPE_LABELS[h.doc.type]}] ${levelBadge(docLevel(h.doc))} ${h.doc.slug}  (score ${h.score.toFixed(3)})`);
       console.log(`  ${h.doc.relPath}`);
       if (h.doc.description) console.log(`  ${h.doc.description}`);
       if (h.snippet) {
@@ -136,7 +165,8 @@ function recallFederated(
     const typeBadge = chalk.cyan(`[${TYPE_LABELS[h.doc.type]}]`);
     const slug = chalk.magentaBright(h.doc.slug);
     const score = chalk.dim(`score ${h.score.toFixed(3)}`);
-    console.log(`  ${vaultBadge}${typeBadge} ${slug}  ${score}`);
+    const level = chalk.dim(levelBadge(docLevel(h.doc)));
+    console.log(`  ${vaultBadge}${typeBadge} ${level} ${slug}  ${score}`);
     console.log(`    ${chalk.dim(h.doc.relPath)}`);
     if (h.doc.description) console.log(`    ${h.doc.description}`);
     if (h.doc.tags.length > 0) {
@@ -160,9 +190,10 @@ export function registerMemoryCommand(program: Command): void {
   memory
     .command('recall')
     .argument('<query...>', 'Search query (multiple words OK)')
-    .description('BM25 search over knowledge + features + tasks + memory entries')
+    .description('Search every corpus channel: knowledge, features, tasks, memory, changelog, objectives, insights, theses, automations')
     .option('-t, --top <n>', 'Number of hits to return', '10')
-    .option('--types <types>', 'Comma-separated subset: knowledge,feature,task,memory')
+    .option('--types <types>', `Comma-separated subset: ${CORPUS_TYPES.join(',')}`)
+    .option('--level <n>', 'Only hits at importance level n or above (1=all, 2=curated, 3=starred/pinned/high-priority)')
     .option('--json', 'Emit JSON for piping into other tools')
     .option('--plain', 'Plain text output without colors')
     .option('--vault <name>', 'Also search this vault (repeatable; registered name or path)', collectVault, [])
@@ -174,6 +205,7 @@ export function registerMemoryCommand(program: Command): void {
         opts: {
           top?: string;
           types?: string;
+          level?: string;
           json?: boolean;
           plain?: boolean;
           vault?: string[];
@@ -185,13 +217,14 @@ export function registerMemoryCommand(program: Command): void {
         const query = queryParts.join(' ');
         const topK = Math.max(1, Math.min(50, Number.parseInt(opts.top ?? '10', 10) || 10));
         const types = parseTypes(opts.types);
+        const minLevel = parseLevel(opts.level);
 
         // ── Federation branch (P1.2/P1.3) ──────────────────────────────────────
         // ANY of --vault / --connected / --all-vaults routes through cross-vault
         // recall.
         const explicitVaults = opts.vault ?? [];
         if (explicitVaults.length > 0 || opts.connected || opts.allVaults) {
-          recallFederated(root, query, topK, types, opts);
+          recallFederated(root, query, topK, types, minLevel, opts);
           return;
         }
 
@@ -212,11 +245,14 @@ export function registerMemoryCommand(program: Command): void {
         const { target: currentTarget } = currentVaultTarget(projectRoot);
         const connectedTargets = resolveConnectedVaults(currentTarget, root);
         if (connectedTargets.length > 1) {
-          recallFederated(root, query, topK, types, { ...opts, connected: true });
+          recallFederated(root, query, topK, types, minLevel, { ...opts, connected: true });
           return;
         }
 
-        const corpus = buildCorpus(root, types ? { types } : {});
+        const corpus = buildCorpus(root, {
+          ...(types ? { types } : {}),
+          ...(minLevel ? { minLevel } : {}),
+        });
         const vocab = loadProjectVocabulary(root);
         // Honour the vault's recall mode (the SAME source of truth the hook and
         // the dashboard read): hybrid BM25+dense fusion when it's selected AND
@@ -243,6 +279,8 @@ export function registerMemoryCommand(program: Command): void {
             tags: h.doc.tags,
             // Path-derived product (single source of truth); omitted when unscoped.
             product: h.doc.product,
+            // Derived importance 1-3 (see DocLevel) — what `--level` filters on.
+            level: docLevel(h.doc),
             score: Number(h.score.toFixed(4)),
             snippet: h.snippet,
           }));
@@ -259,7 +297,7 @@ export function registerMemoryCommand(program: Command): void {
 
         if (opts.plain) {
           for (const h of hits) {
-            console.log(`[${TYPE_LABELS[h.doc.type]}] ${h.doc.slug}  (score ${h.score.toFixed(3)})`);
+            console.log(`[${TYPE_LABELS[h.doc.type]}] ${levelBadge(docLevel(h.doc))} ${h.doc.slug}  (score ${h.score.toFixed(3)})`);
             console.log(`  ${h.doc.relPath}`);
             if (h.doc.description) console.log(`  ${h.doc.description}`);
             if (h.snippet) {
@@ -270,12 +308,14 @@ export function registerMemoryCommand(program: Command): void {
           return;
         }
 
-        console.log(header(`Recall: "${query}"  ${chalk.dim(`(${corpus.length} docs scanned)`)}`));
+        const scope = minLevel ? chalk.dim(` · level >= ${minLevel}`) : '';
+        console.log(header(`Recall: "${query}"  ${chalk.dim(`(${corpus.length} docs scanned)`)}${scope}`));
         for (const h of hits) {
           const typeBadge = chalk.cyan(`[${TYPE_LABELS[h.doc.type]}]`);
           const slug = chalk.magentaBright(h.doc.slug);
           const score = chalk.dim(`score ${h.score.toFixed(3)}`);
-          console.log(`  ${typeBadge} ${slug}  ${score}`);
+          const level = chalk.dim(levelBadge(docLevel(h.doc)));
+          console.log(`  ${typeBadge} ${level} ${slug}  ${score}`);
           console.log(`    ${chalk.dim(h.doc.relPath)}`);
           if (h.doc.description) console.log(`    ${h.doc.description}`);
           if (h.doc.tags.length > 0) {
@@ -440,13 +480,15 @@ export function registerMemoryCommand(program: Command): void {
   // list — list all corpus docs, optionally filtered
   memory
     .command('list')
-    .description('List all docs in the memory corpus (knowledge, features, tasks, memory)')
-    .option('--types <types>', 'Comma-separated subset: knowledge,feature,task,memory')
+    .description('List all docs in the memory corpus (every channel, or a --types subset)')
+    .option('--types <types>', `Comma-separated subset: ${CORPUS_TYPES.join(',')}`)
+    .option('--level <n>', 'Only docs at importance level n or above (1-3)')
     .option('--plain', 'Plain text (no colors)')
-    .action((opts: { types?: string; plain?: boolean }) => {
+    .action((opts: { types?: string; level?: string; plain?: boolean }) => {
       const root = ensureContextRoot();
       const types = parseTypes(opts.types);
-      const corpus = buildCorpus(root, types ? { types } : {});
+      const minLevel = parseLevel(opts.level);
+      const corpus = buildCorpus(root, { ...(types ? { types } : {}), ...(minLevel ? { minLevel } : {}) });
       if (corpus.length === 0) {
         const msg = 'No docs in corpus.';
         if (opts.plain) console.log(msg);
@@ -456,30 +498,28 @@ export function registerMemoryCommand(program: Command): void {
 
       if (opts.plain) {
         for (const doc of corpus) {
-          console.log(`[${TYPE_LABELS[doc.type]}] ${doc.slug}  ${doc.relPath}`);
+          console.log(`[${TYPE_LABELS[doc.type]}] ${levelBadge(docLevel(doc))} ${doc.slug}  ${doc.relPath}`);
         }
         return;
       }
 
-      const byType: Record<CorpusType, typeof corpus> = {
-        knowledge: [],
-        feature: [],
-        task: [],
-        memory: [],
-        changelog: [],
-        objective: [],
-        insight: [],
-        thesis: [],
-        skill: [], // never produced by buildCorpus; present only to satisfy the Record type
-      };
-      for (const doc of corpus) byType[doc.type].push(doc);
+      // Grouped from CORPUS_TYPES rather than a hand-written Record: a new
+      // channel then appears here automatically instead of being silently
+      // omitted from the listing.
+      const byType = new Map<CorpusType, typeof corpus>();
+      for (const doc of corpus) {
+        const bucket = byType.get(doc.type);
+        if (bucket) bucket.push(doc);
+        else byType.set(doc.type, [doc]);
+      }
       console.log(header(`Memory Corpus (${corpus.length} docs)`));
-      for (const t of ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight', 'thesis'] as CorpusType[]) {
-        if (byType[t].length === 0) continue;
-        console.log(`\n  ${chalk.cyan(TYPE_LABELS[t])} (${byType[t].length}):`);
-        for (const doc of byType[t]) {
+      for (const t of CORPUS_TYPES) {
+        const docs = byType.get(t);
+        if (!docs || docs.length === 0) continue;
+        console.log(`\n  ${chalk.cyan(TYPE_LABELS[t])} (${docs.length}):`);
+        for (const doc of docs) {
           const desc = doc.description ? `  ${chalk.dim('— ' + doc.description)}` : '';
-          console.log(`    ${chalk.magentaBright(doc.slug)}${desc}`);
+          console.log(`    ${chalk.dim(levelBadge(docLevel(doc)))} ${chalk.magentaBright(doc.slug)}${desc}`);
         }
       }
     });
@@ -487,35 +527,37 @@ export function registerMemoryCommand(program: Command): void {
   // status
   memory
     .command('status')
-    .description('Show corpus size and breakdown by type')
+    .description('Show corpus size and breakdown by type and importance level')
     .action(() => {
       const root = ensureContextRoot();
       const corpus = buildCorpus(root);
-      const counts: Record<CorpusType, number> = {
-        knowledge: 0,
-        feature: 0,
-        task: 0,
-        memory: 0,
-        changelog: 0,
-        objective: 0,
-        insight: 0,
-        thesis: 0,
-        skill: 0, // never produced by buildCorpus; present only to satisfy the Record type
-      };
+      const counts = new Map<CorpusType, number>();
+      const levels = new Map<number, number>();
       let totalTokens = 0;
       for (const doc of corpus) {
-        counts[doc.type]++;
+        counts.set(doc.type, (counts.get(doc.type) ?? 0) + 1);
+        const lvl = docLevel(doc);
+        levels.set(lvl, (levels.get(lvl) ?? 0) + 1);
         totalTokens += doc.tokens.length;
       }
+      // Unit noun per channel — cosmetic, and defaulting keeps a new channel from
+      // needing an entry here before it can be counted.
+      const UNITS: Partial<Record<CorpusType, string>> = {
+        knowledge: 'files', feature: 'PRDs', task: 'task files',
+        memory: 'LIFO entries', changelog: 'entries', objective: 'objectives',
+        insight: 'insights', thesis: 'theses', automation: 'manifests + runs',
+      };
+      const width = Math.max(...CORPUS_TYPES.map((t) => TYPE_LABELS[t].length));
       console.log(header('Memory Corpus'));
-      console.log(`  ${chalk.magentaBright('knowledge')}  ${counts.knowledge} files`);
-      console.log(`  ${chalk.magentaBright('feature')}    ${counts.feature} PRDs`);
-      console.log(`  ${chalk.magentaBright('task')}       ${counts.task} task files`);
-      console.log(`  ${chalk.magentaBright('memory')}     ${counts.memory} LIFO entries`);
-      console.log(`  ${chalk.magentaBright('changelog')}  ${counts.changelog} entries`);
-      console.log(`  ${chalk.magentaBright('objective')}  ${counts.objective} objectives`);
-      console.log(`  ${chalk.magentaBright('insight')}    ${counts.insight} insights`);
-      console.log(`  ${chalk.magentaBright('thesis')}     ${counts.thesis} theses`);
+      for (const t of CORPUS_TYPES) {
+        const label = TYPE_LABELS[t].padEnd(width);
+        console.log(`  ${chalk.magentaBright(label)}  ${counts.get(t) ?? 0} ${UNITS[t] ?? 'docs'}`);
+      }
+      console.log('');
+      const levelLine = [3, 2, 1]
+        .map((l) => `${levelBadge(l)} ${levels.get(l) ?? 0}`)
+        .join('   ');
+      console.log(`  ${chalk.dim('importance:')} ${levelLine}   ${chalk.dim('(filter with --level <n>)')}`);
       console.log('');
       console.log(`  ${chalk.dim(`${corpus.length} docs · ${totalTokens.toLocaleString()} tokens indexed (in-memory, ephemeral)`)}`);
     });

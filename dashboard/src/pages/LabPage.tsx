@@ -3,7 +3,13 @@ import { LabBoard } from '../components/lab/LabBoard';
 import { FunnelOverviewPage } from '../components/lab/funnel/FunnelOverviewPage';
 import { FunnelDetailPage } from '../components/lab/funnel/FunnelDetailPage';
 import { clearLabPath, pushLabPath, useLabRoute } from '../components/lab/funnel/labRoute';
+import type { FocusTarget } from '../hooks/useFocusTarget';
 import './LabPage.css';
+
+interface LabPageProps {
+  /** Shell navigation focus — opens that insight's detail panel (⌘K recall hit). */
+  focus?: FocusTarget;
+}
 
 /**
  * Lab — the analytics-insights dashboard page. The board is the default view;
@@ -11,7 +17,7 @@ import './LabPage.css';
  * `/lab/<slug>/f/<funnelId>` with real history entries, so back/forward and
  * deep links work. Strictly self-contained; no reach into Roadmap.
  */
-export function LabPage() {
+export function LabPage({ focus }: LabPageProps = {}) {
   const route = useLabRoute();
   const [toast, setToast] = useState<string | null>(null);
 
@@ -56,7 +62,7 @@ export function LabPage() {
       />
     );
   } else {
-    content = <LabBoard />;
+    content = <LabBoard focus={focus} />;
   }
 
   return (

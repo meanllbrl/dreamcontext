@@ -38,6 +38,19 @@ function coreFileName(path: string): string {
   return m ? m[1] : '';
 }
 
+/**
+ * The automation an `automation` hit belongs to. A manifest hit's slug already IS
+ * the automation (`automations/<slug>.md`); a run-output hit carries the synthetic
+ * `run#<automation>-<date>` slug, so recover the automation from its parent
+ * directory (`automations/output/<automation>/<date>.md`) — the run itself has no
+ * page of its own.
+ */
+function automationSlug(hit: RecallHit): string {
+  const m = hit.path.match(/(?:^|\/)automations\/output\/([^/]+)\//);
+  if (m) return m[1];
+  return hit.slug;
+}
+
 export function recallNavTarget(hit: RecallHit): RecallNavTarget {
   switch (hit.type) {
     case 'knowledge':
@@ -47,6 +60,20 @@ export function recallNavTarget(hit: RecallHit): RecallNavTarget {
       return { page: 'knowledge', slug: knowledgeSlug(hit.path) };
     case 'task':
       return { page: 'tasks', slug: hit.slug };
+    // Each of these channels HAS its own dashboard page, so a hit opens the
+    // surface that actually renders it. Before this they fell through to the
+    // `default` and opened the Core page on an empty slug — a dead end that
+    // looked like the search had found nothing real.
+    case 'objective':
+      return { page: 'roadmap', slug: hit.slug };
+    case 'insight':
+      return { page: 'lab', slug: hit.slug };
+    case 'thesis':
+      return { page: 'hypotheses', slug: hit.slug };
+    case 'automation':
+      // A run-output hit (`run#<automation>-<date>`) opens the automation it
+      // belongs to — the run detail lives inside that automation's panel.
+      return { page: 'automations', slug: automationSlug(hit) };
     case 'changelog':
     case 'memory':
     default:

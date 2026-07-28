@@ -310,7 +310,7 @@ dreamcontext dashboard --no-open         # Start without opening browser
 
 A local web UI over the same files the CLI writes — React 19 on a zero-dependency Node HTTP server, shipped in the npm package. No accounts, no external services, no separate database.
 
-**Search & ask.** The front door is a search bar over your whole picture: instantly-ranked hits across knowledge, features, tasks, core, and memory, each jumping straight to its source — plus a plain-language **Ask** that answers from your own files with sources cited inline. Both run on the same local BM25 engine as `memory recall`: instant, zero tokens, nothing leaves your machine. A **Chat** mode goes deeper by running a read-only Claude Code session inside your vault (planning permission mode, action tools disallowed — it can never write or run commands), streamed live, with a normal/intelligent depth toggle.
+**Search & ask.** The front door is a search bar over your whole picture: instantly-ranked hits across knowledge, features, tasks, core, memory, objectives, insights, hypotheses, and automations — each jumping straight to the surface that renders it — plus a plain-language **Ask** that answers from your own files with sources cited inline. A `★` dial next to the input narrows to what the brain marks as important. Both run on the same local BM25 engine as `memory recall`: instant, zero tokens, nothing leaves your machine. A **Chat** mode goes deeper by running a read-only Claude Code session inside your vault (planning permission mode, action tools disallowed — it can never write or run commands), streamed live, with a normal/intelligent depth toggle.
 
 **Tasks.** A drag-and-drop Kanban with saved views (each with its own persisted filter, sort, and grouping), two-pane include/exclude filters, a sprint-aware Versions popover with Current / Backlog / Completed buckets and inline set-current / mark-complete actions, per-card property badges (due date, RICE score, multi-assignee avatars), and an At-Risk alert for past-due or blocked work. The same tasks render along the time axis as a **Timeline (Gantt)**, a **Calendar**, an **Activity heatmap**, an **Eisenhower matrix**, and a **RICE** prioritization view. A Notion-style detail panel edits everything inline — status, dates, custom fields, changelog entries.
 
@@ -467,7 +467,7 @@ Each debate stores its full state under `_dream_context/council/<id>/` (debate, 
 
 ## Memory Recall
 
-Recall and remember across your project's curated context. BM25 ranking over knowledge files, feature PRDs, task files, `2.memory.md` sections, and `CHANGELOG.json` entries — deterministic, instant, no setup: no daemon, no API keys, the corpus is rebuilt in memory on every call (under 100ms on a 40-doc corpus).
+Recall and remember across your project's curated context. BM25 ranking over **everything the brain holds** — knowledge files, feature PRDs, task files, `2.memory.md` sections, `CHANGELOG.json` entries, roadmap objectives, Lab insights, hypotheses, and automations (their prompts, the lessons their runs learned, and what each run reported) — deterministic, instant, no setup: no daemon, no API keys, the corpus is rebuilt in memory on every call (under 100ms on a 40-doc corpus).
 
 <p align="center">
   <img src="public/image/diagram-recall.png" alt="Memory recall pipeline: your prompt → BM25F keyword match (field-weighted, stemming, synonyms) → Haiku recall (smallest cloud agent, 0-3 docs, BM25 fallback) → SessionStart snapshot (warm + cold knowledge, features, index, pinned)" width="860" />
@@ -476,8 +476,12 @@ Recall and remember across your project's curated context. BM25 ranking over kno
 ```bash
 dreamcontext memory recall "how did we decide on the sleep fan-out"      # top-5 hits with snippets
 dreamcontext memory recall "auth flow" --types knowledge,feature          # filter by corpus type
+dreamcontext memory recall "what did the nightly job find" --types automation
+dreamcontext memory recall "notifier" --level 3                           # only what's marked important
 dreamcontext memory remember "Chose BM25 over mem0 after 3-reviewer review"   # quick-capture → CHANGELOG entry
 ```
+
+**Ask for the important stuff only.** Every hit carries an importance level, derived from the markers you already write — a pinned knowledge file, a `★★★` decision, a salience-3 bookmark, a settled hypothesis, an insight wired to a roadmap key result. `--level 3` searches only those; `--level 2` drops changelog pointers and automation run logs and keeps the curated corpus. It narrows *what is searched* rather than re-ordering results, so scores stay comparable.
 
 **Why not a vector DB or mem0.** dreamcontext content is already curated atomic facts. The LLM-extraction step a mem0-style stack provides solves a problem this system already solved; BM25 over the live corpus gives ~80% of the value at 1% of the complexity. (The full reasoning → [deep dive](https://github.com/meanllbrl/dreamcontext/wiki).)
 
@@ -693,7 +697,8 @@ Set `pinned: true` in frontmatter to auto-load a file in every snapshot. Files n
 ### Memory
 
 ```bash
-dreamcontext memory recall <query...> [--top 10] [--types knowledge,task,changelog] [--json] [--plain]
+dreamcontext memory recall <query...> [--top 10] [--types <csv>] [--level 1|2|3] [--json] [--plain]
+#   --types: knowledge, feature, task, memory, changelog, objective, insight, thesis, automation
 dreamcontext memory recall <query...> [--vault other] [--connected] [--all-vaults]   # federation-aware
 dreamcontext memory remember "<text>" [--type fix] [--scope api] [--summary "..."] [--references commit:abc,task:auth]
 dreamcontext memory update <slug> [--description "..."] [--tags a,b] [--append "..."] [--pin|--unpin]
