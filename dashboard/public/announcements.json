@@ -1,20 +1,28 @@
 [
   {
-    "id": "v0-22-0",
-    "date": "2026-07-26",
+    "id": "v0-22-0-automations",
+    "date": "2026-07-28",
     "version": "0.22.0",
-    "title": "Chat is the agent now — and What's New becomes a release history",
-    "summary": "The native Chat screen becomes the default for every Claude session, on new installs and existing ones alike; the embedded terminal stays as Terminal (legacy), one dropdown away in Settings → Agents. What's New is now one page per release, led by its version number and built from real screenshots of the app.",
-    "tags": ["agent", "chat", "announcements"],
-    "story": "v0-22-0.json"
+    "title": "Put the brain on a schedule — automations that learn from every run",
+    "summary": "An automation is a headless Claude run on a cadence you set: you describe the job in plain language, one dispatcher runs what is due, and the result lands as a dated document. Each one keeps a pattern it reads before every run and adds to after one, you can replay the session a run actually had, and the notification carries the result rather than announcing that a file was written.",
+    "tags": [
+      "automations",
+      "agent",
+      "scheduling"
+    ],
+    "story": "v0-22-0-automations.json"
   },
   {
     "id": "v0-21-0",
-    "date": "2026-07-25",
+    "date": "2026-07-27",
     "version": "0.21.0",
-    "title": "Your agent, as an app — the in-app agent is no longer a terminal",
-    "summary": "The Chat view renders the same Claude Code engine as native app UI instead of scrollback: permission asks, questions, sub-agent groups, diffs and images each become a card you can act on. Chat and terminal resume the same conversation both ways.",
-    "tags": ["agent", "chat", "dashboard"],
+    "title": "Your agent, as an app — Chat is the screen every session opens in",
+    "summary": "The in-app agent stops being a terminal: a native 12-state Chat screen where questions become clickable cards, tool calls become collapsible cards, and boards, images and video render in place. It is now the default screen for every Claude session, with the embedded TUI still one dropdown away as Terminal (legacy). What's New also became a release history — one page per version, built from real screenshots.",
+    "tags": [
+      "agent",
+      "chat",
+      "announcements"
+    ],
     "story": "v0-21-0.json"
   },
   {
@@ -23,7 +31,12 @@
     "version": "0.20.0",
     "title": "The brain starts forming opinions — falsifiable theses, re-tested every sleep cycle",
     "summary": "The proactive learning layer lands: claims your project makes about itself, with predictions registered before the evidence arrives, a cited evidence ledger, and a confidence derived by arithmetic rather than felt. Alongside it, funnel analytics in Lab — and What's New itself.",
-    "tags": ["hypotheses", "sleep", "lab", "announcements"],
+    "tags": [
+      "hypotheses",
+      "sleep",
+      "lab",
+      "announcements"
+    ],
     "story": "v0-20-0.json"
   },
   {
@@ -32,7 +45,12 @@
     "version": "0.18.0",
     "title": "Every task gets its own Claude — and goal-skill takes the build the whole way",
     "summary": "Open a task and a dedicated Claude Code session is pinned inside the task view, maintaining the document rather than implementing it. The goal orchestrator was rewritten around it — builders fork and resume, judges stay clean — plus a live agent dock, sleep that stopped duplicating knowledge, and one-click delegation from the board.",
-    "tags": ["tasks", "task-manager", "goal-skill", "dashboard"],
+    "tags": [
+      "tasks",
+      "task-manager",
+      "goal-skill",
+      "dashboard"
+    ],
     "story": "v0-18-0.json"
   }
 ]

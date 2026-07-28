@@ -1,8 +1,8 @@
 {
   "hero": {
-    "eyebrow": "v0.21.0  ·  25 July 2026",
+    "eyebrow": "v0.21.0  ·  27 July 2026",
     "headline": "Your agent, as an app",
-    "sub": "The same Claude Code engine, rendered as the app instead of as scrollback. What it makes, it shows you — right where you're already looking.",
+    "sub": "The same Claude Code engine, rendered as the app instead of as scrollback — and now the screen every session opens in. What it makes, it shows you, right where you're already looking.",
     "shot": {
       "src": "shots/v0-21-0/inline-media.png",
       "alt": "A chat turn showing git log output in a code block and an image the agent embedded inline with a caption underneath",
@@ -32,6 +32,17 @@
       "side": "left"
     },
     {
+      "kind": "split",
+      "title": "And it is the screen you land in",
+      "body": "You don't have to find a beta toggle. Every Claude entry point — ＋ New, ⌘T, side-by-side splits, reopened tabs, and the sessions Sleep or a delegated task spawn for you — opens Chat, including for people who never turned it on.",
+      "shot": {
+        "src": "shots/v0-21-0/chat.png",
+        "alt": "The Chat screen: a Claude answer in markdown, an AskUserQuestion tool card, and a native survey card with clickable options and a Submit button",
+        "caption": "A real session in the app: the answer as prose, the question as a card you click."
+      },
+      "side": "right"
+    },
+    {
       "kind": "points",
       "title": "Nothing was given up to get here",
       "items": [
@@ -50,12 +61,34 @@
       ]
     },
     {
+      "kind": "split",
+      "title": "The terminal is still here, one switch away",
+      "body": "Settings → Agents → Agent screen. The full embedded Claude Code TUI stays available as Terminal (legacy); it just stops being the thing you land in. Sessions already running keep the surface they started on, and plain shells (⌃`) are unaffected.",
+      "shot": {
+        "src": "shots/v0-21-0/settings.png",
+        "alt": "Settings → Agents with the Agent screen dropdown set to Chat (default), above the explanation of the two surfaces",
+        "frame": "plain"
+      },
+      "side": "left"
+    },
+    {
+      "kind": "video",
+      "title": "And What's New became a release history",
+      "body": "One page per version, not one per feature — so the feed answers \"what did 0.18 give me?\" instead of listing things that happened. Each release leads with its number, carries a title, and is built from real screenshots of the app rather than a diagram of it. Announcements can hold clips now, so a page can show motion as well as stills.",
+      "clip": {
+        "src": "clips/v0-21-0/whats-new.mp4",
+        "poster": "clips/v0-21-0/whats-new.png",
+        "alt": "A recording of the What's New page: the current release as a hero card, then the version rail of earlier releases, then one of them opening full screen and scrolling through its story",
+        "caption": "The current release up top, every release before it on the rail — and any of them one click from the whole page."
+      }
+    },
+    {
       "kind": "note",
-      "text": "A chat-spawned Claude and a terminal-spawned Claude are the same binary — so the app briefs the agent about the surface it landed in. That's why it embeds a board instead of telling you where it saved one."
+      "text": "A chat-spawned Claude and a terminal-spawned Claude are the same binary — so the app briefs the agent about the surface it landed in. That's why it embeds a board instead of telling you where it saved one. And if you deliberately switch back to Terminal (legacy), it sticks: the one-time move to Chat runs once and never overrides a choice you made yourself."
     }
   ],
   "closer": {
     "title": "Where it lives",
-    "body": "The agent overlay — the corner launcher, or your open/close hotkey. As of 0.22 it is the default screen for every Claude session."
+    "body": "The agent overlay — the corner launcher, or your open/close hotkey. Want the raw surface back? Settings → Agents → Agent screen → Terminal (legacy)."
   }
 }
