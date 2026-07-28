@@ -16,8 +16,9 @@ import {
   isAgentRun, runDurationMs, formatModelName, runMetaChips,
   isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote, startSubAgentRun,
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_TAIL, WINDOW_STEP, clampLines,
+  rememberMediaBox, knownMediaBox, shouldAutoReveal, WINDOW_REVEAL_PX,
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV,
-  type SubAgentRun, type ProgressProbe, type HistoryNav,
+  type SubAgentRun, type ProgressProbe, type HistoryNav, type AutoRevealMetrics,
 } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 
 // ─── toolGlyph ──────────────────────────────────────────────────────────────────
@@ -1292,5 +1293,106 @@ describe('stepHistory', () => {
     expect(stepHistory(entries, restored.nav, 'back', 'second draft')).toEqual({
       nav: { index: 0, stash: 'second draft' }, text: 'newest',
     });
+  });
+});
+
+// ─── remembered image boxes ─────────────────────────────────────────────────────
+//
+// The cache that stops a revealed block growing under a reader who has scrolled up: an
+// `<img>` with no width/height is 0px tall until its bits land, so ChatPane's hold measures
+// the prepend without it and the image's real height arrives as a shove a frame later.
+// Replaying a known natural size reserves the box up front. (Measured: an unreserved image
+// in this transcript's CSS goes 2px → 420px on load; a reserved one is 420px throughout.)
+
+describe('remembered image boxes', () => {
+  it('an image never displayed has no remembered box', () => {
+    expect(knownMediaBox('never/seen/at/all.png')).toBeNull();
+  });
+
+  it('remembers a natural size and replays it for the next element built for that path', () => {
+    rememberMediaBox('shots/a.png', 1200, 800);
+    expect(knownMediaBox('shots/a.png')).toEqual({ w: 1200, h: 800 });
+  });
+
+  it('a file that changed shape overwrites the stale box rather than keeping it', () => {
+    rememberMediaBox('shots/b.png', 800, 600);
+    rememberMediaBox('shots/b.png', 640, 640);
+    expect(knownMediaBox('shots/b.png')).toEqual({ w: 640, h: 640 });
+  });
+
+  it('refuses a size that is not an aspect ratio — a NaN box would reserve unpredictable height', () => {
+    for (const [w, h] of [[0, 100], [100, 0], [-5, 5], [Number.NaN, 10], [10, Number.POSITIVE_INFINITY]]) {
+      rememberMediaBox('shots/bad.png', w, h);
+      expect(knownMediaBox('shots/bad.png')).toBeNull();
+    }
+  });
+
+  it('a decode that reports 0x0 (a failed image) never displaces a good remembered box', () => {
+    rememberMediaBox('shots/c.png', 900, 300);
+    rememberMediaBox('shots/c.png', 0, 0);
+    expect(knownMediaBox('shots/c.png')).toEqual({ w: 900, h: 300 });
+  });
+
+  it('is bounded — the oldest box goes, not the newest arrival', () => {
+    rememberMediaBox('evict/oldest.png', 10, 10);
+    for (let i = 0; i < 420; i += 1) rememberMediaBox(`evict/filler-${i}.png`, 30, 40);
+    expect(knownMediaBox('evict/oldest.png')).toBeNull();
+    expect(knownMediaBox('evict/filler-419.png')).toEqual({ w: 30, h: 40 });
+  });
+
+  it('re-seeing an UNCHANGED image refreshes its place in the queue', () => {
+    // Sizes are re-reported on every mount, so an unchanged report is the common case — and
+    // it is exactly the signal that this image is still being looked at. Without the refresh
+    // a screenshot the reader keeps scrolling past is evicted by images they passed once,
+    // and the reveal it is mounted in grows under them again.
+    rememberMediaBox('lru/kept.png', 20, 20);
+    for (let i = 0; i < 399; i += 1) rememberMediaBox(`lru/fill-a-${i}.png`, 30, 40);
+    expect(knownMediaBox('lru/kept.png')).toEqual({ w: 20, h: 20 }); // at the cap, still in
+    rememberMediaBox('lru/kept.png', 20, 20);                        // same size — a refresh
+    for (let i = 0; i < 300; i += 1) rememberMediaBox(`lru/fill-b-${i}.png`, 30, 40);
+    expect(knownMediaBox('lru/kept.png')).toEqual({ w: 20, h: 20 });
+  });
+});
+
+// ─── shouldAutoReveal ───────────────────────────────────────────────────────────
+//
+// The gate that stopped the transcript teleporting while it loaded history. `userDriven` was
+// the whole condition, and a scrollbar drag is the case where that is most true and least
+// useful: the browser keeps deriving `scrollTop` from the thumb, so the hold's correction is
+// overwritten on the next drag update and the view snaps back to the ceiling — which reads as
+// user-driven again, and reveals again. Traced on a real 500-item transcript: 42 mounted rows
+// became 282 in one drag.
+
+describe('shouldAutoReveal', () => {
+  const at = (o: Partial<AutoRevealMetrics> = {}): AutoRevealMetrics => ({
+    hiddenCount: 200, scrollTop: 100, userDriven: true, dragging: false, ...o,
+  });
+
+  it('reveals when the reader has read up to the ceiling under their own steam', () => {
+    expect(shouldAutoReveal(at())).toBe(true);
+  });
+
+  it('never reveals while the scrollbar thumb is held — the correction cannot survive a drag', () => {
+    expect(shouldAutoReveal(at({ dragging: true }))).toBe(false);
+  });
+
+  it('a drag does not become acceptable just by being at the very top', () => {
+    expect(shouldAutoReveal(at({ dragging: true, scrollTop: 0 }))).toBe(false);
+  });
+
+  it('refuses an offset the user did not ask for — our own correction, a clamp, a re-home', () => {
+    expect(shouldAutoReveal(at({ userDriven: false }))).toBe(false);
+    expect(shouldAutoReveal(at({ userDriven: false, scrollTop: 0 }))).toBe(false);
+  });
+
+  it('does nothing when the window has nothing left above it', () => {
+    expect(shouldAutoReveal(at({ hiddenCount: 0 }))).toBe(false);
+    expect(shouldAutoReveal(at({ hiddenCount: -1 }))).toBe(false);
+  });
+
+  it('only fires within the reveal band, so scrolling mid-transcript never extends the window', () => {
+    expect(shouldAutoReveal(at({ scrollTop: WINDOW_REVEAL_PX - 1 }))).toBe(true);
+    expect(shouldAutoReveal(at({ scrollTop: WINDOW_REVEAL_PX }))).toBe(false);
+    expect(shouldAutoReveal(at({ scrollTop: 9999 }))).toBe(false);
   });
 });

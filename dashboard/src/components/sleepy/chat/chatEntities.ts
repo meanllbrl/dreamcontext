@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { api, agentFileUrl, RequestError } from '../../../api/client';
 
 /**
@@ -967,6 +967,42 @@ export function nextFirstShown(prev: number, input: WindowInput): number {
   return Math.min(Math.max(0, prev), tail);
 }
 
+/** What the scroll handler knows when it decides whether to extend the window. */
+export interface AutoRevealMetrics {
+  /** Entries above the window's ceiling. Nothing to reveal → nothing to decide. */
+  hiddenCount: number;
+  scrollTop: number;
+  /** Did a gesture cause this, or did our own code / a clamp move the offset? */
+  userDriven: boolean;
+  /** Is the scrollbar thumb currently held? */
+  dragging: boolean;
+}
+
+/**
+ * Should reading up to the ceiling extend the window right now?
+ *
+ * `userDriven` is necessary and NOT sufficient, and the gap between those two is a bug the
+ * owner reported as the transcript teleporting while it loaded history.
+ *
+ * Everything about the reveal assumes the reader can be put back by WRITING `scrollTop` —
+ * that is how the prepend is paid for. While the scrollbar thumb is held that assumption is
+ * false: the browser keeps deriving `scrollTop` from the thumb, so it overwrites the
+ * correction on the next drag update and the view returns to what the thumb says, the top.
+ * Then this predicate is asked again, sees the ceiling and a user-driven event (a drag is the
+ * most unambiguous gesture there is), and reveals again. Traced on a 500-item transcript: 42
+ * mounted rows became 282 in one slow drag, the reader thrown to the top at every step.
+ *
+ * So a drag is exactly the state that most looks like intent and least permits the response.
+ * ChatPane makes the deferred reveal on pointer-release instead, where the offset is its own
+ * again — dragging to the ceiling still extends the window, once, and holds.
+ */
+export function shouldAutoReveal(m: AutoRevealMetrics): boolean {
+  if (m.hiddenCount <= 0) return false;
+  if (m.scrollTop >= WINDOW_REVEAL_PX) return false;
+  if (m.dragging) return false;
+  return m.userDriven;
+}
+
 /** Where each array's rendered slice starts, and how much is hidden above it. */
 export interface WindowSplit {
   /** Entries not mounted at all — what the "Show earlier messages (N)" button offers. */
@@ -1071,7 +1107,23 @@ export function splitWindow(historyLen: number, itemsLen: number, firstShown: nu
  * every render (see this section's header) never double-wraps one.
  */
 export function useCopyableCodeBlocks(ref: RefObject<HTMLElement | null>): void {
-  useEffect(() => {
+  // A LAYOUT effect, for the same reason `useInlineMedia` is one: this pass ADDS HEIGHT to a
+  // row (the bar is ~34px per fenced block), and a passive effect adds it after the browser
+  // has painted. Above a reader who has scrolled up, that is a shove they can see. ChatPane's
+  // hold corrects it — but only on the NEXT frame, via the ResizeObserver, so the wrong
+  // position gets one painted frame first. Child layout effects run before the parent's, so
+  // decorating here means the reveal's correction measures the DECORATED layout and there is
+  // nothing left to catch up on.
+  //
+  // Measured against the real dashboard, a 360-entry resumed transcript, scrolling up through
+  // the reveals: the revealed block carried 6 fenced blocks, each grew by exactly 34px after
+  // the correction had been computed, and the reader's own row jumped by the 204px total for
+  // exactly one frame at every single reveal. The same fixture with no fenced blocks and no
+  // images slipped 0-1px, which is what named this pass as the cause.
+  //
+  // The cost is bounded and was already being paid every commit: the pass is guarded by
+  // `data-chat-copy`, so an already-decorated subtree is two `querySelectorAll` calls.
+  useLayoutEffect(() => {
     const root = ref.current;
     if (!root) return;
     const blocks = root.querySelectorAll<HTMLPreElement>('pre:not([data-chat-copy]):not(.mermaid)');
@@ -1140,7 +1192,11 @@ export function useClickablePaths(
   ref: RefObject<HTMLElement | null>,
   onOpenPath: (path: string) => void,
 ): void {
-  useEffect(() => {
+  // A LAYOUT effect for the same reason as `useCopyableCodeBlocks` above: turning a bare
+  // `<code>` into a chip changes its box, which can rewrap the line it sits in and take the
+  // paragraph with it. Small per path, but it lands above a scrolled-up reader in the same
+  // post-paint window, and the correction for it is a frame behind.
+  useLayoutEffect(() => {
     const root = ref.current;
     if (!root) return;
     root.querySelectorAll<HTMLElement>('code:not([data-chat-path])').forEach((code) => {
@@ -1177,6 +1233,87 @@ export function inlineMediaKind(path: string): 'image' | 'video' | 'audio' | nul
 
 /** How many media elements ONE message keeps alive for re-use (see {@link useInlineMedia}). */
 const MEDIA_KEEP_MAX = 8;
+
+// ─── Remembered image boxes (why a scrolled-up reader stops getting nudged) ───────────
+//
+// An `<img>` with no width/height attributes occupies ZERO height until its bits arrive and
+// the browser learns the intrinsic size. Everywhere else in the transcript that is merely
+// untidy; above a reader who has scrolled up it is the bug. The window reveals 40 older
+// entries, ChatPane's hold measures the prepend in its layout effect and corrects `scrollTop`
+// by exactly what it measured — and every image in that block is still 0px tall at that
+// moment. They resolve a beat later, grow the content ABOVE the reader, and the correction
+// for THAT lands one painted frame afterwards. So the reader sees one frame at the wrong
+// place per image, which is felt as the transcript shoving them around while it loads.
+//
+// Measured against the real dashboard, a 360-entry resumed transcript, same fixture, same
+// browser, scrolling up through the reveals: with an image in every answer the reveal frame
+// slipped 205px EVERY time; with the images removed from the same fixture it slipped 0-1px.
+// That is the whole defect — not the hold, which corrects exactly what it can see.
+//
+// So the box is RESERVED before the bits arrive. The natural size of every image the
+// transcript has ever displayed is remembered here and replayed onto the next element built
+// for that path, which gives the browser the aspect ratio up front and leaves nothing to
+// grow. `localStorage`, not just memory, because the case this exists for is REOPENING a
+// conversation and reading back through it: those images were displayed when the work
+// happened, and a memory-only cache would be empty at exactly the moment it is needed.
+//
+// A stale entry (the file was overwritten at a different aspect) costs one ordinary
+// correction — the same one an unreserved image costs today — and is repaired on load.
+
+/** Remembered `naturalWidth`/`naturalHeight` per referenced path. */
+const mediaBoxes = new Map<string, { w: number; h: number }>();
+const MEDIA_BOX_KEY = 'dreamcontext.chat.mediaBoxes';
+/** Bound on what is persisted. Oldest out — a vault's screenshots are read newest-first. */
+const MEDIA_BOX_MAX = 400;
+let mediaBoxesLoaded = false;
+
+/** Hydrate the remembered boxes once per page. Any failure leaves the map empty, which is
+ *  simply the behaviour that existed before this cache — never an exception into a render. */
+function loadMediaBoxes(): void {
+  if (mediaBoxesLoaded) return;
+  mediaBoxesLoaded = true;
+  try {
+    const raw = localStorage.getItem(MEDIA_BOX_KEY);
+    if (!raw) return;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+    for (const [path, box] of Object.entries(parsed as Record<string, unknown>)) {
+      const b = box as { w?: unknown; h?: unknown };
+      // Only a pair of finite positive numbers is an aspect ratio. Anything else would put
+      // a NaN into an attribute and reserve a box of unpredictable height.
+      if (typeof b?.w === 'number' && typeof b?.h === 'number'
+        && Number.isFinite(b.w) && Number.isFinite(b.h) && b.w > 0 && b.h > 0) {
+        mediaBoxes.set(path, { w: b.w, h: b.h });
+      }
+    }
+  } catch { /* unreadable/disabled storage — reserve nothing, exactly as before */ }
+}
+
+/** Remember one image's natural size, and mirror the map to storage. */
+export function rememberMediaBox(path: string, w: number, h: number): void {
+  if (!(w > 0 && h > 0) || !Number.isFinite(w) || !Number.isFinite(h)) return;
+  const known = mediaBoxes.get(path);
+  // Re-insert at the END so eviction is least-recently-SEEN rather than insertion order: a
+  // screenshot the reader keeps scrolling past must outlive images they only ever passed once.
+  mediaBoxes.delete(path);
+  mediaBoxes.set(path, { w, h });
+  while (mediaBoxes.size > MEDIA_BOX_MAX) {
+    mediaBoxes.delete(mediaBoxes.keys().next().value as string);
+  }
+  // Seeing a known image again reorders the queue but writes nothing: `load` fires for every
+  // image on every mount, and serializing the whole map each time would put a few hundred
+  // entries through `JSON.stringify` on a scroll.
+  if (known && known.w === w && known.h === h) return;
+  try {
+    localStorage.setItem(MEDIA_BOX_KEY, JSON.stringify(Object.fromEntries(mediaBoxes)));
+  } catch { /* quota/disabled — the in-memory map still serves this page */ }
+}
+
+/** The remembered box for a path, or null when this image has never been displayed. */
+export function knownMediaBox(path: string): { w: number; h: number } | null {
+  loadMediaBoxes();
+  return mediaBoxes.get(path) ?? null;
+}
 
 // ─── Folders (the file panel's directory listing) ────────────────────────────────────
 
@@ -1478,6 +1615,17 @@ export function useInlineMedia(
         // landing mid-stream doesn't drop the frame the token was being painted in.
         el.loading = 'lazy';
         el.decoding = 'async';
+        // Reserve the box BEFORE the bits arrive, so a revealed block does not grow under a
+        // reader who has scrolled up (see `mediaBoxes`). The attributes only supply an aspect
+        // ratio here — `.chat-md-image` keeps `width/height: auto` under its two caps, so the
+        // used size is still decided by the column and `max-height`, exactly as before.
+        const box = knownMediaBox(path);
+        if (box) { el.width = box.w; el.height = box.h; }
+        // First sight of this image (or a file that changed shape) teaches the cache, so the
+        // next transcript that mounts it reserves the right box from the start.
+        el.addEventListener('load', () => {
+          rememberMediaBox(path, el.naturalWidth, el.naturalHeight);
+        });
         el.addEventListener('click', () => live.current.onOpen?.(path));
       }
       el.addEventListener('error', () => {

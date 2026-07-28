@@ -6,7 +6,7 @@ import type { ModelConfig } from '../../lib/agentComposer';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
   nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent,
-  nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, revealPath,
+  nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   type SubAgentRun, type ScrollIntent,
 } from './chat/chatEntities';
 import { ItemView } from './chat/TranscriptItem';
@@ -401,10 +401,20 @@ export function ChatPane({
       draggingRef.current = false;
       window.removeEventListener('pointerup', release);
       window.removeEventListener('pointercancel', release);
+      // The reveal the drag was not allowed to make (see the scroll handler). The thumb is
+      // released, the offset is ours to correct again, so reading up to the ceiling by
+      // dragging still extends the window — it just does it once, on release, instead of
+      // once per frame while the browser is overwriting every correction.
+      const el = scrollRef.current;
+      if (el && el.clientHeight > 0 && el.scrollTop < WINDOW_REVEAL_PX) revealEarlierRef.current();
     };
     window.addEventListener('pointerup', release);
     window.addEventListener('pointercancel', release);
   };
+
+  /** `revealEarlier` for the pointer-release handler above, which is created before it and
+   *  must not close over one render's copy — the press outlives several renders. */
+  const revealEarlierRef = useRef<() => void>(() => {});
 
   // ── Transcript window: how much of the conversation is actually mounted ─────────────
   //
@@ -568,6 +578,7 @@ export function ChatPane({
     captureAnchor(true);
     setFirstShownState(next);
   }, [firstShown, windowTotal, setStick, captureAnchor]);
+  revealEarlierRef.current = revealEarlier;
 
   // The reveal's own commit: React has just prepended the entries, so the hold is settled here,
   // synchronously, before the browser paints a single frame of the un-corrected position.
@@ -978,7 +989,38 @@ export function ChatPane({
             // 0. Without the gate, one of them would trip a reveal, whose prepend would
             // land near 0 again, and the whole conversation would unspool in a few frames:
             // exactly the unbounded mount this window exists to prevent.
-            if (hiddenCount > 0 && el.scrollTop < WINDOW_REVEAL_PX && metrics.userDriven) {
+            // …and NOT while the scrollbar thumb is held, which is the one gesture where the
+            // correction cannot survive. Everything above assumes that writing `scrollTop` is
+            // how the reader gets put back. During a drag it isn't: the browser keeps deriving
+            // `scrollTop` from the THUMB, so it overwrites the hold's correction on the next
+            // drag update and the view returns to where the thumb says — the top.
+            //
+            // Traced against the real dashboard on a 500-item transcript, thumb hauled slowly
+            // upward. Each line is one frame; the arrow is the pane's own write:
+            //
+            //     rows=202 top=0     h=22569
+            //     rows=242 top=6873  h=29720   reveal + correction (write 0->6873) — exact
+            //     rows=242 top=6873  h=29720
+            //     rows=242 top=0     h=29560   the DRAG puts it back. No JS write at all.
+            //
+            // and then the next event sees "near the ceiling, user driving" and reveals again:
+            // 42 rows became 282 in one gesture, throwing the reader to the top each time.
+            // That is the owner's report — the transcript teleporting while it loads history —
+            // and it is why `userDriving()` alone was the wrong gate here. A drag is the most
+            // unambiguous user gesture there is (which is exactly why it counts for unpinning)
+            // and simultaneously the one state where our offset is not ours to set.
+            //
+            // So the reveal waits for the release, where `handlePointerDown` makes it. The
+            // wheel, keyboard and touch paths are unaffected: none of them re-derive the
+            // offset from a pointer, and their corrections were measured landing exactly.
+            //
+            // The rule itself lives in `shouldAutoReveal` — this pane cannot be unit-tested
+            // without a WebSocket, a document and a vault, and the drag clause is the one
+            // thing here that must never regress.
+            if (shouldAutoReveal({
+              hiddenCount, scrollTop: el.scrollTop,
+              userDriven: metrics.userDriven, dragging: draggingRef.current,
+            })) {
               revealEarlier();
             }
           }}
