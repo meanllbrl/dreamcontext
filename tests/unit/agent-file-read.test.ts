@@ -101,11 +101,17 @@ describe('handleAgentFile — path handling', () => {
     expect(body().error).toBe('missing_path');
   });
 
-  it('400s invalid_path on a traversal attempt that escapes the project root', async () => {
+  // The FILE decides, not the notation. `../../etc/passwd` names the same thing as
+  // `/etc/passwd`, so it gets the same answer as the test below: refused, with the consent
+  // prompt, and nothing served. (It used to be 400 `invalid_path` purely because of how it
+  // was written — a split that bought no safety, since an answer can always write the
+  // absolute form, and cost every honestly-mistyped reference a dead card.)
+  it('403s needs_grant on a traversal reference — same answer as its absolute twin', async () => {
     const { res, status, body } = makeRes();
     await handleAgentFile(makeReq('/api/agent/file?path=' + encodeURIComponent('../../etc/passwd')), res, {}, contextRoot);
-    expect(status()).toBe(400);
-    expect(body().error).toBe('invalid_path');
+    expect(status()).toBe(403);
+    expect(body().error).toBe('needs_grant');
+    expect(body().content).toBeUndefined();
   });
 
   // An absolute path outside the project is no longer a flat refusal: it is the prompt the
@@ -119,11 +125,16 @@ describe('handleAgentFile — path handling', () => {
     expect(body().content).toBeUndefined();
   });
 
-  it('400s invalid_path on an absolute path carrying traversal — never grantable', async () => {
+  // Normalised before anything is decided, so the `..` cannot be used to make one file look
+  // like another: the answer is the one `/etc/passwd` gets, and the RESOLVED path is what
+  // comes back for the card to name and for a grant to record.
+  it('normalises an absolute path carrying traversal, and still refuses to serve it', async () => {
     const { res, status, body } = makeRes();
     await handleAgentFile(makeReq('/api/agent/file?path=' + encodeURIComponent('/tmp/../etc/passwd')), res, {}, contextRoot);
-    expect(status()).toBe(400);
-    expect(body().error).toBe('invalid_path');
+    expect(status()).toBe(403);
+    expect(body().error).toBe('needs_grant');
+    expect(body().path).toBe('/etc/passwd');
+    expect(body().content).toBeUndefined();
   });
 
   it('404s not_found for a path that does not exist under the project root', async () => {

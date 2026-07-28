@@ -6,7 +6,7 @@ import type { ModelConfig } from '../../lib/agentComposer';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
   nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent,
-  nextFirstShown, splitWindow, revealScrollCorrection, WINDOW_REVEAL_PX,
+  nextFirstShown, splitWindow, revealScrollCorrection, WINDOW_REVEAL_PX, revealPath,
   type SubAgentRun, type ScrollIntent,
 } from './chat/chatEntities';
 import { ItemView } from './chat/TranscriptItem';
@@ -727,7 +727,10 @@ export function ChatPane({
         handleOpenFile(action.path!);
         break;
       case 'reveal':
-        void api.post('/agent/reveal', { path: action.path }).catch(() => { /* not desktop, or gone */ });
+        // Never a dead button (owner report 07-28): if the OS wouldn't take it — gone, or a
+        // path that escapes the project root — fall back to this pane's own file panel,
+        // which SAYS why instead of the click going nowhere.
+        void revealPath(action.path!).then((err) => { if (err) handleOpenFile(action.path!); });
         break;
       case 'ask':
         session.sendText(action.text!);

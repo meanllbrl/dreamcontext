@@ -214,10 +214,10 @@ describe('handleAgentReveal — project-relative paths', () => {
     expect(lastSpawn().args).toEqual([join(projectRoot, rel)]);
   });
 
-  it('400s a relative path that escapes the project root, and never spawns an opener', async () => {
+  it('404s a reference that names nothing anywhere, and never spawns an opener', async () => {
     const { res, status } = makeRes();
-    await handleAgentReveal(makePost({ path: '../dc-agent-outside-x/secret.txt' }), res, {}, contextRoot);
-    expect(status()).toBe(400);
+    await handleAgentReveal(makePost({ path: '../dc-agent-nowhere-x/secret.txt' }), res, {}, contextRoot);
+    expect(status()).toBe(404);
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
@@ -226,6 +226,50 @@ describe('handleAgentReveal — project-relative paths', () => {
     await handleAgentReveal(makePost({ path: 'nope.png' }), res, {}, contextRoot);
     expect(status()).toBe(404);
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+});
+
+// ─── references whose `..` counting is wrong ────────────────────────────────────
+//
+// The owner's 07-28 report. An answer wrote `../../tmp/dc-verify-auto/automations-light.png`
+// for a screenshot at `/tmp/dc-verify-auto/automations-light.png`; the climb lands nowhere,
+// so "Open ↗" — the card's only affordance — opened nothing. The route now resolves a
+// transcript path by what it NAMES (see `resolveChatReference`), which is what makes the
+// button open the picture instead of reporting at the user.
+
+describe('handleAgentReveal — a reference whose climb lands nowhere', () => {
+  it('opens the file the reference actually names', async () => {
+    const shotDir = join(tmpdir(), `dc-agent-shots-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(shotDir, { recursive: true });
+    const shot = join(shotDir, 'automations-light.png');
+    writeFileSync(shot, Buffer.from([0x89, 0x50, 0x4e, 0x47]), 'binary');
+    try {
+      const { res, status } = makeRes();
+      await handleAgentReveal(makePost({ path: `../../${shotDir.split('/').pop()}/automations-light.png` }), res, {}, contextRoot);
+      expect(status()).toBe(200);
+      expect(lastSpawn().args).toEqual([shot]); // an image opens; no `-R`
+    } finally {
+      rmSync(shotDir, { recursive: true, force: true });
+    }
+  });
+
+  it('a RECOVERED executable is still only revealed, never launched', async () => {
+    // Resolving more references must not widen what may be RUN: the open-vs-reveal split is
+    // decided after the file is known, so a recovered `.sh` gets the same treatment as one
+    // named outright.
+    const dir = join(tmpdir(), `dc-agent-sh-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    const script = join(dir, 'setup.sh');
+    writeFileSync(script, '#!/bin/sh\necho hi\n', 'utf-8');
+    try {
+      const { res, status } = makeRes();
+      await handleAgentReveal(makePost({ path: `../../../${dir.split('/').pop()}/setup.sh` }), res, {}, contextRoot);
+      expect(status()).toBe(200);
+      expect(lastSpawn().args).not.toEqual([script]);
+      if (process.platform === 'darwin') expect(lastSpawn().args).toEqual(['-R', script]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

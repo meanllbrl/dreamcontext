@@ -3,7 +3,7 @@ import { api, agentFileUrl } from '../../../api/client';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { ItemView } from './TranscriptItem';
 import {
-  inlineMediaKind, joinChildPath, formatEntrySize, dirTruncationNote,
+  inlineMediaKind, joinChildPath, formatEntrySize, dirTruncationNote, revealPath,
   type Reference, type SubAgentRun,
 } from './chatEntities';
 import type { ChatItem } from '../chatSession';
@@ -168,7 +168,10 @@ function FileSlideOver({ path, reference, onClose, onNavApp, onOpenPath }: Slide
   }, [path, mediaKind]);
 
   const copyPath = () => { void navigator.clipboard?.writeText(path).catch(() => {}); };
-  const revealPath = () => { void api.post('/agent/reveal', { path }).catch(() => { /* not desktop, or gone */ }); };
+  // "Reveal in Finder" that refuses (gone, or a path that escapes the project root) says so
+  // in the panel's own status line rather than swallowing it — owner report 07-28.
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const handleReveal = () => { setRevealError(null); void revealPath(path).then(setRevealError); };
 
   return (
     <>
@@ -191,7 +194,7 @@ function FileSlideOver({ path, reference, onClose, onNavApp, onOpenPath }: Slide
           // The issue's own expected behaviour: a folder should OPEN. In-app listing below,
           // and this hands the same folder to Finder (`/agent/reveal` opens folders; it only
           // ever reveals executables rather than launching them).
-          <button type="button" className="chat-btn" onClick={revealPath}>
+          <button type="button" className="chat-btn" onClick={handleReveal}>
             <span aria-hidden>↗</span> Reveal in Finder
           </button>
         )}
@@ -199,6 +202,7 @@ function FileSlideOver({ path, reference, onClose, onNavApp, onOpenPath }: Slide
           <span aria-hidden>⧉</span> Copy path
         </button>
       </div>
+      {revealError && <p className="chat-slideover-status error">Couldn't open this — {revealError}</p>}
       <div className="chat-slideover-body" data-media={mediaKind ?? undefined}>
         {mediaKind ? (
           <MediaPreview path={path} kind={mediaKind} />

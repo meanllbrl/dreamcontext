@@ -81,6 +81,9 @@
   font-size: var(--font-size-xs, 11.5px);
 }
 .chat-md-blocked-name { color: var(--color-text); font-weight: 600; }
+/* Both the standing "outside the project" and the rare "this file isn't there any more" —
+   deliberately the SAME quiet tertiary. A red alarm in a chat bubble reads as the app
+   breaking; this is the app calmly saying where things stand (owner call, 07-28). */
 .chat-md-blocked-note { color: var(--color-text-tertiary); }
 .chat-md-blocked-allow,
 .chat-md-blocked-open {
@@ -186,6 +189,8 @@ video.chat-msg-user-media-el { cursor: default; }
   cursor: pointer;
 }
 .chat-msg-user-media-gone:hover { color: var(--color-text); }
+.chat-msg-user-media-gone-row { display: inline-flex; align-items: center; gap: var(--space-2); }
+.chat-msg-user-media-gone-note { color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
 
 /* ── Assistant message — FULL-WIDTH, NO AVATAR GUTTER (hard rule 1) ──────────────── */
 

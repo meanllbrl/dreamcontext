@@ -3,7 +3,7 @@ import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { api, agentFileUrl } from '../../../api/client';
 import {
   useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens,
-  inlineMediaKind, splitUserMedia,
+  inlineMediaKind, splitUserMedia, revealPath,
 } from './chatEntities';
 import { parseChatActions, type ChatAction } from './chatActions';
 import { ActionRow } from './ActionRow';
@@ -32,12 +32,6 @@ function copyText(text: string): void {
   void navigator.clipboard?.writeText(text).catch(() => { /* clipboard unavailable */ });
 }
 
-/** Hand an image the transcript can't draw to the OS viewer (`POST /agent/reveal` — image
- *  extensions only, see the route). Best-effort: a failure leaves the chip as it was. */
-function revealFile(path: string): void {
-  void api.post('/agent/reveal', { path }).catch(() => { /* not desktop, or gone */ });
-}
-
 /** The user allowing ONE file outside the project root to be shown inline. Resolves false
  *  when the server refused (gone, or not a file), so the card can stay put and say so. */
 function grantFile(path: string): Promise<boolean> {
@@ -56,14 +50,25 @@ function grantFile(path: string): Promise<boolean> {
  */
 function UserMediaItem({ path, onOpenFile }: { path: string; onOpenFile?: (path: string) => void }) {
   const [failed, setFailed] = useState(false);
+  // Why the OS opener refused, if it did. The chip promised "still opens" and used to break
+  // that promise in silence — a refusal now shows next to it (owner report 07-28).
+  const [revealError, setRevealError] = useState<string | null>(null);
   const kind = inlineMediaKind(path);
   const name = path.replace(/\/+$/, '').split('/').pop() || path;
 
   if (failed) {
     return (
-      <button type="button" className="chat-msg-user-media-gone" onClick={() => revealFile(path)} title={path}>
-        <span aria-hidden>{kind === 'video' ? '🎬' : kind === 'audio' ? '🎵' : '🖼'}</span> {name}
-      </button>
+      <span className="chat-msg-user-media-gone-row">
+        <button
+          type="button"
+          className="chat-msg-user-media-gone"
+          onClick={() => { setRevealError(null); void revealPath(path).then(setRevealError); }}
+          title={path}
+        >
+          <span aria-hidden>{kind === 'video' ? '🎬' : kind === 'audio' ? '🎵' : '🖼'}</span> {name}
+        </button>
+        {revealError && <span className="chat-msg-user-media-gone-note">{revealError}</span>}
+      </span>
     );
   }
   if (kind === 'video' || kind === 'audio') {
@@ -175,7 +180,7 @@ function AssistantMessage({
   // chatEntities.ts — keying them to the message's own text is what let a whole answer revert
   // to raw markdown, `<a href="…mp4">` and all, on somebody else's re-render.
   useCopyableCodeBlocks(bodyRef);
-  useInlineMedia(bodyRef, { onOpen: onOpenFile, onReveal: revealFile, onGrant: grantFile });
+  useInlineMedia(bodyRef, { onOpen: onOpenFile, onReveal: revealPath, onGrant: grantFile });
   useClickablePaths(bodyRef, (path) => onOpenFile?.(path));
 
   // Nothing left to show: an empty finished text block, or one that was ONLY a fence/board

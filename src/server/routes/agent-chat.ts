@@ -3,7 +3,7 @@ import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { join, dirname, basename, extname, isAbsolute } from 'node:path';
+import { join, dirname, basename, extname } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   writeFileSync, rmSync, readFileSync, existsSync, statSync, readdirSync, createReadStream,
@@ -15,6 +15,7 @@ import { isDesktop } from '../desktop.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
 import { safeChildPath } from '../safe-path.js';
+import { resolveChatReference } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
 import { resolveBoardAssets } from './knowledge.js';
@@ -967,23 +968,31 @@ function addGrant(contextRoot: string, abs: string): void {
 
 /**
  * Where `rawPath` really lives, and whether we may serve it.
- *   • inside the project root → allowed (the long-standing rule, via `safeChildPath`)
- *   • absolute + explicitly granted by the user → allowed
- *   • absolute, not granted → `needs_grant`, which the UI turns into an "Allow access" card
- *   • anything else (traversal, null byte, relative escape) → `invalid`
+ *   • inside the project root → allowed
+ *   • outside + explicitly granted by the user → allowed
+ *   • outside, not granted → `needs_grant`, which the UI turns into an "Allow access" card
+ *     naming the RESOLVED file (returned as `abs`, so the grant records exactly what will
+ *     then be served — the notation the answer happened to use never enters the record)
+ *   • unresolvable (empty, null byte) → `invalid`
+ *
+ * WHICH file a reference names is `resolveChatReference`'s job, and it deliberately reads a
+ * transcript path as a name rather than as an argument — see that module. WHETHER we may
+ * serve it is decided here, and the rule is unchanged: nothing outside the project root
+ * reaches the page without a real click on a card naming that file.
+ *
+ * Existence is deliberately NOT checked for an outside path before answering `needs_grant`:
+ * a 404-vs-403 split there would let a page probe for arbitrary files it may not read.
  */
 function resolveServablePath(
   contextRoot: string,
   rawPath: string,
-): { abs: string } | { deny: 'invalid' | 'needs_grant' } {
-  const inProject = safeChildPath(projectRootOf(contextRoot), rawPath);
-  if (inProject) return { abs: inProject };
-  // Only a clean absolute path can be granted — never something that had to be resolved
-  // against a root to mean anything, which is where traversal tricks live.
-  if (!rawPath.startsWith('/') || rawPath.includes('\0') || rawPath.includes('/../') || rawPath.endsWith('/..')) {
-    return { deny: 'invalid' };
-  }
-  return readGrants(contextRoot).includes(rawPath) ? { abs: rawPath } : { deny: 'needs_grant' };
+): { abs: string } | { deny: 'invalid' | 'needs_grant'; abs?: string } {
+  const ref = resolveChatReference(contextRoot ? projectRootOf(contextRoot) : null, contextRoot, rawPath);
+  if (!ref) return { deny: 'invalid' };
+  if (!ref.outside) return { abs: ref.abs };
+  return readGrants(contextRoot).includes(ref.abs)
+    ? { abs: ref.abs }
+    : { deny: 'needs_grant', abs: ref.abs };
 }
 
 /** GET /api/agent/file?path=<relative>[&raw=1] — read one file under the ACTIVE vault's
@@ -1016,9 +1025,15 @@ export async function handleAgentFile(
   if ('deny' in resolved) {
     if (resolved.deny === 'needs_grant') {
       // NOT a refusal the UI should render as an error: it is the prompt to ask the user.
-      sendError(res, 403, 'needs_grant', 'Outside the project — allow access to view this file.');
+      // `path` is the RESOLVED file, so the card can name it and grant exactly it — the
+      // notation the answer used ('../../tmp/x.png') never has to round-trip.
+      sendJson(res, 403, {
+        error: 'needs_grant',
+        message: 'Outside the project — allow access to view this file.',
+        path: resolved.abs,
+      });
     } else {
-      sendError(res, 400, 'invalid_path', 'Path escapes the project root.');
+      sendError(res, 400, 'invalid_path', 'That path cannot be read.');
     }
     return;
   }
@@ -1202,17 +1217,19 @@ export async function handleAgentReveal(
 
   if (!target) { sendError(res, 400, 'missing_path', 'A "path" is required.'); return; }
 
-  // A transcript names files the way the agent writes them: PROJECT-RELATIVE. Handing that
-  // straight to `statSync` resolved it against the SERVER's cwd — which for the desktop-
-  // spawned process is not the project — so every relative path 404'd and the last-resort
-  // "Open ↗" opened nothing. Relative paths are contained under the project root (traversal
-  // rejected); an absolute one is passed through, which is this route's entire purpose: it
-  // is the escape hatch for a file that lives outside the project and can never be served.
-  if (!isAbsolute(target)) {
-    const inProject = safeChildPath(projectRootOf(contextRoot), target);
-    if (!inProject) { sendError(res, 400, 'invalid_path', 'Path escapes the project root.'); return; }
-    target = inProject;
+  // A transcript names files the way the AGENT writes them, which is not the same thing as
+  // a path that resolves: project-relative, absolute, or — the 07-28 report — a `../..`
+  // climb that lands nowhere. `resolveChatReference` reads it as a name and finds the file
+  // it actually means, which is what makes this button open something rather than nothing.
+  // Reaching a file outside the project is this route's whole purpose (that is the escape
+  // hatch for what `/agent/file` may never serve), so `outside` is not a refusal here — the
+  // open-vs-reveal split below is, and it is unchanged.
+  const ref = resolveChatReference(contextRoot ? projectRootOf(contextRoot) : null, contextRoot, target);
+  if (!ref || ref.missing) {
+    sendError(res, 404, 'not_found', `Not found: ${ref?.abs ?? target}`);
+    return;
   }
+  target = ref.abs;
   let st: ReturnType<typeof statSync>;
   try { st = statSync(target); } catch { sendError(res, 404, 'not_found', `Not found: ${target}`); return; }
 

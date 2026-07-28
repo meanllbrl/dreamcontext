@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
-import { agentFileUrl } from '../../../api/client';
+import { api, agentFileUrl, RequestError } from '../../../api/client';
 
 /**
  * Pure, framework-light logic shared by the Agent Chat (beta) redesign's card
@@ -1281,6 +1281,32 @@ function basenameOf(path: string): string {
 }
 
 /**
+ * Hand a path to the OS (`POST /api/agent/reveal`) and say whether it actually went.
+ *
+ * Resolves to `null` when the opener took it, or to a short line to SHOW when it could not.
+ * A button that silently does nothing is worse than no button — the user clicks, the app
+ * says nothing, and there is no telling "opened behind the window" from "never reachable".
+ *
+ * The words are chosen HERE, from the route's `error` slug, and are deliberately the sort a
+ * person says. The route's own prose ("Path escapes the project root") is a correct answer
+ * to the wrong audience: nobody reading a chat bubble asked about project roots. Finding the
+ * file the reference actually meant is `resolveChatReference`'s job on the server, and it
+ * now handles the case that produced this line at all — so this copy is the rare tail, not
+ * the everyday outcome.
+ */
+export function revealPath(path: string): Promise<string | null> {
+  return api.post('/agent/reveal', { path }).then(
+    () => null,
+    (err: unknown) => {
+      const code = err instanceof RequestError ? err.code : '';
+      if (code === 'not_found') return 'this file isn’t there any more';
+      if (code === 'desktop_only') return 'only available in the desktop app';
+      return 'couldn’t open this one';
+    },
+  );
+}
+
+/**
  * Chat-local effect: turns the file references an answer writes into the thing itself —
  * a picture you can see, a clip you can play, a folder you can look inside — instead of a
  * path you have to go find.
@@ -1306,8 +1332,9 @@ export function useInlineMedia(
   handlers: {
     /** Open an image full-size (the existing lightbox). */
     onOpen?: (path: string) => void;
-    /** Hand the path to the OS — the last-resort fallback. */
-    onReveal?: (path: string) => void;
+    /** Hand the path to the OS — the last-resort fallback. Resolves to null when it opened,
+     *  or to the reason it could not, which the card then SHOWS (see {@link revealPath}). */
+    onReveal?: (path: string) => Promise<string | null>;
     /** Ask the server to allow this exact file; resolves true when it may now be served. */
     onGrant?: (path: string) => Promise<boolean>;
   } = {},
@@ -1334,8 +1361,15 @@ export function useInlineMedia(
     const root = ref.current;
     if (!root) return;
 
-    /** The card shown when bytes can't reach the page — always actionable, never a dead end. */
-    const buildFallback = (path: string, reason: 'grant' | 'open'): HTMLElement => {
+    /**
+     * The card shown when bytes can't reach the page — always actionable, never a dead end.
+     *
+     * `grantPath` is the file the SERVER resolved the reference to, which is what "Allow
+     * access" must record: the endpoint decides which file `../../tmp/x.png` means, and a
+     * grant written against the notation instead of the file would never match on the next
+     * read. Falls back to the reference itself when the server sent nothing.
+     */
+    const buildFallback = (path: string, reason: 'grant' | 'open', grantPath: string): HTMLElement => {
       const card = document.createElement('span');
       card.className = 'chat-md-blocked';
       card.title = path;
@@ -1345,12 +1379,23 @@ export function useInlineMedia(
       name.textContent = `${inlineMediaKind(path) === 'video' ? '🎬' : inlineMediaKind(path) === 'audio' ? '🎵' : '🖼'} ${basenameOf(path)}`;
       card.append(name);
 
-      if (reason === 'grant') {
-        const note = document.createElement('span');
-        note.className = 'chat-md-blocked-note';
-        note.textContent = 'outside the project';
-        card.append(note);
+      // The card's one line of explanation, sitting right after the name. Created up front
+      // but only ATTACHED when it has something to say — an empty span would otherwise show
+      // as a gap in the flex row. Carries the standing "outside the project" reason, and
+      // later whatever the OS opener came back with.
+      const note = document.createElement('span');
+      note.className = 'chat-md-blocked-note';
+      const setNote = (text: string | null): void => {
+        if (!text) { note.remove(); return; }
+        note.textContent = text;
+        if (!note.isConnected) name.after(note);
+      };
 
+      /** What the card says when nothing has gone wrong (yet). */
+      const standingNote = reason === 'grant' ? 'outside the project' : null;
+      setNote(standingNote);
+
+      if (reason === 'grant') {
         const allow = document.createElement('button');
         allow.type = 'button';
         allow.className = 'chat-md-blocked-allow';
@@ -1358,7 +1403,7 @@ export function useInlineMedia(
         allow.addEventListener('click', () => {
           allow.disabled = true;
           allow.textContent = 'Allowing…';
-          void (live.current.onGrant?.(path) ?? Promise.resolve(false)).then((ok) => {
+          void (live.current.onGrant?.(grantPath) ?? Promise.resolve(false)).then((ok) => {
             // Granted → swap the card back for the real thing, which now loads.
             if (ok) card.replaceWith(buildMedia(path));
             else { allow.disabled = false; allow.textContent = 'Allow access'; }
@@ -1371,7 +1416,22 @@ export function useInlineMedia(
       open.type = 'button';
       open.className = 'chat-md-blocked-open';
       open.textContent = 'Open ↗';
-      open.addEventListener('click', () => handlers.onReveal?.(path));
+      // `live.current`, never the `handlers` of the render this card was built in — a card
+      // outlives the render that created it (see this hook's `live` ref), and closing over a
+      // dead render's handler is how a button quietly stops working.
+      open.addEventListener('click', () => {
+        const pending = live.current.onReveal?.(path);
+        if (!pending) return; // nothing wired to open with — leave the card exactly as it was
+        open.disabled = true;
+        open.textContent = 'Opening…';
+        void pending.then((err) => {
+          open.disabled = false;
+          open.textContent = 'Open ↗';
+          // Failure SAYS why, in the card, rather than leaving the click looking like it
+          // did something; success drops the line back to the standing reason.
+          setNote(err ?? standingNote);
+        });
+      });
       card.append(open);
       return card;
     };
@@ -1411,13 +1471,21 @@ export function useInlineMedia(
         // A ONE-BYTE ranged GET, not HEAD: the router serves GET only, and a HEAD would come
         // back 404 — making every blocked file look like "can't open" when it merely needs
         // consent. One byte costs nothing even for a large clip.
+        // The 403 body also carries the file the server RESOLVED the reference to, which is
+        // what "Allow access" has to grant — see `buildFallback`.
         void fetch(rawUrl(path), { headers: { Range: 'bytes=0-0' } })
-          .then((r): 'grant' | 'open' => (r.status === 403 ? 'grant' : 'open'))
-          .catch((): 'grant' | 'open' => 'open')
+          .then(async (r): Promise<{ reason: 'grant' | 'open'; grantPath: string }> => {
+            if (r.status !== 403) return { reason: 'open', grantPath: path };
+            const body = await r.json().catch(() => null) as { path?: unknown } | null;
+            return { reason: 'grant', grantPath: typeof body?.path === 'string' ? body.path : path };
+          })
+          .catch((): { reason: 'grant' | 'open'; grantPath: string } => ({ reason: 'open', grantPath: path }))
           // The probe is async, and the block around a still-streaming reference re-renders in
           // the meantime. Swapping a DETACHED element does nothing except drop the fallback on
           // the floor, so only replace one that is still on the page; the next pass rebuilds it.
-          .then((reason) => { if (el.isConnected) el.replaceWith(buildFallback(path, reason)); });
+          .then(({ reason, grantPath }) => {
+            if (el.isConnected) el.replaceWith(buildFallback(path, reason, grantPath));
+          });
       }, { once: true });
       el.src = rawUrl(path);
       // Cap what a single message can keep alive: a detached clip still holds its buffer, and

@@ -98,10 +98,14 @@ describe('handleAgentBoardAssets — gates', () => {
     expect(status()).toBe(400);
   });
 
-  it('400s a traversal attempt rather than reading outside the project', async () => {
-    const { res, status } = makeRes();
+  // The FILE decides, not the notation: a traversal reference names the same thing as its
+  // absolute twin, so it gets the same answer as the test below — asked for, never read.
+  it('never reads outside the project on a traversal attempt — it asks for consent instead', async () => {
+    const { res, status, body } = makeRes();
     await handleAgentBoardAssets(makeGet('../../../etc/passwd'), res, noParams, contextRoot);
-    expect(status()).toBe(400);
+    expect(status()).toBe(403);
+    expect(body()?.error).toBe('needs_grant');
+    expect(body()?.files).toBeUndefined();
   });
 
   it('asks for consent (403 needs_grant) for a board outside the project', async () => {

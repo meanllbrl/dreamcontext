@@ -6,6 +6,18 @@ interface ApiError {
 }
 
 /**
+ * A non-2xx answer from the local API, carrying the route's machine-readable `error` slug
+ * alongside its prose. Still an `Error` with the server's `message`, so every existing
+ * `catch (err: Error) { … err.message }` keeps working untouched.
+ */
+export class RequestError extends Error {
+  constructor(message: string, readonly status: number, readonly code: string) {
+    super(message);
+    this.name = 'RequestError';
+  }
+}
+
+/**
  * The vault this window is pinned to. Set once at boot from the `?vault=` URL
  * param (see setActiveVault). When present it is forwarded on every request as
  * the X-Dreamcontext-Vault header, which the server resolves per-request to the
@@ -61,11 +73,16 @@ class ApiClient {
 
     if (!res.ok) {
       let message = `Request failed: ${res.status}`;
+      let code = '';
       try {
         const err = await res.json() as ApiError;
         if (err.message) message = err.message;
+        if (err.error) code = err.error;
       } catch { /* non-JSON error response */ }
-      throw new Error(message);
+      // The route's own `error` slug rides along. Callers that show a failure to a PERSON
+      // need to pick their own words for it — matching on the English of `message` would be
+      // a UI that breaks when a route reworded itself.
+      throw new RequestError(message, res.status, code);
     }
 
     return await res.json() as T;
