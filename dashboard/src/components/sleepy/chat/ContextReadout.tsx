@@ -9,7 +9,7 @@ import { CONTEXT_TIGHT_PCT, fmtCost, fmtTokens } from '../../../lib/agentCompose
  * control, this is a status. So it is the piece that gives way as the pane narrows, in
  * stages driven by the `chatcmp` size container (see composer.css):
  *
- *   wide      ▭▭▭░░  33%  66k/200k   $0.58
+ *   wide      ▭▭▭░░  33%  330k/1.0M  $0.58
  *   ≤660px    ▭▭▭░░  33%             $0.58     (raw counts drop — the % says the same thing)
  *   ≤560px    ▭▭▭░░  33%                       (the cost chip moves into the card)
  *   ≤470px    ▭░                               (a bare 22px gauge — "how full am I", nothing else)

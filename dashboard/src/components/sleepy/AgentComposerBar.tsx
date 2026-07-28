@@ -1,5 +1,5 @@
 import {
-  effortLabel, fmtTokens, fmtCost, modelLabelFor, CONTEXT_TIGHT_PCT,
+  effortLabel, fmtTokens, fmtCost, modelLabelFor, contextLimitFor, CONTEXT_TIGHT_PCT,
   type ModelOption, type SessionStats,
 } from '../../lib/agentComposer';
 import { Popover, SkillBrowser } from './SkillPickerPopover';
@@ -54,13 +54,16 @@ export function AgentComposerBar({
   // `claude-opus-4-5-20251101` now resolves to "Opus" instead of falling through to the dash.
   const modelLabel = modelLabelFor({ models, efforts, defaultModel: '', defaultEffort: '' }, model) || '—';
   // `contextTokens` must be non-ZERO, not merely non-null: a transcript whose only turn was
-  // a synthetic notice ("Please run /login") reports 0, and "0% 0/200k" is noise, not a
+  // a synthetic notice ("Please run /login") reports 0, and "0% 0/1.0M" is noise, not a
   // reading. Same rule as the chat composer's.
+  // The limit is normally the server's (from the transcript's model); `contextLimitFor` only
+  // stands in when a stats payload arrives without one, and resolves the same way.
+  const ctxLimit = stats?.contextLimit ?? contextLimitFor(stats?.contextTokens ?? 0, model);
   const ctx = stats?.contextTokens
     ? {
       used: stats.contextTokens,
-      limit: stats.contextLimit ?? 200_000,
-      pct: Math.min(100, Math.round((stats.contextTokens / (stats.contextLimit ?? 200_000)) * 100)),
+      limit: ctxLimit,
+      pct: Math.min(100, Math.round((stats.contextTokens / ctxLimit) * 100)),
     }
     : null;
   const showStats = !!ctx || (stats?.costUsd != null && stats.costUsd > 0);
@@ -149,7 +152,7 @@ export function AgentComposerBar({
         >
           {ctx && (
             // Percentage FIRST, then the raw counts — "how much room is left" is the
-            // question the readout exists to answer, and `44k/200k` alone made you do the
+            // question the readout exists to answer, and `44k/1.0M` alone made you do the
             // division yourself. The bar is the same gauge the chat composer draws.
             <span className="agent-composer-stat" data-hot={ctx.pct >= CONTEXT_TIGHT_PCT}>
               <span className="agent-composer-gauge" aria-hidden>

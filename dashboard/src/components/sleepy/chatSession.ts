@@ -1,4 +1,5 @@
 import { api, getActiveVault } from '../../api/client';
+import { contextLimitFor } from '../../lib/agentComposer';
 import { playAskChime } from '../../lib/chime';
 import {
   parseChatLine, buildQuestionAnswer, isUrgentChatEvent,
@@ -560,14 +561,6 @@ export function createChatSession(
     // Mirror only — no subscriber fire (a per-keystroke transcript re-render buys nothing)
     // and no epoch bump (the textarea already shows this text; adoption would be a no-op).
     conv = { ...conv, draft: text };
-  }
-
-  /** Which context window the running model has. Mirrors the server's rule
-   *  (agent-terminal.ts's `computeSessionStats`): 200K unless the model id carries the `1m`
-   *  marker, and promoted to 1M the moment the observed footprint outgrows 200K — a session
-   *  cannot be at 130% of its window, so exceeding it IS the evidence of the larger one. */
-  function contextLimitFor(usedTokens: number, modelId: string | undefined): number {
-    return /1m/i.test(modelId ?? '') || usedTokens > 200_000 ? 1_000_000 : 200_000;
   }
 
   // ── Reducer: one parsed ChatEvent → conversation model + derived-state mutation ────

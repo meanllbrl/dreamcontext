@@ -3,7 +3,7 @@ import { pickFiles, pickFolders } from '../../../lib/desktop';
 import { uploadAgentFile } from '../../../lib/agentDrop';
 import { useAgentSessionStats } from '../../../hooks/useAgentCapabilities';
 import {
-  effortLabel, modelLabelFor, quotePath, isSignInCommand,
+  effortLabel, modelLabelFor, quotePath, isSignInCommand, contextLimitFor,
   slashQueryAt, filterSlashCommands, applySlashCommand, type ModelConfig,
 } from '../../../lib/agentComposer';
 import {
@@ -423,9 +423,10 @@ export function Composer({
   // earlier turns are already on disk but whose usage this process has not seen stream by.
   const stats = useAgentSessionStats(session.claudeId, connected).data;
   // `used > 0` on the fallback too: a transcript whose only turn was a synthetic notice
-  // (e.g. "Please run /login") reports zero tokens, and "0% 0/200k" is noise, not a reading.
+  // (e.g. "Please run /login") reports zero tokens, and "0% 0/1.0M" is noise, not a reading.
+  const statsLimit = stats?.contextLimit ?? contextLimitFor(stats?.contextTokens ?? 0, conv.model);
   const ctx = conv.context
-    ?? (stats?.contextTokens ? { used: stats.contextTokens, limit: stats.contextLimit ?? 200_000, pct: Math.min(100, Math.round((stats.contextTokens / (stats.contextLimit ?? 200_000)) * 100)) }
+    ?? (stats?.contextTokens ? { used: stats.contextTokens, limit: statsLimit, pct: Math.min(100, Math.round((stats.contextTokens / statsLimit) * 100)) }
       : null);
   // `total_cost_usd` off the result frame is already cumulative for the conversation.
   const costUsd = lastResult?.costUsd ?? stats?.costUsd ?? null;

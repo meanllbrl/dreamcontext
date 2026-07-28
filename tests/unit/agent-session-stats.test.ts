@@ -2,17 +2,19 @@
  * Unit tests for the agent-terminal route's session-stats math:
  *   - `priceForModel` — current-generation list prices per tier, legacy-Opus detection,
  *     Fable/Mythos priced at their own tier (not the old Opus placeholder)
+ *   - `contextLimitFor` — 1M is the default and 200K the exception (Haiku, pre-4.6
+ *     Opus/Sonnet); the `[1m]` marker and an oversized observed footprint both promote
  *   - `computeSessionStats` — cost is summed per unique `message.id` (Claude Code writes
  *     one JSONL line per content block, all repeating the same usage), sidechain turns
- *     count toward cost but never toward the context-window footprint, and the
- *     1M-context limit heuristic still applies.
+ *     count toward cost but never toward the context-window footprint, and the window is
+ *     resolved from the transcript's own model id.
  */
 
 import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { priceForModel, computeSessionStats } from '../../src/server/routes/agent-terminal.js';
+import { priceForModel, computeSessionStats, contextLimitFor } from '../../src/server/routes/agent-terminal.js';
 
 const line = (
   usage: Record<string, number>,
@@ -105,20 +107,56 @@ describe('computeSessionStats — sidechain handling', () => {
   });
 });
 
-describe('computeSessionStats — context limit heuristic', () => {
-  it('defaults to 200K and bumps to 1M for [1m] model ids or oversized footprints', () => {
-    const small = writeTranscript([
-      line({ input_tokens: 1000, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }, { id: 'a', model: 'claude-opus-4-8' }),
-    ]);
-    expect(computeSessionStats(small).contextLimit).toBe(200_000);
+describe('contextLimitFor — window per model', () => {
+  it('gives every current model its real 1M window', () => {
+    for (const id of [
+      'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6',
+      'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-fable-5', 'claude-mythos-5',
+    ]) {
+      expect(contextLimitFor(1000, id)).toBe(1_000_000);
+    }
+  });
 
-    const oneM = writeTranscript([
-      line({ input_tokens: 1000, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }, { id: 'a', model: 'claude-opus-4-8[1m]' }),
+  it('keeps 200K for Haiku and the pre-4.6 Opus/Sonnet generations', () => {
+    for (const id of [
+      'claude-haiku-4-5-20251001', 'haiku',
+      'claude-opus-4-5-20251101', 'claude-opus-4-1-20250805', 'claude-opus-4-20250514', 'claude-3-opus-20240229',
+      'claude-sonnet-4-5-20250929', 'claude-sonnet-4-20250514', 'claude-3-7-sonnet-20250219', 'claude-3-5-sonnet-20241022',
+    ]) {
+      expect(contextLimitFor(1000, id)).toBe(200_000);
+    }
+  });
+
+  it('treats an unknown id as a NEW model (1M), not a retired one', () => {
+    expect(contextLimitFor(1000, '')).toBe(1_000_000);
+    expect(contextLimitFor(1000, 'some-future-model')).toBe(1_000_000);
+  });
+
+  it('honours the [1m] marker even on a model that is otherwise 200K', () => {
+    expect(contextLimitFor(1000, 'claude-opus-4-5[1m]')).toBe(1_000_000);
+  });
+
+  it('promotes on the observed footprint — a session cannot exceed its own window', () => {
+    expect(contextLimitFor(250_000, 'claude-haiku-4-5-20251001')).toBe(1_000_000);
+  });
+});
+
+describe('computeSessionStats — context limit', () => {
+  it('reports the 1M window a modern transcript actually has', () => {
+    // The bare id is what Claude Code writes even when the `[1m]` variant is running, so
+    // this is the case that used to (wrongly) read 200K.
+    const modern = writeTranscript([
+      line({ input_tokens: 1000, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }, { id: 'a', model: 'claude-opus-5' }),
     ]);
-    expect(computeSessionStats(oneM).contextLimit).toBe(1_000_000);
+    expect(computeSessionStats(modern).contextLimit).toBe(1_000_000);
+
+    const haiku = writeTranscript([
+      line({ input_tokens: 1000, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }, { id: 'a', model: 'claude-haiku-4-5-20251001' }),
+    ]);
+    expect(computeSessionStats(haiku).contextLimit).toBe(200_000);
 
     const big = writeTranscript([
-      line({ input_tokens: 250_000, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }, { id: 'a', model: 'claude-opus-4-8' }),
+      line({ input_tokens: 250_000, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }, { id: 'a', model: 'claude-haiku-4-5-20251001' }),
     ]);
     expect(computeSessionStats(big).contextLimit).toBe(1_000_000);
   });

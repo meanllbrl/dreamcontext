@@ -301,10 +301,42 @@ export function effortLabel(level: string): string {
 export interface SessionStats {
   /** How full the context window currently is (last turn's total token footprint). */
   contextTokens: number | null;
-  /** The model's context window (200K, or 1M for `[1m]` variants). */
+  /** The running model's context window — see `contextLimitFor`. */
   contextLimit: number | null;
   /** Cumulative spend priced at public API rates — a what-if for flat-rate plans. */
   costUsd: number | null;
+}
+
+/** Model ids whose context window is 200K rather than 1M: the whole Haiku line, and the
+ *  Opus/Sonnet generations before 4.6. Everything the CLI can run today — Opus 4.6+, Opus 5,
+ *  Sonnet 4.6+, Sonnet 5, Fable, Mythos — ships a 1M window. */
+const SMALL_WINDOW_MODEL = /haiku|3-opus|3-[57]-sonnet|opus-4-[01]\b|opus-4-5\b|sonnet-4-[05]\b|-4-\d{8}/;
+
+export const CONTEXT_WINDOW_SMALL = 200_000;
+export const CONTEXT_WINDOW_LARGE = 1_000_000;
+
+/**
+ * The running model's context window, in tokens.
+ *
+ * 1M is the DEFAULT and 200K the exception — the inverse of what this used to be. That
+ * inversion is the whole point: every model Claude Code offers today (Opus 4.6+, Opus 5,
+ * Sonnet 4.6+, Sonnet 5, Fable, Mythos) has a 1M window, so assuming 200K made the gauge
+ * read five times fuller than the session actually was. An id we don't recognise is far
+ * more likely to be a NEW model than a retired one, so unknown resolves to 1M too.
+ *
+ * Two signals refine the guess:
+ *   • the `[1m]` marker Claude Code puts on its explicit 1M picker values
+ *     (`claude-fable-5[1m]`) — present in `~/.claude.json`'s model cache and in the
+ *     spawn-time alias, though NEVER in a transcript's `message.model`, which is exactly
+ *     why keying off it alone left every session reading 200K;
+ *   • the observed footprint — a session cannot be at 130% of its window, so exceeding
+ *     200K IS the evidence of the larger one. This can only ever promote.
+ */
+export function contextLimitFor(usedTokens: number, modelId: string | undefined): number {
+  if (usedTokens > CONTEXT_WINDOW_SMALL) return CONTEXT_WINDOW_LARGE;
+  const id = (modelId ?? '').toLowerCase();
+  if (id.includes('1m')) return CONTEXT_WINDOW_LARGE;
+  return SMALL_WINDOW_MODEL.test(id) ? CONTEXT_WINDOW_SMALL : CONTEXT_WINDOW_LARGE;
 }
 
 /** Compact token count: 850 · 48.2k · 1.2M. */

@@ -1037,6 +1037,36 @@ export function priceForModel(model: string): TokenPrice {
   return MODEL_PRICING.opus; // current opus + unknown models default to the opus tier
 }
 
+/** Model ids whose context window is 200K rather than 1M: the whole Haiku line, and the
+ *  Opus/Sonnet generations before 4.6. */
+const SMALL_WINDOW_MODEL = /haiku|3-opus|3-[57]-sonnet|opus-4-[01]\b|opus-4-5\b|sonnet-4-[05]\b|-4-\d{8}/;
+
+/**
+ * The running model's context window, in tokens. MIRRORED on the client
+ * (dashboard/src/lib/agentComposer.ts) — keep the two rules identical, or the same session
+ * reads one way in the chat composer (which computes from the live stream) and another in
+ * the terminal strip (which reads this).
+ *
+ * 1M is the DEFAULT and 200K the exception — the inverse of what this used to be, and the
+ * whole point of the change: every model Claude Code offers today (Opus 4.6+, Opus 5,
+ * Sonnet 4.6+, Sonnet 5, Fable, Mythos) has a 1M window, so assuming 200K made the gauge
+ * read five times fuller than the session actually was. An unrecognised id is far more
+ * likely to be a NEW model than a retired one, so it resolves to 1M too.
+ *
+ * The `[1m]` marker is still honoured — it is what Claude Code puts on its explicit 1M
+ * picker values (`claude-fable-5[1m]`, and the spawn-time alias) — but it must not be the
+ * ONLY signal: a transcript's `message.model` is always the bare id (`claude-opus-5`) even
+ * when the session is running the `[1m]` variant, so keying off it alone left every session
+ * pinned at 200K. The observed footprint is the third signal and can only ever promote: a
+ * session cannot be at 130% of its window, so exceeding 200K IS evidence of the larger one.
+ */
+export function contextLimitFor(usedTokens: number, modelId: string): number {
+  if (usedTokens > 200_000) return 1_000_000;
+  const id = modelId.toLowerCase();
+  if (id.includes('1m')) return 1_000_000;
+  return SMALL_WINDOW_MODEL.test(id) ? 200_000 : 1_000_000;
+}
+
 interface SessionStats { contextTokens: number | null; contextLimit: number | null; costUsd: number | null }
 const EMPTY_STATS: SessionStats = { contextTokens: null, contextLimit: null, costUsd: null };
 
@@ -1081,10 +1111,7 @@ export function computeSessionStats(jsonlPath: string): SessionStats {
     const p = priceForModel(t.model);
     costUsd += (t.inp * p.in + t.cw * p.cacheWrite + t.cr * p.cacheRead + t.out * p.out) / 1_000_000;
   }
-  // Claude Code's model ids carry a `[1m]` suffix for the 1M-context variants; fall back to
-  // the standard 200K, and bump to 1M if the observed footprint already exceeds 200K.
-  const contextLimit = /1m/i.test(lastModel) || contextTokens > 200_000 ? 1_000_000 : 200_000;
-  return { contextTokens, contextLimit, costUsd };
+  return { contextTokens, contextLimit: contextLimitFor(contextTokens, lastModel), costUsd };
 }
 
 /** GET /api/agent/session-stats?claudeId=<uuid> — the session's live context-window
