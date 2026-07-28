@@ -176,12 +176,30 @@
 }
 .chat-cmp-attachment-glyph { flex: 0 0 auto; }
 .chat-cmp-attachment-name {
+  display: flex;
+  flex-direction: column;
   font-size: var(--font-size-xs, 11px);
   color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* What will happen to this attachment. A pasted image is only sendable once its bytes are
+   on disk, so the chip carries that state rather than looking identical either way. */
+.chat-cmp-attachment-note {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-cmp-attachment[data-state='uploading'] .chat-cmp-thumb { opacity: 0.6; }
+.chat-cmp-attachment[data-state='failed'] {
+  border-color: var(--color-error);
+}
+.chat-cmp-attachment[data-state='failed'] .chat-cmp-attachment-note {
+  color: var(--color-error);
+}
+.chat-cmp-attachment[data-state='failed'] .chat-cmp-thumb { opacity: 0.5; }
 
 /* ── Shared "remove" (✕) button for quote/skill/attachment chips ─────────────────── */
 

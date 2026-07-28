@@ -106,20 +106,26 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
   // must not crash the whole panel render.
   const history = Array.isArray(cache?.history) ? [...cache.history].reverse() : [];
 
-  const handleRefresh = () => {
+  /** Re-fetch this insight and report the outcome, including a per-insight `failed[]` row
+   *  (a sync can answer 200 and still have failed for THIS slug). */
+  const runSync = (okMessage: string, failPrefix: string) => {
     sync.mutate(summary.slug, {
       onSuccess: (data) => {
         const result = data.results[0];
-        if (result?.status === 'failed') onToast(`${summary.title}: sync failed — ${result.error ?? 'unknown error'}`);
-        else onToast(`${summary.title}: refreshed.`);
+        if (result?.status === 'failed') onToast(`${summary.title}: ${failPrefix} — ${result.error ?? 'unknown error'}`);
+        else onToast(`${summary.title}: ${okMessage}`);
       },
-      onError: (err) => onToast(`${summary.title}: refresh failed — ${(err as Error).message}`),
+      onError: (err) => onToast(`${summary.title}: ${failPrefix} — ${(err as Error).message}`),
     });
   };
 
+  const handleRefresh = () => runSync('refreshed.', 'sync failed');
+
   const handleSaveTweaks = (values: Record<string, string>) => {
     updateTweaks.mutate({ slug: summary.slug, tweaks: values }, {
-      onSuccess: () => onToast(`${summary.title}: tweaks saved.`),
+      // Same rule as the card and the funnel views (#235): the data follows the control, so
+      // a saved tweak re-fetches rather than leaving the panel on the pre-tweak window.
+      onSuccess: () => runSync('tweaks saved, refreshed.', 'tweaks saved, but the refresh failed'),
       onError: (err) => onToast(`${summary.title}: could not save tweaks — ${(err as Error).message}`),
     });
   };

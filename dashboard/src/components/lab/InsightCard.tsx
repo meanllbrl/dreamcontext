@@ -55,20 +55,29 @@ export function InsightCard({
   const cache = detail.data?.cache;
   const series = cache?.series ?? [];
 
-  const handleRefresh = () => {
+  /** Re-fetch this insight and report the outcome, including a per-insight `failed[]` row
+   *  (a sync can answer 200 and still have failed for THIS slug). */
+  const runSync = (okMessage: string, failPrefix: string) => {
     sync.mutate(summary.slug, {
       onSuccess: (data) => {
         const result = data.results[0];
-        if (result?.status === 'failed') onToast(`${summary.title}: sync failed — ${result.error ?? 'unknown error'}`);
-        else onToast(`${summary.title}: refreshed.`);
+        if (result?.status === 'failed') onToast(`${summary.title}: ${failPrefix} — ${result.error ?? 'unknown error'}`);
+        else onToast(`${summary.title}: ${okMessage}`);
       },
-      onError: (err) => onToast(`${summary.title}: refresh failed — ${(err as Error).message}`),
+      onError: (err) => onToast(`${summary.title}: ${failPrefix} — ${(err as Error).message}`),
     });
   };
 
+  const handleRefresh = () => runSync('refreshed.', 'refresh failed');
+
   const handleSaveTweaks = (values: Record<string, string>) => {
     updateTweaks.mutate({ slug: summary.slug, tweaks: values }, {
-      onSuccess: () => onToast(`${summary.title}: tweaks saved.`),
+      // Data follows the control (#235). A tweak can change the WINDOW the number is
+      // computed over, so saving it and leaving the tile on the pre-tweak cache shows a
+      // number that no longer answers the question the card is now asking — and nothing on
+      // the tile says so. The funnel views have always chained PATCH → sync for this reason;
+      // the generic card only PATCHed and toasted "saved".
+      onSuccess: () => runSync('tweaks saved, refreshed.', 'tweaks saved, but the refresh failed'),
       onError: (err) => onToast(`${summary.title}: could not save tweaks — ${(err as Error).message}`),
     });
   };

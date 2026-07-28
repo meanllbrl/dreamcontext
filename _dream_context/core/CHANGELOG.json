@@ -17,6 +17,88 @@
     ]
   },
   {
+    "date": "2026-07-27",
+    "type": "note",
+    "scope": "quick",
+    "summary": "KNOWN ISSUE (2026-07-27, ★★★ silent data loss): `dreamcontext tasks sync pull` with the GitHub backend STRIPS the local-only `objectives:` frontmatter from every mirrored task — 72 task→objective l...",
+    "description": "KNOWN ISSUE (2026-07-27, ★★★ silent data loss): `dreamcontext tasks sync pull` with the GitHub backend STRIPS the local-only `objectives:` frontmatter from every mirrored task — 72 task→objective links lost in one command, violating the 2026-07-02 'objectives is local-only, never mapped by remote backends' decision. Silent: the pull reports success and the only symptom is the roadmap board rewriting to 'no tasks yet' with false SLIPPING flags. Unrecoverable by design (state/ is gitignored); this time the links were rebuilt only from the previously committed auto-generated board.md. Until fixed: before any `tasks sync pull`, make sure `knowledge/roadmap/board.md` is committed — it is the only snapshot of the links. Tracked as task github-task-sync-pull-silently-wipes-the-local-only-objectives-field-on-every-mirrored-task.",
+    "breaking": false
+  },
+  {
+    "date": "2026-07-27",
+    "type": "fix",
+    "scope": "lab",
+    "description": "GitHub issue #235: changing a range-enum tweak on Lab number cards saved but never re-synced, so the tile kept rendering the pre-tweak cache until a manual refresh or TTL expiry — reported as 'day filters don't work' across 30+ tiles. InsightCard and InsightDetailPanel PATCHed /lab/:slug/tweaks and toasted 'tweaks saved.'; the funnel views had always chained PATCH -> POST /lab/sync. Both generic surfaces now run the same chain through a shared runSync(okMessage, failPrefix) that also surfaces a per-insight failed[] row (a sync can answer 200 and still have failed for that slug), and the toast distinguishes 'could not save tweaks' from 'tweaks saved, but the refresh failed'. Rule recorded in the feature PRD: a control that changes what the data MEANS must re-fetch, or say out loud that it hasn't. Guard: tests/unit/lab-tweak-resync.test.ts walks every updateTweaks.mutate call site across the four Lab surfaces and fails if one saves without chaining the sync.",
+    "breaking": false,
+    "summary": "Saving a tweak on an insight card or detail panel now re-fetches the tile instead of leaving it on the pre-tweak window (#235)",
+    "references": [
+      "task:lab-card-edit-tweaks-saves-but-does-not-re-sync-tile-silently-keeps-the-stale-window",
+      "feature:lab-analytics-insights",
+      "file:dashboard/src/components/lab/InsightCard.tsx",
+      "file:dashboard/src/components/lab/InsightDetailPanel.tsx",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/235"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-27",
+    "type": "fix",
+    "scope": "chat",
+    "description": "GitHub issue #234: submitting a pinned checklist whose item list had grown scrollable segfaulted the whole desktop app (EXC_BAD_ACCESS in WebCore::ScrollingTree::takePendingScrollUpdates() off RemoteLayerTreeDrawingAreaProxy::didRefreshDisplay(), no app frames — WebKit servicing a display-link refresh against a webview already being destroyed). ChecklistWindow closed the OS window in the same tick as the successful submit, while the scroller still had updates in flight; the non-scrollable case submitted cleanly. Fix is sequencing in two halves: a new 'sent' phase unmounts the scrollable list (removing the scrolling node from the layer tree), and useDeferredClose closes two animation frames later with a 400ms fallback (an occluded window throttles rAF, and a checklist that never closes would be worse than the crash). The titlebar close routes through the same path via a 'closing' phase — the trigger is closing a SCROLLED window, not submitting one — and handleSubmit refuses any phase but idle/failed. Honest limitation: the fault is inside WebKit's own teardown and the repro was intermittent (1 of 2), so this removes the documented trigger rather than proving the race cannot be lost. Guard: tests/unit/checklist-deferred-close.test.ts (one call site, inside the hook, never on a click handler; no scroller in the dying render).",
+    "breaking": false,
+    "summary": "Checklist Submit no longer segfaults the app: the window closes two frames after the scroller is unmounted, never in the same tick (#234)",
+    "references": [
+      "task:checklist-submit-segfaults-the-desktop-app-webkit-scrolling-tree-uaf-on-window-close",
+      "feature:in-app-agent-terminal",
+      "file:dashboard/src/components/checklist/ChecklistWindow.tsx",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/234"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-27",
+    "type": "fix",
+    "scope": "chat",
+    "description": "GitHub issue #236: Cmd+clicking a directory path chip in desktop Chat blanked the whole chat view, reported (reasonably, from host-side evidence) as a WebContent process crash. It was an uncaught React render throw: GET /api/agent/file has always answered a directory with {type:'dir',entries,truncated,total}, but FileSlideOver modelled only the text/markdown arms, so a folder reached NumberedText with content undefined and undefined.split('\\n') threw mid-render — with no boundary between the panel and the transcript, React unmounted the tree. Fix: the panel models the union it is served and draws the folder (server order, sizes, 'showing N of M' note, rows clickable back through the pane's handleOpenFile so a subfolder re-enters the panel and an image lands in the lightbox) plus Reveal in Finder; NumberedText no longer assumes a string. Class fix: PanelBoundary wraps all three slide-over modes — a peripheral panel over a live conversation may fail but may not unmount the conversation; it names the error and keeps the close button. Validation: 8 new unit tests (chat-dir-listing.test.ts) for joinChildPath/formatEntrySize/dirTruncationNote, the real endpoint curled to confirm the dir payload shape, tsc clean, full suite 4811 passed / 0 failed.",
+    "breaking": false,
+    "summary": "A folder path chip opens the folder instead of blanking the chat view (#236); slide-over panels get their own error boundary",
+    "references": [
+      "task:desktop-chat-cmd-clicking-a-directory-path-chip-blanks-the-chat-view-webcontent-process-crash",
+      "feature:in-app-agent-terminal",
+      "file:dashboard/src/components/sleepy/chat/SlideOver.tsx",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/236"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-27",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Two bugs from one owner report (Anil, Slack 07-27, thread p1785160587027509). (1) PASTE: Composer.onPaste built an object-URL preview and submit() filtered image attachments out of the outgoing message — the chip confirmed an attachment the agent never received ('copy paste atinca okumadi, ama add file diyince okudu'). The upload channel had existed since drag-drop shipped; paste now uses it via the extracted lib/agentDrop.ts uploadAgentFile (POST /api/agent/drop -> absolute path in the gitignored vault temp dir), shared with AgentSurface.deliverDrops. Chips carry honest state (attaching… / couldn't attach — not sent); submit awaits in-flight uploads behind a single-flight guard and commit re-reads draft/busy/quote from a live ref; a failed image is not sendable content and survives the submit. (2) TRANSCRIPT: UserMessage rendered item.text as plain text, so an attached image arrived in the user's own bubble as the absolute path quoted for the agent. New pure splitUserMedia lifts the trailing attachment paths out of the displayed text and the bubble draws them (image click-to-lightbox, video/audio player, pruned file -> named chip that opens in the OS). Narrow by design: only absolute or quoted paths count and only the trailing run leaves the text, so prose mentioning shot.png is never rewritten; item.text stays the real message for copy/quote/rewind. Verified: 11 new unit tests, drop->serve probed end-to-end against the real server (identical bytes back through /api/agent/file?raw=1), 4803 tests pass, build clean.",
+    "breaking": false,
+    "summary": "A pasted image now reaches Claude (uploaded via /api/agent/drop), and every attached image renders in the sender's own bubble",
+    "references": [
+      "task:chat-a-pasted-image-must-reach-claude-and-every-attached-image-must-be-visible-in-the-transcript",
+      "feature:in-app-agent-terminal",
+      "file:dashboard/src/lib/agentDrop.ts",
+      "file:dashboard/src/components/sleepy/chat/Composer.tsx",
+      "file:dashboard/src/components/sleepy/chat/TranscriptItem.tsx",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts",
+      "url:https://nativeminds.slack.com/archives/C0B8ZH7N7LN/p1785160587027509"
+    ],
+    "authors": [
+      "mehmet",
+      "anil"
+    ]
+  },
+  {
     "date": "2026-07-26",
     "type": "chore",
     "scope": "release",

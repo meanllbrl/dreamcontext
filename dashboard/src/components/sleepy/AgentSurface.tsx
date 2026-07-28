@@ -4,6 +4,7 @@ import {
 import { createPortal } from 'react-dom';
 import './AgentTerminal.css';
 import { api, getActiveVault } from '../../api/client';
+import { uploadAgentFile } from '../../lib/agentDrop';
 import {
   createSession, currentZoom,
   type Capabilities, type Session, type SessionKind,
@@ -1701,27 +1702,13 @@ export function AgentSurface() {
   // can read the file (image, code, text, PDF, …). Binary can't go through `api.post`
   // (JSON-only), so use raw fetch.
   const deliverDrops = useCallback(async (files: File[], sid: string) => {
-    const vault = getActiveVault();
     for (const file of files) {
-      try {
-        const buf = await file.arrayBuffer();
-        const res = await fetch('/api/agent/drop', {
-          method: 'POST',
-          headers: {
-            'Content-Type': file.type || 'application/octet-stream',
-            'X-Dreamcontext-Filename': encodeURIComponent(file.name),
-            ...(vault ? { 'X-Dreamcontext-Vault': vault } : {}),
-          },
-          body: buf,
-        });
-        if (!res.ok) continue;
-        const { path } = await res.json() as { path?: string };
-        // Inject the path AND land keyboard focus on this session — a drop is async
-        // (read bytes → POST), so the user may start typing before it resolves; grabbing
-        // focus here guarantees the follow-up prompt goes to the session that got the file.
-        const s = sessions.current.get(sid);
-        if (path && s) { s.sendText(quoteIfNeeded(path) + ' '); s.focus(); }
-      } catch { /* best-effort: a failed drop just doesn't inject */ }
+      const path = await uploadAgentFile(file, file.name);
+      // Inject the path AND land keyboard focus on this session — a drop is async
+      // (read bytes → POST), so the user may start typing before it resolves; grabbing
+      // focus here guarantees the follow-up prompt goes to the session that got the file.
+      const s = sessions.current.get(sid);
+      if (path && s) { s.sendText(quoteIfNeeded(path) + ' '); s.focus(); }
     }
   }, []);
 

@@ -1160,6 +1160,110 @@ export function inlineMediaKind(path: string): 'image' | 'video' | 'audio' | nul
 /** How many media elements ONE message keeps alive for re-use (see {@link useInlineMedia}). */
 const MEDIA_KEEP_MAX = 8;
 
+// ─── Folders (the file panel's directory listing) ────────────────────────────────────
+
+/**
+ * The path of one entry inside a listed folder. The listed path may or may not carry a
+ * trailing slash — the agent writes `_dream_context/knowledge/legal/` as readily as without
+ * it — and `a//b` is a different path to the server's resolver than `a/b`, so joining is
+ * never plain concatenation.
+ */
+export function joinChildPath(dir: string, name: string): string {
+  return `${dir.replace(/\/+$/, '')}/${name}`;
+}
+
+/** `1.4 KB` · `310 B` · `2.1 MB` — a folder row's size, or `''` for a subfolder. */
+export function formatEntrySize(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = bytes / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+}
+
+/** What a folder row says about entries the server didn't send. Null when nothing was cut. */
+export function dirTruncationNote(shown: number, total?: number, truncated?: boolean): string | null {
+  if (!truncated && (total == null || total <= shown)) return null;
+  return total != null ? `Showing ${shown} of ${total} entries` : `Showing the first ${shown} entries`;
+}
+
+// ─── Media the USER attached (the sent bubble) ───────────────────────────────────────
+
+/** Cap on thumbnails one sent message draws — a folder of screenshots stays a strip. */
+const USER_MEDIA_MAX = 6;
+
+export interface UserMedia {
+  /** The text to SHOW in the bubble: the trailing attachment paths taken out, because they
+   *  are drawn below it instead. Never used for copy/quote/rewind, which keep the real text. */
+  text: string;
+  /** Attached media paths, in the order they were attached. */
+  media: string[];
+}
+
+/**
+ * Split a SENT message into the part to read and the part to look at.
+ *
+ * The composer folds an attachment into the message as a (quoted) ABSOLUTE path at the end
+ * (see Composer's `commit`) — that is how the agent receives a picture at all, the chat
+ * protocol being text-only. But a path is not what the person who attached it should get
+ * back: they sent a screenshot and the transcript owes them the screenshot (owner report
+ * 07-27 — the bubble showed the path and nothing else).
+ *
+ * Deliberately narrow, because this rewrites what the user sees of their OWN words:
+ *  - only an ABSOLUTE path (or a quoted one, which is how a path with spaces is written)
+ *    counts as an attachment. `check shot.png` typed in prose is left completely alone —
+ *    no thumbnail, no text surgery;
+ *  - only the TRAILING run comes out of the text, which is exactly what the composer appends.
+ *    An attachment path mid-sentence stays where the user put it, and is still drawn.
+ *
+ * Pure: string in, strings out. No filesystem, no network — safe on every render.
+ */
+export function splitUserMedia(raw: string): UserMedia {
+  const tokens = tokenizeQuoted(raw);
+  const isAttachment = (t: Token) => !!inlineMediaKind(t.value) && (t.quoted || t.value.startsWith('/'));
+  let cut = tokens.length;
+  while (cut > 0 && isAttachment(tokens[cut - 1])) cut -= 1;
+  const trailing = tokens.slice(cut);
+  const inline = tokens.slice(0, cut).filter(isAttachment);
+  const media: string[] = [];
+  for (const t of [...inline, ...trailing]) {
+    if (!media.includes(t.value)) media.push(t.value);
+    if (media.length >= USER_MEDIA_MAX) break;
+  }
+  const text = trailing.length ? raw.slice(0, trailing[0].start).replace(/\s+$/, '') : raw;
+  return { text, media };
+}
+
+interface Token { value: string; start: number; quoted: boolean }
+
+/**
+ * Split text into whitespace-separated tokens, treating a single-quoted run as ONE token and
+ * unwrapping it — the composer quotes any path that needs it (`quotePath`), so a screenshot
+ * with a space in its name arrives as `'…/CleanShot 2026-07-27.png'` and must not be read as
+ * two tokens. Records each token's start offset so a caller can cut the original string.
+ */
+function tokenizeQuoted(raw: string): Token[] {
+  const out: Token[] = [];
+  let i = 0;
+  while (i < raw.length) {
+    if (/\s/.test(raw[i])) { i += 1; continue; }
+    const start = i;
+    if (raw[i] === "'") {
+      const end = raw.indexOf("'", i + 1);
+      if (end !== -1) {
+        out.push({ value: raw.slice(i + 1, end), start, quoted: true });
+        i = end + 1;
+        continue;
+      }
+    }
+    while (i < raw.length && !/\s/.test(raw[i])) i += 1;
+    out.push({ value: raw.slice(start, i), start, quoted: false });
+  }
+  return out;
+}
+
 /** A path we should try to render ourselves, rather than leave as an ordinary link. */
 function isLocalRef(href: string): boolean {
   return !!href && !/^(https?:|data:|blob:|mailto:|#)/i.test(href) && !href.startsWith('/api/');
