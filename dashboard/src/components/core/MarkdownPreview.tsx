@@ -8,6 +8,7 @@ import {
   emptyBlockState, markdownBlocks, patchMarkdownBlocks, renderMarkdownBlock,
   type MarkdownBlockState,
 } from '../../lib/markdownBlocks';
+import { decorateMarkdownTables } from '../../lib/markdownTables';
 import './MarkdownPreview.css';
 
 marked.setOptions({ gfm: true, breaks: true });
@@ -56,6 +57,10 @@ export function MarkdownPreview({ content, frontmatter }: Props) {
     const el = bodyRef.current;
     if (!el) return;
     blockState.current = patchMarkdownBlocks(el, blockState.current, blocks, toHtml);
+    // Same commit, right after the patch: a table's column model has to be in place before the
+    // browser paints, or a wide table paints outside its card for one frame. Idempotent, so a
+    // streamed table is re-decorated as its rows arrive. See lib/markdownTables.ts.
+    decorateMarkdownTables(el);
   }, [blocks, toHtml]);
 
   const { resolved } = useTheme();

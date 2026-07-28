@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { agentFileUrl } from '../../../api/client';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
+import { holdsItsWidth } from '../../../lib/markdownTables';
 import { ActionRow } from './ActionRow';
 import type { ChatAction } from './chatActions';
 import type {
@@ -237,6 +238,15 @@ function Card({ widget, onAction }: { widget: CardWidgetSpec; onAction?: (a: Cha
 
 // ─── table — the N-column comparison grid (plan B8); its own horizontal scroller ─────────
 
+/**
+ * The per-cell width mark, the same one the answer's markdown tables carry: a short cell holds
+ * its width, a long one is free to wrap and to break a token that doesn't fit. Positive on both
+ * sides — see lib/markdownTables.ts for why the complement is never expressed as `:not()`.
+ */
+function cellFit(text: string): { 'data-fit'?: '' } | { 'data-wrap'?: '' } {
+  return holdsItsWidth(text) ? { 'data-fit': '' } : { 'data-wrap': '' };
+}
+
 function TableWidget({ widget }: { widget: TableWidgetSpec }) {
   return (
     <div className="chat-pv-table-wrap">
@@ -244,13 +254,17 @@ function TableWidget({ widget }: { widget: TableWidgetSpec }) {
         {widget.caption && <caption className="chat-pv-table-caption">{widget.caption}</caption>}
         <thead>
           <tr>
-            {widget.headers.map((h, i) => <th key={i} scope="col">{h}</th>)}
+            {/* `data-fit` is the same column model the answer's own markdown tables use: a
+                short cell holds its width, a long one wraps and lets the short columns keep
+                theirs. Decided here rather than in CSS because only the content knows.
+                See lib/markdownTables.ts. */}
+            {widget.headers.map((h, i) => <th key={i} scope="col" {...cellFit(h)}>{h}</th>)}
           </tr>
         </thead>
         <tbody>
           {widget.rows.map((row, ri) => (
             <tr key={ri}>
-              {row.map((cell, ci) => <td key={ci}>{cell}</td>)}
+              {row.map((cell, ci) => <td key={ci} {...cellFit(cell)}>{cell}</td>)}
             </tr>
           ))}
         </tbody>

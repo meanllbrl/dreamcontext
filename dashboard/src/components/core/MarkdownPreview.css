@@ -146,6 +146,20 @@
   font-size: var(--font-size-xs);
 }
 
+/* Each table gets its own horizontal scroller (wrapper written by lib/markdownTables.ts).
+   Columns that legitimately add up to more than the measure — a twelve-column grid, a URL
+   longer than the card — then scroll INSIDE the message instead of painting over its border. */
+.md-preview .markdown-body .md-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+/* The table keeps its own bottom margin (it is inside a scroll container, so the margin is
+   part of the wrapper's height); only the last one in a message gives it up, which is the
+   rule `.markdown-body > :last-child` would have applied to the table before it was wrapped. */
+.md-preview .markdown-body > .md-table-scroll:last-child > table {
+  margin-bottom: 0;
+}
+
 .md-preview .markdown-body table {
   width: 100%;
   border-collapse: collapse;
@@ -158,6 +172,29 @@
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
   text-align: left;
+}
+
+/* How the row is shared. Auto table layout shrinks every column in proportion when the table
+   is over-wide, so a prose column drags the short ones into wrapping with it. A cell short
+   enough to be a label/id/number holds its width; the prose columns — which have the room —
+   absorb the whole squeeze. See lib/markdownTables.ts for the measurements. */
+.md-preview .markdown-body th[data-fit],
+.md-preview .markdown-body td[data-fit] {
+  white-space: nowrap;
+}
+/* A long cell wraps, and may break mid-token when the token is wider than the column, so a
+   URL or a deep path can't set an unbreakable floor under the whole table. `anywhere` rather
+   than `break-word` on purpose: only `anywhere` lowers the cell's MIN-CONTENT width, which is
+   what the table layout reads. Measured on a 155-char URL in a 652px card: with `break-word`
+   the column still claimed 693px and the table scrolled; with `anywhere` it resolves to 506px
+   and the table fits the card at the same height.
+
+   Keyed to a POSITIVE mark, never to `:not([data-fit])` — `anywhere` on a cell the pass hasn't
+   classified would break short words mid-glyph (`Sta`/`tus`). An unmarked cell keeps the
+   browser default. */
+.md-preview .markdown-body th[data-wrap],
+.md-preview .markdown-body td[data-wrap] {
+  overflow-wrap: anywhere;
 }
 
 .md-preview .markdown-body th {

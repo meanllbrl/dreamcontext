@@ -251,9 +251,16 @@
 .chat-pv-table td {
   padding: var(--space-2) var(--space-3);
   text-align: left;
-  white-space: nowrap;
   border-bottom: 1px solid var(--color-border);
 }
+/* Same column model as the answer's markdown tables: a short cell holds its width (so a
+   `Plan`/`Price`/`Seats` column is never squeezed by the prose column beside it), a long one
+   wraps rather than forcing the whole grid into the scroller. `data-fit` is set per cell by
+   the widget — see lib/markdownTables.ts for why the decision is per cell, not per column. */
+.chat-pv-table th[data-fit],
+.chat-pv-table td[data-fit] { white-space: nowrap; }
+.chat-pv-table th[data-wrap],
+.chat-pv-table td[data-wrap] { overflow-wrap: anywhere; }
 .chat-pv-table th {
   background: var(--color-bg-tertiary);
   color: var(--color-text-secondary);
