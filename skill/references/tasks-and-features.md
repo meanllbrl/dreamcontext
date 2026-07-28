@@ -236,7 +236,7 @@ Mirrors proactive objective capture. When the user states or implies a recurring
 
 Every write waits for a yes.
 
-**Security (plain language, tell the user when relevant):** lab scripts execute **locally, in-process, with your credentials passed in** — anyone who can push to a shared brain repo can change what runs on your machine at the next sync. Review a script before its first sync and heed the loud "script changed since last run" tripwire notice. Credentials are written ONLY via `lab credentials set` (gitignore-first, file mode 0600, never printed back, redacted from every error/log).
+**Security (plain language, tell the user when relevant):** lab scripts execute **locally, in a short-lived child process, with your credentials passed in over stdin** — anyone who can push to a shared brain repo can change what runs on your machine at the next sync. The child process is an isolation boundary (a hung or crashing script cannot take the host down, and every run re-reads the whole import graph so an edited shared lib is never stale), NOT a sandbox — the script still has your filesystem and network access. Review a script before its first sync and heed the loud "script changed since last run" tripwire notice. Credentials are written ONLY via `lab credentials set` (gitignore-first, file mode 0600, never printed back, redacted from every error/log).
 
 ---
 

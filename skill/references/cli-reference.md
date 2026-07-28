@@ -93,7 +93,7 @@ Curated metrics synced from HTTP APIs or local scripts into `_dream_context/lab/
 | `lab credentials set <key>` | Store a secret for `{{cred:key}}` placeholders — hidden prompt (`--value` works but is shell-history-risky). Gitignore-first, mode 0600. **The only supported way to create `lab/credentials.json`.** |
 | `lab credentials list` | Credential key NAMES only — values are never printed. |
 
-**Trust note:** `lab/scripts/*.mjs` run locally, in-process, with credentials passed in — same trust level as the repo. Review scripts before their first sync. **Sleep does NOT run lab sync** — refreshing is always an explicit action. An insight manifest may carry `binding: {objective: <slug>, value: latest}` to auto-write that objective's Key-Result `metric.current` on every successful sync — set it via `lab bind` or the dashboard's objective dialogs, not by hand.
+**Trust note:** `lab/scripts/*.mjs` run locally with credentials passed in — same trust level as the repo. Review scripts before their first sync. Each run gets a **fresh short-lived Node child process**, so an edit to a script *or to any `lab/scripts/lib-*.mjs` it imports* takes effect on the very next sync, even inside the long-running desktop app. The child is an isolation boundary, not a sandbox: it has your filesystem and network access. A script that hangs is killed at 120s (`DREAMCONTEXT_LAB_SCRIPT_TIMEOUT_MS` raises the ceiling) and reported as a failed sync. **Sleep does NOT run lab sync** — refreshing is always an explicit action. An insight manifest may carry `binding: {objective: <slug>, value: latest}` to auto-write that objective's Key-Result `metric.current` on every successful sync — set it via `lab bind` or the dashboard's objective dialogs, not by hand.
 
 ---
 

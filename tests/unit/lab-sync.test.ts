@@ -344,3 +344,33 @@ describe('syncInsight — bounded sync history', () => {
     expect(history[0].error!.endsWith('…')).toBe(true);
   });
 });
+
+// ── GitHub #242 ────────────────────────────────────────────────────────────────
+// The desktop-app scenario the issue reports, end-to-end through the real engine:
+// ONE long-running host process, two syncs, a shared `lib-*.mjs` corrected in
+// between. Against an in-process `await import(url + '?t=…')` the second sync
+// still serves the pre-fix module, and the cache is written with stale numbers
+// under an `ok` status — exactly the silent-wrong-number failure mode.
+describe('syncInsight — a corrected shared lib is never stale (#242)', () => {
+  it('writes the CORRECTED value on the next sync without restarting the host', async () => {
+    createInsight(root, { slug: 'spend', title: 'Ad Spend', ttl_minutes: 1440 });
+    useScriptSource('spend', 'scripts/spend.mjs');
+    writeScript('lib-shared', 'export const rate = () => 100;\n');
+    writeScript(
+      'spend',
+      'import { rate } from "./lib-shared.mjs";\n'
+      + 'export default async () => [{ name: "spend", points: [{ t: "2026-01-01", v: rate() }] }];\n',
+    );
+
+    const first = await syncInsight(root, 'spend');
+    expect(first.status).toBe('ok');
+    expect(readCache(root, 'spend')!.latest).toBe(100);
+
+    // The bug fix lands in the SHARED lib — the entry script is untouched.
+    writeScript('lib-shared', 'export const rate = () => 250;\n');
+
+    const second = await syncInsight(root, 'spend', { force: true });
+    expect(second.status).toBe('ok');
+    expect(readCache(root, 'spend')!.latest).toBe(250);
+  });
+});
