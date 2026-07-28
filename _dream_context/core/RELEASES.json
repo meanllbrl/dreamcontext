@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_FHD7EMKt",
+    "version": "0.22.0",
+    "date": "2026-07-28",
+    "summary": "Automations: the brain gets scheduled work of its own. A dreamcontext automation is a headless Claude run on a schedule you own, with all job semantics in its prompt rather than in the CLI, private to this machine until you share it, and gated by a machine-local approval hash so an unreviewed prompt (including a teammate's synced edit) never runs unattended. Three things make it more than cron. It LEARNS: every automation carries a bounded pattern in its own manifest, a standing playbook plus a twenty-entry LIFO lesson ledger, read before each run as untrusted notes ordered after the approved prompt and written back only through 'automations learn', so a job that hit a broken endpoint on Sunday knows that next Sunday instead of rediscovering it forever. It is VISIBLE: 'automations session <slug>' replays the headless run turn by turn, every tool call and argument, which ones failed and what it cost, with the same drill-in on every row of the dashboard's run history. And it TELLS YOU WHAT HAPPENED: the notification carries the run's own opening result sentence rather than 'a file was written', titled by the automation, with the output document as a click target, arriving as dreamcontext with success and failure sounding different. Plus the notifier bundle now has a currency contract ('upgrade' refreshes a stale applet, 'install --check' reports it loudly), a rebuilt zero-state that explains the loop before you own one, and an alarm-clock nav icon. Elsewhere: memory recall now spans all nine channels (automations, insights, theses and objectives join the existing five) with a --level importance filter; Lab custom scripts run in a short-lived child process so an edited shared library is never stale behind an ESM cache; and Chat gets four fixes, a context gauge sized to the model's real window, file references resolved by what they name, tables that width-share by column demand, and Auto mode no longer asking permission for every non-edit command.",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_j-6iKPHL",
     "version": "0.20.2",
     "date": "",

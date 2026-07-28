@@ -10,16 +10,20 @@ const {
 const OUT = path.resolve(__dirname, 'surfaces.excalidraw.md');
 
 // ── Geometry — center engine, three surfaces per side ───────────────────────
-const CENTER = { x: 440, y: 330, w: 340, h: 120 };
+const CENTER = { x: 440, y: 405, w: 340, h: 120 };
 const COL = { w: 310, h: 110 };
 const LEFT_X = 40;
 const RIGHT_X = 870;
-const ROW_Y = [140, 330, 520];
+// Four surfaces on the left, three on the right, both columns centered on the
+// engine card so the connectors stay symmetric around it.
+const LEFT_ROW_Y = [140, 320, 500, 680];
+const RIGHT_ROW_Y = [230, 410, 590];
 
 const LEFT = [
   { color: 'purple', text: 'Knowledge\ncurated, wikilinked docs —\nalways current, never a dump' },
   { color: 'blue', text: 'Features & PRDs\nliving product specs, tied to\nthe real work and releases' },
   { color: 'green', text: 'Tasks & Roadmap\nkanban, sprints, OKRs —\nwith forecast slip detection' },
+  { color: 'orange', text: 'Automations\nscheduled headless runs,\nlearning from every one' },
 ];
 const RIGHT = [
   { color: 'yellow', text: 'Lab insights\nlive metrics from your analytics,\ncached in the brain' },
@@ -35,7 +39,7 @@ els.push(...prose({ x: 62, y: 56, fontSize: 18, text: 'Every surface is the same
 els.push(...card({ ...CENTER, color: 'purple', fontSize: 20, text: '_dream_context/\none memory engine\nplain files · git-tracked · yours' }));
 
 LEFT.forEach((s, i) => {
-  const c = { x: LEFT_X, y: ROW_Y[i], w: COL.w, h: COL.h };
+  const c = { x: LEFT_X, y: LEFT_ROW_Y[i], w: COL.w, h: COL.h };
   els.push(...card({ ...c, color: s.color, fontSize: 18, text: s.text }));
   els.push(...connector({
     from: leftOf(CENTER.x, CENTER.y, CENTER.w, CENTER.h),
@@ -44,7 +48,7 @@ LEFT.forEach((s, i) => {
   }));
 });
 RIGHT.forEach((s, i) => {
-  const c = { x: RIGHT_X, y: ROW_Y[i], w: COL.w, h: COL.h };
+  const c = { x: RIGHT_X, y: RIGHT_ROW_Y[i], w: COL.w, h: COL.h };
   els.push(...card({ ...c, color: s.color, fontSize: 18, text: s.text }));
   els.push(...connector({
     from: rightOf(CENTER.x, CENTER.y, CENTER.w, CENTER.h),

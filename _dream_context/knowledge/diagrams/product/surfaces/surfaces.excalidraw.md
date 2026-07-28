@@ -1,7 +1,8 @@
 ---
-tags:
-  - 'topic:excalidraw'
+
+tags: [excalidraw]
 excalidraw-plugin: parsed
+
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
@@ -34,18 +35,22 @@ kanban, sprints, OKRs —
 with forecast slip
 detection ^O6AadTmG
 
+Automations
+scheduled headless runs,
+learning from every one ^ahD1srxC
+
 Lab insights
 live metrics from your
 analytics,
-cached in the brain ^ahD1srxC
+cached in the brain ^aOs849Q7
 
 Council
 multi-persona debates
-for the hard calls ^aOs849Q7
+for the hard calls ^ieQHeCy0
 
 Team sync
 git brain sync · ClickUp /
-GitHub task backends ^ieQHeCy0
+GitHub task backends ^m1alP0xY
 
 ## Embedded Files
 %%
@@ -136,7 +141,7 @@ GitHub task backends ^ieQHeCy0
 			"id": "Y7lBjqrv",
 			"type": "rectangle",
 			"x": 440,
-			"y": 330,
+			"y": 405,
 			"width": 340,
 			"height": 120,
 			"angle": 0,
@@ -148,7 +153,7 @@ GitHub task backends ^ieQHeCy0
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"9SdW6phlSQm1alP0"
+				"0XpvroSP3MB4lKiP"
 			],
 			"frameId": null,
 			"index": "a2",
@@ -168,7 +173,7 @@ GitHub task backends ^ieQHeCy0
 			"id": "L7Ez1UvQ",
 			"type": "text",
 			"x": 440,
-			"y": 340,
+			"y": 415,
 			"width": 340,
 			"height": 100,
 			"angle": 0,
@@ -180,7 +185,7 @@ GitHub task backends ^ieQHeCy0
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"9SdW6phlSQm1alP0"
+				"0XpvroSP3MB4lKiP"
 			],
 			"frameId": null,
 			"index": "a3",
@@ -220,7 +225,7 @@ GitHub task backends ^ieQHeCy0
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"xYTevamEojAij60X"
+				"z9XXOeqquguCA4d9"
 			],
 			"frameId": null,
 			"index": "a4",
@@ -252,7 +257,7 @@ GitHub task backends ^ieQHeCy0
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"xYTevamEojAij60X"
+				"z9XXOeqquguCA4d9"
 			],
 			"frameId": null,
 			"index": "a5",
@@ -282,7 +287,7 @@ GitHub task backends ^ieQHeCy0
 			"x": 350,
 			"y": 195,
 			"width": 90,
-			"height": 195,
+			"height": 270,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -306,11 +311,11 @@ GitHub task backends ^ieQHeCy0
 			"points": [
 				[
 					90,
-					195
+					270
 				],
 				[
 					0,
-					195
+					270
 				],
 				[
 					0,
@@ -327,7 +332,7 @@ GitHub task backends ^ieQHeCy0
 			"id": "LHaY9IsO",
 			"type": "rectangle",
 			"x": 40,
-			"y": 330,
+			"y": 320,
 			"width": 310,
 			"height": 110,
 			"angle": 0,
@@ -339,7 +344,7 @@ GitHub task backends ^ieQHeCy0
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"pvroSP3MB4lKiPz9"
+				"ZucclKRi5nc2PQbL"
 			],
 			"frameId": null,
 			"index": "a7",
@@ -359,7 +364,7 @@ GitHub task backends ^ieQHeCy0
 			"id": "oWXajMGh",
 			"type": "text",
 			"x": 40,
-			"y": 340,
+			"y": 330,
 			"width": 310,
 			"height": 90,
 			"angle": 0,
@@ -371,7 +376,7 @@ GitHub task backends ^ieQHeCy0
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"pvroSP3MB4lKiPz9"
+				"ZucclKRi5nc2PQbL"
 			],
 			"frameId": null,
 			"index": "a8",
@@ -399,9 +404,9 @@ GitHub task backends ^ieQHeCy0
 			"id": "CvoLpxRv",
 			"type": "arrow",
 			"x": 350,
-			"y": 385,
+			"y": 375,
 			"width": 90,
-			"height": 5,
+			"height": 90,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -425,11 +430,11 @@ GitHub task backends ^ieQHeCy0
 			"points": [
 				[
 					90,
-					5
+					90
 				],
 				[
 					0,
-					5
+					90
 				],
 				[
 					0,
@@ -446,7 +451,7 @@ GitHub task backends ^ieQHeCy0
 			"id": "Hd5YtqkQ",
 			"type": "rectangle",
 			"x": 40,
-			"y": 520,
+			"y": 500,
 			"width": 310,
 			"height": 110,
 			"angle": 0,
@@ -458,7 +463,7 @@ GitHub task backends ^ieQHeCy0
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"XXOeqquguCA4d9Zu"
+				"bVDVUoNycp1hhMr2"
 			],
 			"frameId": null,
 			"index": "aA",
@@ -478,7 +483,7 @@ GitHub task backends ^ieQHeCy0
 			"id": "O6AadTmG",
 			"type": "text",
 			"x": 40,
-			"y": 530,
+			"y": 510,
 			"width": 310,
 			"height": 90,
 			"angle": 0,
@@ -490,7 +495,7 @@ GitHub task backends ^ieQHeCy0
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"XXOeqquguCA4d9Zu"
+				"bVDVUoNycp1hhMr2"
 			],
 			"frameId": null,
 			"index": "aB",
@@ -518,9 +523,9 @@ GitHub task backends ^ieQHeCy0
 			"id": "HRGJk6T5",
 			"type": "arrow",
 			"x": 350,
-			"y": 390,
+			"y": 465,
 			"width": 90,
-			"height": 185,
+			"height": 90,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -552,7 +557,7 @@ GitHub task backends ^ieQHeCy0
 				],
 				[
 					0,
-					185
+					90
 				]
 			],
 			"lastCommittedPoint": null,
@@ -564,20 +569,20 @@ GitHub task backends ^ieQHeCy0
 		{
 			"id": "6yCW3Rkq",
 			"type": "rectangle",
-			"x": 870,
-			"y": 140,
+			"x": 40,
+			"y": 680,
 			"width": 310,
 			"height": 110,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
-			"backgroundColor": "#ffec99",
+			"backgroundColor": "orange",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
 			"strokeStyle": "solid",
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"cclKRi5nc2PQbLbV"
+				"JlN0X1wndsNzQiI5"
 			],
 			"frameId": null,
 			"index": "aD",
@@ -596,10 +601,10 @@ GitHub task backends ^ieQHeCy0
 		{
 			"id": "ahD1srxC",
 			"type": "text",
-			"x": 870,
-			"y": 150,
+			"x": 40,
+			"y": 701.25,
 			"width": 310,
-			"height": 90,
+			"height": 68,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -609,7 +614,7 @@ GitHub task backends ^ieQHeCy0
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"cclKRi5nc2PQbLbV"
+				"JlN0X1wndsNzQiI5"
 			],
 			"frameId": null,
 			"index": "aE",
@@ -622,9 +627,9 @@ GitHub task backends ^ieQHeCy0
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "Lab insights\nlive metrics from your\nanalytics,\ncached in the brain",
-			"rawText": "Lab insights\nlive metrics from your\nanalytics,\ncached in the brain",
-			"originalText": "Lab insights\nlive metrics from your\nanalytics,\ncached in the brain",
+			"text": "Automations\nscheduled headless runs,\nlearning from every one",
+			"rawText": "Automations\nscheduled headless runs,\nlearning from every one",
+			"originalText": "Automations\nscheduled headless runs,\nlearning from every one",
 			"fontSize": 18,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -636,10 +641,10 @@ GitHub task backends ^ieQHeCy0
 		{
 			"id": "u7n7bDKr",
 			"type": "arrow",
-			"x": 780,
-			"y": 195,
+			"x": 350,
+			"y": 465,
 			"width": 90,
-			"height": 195,
+			"height": 270,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -662,16 +667,16 @@ GitHub task backends ^ieQHeCy0
 			"locked": false,
 			"points": [
 				[
-					0,
-					195
-				],
-				[
-					90,
-					195
-				],
-				[
 					90,
 					0
+				],
+				[
+					0,
+					0
+				],
+				[
+					0,
+					270
 				]
 			],
 			"lastCommittedPoint": null,
@@ -684,19 +689,19 @@ GitHub task backends ^ieQHeCy0
 			"id": "YkI3HiJp",
 			"type": "rectangle",
 			"x": 870,
-			"y": 330,
+			"y": 230,
 			"width": 310,
 			"height": 110,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
-			"backgroundColor": "#96f2d7",
+			"backgroundColor": "#ffec99",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
 			"strokeStyle": "solid",
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"DVUoNycp1hhMr2Jl"
+				"EIj1BaPeAFp7Y9r7"
 			],
 			"frameId": null,
 			"index": "aG",
@@ -716,9 +721,9 @@ GitHub task backends ^ieQHeCy0
 			"id": "aOs849Q7",
 			"type": "text",
 			"x": 870,
-			"y": 351.25,
+			"y": 240,
 			"width": 310,
-			"height": 68,
+			"height": 90,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -728,7 +733,7 @@ GitHub task backends ^ieQHeCy0
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"DVUoNycp1hhMr2Jl"
+				"EIj1BaPeAFp7Y9r7"
 			],
 			"frameId": null,
 			"index": "aH",
@@ -741,9 +746,9 @@ GitHub task backends ^ieQHeCy0
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "Council\nmulti-persona debates\nfor the hard calls",
-			"rawText": "Council\nmulti-persona debates\nfor the hard calls",
-			"originalText": "Council\nmulti-persona debates\nfor the hard calls",
+			"text": "Lab insights\nlive metrics from your\nanalytics,\ncached in the brain",
+			"rawText": "Lab insights\nlive metrics from your\nanalytics,\ncached in the brain",
+			"originalText": "Lab insights\nlive metrics from your\nanalytics,\ncached in the brain",
 			"fontSize": 18,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -756,9 +761,9 @@ GitHub task backends ^ieQHeCy0
 			"id": "xrYz2ndS",
 			"type": "arrow",
 			"x": 780,
-			"y": 385,
+			"y": 285,
 			"width": 90,
-			"height": 5,
+			"height": 180,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -782,11 +787,11 @@ GitHub task backends ^ieQHeCy0
 			"points": [
 				[
 					0,
-					5
+					180
 				],
 				[
 					90,
-					5
+					180
 				],
 				[
 					90,
@@ -803,19 +808,19 @@ GitHub task backends ^ieQHeCy0
 			"id": "OukmBfep",
 			"type": "rectangle",
 			"x": 870,
-			"y": 520,
+			"y": 410,
 			"width": 310,
 			"height": 110,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
-			"backgroundColor": "#e9ecef",
+			"backgroundColor": "#96f2d7",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
 			"strokeStyle": "solid",
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"N0X1wndsNzQiI5EI"
+				"i9bXQYGwWKwiFfzl"
 			],
 			"frameId": null,
 			"index": "aJ",
@@ -835,7 +840,7 @@ GitHub task backends ^ieQHeCy0
 			"id": "ieQHeCy0",
 			"type": "text",
 			"x": 870,
-			"y": 541.25,
+			"y": 431.25,
 			"width": 310,
 			"height": 68,
 			"angle": 0,
@@ -847,7 +852,7 @@ GitHub task backends ^ieQHeCy0
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"N0X1wndsNzQiI5EI"
+				"i9bXQYGwWKwiFfzl"
 			],
 			"frameId": null,
 			"index": "aK",
@@ -860,9 +865,9 @@ GitHub task backends ^ieQHeCy0
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "Team sync\ngit brain sync · ClickUp /\nGitHub task backends",
-			"rawText": "Team sync\ngit brain sync · ClickUp /\nGitHub task backends",
-			"originalText": "Team sync\ngit brain sync · ClickUp /\nGitHub task backends",
+			"text": "Council\nmulti-persona debates\nfor the hard calls",
+			"rawText": "Council\nmulti-persona debates\nfor the hard calls",
+			"originalText": "Council\nmulti-persona debates\nfor the hard calls",
 			"fontSize": 18,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -875,9 +880,9 @@ GitHub task backends ^ieQHeCy0
 			"id": "g56jTGCC",
 			"type": "arrow",
 			"x": 780,
-			"y": 390,
+			"y": 465,
 			"width": 90,
-			"height": 185,
+			"height": 0,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -909,7 +914,126 @@ GitHub task backends ^ieQHeCy0
 				],
 				[
 					90,
-					185
+					0
+				]
+			],
+			"lastCommittedPoint": null,
+			"startBinding": null,
+			"endBinding": null,
+			"startArrowhead": null,
+			"endArrowhead": "arrow"
+		},
+		{
+			"id": "9SdW6phl",
+			"type": "rectangle",
+			"x": 870,
+			"y": 590,
+			"width": 310,
+			"height": 110,
+			"angle": 0,
+			"strokeColor": "#1e1e1e",
+			"backgroundColor": "#e9ecef",
+			"fillStyle": "solid",
+			"strokeWidth": 2,
+			"strokeStyle": "solid",
+			"roughness": 1,
+			"opacity": 100,
+			"groupIds": [
+				"y2ton32TRnKybouQ"
+			],
+			"frameId": null,
+			"index": "aM",
+			"roundness": {
+				"type": 3
+			},
+			"seed": 4251628824,
+			"version": 1,
+			"versionNonce": 2139356774,
+			"isDeleted": false,
+			"boundElements": [],
+			"updated": 1735689600000,
+			"link": null,
+			"locked": false
+		},
+		{
+			"id": "m1alP0xY",
+			"type": "text",
+			"x": 870,
+			"y": 611.25,
+			"width": 310,
+			"height": 68,
+			"angle": 0,
+			"strokeColor": "#1e1e1e",
+			"backgroundColor": "transparent",
+			"fillStyle": "solid",
+			"strokeWidth": 2,
+			"strokeStyle": "solid",
+			"roughness": 1,
+			"opacity": 100,
+			"groupIds": [
+				"y2ton32TRnKybouQ"
+			],
+			"frameId": null,
+			"index": "aN",
+			"roundness": null,
+			"seed": 3840860535,
+			"version": 1,
+			"versionNonce": 2659081212,
+			"isDeleted": false,
+			"boundElements": [],
+			"updated": 1735689600000,
+			"link": null,
+			"locked": false,
+			"text": "Team sync\ngit brain sync · ClickUp /\nGitHub task backends",
+			"rawText": "Team sync\ngit brain sync · ClickUp /\nGitHub task backends",
+			"originalText": "Team sync\ngit brain sync · ClickUp /\nGitHub task backends",
+			"fontSize": 18,
+			"fontFamily": 5,
+			"textAlign": "center",
+			"verticalAlign": "top",
+			"containerId": null,
+			"lineHeight": 1.25,
+			"autoResize": false
+		},
+		{
+			"id": "vamEojAi",
+			"type": "arrow",
+			"x": 780,
+			"y": 465,
+			"width": 90,
+			"height": 180,
+			"angle": 0,
+			"strokeColor": "#1e1e1e",
+			"backgroundColor": "transparent",
+			"fillStyle": "solid",
+			"strokeWidth": 2,
+			"strokeStyle": "solid",
+			"roughness": 1,
+			"opacity": 100,
+			"groupIds": [],
+			"frameId": null,
+			"index": "aO",
+			"roundness": null,
+			"seed": 3552746303,
+			"version": 1,
+			"versionNonce": 2822425262,
+			"isDeleted": false,
+			"boundElements": [],
+			"updated": 1735689600000,
+			"link": null,
+			"locked": false,
+			"points": [
+				[
+					0,
+					0
+				],
+				[
+					90,
+					0
+				],
+				[
+					90,
+					180
 				]
 			],
 			"lastCommittedPoint": null,
