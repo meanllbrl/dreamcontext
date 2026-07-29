@@ -12,8 +12,8 @@ pinned: false
 date: '2026-07-26'
 status: in_review
 created: '2026-07-26'
-updated: '2026-07-27'
-released_version: null
+updated: '2026-07-28'
+released_version: v0.22.0
 tags:
   - 'topic:agents'
   - 'layer:backend'

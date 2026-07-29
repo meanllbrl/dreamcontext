@@ -100,7 +100,7 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 ### Integration (CLI, recall, snapshot, dashboard)
 
 - [x] `memory recall "<meaning phrase>" --types insight` surfaces the insight; `insight` is in `buildCorpus` defaults.
-- [x] The SessionStart snapshot renders a budget-demotable Lab section (title / latest / staleness / group) and never crashes on malformed manifest.
+- [x] The SessionStart snapshot renders a budget-demotable Lab section (title / latest / staleness / group) with a `maxDemotionLevel: 1` floor (metric names + latest values stay in context under any budget pressure), and never crashes on malformed manifest.
 - [x] HTTP: `GET /api/lab` lists summaries; `GET /api/lab/:slug` returns full series; `POST /api/lab/sync {all:true}` runs same engine and returns `failed[]`; `PATCH /api/lab/:slug/tweaks` persists. No route ever returns a credential value.
 - [x] Full existing test suite stays green; `npm run build` clean.
 
@@ -138,6 +138,13 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 ## Constraints & Decisions
 <!-- LIFO: newest at top -->
+
+### Rule 13 enforcement via hook + demotion floor (2026-07-28, commit a562d1d)
+
+- **Problem:** Operational Rule 13 ("insights before external fetch") shipped as documentation, but the two rungs it leans on were unreachable: (1) insight recall hits rendered identically to knowledge hits with the wrong instruction ("READ the file" instead of "`lab show` for the series"); (2) the Lab snapshot section demoted to "N insight(s) — lab list" under budget pressure, so the agent could not see that a metric question was already answered.
+- **Fix (two-part):** (1) RECALL HOOK: UserPromptSubmit hook now renders insight hits (local + federated peer) with the exact `lab show <slug>` call to make, an explicit do-NOT-fetch-from-API/MCP/script line, and `lab sync` as the only legitimate fetch. This fires on every prompt regardless of skill loading or snapshot survival. (2) SNAPSHOT FLOOR: deleted the level-2 bare-count rung and added `maxDemotionLevel: 1` to `renderLabSection` — metric names + latest values stay in context under any budget pressure; cheaper sections absorb the pressure instead, and the snapshot stays honestly over budget rather than blinding the agent to save ~1KB.
+- **General lesson — hook over skill prose for must-not-miss rules:** When a rule is truly must-not-miss, the load-bearing half lives in the hook that always fires (UserPromptSubmit, SessionStart), not only in skill documentation which is conditional on the skill loading and the snapshot surviving budget pressure. The skill may carry the full explanation, but the directive itself is hook-delivered.
+- **General lesson — a demotion rung that collapses to a bare count is blinding, not cheaper:** Lab demoted to "21 insight(s)" is what made agents re-fetch metrics the brain already held. `maxDemotionLevel` is the general guard. Open audit item: objectives still has a count-shaped deepest rung.
 
 ### Data follows the control — a saved tweak always re-fetches (2026-07-27, issue #235)
 

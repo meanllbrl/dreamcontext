@@ -2,13 +2,15 @@
 id: feat_4NB3SlrK
 status: active
 created: '2026-02-25'
-updated: '2026-07-08'
+updated: '2026-07-28'
 released_version: 0.1.0
 tags:
   - architecture
   - backend
   - onboarding
-related_tasks: []
+related_tasks:
+  - >-
+    the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview
 type: feature
 name: context-snapshot
 description: ''
@@ -53,7 +55,11 @@ Every AI session starts blind — no memory of previous work, no knowledge of pr
 
 ## Constraints & Decisions
 
-
+- **[2026-07-28]** Snapshot-budget rework (wave 2 in flight, decisions durable even if code uncommitted): On mature vaults the snapshot's never-evict tier alone (~20.9KB on dreamcontext vault, measured) exceeds the 20,000-char harness persist limit, so `applyBudget` demotes every section and still returns overBudget, then the harness performs exactly the raw 2KB positional cut the budget module exists to prevent. No demotion ladder can win when the floor already busts the ceiling.
+- **[2026-07-28]** Two-tier architecture chosen: rank-ordered demotion decoupled from render order via `demotionRank` (explicit rank wins over array index for demotion, render order unchanged); byte-aware lazily-resolved rungs (thunks: `BudgetRung = string | (() => string)`; zero resolve under budget, zero thunks in the output); per-section `maxDemotionLevel` floors prevent blinding collapses (see Lab floor below); lossy-but-structure-preserving core-file compressor (`snapshot-compress.ts`: headings + rule titles + first sentences kept verbatim, paths kept, full text recoverable via `Read`/recall); two-band footer (fitted vs exhausted) and `⚠️ CONTEXT IS INCOMPLETE` over-budget banner naming the oversized files.
+- **[2026-07-28]** The ceiling is 4,000 chars per core file, and characters bind — not the ~150-line rule. The line-count heuristic (SKILL.md rule 12, `agents/sleep-state.md` §C1) remains as an authoring guide, but the snapshot budget pays in UTF-16 units (`String.length`), so a 69-line file with 13,573 chars still exceeds the ceiling. `dreamcontext doctor` reports both. Propagated across SKILL.md, cli-reference, troubleshooting, knowledge-and-recall, sleep.md.
+- **[2026-07-28]** Byte-identity golden testing: a date-free 19-file fixture vault rendering 8,504 chars, generated in a detached-HEAD worktree at the base SHA (7effb381) so the golden proves "no drift on an under-budget vault". Determinism pins: `vi.setSystemTime`, fresh `HOME`, `process.chdir` to fixture root (because `buildMarketingSnapshot()` resolves from CWD, not `rootOverride`, and would otherwise splice the real repo's Marketing block into the fixture), `DREAMCONTEXT_DRIFT_CHECK=0`, `triggers: []` (a matching trigger mutates `.sleep.json`), `sleep_history` omitted (migrated + rewritten on first read).
+- **[2026-07-28]** Lab insight snapshot section gains `maxDemotionLevel: 1` floor (shipped commit a562d1d). A level-2 rung collapsing to "N insight(s) — lab list for details" is blinding, not a cheaper render: on both live vaults the budget ladder took it, so metric questions bypassed Lab's synced series and went to external APIs/MCPs — violating Operational Rule 13 (insights before external fetch). The floor keeps metric names + latest values in context under any budget pressure. Paired with UserPromptSubmit hook directive: insight recall hits now carry the exact `lab show` call and an explicit do-NOT-fetch line, so the rule fires on every prompt regardless of skill loading or snapshot survival.
 - **[2026-06-10]** Snapshot token budget: sections demote in waves (cheapest-loss first) using `BudgetSection.demotions[]`. Never-evict sections (soul, user, warnings, reminders) are untouchable regardless of budget pressure. The budget gate is enforced in `src/lib/snapshot-budget.ts` by `applyBudget()`. Design principle: nothing is ever raw-truncated — demoted content stays reachable via file path + recall corpus.
 - **[2026-02-25]** Plain text only — no ANSI colors or interactive elements. The snapshot is piped into the Claude Code context window, not displayed to a human in a terminal.
 - **[2026-02-25]** Completed tasks are excluded from the snapshot to avoid cluttering context with resolved work.
@@ -87,8 +93,39 @@ Every AI session starts blind — no memory of previous work, no knowledge of pr
 8. Features summary — fast-glob `core/features/*.md`, reads frontmatter + `## Why` + `## Changelog` sections. Feature `Why:` excerpt capped at 250 chars with HTML template comments stripped.
 9. Knowledge Index — built by `buildKnowledgeIndex()` in `src/lib/knowledge-index.ts`; **pinned entries surface at the top of the index with a prominent warning** (no body inlining as of 2026-05-23).
 
+**Budget architecture (two-tier model, wave 2 in flight 2026-07-28)**:
+
+The snapshot budget system has two tiers:
+1. **Never-evict tier**: soul, user, warnings, constraints, reminders — always rendered in full regardless of budget pressure. Floor measured at ~20.9KB on dreamcontext vault.
+2. **Demotable tier**: memory, tasks, changelog, objectives, lab, features, knowledge, etc. — progressive demotion through curated rungs.
+
+Demotion mechanics (`src/lib/snapshot-budget.ts`):
+- `BudgetRung = string | (() => string)` — lazily-resolved thunks; zero resolve under budget.
+- `demotionRank?: number` — explicit rank decouples demotion order from render order (cheapest-loss-first demotes, render order unchanged).
+- `maxDemotionLevel?: number` — per-section floor prevents blinding collapses (e.g., Lab's `maxDemotionLevel: 1` keeps metric names + latest values).
+- Rungs memoized per `${id}:${level}` — zero thunks in the output, zero re-resolve on cache hits.
+
+Core-file compression (`src/lib/snapshot-compress.ts`, `src/lib/snapshot-caps.ts`):
+- Lossy-but-structure-preserving: headings + rule titles + first sentences kept verbatim, paths kept, full text recoverable via `Read`/recall.
+- Three rungs: full → headings+titles+first-sentences → titles-only.
+- `packToCharBudget` byte-aware packer: fits whole items to a char budget, never mid-item cuts.
+- `CORE_FILE_CHAR_CEILING = 4_000` (binding); `CORE_FILE_LINE_CEILING = 150` (authoring heuristic).
+
+Signaling (`src/cli/commands/snapshot.ts`, wave 2):
+- Over-budget banner: `⚠️ CONTEXT IS INCOMPLETE` appears in the snapshot header when `overBudget` is true, naming the oversized never-evict files and instructing `dreamcontext doctor`.
+- Two-band footer: fitted (demotions listed, recovery instructions) vs exhausted (floor-reached sections listed, doctor command).
+- `overBudget` computed PRE-footer so the banner decision precedes footer text in the render.
+
+Doctor integration (`src/lib/core-index.ts`, `src/cli/commands/doctor.ts`, wave 2+):
+- `auditCoreFileSizes()` measures both chars (`String.length`, UTF-16 units) and lines (`split('\n').length`).
+- Error iff never-evict tier alone >20,000; warn over 20,000; warn past 18,000 ladder target; ok otherwise.
+- `BUDGET=off` special-cased: names the disabled ladder instead of blaming core files.
+
 **Library dependencies**:
-- `src/lib/core-index.ts` — `buildCoreIndex()`
+- `src/lib/core-index.ts` — `buildCoreIndex()`, `auditCoreFileSizes()`
+- `src/lib/snapshot-budget.ts` — `applyBudget()`, `BudgetSection`, `BudgetRung`, demotion ladder
+- `src/lib/snapshot-compress.ts` — `compressMarkdownBlock()`, `packToCharBudget()`, `compressedCoreFile()`
+- `src/lib/snapshot-caps.ts` — all budget constants + `DemotableSectionId` + `NeverEvictSectionId` + `DEMOTION_RANKS`
 - `src/lib/knowledge-index.ts` — `buildKnowledgeIndex()`
 - `src/lib/frontmatter.ts` — `readFrontmatter()`
 - `src/lib/markdown.ts` — `readSection()`

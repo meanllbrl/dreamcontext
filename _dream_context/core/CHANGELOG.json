@@ -1,6 +1,61 @@
 [
   {
     "date": "2026-07-28",
+    "type": "refactor",
+    "scope": "snapshot",
+    "description": "Task 'the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview' executed across parallel waves after 4 plan-review rounds. Landed uncommitted: src/lib/snapshot-budget.ts reworked with lazy BudgetRung thunks, rank-ordered demotion via demotionRank decoupled from render order, neverEvictChars + flooredSectionIds, a two-band footer, renderOverBudgetBanner + OVERSIZED_SNAPSHOT_DIRECTIVE; new src/lib/snapshot-caps.ts (21 pinned constants + section-id unions + DEMOTION_RANKS) and src/lib/snapshot-compress.ts (compressMarkdownBlock / packToCharBudget / compressedCoreFile); a byte-identity golden fixture harness; an additive core-file audit in src/lib/core-index.ts; and a 7-file docs-lockstep pass. T5 (src/cli/commands/snapshot.ts) was still running at epoch time, so the tree may not typecheck — expected, not a defect. The neverEvict tier alone is ~20.9KB on mature vaults and exceeds the 20,000-char harness limit, so applyBudget demotes every section AND still returns overBudget. Measured on both live vaults (74KB local / 100KB Tilki). No ladder can win against a floor that already busts the ceiling; the fix has to touch the never-evict tier itself.",
+    "breaking": false,
+    "summary": "Snapshot budget rework: lazy rungs, decoupled demotion ranks, two-band footer, oversized directive (IN FLIGHT)",
+    "references": [
+      "task:the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview",
+      "file:src/lib/snapshot-budget.ts",
+      "file:src/lib/snapshot-caps.ts",
+      "file:src/lib/snapshot-compress.ts"
+    ]
+  },
+  {
+    "date": "2026-07-28",
+    "type": "chore",
+    "scope": "release",
+    "description": "Runs publish-checklist steps 0-2 for the automations release. Bump all five version surfaces to 0.22.0 (package.json, desktop/package.json, tauri.conf.json, Cargo.toml, Cargo.lock's dreamcontext-desktop entry). RELEASES.json 0.22.0 record, written at the CLI's canonical 2-space indent rather than through --yes auto-discovery, which over-sweeps. README: automations learning/session/notification bullets, a deep-dive link, and the surfaces figure alt text. The 'what lives inside' board enumerated the surfaces and omitted Automations; it now carries it, rebalanced 4+3 and re-centered so the new top row no longer collides with the intro prose. npm run diagrams: every board respec'd, PNGs byte-stable except surfaces.",
+    "breaking": false,
+    "summary": "v0.22.0 version bump, release record, docs and diagrams",
+    "references": [
+      "commit:40a03da",
+      "file:package.json",
+      "file:_dream_context/core/RELEASES.json",
+      "file:README.md"
+    ]
+  },
+  {
+    "date": "2026-07-28",
+    "type": "feat",
+    "scope": "automations",
+    "description": "An automation was a blind, amnesiac job: it repeated the same mistake every run, you could not see what the headless session actually did, and the notification only said a file had been written. Pattern: a bounded playbook plus a 20-entry LIFO lesson ledger in the manifest, read before every run as untrusted notes ordered AFTER the approved prompt, written only via automations learn so a run recording a lesson can never touch a hashed field and block itself. learning is approval-hashed in the ON direction only, so pre-existing manifests keep a byte-identical hash across the upgrade. Session replay: automations session <slug> [--run N], GET /api/automations/:slug/session, and a per-row drill-in in the dashboard, all over one transcript parser extracted to lib/transcript-history.ts. Notifications carry the run's own opening result sentence, titled by the automation, with the output document as a click target. The notifier applet gains a currency contract: its rendered script hash is stamped into the bundle, upgrade refreshes a stale one, and install --check reports staleness loudly. Automations nav icon, and a rebuilt zero-state that explains the loop.",
+    "breaking": false,
+    "summary": "Automations learn from every run, show their session, and say what happened in the notification",
+    "references": [
+      "commit:4f2353c",
+      "file:src/lib/automations/runner.ts",
+      "file:src/lib/automations/store.ts",
+      "file:src/lib/transcript-history.ts",
+      "file:dashboard/src/components/automations/AutomationDetailPanel.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-28",
+    "type": "feat",
+    "scope": "announcements",
+    "description": "The story filed as v0-22-0 was 'Chat is the agent now' — content that actually shipped in 0.21.0 and was announced under a version 0.22.0 never carried. Left alone, everyone upgrading to Automations would have been shown a What's New about chat defaults. v0-22-0's blocks, shots and clip fold into v0-21-0, where they belong: one announcement per version, and 0.21.0 is the release that shipped them. The Automations story is new, under a fresh id. It could not reuse v0-22-0: that id shipped inside the published 0.21.0 package, so it is already in the seen-set of everyone who opened the app, and a reused id is silently not-new. Its shots are the real thing — a genuine unattended run of an end-of-day digest, whose 32 tool calls, 2 failures and self-recorded lessons are what the pattern and session blocks show.",
+    "breaking": false,
+    "summary": "v0.22.0 announcement is Automations; v0.21.0 gets its Chat payload back",
+    "references": [
+      "commit:e806ba8",
+      "file:dashboard/public/announcements.json"
+    ]
+  },
+  {
+    "date": "2026-07-28",
     "type": "fix",
     "scope": "chat",
     "description": "Owner report 07-28 (pre-publish): 'I scroll up, you suddenly load the history, and the place I was at moves.'\n\nThe transcript's scroll anchoring only existed for the duration of ONE reveal commit — armed when the window prepended 40 older entries, released at the end of that commit. That covered the prepend and nothing else, and the reveal is only the first of the height changes that land above a reader who has scrolled up: the revealed block's own images decode a few hundred ms later, useCopyableCodeBlocks/useClickablePaths decorate in PASSIVE effects (i.e. after the layout effect that did the correcting), a tool card above the fold expands, a rewind truncates rows. Nothing was watching for any of it, and nothing else would catch it: .chat-scroll sets overflow-anchor: none (native anchoring would double-correct the reveal) and the app ships in a WKWebView.\n\nNow ChatPane HOLDS an anchor for as long as the view is unpinned — the topmost few visible rows, measured in scroll-invariant content coordinates, re-asserted from the reveal's layout effect and from the ResizeObserver's unpinned branch (which used to do nothing at all). revealScrollCorrection became anchorHoldCorrection: SIGNED, because a hold that outlives the reveal meets content shrinking above the reader for real, and epsilon-guarded at 0.5px so fractional layout wobble does not write scrollTop every frame. It re-measures against the layout it just produced, so two callers firing for one commit cannot correct twice.\n\nThe non-obvious half: on a scroll event, SETTLE BEFORE RE-HOLDING. A scroll event is not proof the reader moved — the hold's own correction, the re-home restore and the browser's clamp all write scrollTop — and scroll events are delivered BEFORE ResizeObserver callbacks, so a re-hold that ran first would bake in any height change that had landed since the last correction. Measured with the pair inverted: a reveal corrected exactly (5842px), the decoration pass then grew the entries above the fold by 478px, the correction's own scroll event re-held at the new layout, and the observer that followed found nothing to fix.\n\nRuntime-verified against the real dashboard and a resumed 270-item transcript in an isolated scratch vault, same browser and fixture, pre-fix vs post-fix build: reveal-notch excess movement 531.3px -> 0.3px (a plain notch moves the fold row 120.0px); plain-notch spread 53.2px -> 0.2px; an image decoding above the fold 520.5px -> 0.5px; a card collapsing above the fold -240.0px -> 0.0px; pinned auto-scroll still lands at a 0px bottom gap when 600px is appended.",
