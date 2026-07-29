@@ -4,25 +4,31 @@ Sleep (RemSleep) is how working-session changes get folded back into the durable
 
 ## When to sleep
 
-Sleep debt accumulates automatically via hooks (per Write/Edit tool use). Hooks inject directives — honor them.
+Sleep debt accumulates automatically via hooks. Each finished session is scored **0–10** by a weighted sum over four axes — novel tokens consumed, file changes, tool calls, and substance (decisions, task breadth, exchange length) — so a heavy session costs several times a light one. A typical session scores ~5. Hooks inject directives — honor them.
 
-| Debt | Level | Per-change score | Required behavior |
-|------|-------|------------------|-------------------|
-| 0–7 | Alert | 1–3 changes → +1 | No action |
-| 8–13 | Drowsy | 4–8 changes → +2 | After completing a task: **inform user + offer** consolidation |
-| 14–19 | Sleepy | 9+ changes → +3 | At session start: **inform user + recommend** consolidation before new work |
-| 20+ | Must sleep | — | **Consolidate immediately**, before or right after the current task |
+Thresholds are calibrated against measured DAILY work volume (30 real days: median 42 debt/day, busiest 185), targeting **at most ~3 consolidations on the heaviest day and none required on a typical one**.
 
-Also triggers an advisory: a **★★★ bookmark** exists (regardless of debt), or **5+ sessions** since last sleep.
+| Debt | Level | Required behavior |
+|------|-------|-------------------|
+| 0–23 | Alert | No action |
+| 24–39 | Drowsy | After completing a task: **inform user + offer** consolidation |
+| 40–59 | Sleepy | At session start: **inform user + recommend** consolidation before new work |
+| 60+ | Must sleep | **Consolidate**, before or right after the current task |
 
-Injected directives (SessionStart + every user message via UserPromptSubmit when debt ≥8):
-- Debt ≥20 → "CONSOLIDATION REQUIRED"
-- Debt ≥14 → "CONSOLIDATION RECOMMENDED"
-- Debt ≥8 → offer after the current task
+Also triggers an advisory: a **★★★ bookmark** exists (regardless of debt), or **12+ sessions** since last sleep.
 
-**MANDATORY post-task check:** after any task/major implementation, if debt ≥8 tell the user: *"Sleep debt is [N]. I can consolidate now to preserve this work. Want me to run it?"* Never silently finish.
-**Auto-sleep (act without asking):** task completed with debt ≥14; major implementation finished with debt ≥8.
-**Ask first:** debt 8–13 after a task; accumulated small changes; user wrapping up.
+Injected directives (SessionStart + every user message via UserPromptSubmit when debt ≥24):
+- Debt ≥60 → "CONSOLIDATION REQUIRED"
+- Debt ≥40 → "CONSOLIDATION RECOMMENDED"
+- Debt ≥24 → offer after the current task
+
+**Cooldown — sleep is not supposed to be constant.** For **3 hours** after a completed consolidation the hooks stop asking, even as debt climbs; directives print a "Cooling down" line instead. Thresholds bound how much work one sleep is worth but not how close two land, so this is the time floor that stops "consolidate now" from returning half an hour later. Two things still pass through: a hand-tagged **★★★ bookmark**, and debt reaching **120** (2× Must Sleep — an escape hatch for a genuinely enormous burst, not a normal path). **If the user asks for a sleep, run it** — the cooldown governs what the AGENT proposes, never what the user requests.
+
+**MANDATORY post-task check:** after any task/major implementation, if debt ≥24 **and no cooldown is active**, tell the user: *"Sleep debt is [N]. I can consolidate now to preserve this work. Want me to run it?"* Never silently finish.
+**Auto-sleep (act without asking):** task completed with debt ≥60. Otherwise ask.
+**Ask first:** debt 24–59 after a task; accumulated small changes; user wrapping up.
+
+**Depth is NOT the same as level.** Destructive knowledge ops (merge-with-delete, summarize-and-replace, archive/delete) are authorized only at `deep`, which starts at debt **45** — not at Must Sleep. Being overdue to consolidate does not by itself license deleting things; `--deep` remains the explicit override.
 
 For non-file-change work (architecture discussion, a decision with no edits): `dreamcontext sleep add <score> "<reason>"`.
 
@@ -101,7 +107,7 @@ The other place sleep and automations touch is deference, not ownership: a due a
 dreamcontext sleep status              # debt level + history
 dreamcontext sleep start [--deep]      # begin epoch
 dreamcontext sleep done "<summary>"    # finish, reset debt
-dreamcontext sleep add <score> "<why>" # manual debt for non-file work
+dreamcontext sleep add <score> "<why>" # manual debt for non-file work (score 1-10)
 dreamcontext sleep debt                # debt number (programmatic)
 dreamcontext sleep history [-n N]      # consolidation history
 dreamcontext reflect [--write]         # cross-session term candidates

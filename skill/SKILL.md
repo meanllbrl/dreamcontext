@@ -296,19 +296,21 @@ The sleep agent processes bookmarks FIRST, by salience.
 
 ## Sleep / Consolidation (you must do this correctly)
 
-Sleep debt accumulates automatically via hooks (per Write/Edit). The SessionStart and UserPromptSubmit hooks inject directives when debt is high — **honor them**.
+Sleep debt accumulates automatically via hooks. Each finished session scores **0–10** (weighted sum of novel tokens, file changes, tool calls and substance — a typical session ~5, a heavy one ~9). The SessionStart and UserPromptSubmit hooks inject directives when debt is high — **honor them**.
 
 | Debt | Level | Required behavior |
 |------|-------|-------------------|
-| 0–7 | Alert | No action |
-| 8–13 | Drowsy | After completing a task, **inform the user and offer** consolidation |
-| 14–19 | Sleepy | At session start, **inform the user and recommend** consolidation before new work |
-| 20+ | Must sleep | **Consolidate now**, before or right after the current task |
+| 0–23 | Alert | No action |
+| 24–39 | Drowsy | After completing a task, **inform the user and offer** consolidation |
+| 40–59 | Sleepy | At session start, **inform the user and recommend** consolidation before new work |
+| 60+ | Must sleep | **Consolidate**, before or right after the current task |
 
-A ★★★ bookmark or 5+ sessions since last sleep also triggers an advisory.
+A ★★★ bookmark or 12+ sessions since last sleep also triggers an advisory.
 
-**Post-task check (MANDATORY):** after completing any task or major implementation, check debt. If ≥8, tell the user: *"Sleep debt is [N]. I can consolidate now to preserve this work. Want me to run it?"* Never silently finish.
-**Auto-sleep (act without asking):** task completed with debt ≥14, or major implementation finished with debt ≥8.
+**Cooldown:** for 3 hours after a completed consolidation the hooks stop asking (directives say "Cooling down"). Thresholds and cooldown together target **at most ~3 consolidations on the busiest day**. A ★★★ bookmark or debt ≥120 overrides it — and a user asking for a sleep always overrides it.
+
+**Post-task check (MANDATORY):** after completing any task or major implementation, check debt. If ≥24 and no cooldown is active, tell the user: *"Sleep debt is [N]. I can consolidate now to preserve this work. Want me to run it?"* Never silently finish.
+**Auto-sleep (act without asking):** task completed with debt ≥60. Otherwise ask.
 
 **The flow (main agent runs this directly — sub-agents can't reliably fan out):**
 1. Tell the user you're consolidating.

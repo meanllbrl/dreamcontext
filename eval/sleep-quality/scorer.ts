@@ -24,6 +24,8 @@ import {
   upsertSessionOnStop,
   consolidationDepth,
   isDestructiveAllowed,
+  DEBT_DROWSY,
+  DEBT_DEEP_AUTHORITY,
   type SleepState,
   type StopUpsertInput,
   type ConsolidationDepth,
@@ -226,8 +228,20 @@ export function destructiveAllowedForProfile(depth: ConsolidationDepth, profile:
 }
 
 // Debt values that resolve to each depth via consolidationDepth(debt).
-// (×2 scale, 2026-06-29: light 0–7 · standard 8–19 · deep 20+.)
-const DEBT_BY_DEPTH: Record<ConsolidationDepth, number> = { light: 0, standard: 10, deep: 20 };
+//
+// DERIVED from the threshold constants, never hand-written. These are fixture
+// inputs (a debt that lands in each band), NOT gold labels — the thing this
+// sub-score asserts is `depth → destructive allowed?`, which is unchanged. When
+// the scale moved on 2026-07-29 (Drowsy 8→12, and 'deep' split off onto its own
+// DEBT_DEEP_AUTHORITY=45 constant) the previously hardcoded `{0, 10, 20}` began
+// resolving to light/light/standard, silently testing the wrong three bands
+// while still reporting a pass. Deriving them keeps the guard honest across any
+// future rescale.
+const DEBT_BY_DEPTH: Record<ConsolidationDepth, number> = {
+  light: 0,
+  standard: DEBT_DROWSY,
+  deep: DEBT_DEEP_AUTHORITY,
+};
 
 function scoreDepthGating(_input: ScorerInput, gold: Gold, profile: Profile): number {
   const depths: ConsolidationDepth[] = ['light', 'standard', 'deep'];

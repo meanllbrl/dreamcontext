@@ -3,6 +3,9 @@ import {
   consolidationDepth,
   catchupDebtSplit,
   CATCHUP_DEEP_CAP_RATIO,
+  DEBT_DROWSY,
+  DEBT_MUST_SLEEP,
+  DEBT_DEEP_AUTHORITY,
 } from '../../src/lib/sleep-consolidation.js';
 import type { SessionRecord } from '../../src/lib/sleep-consolidation.js';
 
@@ -64,45 +67,68 @@ describe('catchupDebtSplit', () => {
   });
 });
 
+// Fixture algebra, expressed through the constants so a rescale updates it.
+const DEEP_TOTAL = DEBT_MUST_SLEEP * 2;   // base depth 'deep'
+const STANDARD_HALF = DEBT_MUST_SLEEP;    // alone, only 'standard'
+
 describe('consolidationDepth — AC4 catch-up cap, boundary-exact', () => {
-  it('debt 24, catchup 12/organic 12 (ratio exactly 0.5) → capped to standard', () => {
-    const d = consolidationDepth(24, { catchup: { total: 24, catchup: 12, organic: 12, ratio: 0.5 } });
+  it('fixture premise: the numbers below still land in the intended depth bands', () => {
+    // If a future rescale breaks this, every case below fails for a REASON
+    // rather than mysteriously testing the wrong bands.
+    expect(consolidationDepth(DEEP_TOTAL).depth).toBe('deep');
+    expect(consolidationDepth(STANDARD_HALF).depth).toBe('standard');
+    expect(consolidationDepth(0).depth).toBe('light');
+  });
+
+  it('deep base, catchup/organic split exactly 0.5 → capped to standard', () => {
+    const d = consolidationDepth(DEEP_TOTAL, {
+      catchup: { total: DEEP_TOTAL, catchup: STANDARD_HALF, organic: STANDARD_HALF, ratio: 0.5 },
+    });
     expect(d.depth).toBe('standard');
     expect(d.source).toBe('debt');
     expect(d.cappedByCatchup).toBe(true);
   });
 
-  it('debt 24, ratio 11/24 ≈ 0.458 (just below threshold) → no cap, stays deep', () => {
-    const ratio = 11 / 24;
-    const d = consolidationDepth(24, { catchup: { total: 24, catchup: 11, organic: 13, ratio } });
+  it('ratio just below the threshold → no cap, stays deep', () => {
+    const catchup = Math.floor(DEEP_TOTAL * (CATCHUP_DEEP_CAP_RATIO - 0.05));
+    const organic = DEEP_TOTAL - catchup;
+    const ratio = catchup / DEEP_TOTAL;
+    expect(ratio).toBeLessThan(CATCHUP_DEEP_CAP_RATIO);
+    const d = consolidationDepth(DEEP_TOTAL, { catchup: { total: DEEP_TOTAL, catchup, organic, ratio } });
     expect(d.depth).toBe('deep');
     expect(d.source).toBe('debt');
     expect(d.cappedByCatchup).toBeUndefined();
   });
 
-  it('debt 40, catchup 20/organic 20 (ratio 0.5) → organic alone is deep, so NEVER lowered', () => {
-    const d = consolidationDepth(40, { catchup: { total: 40, catchup: 20, organic: 20, ratio: 0.5 } });
+  it('organic half alone is ALSO deep (ratio 0.5) → never lowered', () => {
+    const total = DEBT_DEEP_AUTHORITY * 2;
+    const half = DEBT_DEEP_AUTHORITY;
+    expect(consolidationDepth(half).depth).toBe('deep');
+    const d = consolidationDepth(total, { catchup: { total, catchup: half, organic: half, ratio: 0.5 } });
     expect(d.depth).toBe('deep');
     expect(d.cappedByCatchup).toBeUndefined();
   });
 
-  it('debt 32, catchup 32/organic 0 (ratio 1.0) → floors at standard, NOT light', () => {
-    const d = consolidationDepth(32, { catchup: { total: 32, catchup: 32, organic: 0, ratio: 1 } });
+  it('all debt from catch-up (ratio 1.0, organic 0) → floors at standard, NOT light', () => {
+    const d = consolidationDepth(DEEP_TOTAL, {
+      catchup: { total: DEEP_TOTAL, catchup: DEEP_TOTAL, organic: 0, ratio: 1 },
+    });
     expect(d.depth).toBe('standard');
     expect(d.cappedByCatchup).toBe(true);
   });
 
   it('--deep (userRequestedDeep) always wins over the cap', () => {
-    const d = consolidationDepth(24, {
+    const d = consolidationDepth(DEEP_TOTAL, {
       userRequestedDeep: true,
-      catchup: { total: 24, catchup: 12, organic: 12, ratio: 0.5 },
+      catchup: { total: DEEP_TOTAL, catchup: STANDARD_HALF, organic: STANDARD_HALF, ratio: 0.5 },
     });
     expect(d.depth).toBe('deep');
     expect(d.source).toBe('user');
   });
 
-  it('debt 19 (base standard) with ratio 1.0 → cap is a no-op, stays standard', () => {
-    const d = consolidationDepth(19, { catchup: { total: 19, catchup: 19, organic: 0, ratio: 1 } });
+  it('a standard base with ratio 1.0 → cap is a no-op, stays standard', () => {
+    const t = STANDARD_HALF;
+    const d = consolidationDepth(t, { catchup: { total: t, catchup: t, organic: 0, ratio: 1 } });
     expect(d.depth).toBe('standard');
     expect(d.cappedByCatchup).toBeUndefined();
   });
@@ -120,39 +146,42 @@ describe('consolidationDepth — AC4 catch-up cap, boundary-exact', () => {
   });
 
   it('opts.catchup omitted → identical to pre-AC4 behavior across all debt levels (frozen-eval guard)', () => {
-    for (const debt of [0, 7, 8, 13, 14, 19, 20, 32]) {
+    for (const debt of [0, DEBT_DROWSY - 1, DEBT_DROWSY, DEBT_MUST_SLEEP, DEBT_DEEP_AUTHORITY, 100]) {
       const d = consolidationDepth(debt);
       expect(d.cappedByCatchup).toBeUndefined();
       expect(d.source).toBe('debt');
     }
     expect(consolidationDepth(0).depth).toBe('light');
-    expect(consolidationDepth(8).depth).toBe('standard');
-    expect(consolidationDepth(19).depth).toBe('standard');
-    expect(consolidationDepth(20).depth).toBe('deep');
-    expect(consolidationDepth(32).depth).toBe('deep');
+    expect(consolidationDepth(DEBT_DROWSY).depth).toBe('standard');
+    // Overdue to consolidate, but NOT authorized to destroy (2026-07-29 split).
+    expect(consolidationDepth(DEBT_MUST_SLEEP).depth).toBe('standard');
+    expect(consolidationDepth(DEBT_DEEP_AUTHORITY).depth).toBe('deep');
   });
 
   it('all sessions lack catchup_finalized (legacy 89-cycle state) → ratio 0 → no cap', () => {
-    const sessions: SessionRecord[] = [session({ score: 12 }), session({ score: 12 })];
+    const sessions: SessionRecord[] = [session({ score: STANDARD_HALF }), session({ score: STANDARD_HALF })];
     const split = catchupDebtSplit(sessions);
-    const d = consolidationDepth(24, { catchup: split });
+    expect(split.total).toBe(DEEP_TOTAL);
+    const d = consolidationDepth(DEEP_TOTAL, { catchup: split });
     expect(d.depth).toBe('deep');
     expect(d.cappedByCatchup).toBeUndefined();
   });
 
   it('agentBump 2 on a capped standard → deep, source "agent" (agent authority independent of the cap)', () => {
-    const d = consolidationDepth(24, {
+    const d = consolidationDepth(DEEP_TOTAL, {
       agentBump: 2,
-      catchup: { total: 24, catchup: 12, organic: 12, ratio: 0.5 },
+      catchup: { total: DEEP_TOTAL, catchup: STANDARD_HALF, organic: STANDARD_HALF, ratio: 0.5 },
     });
     expect(d.depth).toBe('deep');
     expect(d.source).toBe('agent');
   });
 
   it('decision.reason names the ratio and the organic base when capped', () => {
-    const d = consolidationDepth(24, { catchup: { total: 24, catchup: 12, organic: 12, ratio: 0.5 } });
+    const d = consolidationDepth(DEEP_TOTAL, {
+      catchup: { total: DEEP_TOTAL, catchup: STANDARD_HALF, organic: STANDARD_HALF, ratio: 0.5 },
+    });
     expect(d.reason).toContain('50%');
-    expect(d.reason).toContain('12');
+    expect(d.reason).toContain(String(STANDARD_HALF));
     expect(d.reason).toContain('standard');
   });
 });
@@ -160,13 +189,16 @@ describe('consolidationDepth — AC4 catch-up cap, boundary-exact', () => {
 describe('consolidationDepth — end-to-end via catchupDebtSplit(sessions)', () => {
   it('bulk catch-up scenario: 60% of debt arrived via catch-up (organic alone is standard) → capped to standard', () => {
     const sessions: SessionRecord[] = [
-      session({ score: 12, catchup_finalized: true }),
-      session({ score: 12, catchup_finalized: true }),
-      session({ score: 12 }),
-      session({ score: 4 }),
+      session({ score: 30, catchup_finalized: true }),
+      session({ score: 30, catchup_finalized: true }),
+      session({ score: 30 }),
+      session({ score: 10 }),
     ];
     const split = catchupDebtSplit(sessions);
-    expect(split).toEqual({ total: 40, catchup: 24, organic: 16, ratio: 0.6 });
+    expect(split).toEqual({ total: 100, catchup: 60, organic: 40, ratio: 0.6 });
+    // Premise: the total is deep, the organic remainder alone is only standard.
+    expect(consolidationDepth(split.total).depth).toBe('deep');
+    expect(consolidationDepth(split.organic).depth).toBe('standard');
 
     const d = consolidationDepth(split.total, { catchup: split });
     expect(d.depth).toBe('standard');
@@ -175,13 +207,15 @@ describe('consolidationDepth — end-to-end via catchupDebtSplit(sessions)', () 
 
   it('bulk catch-up scenario: organic debt alone already deep → cap is a no-op', () => {
     const sessions: SessionRecord[] = [
-      session({ score: 12, catchup_finalized: true }),
-      session({ score: 12, catchup_finalized: true }),
-      session({ score: 12 }),
-      session({ score: 12 }),
+      session({ score: 45, catchup_finalized: true }),
+      session({ score: 45, catchup_finalized: true }),
+      session({ score: 45 }),
+      session({ score: 45 }),
     ];
     const split = catchupDebtSplit(sessions);
-    expect(split).toEqual({ total: 48, catchup: 24, organic: 24, ratio: 0.5 });
+    expect(split).toEqual({ total: 180, catchup: 90, organic: 90, ratio: 0.5 });
+    // Premise: the organic remainder alone is ALREADY deep, so nothing to lower.
+    expect(consolidationDepth(split.organic).depth).toBe('deep');
 
     const d = consolidationDepth(split.total, { catchup: split });
     expect(d.depth).toBe('deep');

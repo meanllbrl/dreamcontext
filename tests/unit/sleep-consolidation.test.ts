@@ -6,6 +6,10 @@ import {
   inspectSleepLock,
   finalizeSleepState,
   SLEEP_LOCK_STALE_MS,
+  DEBT_DROWSY,
+  DEBT_SLEEPY,
+  DEBT_MUST_SLEEP,
+  DEBT_DEEP_AUTHORITY,
 } from '../../src/lib/sleep-consolidation.js';
 import type { SleepState } from '../../src/lib/sleep-consolidation.js';
 
@@ -42,28 +46,33 @@ function finalizeInput(over: Partial<SleepState> = {}): SleepState {
  */
 
 describe('sleepinessLevel — boundary-exact', () => {
-  // ×2 scale (2026-06-29): Alert 0–7 · Drowsy 8–13 · Sleepy 14–19 · Must Sleep 20+.
+  // 0-10 session scale (2026-07-29): Alert 0–11 · Drowsy 12–19 · Sleepy 20–29 ·
+  // Must Sleep 30+. Derived from the constants so a future rescale updates the
+  // table rather than silently testing the wrong bands.
   it.each([
-    [7, 'Alert'],
-    [8, 'Drowsy'],
-    [13, 'Drowsy'],
-    [14, 'Sleepy'],
-    [19, 'Sleepy'],
-    [20, 'Must Sleep'],
+    [DEBT_DROWSY - 1, 'Alert'],
+    [DEBT_DROWSY, 'Drowsy'],
+    [DEBT_SLEEPY - 1, 'Drowsy'],
+    [DEBT_SLEEPY, 'Sleepy'],
+    [DEBT_MUST_SLEEP - 1, 'Sleepy'],
+    [DEBT_MUST_SLEEP, 'Must Sleep'],
   ] as const)('debt %i → %s', (debt, expected) => {
     expect(sleepinessLevel(debt)).toBe(expected);
   });
 });
 
 describe('consolidationDepth — debt base', () => {
-  // light = Alert (0–7) · standard = Drowsy+Sleepy (8–19) · deep = Must Sleep (20+).
+  // light = Alert · standard = everything up to DEBT_DEEP_AUTHORITY · deep only
+  // past it. Note 'deep' is NOT tied to Must Sleep (2026-07-29): being overdue
+  // to consolidate must not by itself authorize destructive knowledge ops.
   it.each([
     [0, 'light'],
-    [7, 'light'],
-    [8, 'standard'],
-    [19, 'standard'],
-    [20, 'deep'],
-    [50, 'deep'],
+    [DEBT_DROWSY - 1, 'light'],
+    [DEBT_DROWSY, 'standard'],
+    [DEBT_MUST_SLEEP, 'standard'],
+    [DEBT_DEEP_AUTHORITY - 1, 'standard'],
+    [DEBT_DEEP_AUTHORITY, 'deep'],
+    [DEBT_DEEP_AUTHORITY + 30, 'deep'],
   ] as const)('debt %i → %s (source debt)', (debt, depth) => {
     const d = consolidationDepth(debt);
     expect(d.depth).toBe(depth);
@@ -104,18 +113,18 @@ describe('consolidationDepth — agent bump (clamped, monotonic)', () => {
   });
 
   it('negative bump does NOT lower; stays at the debt base', () => {
-    const d = consolidationDepth(8, { agentBump: -3 }); // base standard, neutralized
+    const d = consolidationDepth(DEBT_DROWSY, { agentBump: -3 }); // base standard, neutralized
     expect(d.depth).toBe('standard');
     expect(d.source).toBe('debt');
   });
 
   it('never drops below the debt base even with a negative bump at high debt', () => {
-    const d = consolidationDepth(20, { agentBump: -2 }); // base deep
+    const d = consolidationDepth(DEBT_DEEP_AUTHORITY, { agentBump: -2 }); // base deep
     expect(d.depth).toBe('deep');
   });
 
   it('bump never exceeds deep at an already-high base', () => {
-    const d = consolidationDepth(20, { agentBump: 2 }); // base deep, clamps at deep
+    const d = consolidationDepth(DEBT_DEEP_AUTHORITY, { agentBump: 2 }); // base deep, clamps at deep
     expect(d.depth).toBe('deep');
   });
 });

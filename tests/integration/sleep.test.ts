@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync
 import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { execSync } from 'node:child_process';
+import { SESSION_SCORE_MAX, DEBT_DROWSY } from '../../src/lib/sleep-consolidation.js';
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
 
@@ -85,12 +86,18 @@ describe('sleep (integration)', () => {
 
   it('sleep status shows sessions after adds', () => {
     // Debt 8 lands in the (rescaled) Drowsy band 8–13.
-    run('sleep add 2 Bug fix', tmpDir);
-    run('sleep add 3 Arch change', tmpDir);
-    run('sleep add 3 Refactor pass', tmpDir);
+    // Add exactly enough manual debt to land in the Drowsy band, whatever the
+    // current scale is (the entry point moved 8 -> 12 with the 0-10 rescale).
+    let added = 0;
+    while (added < DEBT_DROWSY) {
+      const chunk = Math.min(SESSION_SCORE_MAX, DEBT_DROWSY - added);
+      run(`sleep add ${chunk} Bug fix`, tmpDir);
+      added += chunk;
+    }
+    run('sleep add 1 Arch change', tmpDir);
 
     const output = run('sleep status', tmpDir);
-    expect(output).toContain('8');
+    expect(output).toContain(String(added + 1));
     expect(output).toContain('Drowsy');
     expect(output).toContain('Bug fix');
     expect(output).toContain('Arch change');
@@ -121,15 +128,15 @@ describe('sleep (integration)', () => {
     expect(output).toContain('Test consolidation');
   });
 
-  it('sleep add rejects invalid score', () => {
-    const output0 = run('sleep add 0 Invalid', tmpDir);
-    expect(output0).toContain('Score must be 1, 2, or 3');
+  it('sleep add rejects a score outside 1..SESSION_SCORE_MAX', () => {
+    const expected = `Score must be an integer from 1 to ${SESSION_SCORE_MAX}`;
 
-    const output4 = run('sleep add 4 Invalid', tmpDir);
-    expect(output4).toContain('Score must be 1, 2, or 3');
+    expect(run('sleep add 0 Invalid', tmpDir)).toContain(expected);
+    expect(run(`sleep add ${SESSION_SCORE_MAX + 1} Invalid`, tmpDir)).toContain(expected);
+    expect(run('sleep add abc Invalid', tmpDir)).toContain(expected);
 
-    const outputNaN = run('sleep add abc Invalid', tmpDir);
-    expect(outputNaN).toContain('Score must be 1, 2, or 3');
+    // The range widened with the 0-10 rescale: 4 used to be rejected.
+    expect(run('sleep add 4 Now valid', tmpDir)).not.toContain(expected);
   });
 
   it('persists accumulated debt to .sleep.json; snapshot stays lean', () => {

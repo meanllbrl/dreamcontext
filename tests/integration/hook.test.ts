@@ -3,6 +3,20 @@ import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
+import { analyzeTranscript, scoreSession } from '../../src/cli/commands/hook.js';
+import {
+  DEBT_DROWSY,
+  DEBT_SLEEPY,
+  DEBT_MUST_SLEEP,
+  NEVER_FLUSHED_FLOOR_SCORE,
+  RHYTHM_SESSIONS,
+} from '../../src/lib/sleep-consolidation.js';
+
+/** What the shipped scorer gives this transcript — derived, never hardcoded, so
+ *  a deliberate retune updates the expectation instead of failing the wiring. */
+function expectedScore(transcriptPath: string): number {
+  return scoreSession(analyzeTranscript(transcriptPath));
+}
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
 
@@ -161,11 +175,13 @@ describe('hook stop (integration)', () => {
     runWithStdin('hook stop', input, tmpDir);
 
     const state = readSleep(ctx);
-    expect(state.debt).toBe(2); // 5 writes -> score 2
+    const expected = expectedScore(transcriptPath);
+    expect(expected).toBeGreaterThan(0);
+    expect(state.debt).toBe(expected);
     const sessions = state.sessions as any[];
     expect(sessions[0].change_count).toBe(5);
     expect(sessions[0].tool_count).toBe(5);
-    expect(sessions[0].score).toBe(2);
+    expect(sessions[0].score).toBe(expected);
   });
 
   it('preserves existing debt when adding new session', () => {
@@ -190,7 +206,9 @@ describe('hook stop (integration)', () => {
     runWithStdin('hook stop', input, tmpDir);
 
     const state = readSleep(ctx);
-    expect(state.debt).toBe(2); // 4 edits -> score 2, not 4
+    // The point is the RE-STOP: debt equals ONE session's score, not two.
+    expect(state.debt).toBe(expectedScore(transcriptPath));
+    expect(state.sessions).toHaveLength(1);
   });
 
   it('stores null last_assistant_message when not provided', () => {
@@ -471,10 +489,10 @@ describe('hook session-start (integration)', () => {
     const state = readSleep(ctx);
     const sessions = state.sessions as any[];
     const finalized = sessions.find((s: any) => s.session_id === 'sess-no-transcript');
-    expect(finalized.score).toBe(1);
+    expect(finalized.score).toBe(NEVER_FLUSHED_FLOOR_SCORE);
     expect(finalized.change_count).toBe(0);
     expect(finalized.catchup_finalized).toBe(true);
-    expect(state.debt).toBe(1);
+    expect(state.debt).toBe(NEVER_FLUSHED_FLOOR_SCORE);
   });
 
   it('finalizes at floor score 0 for a no-transcript session with NO last_assistant_message (AC2, other branch)', () => {
@@ -502,8 +520,8 @@ describe('hook session-start (integration)', () => {
     expect(state.debt).toBe(0);
   });
 
-  it('prepends CRITICAL directive when debt >= 20', () => {
-    writeSleep(ctx, { debt: 20, sessions: [] });
+  it('prepends CRITICAL directive at DEBT_MUST_SLEEP', () => {
+    writeSleep(ctx, { debt: DEBT_MUST_SLEEP, sessions: [] });
 
     const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
     const output = runWithStdin('hook session-start', input, tmpDir);
@@ -513,31 +531,31 @@ describe('hook session-start (integration)', () => {
     expect(output).toContain('# Agent Context');
   });
 
-  it('prepends elevated note when debt 14-19', () => {
-    writeSleep(ctx, { debt: 14, sessions: [] });
+  it('prepends elevated note in the Sleepy band', () => {
+    writeSleep(ctx, { debt: DEBT_SLEEPY, sessions: [] });
 
     const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
     const output = runWithStdin('hook session-start', input, tmpDir);
 
     expect(output).toContain('CONSOLIDATION RECOMMENDED');
-    expect(output).toContain('14/20');
+    expect(output).toContain(`${DEBT_SLEEPY}/${DEBT_MUST_SLEEP}`);
   });
 
-  it('shows drowsy directive when debt 8-13', () => {
-    writeSleep(ctx, { debt: 8, sessions: [] });
+  it('shows drowsy directive in the Drowsy band', () => {
+    writeSleep(ctx, { debt: DEBT_DROWSY, sessions: [] });
 
     const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
     const output = runWithStdin('hook session-start', input, tmpDir);
 
-    expect(output).toContain('Sleep debt is 8');
+    expect(output).toContain(`Sleep debt is ${DEBT_DROWSY}`);
     expect(output).toContain('MUST offer to consolidate');
     expect(output).not.toContain('CONSOLIDATION REQUIRED');
     expect(output).not.toContain('CONSOLIDATION RECOMMENDED');
     expect(output).toContain('# Agent Context');
   });
 
-  it('no directive when debt < 8', () => {
-    writeSleep(ctx, { debt: 2, sessions: [] });
+  it('no directive below DEBT_DROWSY', () => {
+    writeSleep(ctx, { debt: DEBT_DROWSY - 1, sessions: [] });
 
     const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
     const output = runWithStdin('hook session-start', input, tmpDir);
@@ -561,8 +579,8 @@ describe('hook session-start (integration)', () => {
     expect(output).toContain('No active cohorts');
   });
 
-  it('suppresses consolidation directive when sleep is in progress and debt >= 8', () => {
-    writeSleep(ctx, { debt: 20, sleep_started_at: new Date().toISOString() /* live epoch: within the 30m stale TTL → genuinely suppresses */, sessions: [] });
+  it('suppresses consolidation directive when sleep is in progress and debt is high', () => {
+    writeSleep(ctx, { debt: DEBT_MUST_SLEEP, sleep_started_at: new Date().toISOString() /* live epoch: within the 30m stale TTL → genuinely suppresses */, sessions: [] });
 
     const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
     const output = runWithStdin('hook session-start', input, tmpDir);
@@ -573,7 +591,7 @@ describe('hook session-start (integration)', () => {
     expect(output).not.toContain('CONSOLIDATION RECOMMENDED');
   });
 
-  it('no directive when sleep is in progress and debt < 8', () => {
+  it('no directive when sleep is in progress and debt is below DEBT_DROWSY', () => {
     writeSleep(ctx, { debt: 2, sleep_started_at: new Date().toISOString() /* live epoch: within the 30m stale TTL → genuinely suppresses */, sessions: [] });
 
     const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
@@ -583,17 +601,17 @@ describe('hook session-start (integration)', () => {
     expect(output).not.toContain('CONSOLIDATION');
   });
 
-  it('shows rhythm advisory when 5+ sessions since last sleep', () => {
-    writeSleep(ctx, { debt: 1, sessions_since_last_sleep: 5, sessions: [] });
+  it('shows rhythm advisory at RHYTHM_SESSIONS since last sleep', () => {
+    writeSleep(ctx, { debt: 1, sessions_since_last_sleep: RHYTHM_SESSIONS, sessions: [] });
 
     const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
     const output = runWithStdin('hook session-start', input, tmpDir);
 
-    expect(output).toContain('5 sessions since last consolidation');
+    expect(output).toContain(`${RHYTHM_SESSIONS} sessions since last consolidation`);
     expect(output).toContain('offer to consolidate');
   });
 
-  it('finalizes at floor score 1 when a recorded transcript file never appeared (aged out) and last_assistant_message is non-empty (AC2/AC3)', () => {
+  it('finalizes at the never-flushed floor when a recorded transcript file never appeared (aged out) and last_assistant_message is non-empty (AC2/AC3)', () => {
     // transcript_path IS recorded but the file never flushed under EITHER
     // layout (resolveTranscript probes flat then dir, finds neither) — with
     // stopped_at old enough to have aged past NEVER_FLUSHED_FINALIZE_MS, this
@@ -616,10 +634,10 @@ describe('hook session-start (integration)', () => {
     const state = readSleep(ctx);
     const sessions = state.sessions as any[];
     const finalized = sessions.find((s: any) => s.session_id === 'sess-1');
-    expect(finalized.score).toBe(1);
+    expect(finalized.score).toBe(NEVER_FLUSHED_FLOOR_SCORE);
     expect(finalized.change_count).toBe(0);
     expect(finalized.catchup_finalized).toBe(true);
-    expect(state.debt).toBe(1); // no crash, no silent drop of real work
+    expect(state.debt).toBe(NEVER_FLUSHED_FLOOR_SCORE); // no crash, no silent drop
   });
 
   it('finalizes at floor score 0 when a recorded transcript file never appeared (aged out) and last_assistant_message is empty (AC2, other branch)', () => {
@@ -1264,27 +1282,27 @@ describe('hook user-prompt-submit (integration)', () => {
     expect(output.trim()).toBe('');
   });
 
-  it('outputs reminder when debt is 8 (Drowsy range)', () => {
-    writeSleep(ctx, { debt: 8, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+  it('outputs reminder at DEBT_DROWSY', () => {
+    writeSleep(ctx, { debt: DEBT_DROWSY, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'fix the bug' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
-    expect(output).toContain('Sleep debt is 8');
+    expect(output).toContain(`Sleep debt is ${DEBT_DROWSY}`);
     expect(output).toContain('offer to consolidate');
   });
 
-  it('outputs stronger message when debt is 14 (Sleepy range)', () => {
-    writeSleep(ctx, { debt: 14, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+  it('outputs stronger message at DEBT_SLEEPY', () => {
+    writeSleep(ctx, { debt: DEBT_SLEEPY, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'add feature' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
-    expect(output).toContain('Sleep debt is 14');
+    expect(output).toContain(`Sleep debt is ${DEBT_SLEEPY}`);
     expect(output).toContain('recommended');
   });
 
-  it('outputs REQUIRED message when debt >= 20', () => {
-    writeSleep(ctx, { debt: 22, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+  it('outputs REQUIRED message at/above DEBT_MUST_SLEEP', () => {
+    writeSleep(ctx, { debt: DEBT_MUST_SLEEP + 2, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'do something' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
-    expect(output).toContain('Sleep debt is 22');
+    expect(output).toContain(`Sleep debt is ${DEBT_MUST_SLEEP + 2}`);
     expect(output).toContain('CONSOLIDATION REQUIRED');
   });
 
@@ -1311,8 +1329,8 @@ describe('hook user-prompt-submit (integration)', () => {
     rmSync(emptyDir, { recursive: true, force: true });
   });
 
-  it('suppresses debt reminder when sleep is in progress and debt >= 8', () => {
-    writeSleep(ctx, { debt: 20, sleep_started_at: new Date().toISOString() /* live epoch: within the 30m stale TTL → genuinely suppresses */, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+  it('suppresses debt reminder when sleep is in progress and debt is high', () => {
+    writeSleep(ctx, { debt: DEBT_MUST_SLEEP, sleep_started_at: new Date().toISOString() /* live epoch: within the 30m stale TTL → genuinely suppresses */, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'hello' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
     expect(output).toContain('Consolidation already in progress');
@@ -1449,11 +1467,11 @@ describe('hook user-prompt-submit (integration)', () => {
   });
 
   it('no .claude/skills dir → skills do not fire the gate (sleep reminder intact)', () => {
-    writeSleep(ctx, { debt: 8, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    writeSleep(ctx, { debt: DEBT_DROWSY, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'review this PR with the team' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
     expect(output).not.toContain('get the full picture from project memory');
-    expect(output).toContain('Sleep debt is 8'); // existing sleep-debt behaviour intact
+    expect(output).toContain(`Sleep debt is ${DEBT_DROWSY}`); // existing sleep-debt behaviour intact
   });
 
   it('short greeting (< 8 chars) does not fire the gate', () => {
@@ -1546,11 +1564,11 @@ describe('hook user-prompt-submit (integration)', () => {
   });
 
   it('no context gate when neither knowledge nor skills are relevant', () => {
-    writeSleep(ctx, { debt: 8, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    writeSleep(ctx, { debt: DEBT_DROWSY, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const env = { ...process.env, DREAMCONTEXT_RECALL_MODE: 'raw', DREAMCONTEXT_SKILLS_HOOK: '0' };
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'xyzzy qqq zzz nothing matches here at all' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir, env);
-    expect(output).toContain('Sleep debt is 8'); // existing behaviour intact
+    expect(output).toContain(`Sleep debt is ${DEBT_DROWSY}`); // existing behaviour intact
     expect(output).not.toContain('get the full picture from project memory');
   });
 });
@@ -1831,7 +1849,7 @@ describe('hook initializer detection (integration)', () => {
 
   it('sparse-brain: offer and the sleep-debt directive coexist (existing behaviour intact)', () => {
     const ctx = scaffoldSparse(tmpDir);
-    writeSleep(ctx, { debt: 14, sessions: [], bookmarks: [] });
+    writeSleep(ctx, { debt: DEBT_SLEEPY, sessions: [], bookmarks: [] });
     const output = runWithStdin('hook session-start', SESSION_INPUT, tmpDir);
     expect(output).toContain(OFFER_MARKER);              // initializer offer
     expect(output).toContain('CONSOLIDATION RECOMMENDED'); // sleep-debt directive still there
@@ -1935,14 +1953,14 @@ describe('hook initializer detection (integration)', () => {
 
   it('never breaks the hook: mass offer and the sleep-debt reminder coexist', () => {
     const ctx = scaffoldHealthy(tmpDir);
-    writeSleep(ctx, { debt: 8, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    writeSleep(ctx, { debt: DEBT_DROWSY, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const docs = join(tmpDir, 'docs');
     mkdirSync(docs, { recursive: true });
     for (let i = 0; i < 6; i++) writeFileSync(join(docs, `d${i}.md`), `# doc ${i}`);
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'please ingest ./docs into the brain' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
     expect(output).toContain(OFFER_MARKER);       // initializer offer
-    expect(output).toContain('Sleep debt is 8');  // existing sleep-debt behaviour intact
+    expect(output).toContain(`Sleep debt is ${DEBT_DROWSY}`);  // existing sleep-debt behaviour intact
   });
 
   it('never breaks the hook: memory recall still fires alongside the initializer offer', () => {
@@ -1976,7 +1994,7 @@ describe('hook initializer detection (integration)', () => {
 
   it('DREAMCONTEXT_INITIALIZER_HOOK=0 silences the UPS offer but the sleep reminder stays', () => {
     const ctx = scaffoldHealthy(tmpDir);
-    writeSleep(ctx, { debt: 8, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    writeSleep(ctx, { debt: DEBT_DROWSY, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const docs = join(tmpDir, 'docs');
     mkdirSync(docs, { recursive: true });
     for (let i = 0; i < 6; i++) writeFileSync(join(docs, `d${i}.md`), `# doc ${i}`);
@@ -1986,6 +2004,6 @@ describe('hook initializer detection (integration)', () => {
       DREAMCONTEXT_INITIALIZER_HOOK: '0',
     });
     expect(output).not.toContain(OFFER_MARKER);
-    expect(output).toContain('Sleep debt is 8');
+    expect(output).toContain(`Sleep debt is ${DEBT_DROWSY}`);
   });
 });

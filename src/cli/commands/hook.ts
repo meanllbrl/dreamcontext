@@ -10,6 +10,8 @@ import {
   upsertSessionOnStop,
   appendCompactionRecord,
   inspectSleepLock,
+  inspectSleepCooldown,
+  formatCooldownRemaining,
   DEBT_DROWSY,
   DEBT_SLEEPY,
   DEBT_MUST_SLEEP,
@@ -18,13 +20,15 @@ import {
   effectiveRhythm,
   floorScoreForNeverFlushed,
   NEVER_FLUSHED_FINALIZE_MS,
+  SESSION_SCORE_MAX,
+  SCORING_VERSION,
   type StopUpsertInput,
 } from '../../lib/sleep-consolidation.js';
 import { DECISION_RE, CORRECTION_RE } from '../../lib/salience.js';
 import { distillTranscript, mergeDistilled, distillSubagents } from './transcript.js';
 import { buildDigest, writeDigest, digestExists, digestIsPartial } from '../../lib/session-digest.js';
 import { detectSalience, detectSalienceFromMessage } from '../../lib/salience.js';
-import { resolveTranscript } from '../../lib/transcript-locate.js';
+import { resolveTranscript, listSubagentTranscripts } from '../../lib/transcript-locate.js';
 import type { TranscriptLocation } from '../../lib/transcript-locate.js';
 import { generateId } from '../../lib/id.js';
 import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
@@ -95,11 +99,12 @@ export interface TranscriptAnalysis {
   userTurns: number;        // count of user-role transcript records
   assistantChars: number;   // total chars across assistant text blocks (each capped)
   decisionMarkers: number;  // lines matching DECISION_RE / CORRECTION_RE
+  novelTokens: number;      // Σ(output + cache_creation + input) — see novelTokensFromUsage
 }
 
 const ZERO_ANALYSIS: TranscriptAnalysis = {
   changeCount: 0, toolCount: 0, taskSlugs: [],
-  userTurns: 0, assistantChars: 0, decisionMarkers: 0,
+  userTurns: 0, assistantChars: 0, decisionMarkers: 0, novelTokens: 0,
 };
 
 // Cap each assistant text block so one giant block cannot dominate assistantChars.
@@ -140,6 +145,7 @@ export function analyzeTranscript(transcriptPath: string): TranscriptAnalysis {
     let userTurns = 0;
     let assistantChars = 0;
     let decisionMarkers = 0;
+    let novelTokens = 0;
     for (const line of content.split('\n')) {
       const trimmed = line.trim();
       if (!trimmed) continue;
@@ -153,6 +159,7 @@ export function analyzeTranscript(transcriptPath: string): TranscriptAnalysis {
         continue; // not a JSON record (or partial) — skip
       }
       if (!rec || typeof rec !== 'object') continue;
+      novelTokens += novelTokensFromUsage(rec);
       const role = recordRole(rec);
       if (role === 'user') {
         userTurns++;
@@ -168,6 +175,7 @@ export function analyzeTranscript(transcriptPath: string): TranscriptAnalysis {
       userTurns,
       assistantChars,
       decisionMarkers,
+      novelTokens,
     };
   } catch {
     return ZERO_ANALYSIS;
@@ -207,6 +215,33 @@ function recordRole(rec: object): string | null {
     return r.message.role;
   }
   return null;
+}
+
+/**
+ * NOVEL tokens carried by one transcript record's `usage` block:
+ * `output_tokens + cache_creation_input_tokens + input_tokens`.
+ *
+ * `cache_read_input_tokens` is DELIBERATELY EXCLUDED. It is the same conversation
+ * prefix re-read on every single turn, so summing it measures
+ * `turns × context size`, not work: across 395 real transcripts it ran 20–40×
+ * the novel total (one session: 341M cache-read vs. 15.6M novel). Including it
+ * would make debt explode for any long conversation regardless of what was
+ * accomplished in it — the very failure the weighted scorer exists to avoid.
+ *
+ * What remains is the honest measure of NEW material: what the assistant
+ * generated (`output`), plus context that entered the window for the first time
+ * (`cache_creation` + uncached `input`).
+ *
+ * Tolerates both the flat and `message`-nested record shapes, and any missing
+ * field. Never throws.
+ */
+function novelTokensFromUsage(rec: object): number {
+  const r = rec as { usage?: unknown; message?: { usage?: unknown } };
+  const raw = (r.message && typeof r.message === 'object' ? r.message.usage : undefined) ?? r.usage;
+  if (!raw || typeof raw !== 'object') return 0;
+  const u = raw as Record<string, unknown>;
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  return num(u.output_tokens) + num(u.cache_creation_input_tokens) + num(u.input_tokens);
 }
 
 /** Sum the chars of every assistant `type:'text'` block, capping each block. */
@@ -277,6 +312,151 @@ export function scoreFromToolCount(count: number): number {
   return 3;
 }
 
+// ─── Weighted session scoring (0..SESSION_SCORE_MAX) ─────────────────────────
+//
+// **[2026-07-29]** Replaces `max(scoreFromChangeCount, scoreFromToolCount,
+// scoreFromSubstance)` as the scorer the Stop hook and the SessionStart catch-up
+// actually use. The three functions above are KEPT, exported and unchanged —
+// `eval/sleep-quality/scorer.ts` pins its frozen before/after profiles to them.
+//
+// Why the old composition failed, measured over 395 real transcripts in this
+// project's history: every component saturated far below the real distribution
+// (its ceiling was 9 file changes / 41 tool calls, against observed medians of 6
+// changes and 47 tools and maxima of 188 and 691), and `max()` meant the
+// components could not reinforce each other. Result: **77% of all sessions
+// scored exactly 3** — a 42-change/155-tool session was worth precisely as much
+// as a 13-change/103-tool one, and total debt degenerated into a session counter.
+//
+// The replacement fixes all three defects at once: log compression so a 148×
+// spread in real work maps onto a usable range instead of clipping, a weighted
+// SUM so breadth across axes accumulates, and a token term so the volume of
+// thinking counts at all (it previously did not, in any form).
+
+/**
+ * Log-compressed contribution: 0 at `x = 0`, rising steeply through the first
+ * few units, reaching exactly `weight` at `x = full` and clamped there after.
+ *
+ * Log rather than linear because the underlying quantities are log-normal in
+ * practice (novel tokens span 105k at p10 to 15.6M at p100). Linear scaling
+ * would let one outlier session dominate every threshold; a hard cap alone
+ * throws away the entire top decile, which is exactly the bug being fixed.
+ *
+ * `k` sets what counts as "one unit of meaningful work" (the curve's knee);
+ * `full` is the value that earns the whole weight, pinned to ≈p95 of observed
+ * data so roughly the top 5% of sessions max out any given axis.
+ */
+export function logPoints(x: number, k: number, full: number, weight: number): number {
+  if (!Number.isFinite(x) || x <= 0) return 0;
+  return Math.min(weight, weight * Math.log2(1 + x / k) / Math.log2(1 + full / k));
+}
+
+/**
+ * Per-axis tuning. `k`/`full` are calibrated against the measured distribution
+ * of 395 real transcripts (novel tokens p50 686k / p90 2.55M / p95 3.5M;
+ * changes p50 6 / p90 36; tools p50 47 / p90 155).
+ *
+ * Weights encode how strongly each axis evidences "the brain changed":
+ * generated + newly-ingested tokens and file mutations carry the most, tool
+ * calls the least (most are read-only exploration that may find nothing).
+ * They sum to exactly SESSION_SCORE_MAX.
+ */
+export const SCORE_AXES = {
+  tokens:    { k: 100_000, full: 3_500_000, weight: 4 },
+  changes:   { k: 2,       full: 40,        weight: 3 },
+  tools:     { k: 10,      full: 200,       weight: 1.5 },
+  substance: { weight: 1.5 },
+} as const;
+
+/**
+ * Semantic points (0..1.5): signals that a session MEANT something even when it
+ * edited little — a long human exchange, dense assistant output, explicit
+ * decision/correction markers, breadth across tracked tasks.
+ *
+ * Thresholds sit near the p75–p90 of observed sessions so this stays a genuine
+ * signal rather than a participation trophy every session collects. Unlike the
+ * other axes this one is stepped, not continuous: these are qualitative facts
+ * ("a decision was made"), and interpolating them would imply a precision the
+ * underlying regex detection does not have.
+ */
+export function scoreFromSubstanceV2(signals: {
+  userTurns: number;
+  assistantChars: number;
+  decisionMarkers: number;
+  taskSlugs: string[];
+}): number {
+  let pts = 0;
+  if (signals.userTurns >= 8) pts += 0.4;
+  if (signals.assistantChars >= 25_000) pts += 0.4;
+  if (signals.decisionMarkers >= 4) pts += 0.35;
+  if (signals.taskSlugs.length >= 2) pts += 0.35;
+  return Math.min(SCORE_AXES.substance.weight, pts);
+}
+
+/**
+ * Score one session's analyzed transcript onto 0..SESSION_SCORE_MAX.
+ *
+ * Rounded to an INTEGER: debt is summed, displayed and compared to thresholds
+ * all over the codebase (and asserted exactly in the frozen eval), so keeping it
+ * integral avoids float drift in `recomputeDebt` and needs no display changes.
+ * Ten buckets is ample resolution — the measured corpus spreads across p10=1,
+ * p50=5, p90=9, with only 1.5% at the ceiling.
+ */
+export function scoreSession(analysis: TranscriptAnalysis): number {
+  const raw =
+    logPoints(analysis.novelTokens, SCORE_AXES.tokens.k, SCORE_AXES.tokens.full, SCORE_AXES.tokens.weight) +
+    logPoints(analysis.changeCount, SCORE_AXES.changes.k, SCORE_AXES.changes.full, SCORE_AXES.changes.weight) +
+    logPoints(analysis.toolCount, SCORE_AXES.tools.k, SCORE_AXES.tools.full, SCORE_AXES.tools.weight) +
+    scoreFromSubstanceV2(analysis);
+  return Math.min(SESSION_SCORE_MAX, Math.round(raw));
+}
+
+/**
+ * Fold sub-agent transcripts into the main one's analysis.
+ *
+ * Sub-agent work was previously invisible to the debt ledger entirely: a
+ * fan-out session shows ONE `Task` tool call in its main transcript while ten
+ * agents burn millions of tokens and edit dozens of files in
+ * `<sessionDir>/subagents/agent-*.jsonl`. Their tokens, edits and tool calls are
+ * summed in — there is no double counting, since none of that activity appears
+ * in the main transcript.
+ *
+ * `userTurns` is the ONE field taken from the main transcript only: a sub-agent's
+ * user-role records are injected prompts and tool results, not human turns, and
+ * counting them would fire the "long human exchange" substance signal on work
+ * the human never touched.
+ */
+export function mergeAnalyses(main: TranscriptAnalysis, subs: TranscriptAnalysis[]): TranscriptAnalysis {
+  const merged: TranscriptAnalysis = { ...main, taskSlugs: [...main.taskSlugs] };
+  const slugs = new Set(merged.taskSlugs);
+  for (const s of subs) {
+    merged.changeCount += s.changeCount;
+    merged.toolCount += s.toolCount;
+    merged.assistantChars += s.assistantChars;
+    merged.decisionMarkers += s.decisionMarkers;
+    merged.novelTokens += s.novelTokens;
+    for (const slug of s.taskSlugs) slugs.add(slug);
+  }
+  merged.taskSlugs = [...slugs];
+  return merged;
+}
+
+/**
+ * Analyze a session end to end: its main transcript plus every sub-agent
+ * transcript beside it (newest first, capped by `SUBAGENT_HARVEST_CAP`).
+ * Sub-agent harvesting is best-effort — a missing or unreadable `subagents/`
+ * dir yields the main analysis unchanged, never a throw.
+ */
+export function analyzeSession(loc: TranscriptLocation): TranscriptAnalysis {
+  const main = loc.mainPath ? analyzeTranscript(loc.mainPath) : ZERO_ANALYSIS;
+  try {
+    const subPaths = listSubagentTranscripts(loc);
+    if (subPaths.length === 0) return main;
+    return mergeAnalyses(main, subPaths.map(p => analyzeTranscript(p)));
+  } catch {
+    return main;
+  }
+}
+
 // ─── Stop-hook transcript-less capture (AC2a) ────────────────────────────────
 
 /**
@@ -315,6 +495,8 @@ export interface CatchupFinalizeResult {
   changeCount: number;
   toolCount: number;
   score: number;
+  /** Novel tokens observed across the main transcript + its sub-agents. */
+  novelTokens: number;
   /** Existing task_slugs UNION transcript-extracted ones — never a replacement. */
   taskSlugs: string[];
   /** Always true — every result of this function is a catch-up finalization. */
@@ -359,22 +541,20 @@ export function resolveCatchupFinalization(
       changeCount: 0,
       toolCount: 0,
       score: floor,
+      novelTokens: 0,
       taskSlugs: session.task_slugs ?? [],
       catchupFinalized: true,
       debtDelta: floor,
     };
   }
 
-  const analysis = analyzeTranscript(loc.mainPath);
-  const score = Math.max(
-    scoreFromChangeCount(analysis.changeCount),
-    scoreFromToolCount(analysis.toolCount),
-    scoreFromSubstance(analysis),
-  );
+  const analysis = analyzeSession(loc);
+  const score = scoreSession(analysis);
   return {
     changeCount: analysis.changeCount,
     toolCount: analysis.toolCount,
     score,
+    novelTokens: analysis.novelTokens,
     taskSlugs: [...new Set([...(session.task_slugs ?? []), ...analysis.taskSlugs])],
     catchupFinalized: true,
     debtDelta: score,
@@ -575,8 +755,30 @@ export function getConsolidationDirective(state: SleepState): string | null {
     return null;
   }
 
-  // Check for critical (★★★) bookmarks that need immediate consolidation
+  // Check for critical (★★★) bookmarks that need immediate consolidation.
+  // Salience 3 is only ever set by hand — the auto-detectors top out at 2 — so
+  // these are rare, user-authored "this matters now" markers and are the one
+  // signal the cooldown below deliberately does NOT silence.
   const criticalBookmarks = bookmarks.filter(b => b.salience === 3);
+
+  // Post-consolidation cooldown: a recent COMPLETED sleep silences debt- and
+  // rhythm-driven nagging for SLEEP_COOLDOWN_MS. Thresholds bound how much work
+  // a sleep is worth but not how close two sleeps land — without this, a heavy
+  // afternoon crosses Must Sleep several times in a few hours and the brain asks
+  // to consolidate again half an hour after it just did. Bypassed once debt
+  // reaches DEBT_COOLDOWN_OVERRIDE so a genuinely enormous burst is never held.
+  const cooldown = inspectSleepCooldown(state, Date.now(), debt);
+  if (cooldown.active && criticalBookmarks.length === 0) {
+    if (debt >= DEBT_DROWSY) {
+      return [
+        `> Consolidated recently; ${debt} debt has accrued since. Cooling down — do NOT consolidate`,
+        `  again for another ${formatCooldownRemaining(cooldown.remainingMs)} unless the user asks.`,
+        ...(pendingLine ? [pendingLine] : []),
+        '',
+      ].join('\n');
+    }
+    return null;
+  }
 
   if (debt >= DEBT_MUST_SLEEP) {
     return [
@@ -723,6 +925,20 @@ export function userPromptReminder(state: SleepState): string | null {
   }
 
   const criticalBookmarks = bookmarks.filter(b => b.salience === 3);
+
+  // Post-consolidation cooldown. This reminder fires on EVERY user message, so
+  // it is where over-eager thresholds are actually felt — a 3-hour floor after a
+  // completed sleep is what stops "consolidate now" from reappearing half an
+  // hour later. Hand-tagged ★★★ bookmarks and DEBT_COOLDOWN_OVERRIDE still pass.
+  const cooldown = inspectSleepCooldown(state, Date.now(), debt);
+  if (cooldown.active && criticalBookmarks.length === 0) {
+    if (debt >= DEBT_DROWSY) {
+      return `Consolidated recently; ${debt} debt since. Cooling down for another `
+        + `${formatCooldownRemaining(cooldown.remainingMs)} — do not consolidate again unless asked.`;
+    }
+    return null;
+  }
+
   if (debt >= DEBT_MUST_SLEEP) {
     return `Sleep debt is ${debt}${pendingSuffix}. CONSOLIDATION REQUIRED. Run sleep flow per SKILL.md (parallel specialist fan-out) NOW.`;
   }
@@ -975,18 +1191,19 @@ export function registerHookCommand(program: Command): void {
       // the catch-up finalizes it once the flushed transcript appears, and
       // zero-finalizes after 7 days if it never does (hard-killed tab).
       const transcriptOnDisk = !!transcriptPath && existsSync(transcriptPath);
-      const analysis = transcriptOnDisk ? analyzeTranscript(transcriptPath) : ZERO_ANALYSIS;
+      // Resolve the full location (not just the flat path) so `analyzeSession`
+      // can fold in this session's sub-agent transcripts — a fan-out session's
+      // real work lives in `subagents/`, not in the one `Task` call the main
+      // transcript records.
+      const analysis = transcriptOnDisk
+        ? analyzeSession(resolveTranscript(transcriptPath, { sessionId }))
+        : ZERO_ANALYSIS;
       const { changeCount, toolCount } = analysis;
-      // Substance-weighted debt (WS-DEBT): max() with the substance ladder keeps
-      // the score bounded at 3 and only raises the FLOOR for edit-free-but-dense
-      // sessions; it never lowers an edit-heavy score.
-      const score = transcriptOnDisk
-        ? Math.max(
-          scoreFromChangeCount(changeCount),
-          scoreFromToolCount(toolCount),
-          scoreFromSubstance(analysis),
-        )
-        : null;
+      // Weighted-sum debt: log-compressed token / change / tool axes plus the
+      // substance ladder, summed and rounded onto 0..SESSION_SCORE_MAX. Replaces
+      // the old max() composition, whose ceiling of 3 was hit by 77% of real
+      // sessions (see scoreSession).
+      const score = transcriptOnDisk ? scoreSession(analysis) : null;
 
       // Link unlinked bookmarks to this session
       for (const bookmark of state.bookmarks) {
@@ -1011,6 +1228,9 @@ export function registerHookCommand(program: Command): void {
         tool_count: transcriptOnDisk ? toolCount : null,
         score,
         task_slugs: taskSlugs,
+        ...(transcriptOnDisk
+          ? { novel_tokens: analysis.novelTokens, scoring_version: SCORING_VERSION }
+          : {}),
       };
       const nextState = upsertSessionOnStop(state, upsertInput);
 
@@ -1182,6 +1402,8 @@ export function registerHookCommand(program: Command): void {
         session.change_count = result.changeCount;
         session.tool_count = result.toolCount;
         session.score = result.score;
+        session.novel_tokens = result.novelTokens;
+        session.scoring_version = SCORING_VERSION;
         session.task_slugs = result.taskSlugs; // AC8b — MERGE, never replace (done inside resolveCatchupFinalization)
         session.catchup_finalized = result.catchupFinalized; // AC4
         state.debt += result.debtDelta;

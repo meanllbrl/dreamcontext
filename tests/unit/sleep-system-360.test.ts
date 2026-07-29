@@ -22,6 +22,8 @@ import {
   type Trigger,
   type CompactionRecord,
   type StopUpsertInput,
+  DEBT_DEEP_AUTHORITY,
+  SESSION_SCORE_MAX,
 } from '../../src/lib/sleep-consolidation.js';
 import {
   getConsolidationDirective,
@@ -333,9 +335,10 @@ describe('sleep 360° — debt scoring & double-count (WS2)', () => {
     expect(state.sessions).toHaveLength(1);
   });
 
-  it('manual `sleep add` rejects scores outside 1..3 and requires a description', () => {
+  it('manual `sleep add` rejects scores outside the session range and requires a description', () => {
     expect(validateSleepAdd('0', 'x').ok).toBe(false);
-    expect(validateSleepAdd('4', 'x').ok).toBe(false);
+    expect(validateSleepAdd(String(SESSION_SCORE_MAX), 'x').ok).toBe(true);
+    expect(validateSleepAdd(String(SESSION_SCORE_MAX + 1), 'x').ok).toBe(false);
     expect(validateSleepAdd('abc', 'x').ok).toBe(false);
     expect(validateSleepAdd('2', '   ').ok).toBe(false); // empty desc
     expect(validateSleepAdd('2', 'valid reason').ok).toBe(true);
@@ -343,27 +346,28 @@ describe('sleep 360° — debt scoring & double-count (WS2)', () => {
 });
 
 describe('sleep 360° — debt levels & directive injection (WS2)', () => {
-  // ×2 scale (2026-06-29): Alert 0–7 · Drowsy 8–13 · Sleepy 14–19 · Must Sleep 20+.
+  // 0-10 session scale (2026-07-29): Alert 0–11 · Drowsy 12–19 · Sleepy 20–29 ·
+  // Must Sleep 30+. Derived so a rescale updates the table, never bypasses it.
   it.each([
-    [7, 'Alert'],
-    [8, 'Drowsy'],
-    [13, 'Drowsy'],
-    [14, 'Sleepy'],
-    [19, 'Sleepy'],
-    [20, 'Must Sleep'],
+    [DEBT_DROWSY - 1, 'Alert'],
+    [DEBT_DROWSY, 'Drowsy'],
+    [DEBT_SLEEPY - 1, 'Drowsy'],
+    [DEBT_SLEEPY, 'Sleepy'],
+    [DEBT_MUST_SLEEP - 1, 'Sleepy'],
+    [DEBT_MUST_SLEEP, 'Must Sleep'],
   ] as const)('sleepinessLevel: debt %i → %s (boundary-exact)', (debt, level) => {
     expect(sleepinessLevel(debt)).toBe(level);
   });
 
-  it('session-start prepends a CRITICAL consolidation directive when debt >= 20', () => {
-    const d = getConsolidationDirective(baseState({ debt: 20 }));
+  it('session-start prepends a CRITICAL consolidation directive at DEBT_MUST_SLEEP', () => {
+    const d = getConsolidationDirective(baseState({ debt: DEBT_MUST_SLEEP }));
     expect(d).not.toBeNull();
     expect(d).toContain('CONSOLIDATION REQUIRED');
     expect(d).toContain('You MUST inform the user and consolidate NOW.');
   });
 
-  it('session-start prepends a softer advisory when debt >= 14', () => {
-    const d = getConsolidationDirective(baseState({ debt: 14 }));
+  it('session-start prepends a softer advisory at DEBT_SLEEPY', () => {
+    const d = getConsolidationDirective(baseState({ debt: DEBT_SLEEPY }));
     expect(d).not.toBeNull();
     expect(d).toContain('CONSOLIDATION RECOMMENDED');
     expect(d).not.toContain('CONSOLIDATION REQUIRED');
@@ -375,11 +379,11 @@ describe('sleep 360° — debt levels & directive injection (WS2)', () => {
     expect(d).toContain('CRITICAL BOOKMARKS NEED CONSOLIDATION');
   });
 
-  it('user-prompt-submit emits a one-line reminder when debt >= 8, silent below 8', () => {
-    expect(userPromptReminder(baseState({ debt: 8 }))).not.toBeNull();
-    expect(userPromptReminder(baseState({ debt: 14 }))).not.toBeNull();
-    expect(userPromptReminder(baseState({ debt: 20 }))).not.toBeNull();
-    expect(userPromptReminder(baseState({ debt: 7 }))).toBeNull();
+  it('user-prompt-submit emits a one-line reminder from DEBT_DROWSY up, silent below it', () => {
+    expect(userPromptReminder(baseState({ debt: DEBT_DROWSY }))).not.toBeNull();
+    expect(userPromptReminder(baseState({ debt: DEBT_SLEEPY }))).not.toBeNull();
+    expect(userPromptReminder(baseState({ debt: DEBT_MUST_SLEEP }))).not.toBeNull();
+    expect(userPromptReminder(baseState({ debt: DEBT_DROWSY - 1 }))).toBeNull();
     expect(userPromptReminder(baseState({ debt: 0 }))).toBeNull();
   });
 });
@@ -389,27 +393,28 @@ describe('sleep 360° — directive suppression respects the consolidation lock'
   const STALE = () => new Date(Date.now() - 31 * 60 * 1000).toISOString(); // past 30m TTL
 
   it('a FRESH lock suppresses the consolidation directive (says "already in progress")', () => {
-    const d = getConsolidationDirective(baseState({ debt: 20, sleep_started_at: FRESH() }));
+    const d = getConsolidationDirective(baseState({ debt: DEBT_MUST_SLEEP, sleep_started_at: FRESH() }));
     expect(d).not.toBeNull();
     expect(d).toContain('already in progress');
     expect(d).not.toContain('CONSOLIDATION REQUIRED');
   });
 
   it('a FRESH lock silences the user-prompt reminder below the suppression threshold', () => {
-    // debt 8 → reminder is the "in progress" line; debt 7 (< DEBT_DROWSY) → fully silent under a live lock.
-    expect(userPromptReminder(baseState({ debt: 8, sleep_started_at: FRESH() }))).toContain('already in progress');
-    expect(userPromptReminder(baseState({ debt: 7, sleep_started_at: FRESH() }))).toBeNull();
+    // At DEBT_DROWSY the reminder is the "in progress" line; just below it, fully
+    // silent under a live lock.
+    expect(userPromptReminder(baseState({ debt: DEBT_DROWSY, sleep_started_at: FRESH() }))).toContain('already in progress');
+    expect(userPromptReminder(baseState({ debt: DEBT_DROWSY - 1, sleep_started_at: FRESH() }))).toBeNull();
   });
 
   it('a STALE lock does NOT suppress — the directive fires through so a crashed sleep cannot wedge the brain', () => {
-    const d = getConsolidationDirective(baseState({ debt: 20, sleep_started_at: STALE() }));
+    const d = getConsolidationDirective(baseState({ debt: DEBT_MUST_SLEEP, sleep_started_at: STALE() }));
     expect(d).not.toBeNull();
     expect(d).toContain('CONSOLIDATION REQUIRED');
     expect(d).not.toContain('already in progress');
   });
 
   it('a STALE lock lets the normal debt reminder fire through', () => {
-    const r = userPromptReminder(baseState({ debt: 14, sleep_started_at: STALE() }));
+    const r = userPromptReminder(baseState({ debt: DEBT_SLEEPY, sleep_started_at: STALE() }));
     expect(r).not.toBeNull();
     expect(r).not.toContain('already in progress');
   });
@@ -518,26 +523,26 @@ describe('sleep 360° — capture → consolidation loop (WS4)', () => {
 });
 
 describe('sleep 360° — AC1 pending-session provisional debt (directive/reminder integration, T7)', () => {
-  it('persisted 6 + 1 pending → effective 8 crosses into DROWSY; directive names the pending count', () => {
-    const state = baseState({ debt: 6, sessions: [pendingSession('p1')] });
+  it('one pending session carries persisted debt across DROWSY; directive names the pending count', () => {
+    const state = baseState({ debt: DEBT_DROWSY - PENDING_SESSION_PROVISIONAL, sessions: [pendingSession('p1')] });
     const d = getConsolidationDirective(state);
     expect(d).not.toBeNull();
-    expect(d).toContain(`Sleep debt is ${6 + PENDING_SESSION_PROVISIONAL}`);
+    expect(d).toContain(`Sleep debt is ${DEBT_DROWSY}`);
     expect(d).toContain('1 session(s) awaiting analysis');
-    expect(d).toContain('persisted debt 6');
+    expect(d).toContain(`persisted debt ${DEBT_DROWSY - PENDING_SESSION_PROVISIONAL}`);
     expect(d).not.toContain('CONSOLIDATION RECOMMENDED');
     expect(d).not.toContain('CONSOLIDATION REQUIRED');
   });
 
-  it('persisted 12 + 1 pending → effective 14 crosses into SLEEPY (CONSOLIDATION RECOMMENDED)', () => {
-    const state = baseState({ debt: 12, sessions: [pendingSession('p1')] });
+  it('one pending session carries persisted debt across SLEEPY (CONSOLIDATION RECOMMENDED)', () => {
+    const state = baseState({ debt: DEBT_SLEEPY - PENDING_SESSION_PROVISIONAL, sessions: [pendingSession('p1')] });
     const d = getConsolidationDirective(state);
     expect(d).toContain('CONSOLIDATION RECOMMENDED');
     expect(d).toContain('1 session(s) awaiting analysis');
   });
 
-  it('persisted 18 + 1 pending → effective 20 crosses into MUST SLEEP (CONSOLIDATION REQUIRED)', () => {
-    const state = baseState({ debt: 18, sessions: [pendingSession('p1')] });
+  it('one pending session carries persisted debt across MUST SLEEP (CONSOLIDATION REQUIRED)', () => {
+    const state = baseState({ debt: DEBT_MUST_SLEEP - PENDING_SESSION_PROVISIONAL, sessions: [pendingSession('p1')] });
     const d = getConsolidationDirective(state);
     expect(d).toContain('CONSOLIDATION REQUIRED');
     expect(d).toContain('1 session(s) awaiting analysis');
@@ -552,7 +557,7 @@ describe('sleep 360° — AC1 pending-session provisional debt (directive/remind
   });
 
   it('provisional debt is NEVER persisted into state.debt (directive/reminder are read-only)', () => {
-    const state = baseState({ debt: 6, sessions: [pendingSession('p1'), pendingSession('p2')] });
+    const state = baseState({ debt: DEBT_DROWSY - PENDING_SESSION_PROVISIONAL, sessions: [pendingSession('p1'), pendingSession('p2')] });
     const frozen = JSON.parse(JSON.stringify(state));
     getConsolidationDirective(state);
     userPromptReminder(state);
@@ -561,66 +566,73 @@ describe('sleep 360° — AC1 pending-session provisional debt (directive/remind
   });
 
   it('the audit case (persisted 0, 5 pending) now returns a non-null directive naming the pending count', () => {
-    // 5 pending * PENDING_SESSION_PROVISIONAL(2) = 10 provisional → effective 10,
-    // which already crosses DEBT_DROWSY(8) — the pre-existing Drowsy branch
-    // fires (not the new bottom-priority branch below), but the audit's exact
-    // blind spot (debt 0, 5 sessions score:null, directive fully silent) is closed.
-    const state = baseState({ debt: 0, sessions: Array.from({ length: 5 }, (_, i) => pendingSession(`p${i}`)) });
+    // 5 pending * PENDING_SESSION_PROVISIONAL, clamped by PENDING_PROVISIONAL_CAP,
+    // already crosses DEBT_DROWSY — the pre-existing Drowsy branch fires (not the
+    // bottom-priority branch below), but the audit's exact blind spot (debt 0,
+    // 5 sessions score:null, directive fully silent) is closed.
+    // Enough pending sessions that their provisional debt alone crosses DROWSY.
+    const pending = Math.ceil(DEBT_DROWSY / PENDING_SESSION_PROVISIONAL);
+    const state = baseState({ debt: 0, sessions: Array.from({ length: pending }, (_, i) => pendingSession(`p${i}`)) });
+    const effective = Math.min(PENDING_PROVISIONAL_CAP, pending * PENDING_SESSION_PROVISIONAL);
+    expect(effective).toBeGreaterThanOrEqual(DEBT_DROWSY);
     const d = getConsolidationDirective(state);
     expect(d).not.toBeNull();
-    expect(d).toContain('5 session(s) awaiting analysis');
-    expect(d).toContain(`Sleep debt is ${DEBT_DROWSY + 2}`); // 0 + min(12, 5*2) = 10
+    expect(d).toContain(`${pending} session(s) awaiting analysis`);
+    expect(d).toContain(`Sleep debt is ${effective}`);
   });
 
   it('new lowest-priority branch fires when pending debt alone stays BELOW every other threshold', () => {
-    // 3 pending * 2 = 6 provisional → effective 6, below DEBT_DROWSY(8) and
-    // below RHYTHM_SESSIONS with sessions_since_last_sleep 0 — nothing else
-    // fires, so this exercises the new bottom branch specifically.
-    const state = baseState({ debt: 0, sessions: Array.from({ length: 3 }, (_, i) => pendingSession(`p${i}`)) });
+    // Two pending sessions' provisional debt stays below DEBT_DROWSY, and with
+    // sessions_since_last_sleep 0 the rhythm advisory is silent too — nothing
+    // else fires, so this exercises the new bottom branch specifically.
+    const pending = 2;
+    expect(pending * PENDING_SESSION_PROVISIONAL).toBeLessThan(DEBT_DROWSY);
+    const state = baseState({ debt: 0, sessions: Array.from({ length: pending }, (_, i) => pendingSession(`p${i}`)) });
     const d = getConsolidationDirective(state);
     expect(d).not.toBeNull();
-    expect(d).toContain('3 session(s) awaiting analysis');
+    expect(d).toContain(`${pending} session(s) awaiting analysis`);
     expect(d).not.toContain('CONSOLIDATION');
     expect(d?.trim().startsWith('>')).toBe(true);
   });
 
   it('zero pending sessions → directive unaffected (byte-identical regression)', () => {
-    for (const debt of [0, 7, 8, 13, 14, 19, 20, 32]) {
+    for (const debt of [0, DEBT_DROWSY - 1, DEBT_DROWSY, DEBT_SLEEPY - 1, DEBT_SLEEPY,
+      DEBT_MUST_SLEEP - 1, DEBT_MUST_SLEEP, DEBT_DEEP_AUTHORITY]) {
       const withPending = getConsolidationDirective(baseState({ debt, sessions: [] }));
       const withoutHelper = getConsolidationDirective(baseState({ debt, sessions: [] }));
       expect(withPending).toBe(withoutHelper);
     }
     // Explicit byte check against the pre-existing fixed assertions.
-    expect(getConsolidationDirective(baseState({ debt: 20, sessions: [] }))).toContain('CONSOLIDATION REQUIRED');
-    expect(getConsolidationDirective(baseState({ debt: 7, sessions: [] }))).toBeNull();
+    expect(getConsolidationDirective(baseState({ debt: DEBT_MUST_SLEEP, sessions: [] }))).toContain('CONSOLIDATION REQUIRED');
+    expect(getConsolidationDirective(baseState({ debt: DEBT_DROWSY - 1, sessions: [] }))).toBeNull();
   });
 
-  it('rhythm regression: sessions_since_last_sleep >= 5 with zero pending still fires the rhythm advisory', () => {
-    // 5 sessions scored 1 each: persisted debt 5 (< DEBT_DROWSY), rhythm counter 5.
-    const state = baseState({ debt: 5, sessions_since_last_sleep: 5, sessions: [] });
+  it('rhythm regression: sessions_since_last_sleep >= RHYTHM_SESSIONS with zero pending still fires the rhythm advisory', () => {
+    // Debt deliberately below DEBT_DROWSY so ONLY the rhythm branch can fire.
+    const state = baseState({ debt: 1, sessions_since_last_sleep: RHYTHM_SESSIONS, sessions: [] });
     const d = getConsolidationDirective(state);
     expect(d).not.toBeNull();
-    expect(d).toContain('5 sessions since last consolidation');
+    expect(d).toContain(`${RHYTHM_SESSIONS} sessions since last consolidation`);
   });
 
   it('userPromptReminder: effective debt crossing DROWSY includes the pending suffix', () => {
-    const state = baseState({ debt: 6, sessions: [pendingSession('p1')] });
+    const state = baseState({ debt: DEBT_DROWSY - PENDING_SESSION_PROVISIONAL, sessions: [pendingSession('p1')] });
     const r = userPromptReminder(state);
     expect(r).not.toBeNull();
-    expect(r).toContain(`Sleep debt is ${6 + PENDING_SESSION_PROVISIONAL}`);
+    expect(r).toContain(`Sleep debt is ${DEBT_DROWSY}`);
     expect(r).toContain('(1 awaiting analysis)');
   });
 
   it('userPromptReminder: pending-only (below every debt threshold) returns the bottom-branch line', () => {
-    const state = baseState({ debt: 0, sessions: Array.from({ length: 3 }, (_, i) => pendingSession(`p${i}`)) });
+    const state = baseState({ debt: 0, sessions: Array.from({ length: 2 }, (_, i) => pendingSession(`p${i}`)) });
     const r = userPromptReminder(state);
     expect(r).not.toBeNull();
-    expect(r).toContain('3 session(s) awaiting analysis');
+    expect(r).toContain('2 session(s) awaiting analysis');
   });
 
   it('userPromptReminder: zero pending stays byte-identical (regression)', () => {
-    expect(userPromptReminder(baseState({ debt: 8, sessions: [] }))).not.toBeNull();
-    expect(userPromptReminder(baseState({ debt: 7, sessions: [] }))).toBeNull();
+    expect(userPromptReminder(baseState({ debt: DEBT_DROWSY, sessions: [] }))).not.toBeNull();
+    expect(userPromptReminder(baseState({ debt: DEBT_DROWSY - 1, sessions: [] }))).toBeNull();
     expect(userPromptReminder(baseState({ debt: 0, sessions: [] }))).toBeNull();
   });
 

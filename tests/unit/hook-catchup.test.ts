@@ -52,7 +52,7 @@ describe('resolveCatchupFinalization — AC2 (7-day floor) + AC4 (catchup_finali
     expect(resolveCatchupFinalization(session, loc, NOW)).toBeNull();
   });
 
-  it('no main transcript, EXACTLY 7 days old, non-empty last_assistant_message → floor score 1', () => {
+  it('no main transcript, EXACTLY 7 days old, non-empty last_assistant_message → the never-flushed floor score', () => {
     const session = pendingSession({
       stopped_at: new Date(NOW - NEVER_FLUSHED_FINALIZE_MS).toISOString(),
       last_assistant_message: 'Fixed the bug and shipped it.',
@@ -61,8 +61,7 @@ describe('resolveCatchupFinalization — AC2 (7-day floor) + AC4 (catchup_finali
     const result = resolveCatchupFinalization(session, loc, NOW);
     expect(result).not.toBeNull();
     expect(result!.score).toBe(NEVER_FLUSHED_FLOOR_SCORE);
-    expect(result!.score).toBe(1);
-    expect(result!.debtDelta).toBe(1);
+    expect(result!.debtDelta).toBe(NEVER_FLUSHED_FLOOR_SCORE);
     expect(result!.catchupFinalized).toBe(true);
   });
 
@@ -84,7 +83,7 @@ describe('resolveCatchupFinalization — AC2 (7-day floor) + AC4 (catchup_finali
     const loc = { mainPath: null, sessionDir: null, layout: 'none' as const };
     const result = resolveCatchupFinalization(session, loc, NOW);
     expect(result).not.toBeNull();
-    expect(result!.score).toBe(1);
+    expect(result!.score).toBe(NEVER_FLUSHED_FLOOR_SCORE);
   });
 
   it('debtDelta always equals score — no divergence possible from recomputeDebt', () => {
@@ -161,7 +160,7 @@ describe('resolveCatchupFinalization — AC3 (flat/dir layout wiring)', () => {
     });
     const result = resolveCatchupFinalization(agedSession, loc, NOW);
     expect(result).not.toBeNull();
-    expect(result!.score).toBe(1);
+    expect(result!.score).toBe(NEVER_FLUSHED_FLOOR_SCORE);
   });
 
   it('dir layout WITH a main transcript inside (future-layout case) → resolves and scores it', () => {
