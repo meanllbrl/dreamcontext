@@ -76,7 +76,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 
 | Capability | What it is | Reference |
 |---|---|---|
-| **Structured memory** | soul/user/memory + knowledge + tasks, auto-loaded each session | this file |
+| **Structured memory** | soul + the active person's constitution + memory + knowledge + tasks, auto-loaded each session | this file |
 | **Tasks** | Working documents with changelog, RICE, status lifecycle, start/due date ranges, resolved assignees, and project-declared custom fields (`overrides/task.md`) | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Roadmap / Objectives** | PO-authored OKR board: objectives in `core/objectives/`, many-to-many task links (`objectives:` frontmatter), dependency DAG with full forecast cascade, target vs forecast slip detection, `dreamcontext roadmap` (+ `--json`) | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Lab / Insights** | Curated analytics **metrics** ("insights") synced from HTTP APIs or local scripts into the brain: manifests in `lab/insights/`, cached series every session, roadmap Key-Result binding (`lab bind` / the dashboard's objective dialogs — one feeder per objective, seeds `metric.current` on connect), dashboard Lab page. **Funnel analytics**: `--render funnel` + a `funnel-set/v1` payload gives a routed multi-page view — all-funnels comparison table + per-funnel step lane with drop badges, arc gesture, filters, breakdowns, compare (`/lab/<slug>`). **An insight is NOT a knowledge file** — create with `dreamcontext lab create`, never `knowledge create` | [tasks-and-features.md](references/tasks-and-features.md) |
@@ -101,7 +101,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Versions / releases** | Planning versions and releases unify in RELEASES.json | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Proactive learning (Hypotheses)** | Falsifiable **theses** validated/invalidated across sleep cycles: derived confidence from an evidence ledger, pre-registered predictions, understanding changelog, relations to insights/objectives/tasks, dashboard "Hypotheses" board. Opt-in — off until `dreamcontext theses enable` | [learning.md](references/learning.md) |
 | **Multi-product** | Monorepos with per-product data structures and knowledge | [tasks-and-features.md](references/tasks-and-features.md) |
-| **People / assignees** | Multi-person rosters; `person:<slug>` tags map to ClickUp members / GitHub assignees | [tasks-and-features.md](references/tasks-and-features.md) |
+| **People (constitutions + roster)** | One constitution file per person (`people/<slug>.md`), a structural roster (`people/people.json`), machine-local active-person resolution, `person:<slug>` tags → ClickUp/GitHub assignees | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Feedback loop** | File gaps/bugs upstream as GitHub issues | [improving-dreamcontext.md](references/improving-dreamcontext.md) |
 | **Full CLI** | Every command and flag | [cli-reference.md](references/cli-reference.md) |
 
@@ -111,11 +111,11 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 
 ## Entity Router — create the RIGHT thing (past sessions got this wrong)
 
-dreamcontext has **eleven distinct entity types**, each with ONE home and ONE creation path. When the user says "create/add/track X", route by what X **is** — never by the nearest command you happen to remember. The canonical mistake: user says *"create an insight"* and the agent runs `knowledge create`. An insight is not knowledge.
+dreamcontext has **twelve distinct entity types**, each with ONE home and ONE creation path. When the user says "create/add/track X", route by what X **is** — never by the nearest command you happen to remember. The canonical mistake: user says *"create an insight"* and the agent runs `knowledge create`. An insight is not knowledge.
 
 Two routing rules that override surface reading:
 
-- **Entity nouns are reserved words — in ANY language.** In a dreamcontext project, *insight, objective, roadmap, thesis, task, feature, knowledge, pattern, bookmark, trigger, automation, release* name THESE entities, not their dictionary meanings — whatever language the sentence around them is in ("insight oluşturalım", "crea un insight" → `lab create`, not a prose analysis or an external dashboard). The trigger phrases below are English examples; match the **intent**, not the exact words.
+- **Entity nouns are reserved words — in ANY language.** In a dreamcontext project, *insight, objective, roadmap, thesis, task, feature, knowledge, pattern, bookmark, trigger, automation, release, person* name THESE entities, not their dictionary meanings — whatever language the sentence around them is in ("insight oluşturalım", "crea un insight" → `lab create`, not a prose analysis or an external dashboard). The trigger phrases below are English examples; match the **intent**, not the exact words.
 - **Route by problem-shape too, not only by verbs.** Users often describe the need without naming the entity. If the described capability matches a subsystem's shape (see litmus tests + the "don't rebuild" rule below), that subsystem IS the answer.
 
 | User says… | Entity | What it IS | Create with |
@@ -131,6 +131,7 @@ Two routing rules that override surface reading:
 | "remind me when / next time X comes up" | **Trigger** | Prospective memory — fires when context matches | `dreamcontext trigger add <when> <remind>` |
 | "every evening at 6pm, pull together today's summary", "her akşam / her cuma / her gün", "every friday at 17:00, generate the weekly report", "schedule this to run daily", "run this every Tuesday", **or the problem-shape:** "I don't want to have to remember to ask for this every day", "something that happens on its own while nobody is at the keyboard" | **Automation**: `automations/<slug>.md` | A recurring headless job: a schedule plus a prose prompt, executed unattended by a `claude` session on its own cadence. Ships disabled by default; needs the dispatcher installed and the automation approved on this machine before anything runs. **Private to this machine by default** — mention this when creating one; sharing it with the team is a separate, explicit `automations share <slug>` | `dreamcontext automations create <slug> --title "…" --days <daily\|mon,wed> --at HH:MM` (capture protocol, offer-and-confirm → [automations.md](references/automations.md)) |
 | "version / release / sprint / milestone" | **Release entry** — `RELEASES.json` | A planning version or shipped release | `dreamcontext core releases add` |
+| "add a teammate", "who am I", "kim çalışıyor", "add me to the project", **or the problem-shape:** "the agent should know who is at the keyboard" | **Person** — `people/<slug>.md` (constitution) + a row in `people/people.json` (roster) | A **human who works in this vault**. Their constitution (`## Identity` / `## Preferences` / `## Communication Style`) renders verbatim in the snapshot when they are the ACTIVE person on this machine; the roster row is structural (`name`, `emails`, optional `role`) and is what `person:<slug>` assignee tags resolve against. **Not knowledge, and not recall-indexed** | `dreamcontext people add "<Name>" --email <address>` (`--role <label>` optional); `dreamcontext people whoami [--set <slug>]` binds THIS machine |
 
 **Litmus tests when unsure:**
 - Is it a **number/series that updates from a source**? → insight (`lab`).
@@ -140,6 +141,7 @@ Two routing rules that override surface reading:
 - Is it **work to do**? → task.
 - Is it a **falsifiable claim actively being proven/disproven**? → thesis (not knowledge).
 - Is it **work that should run on a schedule with nobody asking**? → automation (`automations`), never a hand-rolled cron job or external scheduler.
+- Is it a **human who works in this vault**? → person (`dreamcontext people add`), never a knowledge file about a teammate and never a `## People` block inside a core file.
 - **Duplicate task families / `-N` mirrors, or `tasks list` shows the same task 2–4×**? → repair, don't recreate: `dreamcontext tasks dedup` (never hand-delete the extra files or hand-edit `.tasks-map.json`).
 
 **The router governs READING too, not only creating.** *"What's our MRR?"*, *"kaç aktif öğretmen var?"*, *"how did revenue move last month?"* — a metric question routes to the insight that already measures it, before any external call: snapshot **Lab** section → `dreamcontext lab show <slug>` (full cached series, **no fetch**) → `dreamcontext lab list` / `memory recall "<phrase>" --types insight`; `lab sync <slug>` only when TTL-stale. Reaching for an MCP tool, an API request, or a one-off script while `lab/insights/` already holds that metric is the read-side twin of the creation mistake above — full ladder in Operational Rule 13.
@@ -154,7 +156,8 @@ If the requested entity type is ambiguous ("track this" could be insight, object
 
 The SessionStart hook injects this automatically every session — answer from it directly, **zero tool calls needed**:
 
-- **Soul, User, Memory** — full content (`core/0.soul.md`, `1.user.md`, `2.memory.md`)
+- **Soul, Person, Memory** — full content (`core/0.soul.md`, `people/<slug>.md` for whoever is at THIS keyboard, `core/2.memory.md`). The person block renders under `## Person (Active — <Name>, \`person:<slug>\`)`; when this machine cannot be identified it renders `## Person (Active — UNRESOLVED)` and **no constitution at all** — somebody else's preferences are never substituted
+- **Other People (this vault)** — the rest of the roster, one `- **Name** (\`person:<slug>\`) — role` line each, on multi-person vaults only (a solo vault renders zero ceremony about people)
 - **Extended core files index** — names/types of style guide, tech stack, system flow
 - **Active tasks** — status, priority, last updated, and the objectives each serves (answer "which tasks are active?" from this)
 - **Objectives (roadmap)** — active + recently-finished objectives with progress %, target vs forecast, and slip flags. **Weigh decisions against these outcomes** — they are WHAT the project is driving toward
@@ -169,6 +172,8 @@ The SessionStart hook injects this automatically every session — answer from i
 - **Pinned knowledge** — files with `pinned: true`, loaded in full
 - **Connected projects** — readable federation peers (if any)
 - **Active product knowledge** — injected when the active task has a `product:` field (multi-product)
+
+**On a mature brain this shrinks — but never blindly, and never the two constitutions.** The snapshot is bounded by the harness's 20,000-char hook-output limit. Past it, sections demote through *curated* summaries, cheapest-loss first — memory's decisions collapse to titles, inventories to names + paths (every file path stays; `Read` or `memory recall` recovers the full text), and the chain ends at Lab. **`core/0.soul.md` and the active `people/<slug>.md` are exempt — the agent's constitution and the person's constitution render verbatim at every budget**, so either one over the limit raises the banner and a `doctor` error instead. The fix is to slim the file (extract conditional rules to `knowledge/patterns/`; move anything that is not about the person out of that person's constitution), not to compress it. The *roster* of other people is a different thing entirely and does demote (rank 110) — but every person stays NAMED with their `person:<slug>` tag, never a bare count. Some sections have floors and never shrink below name + value (Lab metrics, objectives, hypotheses, ★★★ bookmarks). If it *still* cannot fit, a loud **`⚠️ CONTEXT IS INCOMPLETE`** banner sits directly under the snapshot's H1 and names the fix — believe it, and act on it before assuming the brain is empty. Full ladder → [cli-reference.md](references/cli-reference.md).
 
 **Do not re-read auto-loaded files.** For more, load on demand:
 
@@ -198,7 +203,7 @@ For files beyond the auto-loaded index, `ls _dream_context/core/` to discover th
 
 **Native tools** (Read, Edit, Write, Grep, Glob):
 - Reading any `_dream_context/` file directly
-- Find-and-replace / updating existing content (e.g. editing soul/user/memory)
+- Find-and-replace / updating existing content (e.g. editing the soul, a person's constitution, memory)
 - Searching across context files (after `memory recall`)
 
 **`dreamcontext` CLI** for everything structured:
@@ -251,7 +256,7 @@ When in doubt about a command or flag, open [cli-reference.md](references/cli-re
 
 11. **Tag before you create.** Before tagging a task/feature/knowledge, consult `dreamcontext taxonomy vocab` and reuse canonical faceted tags (`topic:recall`, `domain:security`) before inventing new ones. Fragmenting tags degrades recall. To heal accumulated drift in one shot, run `dreamcontext taxonomy audit --fix` (bulk-normalizes alias/normalizable tags to canonical across the corpus — safe, idempotent, `--dry-run` to preview; orphans are reported, never guessed).
 
-12. **Be surgical.** Only touch what changed. ~150-line soft limit on context files — extract detail to knowledge, keep a summary + reference. LIFO inserts go at the top (CHANGELOG, task changelog, constraint sections).
+12. **Be surgical.** Only touch what changed. Core files carry two anti-bloat ceilings: ~150 lines **and ~4,000 characters** (`CORE_FILE_CHAR_CEILING`). The character one is what actually binds — a 69-line file of dense bullets is still 13KB, and the SessionStart snapshot pays that cost every single session — so measure bytes, not lines. `dreamcontext doctor` reports both. Over either ceiling: extract detail to knowledge, keep a summary + reference. LIFO inserts go at the top (CHANGELOG, task changelog, constraint sections).
 
 13. **Insights before external fetch — the READ path, not just the create path.** When the user asks for a metric (MRR, WAU, signups, churn, revenue, conversion, "kaç aktif kullanıcı var?"), the answer comes from the brain FIRST, in this order: the snapshot's **Lab** section (latest value + staleness, zero tool calls) → `dreamcontext lab show <slug>` (**the full cached series — never fetches**; this is the call for a breakdown, a trend, or "how did it move last month?") → `dreamcontext lab list` / `memory recall "<phrase>" --types insight` when you don't know the slug. Only when the cache is TTL-stale: `dreamcontext lab sync <slug>`. **An MCP tool, a raw API request, or a hand-written script is the LAST resort** — and when you take it, say why the insight didn't cover it. A real past failure: asked for revenue, an agent reached for a billing MCP while `lab/insights/` already held the synced series; the project had to hand-write a memory note to stop it recurring. Fetching a metric that already has a manifest bypasses its cache, tweaks and KR binding, and returns a number the next session cannot reproduce. **The hook tells you when this applies** — a recall hit of type `insight` arrives with `→ ALREADY TRACKED as an insight` and the exact `lab show` call; that line is authoritative, and it fires on every prompt whether or not this skill body is loaded. (A federated peer's insight can't be read with `lab show` — open that vault's `lab/cache/<slug>.json`, as the directive says.)
 
@@ -351,7 +356,7 @@ Status: `todo → in_progress → in_review → completed`. Sections: `why`, `us
 
 ## Memory & Knowledge — essentials
 
-- **Quick updates (no sleep):** edit `0.soul.md`/`1.user.md`/`2.memory.md` directly; `dreamcontext core changelog add` for code changes; `dreamcontext tasks log` for progress.
+- **Quick updates (no sleep):** edit `core/0.soul.md`/`core/2.memory.md`/`people/<slug>.md` directly; `dreamcontext core changelog add` for code changes; `dreamcontext tasks log` for progress.
 - **Recall (first-line discovery):** `dreamcontext memory recall "<query>" [--top N] [--types knowledge,feature,task,memory,changelog,objective,insight,thesis,automation] [--level 1|2|3] [--json]`. Default mode is **`haiku`** (a small cloud model picks relevant docs); `raw` = BM25 only; `hybrid` = experimental BM25+local-embedding fusion (no LLM call); `off` = disabled. Control with `dreamcontext recall on|raw|hybrid|off|status`. Auto-injected on prompts (opt out `DREAMCONTEXT_MEMORY_HOOK=0`).
 - **Quick capture:** `dreamcontext memory remember "<text>"` writes a `type=note` CHANGELOG entry; sleep reconciles it later. (`2.memory.md` no longer has a LIFO ship-narrative section — ship events live in CHANGELOG.)
 - **Knowledge files:** index auto-loaded; create with `dreamcontext knowledge create <name>`; pin frequently-needed ones (`pinned: true`); read non-pinned on demand and `knowledge touch` after. Group a flat file into a context folder with `dreamcontext knowledge move <slug> <folder>` (atomic move + inbound `[[wikilink]]` rewrite — never `mv` + hand-edit links).
@@ -400,9 +405,13 @@ When dreamcontext gets in your way — a recall gap, a missing command, a confus
 ```
 _dream_context/
 ├── core/
-│   ├── 0.soul.md  1.user.md  2.memory.md
+│   ├── 0.soul.md  2.memory.md            ← slot 1 is RETIRED (the user file became people/)
 │   ├── 3.style_guide_and_branding.md  4.tech_stack.md  6.system_flow.md
 │   ├── CHANGELOG.json  RELEASES.json  taxonomy.json
+├── people/                           ← WHO works in this vault (`dreamcontext people`)
+│   ├── people.json                   ←   the structural roster: {version, people:{<slug>:{name,emails[],role?}}}
+│   └── <slug>.md                     ←   one constitution per person — verbatim in the snapshot when active,
+│                                     ←   NOT knowledge and NOT recall-indexed
 ├── knowledge/                        ← Deep research — grouped by context, indexed recursively
 │   ├── <topic>.md                    ←   flat top-level docs are fine
 │   ├── <context>/                    ←   PROMOTED: group related docs into a context folder
@@ -420,7 +429,9 @@ _dream_context/
 │   └── task.md                       ← OPTIONAL: project task template + custom_fields schema (briefed to agents)
 ├── state/
 │   ├── <task>.md                     ← Active tasks (frontmatter may include product:, start_date, due_date, custom_fields)
-│   ├── .config.json                  ← platforms, packs, multiProduct, taskBackend, people, linkedRepos…
+│   ├── .config.json                  ← platforms, packs, multiProduct, taskBackend, peopleIdentity, linkedRepos…
+│   │                                    (the `people` roster key was RETIRED in 0.23.0 → people/people.json)
+│   ├── .brain-local.json             ← gitignored: machine-local state incl. the active-person pin
 │   │                                    (linked-repo LOCAL paths live in ~/.dreamcontext/linked-repos.json, never synced)
 │   ├── .active-version.json          ← current sprint (active planning version)
 │   ├── .sleep.json  .secrets.json (gitignored)  .active-task

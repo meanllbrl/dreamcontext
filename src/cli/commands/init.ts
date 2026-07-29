@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { input, confirm, checkbox } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { getInitPath } from '../../lib/context-path.js';
-import { today } from '../../lib/id.js';
+import { slugify, today } from '../../lib/id.js';
 import { error, info, miniBox } from '../../lib/format.js';
 import { insertToJsonArray } from '../../lib/json-file.js';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +23,16 @@ import { printDeprecationHint, SETUP_INTERNAL_ENV } from './install-skill.js';
 import { platformSkillRoot } from '../../lib/catalog.js';
 import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
 import { detectTechStack } from '../../lib/tech-stack.js';
+import { addPerson, isSafePersonSlug } from '../../lib/people-store.js';
+import { resolveAuthors } from '../../lib/people-resolve.js';
+import { readGitIdentity } from '../../lib/git-sync/git.js';
+
+/**
+ * Display name used when this machine has no usable git identity. Its slug
+ * (`owner`) is the documented fallback: a vault always has exactly one person
+ * after `init`, even on a box where nobody ever ran `git config user.name`.
+ */
+const FALLBACK_PERSON_NAME = 'Owner';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -219,6 +229,7 @@ export function registerInitCommand(program: Command): void {
       mkdirSync(join(contextDir, 'knowledge', 'products'), { recursive: true });
       mkdirSync(join(contextDir, 'state'), { recursive: true });
       mkdirSync(join(contextDir, 'inbox'), { recursive: true });
+      mkdirSync(join(contextDir, 'people'), { recursive: true });
 
       // Seed as an Obsidian vault: `.obsidian/` makes _dream_context/ openable
       // via "Open folder as vault". Graph colors distinguish soul/knowledge/state.
@@ -228,7 +239,6 @@ export function registerInitCommand(program: Command): void {
       const templateDir = getTemplateDir();
       const templateFiles = [
         '0.soul.md',
-        '1.user.md',
         '2.memory.md',
         '3.style_guide_and_branding.md',
         '4.tech_stack.md',
@@ -245,6 +255,28 @@ export function registerInitCommand(program: Command): void {
           // Create minimal placeholder
           writeFileSync(destPath, `# ${file}\n\nCreated: ${dateStr}\n`, 'utf-8');
         }
+      }
+
+      // The user constitution is people-first: `people/people.json` (who exists)
+      // plus one `people/<slug>.md` per human. Seed it from this machine's git
+      // identity so the very first session already knows whose vault this is.
+      // `addPerson` owns BOTH halves, so a person created here is the same
+      // document as one created later by `dreamcontext people add` — the person
+      // template (`src/templates/init/people/person.md`) is the pinned copy of
+      // what it writes.
+      const gitIdentity = readGitIdentity(process.cwd());
+      const gitName = (gitIdentity.name ?? '').trim();
+      // A name that yields no usable slug (e.g. entirely non-latin) is treated
+      // exactly like no identity at all — init must never die on `git config`.
+      const hasUsableIdentity = gitName.length > 0 && isSafePersonSlug(slugify(gitName));
+      const { slug: personSlug } = addPerson(contextDir, {
+        name: hasUsableIdentity ? gitName : FALLBACK_PERSON_NAME,
+        emails: gitIdentity.email ? [gitIdentity.email] : [],
+      });
+      if (!hasUsableIdentity) {
+        console.log();
+        console.log(chalk.yellow(`  ⚠ No git identity found — created ${chalk.green(`people/${personSlug}.md`)}.`));
+        console.log(`    ${chalk.dim('Fix with:')} ${chalk.magentaBright('git config user.email "you@example.com"')} ${chalk.dim('&&')} ${chalk.magentaBright('dreamcontext people add "Your Name" --email "you@example.com"')}`);
       }
 
       // Data structures: per-product file (or default.md for single-product).
@@ -293,14 +325,19 @@ export function registerInitCommand(program: Command): void {
       // Persist project platform defaults
       writeProjectPlatformDefaults(process.cwd(), selectedPlatforms);
 
-      // Add initial changelog entry
-      insertToJsonArray(join(contextDir, 'core', 'CHANGELOG.json'), {
+      // Add initial changelog entry, stamped with whoever ran init (the person we
+      // just created). `resolveAuthors` returns undefined on a rosterless vault,
+      // so the key stays absent everywhere it was absent before (D18).
+      const initEntry: Record<string, unknown> = {
         date: dateStr,
         type: 'chore',
         scope: 'project',
         description: 'Agent context initialized',
         breaking: false,
-      });
+      };
+      const initAuthors = resolveAuthors(contextDir);
+      if (initAuthors?.length) initEntry.authors = initAuthors;
+      insertToJsonArray(join(contextDir, 'core', 'CHANGELOG.json'), initEntry);
 
       const productSummary = multiProduct === false ? 'single (default)' : multiProduct.join(', ');
       console.log();
@@ -323,7 +360,6 @@ export function registerInitCommand(program: Command): void {
         console.log(`  │   │   ├── ${chalk.green(product + '.md')}`);
       }
       console.log(`  │   ├── ${chalk.green('0.soul.md')}`);
-      console.log(`  │   ├── ${chalk.green('1.user.md')}`);
       console.log(`  │   ├── ${chalk.green('2.memory.md')}`);
       console.log(`  │   ├── ${chalk.green('3.style_guide_and_branding.md')}`);
       console.log(`  │   ├── ${chalk.green('4.tech_stack.md')}`);
@@ -337,6 +373,9 @@ export function registerInitCommand(program: Command): void {
           console.log(`  │       ├── ${chalk.green(product + '.md')}`);
         }
       }
+      console.log(`  ├── ${chalk.magentaBright.bold('people/')}`);
+      console.log(`  │   ├── ${chalk.yellow('people.json')}`);
+      console.log(`  │   └── ${chalk.green(personSlug + '.md')}`);
       console.log(`  ├── ${chalk.magentaBright.bold('state/')}`);
       console.log(`  │   └── ${chalk.dim('.config.json')}`);
       if (obsidianInstalled) {
@@ -399,7 +438,7 @@ export function registerInitCommand(program: Command): void {
         console.log(chalk.bold('  What\'s next:'));
         console.log(`  ${chalk.dim('1.')} ${chalk.green('Done')} — next session the hook fires and your agent loads this context.`);
         console.log(`  ${chalk.dim('2.')} Run ${chalk.magentaBright('dreamcontext features create <name>')} to add features`);
-        console.log(`  ${chalk.dim('3.')} Edit ${chalk.green('_dream_context/core/0.soul.md')} to define agent identity`);
+        console.log(`  ${chalk.dim('3.')} Edit ${chalk.green('_dream_context/core/0.soul.md')} (agent identity) and ${chalk.green(`_dream_context/people/${personSlug}.md`)} (your constitution)`);
         let nextStep = 4;
         if (obsidianInstalled) {
           console.log(`  ${chalk.dim(nextStep++ + '.')} In Obsidian: ${chalk.white('Open folder as vault')} → select ${chalk.green('_dream_context/')}`);
@@ -413,7 +452,7 @@ export function registerInitCommand(program: Command): void {
         console.log(`  ${chalk.dim('1.')} Run ${chalk.magentaBright.bold('dreamcontext setup')} ${chalk.dim('— one-shot: skills + agents + hooks + root instructions')}`);
         console.log(`  ${chalk.dim('   ')} ${chalk.dim('(or')} ${chalk.magentaBright('dreamcontext install-skill')}${chalk.dim(' to install just the integration)')}`);
         console.log(`  ${chalk.dim('2.')} Run ${chalk.magentaBright('dreamcontext features create <name>')} to add features`);
-        console.log(`  ${chalk.dim('3.')} Edit ${chalk.green('_dream_context/core/0.soul.md')} to define agent identity`);
+        console.log(`  ${chalk.dim('3.')} Edit ${chalk.green('_dream_context/core/0.soul.md')} (agent identity) and ${chalk.green(`_dream_context/people/${personSlug}.md`)} (your constitution)`);
         if (obsidianInstalled) {
           console.log(`  ${chalk.dim('4.')} In Obsidian: ${chalk.white('Open folder as vault')} → select ${chalk.green('_dream_context/')}`);
         }

@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { confirm, input } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { header, info, success, error } from '../../lib/format.js';
+import { resolveAuthors } from '../../lib/people-resolve.js';
 import {
   buildCorpus,
   bm25Search,
@@ -341,7 +342,7 @@ export function registerMemoryCommand(program: Command): void {
     .option('--type <type>', 'Changelog type (default: note)', 'note')
     .option('--scope <scope>', 'Changelog scope (default: quick)', 'quick')
     .option('--references <refs>', 'Optional comma-separated references (commit:<sha>, file:<path>, knowledge:<slug>, feature:<slug>, task:<slug>, url:<href>)')
-    .option('--person <list>', 'Optional comma-separated people to attribute this memory to (e.g. "mehmet,ada")')
+    .option('--person <list>', 'Comma-separated people to attribute this memory to (e.g. "mehmet,ada") — defaults to the active person')
     .description('Quick-append a CHANGELOG entry. Fast path; for full control use `dreamcontext core changelog add`.')
     .action(async (
       textParts: string[],
@@ -361,9 +362,12 @@ export function registerMemoryCommand(program: Command): void {
       // Person attribution uses the UNIFIED `authors` carrier (the same field as
       // `core changelog add --authors`), NOT references. recall.ts indexes
       // `authors` into the doc tags so the person name is searchable.
-      const authors = opts.person
+      // An explicit --person wins verbatim; otherwise the active person is
+      // stamped, and a vault with no people/people.json stamps nothing (D18).
+      const explicitPeople = opts.person
         ? opts.person.split(',').map((s) => s.trim()).filter(Boolean)
         : undefined;
+      const authors = resolveAuthors(root, explicitPeople);
       const changelogPath = join(root, 'core', 'CHANGELOG.json');
       const entry: Record<string, unknown> = {
         date: today(),

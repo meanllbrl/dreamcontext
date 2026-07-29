@@ -9,10 +9,13 @@ export interface SetupConfig {
   packs: string[];
   multiProduct: false | string[];
   /**
-   * Canonical roster of humans working in this project (kebab-case display
-   * names). Optional + additive: absent ⇒ single-person project. There is NO
-   * persisted `multiPerson` flag — multi-person status is DERIVED from this
-   * roster via `isMultiPerson()` (people.length > 1) to avoid desync.
+   * @deprecated Retired in 0.23.0 — the roster moved to `people/people.json`
+   * (`src/lib/people-store.ts`), which owns `slug → {name, emails[], role?}`
+   * instead of bare display names. Parsing is KEPT so a pre-0.23 config still
+   * loads for the migration to read; the 0.23.0 migration then deletes the key
+   * via `deleteSetupConfigKeys`. Nothing new should read or write this.
+   * `peopleIdentity` (below) is NOT retired — it is a side-table of external
+   * system ids keyed by slug, not a roster.
    */
   people?: string[];
   setupVersion: string;
@@ -148,6 +151,16 @@ export interface BrainLocalState {
    * Only ever a hash — the raw value never lands in this 0644 file.
    */
   demotedTokenSha256?: string;
+  /**
+   * WHICH PERSON is at this keyboard (`people whoami --set <slug>`) — rung 2 of
+   * the resolution ladder in `people-resolve.ts`. Machine identity, so it lives
+   * in the one gitignored machine-local file and is NEVER written to the synced
+   * brain. Written ONLY by an explicit `--set`, never auto-persisted: resolution
+   * stays deterministic instead of mysteriously sticky. Validated (charset +
+   * roster membership) on write AND on read — a hand-edit or a bad merge must
+   * not be able to feed a path segment into `personFilePath`.
+   */
+  activePersonSlug?: string;
 }
 
 export interface ClickUpConfig {
@@ -361,6 +374,42 @@ export function updateSetupConfig(
 }
 
 /**
+ * Physically DELETE keys from `.config.json`.
+ *
+ * `updateSetupConfig`'s `patch.X ?? existing.X` merge cannot express deletion —
+ * `undefined` means "leave alone" by design — so a retiring key (0.23.0's
+ * `people`) needs its own verb. Operates on the RAW parsed object rather than a
+ * `SetupConfig` round-trip so that any key this module does not model survives
+ * the rewrite untouched.
+ *
+ * No-op when the file is absent, or when none of `keys` is present (so a
+ * re-run of the migration that owns this leaves the file byte-identical).
+ * THROWS on a present-but-unparseable config: silently rewriting a file we
+ * could not read would destroy it.
+ */
+export function deleteSetupConfigKeys(projectRoot: string, keys: Array<keyof SetupConfig>): void {
+  const path = configPath(projectRoot);
+  if (!existsSync(path)) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf-8'));
+  } catch (err) {
+    throw new Error(`${CONFIG_REL_PATH} is not valid JSON — refusing to rewrite it: ${(err as Error).message}`);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+  const raw = parsed as Record<string, unknown>;
+  let removed = false;
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(raw, key)) {
+      delete raw[key];
+      removed = true;
+    }
+  }
+  if (!removed) return;
+  writeFileSync(path, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+}
+
+/**
  * Proactive learning layer gate. Default OFF: absent config, absent
  * `learning`, or `enabled !== true` all resolve to disabled — the layer is
  * opt-in per project (see `SetupConfig.learning`).
@@ -391,6 +440,7 @@ export function readBrainLocal(projectRoot: string): BrainLocalState {
     if (typeof parsed.pendingAgentMerge === 'boolean') out.pendingAgentMerge = parsed.pendingAgentMerge;
     if (typeof parsed.needsTaskSync === 'boolean') out.needsTaskSync = parsed.needsTaskSync;
     if (typeof parsed.demotedTokenSha256 === 'string') out.demotedTokenSha256 = parsed.demotedTokenSha256;
+    if (typeof parsed.activePersonSlug === 'string') out.activePersonSlug = parsed.activePersonSlug;
     return out;
   } catch {
     return {};
@@ -411,7 +461,14 @@ export function writeBrainLocal(projectRoot: string, patch: Partial<BrainLocalSt
  * Multi-person status is DERIVED, never persisted: a project is multi-person iff
  * its roster lists more than one human. Absent/short roster ⇒ single-person.
  * Mirrors the `multiProduct` length check so every surface gates identically.
+ *
+ * @deprecated Retired in 0.23.0 with `SetupConfig.people` — use
+ * `isMultiPersonVault(contextRoot)` from `people-store.ts`, which reads the real
+ * roster. Retained ONLY so the 0.23.0 migration can read a legacy config and so
+ * the wave-2 call sites (`snapshot.ts`, `tasks.ts`) keep compiling until they
+ * are re-pointed.
  */
+// SUNSET: remove in 0.24.0
 export function isMultiPerson(config: SetupConfig | null | undefined): boolean {
   return (config?.people?.length ?? 0) > 1;
 }

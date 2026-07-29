@@ -1,0 +1,17 @@
+[
+  {
+    "version": "v0.3.0",
+    "status": "planning",
+    "summary": "Byte-aware demotion rungs",
+    "tasks": ["alpha-harness-fit", "beta-doctor-check"]
+  },
+  {
+    "version": "v0.2.0",
+    "status": "released",
+    "date": "2026-01-05",
+    "summary": "Budget ladder with lazy rungs",
+    "breaking": false,
+    "tasks": ["alpha-harness-fit"],
+    "features": ["login-flow"]
+  }
+]

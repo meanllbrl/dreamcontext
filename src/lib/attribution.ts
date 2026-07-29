@@ -1,13 +1,19 @@
+import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import fg from 'fast-glob';
 import { slugify } from './id.js';
+import { readFrontmatter } from './frontmatter.js';
 
 /**
- * Per-person attribution of git commits to a known roster.
+ * Per-person attribution — commits to a roster, and a release to its people.
  *
- * Pure, side-effect-free. The orchestrator collects the cycle's commits (from
- * `git log`) and the detected `people` roster, then hands both to this helper so
- * each specialist can report who drove which change. A person is identified by a
- * kebab-case slug (`slugify(name)`), the same slug used in `person:<slug>` task
- * tags and changelog `authors`.
+ * A person is identified by a kebab-case slug (`slugify(name)`), the same slug
+ * used in `person:<slug>` task tags, changelog `authors`, and the
+ * `people/people.json` roster.
+ *
+ * `attributeByPerson` is pure. `deriveContributors` reads the vault's task files
+ * (it needs the `person:` tags behind a release's task ids) — the one impure
+ * export, and it never writes.
  */
 
 /** A single git commit, as much as attribution needs. */
@@ -67,4 +73,69 @@ export function attributeByPerson(
   }
 
   return result;
+}
+
+/** The `person:<slug>` tag prefix — the single carrier of task assignment. */
+const PERSON_TAG_PREFIX = 'person:';
+
+/**
+ * Collect the `person:<slug>` tags of the tasks named by `taskIds`.
+ *
+ * Tasks are addressed by frontmatter `id` (that is what a release records), so
+ * this scans `state/*.md` once and keeps the ones whose id was asked for.
+ * Unreadable files are skipped — a release must never fail to record because one
+ * task file is malformed.
+ */
+function personTagsForTasks(contextRoot: string, taskIds: string[]): string[] {
+  const wanted = new Set(taskIds.filter(Boolean));
+  if (wanted.size === 0) return [];
+  const stateDir = join(contextRoot, 'state');
+  if (!existsSync(stateDir)) return [];
+
+  const out: string[] = [];
+  for (const file of fg.sync('*.md', { cwd: stateDir, absolute: true })) {
+    try {
+      const { data } = readFrontmatter<Record<string, unknown>>(file);
+      if (!wanted.has(String(data.id ?? ''))) continue;
+      const tags = Array.isArray(data.tags) ? data.tags : [];
+      for (const tag of tags) {
+        const value = String(tag).trim();
+        if (value.startsWith(PERSON_TAG_PREFIX)) out.push(value.slice(PERSON_TAG_PREFIX.length).trim());
+      }
+    } catch { /* skip unreadable */ }
+  }
+  return out;
+}
+
+/**
+ * The people behind a release: the union of its changelog entries' `authors`
+ * and its tasks' `person:<slug>` tags (D11).
+ *
+ * Bots are dropped (`github-actions`, `dependabot` — the same filter
+ * `attributeByPerson` uses: a CI account is not a contributor), blanks are
+ * dropped, the result is deduped and sorted so two machines recording the same
+ * release produce the same list.
+ *
+ * Returns `[]` when there is nothing to attribute — callers OMIT the
+ * `contributors` key entirely rather than writing an empty array, which is what
+ * keeps a rosterless vault's releases byte-identical to pre-0.23.0 (D18).
+ */
+export function deriveContributors(
+  contextRoot: string,
+  input: { changelogEntries: Array<{ authors?: string[] }>; taskIds: string[] },
+): string[] {
+  const candidates: string[] = [];
+  for (const entry of input.changelogEntries) {
+    for (const author of entry.authors ?? []) candidates.push(String(author));
+  }
+  candidates.push(...personTagsForTasks(contextRoot, input.taskIds));
+
+  const seen = new Set<string>();
+  for (const raw of candidates) {
+    const slug = raw.trim();
+    if (!slug) continue;
+    if (isBotAuthor(slug.toLowerCase())) continue;
+    seen.add(slug);
+  }
+  return [...seen].sort();
 }

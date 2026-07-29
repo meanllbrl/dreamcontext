@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "people": {
+    "ada-fixture": {
+      "name": "Ada Fixture",
+      "emails": [
+        "ada@fixture.invalid"
+      ],
+      "role": "maintainer"
+    },
+    "bob-fixture": {
+      "name": "Bob Fixture",
+      "emails": [
+        "bob@fixture.invalid"
+      ],
+      "role": "reviewer"
+    },
+    "cleo-fixture": {
+      "name": "Cleo Fixture",
+      "emails": [
+        "cleo@fixture.invalid"
+      ]
+    }
+  }
+}

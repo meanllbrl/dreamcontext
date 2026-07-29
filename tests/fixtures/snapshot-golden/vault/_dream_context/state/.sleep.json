@@ -1,0 +1,43 @@
+{
+  "debt": 3,
+  "sessions": [
+    {
+      "id": "ses_fixture01",
+      "started_at": "2026-01-05T09:00:00.000Z",
+      "score": null
+    },
+    {
+      "id": "ses_fixture02",
+      "started_at": "2026-01-04T09:00:00.000Z",
+      "score": 2
+    }
+  ],
+  "bookmarks": [
+    {
+      "id": "bm_fixture01",
+      "message": "The never-evict tier is what busts the harness limit, not the demotable sections.",
+      "salience": 3,
+      "created_at": "2026-01-05T10:00:00.000Z",
+      "session_id": null,
+      "task_slug": "alpha-harness-fit"
+    },
+    {
+      "id": "bm_fixture02",
+      "message": "Splitting a flush at any element boundary is byte-neutral because join inserts exactly one newline either way.",
+      "salience": 2,
+      "created_at": "2026-01-04T10:00:00.000Z",
+      "session_id": null,
+      "task_slug": null
+    },
+    {
+      "id": "bm_fixture03",
+      "message": "Golden fixtures must be date-free or they rot.",
+      "salience": 1,
+      "created_at": "2026-01-03T10:00:00.000Z",
+      "session_id": null,
+      "task_slug": null
+    }
+  ],
+  "triggers": [],
+  "knowledge_access": {}
+}

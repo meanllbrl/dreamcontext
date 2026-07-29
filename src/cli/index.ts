@@ -33,6 +33,7 @@ import { registerVaultsCommand } from './commands/vaults.js';
 import { registerConnectionsCommand } from './commands/connections.js';
 import { registerFederationCommand } from './commands/federation.js';
 import { registerConfigCommand } from './commands/config.js';
+import { registerPeopleCommand } from './commands/people.js';
 import { registerFeedbackCommand } from './commands/feedback.js';
 import { registerMigrationsCommand } from './commands/migrations.js';
 import { registerBrainCommand } from './commands/brain.js';
@@ -165,6 +166,7 @@ export function createProgram(): Command {
   registerConnectionsCommand(program);
   registerFederationCommand(program);
   registerConfigCommand(program);
+  registerPeopleCommand(program);
   registerFeedbackCommand(program);
   registerMigrationsCommand(program);
   registerBrainCommand(program);

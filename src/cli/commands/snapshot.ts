@@ -11,9 +11,13 @@ import { readSection } from '../../lib/markdown.js';
 import { readSleepState, writeSleepState, readSleepHistory } from './sleep.js';
 import { countPendingSessions } from '../../lib/sleep-consolidation.js';
 import { buildKnowledgeIndex } from '../../lib/knowledge-index.js';
-import { buildCoreIndex } from '../../lib/core-index.js';
+import { buildCoreIndex, auditCoreFileSizes, CORE_FILE_CHAR_CEILING } from '../../lib/core-index.js';
 import { buildMarketingSnapshot } from '../../lib/marketing/snapshot.js';
-import { readSetupConfig, isMultiPerson, isLearningEnabled, type SetupConfig } from '../../lib/setup-config.js';
+import { readSetupConfig, isLearningEnabled, type SetupConfig } from '../../lib/setup-config.js';
+import {
+  hasPeopleLayout, isMultiPersonVault, listPeople, personFilePath, PeopleStoreError,
+} from '../../lib/people-store.js';
+import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { loadTaskOverride, renderOverrideBriefing } from '../../lib/overrides.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
 import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge } from '../../lib/version-check.js';
@@ -31,15 +35,226 @@ import { readPeerSummaryCache } from '../../lib/federation-peer-summary.js';
 import { resolveLinkedRepos } from '../../lib/linked-repos.js';
 import { renderAutomationsSection } from '../../lib/automations/snapshot.js';
 import {
-  applyBudget, resolveBudget, demoteMemoryBlock, demoteTaskList, HARNESS_PERSIST_CHAR_LIMIT,
-  type BudgetSection,
+  applyBudget, resolveBudget, demoteMemoryBlock, demoteTaskList, renderOverBudgetBanner,
+  HARNESS_PERSIST_CHAR_LIMIT,
+  type BudgetSection, type BudgetRung, type BudgetResult,
 } from '../../lib/snapshot-budget.js';
+import {
+  compressMarkdownBlock, compressedCoreFile, packToCharBudget, shrinkBody,
+  type CompressOptions,
+} from '../../lib/snapshot-compress.js';
+import {
+  // CORE_L1/L2/L3 are deliberately NOT imported: the soul and the user file are
+  // both never-evict now, so no core file has a compression rung to configure.
+  // See the note on `renderCoreFile` below and in `snapshot-caps.ts`.
+  MEMORY_DEEP_ITEM_CHARS, MEMORY_DEEP_PER_SECTION_CHARS,
+  TASKS_L1_CHARS, TASKS_L2_CHARS, TASKS_ROSTER_CHARS,
+  FEATURES_L1_CHARS, FEATURES_L2_CHARS, FEATURES_ROSTER_CHARS,
+  KNOWLEDGE_L2_CHARS, PINNED_ITEM_CHARS, PINNED_KNOWLEDGE_CHARS,
+  BOOKMARKS_L1_CHARS, BOOKMARK_ITEM_CHARS,
+  EXTENDED_CORE_L1_CHARS, RELEASES_L1_CHARS,
+  CONNECTED_L1_CHARS, CONNECTED_L2_CHARS, PEOPLE_ROSTER_L1_CHARS,
+  OBJECTIVES_L2_CHARS, OBJECTIVE_ITEM_CHARS, THESES_CLAIM_CHARS,
+  BANNER_MAX_CORE_FILES, DEMOTION_RANKS,
+  type DemotableSectionId, type NeverEvictSectionId,
+} from '../../lib/snapshot-caps.js';
 
 /**
  * Default line cap when inlining pinned knowledge into the auto-context snapshot.
  * Per-entry overrides via frontmatter `pinned_preview_lines: N` or `pinned_preview: "all"`.
  */
 export const DEFAULT_PINNED_PREVIEW_LINES = 60;
+
+/**
+ * The pinned-knowledge MUST-READ banner, shared by all three snapshot renders of
+ * the pinned block (level 0, rung 1, rung 2) so they cannot drift apart. It is
+ * never dropped at any rung, however deep the ladder goes.
+ *
+ * `generateSubagentBriefing` deliberately keeps its own copy: that function is
+ * contractually untouched by this rework, and the briefing has no ladder.
+ */
+const PINNED_BANNER =
+  '> !!! ÇOK ÖNEMLİ !!! Kullanıcı bu bilgiyi pinlemiş — yapacağın bir işle ilişkisi varsa MUTLAKA OKU!\n';
+
+/**
+ * The pinned 📌 block for the DEMOTED (rung-2) knowledge index.
+ *
+ * Pinned knowledge is the last thing this section gives up — verbatim at level 0
+ * and rung 1, bounded only here. The bound exists because pin COUNT is unbounded
+ * and the verbatim block measured 3,530 chars on a 6-pin vault, ~82% of it
+ * description prose the pinned file itself holds one Read away, while the signal
+ * that matters — 📌 + slug + path — costs ~104 chars per pin.
+ *
+ * Degrades uniformly rather than per-item, so what the agent is looking at is
+ * always one of three known shapes: described → bare → packed with a counted
+ * tail. Every pin keeps its 📌, slug and path at every stage but the last, which
+ * only a pathological pin count reaches and which still reports an accurate
+ * remainder plus the command that lists them.
+ */
+function renderPinnedBlock(
+  pinned: ReturnType<typeof buildKnowledgeIndex>,
+  itemChars: number,
+  budget: number,
+): string[] {
+  if (pinned.length === 0) return [];
+
+  const bare = (e: (typeof pinned)[number]): string =>
+    `- 📌 **${e.slug}** (_dream_context/knowledge/${e.slug}.md)`;
+  const described = pinned.map((e) => {
+    const summary = shrinkBody(e.description, itemChars, false);
+    return summary ? `${bare(e)}: ${summary}` : bare(e);
+  });
+  const fits = (lines: string[]): boolean =>
+    lines.reduce((total, line) => total + line.length + 1, 0) <= budget;
+
+  let body: string[];
+  if (fits(described)) body = described;
+  else if (fits(pinned.map(bare))) body = pinned.map(bare);
+  else {
+    body = packToCharBudget(pinned, bare, budget, (rest) =>
+      `- 📌 (+${rest.length} more pinned — \`dreamcontext knowledge index\` lists them)`);
+  }
+
+  return [PINNED_BANNER, ...body, ''];
+}
+
+/**
+ * Build a demotable budget section with its rank already attached.
+ *
+ * The rank comes from `DEMOTION_RANKS`, keyed by `DemotableSectionId`, so a new
+ * demotable section that nobody gave a rank is a COMPILE error here rather than
+ * a silent fallback to its array index — which would drop it into the middle of
+ * the 10-150 rank scale and let, say, the user file demote before warm knowledge.
+ *
+ * Used directly by the sections that are pushed rather than flushed (objectives,
+ * lab, theses) and by `flushDemotable` inside the snapshot builder.
+ */
+function demotableSection(
+  id: DemotableSectionId,
+  text: string,
+  demotions: BudgetRung[],
+  maxDemotionLevel?: number,
+): BudgetSection {
+  return {
+    id,
+    text,
+    demotions,
+    demotionRank: DEMOTION_RANKS[id],
+    ...(maxDemotionLevel !== undefined ? { maxDemotionLevel } : {}),
+  };
+}
+
+/**
+ * A remainder tail that names WHOLE items and never cuts one.
+ *
+ * Two rules meet here. A user-visible name is an identifier the agent has to be
+ * able to act on, so it is never sliced mid-string — a half-printed slug is the
+ * exact positional-cut failure this whole module exists to prevent. But the tail
+ * is also BOUNDED, so no rung has an unbounded term that grows with the backlog
+ * and quietly re-breaks the budget. Past the bound, items are omitted behind an
+ * accurate count plus the command that gets them back.
+ */
+function namedRosterTail(names: string[], budget: number, noun: string, recovery: string): string {
+  const named: string[] = [];
+  let used = 0;
+  for (const name of names) {
+    const cost = name.length + 2; // the ', ' that joins it
+    if (named.length > 0 && used + cost > budget) break;
+    named.push(name);
+    used += cost;
+  }
+  const omitted = names.length - named.length;
+  const head = omitted > 0
+    ? `+${names.length} more ${noun} — ${named.length} named, ${omitted} omitted`
+    : `+${names.length} more ${noun}`;
+  return `- (${head}: ${named.join(', ')} — ${recovery})`;
+}
+
+/** Recovery pointer for anything that lives inside `core/2.memory.md`. */
+function memoryRecallTail(count: number): string {
+  return `- (+${count} more in \`_dream_context/core/2.memory.md\` — \`dreamcontext memory recall "<keywords>"\`)`;
+}
+
+/**
+ * Deepest Memory rung: every entry compressed to its title, then each H2 packed
+ * into its own char budget.
+ *
+ * Heading-agnostic by design. `demoteMemoryBlock` only knows the literal string
+ * `## Technical Decisions`, which is why `## Known Issues` had no rung at all and
+ * stayed at full size (4.7KB on this vault) even at "max demotion". Packing per
+ * H2 rather than over the whole block stops one huge section from starving the
+ * others: a mature brain's decision list would otherwise consume the entire
+ * budget and leave the working set with nothing.
+ */
+function demoteMemoryBlockDeep(header: string, content: string): string {
+  const compressed = compressMarkdownBlock(content, {
+    itemChars: MEMORY_DEEP_ITEM_CHARS,
+    paraChars: MEMORY_DEEP_ITEM_CHARS + 40,
+    titleOnly: true,
+  });
+
+  const blocks: string[] = [];
+  let heading: string | null = null;
+  let items: string[] = [];
+  const flushGroup = (): void => {
+    const packed = items.length > 0
+      ? packToCharBudget(items, (line) => line, MEMORY_DEEP_PER_SECTION_CHARS,
+        (rest) => memoryRecallTail(rest.length))
+      : [];
+    if (heading !== null || packed.length > 0) {
+      blocks.push([...(heading === null ? [] : [heading]), ...packed].join('\n'));
+    }
+    heading = null;
+    items = [];
+  };
+
+  // Only H1/H2 open a new budget. A `###` is a sub-heading INSIDE a section
+  // (dated entries under Technical Decisions — 25 of them on the largest live
+  // vault), so treating it as a boundary would hand each one its own full budget
+  // and multiply the section's floor by the number of sub-headings. They pack as
+  // items instead, which is also what keeps them competing for the same space as
+  // the entries they head.
+  for (const line of compressed.split('\n')) {
+    if (/^#{1,2}\s/.test(line)) {
+      flushGroup();
+      heading = line;
+      continue;
+    }
+    if (line.trim() === '') continue;
+    items.push(line);
+  }
+  flushGroup();
+
+  return [header, blocks.join('\n\n'), ''].join('\n');
+}
+
+/**
+ * Render a core file for a compressed ladder rung. The header line is re-emitted
+ * so the block keeps exactly the shape of the full render.
+ *
+ * CURRENTLY UNREFERENCED, and deliberately retained. Both files that ever went
+ * through here are now never-evict: the soul (agent constitution) and the user
+ * file (person constitution) render verbatim at every budget, so no core file
+ * has a compression rung today. It is kept because the people-first redesign
+ * splits the user file's non-person content into core surfaces that WILL be
+ * demotable, and this is the exact shape they need — plus it keeps
+ * `compressedCoreFile` wired to a real render path rather than tests alone.
+ *
+ * Deliberately takes no per-vault configuration: what survives compression is
+ * decided by the rung's `CompressOptions` alone. There is no frontmatter read
+ * here — `compressedCoreFile` strips a leading frontmatter block itself.
+ */
+function renderCoreFile(
+  header: string,
+  rawFileContent: string,
+  relPath: string,
+  opts: CompressOptions,
+): string {
+  const body = compressedCoreFile(
+    rawFileContent, relPath, rawFileContent.length, rawFileContent.split('\n').length, opts,
+  );
+  return [header, body, ''].join('\n');
+}
 
 /**
  * Strip leading YAML frontmatter and surrounding blank lines from markdown content.
@@ -120,6 +335,13 @@ export function extractFirstParagraph(content: string): string {
  */
 interface ActiveTaskEntry {
   text: string;
+  /**
+   * The task's file slug. Carried explicitly so a demoted rung can name the
+   * tasks it omitted without regexing them back out of the rendered `text` —
+   * the roster must reproduce the slug exactly, since it is what
+   * `dreamcontext tasks <slug>` takes.
+   */
+  slug: string;
   status: string;
   priority: string;
   updated: string;
@@ -210,7 +432,7 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
         line += `\n  Custom fields: ${rendered.join(', ')}`;
       }
 
-      entries.push({ text: line, status, priority, updated });
+      entries.push({ text: line, slug: name, status, priority, updated });
     } catch {
       // skip unreadable files
     }
@@ -543,10 +765,35 @@ function objectiveSnapshotLine(o: RoadmapObjective): string {
 }
 
 /**
+ * One ACTIVE objective at the deepest rung: slug, progress, slip. No title, no
+ * description, no dates.
+ *
+ * The slug is the load-bearing part — it is what `objectives:` frontmatter
+ * references and what `dreamcontext roadmap` prints — so it is never shortened.
+ * If a pathological slug would blow OBJECTIVE_ITEM_CHARS on its own, the
+ * decorations are dropped instead of the name.
+ */
+function objectiveCompactLine(o: RoadmapObjective): string {
+  const icon = { done: '🟢', active: '🔵', review: '🟡', not_started: '⚪' }[o.status];
+  const pct = o.progress.pct === null ? 'no tasks yet' : `${o.progress.pct}%`;
+  const slip = o.slipping === true
+    ? (o.slip_days !== null ? ` · ${o.slip_days}d late` : ' · SLIPPING')
+    : '';
+  const bare = `- ${icon} ${o.slug}`;
+  const full = `${bare} — ${pct}${slip}`;
+  return full.length > OBJECTIVE_ITEM_CHARS ? bare : full;
+}
+
+/**
  * Objectives (roadmap) section: active objectives + ones completed in the last
  * OBJECTIVES_RECENT_DONE_DAYS days — so every session knows WHAT the project is
  * driving toward and what just landed. Returns null when no objectives exist.
- * Demotions: full → active-only one-liners → single count line.
+ *
+ * Demotions: full → active-only one-liners → one compact line per active
+ * objective. The deepest rung used to be `- N objective(s)`, which left the
+ * agent unable to name a single outcome while SKILL.md still told it to weigh
+ * decisions against them. That rung is gone; the floor is set at level 2 so
+ * nothing can reintroduce it by adding a cheaper one.
  */
 function renderObjectivesSection(root: string): { full: string; demotions: string[] } | null {
   try {
@@ -598,7 +845,16 @@ function renderObjectivesSection(root: string): { full: string; demotions: strin
 
     const level2 = [
       '## Objectives (Roadmap)\n',
-      `- ${model.objectives.length} objective(s)${slippingCount > 0 ? ` — ${slippingCount} SLIPPING` : ''} — \`dreamcontext roadmap\` for the board`,
+      `${model.objectives.length} objective(s)${slippingCount > 0 ? ` — ${slippingCount} SLIPPING` : ''}. Board: \`dreamcontext roadmap\`.`,
+      '',
+      ...packToCharBudget(
+        active,
+        objectiveCompactLine,
+        OBJECTIVES_L2_CHARS,
+        (rest) => namedRosterTail(
+          rest.map((o) => o.slug), OBJECTIVES_L2_CHARS, 'objective(s)', '`dreamcontext roadmap`',
+        ),
+      ),
       '',
     ];
 
@@ -667,6 +923,18 @@ function thesisSnapshotLine(t: ThesisManifest): string {
 }
 
 /**
+ * The same line at the demoted rung: the claim compressed to its first sentence
+ * so the agent still knows WHAT is being tested, not just how many are open.
+ */
+function thesisCompactLine(t: ThesisManifest): string {
+  const pct = Math.round(t.confidence * 100);
+  const claim = compressMarkdownBlock(`- ${t.claim}`, {
+    itemChars: THESES_CLAIM_CHARS, paraChars: THESES_CLAIM_CHARS,
+  });
+  return `${claim} (${pct}%)`;
+}
+
+/**
  * Proactive learning layer (theses) section: open count, theses flipped
  * (validated/invalidated) in the last 7 days, awaiting-instrumentation count,
  * and the top 3 open claims ranked by distance from undecided (0.5). Hard-
@@ -705,9 +973,20 @@ function buildThesesSection(root: string, config: SetupConfig | null): BudgetSec
     const footer = ['', 'Board: `dreamcontext theses list` · dashboard: Hypotheses.', ''];
 
     const fullText = [...headerLines, ...summaryLines, ...topLines, ...footer].join('\n');
-    const level1 = `⚗ Learning: ${open.length} open · ${recentFlips.length} flipped · ${blocked.length} blocked`;
 
-    return { id: 'theses', text: fullText, demotions: [level1] };
+    // The only rung, and it is floored: the old one was
+    // `⚗ Learning: N open · N flipped · N blocked`, which told the agent that
+    // hypotheses exist while hiding every claim being tested. Counts alone
+    // cannot be acted on, so the claims come with them at every level of
+    // pressure — there is no cheaper rung for the ladder to reach for.
+    const level1 = [
+      ...headerLines,
+      ...summaryLines,
+      ...(topOpen.length > 0 ? ['', 'Top open:', ...topOpen.map(thesisCompactLine)] : []),
+      '',
+    ].join('\n');
+
+    return demotableSection('theses', fullText, [level1], 1);
   } catch {
     return null; // the snapshot must never crash on a malformed manifest
   }
@@ -775,10 +1054,56 @@ function renderLinkedReposGlance(root: string, style: 'snapshot' | 'briefing'): 
   }
 }
 
+/** A rendered snapshot together with the ladder verdict that produced it. */
+export interface SnapshotMeasurement {
+  /** The FINAL text, banner included. What the hook prints. */
+  text: string;
+  /**
+   * The raw ladder result, BEFORE the over-limit banner is injected — so
+   * `budget.text !== text` whenever the banner fired. Callers that need per
+   * section levels or the never-evict floor (doctor, tests) read this.
+   */
+  budget: BudgetResult;
+}
+
+/** Returned when there is no context root; keeps `generateSnapshot` at `''`. */
+const EMPTY_BUDGET_RESULT: BudgetResult = Object.freeze({
+  text: '',
+  demoted: [],
+  estimatedTokens: 0,
+  overBudget: false,
+  neverEvictChars: 0,
+  flooredSectionIds: [],
+});
+
+/** Options shared by `measureSnapshot` and `generateSnapshot`. */
+export interface SnapshotOptions {
+  /**
+   * Whether matched contextual reminders consume a firing (`fired_count++` plus
+   * a `.sleep.json` write). The reminders still RENDER when false — only the
+   * mutation is skipped. This is the sole write in the whole snapshot path, and
+   * `dreamcontext doctor` measures the snapshot without spending a firing.
+   */
+  fireTriggers?: boolean;
+  /**
+   * This render is a PEER vault's (`snapshot --vault <name>`), not this
+   * project's. Default `false`, and set in exactly one place: the
+   * `resolveVaultContextRoot` branch of `registerSnapshotCommand`.
+   *
+   * It exists because `rootOverride` alone cannot answer "is this a peer" —
+   * `doctor` and the floors tests pass LOCAL roots through it. The only thing it
+   * gates is the person + roster blocks (D14): this machine's identity resolved
+   * against a PEER's roster is a category error, and a peer's person binding is
+   * not this vault's problem to narrate.
+   */
+  peer?: boolean;
+}
+
 /**
- * Output a plain-text context snapshot to stdout.
+ * Render the context snapshot and report how the budget ladder resolved it.
+ *
  * Designed for SessionStart hook consumption — no chalk, no interactivity.
- * If _dream_context/ doesn't exist, exits silently.
+ * If _dream_context/ doesn't exist, returns an empty measurement.
  *
  * `rootOverride` (federation P1.4) prints a PEER vault's snapshot from an
  * already-resolved context root; the no-arg path resolves the local context root
@@ -786,23 +1111,45 @@ function renderLinkedReposGlance(root: string, style: 'snapshot' | 'briefing'): 
  * SessionStart hook calls it with no argument — regression-guarded). No peer
  * resolution, no cross-vault work happens on the no-arg path.
  */
-export function generateSnapshot(rootOverride?: string): string {
+export function measureSnapshot(
+  rootOverride?: string,
+  opts: SnapshotOptions = {},
+): SnapshotMeasurement {
   const root = rootOverride ?? resolveContextRoot();
-  if (!root) return '';
+  if (!root) return { text: '', budget: EMPTY_BUDGET_RESULT };
+  const fireTriggers = opts.fireTriggers !== false;
 
   // Snapshot is assembled as budget SECTIONS (see src/lib/snapshot-budget.ts):
-  // blocks accumulate into `parts`, then flush() seals them into a named
-  // section. Demotable sections carry pre-rendered ladder rungs; identity and
-  // warning sections are neverEvict. Under budget, the output is byte-identical
-  // to the pre-budget format (sections join exactly like the old parts array).
+  // blocks accumulate into `parts`, then a flush seals them into a named
+  // section. Under budget the output is byte-identical to the pre-budget format
+  // — sections join exactly like the old single parts array, so splitting one
+  // flush into two is a no-op on the rendered text.
+  //
+  // Which flush you call IS the tier. `flushPinned` takes only never-evict ids
+  // and `flushDemotable` only ranked demotable ids, so neither a missing
+  // `neverEvict: true` nor a missing rank can slip through as a plain boolean.
   const sections: BudgetSection[] = [];
   let parts: string[] = ['# Agent Context — Auto-loaded\n'];
-  const flush = (id: string, opts: { neverEvict?: boolean; demotions?: string[] } = {}): void => {
-    if (parts.length > 0) {
-      sections.push({ id, text: parts.join('\n'), ...opts });
-      parts = [];
-    }
+  const flushPinned = (id: NeverEvictSectionId): void => {
+    if (parts.length === 0) return;
+    sections.push({ id, text: parts.join('\n'), neverEvict: true });
+    parts = [];
   };
+  const flushDemotable = (
+    id: DemotableSectionId,
+    demotions: BudgetRung[],
+    maxDemotionLevel?: number,
+  ): void => {
+    if (parts.length === 0) return;
+    sections.push(demotableSection(id, parts.join('\n'), demotions, maxDemotionLevel));
+    parts = [];
+  };
+
+  // The H1 gets its own never-evict section. It used to ride along in whichever
+  // block flushed first — harmless while that block was always never-evict, but
+  // the identity tier is demotable now, and a demoted soul would have taken the
+  // document's title with it.
+  flushPinned('header');
 
   // 0. Linked repos — FIRST, inside the harness's ~2KB blind-preview window:
   // resolved local paths are machine facts the agent otherwise ASKS THE USER
@@ -812,27 +1159,153 @@ export function generateSnapshot(rootOverride?: string): string {
   const linkedGlance = renderLinkedReposGlance(root, 'snapshot');
   if (linkedGlance) {
     parts.push(...linkedGlance);
-    flush('linked-repos', { neverEvict: true });
+    flushPinned('linked-repos');
   }
 
-  // 1. Soul file (full content) — WHO the agent is
+  // 1. Soul file (full content) — WHO the agent is. NEVER-EVICT, no rungs.
+  //
+  // The soul is the agent's CONSTITUTION. A constitution rendered as a list of
+  // rule titles is not a constitution: the agent knows a rule exists and not
+  // what it says, which is worse than useless because it reads as compliance.
+  // So this block renders VERBATIM at every budget, at any size.
+  //
+  // That makes the soul the one section whose size the ladder cannot fix, and
+  // that is the point: an oversized soul is a CONTENT problem (conditional
+  // "when X, do Y" rules belong in knowledge/patterns, which recall fetches on
+  // demand — only the unconditional identity belongs here). The over-budget
+  // banner and `dreamcontext doctor` both name the file and its char count so
+  // the fix lands on the file rather than on the renderer.
+  const SOUL_HEADER = '## Soul (Agent Identity, Principles, Rules)\n';
   const soulPath = join(root, 'core', '0.soul.md');
   if (existsSync(soulPath)) {
     const content = readFileSync(soulPath, 'utf-8').trim();
-    parts.push('## Soul (Agent Identity, Principles, Rules)\n');
+    parts.push(SOUL_HEADER);
     parts.push(content);
     parts.push('');
+    flushPinned('soul');
   }
 
-  // 2. User file (full content) — WHO uses the agent
-  const userPath = join(root, 'core', '1.user.md');
-  if (existsSync(userPath)) {
-    const content = readFileSync(userPath, 'utf-8').trim();
-    parts.push('## User (Preferences, Project Details, Rules)\n');
-    parts.push(content);
-    parts.push('');
+  // 2. The ACTIVE PERSON's constitution (full content) — WHO is at the keyboard.
+  // NEVER-EVICT, no rungs.
+  //
+  // Exactly the soul's doctrine, applied to the person: `people/<slug>.md` is
+  // that person's constitution, so it renders VERBATIM at every budget, at any
+  // size. A preference reduced to its title is worse than an absent one — the
+  // agent sees that a rule about the person exists, reads that as knowing it,
+  // and never opens the file to find out what it actually says.
+  //
+  // Its size is therefore a CONTENT problem too, and the fix is the same shape
+  // as the soul's: what is not about the PERSON does not belong here. An
+  // oversized constitution trips the same loud banner + `dreamcontext doctor`
+  // error the soul does, naming the file and its char count.
+  //
+  // Four states, in order, and the ONLY one that renders prose is the first:
+  //   1. people/ layout + a resolved person + their file exists → verbatim.
+  //   2. people/ layout, nothing resolved → a notice and NOTHING ELSE. Rendering
+  //      somebody else's constitution because this machine could not be
+  //      identified is the one failure mode worse than rendering none.
+  //   3. no people/ layout but a legacy core/1.user.md → the D15 migration
+  //      window: verbatim under the OLD header plus one deprecation line.
+  //   4. a corrupt people.json (D17) collapses into state 2 — `resolveActivePerson`
+  //      swallows the parse error into its `reason`, which the notice prints.
+  // Peer vaults skip the whole thing (D14).
+  const activePerson = opts.peer !== true && hasPeopleLayout(root)
+    ? resolveActivePerson(root)
+    : null;
+  if (activePerson) {
+    const constitutionPath = activePerson.slug ? personFilePath(root, activePerson.slug) : null;
+    if (activePerson.slug && constitutionPath && existsSync(constitutionPath)) {
+      parts.push(`## Person (Active — ${activePerson.name}, \`person:${activePerson.slug}\`)\n`);
+      parts.push(readFileSync(constitutionPath, 'utf-8').trim());
+      parts.push('');
+    } else {
+      const why = activePerson.slug
+        ? `\`person:${activePerson.slug}\` resolved (${activePerson.source}) but \`_dream_context/people/${activePerson.slug}.md\` is missing`
+        : activePerson.reason;
+      parts.push('## Person (Active — UNRESOLVED)\n');
+      parts.push(
+        `- No constitution is loaded — ${why}. Fix it with \`dreamcontext people whoami --set <slug>\` `
+        + '(bind THIS machine) or `dreamcontext people add "<Your Name>" --email <your git email>` '
+        + '(add yourself). Nothing is guessed: another person\'s preferences are never rendered here.',
+      );
+      parts.push('');
+    }
+    flushPinned('person');
+  } else if (opts.peer !== true) {
+    // SUNSET: remove in 0.24.0 — D15's migration window, and nothing more. It is
+    // unreachable the moment the 0.23.0 migration deletes `core/1.user.md`, but
+    // until that runs (it fires at `sleep start` / `update`) a vault whose CLI
+    // has been upgraded ahead of its brain must still tell the agent who the
+    // user is. A window where the agent knows NOTHING about the person is a
+    // worse failure than one extra branch.
+    const USER_HEADER = '## User (Preferences, Project Details, Rules)\n';
+    const userPath = join(root, 'core', '1.user.md');
+    if (existsSync(userPath)) {
+      const content = readFileSync(userPath, 'utf-8').trim();
+      parts.push(USER_HEADER);
+      parts.push('> ⚠️ Retired layout — run `dreamcontext update` to migrate to `people/`.');
+      parts.push(content);
+      parts.push('');
+      flushPinned('person');
+    }
   }
-  flush('identity', { neverEvict: true });
+
+  // 2a. Everyone ELSE in this vault — inventory, not constitution, so unlike the
+  // block above it is DEMOTABLE (rank 110). Multi-person vaults only: a solo
+  // vault renders zero ceremony about people, exactly as before.
+  //
+  // The line carries `role` FROM people.json and nothing else. It deliberately
+  // does not open anyone's markdown to summarise them: that would read every
+  // person's constitution on the SessionStart hot path, and it would lift PROSE
+  // into a structural line — the roster's whole job is to say who exists, and
+  // `dreamcontext people show <slug>` is one command away for the rest.
+  if (opts.peer !== true) {
+    let roster: Array<{ slug: string; name: string; role?: string }> = [];
+    try {
+      roster = listPeople(root);
+    } catch (err) {
+      // A corrupt roster already spoke for itself in the UNRESOLVED notice above
+      // (D17: the read path degrades, `doctor` is the one that shouts).
+      if (!(err instanceof PeopleStoreError)) throw err;
+    }
+    const others = roster.filter((p) => p.slug !== activePerson?.slug);
+    if (roster.length > 1 && others.length > 0) {
+      const ROSTER_HEADER = '## Other People (this vault)\n';
+      const line = (p: { slug: string; name: string; role?: string }): string =>
+        `- **${p.name}** (\`person:${p.slug}\`)${p.role ? ` — ${p.role}` : ''}`;
+      parts.push(ROSTER_HEADER);
+      parts.push(others.map(line).join('\n'));
+      parts.push('');
+      flushDemotable('people-roster', [
+        // Rung 1 drops the role label; every person keeps their name AND their
+        // `person:<slug>` tag, which is what makes them addressable at all.
+        () => [
+          ROSTER_HEADER,
+          ...packToCharBudget(
+            others,
+            (p) => `- **${p.name}** (\`person:${p.slug}\`)`,
+            PEOPLE_ROSTER_L1_CHARS,
+            (rest) => namedRosterTail(
+              rest.map((p) => p.slug), PEOPLE_ROSTER_L1_CHARS,
+              'person/people', '`dreamcontext people list`',
+            ),
+          ),
+          '',
+        ].join('\n'),
+        // Rung 2: a single line — still a NAMED list, never a bare count.
+        () => [
+          ROSTER_HEADER,
+          `- Other people: ${packToCharBudget(
+            others,
+            (p) => p.name,
+            PEOPLE_ROSTER_L1_CHARS,
+            (rest) => `+${rest.length} more (\`dreamcontext people list\`)`,
+          ).join(', ')}`,
+          '',
+        ].join('\n'),
+      ]);
+    }
+  }
 
   // 2b. Active task-format override — the MAIN agent must honor the project's
   // custom task shape + custom fields (with per-field prompts) exactly like the
@@ -842,25 +1315,35 @@ export function generateSnapshot(rootOverride?: string): string {
     parts.push('## Task Format Override (ACTIVE — follow for every task)\n');
     parts.push(renderOverrideBriefing(taskOverride));
     parts.push('');
-    flush('task-override', { neverEvict: true });
+    flushPinned('task-override');
   }
 
   // 3. Memory file (full content) — WHAT the agent knows.
-  // Demotion: Technical Decisions keeps the newest N bullets, older collapse
-  // to titles (still recallable); Active Memory + Known Issues never shrink.
+  // Rungs 1-2: Technical Decisions keeps the newest N bullets, older collapse to
+  // titles. Rung 3 compresses EVERY entry to its title and packs each H2 into
+  // its own budget — that is what finally shrinks `## Known Issues`, which the
+  // heading-specific rungs above never touched.
+  const MEMORY_HEADER = '## Memory (Technical Decisions, Known Issues, Session Log)\n';
   const memoryPath = join(root, 'core', '2.memory.md');
   if (existsSync(memoryPath)) {
     const content = readFileSync(memoryPath, 'utf-8').trim();
     if (content) {
-      parts.push('## Memory (Technical Decisions, Known Issues, Session Log)\n');
+      parts.push(MEMORY_HEADER);
       parts.push(content);
       parts.push('');
       const full = parts.join('\n');
-      flush('memory', { demotions: [demoteMemoryBlock(full, 8), demoteMemoryBlock(full, 4)] });
+      flushDemotable('memory', [
+        () => demoteMemoryBlock(full, 8),
+        () => demoteMemoryBlock(full, 4),
+        () => demoteMemoryBlockDeep(MEMORY_HEADER, content),
+      ]);
     }
   }
 
-  // 4. Extended Core Files index (files 3+, not loaded in full)
+  // 4. Extended Core Files index (files 3+, not loaded in full).
+  // Demotion drops the summaries and keeps name + path, which is nearly all of
+  // the cost: 2,175 chars here and 4,463 on the largest live vault collapse to
+  // ~200 and ~420. Every file is still named and still one Read away.
   const coreExtras = buildCoreIndex(root);
   if (coreExtras.length > 0) {
     parts.push('## Extended Core Files\n');
@@ -872,21 +1355,50 @@ export function generateSnapshot(rootOverride?: string): string {
       parts.push(line);
     }
     parts.push('');
+    flushDemotable('extended-core', [
+      () => [
+        '## Extended Core Files\n',
+        ...packToCharBudget(
+          coreExtras,
+          (entry) => `- **${entry.name}** (${entry.path})`,
+          EXTENDED_CORE_L1_CHARS,
+          (rest) => namedRosterTail(
+            rest.map((entry) => entry.name), EXTENDED_CORE_L1_CHARS,
+            'core file(s)', '`dreamcontext core list`',
+          ),
+        ),
+        '',
+      ].join('\n'),
+    ]);
   }
-  flush('extended-core', { neverEvict: true });
 
   // 5. Active tasks. Full render keeps file order (byte-identical under
-  // budget); demoted renders sort by activity and cap the list, the remainder
-  // collapsing to a count line — every task is still one `tasks list` away.
+  // budget); demoted renders sort by activity and pack whole entry blocks into a
+  // CHAR budget, with the remainder named slug-by-slug. Item counts were the bug
+  // here: 8 entries is 3KB on one vault and 900 chars on another.
   const activeTasks = getActiveTaskEntries(root);
   if (activeTasks.length > 0) {
     parts.push('## Active Tasks\n');
     parts.push(activeTasks.map((t) => t.text).join('\n'));
     parts.push('');
-    const sortedTexts = sortTaskEntriesByActivity(activeTasks).map((t) => t.text);
-    const renderTasks = (keep: number): string =>
-      ['## Active Tasks\n', demoteTaskList(sortedTexts, keep).join('\n'), ''].join('\n');
-    flush('tasks', { demotions: [renderTasks(12), renderTasks(8)] });
+    const sorted = sortTaskEntriesByActivity(activeTasks);
+    const renderTasks = (keptChars: number): string => [
+      '## Active Tasks\n',
+      packToCharBudget(
+        sorted,
+        (entry) => entry.text,
+        keptChars,
+        (rest) => namedRosterTail(
+          rest.map((entry) => entry.slug), TASKS_ROSTER_CHARS,
+          'active task(s)', '`dreamcontext tasks list`',
+        ),
+      ).join('\n'),
+      '',
+    ].join('\n');
+    flushDemotable('tasks', [
+      () => renderTasks(TASKS_L1_CHARS),
+      () => renderTasks(TASKS_L2_CHARS),
+    ]);
   }
 
   // 5.1 Active Product Knowledge (multi-product binding)
@@ -920,21 +1432,53 @@ export function generateSnapshot(rootOverride?: string): string {
     parts.push(migrationNote);
     parts.push('');
   }
-  flush('product-and-nudge', { neverEvict: true });
+  flushPinned('product-and-nudge');
 
   // 5.5 Read sleep state (used by multiple sections below)
   const sleepState = readSleepState(root);
 
-  // 5.6 Bookmarks (awake ripples, tagged moments from previous sessions)
+  // 5.6 Bookmarks (awake ripples, tagged moments from previous sessions).
+  // Demotes, but only to a floor: ★★★ bookmarks are the primary consolidation
+  // signal (soul: "critical bookmarks take priority over raw change counts"), so
+  // they stay VERBATIM at every rung and only the quieter ones shrink.
   if (sleepState.bookmarks.length > 0) {
     const sorted = [...sleepState.bookmarks].sort((a, b) => b.salience - a.salience);
-    parts.push('## Bookmarks\n');
     const salienceLabels: Record<number, string> = { 1: '*', 2: '**', 3: '***' };
-    for (const b of sorted) {
+    const bookmarkLine = (b: typeof sorted[number]): string => {
       const taskRef = b.task_slug ? ` (task: ${b.task_slug})` : '';
-      parts.push(`- ${salienceLabels[b.salience] || '*'} ${b.message}${taskRef}`);
-    }
+      return `- ${salienceLabels[b.salience] || '*'} ${b.message}${taskRef}`;
+    };
+    const compactLine = (b: typeof sorted[number]): string => {
+      if (b.salience === 3) return bookmarkLine(b);
+      const taskRef = b.task_slug ? ` (task: ${b.task_slug})` : '';
+      const message = compressMarkdownBlock(`- ${b.message}`, {
+        itemChars: BOOKMARK_ITEM_CHARS, paraChars: BOOKMARK_ITEM_CHARS,
+      }).replace(/^- /, '');
+      return `- ${salienceLabels[b.salience] || '*'} ${message}${taskRef}`;
+    };
+    const quieterTail = (rest: typeof sorted): string =>
+      `- (+${rest.length} quieter bookmark(s) — \`dreamcontext bookmark list\`)`;
+
+    parts.push('## Bookmarks\n');
+    for (const b of sorted) parts.push(bookmarkLine(b));
     parts.push('');
+
+    const critical = sorted.filter((b) => b.salience === 3);
+    flushDemotable('bookmarks', [
+      () => [
+        '## Bookmarks\n',
+        ...packToCharBudget(sorted, compactLine, BOOKMARKS_L1_CHARS, quieterTail),
+        '',
+      ].join('\n'),
+      () => [
+        '## Bookmarks\n',
+        ...critical.map(bookmarkLine),
+        ...(sorted.length > critical.length
+          ? [quieterTail(sorted.slice(critical.length))]
+          : []),
+        '',
+      ].join('\n'),
+    ], 2);
   }
 
   // 5.7 Contextual Reminders (matching triggers for active tasks)
@@ -971,12 +1515,14 @@ export function generateSnapshot(rootOverride?: string): string {
       parts.push('## Contextual Reminders\n');
       for (const t of matchedTriggers) {
         parts.push(`- ${t.remind}`);
-        // Increment fired_count
-        t.fired_count++;
+        // Increment fired_count. A reminder has a finite budget of firings, so a
+        // caller that is only MEASURING the snapshot (doctor) must not spend one
+        // — it still renders, it just doesn't consume.
+        if (fireTriggers) t.fired_count++;
       }
       parts.push('');
-      // Persist trigger fired_count updates
-      writeSleepState(root, sleepState);
+      // Persist trigger fired_count updates — the only write in this whole path.
+      if (fireTriggers) writeSleepState(root, sleepState);
     }
   }
 
@@ -999,7 +1545,7 @@ export function generateSnapshot(rootOverride?: string): string {
   if (automationLines.length > 0) {
     parts.push('## Automations\n', ...automationLines, '');
   }
-  flush('awareness', { neverEvict: true });
+  flushPinned('awareness');
 
   // 6. Sleep State — DEPRECATED in snapshot (v0.4.0+).
   // Sleep debt + critical bookmark reminders are delivered by the
@@ -1018,10 +1564,18 @@ export function generateSnapshot(rootOverride?: string): string {
   const CHANGELOG_TIER2 = 10;
   const TIER1_BODY_CHARS = 300;
   const TIER2_LINE_CHARS = 140;
-  // Person attribution is gated on DERIVED multi-person status. Single-person
+  // Person attribution is gated on DERIVED multi-person status — now read from
+  // `people/people.json`, the one file that owns who exists. Single-person
   // projects (no roster / roster ≤1) never render `— by …`, so their Recent
-  // Changelog output stays byte-identical to today.
-  const multiPerson = isMultiPerson(readSetupConfig(dirname(root)));
+  // Changelog output stays byte-identical to today. A corrupt roster degrades to
+  // "not multi-person" rather than crashing the session (D17).
+  let multiPerson: boolean;
+  try {
+    multiPerson = isMultiPersonVault(root);
+  } catch (err) {
+    if (!(err instanceof PeopleStoreError)) throw err;
+    multiPerson = false;
+  }
   const authorSuffix = (e: Record<string, unknown>): string => {
     if (!multiPerson) return '';
     const authors = Array.isArray(e.authors)
@@ -1082,26 +1636,56 @@ export function generateSnapshot(rootOverride?: string): string {
       };
       if (tier1.length > 0) {
         parts.push(...renderChangelog(true, CHANGELOG_TIER2));
-        flush('changelog', {
-          demotions: [
-            renderChangelog(false, 5).join('\n'),
-            renderChangelog(false, 0).join('\n'),
-          ],
-        });
+        flushDemotable('changelog', [
+          () => renderChangelog(false, 5).join('\n'),
+          () => renderChangelog(false, 0).join('\n'),
+        ]);
       }
     } catch {
       // skip if malformed
     }
   }
 
-  // 7.5. Releases (planning + latest released)
+  // 7.5. Releases (planning + latest released). Demotion drops the version
+  // summaries and the latest release's roll-up counts, keeping every version
+  // NUMBER — which is what a session actually needs to know it is working toward
+  // v0.23.0. Full detail is one `RELEASES.json` read away.
   const releasesPath = join(root, 'core', 'RELEASES.json');
+  let releasesRung: (() => string) | null = null;
   if (existsSync(releasesPath)) {
     try {
       const releases = readJsonArray<Record<string, unknown>>(releasesPath);
       if (releases.length > 0) {
         const planning = releases.filter(r => r.status === 'planning');
         const released = releases.filter(r => r.status !== 'planning');
+
+        releasesRung = (): string => {
+          const out: string[] = [];
+          if (planning.length > 0) {
+            out.push('## Upcoming Versions\n');
+            out.push(...packToCharBudget(
+              planning,
+              (p) => {
+                const taskCount = Array.isArray(p.tasks) ? p.tasks.length : 0;
+                return `- ${String(p.version ?? '')}${taskCount > 0 ? ` (${taskCount} task(s))` : ''}`;
+              },
+              RELEASES_L1_CHARS,
+              (rest) => namedRosterTail(
+                rest.map((p) => String(p.version ?? '')), RELEASES_L1_CHARS,
+                'planned version(s)', '`_dream_context/core/RELEASES.json`',
+              ),
+            ));
+            out.push('');
+          }
+          if (released.length > 0) {
+            const latest = released[0];
+            const brk = latest.breaking ? ' (BREAKING)' : '';
+            out.push('## Latest Release\n');
+            out.push(`- ${String(latest.version ?? '')} (${String(latest.date ?? '')})${brk}: ${String(latest.summary ?? '')}`);
+            out.push('');
+          }
+          return out.join('\n');
+        };
 
         if (planning.length > 0) {
           parts.push('## Upcoming Versions\n');
@@ -1134,17 +1718,19 @@ export function generateSnapshot(rootOverride?: string): string {
       // skip if malformed
     }
   }
-  flush('releases', { neverEvict: true });
+  // An empty rung list means "no cheaper render exists" — the section still
+  // flushes and renders in full, it just never demotes. That keeps this flush
+  // unconditional, so a release block can never leak into the next section.
+  flushDemotable('releases', releasesRung === null ? [] : [releasesRung]);
 
   // 7.6 Objectives (roadmap) — active goals + recently-finished, so every
   // session's decisions are weighed against the outcomes the PO is driving.
+  // Floored at level 2 — the rung below it used to be `- N objective(s)`.
   const objectivesSection = renderObjectivesSection(root);
   if (objectivesSection) {
-    sections.push({
-      id: 'objectives',
-      text: objectivesSection.full,
-      demotions: objectivesSection.demotions,
-    });
+    sections.push(demotableSection(
+      'objectives', objectivesSection.full, objectivesSection.demotions, 2,
+    ));
   }
 
   // 7.7 Lab (analytics insights) — curated metrics synced from HTTP/scripts.
@@ -1154,12 +1740,7 @@ export function generateSnapshot(rootOverride?: string): string {
   // already answered here instead of at some external API (Rule 13).
   const labSection = renderLabSection(root);
   if (labSection) {
-    sections.push({
-      id: 'lab',
-      text: labSection.full,
-      demotions: labSection.demotions,
-      maxDemotionLevel: 1,
-    });
+    sections.push(demotableSection('lab', labSection.full, labSection.demotions, 1));
   }
 
   // 7.8 Learning (proactive learning layer — theses) — hard-gated on
@@ -1177,7 +1758,9 @@ export function generateSnapshot(rootOverride?: string): string {
     // Recurse so features grouped into topical/product subfolders are listed too.
     const featureFiles = fg.sync('**/*.md', { cwd: featuresPath, absolute: true });
     const features: string[] = [];
-    const featureMeta: Array<{ detail: string; nameLine: string; status: string; updated: string }> = [];
+    const featureMeta: Array<{
+      detail: string; nameLine: string; slug: string; status: string; updated: string;
+    }> = [];
 
     for (const file of featureFiles) {
       try {
@@ -1246,6 +1829,7 @@ export function generateSnapshot(rootOverride?: string): string {
         featureMeta.push({
           detail: featureLine,
           nameLine: `- **${name}** (status: ${status}) -> _dream_context/knowledge/features/${name}.md`,
+          slug: name,
           status,
           updated: String(data.updated ?? data.created ?? ''),
         });
@@ -1263,11 +1847,34 @@ export function generateSnapshot(rootOverride?: string): string {
           s === 'in_progress' || s === 'active' ? 0 : s === 'planned' || s === 'todo' ? 1 : 2;
         return rank(a.status) - rank(b.status) || b.updated.localeCompare(a.updated);
       });
-      const renderFeatures = (detailCount: number): string => {
-        const lines = activeFirst.map((f, i) => (i < detailCount ? f.detail : f.nameLine));
-        return ['## Features\n', lines.join('\n'), ''].join('\n');
-      };
-      flush('features', { demotions: [renderFeatures(8), renderFeatures(0)] });
+      // Rung 1 keeps as many full detail blocks as fit, then falls back to
+      // name+status+path lines for the rest. Rung 2 keeps only name lines, and
+      // its own tail names whole slugs — a feature the agent cannot name is a
+      // feature it will rebuild.
+      const renderFeatureDetails = (): string => [
+        '## Features\n',
+        packToCharBudget(
+          activeFirst,
+          (f) => f.detail,
+          FEATURES_L1_CHARS,
+          (rest) => rest.map((f) => f.nameLine).join('\n'),
+        ).join('\n'),
+        '',
+      ].join('\n');
+      const renderFeatureNames = (): string => [
+        '## Features\n',
+        packToCharBudget(
+          activeFirst,
+          (f) => f.nameLine,
+          FEATURES_L2_CHARS,
+          (rest) => namedRosterTail(
+            rest.map((f) => f.slug), FEATURES_ROSTER_CHARS,
+            'feature(s)', 'PRDs in `_dream_context/knowledge/features/`',
+          ),
+        ).join('\n'),
+        '',
+      ].join('\n');
+      flushDemotable('features', [renderFeatureDetails, renderFeatureNames]);
     }
   }
 
@@ -1333,7 +1940,7 @@ export function generateSnapshot(rootOverride?: string): string {
     // intentionally NOT inlined — `memory recall` fetches on demand and the
     // agent can Read the file when the warning applies.
     if (pinnedEntries.length > 0) {
-      parts.push('> !!! ÇOK ÖNEMLİ !!! Kullanıcı bu bilgiyi pinlemiş — yapacağın bir işle ilişkisi varsa MUTLAKA OKU!\n');
+      parts.push(PINNED_BANNER);
       for (const entry of pinnedEntries) {
         const tagsStr = entry.tags.length > 0 ? ` [${entry.tags.join(', ')}]` : '';
         parts.push(`- 📌 **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}`);
@@ -1355,7 +1962,7 @@ export function generateSnapshot(rootOverride?: string): string {
       const compactNonPinned = compactLines.filter((_, i) => !pinnedSlugs.has(knowledgeEntries[i]?.slug));
       const compact: string[] = ['## Knowledge Index\n'];
       if (pinnedEntries.length > 0) {
-        compact.push('> !!! ÇOK ÖNEMLİ !!! Kullanıcı bu bilgiyi pinlemiş — yapacağın bir işle ilişkisi varsa MUTLAKA OKU!\n');
+        compact.push(PINNED_BANNER);
         for (const entry of pinnedEntries) {
           const tagsStr = entry.tags.length > 0 ? ` [${entry.tags.join(', ')}]` : '';
           compact.push(`- 📌 **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}`);
@@ -1366,7 +1973,44 @@ export function generateSnapshot(rootOverride?: string): string {
       compact.push('(slugs only — files at _dream_context/knowledge/<slug>.md; descriptions via `dreamcontext knowledge index` or memory recall)');
       compact.push(compactNonPinned.join('\n'));
       compact.push('');
-      flush('knowledge-index', { demotions: [compact.join('\n')] });
+
+      // Rung 2 groups non-pinned slugs by folder. Even the compact rung is 9KB on
+      // both live vaults because it is one line per file; grouping collapses that
+      // to ~2KB while still naming every slug.
+      //
+      // This is also the ONLY rung where the pinned block is bounded. Carrying it
+      // verbatim here left the design with one unbounded term — 3,530 chars on a
+      // 6-pin vault, and nothing stopping a 40-pin one — which is exactly the
+      // class of defect every other tail was reworked to remove. It still degrades
+      // last, and every pin keeps its slug and path (see renderPinnedBlock).
+      const nonPinnedEntries = knowledgeEntries.filter((e) => !pinnedSlugs.has(e.slug));
+      const folders = new Map<string, string[]>();
+      for (const entry of nonPinnedEntries) {
+        const segments = entry.slug.split('/');
+        const folder = segments.length > 1
+          ? `_dream_context/knowledge/${segments.slice(0, -1).join('/')}/`
+          : '_dream_context/knowledge/';
+        const bucket = folders.get(folder);
+        if (bucket) bucket.push(segments[segments.length - 1]);
+        else folders.set(folder, [segments[segments.length - 1]]);
+      }
+      const grouped: string[] = ['## Knowledge Index\n'];
+      if (pinnedEntries.length > 0) {
+        grouped.push(...renderPinnedBlock(pinnedEntries, PINNED_ITEM_CHARS, PINNED_KNOWLEDGE_CHARS));
+        grouped.push('### Other knowledge:\n');
+      }
+      grouped.push('(grouped by folder — every file is named; descriptions via `dreamcontext knowledge index` or memory recall)');
+      grouped.push(...packToCharBudget(
+        [...folders.entries()],
+        ([folder, slugs]) => `- **${folder}** (${slugs.length}): ${slugs.join(', ')}`,
+        KNOWLEDGE_L2_CHARS,
+        (rest) => rest
+          .map(([folder, slugs]) => `- **${folder}** (${slugs.length} files — \`dreamcontext knowledge index\`)`)
+          .join('\n'),
+      ));
+      grouped.push('');
+
+      flushDemotable('knowledge-index', [compact.join('\n'), grouped.join('\n')]);
     }
 
     // 9.5 Warm Knowledge (recently relevant, first paragraph only)
@@ -1395,12 +2039,14 @@ export function generateSnapshot(rootOverride?: string): string {
         return out;
       };
       parts.push(...renderWarm(warmEntries.length));
-      flush('warm-knowledge', {
-        demotions: [
-          renderWarm(4).join('\n'),
-          '(Warm knowledge omitted for budget — the Knowledge Index above lists every file; recall surfaces them on demand.)\n',
-        ],
-      });
+      // First to demote and the only section whose deepest rung is a full drop —
+      // deliberately no floor. Every warm file is ALSO named, with its path, by
+      // the Knowledge Index directly above, so dropping this is the one place
+      // where nothing becomes unreachable. Cheapest loss in the whole ladder.
+      flushDemotable('warm-knowledge', [
+        () => renderWarm(4).join('\n'),
+        '(Warm knowledge omitted for budget — the Knowledge Index above lists every file; recall surfaces them on demand.)\n',
+      ]);
     }
   }
 
@@ -1414,7 +2060,7 @@ export function generateSnapshot(rootOverride?: string): string {
   } catch {
     // Marketing snapshot must never break the SessionStart hook.
   }
-  flush('marketing', { neverEvict: true });
+  flushPinned('marketing');
 
   // 12. Federation inbox note — HOT-PATH SAFE. A single LOCAL readdir
   // (`pendingInboxCount`); it NEVER resolves a peer vault or builds a peer
@@ -1429,7 +2075,7 @@ export function generateSnapshot(rootOverride?: string): string {
         `disabled; nothing will be ingested). Federation reads peers live instead. ` +
         `Old federated copies can be removed with \`dreamcontext federation purge --all\`.\n`,
     );
-    flush('federation', { neverEvict: true });
+    flushPinned('federation');
   }
 
   // 13. Connected projects — AMBIENT READ AWARENESS, HOT-PATH SAFE. Built PURELY
@@ -1463,31 +2109,89 @@ export function generateSnapshot(rootOverride?: string): string {
     );
     lines.push('');
     parts.push(lines.join('\n'));
-    flush('connected-projects', { neverEvict: true });
+
+    // Rung 1 drops each peer's activity/tags/pinned-doc detail; rung 2 collapses
+    // to a single roster line. Both keep every peer NAMED, which is what makes
+    // `memory recall --vault <name>` reachable at all.
+    const recallPointer = 'Recall already spans these. To search one directly: '
+      + '`dreamcontext memory recall <q> --vault <name>`.';
+    flushDemotable('connected-projects', [
+      () => [
+        '## Connected projects\n',
+        'READABLE peer vaults — recall reads their canonical docs live, nothing is copied here.\n',
+        ...packToCharBudget(
+          peerCache.peers,
+          (p) => `- **${p.vault}**${p.whatItIs ? ` — ${p.whatItIs}` : ''}`,
+          CONNECTED_L1_CHARS,
+          (rest) => namedRosterTail(
+            rest.map((p) => p.vault), CONNECTED_L1_CHARS, 'peer(s)', '`dreamcontext federation peers`',
+          ),
+        ),
+        '',
+        recallPointer,
+        '',
+      ].join('\n'),
+      () => {
+        const names = packToCharBudget(
+          peerCache.peers,
+          (p) => p.vault,
+          CONNECTED_L2_CHARS,
+          (rest) => `+${rest.length} more (\`dreamcontext federation peers\`)`,
+        );
+        return [
+          '## Connected projects\n',
+          `- Readable peers: ${names.join(', ')}`,
+          '',
+          recallPointer,
+          '',
+        ].join('\n');
+      },
+    ]);
   }
 
   // Final assembly through the token budget (see snapshot-budget.ts). The
   // demotion ladder only engages when the full render exceeds the budget;
   // under budget the output is byte-identical to the legacy format.
   const budget = resolveBudget(process.env.DREAMCONTEXT_SNAPSHOT_BUDGET);
-  let text = applyBudget(sections, budget).text.trim();
+  const result = applyBudget(sections, budget);
+  let text = result.text.trim();
 
-  // Harness persist guard. Claude Code persists hook stdout past
-  // HARNESS_PERSIST_CHAR_LIMIT (~20K chars) to a file and injects only the
-  // first ~2KB as a blind positional preview. When the never-evict floor keeps
-  // the snapshot above that limit even fully demoted, the agent would start
-  // blind — so tell it, INSIDE the preview window, to read the persisted file.
+  // Harness persist guard, and ONLY for the band that actually loses content.
+  // Claude Code persists hook stdout past HARNESS_PERSIST_CHAR_LIMIT to a file
+  // and injects the first ~2KB as a blind positional slice. Being over the TOKEN
+  // budget is a different, milder state — the snapshot is thinner than the brain
+  // but still arrives complete, and `applyBudget`'s footer says so. Claiming a
+  // truncated preview there would be false, so the banner is gated on the char
+  // limit alone. It goes immediately after the H1 so it lands INSIDE the window
+  // it is warning about.
   if (text.length > HARNESS_PERSIST_CHAR_LIMIT) {
+    const banner = renderOverBudgetBanner({
+      chars: text.length,
+      budgetChars: budget === null ? HARNESS_PERSIST_CHAR_LIMIT : budget * 4,
+      neverEvictChars: result.neverEvictChars,
+      neverEvictSectionIds: sections.filter((s) => s.neverEvict).map((s) => s.id),
+      flooredSectionIds: result.flooredSectionIds,
+      oversizedCoreFiles: auditCoreFileSizes(root).filter((a) => a.overChars),
+      charCeiling: CORE_FILE_CHAR_CEILING,
+      maxCoreFiles: BANNER_MAX_CORE_FILES,
+    });
     const newline = text.indexOf('\n');
     const head = newline === -1 ? text : text.slice(0, newline);
     const tail = newline === -1 ? '' : text.slice(newline + 1);
-    const directive =
-      '> ⚠️ OVERSIZED SNAPSHOT — if a "Full output saved to:" path appears above, you are ' +
-      'reading a truncated 2KB preview. Read that full file NOW before doing anything else: ' +
-      'the project brain (memory, decisions, tasks, knowledge index, warnings) is in it.';
-    text = `${head}\n\n${directive}\n${tail}`;
+    text = `${head}\n\n${banner}\n${tail}`;
   }
-  return text;
+
+  return { text, budget: result };
+}
+
+/**
+ * The snapshot as the SessionStart hook consumes it: plain text, nothing else.
+ * Signature and return type are unchanged from before `measureSnapshot` existed
+ * — every caller (the hook, the `snapshot` command, the test suites) is
+ * untouched, and callers that need the ladder verdict call `measureSnapshot`.
+ */
+export function generateSnapshot(rootOverride?: string, opts: SnapshotOptions = {}): string {
+  return measureSnapshot(rootOverride, opts).text;
 }
 
 /**
@@ -1729,16 +2433,22 @@ export function registerSnapshotCommand(program: Command): void {
       // A bad name/path yields a clean VaultError message + non-zero exit (no
       // stack). The default (no --vault) path is untouched.
       let rootOverride: string | undefined;
+      let peer = false;
       if (opts.vault !== undefined) {
         try {
           rootOverride = resolveVaultContextRoot(opts.vault);
+          // The ONE place `peer` is set. `rootOverride` cannot stand in for it:
+          // doctor and the test suites pass LOCAL roots through that same
+          // parameter, so deriving "is a peer" from it would suppress the person
+          // block on renders that are not peers at all.
+          peer = true;
         } catch (err) {
           error(err instanceof VaultError ? err.message : `Could not resolve vault: ${String(err)}`);
           process.exit(1);
         }
       }
 
-      const output = generateSnapshot(rootOverride);
+      const output = generateSnapshot(rootOverride, { peer });
       if (!output) return;
 
       if (opts.tokens) {

@@ -2,8 +2,19 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { generateSnapshot } from '../../src/cli/commands/snapshot.js';
+import { generateSnapshot, measureSnapshot } from '../../src/cli/commands/snapshot.js';
 import { createInsight, writeCache } from '../../src/lib/lab/store.js';
+import { writePeople } from '../../src/lib/people-store.js';
+
+/**
+ * A soul the demotion ladder cannot shrink, built ONLY from heading lines —
+ * `compressMarkdownBlock` passes headings through verbatim at every rung, so this
+ * forces the ladder to every floor without any opt-in feature or config.
+ */
+function incompressibleSoul(rules: number): string {
+  const body = Array.from({ length: rules }, (_, i) => `## Rule ${i} — ${'x'.repeat(40)}`).join('\n');
+  return `---\nname: Big\ntype: soul\n---\n\n${body}\n`;
+}
 
 let root: string;
 
@@ -11,10 +22,15 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'dc-lab-snapshot-'));
   mkdirSync(join(root, 'core'), { recursive: true });
   mkdirSync(join(root, 'knowledge'), { recursive: true });
+  mkdirSync(join(root, 'people'), { recursive: true });
   mkdirSync(join(root, 'state'), { recursive: true });
   writeFileSync(join(root, 'core', '0.soul.md'), '# Soul\n', 'utf-8');
-  writeFileSync(join(root, 'core', '1.user.md'), '# User\n', 'utf-8');
   writeFileSync(join(root, 'core', '2.memory.md'), '# Memory\n', 'utf-8');
+  // The people-first layout. A SOLO roster resolves without any machine state
+  // (the vault's only person is trivially the active one), so nothing here
+  // depends on the developer's git identity.
+  writePeople(root, { ada: { name: 'Ada', emails: ['ada@lab.invalid'] } });
+  writeFileSync(join(root, 'people', 'ada.md'), '---\nname: ada\ntype: person\n---\n\n# Person\n', 'utf-8');
 });
 
 afterEach(() => {
@@ -60,18 +76,20 @@ describe('SessionStart snapshot — Lab section (AC15)', () => {
       unit: 'USD', series: [{ name: 'default', points: [{ t: '2026-07-01', v: 156 }] }],
       latest: 156, error: null, errorAt: null, scriptHash: null,
     });
-    // A soul far over any budget forces the ladder to its deepest rung.
-    writeFileSync(join(root, 'core', '0.soul.md'), `# Soul\n${'padding line\n'.repeat(4000)}`, 'utf-8');
+    // A soul the ladder CANNOT compress forces it to every floor. Padding prose
+    // would not: the soul is demotable now, so the ladder would shrink it, the
+    // snapshot would fit, and this test would pass without ever pressuring Lab.
+    writeFileSync(join(root, 'core', '0.soul.md'), incompressibleSoul(500), 'utf-8');
 
     const prev = process.env.DREAMCONTEXT_SNAPSHOT_BUDGET;
     process.env.DREAMCONTEXT_SNAPSHOT_BUDGET = '2000';
     try {
-      const snapshot = generateSnapshot(root);
-      expect(snapshot).toContain('Budget note');           // the ladder really ran…
-      expect(snapshot).toContain('lab');                   // …and demoted Lab…
-      expect(snapshot).toContain('Monthly Recurring Revenue'); // …but the name survived
-      expect(snapshot).toContain('156');                       // …and so did the value
-      expect(snapshot).not.toMatch(/- \d+ insight\(s\)/);      // the blinding rung is gone
+      const { text, budget } = measureSnapshot(root);
+      expect(budget.demoted).toContainEqual({ id: 'lab', level: 1 }); // demoted, and floored there
+      expect(text).toContain('Budget note');                 // the ladder really ran…
+      expect(text).toContain('Monthly Recurring Revenue');   // …but the name survived
+      expect(text).toContain('156');                         // …and so did the value
+      expect(text).not.toMatch(/- \d+ insight\(s\)/);        // the blinding rung is gone
     } finally {
       if (prev === undefined) delete process.env.DREAMCONTEXT_SNAPSHOT_BUDGET;
       else process.env.DREAMCONTEXT_SNAPSHOT_BUDGET = prev;

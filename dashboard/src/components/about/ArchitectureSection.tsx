@@ -39,11 +39,11 @@ const STRATA: Stratum[] = [
     desc: 'Who it is — purpose, principles, and the rules it must never break.',
   },
   {
-    file: '1.user',
+    file: 'people/<slug>',
     glyph: '◉',
     region: 'Episodic',
     brain: 'lived history',
-    desc: 'What you did and decided, session over session.',
+    desc: 'Who is at the keyboard — one constitution per person, and what they decided, session over session.',
   },
   {
     file: '2.memory',

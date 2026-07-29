@@ -11,7 +11,8 @@ import {
   findUnreleasedFeatures,
   findUnreleasedChangelog,
 } from '../../lib/release-discovery.js';
-import type { ReleaseEntry } from '../../lib/release-discovery.js';
+import type { ChangelogEntry, ReleaseEntry } from '../../lib/release-discovery.js';
+import { deriveContributors } from '../../lib/attribution.js';
 import { backPopulateFeatures } from '../../lib/release-backpopulate.js';
 import { recordDashboardChange } from '../change-tracker.js';
 import {
@@ -219,6 +220,19 @@ export async function handleReleasesCreate(
 
   const status = body.status === 'planning' ? 'planning' : 'released' as const;
 
+  const tasks: string[] = Array.isArray(body.tasks) ? body.tasks : [];
+  const changelog: ChangelogEntry[] = Array.isArray(body.changelog) ? body.changelog : [];
+
+  // Contributors are DERIVED from what the release actually sweeps (changelog
+  // `authors` ∪ the tasks' `person:` tags) — never asked for — and the key is
+  // OMITTED when empty, so a vault with no roster records byte-identical
+  // releases to pre-0.23.0. A `planning` entry sweeps nothing yet, so this is
+  // naturally `[]` there and the key never appears.
+  const contributors = deriveContributors(contextRoot, {
+    changelogEntries: changelog,
+    taskIds: tasks,
+  });
+
   const release: ReleaseEntry = {
     id: generateId('rel'),
     version: version.trim(),
@@ -227,8 +241,9 @@ export async function handleReleasesCreate(
     breaking: body.breaking === true,
     status,
     features: Array.isArray(body.features) ? body.features : [],
-    tasks: Array.isArray(body.tasks) ? body.tasks : [],
-    changelog: Array.isArray(body.changelog) ? body.changelog : [],
+    tasks,
+    changelog,
+    ...(contributors.length > 0 ? { contributors } : {}),
   };
 
   const filePath = join(contextRoot, 'core', 'RELEASES.json');
@@ -342,6 +357,9 @@ export async function handleReleasesUpdate(
   // Capture before any mutation: the active pointer re-validates against the
   // on-disk entry, which still carries the old name at this point.
   const wasActive = isRename && getActivePlanningVersion(contextRoot) === params.version;
+  // Also captured before mutation: contributors are derived on the TRANSITION
+  // into `released`, the moment a plan becomes something people actually shipped.
+  const wasReleased = release.status === 'released';
 
   if (body.status !== undefined) {
     const s = body.status as string;
@@ -352,6 +370,18 @@ export async function handleReleasesUpdate(
     release.status = s;
     if (s === 'released' && !release.date) {
       release.date = today();
+    }
+    // Same derivation as create (changelog `authors` ∪ the tasks' `person:`
+    // tags), same rules: the key is OMITTED when there is nothing to attribute,
+    // so a rosterless vault's releases stay byte-identical to pre-0.23.0. An
+    // existing non-empty list is never overwritten — a curated credit roll
+    // outranks a re-derivation.
+    if (s === 'released' && !wasReleased && !release.contributors?.length) {
+      const contributors = deriveContributors(contextRoot, {
+        changelogEntries: release.changelog ?? [],
+        taskIds: release.tasks ?? [],
+      });
+      if (contributors.length > 0) release.contributors = contributors;
     }
   }
 

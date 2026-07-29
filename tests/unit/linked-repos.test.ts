@@ -577,11 +577,15 @@ describe('generateSnapshot — Linked repos glance (hot-path safe)', () => {
     writeFileSync(soulPath, '---\nname: Small\ntype: soul\n---\n\nA tiny project.\n');
     expect(generateSnapshot(ctx)).not.toContain('OVERSIZED SNAPSHOT');
 
-    // A never-evict soul past 20K chars keeps the snapshot over the persist
-    // limit regardless of the demotion ladder → the directive must appear,
-    // and inside the 2KB preview window.
-    const bloat = Array.from({ length: 500 }, (_, i) => `- decision line ${i}: ${'x'.repeat(40)}`).join('\n');
-    writeFileSync(soulPath, `---\nname: Big\ntype: soul\n---\n\n## Project Identity\n\n${bloat}\n`);
+    // The soul is DEMOTABLE now, so bloat made of bullets no longer proves
+    // anything — the ladder would compress it to titles and the snapshot would
+    // fit. This bloat is HEADING lines, which `compressMarkdownBlock` passes
+    // through verbatim at every rung (a published contract of that module,
+    // covered by its own suite). So the snapshot stays over the persist limit
+    // after the ladder has done everything it can, which is exactly the state
+    // the directive exists for — and it must land inside the 2KB preview window.
+    const bloat = Array.from({ length: 500 }, (_, i) => `## Rule ${i} — ${'x'.repeat(40)}`).join('\n');
+    writeFileSync(soulPath, `---\nname: Big\ntype: soul\n---\n\n${bloat}\n`);
     const output = generateSnapshot(ctx);
     expect(output.length).toBeGreaterThan(20_000);
     expect(output.slice(0, 2000)).toContain('OVERSIZED SNAPSHOT');

@@ -52,8 +52,12 @@ whatever shape accreted. So derive the target shape from the live system, never 
 - `dreamcontext taxonomy audit` — off-vocabulary tags already flagged, read-only.
 - The installed `dreamcontext` SKILL.md + `references/` — folder conventions, the core ceiling,
   the feature-vs-knowledge rule, status vocab.
-- `_dream_context/core/0.soul.md` + `1.user.md` — project-specific principles/constraints
-  (e.g. a tightened line cap, naming vocabulary, single-source-of-truth rules).
+- `_dream_context/core/0.soul.md` + `_dream_context/people/<active>.md` — project-specific
+  principles/constraints (e.g. a tightened line cap, naming vocabulary,
+  single-source-of-truth rules). The active person's constitution is the one that governs
+  THIS session; `dreamcontext people show` prints it, `dreamcontext people list` names the
+  rest. **Person constitutions are never an audit target** — they are not knowledge, are not
+  recall-indexed, and are outside every curator domain. You read them for conventions only.
 - `dreamcontext knowledge index`, `dreamcontext features list`, `dreamcontext tasks list --all`,
   `dreamcontext core releases list` — the current inventory.
 

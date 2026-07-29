@@ -13,6 +13,8 @@ import {
 } from '../../lib/release-discovery.js';
 import type { ReleaseEntry } from '../../lib/release-discovery.js';
 import { backPopulateFeatures } from '../../lib/release-backpopulate.js';
+import { resolveAuthors } from '../../lib/people-resolve.js';
+import { deriveContributors } from '../../lib/attribution.js';
 import {
   getActivePlanningVersion,
   setActivePlanningVersion,
@@ -37,7 +39,7 @@ export function registerCoreCommand(program: Command): void {
     .option('--description <desc>', 'Description (long-form, full body)')
     .option('--summary <summary>', 'Optional ≤200-char one-liner for snapshot display')
     .option('--references <refs>', 'Optional comma-separated references (commit:<sha>, file:<path>, knowledge:<slug>, feature:<slug>, task:<slug>, url:<href>)')
-    .option('--authors <list>', 'Optional comma-separated people involved (e.g. "mehmet,ada")')
+    .option('--authors <list>', 'Comma-separated people involved (e.g. "mehmet,ada") — defaults to the active person')
     .option('--supersedes <key>', 'Optional pointer to prior entry this supersedes (e.g., "2026-05-09|sleep")')
     .option('--breaking', 'Mark as a breaking change', false)
     .action(async (opts: { type?: string; scope?: string; description?: string; summary?: string; references?: string; authors?: string; supersedes?: string; breaking?: boolean }) => {
@@ -77,6 +79,11 @@ export function registerCoreCommand(program: Command): void {
       const authors = opts.authors
         ? opts.authors.split(',').map((s) => s.trim()).filter(Boolean)
         : undefined;
+      // An explicit --authors is used VERBATIM; otherwise the active person is
+      // stamped. `undefined` when this vault has no people/people.json (D18) —
+      // the key is then omitted entirely, so release-discovery fingerprints and
+      // recall indexing on un-migrated vaults stay byte-identical.
+      const stamped = resolveAuthors(root, authors);
       const supersedes = opts.supersedes ?? undefined;
       const breaking = opts.breaking ?? (typeof opts.breaking === 'boolean'
         ? opts.breaking
@@ -98,7 +105,7 @@ export function registerCoreCommand(program: Command): void {
       };
       if (summary) entry.summary = summary;
       if (references && references.length > 0) entry.references = references;
-      if (authors && authors.length > 0) entry.authors = authors;
+      if (stamped?.length) entry.authors = stamped;
       if (supersedes) entry.supersedes = supersedes;
 
       insertToJsonArray(filePath, entry);
@@ -238,6 +245,13 @@ export function registerCoreCommand(program: Command): void {
       }
 
       // 7. Build release entry
+      // Contributors are DERIVED from what the release actually swept (changelog
+      // authors ∪ the tasks' person: tags), never asked for — and the key is
+      // omitted when empty so a rosterless vault records the same bytes as before.
+      const contributors = deriveContributors(root, {
+        changelogEntries: selectedChangelog.map(c => c.entry),
+        taskIds: selectedTaskIds,
+      });
       const releaseEntry: ReleaseEntry = {
         id: generateId('rel'),
         version: version.trim(),
@@ -248,6 +262,7 @@ export function registerCoreCommand(program: Command): void {
         features: selectedFeatureIds,
         tasks: selectedTaskIds,
         changelog: selectedChangelog.map(c => c.entry),
+        ...(contributors.length > 0 ? { contributors } : {}),
       };
 
       // 8. Write to RELEASES.json
@@ -338,6 +353,9 @@ export function registerCoreCommand(program: Command): void {
       console.log(`  Summary:  ${release.summary}`);
       console.log(`  Breaking: ${release.breaking ? 'Yes' : 'No'}`);
       console.log(`  ID:       ${release.id}`);
+      if (release.contributors && release.contributors.length > 0) {
+        console.log(`  People:   ${release.contributors.join(', ')}`);
+      }
 
       if (release.tasks.length > 0) {
         console.log(`\n  Tasks (${release.tasks.length}):`);

@@ -9,6 +9,7 @@ import {
   mergeChangelogJson,
   mergeReleasesJson,
   mergeConfigJson,
+  mergePeopleJson,
   mergeTaxonomyJson,
   mergeTasksMapJson,
   mergeTaskMd,
@@ -132,15 +133,96 @@ describe('git-sync/semantic-merge — mergeReleasesJson', () => {
 });
 
 describe('git-sync/semantic-merge — mergeConfigJson', () => {
-  it('unions people/packs/platforms rosters and peopleIdentity keys', () => {
-    const ours = JSON.stringify({ people: ['alice'], packs: ['growth'], platforms: ['claude'], peopleIdentity: { alice: { role: 'eng' } } });
-    const theirs = JSON.stringify({ people: ['bob'], packs: ['design'], platforms: ['claude'], peopleIdentity: { bob: { role: 'pm' } } });
+  it('unions packs/platforms and peopleIdentity keys', () => {
+    const ours = JSON.stringify({ packs: ['growth'], platforms: ['claude'], peopleIdentity: { alice: { role: 'eng' } } });
+    const theirs = JSON.stringify({ packs: ['design'], platforms: ['claude'], peopleIdentity: { bob: { role: 'pm' } } });
     const { merged } = mergeConfigJson('{}', ours, theirs);
     const obj = JSON.parse(merged);
-    expect(obj.people.sort()).toEqual(['alice', 'bob']);
     expect(obj.packs.sort()).toEqual(['design', 'growth']);
     expect(obj.platforms.sort()).toEqual(['claude']);
     expect(Object.keys(obj.peopleIdentity).sort()).toEqual(['alice', 'bob']);
+  });
+
+  it('STRIPS the retired `people` key — a pre-0.23 teammate cannot resurrect a ghost roster (D19a)', () => {
+    // The roster moved to people/people.json (which has its own union merge);
+    // the `{...theirs, ...ours}` spread would otherwise carry the stale key back in.
+    const ours = JSON.stringify({ packs: [], platforms: [] });
+    const theirs = JSON.stringify({ people: ['Alice', 'Bob'], packs: [], platforms: [] });
+    const obj = JSON.parse(mergeConfigJson('{}', ours, theirs).merged);
+    expect(obj).not.toHaveProperty('people');
+
+    // …and when it is OUR side that is stale, too.
+    const stillOurs = JSON.stringify({ people: ['Alice'], packs: [], platforms: [] });
+    const obj2 = JSON.parse(mergeConfigJson('{}', stillOurs, JSON.stringify({ packs: [] })).merged);
+    expect(obj2).not.toHaveProperty('people');
+  });
+});
+
+describe('git-sync/semantic-merge — mergePeopleJson (the roster union that replaced config.people)', () => {
+  const person = (name: string, emails: string[], role?: string) => ({ name, emails, ...(role ? { role } : {}) });
+
+  it('key-unions the roster: two machines adding different people both survive', () => {
+    const ours = JSON.stringify({ version: 1, people: { alice: person('Alice', ['alice@x.dev']) } });
+    const theirs = JSON.stringify({ version: 1, people: { bob: person('Bob', ['bob@x.dev']) } });
+    const obj = JSON.parse(mergePeopleJson(ours, theirs).merged);
+    expect(Object.keys(obj.people)).toEqual(['alice', 'bob']); // sorted, so both machines agree byte-for-byte
+    expect(obj.people.alice.name).toBe('Alice');
+    expect(obj.people.bob.name).toBe('Bob');
+  });
+
+  it('OURS wins on a collision, but emails are UNIONED (the one field both sides append to)', () => {
+    const ours = JSON.stringify({ version: 1, people: { alice: person('Alice Local', ['alice@work.dev'], 'eng') } });
+    const theirs = JSON.stringify({ version: 1, people: { alice: person('Alice Remote', ['alice@home.dev'], 'pm') } });
+    const obj = JSON.parse(mergePeopleJson(ours, theirs).merged);
+    expect(obj.people.alice.name).toBe('Alice Local');
+    expect(obj.people.alice.role).toBe('eng');
+    expect(obj.people.alice.emails.sort()).toEqual(['alice@home.dev', 'alice@work.dev']);
+  });
+
+  it('keeps a field only THEIR side has (ours-wins is per-field, not whole-entry replacement)', () => {
+    const ours = JSON.stringify({ version: 1, people: { alice: person('Alice', ['a@x.dev']) } });
+    const theirs = JSON.stringify({ version: 1, people: { alice: person('Alice', ['a@x.dev'], 'pm') } });
+    const obj = JSON.parse(mergePeopleJson(ours, theirs).merged);
+    expect(obj.people.alice.role).toBe('pm');
+  });
+
+  it('takes the MAX version — a newer schema is never downgraded by an older peer', () => {
+    const ours = JSON.stringify({ version: 1, people: {} });
+    const theirs = JSON.stringify({ version: 2, people: {} });
+    expect(JSON.parse(mergePeopleJson(ours, theirs).merged).version).toBe(2);
+    expect(JSON.parse(mergePeopleJson(theirs, ours).merged).version).toBe(2);
+  });
+
+  it('survives a garbage side without dropping the readable one, and always emits valid JSON', () => {
+    const ours = JSON.stringify({ version: 1, people: { alice: person('Alice', ['a@x.dev']) } });
+    const obj = JSON.parse(mergePeopleJson(ours, 'not json at all').merged);
+    expect(Object.keys(obj.people)).toEqual(['alice']);
+    expect(obj.version).toBe(1);
+
+    const empty = JSON.parse(mergePeopleJson('', '').merged);
+    expect(empty).toEqual({ version: 1, people: {} });
+  });
+
+  it('is routed by the classifier and resolved by resolveConflicts (not deferred to the prose agent)', () => {
+    expect(classifyPath('people/people.json')).toBe('people-json');
+    expect(classifyPath('_dream_context/people/people.json')).toBe('people-json');
+    expect(classifyPath('people/alice.md')).toBe('other'); // constitutions ride the prose lane
+
+    const cwd = mkdtempSync(join(tmpdir(), 'dc-merge-people-'));
+    mkdirSync(join(cwd, 'people'), { recursive: true });
+    (gitMock as unknown as { __setFixture: (p: string, v: { base: string; ours: string; theirs: string }) => void }).__setFixture(
+      'people/people.json',
+      {
+        base: JSON.stringify({ version: 1, people: {} }),
+        ours: JSON.stringify({ version: 1, people: { alice: person('Alice', ['a@x.dev']) } }),
+        theirs: JSON.stringify({ version: 1, people: { bob: person('Bob', ['b@x.dev']) } }),
+      },
+    );
+    const result = resolveConflicts(cwd, ['people/people.json']);
+    expect(result.resolved).toEqual(['people/people.json']);
+    expect(result.deferredToAgent).toEqual([]);
+    const written = JSON.parse(readFileSync(join(cwd, 'people', 'people.json'), 'utf-8'));
+    expect(Object.keys(written.people)).toEqual(['alice', 'bob']);
   });
 });
 

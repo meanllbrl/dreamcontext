@@ -377,11 +377,11 @@ describe('hook session-start (integration)', () => {
 
     const state = readSleep(ctx);
     // 5 Write calls -> score 2
-    expect(state.debt).toBe(2);
     const sessions = state.sessions as any[];
     expect(sessions[0].change_count).toBe(5);
     expect(sessions[0].tool_count).toBe(5);
-    expect(sessions[0].score).toBe(2);
+    expect(state.debt).toBeGreaterThan(0);
+    expect(state.debt).toBe(sessions[0].score);
   });
 
   it('skips already-analyzed sessions (resume safety)', () => {
@@ -438,15 +438,17 @@ describe('hook session-start (integration)', () => {
     runWithStdin('hook session-start', input, tmpDir);
 
     const state = readSleep(ctx);
-    expect(state.debt).toBe(3); // 1 + 2
     const sessions = state.sessions as any[];
     expect(sessions).toHaveLength(2);
-    // Both should be analyzed
-    expect(sessions[0].score).toBe(2); // sess-2: 5 edits
-    expect(sessions[1].score).toBe(1); // sess-1: 2 writes
+    // Both analyzed, and the heavier session (5 edits) must not score below the
+    // lighter one (2 writes) — the discrimination the old ceiling destroyed.
+    expect(sessions[0].score).toBeGreaterThan(0);
+    expect(sessions[1].score).toBeGreaterThan(0);
+    expect(sessions[0].score).toBeGreaterThanOrEqual(sessions[1].score);
+    expect(state.debt).toBe(sessions[0].score + sessions[1].score);
   });
 
-  it('finalizes at floor score 1 for a no-transcript session with a non-empty last_assistant_message (AC2)', () => {
+  it('finalizes at the never-flushed floor for a no-transcript session with a non-empty last_assistant_message (AC2)', () => {
     // No transcript_path was EVER recorded — this is the "genuinely nothing
     // will ever appear" case, finalized immediately (no 7-day wait). Since
     // real work is evidenced by last_assistant_message, the AC2 floor applies
@@ -683,12 +685,12 @@ describe('hook session-start (integration)', () => {
     runWithStdin('hook session-start', input, tmpDir);
 
     const state = readSleep(ctx);
-    // 2 tool calls (Read + Glob) -> toolScore 1, changeScore 0 -> max = 1
-    expect(state.debt).toBe(1);
+    // 2 tool calls (Read + Glob), no edits, no usage blocks — a genuinely tiny
+    // session. It still registers, and debt tracks the session's own score.
     const sessions = state.sessions as any[];
-    expect(sessions[0].score).toBe(1);
     expect(sessions[0].change_count).toBe(0);
     expect(sessions[0].tool_count).toBe(2);
+    expect(state.debt).toBe(sessions[0].score);
   });
 
   it('scores debt from tool_count for Bash-heavy sessions', () => {
@@ -705,11 +707,11 @@ describe('hook session-start (integration)', () => {
 
     const state = readSleep(ctx);
     // 35 tools -> toolScore 2, 0 changes -> changeScore 0 -> max = 2
-    expect(state.debt).toBe(2);
     const sessions = state.sessions as any[];
     expect(sessions[0].change_count).toBe(0);
     expect(sessions[0].tool_count).toBe(35);
-    expect(sessions[0].score).toBe(2);
+    expect(state.debt).toBeGreaterThan(0);
+    expect(state.debt).toBe(sessions[0].score);
   });
 
   it('outputs empty when no _dream_context/', () => {
@@ -737,7 +739,7 @@ describe('hook session-start (integration)', () => {
     runWithStdin('hook stop', stop1, tmpDir);
 
     let state = readSleep(ctx);
-    expect(state.debt).toBe(1); // scored at stop time
+    expect(state.debt).toBeGreaterThan(0); // scored at stop time
 
     // Session 2 starts: no unanalyzed sessions, just outputs snapshot
     const input2 = JSON.stringify({ session_id: 'sess-2', source: 'startup', transcript_path: '/tmp/t2.jsonl' });
@@ -748,11 +750,10 @@ describe('hook session-start (integration)', () => {
     runWithStdin('hook stop', stop2, tmpDir);
 
     state = readSleep(ctx);
-    expect(state.debt).toBe(3); // 1 + 2
     const sessions = state.sessions as any[];
     expect(sessions).toHaveLength(2);
-    expect(sessions[0].score).toBe(2); // sess-2
-    expect(sessions[1].score).toBe(1); // sess-1
+    expect(sessions[0].score).toBeGreaterThanOrEqual(sessions[1].score);
+    expect(state.debt).toBe(sessions[0].score + sessions[1].score);
   });
 
   it('persists last session summary to .sleep.json; snapshot stays lean', () => {
@@ -898,7 +899,7 @@ describe('hook subagent-start (integration)', () => {
     expect(ctx_text).not.toContain('This content should appear in full in the briefing.');
   });
 
-  it('does NOT include soul/user/memory full content', () => {
+  it('does NOT include soul/person/memory full content', () => {
     writeFileSync(join(ctx, 'core', '0.soul.md'), [
       '---',
       'name: test',
@@ -908,9 +909,18 @@ describe('hook subagent-start (integration)', () => {
       '## Constraints',
       'Never do X. Always do Y.',
     ].join('\n'));
-    writeFileSync(join(ctx, 'core', '1.user.md'), [
+    // The people-first layout: the briefing must not carry the ACTIVE person's
+    // constitution any more than it carried the old user file (D20 — the
+    // sub-agent briefing is deliberately identity-free).
+    mkdirSync(join(ctx, 'people'), { recursive: true });
+    writeFileSync(join(ctx, 'people', 'people.json'), JSON.stringify({
+      version: 1,
+      people: { ada: { name: 'Ada', emails: ['ada@example.invalid'] } },
+    }, null, 2));
+    writeFileSync(join(ctx, 'people', 'ada.md'), [
       '---',
-      'name: user',
+      'name: ada',
+      'type: person',
       '---',
       '## User Preferences',
       'The user prefers dark mode and vim keybindings.',

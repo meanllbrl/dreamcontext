@@ -11,7 +11,12 @@ import {
   isMultiPerson,
   type SetupConfig,
 } from '../../src/lib/setup-config.js';
-import { ensurePeopleSection } from '../../src/lib/people.js';
+import {
+  isMultiPersonVault,
+  listPeople,
+  writePeople,
+  type PeopleMap,
+} from '../../src/lib/people-store.js';
 import { findUnreleasedChangelog } from '../../src/lib/release-discovery.js';
 import { buildCorpus, bm25Search } from '../../src/lib/recall.js';
 import { registerConfigCommand } from '../../src/cli/commands/config.js';
@@ -55,11 +60,19 @@ import { generateSnapshot } from '../../src/cli/commands/snapshot.js';
  *        attributed via the SAME `authors` carrier; recall indexes authors into
  *        the doc tags field so the person name is searchable.
  *
- *   5. user.md: ensurePeopleSection adds a "## People" section when multiPerson;
- *        single-person projects are unchanged (idempotent).
+ *   5. The roster: since 0.23.0 it lives in `people/people.json` (the people
+ *        store), NOT in a "## People" block in 1.user.md. `ensurePeopleSection`
+ *        and `src/lib/people.ts` are deleted; the contract that survives is
+ *        "a solo vault grows no roster surface at all".
  *
  *   6. Snapshot (src/cli/commands/snapshot.ts): when multiPerson, per-entry
  *        "— by <names>" attribution; single-person output is byte-identical.
+ *
+ * NOTE on the fixtures below: several cases seed BOTH the legacy
+ * `.config.json.people` roster and `people/people.json`. The multi-person GATE
+ * is moving from the former to the latter in this same wave (T3/T4), and both
+ * readings must agree — seeding both is what makes these assertions true before
+ * and after that switch, rather than a tripwire on lane ordering.
  */
 
 // ── Tmp-context fixture (mirrors release-discovery.test.ts) ──────────────────
@@ -124,6 +137,22 @@ function baseConfig(overrides: Partial<SetupConfig> = {}): SetupConfig {
   };
 }
 
+/**
+ * Seed `people/people.json` — the 0.23.0 roster. The fixture slugs double as
+ * display names so the legacy `.config.json.people` values and the store's
+ * slugs line up while the multi-person gate moves between them.
+ */
+function seedPeople(contextRoot: string, slugs: string[], emails: Record<string, string[]> = {}): void {
+  const map: PeopleMap = {};
+  for (const slug of slugs) map[slug] = { name: slug, emails: emails[slug] ?? [] };
+  writePeople(contextRoot, map);
+}
+
+/** Return the vault to "no people layout at all" — the un-migrated shape. */
+function clearPeople(contextRoot: string): void {
+  rmSync(join(contextRoot, 'people'), { recursive: true, force: true });
+}
+
 describe('multi-people awareness', () => {
   let fx: Fixture;
   let origCwd: string;
@@ -177,12 +206,24 @@ describe('multi-people awareness', () => {
       expect(merged.people).toEqual(['mehmet', 'ada']);
     });
 
-    it('config show prints the people roster when present', async () => {
+    it('config show prints the people roster from people.json (sorted by name)', async () => {
+      // 0.23.0: the roster line reads the people STORE, not `.config.json.people`.
+      writeSetupConfig(fx.projectRoot, baseConfig());
+      seedPeople(fx.contextRoot, ['mehmet', 'ada']);
+      const out = await captureStdout(() =>
+        runCli(registerConfigCommand, ['config', 'show']),
+      );
+      expect(out).toMatch(/People:\s+ada, mehmet/);
+    });
+
+    it('a legacy config.people roster no longer feeds the config show line', async () => {
+      // The key still PARSES (the 0.23.0 migration needs to read it), but nothing
+      // renders it — one file owns "who exists", and it is people.json.
       writeSetupConfig(fx.projectRoot, baseConfig({ people: ['mehmet', 'ada'] }));
       const out = await captureStdout(() =>
         runCli(registerConfigCommand, ['config', 'show']),
       );
-      expect(out).toMatch(/People:\s+mehmet, ada/);
+      expect(out).not.toMatch(/People:/);
     });
 
     it('missing people/multiPerson is treated as single-person (backwards compatible)', async () => {
@@ -254,6 +295,7 @@ describe('multi-people awareness', () => {
 
     it('snapshot Recent Changelog shows author attribution when multiPerson', async () => {
       writeSetupConfig(fx.projectRoot, baseConfig({ people: ['mehmet', 'ada'] }));
+      seedPeople(fx.contextRoot, ['mehmet', 'ada']);
       writeFileSync(
         join(fx.contextRoot, 'core', 'CHANGELOG.json'),
         JSON.stringify([
@@ -268,6 +310,7 @@ describe('multi-people awareness', () => {
       // Single-person output is byte-identical to today: same CHANGELOG, no
       // roster ⇒ no "— by" suffix anywhere.
       writeSetupConfig(fx.projectRoot, baseConfig());
+      clearPeople(fx.contextRoot);
       const singlePerson = generateSnapshot();
       expect(singlePerson).toContain('## Recent Changelog');
       expect(singlePerson).not.toContain('— by');
@@ -277,6 +320,7 @@ describe('multi-people awareness', () => {
   describe('task person tags', () => {
     it('when multiPerson, the responsible person is recorded as a person:<name> tag in task frontmatter', async () => {
       writeSetupConfig(fx.projectRoot, baseConfig({ people: ['mehmet', 'ada'] }));
+      seedPeople(fx.contextRoot, ['mehmet', 'ada']);
       await runCli(registerTasksCommand, [
         'tasks', 'create', 'Ship rostering', '-w', 'test why', '--person', 'Ada',
       ]);
@@ -286,6 +330,7 @@ describe('multi-people awareness', () => {
 
     it('tasks list can filter/group by person:<name> tag (reuses existing tag handling)', async () => {
       writeSetupConfig(fx.projectRoot, baseConfig({ people: ['mehmet', 'ada'] }));
+      seedPeople(fx.contextRoot, ['mehmet', 'ada']);
       await runCli(registerTasksCommand, ['tasks', 'create', 'Task A', '-w', 'test why', '--person', 'Ada']);
       await runCli(registerTasksCommand, ['tasks', 'create', 'Task B', '-w', 'test why', '--person', 'Mehmet']);
 
@@ -347,31 +392,34 @@ describe('multi-people awareness', () => {
     });
   });
 
-  describe('user.md People section', () => {
-    it('when multiPerson, 1.user.md gains a "## People" section enumerating each person', () => {
-      const userMd = '# User\n\nSome existing preferences.\n';
-      const updated = ensurePeopleSection(userMd, ['mehmet', 'ada']);
-      expect(updated).toContain('## People');
-      expect(updated).toContain('- mehmet (`person:mehmet`)');
-      expect(updated).toContain('- ada (`person:ada`)');
-      // Existing content is preserved.
-      expect(updated).toContain('Some existing preferences.');
+  // The `## People` block in 1.user.md (and `ensurePeopleSection` with it) is
+  // GONE — the roster is `people/people.json` and the prose is one constitution
+  // per person. What survives from that contract is the shape of the gate: a
+  // vault with ≤1 person grows no roster surface anywhere.
+  describe('people roster (people/people.json)', () => {
+    it('the roster enumerates each person, keyed by slug, sorted by name', () => {
+      seedPeople(fx.contextRoot, ['mehmet', 'ada']);
+      const roster = listPeople(fx.contextRoot);
+      expect(roster.map((p) => p.slug)).toEqual(['ada', 'mehmet']);
+      expect(roster.every((p) => Array.isArray(p.emails))).toBe(true);
 
-      // Idempotent: re-running with the same roster yields identical output.
-      expect(ensurePeopleSection(updated, ['mehmet', 'ada'])).toBe(updated);
-
-      // Additive update: a new person replaces the block in place (no duplicate
-      // ## People heading).
-      const withThree = ensurePeopleSection(updated, ['mehmet', 'ada', 'lina']);
-      expect(withThree.match(/## People/g)).toHaveLength(1);
-      expect(withThree).toContain('- lina (`person:lina`)');
+      // Additive update: a third person joins without disturbing the first two.
+      seedPeople(fx.contextRoot, ['mehmet', 'ada', 'lina']);
+      expect(listPeople(fx.contextRoot).map((p) => p.slug)).toEqual(['ada', 'lina', 'mehmet']);
     });
 
-    it('single-person 1.user.md is left unchanged (no empty People section)', () => {
-      const userMd = '# User\n\nSolo project preferences.\n';
-      expect(ensurePeopleSection(userMd, ['mehmet'])).toBe(userMd);
-      expect(ensurePeopleSection(userMd, [])).toBe(userMd);
-      expect(ensurePeopleSection(userMd, ['mehmet'])).not.toContain('## People');
+    it('solo vault renders no roster section', () => {
+      // The gate every roster surface hangs off: >1 person. A solo vault (and an
+      // un-migrated one) is single-person, so nothing enumerates anybody.
+      clearPeople(fx.contextRoot);
+      expect(isMultiPersonVault(fx.contextRoot)).toBe(false);
+      expect(listPeople(fx.contextRoot)).toEqual([]);
+
+      seedPeople(fx.contextRoot, ['mehmet']);
+      expect(isMultiPersonVault(fx.contextRoot)).toBe(false);
+
+      seedPeople(fx.contextRoot, ['mehmet', 'ada']);
+      expect(isMultiPersonVault(fx.contextRoot)).toBe(true);
     });
   });
 

@@ -289,3 +289,106 @@ describe('skill/references integrations.md — claude PATH prerequisite', () => 
     expect(content).toContain('~/.local/bin');
   });
 });
+
+// ── people-first (0.23.0) markers ────────────────────────────────────────────
+// 0.23.0 replaced `core/1.user.md` with one constitution per person. This is the
+// v0.11.0 Lab failure shape applied to identity: docs that still teach the old
+// model route an agent to a file that no longer exists and to a `config people`
+// roster write that now refuses. These markers pin the frozen surface — the CLI
+// verbs, the router row, the resolution ladder, and the two caveats that are
+// only true because nobody built the alternative (no rm tombstone, and a legacy
+// branch that dies in 0.24.0).
+
+describe('people-first docs markers', () => {
+  const skill = readFileSync(join(ROOT, 'skill', 'SKILL.md'), 'utf-8');
+  const cli = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
+
+  it('SKILL.md has the People capabilities row', () => {
+    expect(skill).toContain('**People (constitutions + roster)**');
+    expect(skill).toContain('people/people.json');
+  });
+
+  // A person is a CREATABLE entity now — without a router row, "add a teammate"
+  // shadow-routes to a knowledge file about that teammate.
+  it('SKILL.md has a Person row in the Entity Router', () => {
+    expect(skill).toContain('**Person** — `people/<slug>.md`');
+    expect(skill).toContain('dreamcontext people add "<Name>" --email <address>');
+    expect(skill).toContain('dreamcontext people whoami');
+  });
+
+  it('SKILL.md lists person among the reserved entity nouns', () => {
+    expect(skill).toContain('automation, release, person');
+  });
+
+  // The frozen snapshot headers — an agent that cannot name them cannot explain
+  // why no constitution loaded.
+  it('SKILL.md names the active-person snapshot headers verbatim', () => {
+    expect(skill).toContain('## Person (Active — UNRESOLVED)');
+    expect(skill).toContain('Other People (this vault)');
+  });
+
+  it('cli-reference.md documents every people verb', () => {
+    for (const verb of [
+      '`people list`',
+      '`people add <name>`',
+      '`people show [slug]`',
+      '`people whoami`',
+      '`people rm <slug>`',
+    ]) {
+      expect(cli).toContain(verb);
+    }
+  });
+
+  it('cli-reference.md documents DREAMCONTEXT_PERSON and the 5-rung ladder', () => {
+    expect(cli).toContain('DREAMCONTEXT_PERSON');
+    expect(cli).toContain('Active-person resolution — the 5-rung ladder');
+    expect(cli).toContain('Invariant P');
+  });
+
+  // D7: `config people` is a redirect that WRITES NOTHING. Documenting it as an
+  // alias would send scripts on writing a roster key that no longer exists.
+  it('cli-reference.md carries the config people redirect, not an alias', () => {
+    expect(cli).toContain('[Moved in 0.23.0]');
+    expect(cli).toContain('redirect, not an alias');
+  });
+
+  // D21 (no rm tombstone) and D22 (the legacy branch's removal version).
+  it('cli-reference.md states the rm-resurrection caveat and the 0.24.0 sunset', () => {
+    expect(cli).toContain('resurrect them on the next brain sync');
+    expect(cli).toContain('SUNSET: remove in 0.24.0');
+  });
+
+  // D13: person files are constitutions, not corpus. Indexing them would invite
+  // the agent to apply someone else's preferences to your session.
+  it('knowledge-and-recall.md states person constitutions are not recall-indexed', () => {
+    const content = readFileSync(
+      join(ROOT, 'skill', 'references', 'knowledge-and-recall.md'),
+      'utf-8',
+    );
+    expect(content).toContain('Person constitutions are NOT knowledge and are NOT recall-indexed');
+  });
+
+  it('tasks-and-features.md points the roster at people.json', () => {
+    const content = readFileSync(join(ROOT, 'skill', 'references', 'tasks-and-features.md'), 'utf-8');
+    expect(content).toContain('_dream_context/people/people.json');
+    expect(content).toContain('`--person` defaults to the active person');
+  });
+
+  it('troubleshooting.md has both people-first symptoms', () => {
+    const content = readFileSync(join(ROOT, 'skill', 'references', 'troubleshooting.md'), 'utf-8');
+    expect(content).toContain('## Person (Active — UNRESOLVED)');
+    expect(content).toContain('inbox/1.user-residue.md');
+    expect(content).toContain('NOTHING IS DISCARDED');
+  });
+
+  it('sleep.md gives sleep-state the people layer', () => {
+    const content = readFileSync(join(ROOT, 'skill', 'references', 'sleep.md'), 'utf-8');
+    expect(content).toContain('`people/people.json` + `people/*.md`');
+  });
+
+  it('brain-sync.md documents the people.json union merge and the prose lane', () => {
+    const content = readFileSync(join(ROOT, 'skill', 'references', 'brain-sync.md'), 'utf-8');
+    expect(content).toContain('key UNION');
+    expect(content).toContain("`'other'` prose lane");
+  });
+});

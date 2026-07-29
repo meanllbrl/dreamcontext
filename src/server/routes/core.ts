@@ -1,11 +1,19 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readFrontmatter, writeFrontmatter } from '../../lib/frontmatter.js';
 import { listSections, readSection } from '../../lib/markdown.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { safeChildPath } from '../safe-path.js';
 import { recordDashboardChange } from '../change-tracker.js';
+import {
+  PeopleStoreError,
+  isSafePersonSlug,
+  listPeople,
+  peopleDir,
+  type Person,
+} from '../../lib/people-store.js';
+import { resolveActivePerson } from '../../lib/people-resolve.js';
 
 function getCoreDir(contextRoot: string): string {
   return join(contextRoot, 'core');
@@ -71,7 +79,6 @@ export async function handleCoreGet(
   }
 
   if (filename.endsWith('.json')) {
-    const { readFileSync } = await import('node:fs');
     const raw = readFileSync(filePath, 'utf-8');
     try {
       const data = JSON.parse(raw);
@@ -109,7 +116,6 @@ export async function handleCoreGet(
   }
 
   // Other file types (e.g., .sql)
-  const { readFileSync } = await import('node:fs');
   const raw = readFileSync(filePath, 'utf-8');
   sendJson(res, 200, { filename, type: 'text', content: raw });
 }
@@ -179,7 +185,6 @@ export async function handleCoreUpdate(
       return;
     }
     changedParts.push('content');
-    const { writeFileSync } = await import('node:fs');
     writeFileSync(filePath, body.content as string, 'utf-8');
   }
 
@@ -192,4 +197,169 @@ export async function handleCoreUpdate(
   });
 
   sendJson(res, 200, { success: true });
+}
+
+// ─── People (constitutions + roster) ─────────────────────────────────────────
+//
+// Three ADDITIVE routes (D6). They are deliberately NOT an extension of
+// `handleCoreGet/Update`: those root their `safeChildPath` at `core/`, and
+// serving `people/` through them would mean re-rooting at `contextRoot` — which
+// widens the dashboard's writable surface from one directory to the whole vault.
+// Separate handlers keep each traversal guard tight and leave every existing
+// core consumer byte-identical.
+//
+// Slug discipline: `isSafePersonSlug` runs BEFORE any filesystem access, so a
+// hostile `:slug` never even reaches `safeChildPath` (which then re-checks the
+// resolved path — defense in depth, two independent gates).
+
+/**
+ * Resolve `people/<slug>.md`, or null when the slug is not a legal person slug
+ * or the resolved path escapes `people/`. The charset check is first and
+ * standalone: it means no request-shaped string is ever passed to `join`.
+ */
+function personConstitutionPath(contextRoot: string, slug: string): string | null {
+  if (!isSafePersonSlug(slug)) return null;
+  return safeChildPath(peopleDir(contextRoot), `${slug}.md`);
+}
+
+/** Character count of a constitution — `String.length`, matching `auditCoreFileSizes`. Absent/unreadable ⇒ 0. */
+function constitutionChars(filePath: string): number {
+  try {
+    return readFileSync(filePath, 'utf-8').length;
+  } catch {
+    return 0; // missing or unreadable file is a doctor problem, not a 500
+  }
+}
+
+/**
+ * GET /api/core/people — the roster plus who is active on THIS machine.
+ *
+ * D17 read-path rule: a present-but-corrupt `people.json` degrades to an empty
+ * roster with the parse error attached, at 200 — the dashboard must render, and
+ * `doctor` is the loud channel. The `error` key is OMITTED on the happy path, so
+ * a healthy vault's payload carries no apology field.
+ */
+export async function handlePeopleList(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  let roster: Array<Person & { slug: string }>;
+  try {
+    roster = listPeople(contextRoot);
+  } catch (err) {
+    if (!(err instanceof PeopleStoreError)) throw err;
+    sendJson(res, 200, { activeSlug: null, source: 'none', people: [], error: err.message });
+    return;
+  }
+
+  // `resolveActivePerson` never throws and re-reads the same (now known-good)
+  // roster, so it cannot disagree with the list above.
+  const active = resolveActivePerson(contextRoot);
+  const dir = peopleDir(contextRoot);
+
+  sendJson(res, 200, {
+    activeSlug: active.slug,
+    source: active.source,
+    people: roster.map((person) => ({
+      slug: person.slug,
+      name: person.name,
+      ...(person.role ? { role: person.role } : {}),
+      active: person.slug === active.slug,
+      chars: constitutionChars(join(dir, `${person.slug}.md`)),
+    })),
+  });
+}
+
+/**
+ * The roster display name for `slug`, or null when the roster has no entry (or
+ * cannot be read). Never throws — the constitution FILE is the thing being
+ * served here; the roster only supplies a nicer label.
+ */
+function rosterName(contextRoot: string, slug: string): string | null {
+  try {
+    return listPeople(contextRoot).find((p) => p.slug === slug)?.name ?? null;
+  } catch (err) {
+    if (!(err instanceof PeopleStoreError)) throw err;
+    return null;
+  }
+}
+
+/**
+ * GET /api/core/people/:slug — one person's constitution.
+ *
+ * `content` is the RAW file, frontmatter included, because the response carries
+ * no separate `frontmatter` key: whole-file in, whole-file out is what makes the
+ * GET → edit → PUT round trip lossless.
+ */
+export async function handlePersonGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const { slug } = params;
+  const filePath = personConstitutionPath(contextRoot, slug);
+  if (!filePath) {
+    sendError(res, 400, 'invalid_path', 'Invalid person slug.');
+    return;
+  }
+  if (!existsSync(filePath)) {
+    sendError(res, 404, 'not_found', `No constitution for person: ${slug}`);
+    return;
+  }
+
+  sendJson(res, 200, {
+    slug,
+    name: rosterName(contextRoot, slug) ?? slug,
+    content: readFileSync(filePath, 'utf-8'),
+  });
+}
+
+/**
+ * PUT /api/core/people/:slug — replace one person's constitution.
+ *
+ * Writes the body VERBATIM (the mirror of the GET above). Like
+ * `handleCoreUpdate`, it only ever overwrites an existing file: creating a
+ * person is `dreamcontext people add`'s job, which also writes the roster entry
+ * — a constitution with no roster entry is exactly the orphan `doctor` errors on.
+ */
+export async function handlePersonUpdate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const { slug } = params;
+  const filePath = personConstitutionPath(contextRoot, slug);
+  if (!filePath) {
+    sendError(res, 400, 'invalid_path', 'Invalid person slug.');
+    return;
+  }
+  if (!existsSync(filePath)) {
+    sendError(res, 404, 'not_found', `No constitution for person: ${slug}`);
+    return;
+  }
+
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be JSON.');
+    return;
+  }
+  if (typeof body.content !== 'string') {
+    sendError(res, 400, 'missing_content', 'Content string is required.');
+    return;
+  }
+
+  writeFileSync(filePath, body.content, 'utf-8');
+
+  recordDashboardChange(contextRoot, {
+    entity: 'core',
+    action: 'update',
+    target: `people/${slug}.md`,
+    summary: `person '${slug}': updated constitution`,
+  });
+
+  sendJson(res, 200, { ok: true });
 }

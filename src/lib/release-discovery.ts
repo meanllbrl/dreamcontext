@@ -52,6 +52,15 @@ export interface ReleaseEntry {
   features: string[];
   tasks: string[];
   changelog: ChangelogEntry[];
+  /**
+   * People who contributed to this release (kebab-case person slugs), derived at
+   * record time from the swept changelog `authors` ∪ the swept tasks' `person:`
+   * tags — see `deriveContributors` in `attribution.ts`. OMITTED when empty
+   * (never `[]`), so a vault with no roster records byte-identical releases to
+   * pre-0.23.0. Only `status: 'released'` entries carry it: a planning version
+   * has no contributors yet.
+   */
+  contributors?: string[];
 }
 
 export interface UnreleasedTask {

@@ -10,6 +10,7 @@ import {
 } from './migration-ledger.js';
 import { insertToJsonArray } from './json-file.js';
 import { today } from './id.js';
+import { resolveAuthors } from './people-resolve.js';
 import type { MigrationAgentTask } from '../migrations/types.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -136,6 +137,11 @@ export function runMigrations(
       }
     }
 
+    // The human who ran the upgrade is the honest author of a migration entry.
+    // `undefined` on a vault with no people/people.json (D18) ⇒ no `authors` key,
+    // exactly as before — resolved once, since every entry shares the runner.
+    const authors = resolveAuthors(contextRoot);
+
     for (const [version, entries] of codeByVersion) {
       const description = `Migration ${version} applied: ${entries.map((e) => e.step).join(', ')}`;
       const summary = entries.map((e) => e.summary).join('; ');
@@ -147,6 +153,7 @@ export function runMigrations(
         breaking: false,
         summary,
         references: ['file:state/.migrations.json'],
+        ...(authors?.length ? { authors } : {}),
       };
       try {
         insertToJsonArray(changelogPath, changelogEntry, 'top');

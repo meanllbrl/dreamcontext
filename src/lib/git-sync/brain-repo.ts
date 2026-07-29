@@ -209,6 +209,10 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     'state/.tasks-map.json',
     'state/.tasks-sync.*',
     'state/.tasks-queue.json',
+    // The roster's cross-process write lock — live PID state. `people/people.json`
+    // and every `people/<slug>.md` DO sync; only the lock is machine-local (a
+    // synced lock would read as "held" by a foreign PID on every clone).
+    'people/.people.lock',
     '.obsidian/',
     'tmp/',
     '**/.env',
@@ -263,6 +267,9 @@ export const FULL_REPO_LOCAL_GITIGNORE_ENTRIES = [
   '_dream_context/state/.tasks-sync.lock',
   '_dream_context/state/.tasks-sync.json',
   '_dream_context/state/.tasks-queue.json',
+  // Roster write lock — live PID state, same reasoning as the sync lock above.
+  // The roster itself and the constitutions are DELIBERATELY absent: they sync.
+  '_dream_context/people/.people.lock',
   '_dream_context/tmp/',
   // Lab analytics credentials — the example (key names only) still syncs.
   '_dream_context/lab/credentials.json',

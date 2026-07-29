@@ -1,13 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 
 /**
- * Issue #10 — `config people` seeds the roster and syncs the ## People block in
- * 1.user.md, end-to-end via the built CLI (dist/index.js). This is the writer
- * the initializer uses to seed a multi-person roster from git authors.
+ * D7 — `dreamcontext config people` MOVED in 0.23.0.
+ *
+ * The old command was a full-roster REPLACE (`--clear` wrote `[]`). The new
+ * roster lives in `people/people.json` and is grown one person at a time, so
+ * forwarding would invert the command's semantics and `--clear` would have no
+ * counterpart at all. It is therefore a REDIRECT, not an alias: it prints where
+ * the roster went, exits 1, and — the part this file exists to lock — writes
+ * NOTHING, under every flag combination including `--clear`.
+ *
+ * Also pinned here (D17's read-path asymmetry): a corrupt roster degrades the
+ * `config show` People line to a named placeholder instead of taking the
+ * command down with a JSON parse error.
  */
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
@@ -18,73 +27,96 @@ function makeTmpDir(): string {
   return realpathSync(raw);
 }
 
-function run(cmd: string, cwd: string): string {
+function run(cmd: string, cwd: string): { out: string; code: number } {
   try {
-    return execSync(`node ${CLI} ${cmd} 2>&1`, { cwd, encoding: 'utf-8', timeout: 15000 });
+    const out = execSync(`node ${CLI} ${cmd} 2>&1`, { cwd, encoding: 'utf-8', timeout: 15000 });
+    return { out, code: 0 };
   } catch (e: any) {
-    return (e.stdout ?? '') + (e.stderr ?? '');
+    return { out: (e.stdout ?? '') + (e.stderr ?? ''), code: e.status ?? 1 };
   }
 }
 
-function readConfig(tmpDir: string): any {
-  return JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'state', '.config.json'), 'utf-8'));
-}
-
-function readUserMd(tmpDir: string): string {
-  return readFileSync(join(tmpDir, '_dream_context', 'core', '1.user.md'), 'utf-8');
-}
-
-describe('config people (integration)', () => {
+describe('config people — the 0.23.0 redirect (integration)', () => {
   let tmpDir: string;
+  let configPath: string;
+  let peopleJsonPath: string;
+
+  /** Raw bytes of both files that a write path could plausibly touch. */
+  function snapshotFiles(): { config: string; people: string | null } {
+    return {
+      config: readFileSync(configPath, 'utf-8'),
+      people: existsSync(peopleJsonPath) ? readFileSync(peopleJsonPath, 'utf-8') : null,
+    };
+  }
 
   beforeEach(() => {
     tmpDir = makeTmpDir();
     run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+    configPath = join(tmpDir, '_dream_context', 'state', '.config.json');
+    peopleJsonPath = join(tmpDir, '_dream_context', 'people', 'people.json');
+    // A real roster to protect: the redirect must not rewrite it either.
+    mkdirSync(join(tmpDir, '_dream_context', 'people'), { recursive: true });
+    writeFileSync(
+      peopleJsonPath,
+      JSON.stringify(
+        { version: 1, people: { ada: { name: 'Ada Lovelace', emails: ['ada@test.dev'] } } },
+        null,
+        2,
+      ) + '\n',
+      'utf-8',
+    );
   });
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('seeds a multi-person roster and inserts the ## People block', () => {
-    const out = run('config people "Alice Smith" "Bob Jones"', tmpDir);
-    expect(out).toContain('People roster set: Alice Smith, Bob Jones');
+  // Every flag combination the old command accepted — each must redirect, exit
+  // 1, and leave both files byte-identical.
+  const invocations: Array<[label: string, argv: string]> = [
+    ['names', 'config people "Alice Smith" "Bob Jones"'],
+    ['--clear', 'config people --clear'],
+    ['no arguments', 'config people'],
+    ['--clear with names', 'config people --clear "Alice Smith"'],
+  ];
 
-    const cfg = readConfig(tmpDir);
-    expect(cfg.people).toEqual(['Alice Smith', 'Bob Jones']);
+  for (const [label, argv] of invocations) {
+    it(`redirects and exits 1 for ${label}`, () => {
+      const { out, code } = run(argv, tmpDir);
+      expect(out).toContain('`dreamcontext config people` moved in 0.23.0.');
+      expect(out).toContain('The roster now lives in _dream_context/people/people.json.');
+      expect(out).toContain('Use: dreamcontext people list | people add <name> --email <e> | people rm <slug>');
+      expect(code).toBe(1);
+    });
 
-    const userMd = readUserMd(tmpDir);
-    expect(userMd).toContain('## People');
-    expect(userMd).toContain('- Alice Smith (`person:alice-smith`)');
-    expect(userMd).toContain('- Bob Jones (`person:bob-jones`)');
+    it(`writes nothing for ${label}`, () => {
+      const before = snapshotFiles();
+      run(argv, tmpDir);
+      expect(snapshotFiles()).toEqual(before);
+    });
+  }
+
+  it('never reaches the store: no roster is created when people.json is absent', () => {
+    rmSync(join(tmpDir, '_dream_context', 'people'), { recursive: true, force: true });
+    const before = readFileSync(configPath, 'utf-8');
+    run('config people "Alice Smith" "Bob Jones"', tmpDir);
+    expect(existsSync(peopleJsonPath)).toBe(false);
+    expect(readFileSync(configPath, 'utf-8')).toBe(before);
   });
 
-  it('dedupes by slug and is idempotent on the user.md block', () => {
-    run('config people "Alice" "alice" "Alice"', tmpDir);
-    const cfg = readConfig(tmpDir);
-    // collapses to a single entry; single person => no block, multi-person off
-    expect(cfg.people).toEqual(['Alice']);
-    expect(readUserMd(tmpDir)).not.toContain('## People');
-
-    // re-running a 2-person roster twice yields a byte-identical user.md
-    run('config people "Alice" "Bob"', tmpDir);
-    const first = readUserMd(tmpDir);
-    run('config people "Alice" "Bob"', tmpDir);
-    expect(readUserMd(tmpDir)).toBe(first);
+  it('config show reads the People line from people.json', () => {
+    const { out } = run('config show', tmpDir);
+    expect(out).toMatch(/People:\s+Ada Lovelace/);
   });
 
-  it('--clear empties the roster', () => {
-    run('config people "Alice" "Bob"', tmpDir);
-    expect(readConfig(tmpDir).people).toEqual(['Alice', 'Bob']);
-
-    const out = run('config people --clear', tmpDir);
-    expect(out).toContain('roster cleared');
-    // [] reads as single-person (isMultiPerson([]) === false)
-    expect(readConfig(tmpDir).people).toEqual([]);
-  });
-
-  it('rejects an empty roster without --clear', () => {
-    const out = run('config people', tmpDir);
-    expect(out).toContain('No valid names provided');
+  it('config show degrades a corrupt roster instead of crashing (D17 read path)', () => {
+    writeFileSync(peopleJsonPath, '{ "version": 1, "people": {', 'utf-8');
+    const { out, code } = run('config show', tmpDir);
+    expect(out).toContain('People:');
+    expect(out).toContain('<unreadable — run dreamcontext doctor>');
+    // Degrade, don't die: no stack trace, and `config show` still succeeds.
+    expect(out).not.toContain('PeopleStoreError:');
+    expect(out).not.toMatch(/\n\s+at /);
+    expect(code).toBe(0);
   });
 });

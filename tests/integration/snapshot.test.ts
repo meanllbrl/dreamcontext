@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { readFrontmatter, writeFrontmatter } from '../../src/lib/frontmatter.js';
+import { writePeople } from '../../src/lib/people-store.js';
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `ac-snap-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -55,7 +56,25 @@ describe('snapshot (integration)', () => {
     expect(output).toContain('A test project.');
   });
 
-  it('outputs user file content', () => {
+  it('outputs the active person\'s constitution', () => {
+    const ctx = scaffold(tmpDir);
+    mkdirSync(join(ctx, 'people'), { recursive: true });
+    writePeople(ctx, { ada: { name: 'Ada', emails: ['ada@example.invalid'] } });
+    writeFileSync(
+      join(ctx, 'people', 'ada.md'),
+      '---\nname: ada\ntype: person\n---\n\n## Preferences\n\n- Prefers concise output.\n',
+    );
+    const output = runSnapshot(tmpDir);
+    expect(output).toContain('## Person (Active — Ada, `person:ada`)');
+    expect(output).toContain('Prefers concise output');
+    // Solo vault: zero ceremony about other people.
+    expect(output).not.toContain('## Other People');
+  });
+
+  it('outputs a legacy core/1.user.md under the old header plus one deprecation line (D15)', () => {
+    // The migration window: the CLI is upgraded but the project has not run
+    // `dreamcontext update` yet. Knowing NOTHING about the user would be a worse
+    // failure than one deprecation line, so the old file still renders verbatim.
     const ctx = scaffold(tmpDir);
     writeFileSync(
       join(ctx, 'core', '1.user.md'),
@@ -64,6 +83,32 @@ describe('snapshot (integration)', () => {
     const output = runSnapshot(tmpDir);
     expect(output).toContain('## User (Preferences, Project Details, Rules)');
     expect(output).toContain('Prefers concise output');
+    expect(output.split('\n').filter((l) => l.includes('Retired layout'))).toHaveLength(1);
+    expect(output).toContain('run `dreamcontext update` to migrate to `people/`');
+    expect(output).not.toContain('## Person (Active');
+  });
+
+  it('renders the UNRESOLVED notice instead of guessing, and never another person\'s file', () => {
+    const ctx = scaffold(tmpDir);
+    mkdirSync(join(ctx, 'people'), { recursive: true });
+    writePeople(ctx, {
+      ada: { name: 'Ada', emails: ['ada@example.invalid'] },
+      bob: { name: 'Bob', emails: ['bob@example.invalid'], role: 'reviewer' },
+    });
+    writeFileSync(join(ctx, 'people', 'ada.md'), '---\nname: ada\n---\n\nADA_ONLY_MARKER\n');
+    writeFileSync(join(ctx, 'people', 'bob.md'), '---\nname: bob\n---\n\nBOB_ONLY_MARKER\n');
+
+    // Two people and no binding for this machine (the fixture emails belong to
+    // nobody), so resolution must stop rather than pick one.
+    const output = runSnapshot(tmpDir);
+    expect(output).toContain('## Person (Active — UNRESOLVED)');
+    expect(output).not.toContain('ADA_ONLY_MARKER');
+    expect(output).not.toContain('BOB_ONLY_MARKER');
+    expect(output).toContain('dreamcontext people whoami --set');
+    // Multi-person, so everyone is still NAMED by the roster.
+    expect(output).toContain('## Other People (this vault)');
+    expect(output).toContain('- **Ada** (`person:ada`)');
+    expect(output).toContain('- **Bob** (`person:bob`) — reviewer');
   });
 
   it('outputs memory file content fully', () => {

@@ -126,12 +126,15 @@ describe('task backend', () => {
   });
 
   describe('M2 — identity + config + ApiAdapter + token storage', () => {
+    // 0.23.0 (D19): the roster source here is the KEYS of `peopleIdentity`, not
+    // the retired `.config.json.people`. WHO EXISTS lives in people/people.json;
+    // this module only ever resolved the people who have a REMOTE mapping, and
+    // those are exactly the peopleIdentity keys — so no signature changed.
     it('people roster maps person slugs to ClickUp member IDs (config peopleIdentity)', () => {
       const { contextRoot, projectRoot } = makeTmpProject();
       try {
         const config: SetupConfig = {
           ...BASE_CONFIG,
-          people: ['Alice Smith', 'bob'],
           peopleIdentity: {
             'alice-smith': { clickupMemberId: '101', tokenEnv: 'ALICE_CLICKUP_TOKEN' },
             bob: { clickupMemberId: '202' },
@@ -154,7 +157,12 @@ describe('task backend', () => {
           '# Team owners\n\n- Engineering: Alice Smith\n- Design: bob\n',
           'utf-8',
         );
-        const config: SetupConfig = { ...BASE_CONFIG, people: ['Alice Smith', 'bob'] };
+        // The seeding is keyed by SLUG, so it needs no display names — the
+        // roster is the peopleIdentity keys, each here with no role of its own.
+        const config: SetupConfig = {
+          ...BASE_CONFIG,
+          peopleIdentity: { 'alice-smith': {}, bob: {} },
+        };
         const people = resolvePeople(contextRoot, config);
         expect(people.find((p) => p.slug === 'alice-smith')?.role).toBe('Engineering');
         expect(people.find((p) => p.slug === 'bob')?.role).toBe('Design');

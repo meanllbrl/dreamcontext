@@ -163,6 +163,26 @@ export function removeRemote(cwd: string, name: string): void {
   run(cwd, ['remote', 'remove', name]);
 }
 
+/**
+ * The configured git identity (local or global), or nulls. NEVER throws — an
+ * absent identity, a missing `git`, or a non-repo `cwd` is an ordinary state
+ * here, not a failure: `people-resolve`'s git-email rung and `init`'s
+ * first-person seeding both simply fall through when there is nothing to read.
+ * Each field resolves independently (a repo can have `user.email` and no
+ * `user.name`). Blank values normalize to null.
+ */
+export function readGitIdentity(cwd: string): { name: string | null; email: string | null } {
+  const read = (key: string): string | null => {
+    try {
+      const value = run(cwd, ['config', key]).trim();
+      return value.length > 0 ? value : null;
+    } catch {
+      return null;
+    }
+  };
+  return { name: read('user.name'), email: read('user.email') };
+}
+
 /** True when `user.name`/`user.email` resolve (local or global config). */
 export function hasGitIdentity(cwd: string): boolean {
   try {

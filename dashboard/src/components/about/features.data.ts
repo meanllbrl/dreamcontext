@@ -97,11 +97,11 @@ const SLEEP_MINI_FLOW: FlowSpec = {
 const REGIONS_FLOW: FlowSpec = {
   viewBox: MINI_VB,
   ariaLabel:
-    'Brain-region core files: soul, user, memory and the knowledge index sit in a numbered band the snapshot always loads.',
+    'Brain-region core files: soul, the active person constitution, memory and the knowledge index sit in a numbered band the snapshot always loads.',
   nodes: [
     { id: 'soul', x: 14, y: 24, w: 158, h: 54, title: '0.soul', sub: 'identity · rules', variant: 'region', breathe: true },
     { id: 'mem', x: 188, y: 24, w: 158, h: 54, title: '2.memory', sub: 'decisions · issues', variant: 'region', breathe: true, breatheDelay: 0.2 },
-    { id: 'user', x: 14, y: 96, w: 158, h: 54, title: '1.user', sub: 'preferences', variant: 'region', breathe: true, breatheDelay: 0.4 },
+    { id: 'user', x: 14, y: 96, w: 158, h: 54, title: 'people/<slug>', sub: 'constitution', variant: 'region', breathe: true, breatheDelay: 0.4 },
     { id: 'know', x: 188, y: 96, w: 158, h: 54, title: 'knowledge', sub: 'index · pinned', variant: 'region', breathe: true, breatheDelay: 0.6 },
   ],
   edges: [],

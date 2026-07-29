@@ -7,11 +7,18 @@ import { resolveClickUpToken, type ResolvedToken } from './secrets.js';
 /**
  * Identity layer — issue #11 P1.
  *
- * Multi-people awareness for remote backends: the `.config.json` people
- * roster gains per-person remote identity ({ role, clickupMemberId, tokenEnv }
- * in `peopleIdentity`, keyed by person slug). Assignment is STATIC config
- * mapping; live presence is explicitly out of scope — `updated_by` +
- * `last_synced_at` suffice.
+ * Multi-people awareness for remote backends: `.config.json.peopleIdentity`
+ * holds per-person remote identity ({ role, clickupMemberId, tokenEnv,
+ * githubLogin }), keyed by person slug. Assignment is STATIC config mapping;
+ * live presence is explicitly out of scope — `updated_by` + `last_synced_at`
+ * suffice.
+ *
+ * D19 (0.23.0): WHO EXISTS now lives in `people/people.json`, not
+ * `.config.json.people` (retired). This module's roster source is therefore the
+ * KEYS of `peopleIdentity` — the people who have a remote mapping at all, which
+ * is the only population it can resolve anyway. A roster person with no
+ * `peopleIdentity` entry has no ClickUp/GitHub identity to resolve, so their
+ * absence here is not a loss; it keeps every signature unchanged.
  */
 
 export interface ResolvedPerson {
@@ -57,20 +64,19 @@ export function seedRolesFromTeamOwners(contextRoot: string): Record<string, str
 }
 
 /**
- * Resolve the full roster with remote identities merged in. Roles missing
- * from `peopleIdentity` are seeded from `knowledge/team_owners.md` when the
- * doc exists.
+ * Resolve the remote-identity roster: every slug that has a `peopleIdentity`
+ * entry (D19), with its identity merged in. Roles missing from `peopleIdentity`
+ * are seeded from `knowledge/team_owners.md` when the doc exists — that seeding
+ * is keyed by SLUG, so it needs no display names and this signature is unchanged.
  */
 export function resolvePeople(
   contextRoot: string,
   config: SetupConfig | null,
 ): ResolvedPerson[] {
-  const people = config?.people ?? [];
   const identity = config?.peopleIdentity ?? {};
   const seededRoles = seedRolesFromTeamOwners(contextRoot);
 
-  return people.map((name) => {
-    const slug = slugify(name);
+  return Object.keys(identity).map((slug) => {
     const id = identity[slug] ?? {};
     return {
       slug,
@@ -92,14 +98,15 @@ export function clickupMemberMap(contextRoot: string, config: SetupConfig | null
 
 /**
  * Who is acting right now (for created_by / updated_by attribution).
- * `DREAMCONTEXT_PERSON` env wins; otherwise a single-person roster names its
- * only member; otherwise null (attribution recorded as unknown).
+ * `DREAMCONTEXT_PERSON` env wins; otherwise a single-mapping roster names its
+ * only member (D19: the keys of `peopleIdentity`); otherwise null (attribution
+ * recorded as unknown).
  */
 export function resolveActor(config: SetupConfig | null): string | null {
   const env = process.env.DREAMCONTEXT_PERSON;
   if (env && env.trim()) return slugify(env);
-  const people = config?.people ?? [];
-  if (people.length === 1) return slugify(people[0]);
+  const slugs = Object.keys(config?.peopleIdentity ?? {});
+  if (slugs.length === 1) return slugs[0];
   return null;
 }
 

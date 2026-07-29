@@ -339,6 +339,12 @@
   color: hsl(220 90% 56%);
 }
 
+/* Release contributors — person slugs, not ids, so no mono-uppercase treatment. */
+.json-id-chip--person {
+  background: hsl(152 55% 42% / 0.1);
+  color: hsl(152 55% 34%);
+}
+
 /* ─── Release Changelog ─── */
 .json-release-changelog {
   display: flex;

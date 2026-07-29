@@ -82,7 +82,7 @@ An agent can only run your project if it *remembers* your project. Everything in
 
 - **Capture** — while you work, hooks and bookmarks record what matters — decisions, constraints, discoveries — with zero effort from you. Seven hooks do it automatically: Stop records what happened, SessionStart injects everything before the first message, SubagentStart briefs sub-agents, PreToolUse blocks blind exploration when curated context exists, UserPromptSubmit surfaces sleep debt and relevant memories on every message, PostToolUse auto-formats and type-checks edited files, PreCompact saves state before context compaction. Bookmarks tag the important moments with salience levels; critical ones trigger immediate consolidation advisories.
 - **Sleep** — a brain doesn't file raw experience; it consolidates during sleep. So does dreamcontext: when enough has happened, agents fan out in parallel — reading bookmarks first, distilling transcripts for high-signal content, extracting recurring patterns, promoting learnings, cleaning stale entries — and fold it all back into human-readable files. The single source of truth, refreshed.
-- **Start ready** — the next session opens with the full picture already loaded: identity, decisions, active work, the knowledge index. Zero tool calls. Anything deeper is one recall away — instant, local, zero tokens.
+- **Start ready** — the next session opens with the full picture already loaded: identity, decisions, active work, the knowledge index. Zero tool calls. Anything deeper is one recall away — instant, local, zero tokens. The snapshot stays inside its budget as the brain grows: sections step down through curated summaries that keep every name and file path, never a blind cut through the middle of a file, and `dreamcontext doctor` tells you when it is time to trim.
 
 **Remember → learn → start ready.** Every surface below — knowledge, PRDs, roadmap, insights, team sync — is this mechanism wearing a different face.
 
@@ -216,7 +216,7 @@ your-project/
 ├── _dream_context/              # Structured context (git-tracked)
 │   ├── core/
 │   │   ├── 0.soul.md                    # Identity, principles, rules
-│   │   ├── 1.user.md                    # Your preferences, project details
+│   │   │                                # slot 1 is retired (the user file became people/)
 │   │   ├── 2.memory.md                  # Decisions & known issues
 │   │   ├── 3.style_guide_and_branding.md
 │   │   ├── 4.tech_stack.md              # Tech decisions
@@ -224,6 +224,9 @@ your-project/
 │   │   ├── CHANGELOG.json
 │   │   ├── RELEASES.json
 │   │   └── features/                    # Feature PRDs
+│   ├── people/                          # Who works in this vault
+│   │   ├── people.json                  # The roster: slug, name, emails, optional role
+│   │   └── *.md                         # One constitution per person, loaded when it's yours
 │   ├── knowledge/                       # Tagged docs (index in snapshot)
 │   │   ├── data-structures/             # Schema files (SQL-fenced, highlighted)
 │   │   │   └── default.md              # single-product; one per product if monorepo
@@ -371,7 +374,8 @@ dreamcontext brain disable   # Turn it off (the brain stays committed locally, n
 - **Deterministic files merge themselves; prose defers to an agent; code goes to you.** JSON and task status/changelog merge by rule (changelogs union, the furthest status wins). When two people edit the same *prose* section, the conflict goes to a semantic **merge agent** (the `/dream-sync` skill) that reads base/ours/theirs and writes the real merge. A real **code** conflict is left for your editor with native git markers — never mangled by an agent.
 - **Two modes.** `full-repo` (cloud sync on) syncs the whole project on the current branch; **`in-tree`** (the safe default) commits the brain locally on sleep and **never auto-pushes**.
 - **Nothing secret or machine-local is ever pushed.** A **scrub gate** blocks secrets and absolute local paths before every commit and push; the machine-local excludes are force-written into `.gitignore` before every stage; the auth token rides `GIT_ASKPASS` with a `0600` temp file — never the remote URL, the environment, or a process argument. Per-machine indexes, caches, and embeddings are gitignored and rebuilt locally.
-- **Personal attribution, no per-person forks.** Attribution rides `person:<slug>` tags and changelog authors, not per-person file copies.
+- **Personal attribution, no per-person forks.** Attribution rides `person:<slug>` tags and changelog authors, not per-person file copies. Authors are stamped automatically from whoever this machine resolves to, so a shared brain records who did what without anyone remembering to say so.
+- **One roster, one constitution each.** `people/people.json` merges as a union across machines, so two teammates adding two different people never lose one of them. The per-person constitutions under `people/*.md` merge as ordinary prose. See [People](#people-who-works-in-this-vault).
 
 The [desktop app](#desktop-app) wraps the whole flow terminal-free — login, toggle, team-updates badge, AI conflict resolution, and origin creation.
 
@@ -621,6 +625,23 @@ Or re-run the one-command installer — it detects an existing `_dream_context/`
 ## CLI Reference
 
 The command groups below are the ones not already covered in their feature sections above ([Teams](#built-for-teams) holds brain / federation / link / task-backend commands; [Council](#council), [Memory Recall](#memory-recall), [Lab](#lab-insights), and [Automations](#automations) hold theirs).
+
+### People (who works in this vault)
+
+```bash
+dreamcontext people list                                  # The roster; the active person is marked
+dreamcontext people add "Ada" --email ada@example.com      # Roster row + people/ada.md constitution
+dreamcontext people add "Ada" --role backend               # Role is a structural label, not prose
+dreamcontext people show [slug]                            # Print a constitution (defaults to you)
+dreamcontext people whoami [--set <slug>] [--clear]        # Show or pin who is at this keyboard
+dreamcontext people rm <slug> [--yes]                      # Leave the roster; the file is kept
+```
+
+Every person gets a **constitution** at `people/<slug>.md` (identity, preferences, communication style) plus a structural row in `people/people.json` (name, emails, optional role). The constitution of whoever is at *this* keyboard loads in full every session, verbatim, at any budget. Everyone else appears as a named roster line, which is what `person:<slug>` assignee tags resolve against.
+
+Who is at the keyboard is resolved per machine, never guessed: `DREAMCONTEXT_PERSON`, then a machine pin from `people whoami --set`, then this machine's git `user.email` matched against the roster, then a solo vault's only person. If none of those land, the session says so and loads **no** constitution rather than somebody else's. The pin lives in a gitignored file, so machine identity never enters the synced brain, while the roster itself syncs and merges as a union across machines.
+
+> Upgrading from before v0.23.0? `dreamcontext update` migrates `core/1.user.md` into `people/`, moves identity and preferences into your constitution, and parks every other section verbatim in `inbox/1.user-residue.md` for an agent to file. Nothing is discarded.
 
 ### Core (changelog & releases)
 

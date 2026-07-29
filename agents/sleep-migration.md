@@ -18,7 +18,7 @@ skills:
 
 | You touch | You NEVER touch |
 |---|---|
-| Folder/file moves and renames | Body prose (gotcha 3: no content edits) |
+| Folder/file moves and renames | Body prose (gotcha 3: no content edits — the 0.23.0 residue task is the single carve-out, and it MOVES sections verbatim rather than editing them) |
 | Frontmatter normalisation (type, tags, product) | Logic or semantic content |
 | SQL fence wrapping (`\`\`\`sql ... \`\`\``) | Anything sleep-state / sleep-tasks / sleep-product own |
 | Inbound [[wikilink]] targets on moved slugs | Link text / alias / anchor (preserve verbatim) |
@@ -65,6 +65,50 @@ Before running it, decide per board:
 
 Decision rule: "Will a future session need to know this? → knowledge. Throwaway/working? → inbox/workspace."
 
+### Residue distribution (behavioral) — migration 0.23.0, `distribute-user-md-residue`
+
+0.23.0 replaced `_dream_context/core/1.user.md` with one constitution per person
+(`_dream_context/people/<slug>.md`). The deterministic steps already moved
+`## Identity` / `## Preferences` / `## Communication Style` into the owner's
+constitution and the `## People` bullets into `people/people.json`. **Every other
+section was copied VERBATIM into `_dream_context/inbox/1.user-residue.md`**,
+because deciding where prose belongs is judgment, not a string transform — which
+is why it is your job and not the code's.
+
+**Start by checking the filesystem:** if `_dream_context/inbox/1.user-residue.md`
+does not exist, there is nothing to distribute — record the step and stop.
+
+Read the residue file and place each `## <Heading>` section:
+
+- `## Project Details`, `## Skills & Capabilities` → `core/4.tech_stack.md`.
+  Merge into the existing sections; do not duplicate a fact already recorded.
+- `## Project Rules` → `core/0.soul.md`, as **UNCONDITIONAL** one-liners (the soul
+  holds rules that always apply). A conditional rule — "when X, do Y" — is a
+  pattern, not a law: move it to `knowledge/patterns/<slug>.md` instead.
+- `## Workflow Notes` → `knowledge/patterns/<slug>.md`, **MOVED AS-IS** with honest
+  frontmatter (`name`, `type: pattern`, `updated`) and an explicit note that the
+  content is un-distilled and migrated from `core/1.user.md`. Do not paraphrase it
+  into something you did not verify.
+- brand / palette / tone / voice sections → `core/3.style_guide_and_branding.md`.
+- `## Preamble` holds prose that sat before the first heading. Place it by meaning,
+  exactly like any other section.
+
+**NOTHING IS DISCARDED.** A section with no sensible home **STAYS** in the residue
+file and is **reported in your summary** — never delete prose you could not place.
+Delete `_dream_context/inbox/1.user-residue.md` only when every section has been
+placed. If anything remains, leave the file and say what is left and why.
+
+This is the one migration where you DO write body prose into a target file — you
+are moving sections a human wrote, verbatim, to the file that owns them. You are
+still not rewriting them.
+
+Then record completion:
+
+```bash
+dreamcontext migrations record --version 0.23.0 --step distribute-user-md-residue \
+  --executor agent --summary "<what you did>"
+```
+
 4. **Write the ledger ONLY on completion** via:
    ```bash
    dreamcontext migrations record \
@@ -86,7 +130,10 @@ Decision rule: "Will a future session need to know this? → knowledge. Throwawa
 1. Never modify `.claude/` or `.agents/` files.
 2. After moving a file, update inbound [[wikilinks]] or clearly list broken
    links in your report so the user can fix them.
-3. NEVER alter body prose — only structure (paths, frontmatter, fences).
+3. NEVER alter body prose — only structure (paths, frontmatter, fences). **One
+   carve-out, and only one:** the 0.23.0 `distribute-user-md-residue` task MOVES
+   whole prose sections between files. Even there you move them **verbatim** and
+   never rewrite or paraphrase them.
 4. Atomic writes only: prefer Edit over Write for existing files.
 5. Record the ledger at the end, not at the start.
 6. The code step already handled the deterministic part — check the ledger

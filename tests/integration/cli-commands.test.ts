@@ -12,12 +12,35 @@ function makeTmpDir(): string {
   return realpathSync(raw);
 }
 
-function run(cmd: string, cwd: string): string {
+function run(cmd: string, cwd: string, env?: NodeJS.ProcessEnv): string {
   try {
-    return execSync(`node ${CLI} ${cmd} 2>&1`, { cwd, encoding: 'utf-8', timeout: 10000 });
+    return execSync(`node ${CLI} ${cmd} 2>&1`, {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 10000,
+      ...(env ? { env: { ...process.env, ...env } } : {}),
+    });
   } catch (e: any) {
     return (e.stdout ?? '') + (e.stderr ?? '');
   }
+}
+
+/**
+ * Pin the git identity the CLI (and therefore `init`'s person creation) sees:
+ * global + system config are redirected, so the person a fresh vault gets is the
+ * same on a developer laptop and in CI. `identity: null` = a machine that never
+ * ran `git config user.name`.
+ */
+function gitIdentityEnv(dir: string, identity: { name: string; email: string } | null): NodeJS.ProcessEnv {
+  const configPath = join(dir, 'test-gitconfig');
+  writeFileSync(
+    configPath,
+    identity ? `[user]\n\tname = ${identity.name}\n\temail = ${identity.email}\n` : '',
+    'utf-8',
+  );
+  // DREAMCONTEXT_PERSON is blanked so an exported override in the dev's shell
+  // cannot steer the active-person ladder mid-test.
+  return { GIT_CONFIG_GLOBAL: configPath, GIT_CONFIG_SYSTEM: '/dev/null', DREAMCONTEXT_PERSON: '' };
 }
 
 describe('CLI commands (integration)', () => {
@@ -51,11 +74,76 @@ describe('CLI commands (integration)', () => {
       const output = run('init --yes --name "Test" --description "Test project" --stack "Node.js" --priority "Ship v1"', tmpDir);
       expect(output).toContain('initialized');
       expect(existsSync(join(tmpDir, '_dream_context', 'core', '0.soul.md'))).toBe(true);
-      expect(existsSync(join(tmpDir, '_dream_context', 'core', '1.user.md'))).toBe(true);
       expect(existsSync(join(tmpDir, '_dream_context', 'core', '2.memory.md'))).toBe(true);
       expect(existsSync(join(tmpDir, '_dream_context', 'core', 'CHANGELOG.json'))).toBe(true);
       expect(existsSync(join(tmpDir, '_dream_context', 'state'))).toBe(true);
       expect(existsSync(join(tmpDir, '_dream_context', 'knowledge'))).toBe(true);
+      // People-first: the user constitution is people/<slug>.md, never core/1.user.md.
+      expect(existsSync(join(tmpDir, '_dream_context', 'core', '1.user.md'))).toBe(false);
+      expect(existsSync(join(tmpDir, '_dream_context', 'people', 'people.json'))).toBe(true);
+    });
+
+    it('creates people/ from this machine\'s git identity — roster + constitution, no core/1.user.md', () => {
+      const env = gitIdentityEnv(tmpDir, { name: 'Ada Lovelace', email: 'ADA@Example.dev' });
+      const output = run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir, env);
+      expect(output).toContain('initialized');
+
+      const roster = JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'people', 'people.json'), 'utf-8'));
+      // EXACTLY the git-config person — one entry, email normalized to lowercase.
+      expect(roster).toEqual({
+        version: 1,
+        people: { 'ada-lovelace': { name: 'Ada Lovelace', emails: ['ada@example.dev'] } },
+      });
+      expect(existsSync(join(tmpDir, '_dream_context', 'people', 'ada-lovelace.md'))).toBe(true);
+      expect(existsSync(join(tmpDir, '_dream_context', 'core', '1.user.md'))).toBe(false);
+      // The tree print names the new layout.
+      expect(output).toContain('people/');
+      expect(output).toContain('ada-lovelace.md');
+    });
+
+    // Single-source pin: the shipped template and `renderPersonConstitution`
+    // (what `people add` writes) are the same document. Only a test can hold
+    // that — init writes via the store, so a template edit alone goes unnoticed.
+    it('the created constitution is byte-identical to src/templates/init/people/person.md', () => {
+      const env = gitIdentityEnv(tmpDir, { name: 'Ada Lovelace', email: 'ada@example.dev' });
+      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir, env);
+
+      const written = readFileSync(join(tmpDir, '_dream_context', 'people', 'ada-lovelace.md'), 'utf-8');
+      const template = readFileSync(
+        join(__dirname, '..', '..', 'src', 'templates', 'init', 'people', 'person.md'),
+        'utf-8',
+      );
+      // Take DATE from the written file (the run could straddle a UTC midnight);
+      // its shape is asserted separately, everything else is compared verbatim.
+      const date = /^updated: "(.+)"$/m.exec(written)?.[1] ?? '';
+      expect(date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(written).toBe(
+        template
+          .replaceAll('{{PERSON_SLUG}}', 'ada-lovelace')
+          .replaceAll('{{PERSON_NAME}}', 'Ada Lovelace')
+          .replaceAll('{{DATE}}', date),
+      );
+    });
+
+    it('falls back to the owner slug and prints the fix hint when there is no git identity', () => {
+      const env = gitIdentityEnv(tmpDir, null);
+      const output = run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir, env);
+
+      expect(output).toContain('No git identity found');
+      expect(output).toContain('people/owner.md');
+      expect(output).toContain('git config user.email');
+
+      const roster = JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'people', 'people.json'), 'utf-8'));
+      expect(roster.people).toEqual({ owner: { name: 'Owner', emails: [] } });
+      expect(existsSync(join(tmpDir, '_dream_context', 'people', 'owner.md'))).toBe(true);
+    });
+
+    it('stamps the init changelog entry with the person who ran it', () => {
+      const env = gitIdentityEnv(tmpDir, { name: 'Ada Lovelace', email: 'ada@example.dev' });
+      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir, env);
+      const changelog = JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'core', 'CHANGELOG.json'), 'utf-8'));
+      expect(changelog[0].description).toBe('Agent context initialized');
+      expect(changelog[0].authors).toEqual(['ada-lovelace']);
     });
 
     it('refuses to init if _dream_context/ already exists', () => {
@@ -747,6 +835,20 @@ parent_task: null
       expect(output).toContain('Snapshot Test');
       expect(output).toContain('my-task');
     });
+
+    // Cross-command residue: every other Person-block test builds its `people/`
+    // by hand. This is the only one that proves the person `init` ACTUALLY
+    // creates flows through to the renderer — the two halves of the feature meet
+    // nowhere else in the suite.
+    it('renders the person init created, with no roster ceremony on a solo vault', () => {
+      const env = gitIdentityEnv(tmpDir, { name: 'Ada Lovelace', email: 'ada@example.dev' });
+      run('init --yes --name "Snapshot Test" --description "d" --stack "Node" --priority "p"', tmpDir, env);
+      const output = run('snapshot', tmpDir, env);
+      expect(output).toContain('## Person (Active — Ada Lovelace, `person:ada-lovelace`)');
+      expect(output).toContain(readFileSync(join(tmpDir, '_dream_context', 'people', 'ada-lovelace.md'), 'utf-8').trim());
+      expect(output).not.toContain('## Other People');
+      expect(output).not.toContain('## User (Preferences, Project Details, Rules)');
+    });
   });
 
   describe('doctor', () => {
@@ -758,6 +860,19 @@ parent_task: null
       expect(output).not.toContain('Missing: core/0.soul.md');
       expect(output).not.toContain('Missing: core/1.user.md');
       expect(output).not.toContain('Missing: core/2.memory.md');
+    });
+
+    // Cross-command residue: a vault built by the real `init` must satisfy the
+    // people-first checks doctor gained in 0.23.0 — no roster error, and no
+    // retired-layout warning, on a brand-new vault.
+    it('passes the people-first checks on a freshly initialized vault', () => {
+      const env = gitIdentityEnv(tmpDir, { name: 'Ada Lovelace', email: 'ada@example.dev' });
+      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir, env);
+      const output = run('doctor', tmpDir, env);
+      expect(output).toContain('people/ (1 person), each with a constitution');
+      expect(output).not.toContain('retired layout');
+      expect(output).not.toContain('Missing: people/people.json');
+      expect(output).not.toContain('lists no people');
     });
 
     it('reports error when _dream_context/ does not exist', () => {

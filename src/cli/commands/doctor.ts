@@ -16,9 +16,18 @@ import { parseFunnelSet, FUNNEL_HISTORY_MAX } from '../../lib/lab/funnel.js';
 import { RENDERS } from '../../lib/lab/types.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
 import { readSetupConfig, isLearningEnabled } from '../../lib/setup-config.js';
+import { hasPeopleLayout, listPeople, personFilePath } from '../../lib/people-store.js';
+import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { readFrontmatter } from '../../lib/frontmatter.js';
 import { listTheses, isSafeThesisSlug, thesesDir } from '../../lib/theses/store.js';
 import { THESIS_STATUSES, THESIS_KINDS, EVIDENCE_VERDICTS, EVIDENCE_SOURCES } from '../../lib/theses/types.js';
+import {
+  auditCoreFileSizes, CORE_FILE_CHAR_CEILING, CORE_FILE_LINE_CEILING,
+  type CoreFileSizeAudit,
+} from '../../lib/core-index.js';
+import { measureSnapshot, type SnapshotMeasurement } from './snapshot.js';
+import { resolveBudget, HARNESS_PERSIST_CHAR_LIMIT, HARNESS_PREVIEW_CHARS } from '../../lib/snapshot-budget.js';
+import type { NeverEvictSectionId } from '../../lib/snapshot-caps.js';
 
 /**
  * Remove content that represents documented mentions of placeholder syntax
@@ -537,6 +546,297 @@ export function checkTheses(root: string): CheckResult[] {
   return results;
 }
 
+// ─── Snapshot health ───────────────────────────────────────────────────────
+
+/**
+ * Group digits so a size reads at a glance. Duplicated (one line) from
+ * `snapshot-compress.ts` rather than exported from it: that copy is private to
+ * the compressor's provenance footer, and a shared formatting util is not worth
+ * a new module boundary.
+ */
+function withThousands(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The never-evict tier, as a runtime list.
+ *
+ * Typed `Record<NeverEvictSectionId, true>` on purpose: a section added to (or
+ * removed from) the union in `snapshot-caps.ts` without updating this list is a
+ * COMPILE error, so the message below can never name a tier that no longer
+ * matches the snapshot builder.
+ */
+const NEVER_EVICT_SECTIONS: Record<NeverEvictSectionId, true> = {
+  header: true,
+  'linked-repos': true,
+  soul: true,
+  person: true,
+  'task-override': true,
+  'product-and-nudge': true,
+  awareness: true,
+  marketing: true,
+  federation: true,
+};
+
+/**
+ * The people-first layout, end to end: is there a user constitution at all, is
+ * the roster readable, does every roster entry have its file, and does THIS
+ * machine know who it is?
+ *
+ * The matrix, and why each row is the severity it is:
+ *   - ERROR: neither `people/people.json` nor `core/1.user.md` — the vault has no
+ *     user constitution at all, so every session starts knowing nothing about
+ *     the person.
+ *   - ERROR: a roster that parses to ZERO people. An empty roster is
+ *     unrepresentable state, not a valid solo vault: nothing can resolve against
+ *     it, and it is indistinguishable from a half-finished migration.
+ *   - ERROR: a roster slug with no `people/<slug>.md`, naming each missing file —
+ *     that person's constitution is the thing the snapshot renders verbatim, and
+ *     its absence is silent everywhere else.
+ *   - WARN + exit 0: `core/1.user.md` still present, with or without `people/`.
+ *     This is D15's migration window (CLI upgraded, project not yet updated). A
+ *     vault in it is working correctly, so hard-failing here would break `doctor`
+ *     in CI on a healthy project.
+ *   - WARN (multi-person only): the active person is unresolved on this machine,
+ *     printing the resolution SOURCE so an unexpected identity is self-diagnosing.
+ *
+ * `readPeople` THROWS on a present-but-unparseable roster (D17). That throw is
+ * caught here and reported as an error like any other: `doctor` is the tool
+ * people run *because* something is wrong, so it must never die with a stack
+ * trace on the very file it is diagnosing.
+ */
+export function checkPeople(root: string): CheckResult[] {
+  const NAME = 'People';
+  const results: CheckResult[] = [];
+  const hasLegacyUser = existsSync(join(root, 'core', '1.user.md'));
+  const retiredLayoutWarning: CheckResult = {
+    name: NAME,
+    status: 'warn',
+    message: 'core/1.user.md — retired layout — run `dreamcontext update` to migrate to people/',
+  };
+
+  if (!hasPeopleLayout(root)) {
+    if (!hasLegacyUser) {
+      return [{
+        name: NAME,
+        status: 'error',
+        message:
+          'Missing: people/people.json AND core/1.user.md — this vault has no user constitution at all. '
+          + 'Run `dreamcontext update` to migrate a legacy vault, or '
+          + '`dreamcontext people add "<Your Name>" --email <email>` to create one.',
+      }];
+    }
+    return [retiredLayoutWarning];
+  }
+
+  let roster: Array<{ slug: string; name: string }>;
+  try {
+    roster = listPeople(root);
+  } catch (err) {
+    results.push({
+      name: NAME,
+      status: 'error',
+      message: `people/people.json could not be read: ${errorText(err)}`,
+    });
+    if (hasLegacyUser) results.push(retiredLayoutWarning);
+    return results;
+  }
+
+  if (roster.length === 0) {
+    results.push({
+      name: NAME,
+      status: 'error',
+      message:
+        'people/people.json lists no people — an empty roster is unrepresentable state, not a solo '
+        + 'vault. Add yourself: `dreamcontext people add "<Your Name>" --email <email>`.',
+    });
+  } else {
+    const missing = roster.filter((p) => !existsSync(personFilePath(root, p.slug)));
+    if (missing.length > 0) {
+      results.push({
+        name: NAME,
+        status: 'error',
+        message:
+          `Missing ${missing.length} person constitution${missing.length === 1 ? '' : 's'}: `
+          + `${missing.map((p) => `people/${p.slug}.md`).join(', ')} — every roster entry needs its file `
+          + '(re-create it with `dreamcontext people add "<Name>"`, which never overwrites existing prose).',
+      });
+    } else {
+      results.push({
+        name: NAME,
+        status: 'ok',
+        message: `people/ (${roster.length} person${roster.length === 1 ? '' : 's'}), each with a constitution`,
+      });
+    }
+
+    // Only multi-person vaults can be genuinely ambiguous: a solo roster is
+    // trivially implied, so an "unresolved" warning there would be noise.
+    if (roster.length > 1) {
+      const active = resolveActivePerson(root);
+      results.push(active.slug
+        ? {
+            name: NAME,
+            status: 'ok',
+            message: `Active person: ${active.name} (\`person:${active.slug}\`, source: ${active.source})`,
+          }
+        : {
+            name: NAME,
+            status: 'warn',
+            message:
+              `Active person unresolved on this machine (source: ${active.source}) — ${active.reason}. `
+              + 'The snapshot renders no constitution until you run '
+              + '`dreamcontext people whoami --set <slug>` or add this machine\'s git email to a person.',
+          });
+    }
+  }
+
+  if (hasLegacyUser) results.push(retiredLayoutWarning);
+  return results;
+}
+
+/**
+ * Anti-bloat ceilings for the always-loaded core files.
+ *
+ * Reports BOTH axes, chars first, because the line ceiling the skill has always
+ * stated is not a usable size proxy on its own: measured on this repo,
+ * `core/0.soul.md` is 69 lines but 13,573 chars and `core/2.memory.md` is 165
+ * lines / 92,249 chars — a line-only check calls the two worst offenders fine.
+ * The SessionStart snapshot pays these chars on every single session.
+ */
+export function checkCoreFileSizes(root: string): CheckResult[] {
+  const NAME = 'Core file size';
+  let audits: CoreFileSizeAudit[];
+  try {
+    audits = auditCoreFileSizes(root);
+  } catch (err) {
+    return [{ name: NAME, status: 'warn', message: `Could not measure core files: ${errorText(err)}` }];
+  }
+  if (audits.length === 0) return [];
+
+  const over = audits.filter((a) => a.overChars || a.overLines);
+  if (over.length === 0) {
+    return [{
+      name: NAME,
+      status: 'ok',
+      message:
+        `core/ (${audits.length} file${audits.length === 1 ? '' : 's'}) within the `
+        + `${withThousands(CORE_FILE_CHAR_CEILING)}-char / ${CORE_FILE_LINE_CEILING}-line ceilings`,
+    }];
+  }
+
+  return over.map((a) => {
+    const exceeded: string[] = [];
+    if (a.overChars) exceeded.push(`${withThousands(CORE_FILE_CHAR_CEILING)}-char`);
+    if (a.overLines) exceeded.push(`${CORE_FILE_LINE_CEILING}-line`);
+    return {
+      name: NAME,
+      status: 'warn' as const,
+      message:
+        `${a.relPath}: ${withThousands(a.chars)} chars / ${withThousands(a.lines)} lines — over the `
+        + `${exceeded.join(' and ')} ceiling. The SessionStart snapshot pays this every session; `
+        + 'extract detail to knowledge/ and keep a summary + reference.',
+    };
+  });
+}
+
+/**
+ * Does the rendered snapshot actually reach the agent?
+ *
+ * Past HARNESS_PERSIST_CHAR_LIMIT the harness writes the whole snapshot to a
+ * file and injects only a blind positional preview — the failure is invisible
+ * from the outside, because the snapshot prints fine on the terminal and is
+ * absent exactly when the agent needs it. This is what makes it noticeable
+ * without measuring by hand.
+ *
+ * Measures with `fireTriggers: false`: rendering the snapshot is the only write
+ * in that whole path (a matched contextual reminder consumes one of its finite
+ * firings), and a health check must not spend one.
+ */
+export function checkSnapshotSize(root: string): CheckResult[] {
+  const NAME = 'Snapshot size';
+  let measured: SnapshotMeasurement;
+  try {
+    measured = measureSnapshot(root, { fireTriggers: false });
+  } catch (err) {
+    return [{
+      name: NAME,
+      status: 'warn',
+      message: `Could not render the snapshot to measure it: ${errorText(err)}`,
+    }];
+  }
+
+  const chars = measured.text.length;
+  const { neverEvictChars } = measured.budget;
+  const pct = Math.round((chars / HARNESS_PERSIST_CHAR_LIMIT) * 100);
+
+  // BudgetResult does not carry the budget it ran against, so resolve it here
+  // exactly as the snapshot does. `null` means the ladder is switched OFF.
+  const budgetTokens = resolveBudget(process.env.DREAMCONTEXT_SNAPSHOT_BUDGET);
+  const ladderOff = budgetTokens === null;
+  const budgetChars = ladderOff
+    ? Math.floor(HARNESS_PERSIST_CHAR_LIMIT * 0.9)
+    : budgetTokens * 4;
+
+  // The one state the ladder genuinely cannot fix: the pinned tier alone busts
+  // the limit, so no amount of demotion helps. Everything else is a warning.
+  if (neverEvictChars > HARNESS_PERSIST_CHAR_LIMIT) {
+    return [{
+      name: NAME,
+      status: 'error',
+      message:
+        `Never-evict tier is ${withThousands(neverEvictChars)} chars — past the `
+        + `${withThousands(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit on its own, so the demotion `
+        + `ladder cannot fix this. The never-evict sections (${Object.keys(NEVER_EVICT_SECTIONS).join(', ')}) `
+        + 'are pinned by design; the usual cause is an oversized core/0.soul.md or people/<active>.md, which '
+        + 'both render verbatim and must be slimmed by moving content OUT — conditional "when X, do Y" '
+        + 'rules into knowledge/patterns, and anything that is not about the person out of that person\'s '
+        + 'constitution. '
+        + 'Otherwise check overrides/task.md and state/.sleep.json (contextual reminders, automations) '
+        + 'for an oversized block.',
+    }];
+  }
+
+  if (chars > HARNESS_PERSIST_CHAR_LIMIT) {
+    // A disabled ladder renders everything at full size by design. Blaming the
+    // core files for that would send the user to trim files that are fine.
+    const message = ladderOff
+      ? `Snapshot renders at ${withThousands(chars)} chars — over the `
+        + `${withThousands(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit, but DREAMCONTEXT_SNAPSHOT_BUDGET `
+        + 'is set to off, so the demotion ladder is disabled. Unset it to restore the budgeted render '
+        + 'before reading this as core-file bloat.'
+      : `Snapshot renders at ${withThousands(chars)} chars — over the `
+        + `${withThousands(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit. Claude Code persists it to a `
+        + `file and injects only a ${withThousands(HARNESS_PREVIEW_CHARS)}-char blind preview, so the agent `
+        + `starts near-blind. Never-evict tier: ${withThousands(neverEvictChars)} chars. Trim the core `
+        + 'files flagged above — extract detail to knowledge/.';
+    return [{ name: NAME, status: 'warn', message }];
+  }
+
+  if (chars > budgetChars) {
+    const message = ladderOff
+      ? `Snapshot renders at ${withThousands(chars)} chars — ${pct}% of the `
+        + `${withThousands(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit, with little headroom left. `
+        + '(DREAMCONTEXT_SNAPSHOT_BUDGET is off, so the demotion ladder is disabled.)'
+      : `Snapshot renders at ${withThousands(chars)} chars — past the ladder's `
+        + `${withThousands(budgetChars)}-char target (${withThousands(budgetTokens)} tok x 4), so sections `
+        + `are already demoting, though it still lands inline under the `
+        + `${withThousands(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit.`;
+    return [{ name: NAME, status: 'warn', message }];
+  }
+
+  return [{
+    name: NAME,
+    status: 'ok',
+    message:
+      `Snapshot size — ${withThousands(chars)} chars `
+      + `(${pct}% of the ${withThousands(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit)`,
+  }];
+}
+
 
 /**
  * Task↔feature link integrity: every `task.related_feature` must resolve to a
@@ -670,7 +970,10 @@ export function registerDoctorCommand(program: Command): void {
 
         // Required core files
         checkFile(root, 'core/0.soul.md', 'Soul file', true),
-        checkFile(root, 'core/1.user.md', 'User file', true),
+        // Slot 1's replacement, in place: the user constitution moved to
+        // people/, and the legacy file became a warning rather than a
+        // requirement (see checkPeople for the full matrix).
+        ...checkPeople(root),
         checkFile(root, 'core/2.memory.md', 'Memory file', true),
 
         // JSON files
@@ -687,6 +990,11 @@ export function registerDoctorCommand(program: Command): void {
         ...checkSharedTaskContainer(root),
         ...checkLab(root),
         ...checkTheses(root),
+
+        // Snapshot health. Core files FIRST so the snapshot-size message's
+        // "trim the core files flagged above" points at lines already printed.
+        ...checkCoreFileSizes(root),
+        ...checkSnapshotSize(root),
 
         // Taxonomy vocabulary (non-fatal: absent means DEFAULT_VOCABULARY used)
         ...(!existsSync(join(root, 'core', 'taxonomy.json'))

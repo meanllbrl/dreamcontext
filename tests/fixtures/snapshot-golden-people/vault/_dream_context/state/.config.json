@@ -1,0 +1,13 @@
+{
+  "platforms": ["claude"],
+  "packs": [],
+  "multiProduct": false,
+  "setupVersion": "0.2.0",
+  "disableNativeMemory": true,
+  "linkedRepos": [
+    {
+      "name": "fixture-web",
+      "gitRemoteUrl": "https://github.com/fixture-org/fixture-web"
+    }
+  ]
+}

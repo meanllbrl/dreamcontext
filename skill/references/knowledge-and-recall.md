@@ -4,7 +4,9 @@
 
 Deep, durable docs the agent should recall in future sessions (research, design rationale, domain context). The **index is auto-loaded each session** (names, descriptions, tags, staleness) — so you already know what exists.
 
-**Knowledge is prose, not everything.** A metric the user wants tracked ("create an insight", "track MRR") is a **Lab insight** (`dreamcontext lab create` — see [tasks-and-features.md](tasks-and-features.md)); an outcome with a target date is a roadmap **objective**; what a shipped capability is belongs in a **feature PRD**. See the Entity Router in SKILL.md before creating anything.
+**Knowledge is prose, not everything.** A metric the user wants tracked ("create an insight", "track MRR") is a **Lab insight** (`dreamcontext lab create` — see [tasks-and-features.md](tasks-and-features.md)); an outcome with a target date is a roadmap **objective**; what a shipped capability is belongs in a **feature PRD**; a **human who works here** is a person (`dreamcontext people add`). See the Entity Router in SKILL.md before creating anything.
+
+**Person constitutions are NOT knowledge and are NOT recall-indexed.** `_dream_context/people/<slug>.md` is a *constitution*, the same kind of document as `core/0.soul.md`: the ACTIVE person's file is already in the snapshot **verbatim**, at every budget, so indexing it would add nothing — and indexing *everyone else's* would actively invite the agent to apply somebody else's preferences to your session. So `memory recall` never returns a person file, `--types` has no `person` value, and `knowledge index` does not list `people/`. To read one, use `dreamcontext people show [slug]` (defaults to the active person). To write one, edit `people/<slug>.md` directly or use the dashboard's People editor — **never `knowledge create`**.
 
 ```bash
 dreamcontext knowledge create <name> -d "description" -t architecture,api -c "body"
@@ -148,7 +150,8 @@ Writes a CHANGELOG entry (`type=note`, `scope=quick`); the sleep cycle reconcile
 
 ### What recall is and isn't
 - BM25 is keyword/stemming-based, not semantic — "ML practitioner" won't match "data scientist" (haiku mode mitigates this).
-- Recall does **not** replace the SessionStart snapshot (soul/user/memory/active-tasks/knowledge-index are always pre-loaded). It is not a vector DB or mem0; the corpus is the same set the sleep agents curate.
+- Recall does **not** replace the SessionStart snapshot (soul / the active person's constitution / memory / active-tasks / knowledge-index are pre-loaded every session). It is not a vector DB or mem0; the corpus is the same set the sleep agents curate. **`people/*.md` are not in that corpus at all** — see "Person constitutions are NOT knowledge" above.
+- **Pre-loaded does not always mean verbatim — except the two constitutions.** On a brain large enough to bust the harness's 20,000-char hook limit, the snapshot demotes: memory's decisions collapse to titles, inventories fall back to names + paths, and the chain ends at Lab. Every file path stays, so `Read _dream_context/core/2.memory.md` or `memory recall "<keywords>"` recovers the full text on demand — that recoverability is exactly what makes the compression safe. `core/0.soul.md` and the active `people/<slug>.md` are the exceptions: the agent's constitution and the person's constitution always render **verbatim**, at every budget. An oversized soul or constitution is fixed by extraction (conditional rules belong in `knowledge/patterns/`; anything not about the person belongs out of that person's constitution), which the banner and `doctor` error say out loud — never by compressing it. The *roster* of other people demotes but stays named. See [cli-reference.md](cli-reference.md) for the ladder.
 
 ### Two depths of search: explore vs deep-research
 Recall feeds two read surfaces — pick by how much synthesis the question needs:

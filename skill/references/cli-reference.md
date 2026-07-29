@@ -16,17 +16,71 @@ Every command and flag, grouped. All commands are prefixed with `dreamcontext`. 
 | `install-instructions` | *(deprecated standalone)* Install managed root instructions (CLAUDE.md / AGENTS.md). Flags: `--platforms <list>`, `--mode append\|replace\|skip`. (`install-claude-md` is a legacy alias.) |
 | `update` | Refresh THIS project's installed skill, agents, hooks, packs, references, and root instructions to the latest shipped version. Flags: `--packs-only`, `--core-only`, `-y/--yes`. |
 | `upgrade` | Upgrade the CLI, then update the desktop app (if installed) and offer to refresh **every registered project** — one command brings the whole machine current. Flags: `--check` (print current vs latest, don't install), `-y/--yes` (refresh app + all projects non-interactively). |
-| `doctor` | Validate `_dream_context/` structure and report issues. |
+| `doctor` | Validate `_dream_context/` structure and report issues — including two size checks that make an invisible failure visible. **Snapshot size:** `error` when the never-evict tier ALONE exceeds the 20,000-char harness limit (no ladder rung can fix that — the usual cause is an oversized `core/0.soul.md` or `people/<slug>.md`, which both render verbatim and must be slimmed by extraction); `warn` when the rendered snapshot exceeds 20,000 chars (the harness persists it to a file and injects only a 2,000-char blind preview); `warn` when it is past the 18,000-char ladder target (4,500 tok × 4) but still lands inline; `ok` otherwise, printing the size and its % of the limit. Under `DREAMCONTEXT_SNAPSHOT_BUDGET=off` the message names the *disabled ladder* rather than blaming core files. **Core-file size:** one `warn` per `core/[0-9]*.md` **and per `people/<slug>.md`** over the ~4,000-char or ~150-line ceiling, naming chars first (chars are what bind — see [Snapshot budget](#snapshot-budget--the-harness-limit)). **People:** see the check matrix in [People](#people--who-works-in-this-vault). |
 | `config show` | Print project config (platforms, packs, products, people, native-memory, shareable, task backend). |
 | `config native-memory enable\|disable` | Toggle Claude Code's native auto-memory (disabled by default so dreamcontext owns memory). |
 | `config shareable on\|off` | Toggle whether peer vaults may recall this project (default off/private). |
-| `config people [names...]` | Set the people roster; syncs the `## People` block in `1.user.md`. `--clear` for single-person. |
+| `config people [names...]` | **[Moved in 0.23.0] The roster now lives in people/people.json — use `dreamcontext people`.** A **redirect, not an alias**: it writes **nothing** under any flag combination (including `--clear`) and exits 1, printing `` `dreamcontext config people` moved in 0.23.0. `` / `The roster now lives in _dream_context/people/people.json.` / `Use: dreamcontext people list \| people add <name> --email <e> \| people rm <slug>`. Forwarding would invert the semantics — the old command was a full-roster REPLACE, `people add` GROWS a roster. See [People](#people--who-works-in-this-vault). |
 | `config task-backend local\|clickup\|github` | **[Advanced]** Switch the task backend — one cloud sync at a time (see [integrations.md](integrations.md)). |
 | `config clickup-token [token]` | Store a ClickUp API key in the gitignored secrets file. `--user <name>` to scope it. |
 | `config clickup-list <teamId> <spaceId> <listId>` | Set the ClickUp sync target. `--migrate` / `--keep` when changing lists. |
 | `config clickup-member <person> <memberId>` | Map a roster person to a ClickUp member id. `--token-env <ENV>`. |
 | `config github-token [token]` | Store a GitHub token in the gitignored secrets file (also reads `GITHUB_TOKEN`/`GH_TOKEN`). `--user <name>` to scope it. |
 | `config github-repo <owner> <repo>` | Set the GitHub sync target (`owner`/`repo`). |
+
+---
+
+## People — who works in this vault
+
+Since **0.23.0** the user model is people-first. `core/1.user.md` is gone; in its place:
+
+- **`_dream_context/people/people.json`** — the structural roster, `{version, people: {<slug>: {name, emails[], role?}}}`. Synced with the brain.
+- **`_dream_context/people/<slug>.md`** — one **constitution** per person (`## Identity` / `## Preferences` / `## Communication Style`). The ACTIVE person's file renders **verbatim** in every snapshot. These are constitutions, **not knowledge** — they are not in the recall corpus (see [knowledge-and-recall.md](knowledge-and-recall.md)).
+- **`_dream_context/state/.brain-local.json`** — gitignored, machine-local. Holds this machine's person pin and nothing that ever enters the synced brain.
+
+A slug is a filesystem path segment and a dashboard route segment, so the charset is narrow: `/^[a-z0-9][a-z0-9-]{0,63}$/`.
+
+**Never hand-edit `people/people.json`.** Every write goes through a PID lockfile so two concurrent `dreamcontext` processes cannot interleave a read-modify-write and lose a person; a hand-edit bypasses that and a malformed one turns into a `doctor` error. Use the verbs. Editing a `people/<slug>.md` by hand is fine — that is ordinary prose.
+
+| Command | Description |
+|---|---|
+| `people list` | List this vault's people roster (the **default** verb — bare `dreamcontext people` runs it). Prints `SLUG NAME EMAILS ROLE` plus `← you` on the active person and an `Active: <slug> (source: <source>) — <reason>` footer. `--json` → `{activeSlug, source, people:[{slug,name,emails,role?,active}]}`. |
+| `people add <name>` | Add a person to the roster **and scaffold their constitution file**. `--email <email...>` (repeatable — how this person's machine is recognised from git config), `--role <role>` (a structural label like `founder`/`backend`, **never prose**). Re-running on an existing person **merges the new details in**; it never overwrites existing prose. Warns when an email already belongs to someone else (git-email resolution between them is ambiguous). |
+| `people show [slug]` | Print a person's constitution. **Defaults to the active person on this machine.** Errors (exit 1) on an unknown slug or a missing `people/<slug>.md`. |
+| `people whoami` | Show — or pin — who dreamcontext thinks is at this keyboard. Prints `Person / Name / Source / Why`. `--set <slug>` pins THIS machine (validated against the roster **before** writing, stored in the gitignored `state/.brain-local.json`, never synced); `--clear` unpins. `--set` and `--clear` together is an error. |
+| `people rm <slug>` | Remove a person from the roster. **Their `people/<slug>.md` is kept** — a person's prose outlives their roster membership; delete it by hand if you mean to. `--yes` skips the confirm (required non-interactively). |
+
+### Active-person resolution — the 5-rung ladder
+
+`resolveActivePerson` **never guesses and never throws**. It walks these rungs in order and reports the winning `source` plus a `reason` that names every rejected rung verbatim:
+
+| # | Source | Rung |
+|---|---|---|
+| 1 | `env` | **`DREAMCONTEXT_PERSON`** — the explicit override (headless/CI). An *invalid* value does not void the pin below it: resolution falls through to the next rung and records the rejection. |
+| 2 | `pin` | This machine's pin from `dreamcontext people whoami --set <slug>` (`state/.brain-local.json`, gitignored). |
+| 3 | `git-email` | This machine's git `user.email`, matched **case-insensitively** against the roster's `emails[]`. |
+| 4 | `solo` | A vault with exactly one person trivially implies them. |
+| 5 | `none` | **Nothing.** `slug: null` — the snapshot renders `## Person (Active — UNRESOLVED)` and **no constitution at all**. Rendering somebody else's preferences because this machine could not be identified is the one failure mode worse than rendering none. |
+
+**Invariant P:** no slug reaches a filesystem path, the snapshot, or author stamping unless it matches the slug charset **AND** is a key in `people/people.json`. That gate applies to every rung — including the machine-local pin, because `.brain-local.json` is a plain JSON file a hand-edit or a bad merge can corrupt.
+
+### What `doctor` checks
+
+- **error** — neither `people/people.json` nor `core/1.user.md` exists (the vault has no user constitution at all).
+- **error** — `people/people.json` exists but lists **zero people** (an empty roster is unrepresentable state, not a solo vault).
+- **error** — a roster slug has no `people/<slug>.md`; each missing file is **named**.
+- **error** — `people/people.json` could not be read (a corrupt roster is reported as a message, never a stack trace).
+- **warn** — `core/1.user.md` is present, with or without `people/`: `core/1.user.md — retired layout — run \`dreamcontext update\` to migrate to people/`. **Exit 0.**
+- **warn** (multi-person vaults only) — the active person is unresolved on this machine, printing the resolution `source` and `reason`.
+
+### Two caveats worth stating out loud
+
+- **`people rm` has no tombstone.** The roster merges as a **UNION** across machines, so a teammate who still has this person will **resurrect them on the next brain sync** — remove them there too. `people rm` says this in its own output. Tombstones are deliberate YAGNI for a file that changes a few times a year.
+- **The legacy `core/1.user.md` branch is a migration window, and it is marked `SUNSET: remove in 0.24.0`** — along with the deprecated `isMultiPerson` export. Until the 0.23.0 migration runs (at `sleep start` / `update`), a vault whose CLI is ahead of its brain still renders the old `## User (Preferences, Project Details, Rules)` block plus one deprecation line. Do not build on it.
+
+**Migrating from a pre-0.23.0 vault:** `dreamcontext update` runs migration `0.23.0`, whose steps are `rescale-legacy-sleep-debt`, `seed-people-from-config`, `split-user-file`, `retire-config-roster`. `split-user-file` moves Identity / Preferences / Communication Style into the owner's constitution, upserts the `## People` bullets into the roster, and copies **every other section verbatim** into `_dream_context/inbox/1.user-residue.md` for the agent task `distribute-user-md-residue` (`dreamcontext migrations pending` prints the full instruction). Nothing is discarded.
+
+**Dashboard/server routes:** `GET /api/core/people` → `{activeSlug, source, people:[{slug,name,role?,active,chars}]}` · `GET /api/core/people/:slug` → `{slug,name,content}` · `PUT /api/core/people/:slug {content}` → `{ok:true}`. The slug is charset-validated **before** any filesystem access; creating a person is `dreamcontext people add`'s job, not the PUT's.
 
 ---
 
@@ -309,7 +363,7 @@ The CLI writes `_dream_context/tmp/.council-live.json` automatically on state-ch
 | `marketing` / `mk` | Meta marketing skill surface. |
 | `transcript distill <session_id>` | Extract high-signal content from a transcript. `--since <ts>`, `--full`. |
 | `reflect` | Surface recurring cross-session terms as candidates. `--min-sessions`, `--max`, `--write`. |
-| `snapshot` | Output the context snapshot (used by SessionStart). `--tokens`, `--vault <name>`. |
+| `snapshot` | Output the context snapshot (used by SessionStart). `--tokens`, `--vault <name>`. Budget-bounded — see [Snapshot budget](#snapshot-budget--the-harness-limit). |
 | `migrations pending\|apply-diagrams\|record` | Inspect/apply brain-structure migrations. `record --files --summary`. |
 | `feedback` | File a gap/bug upstream as a GitHub issue. See [improving-dreamcontext.md](improving-dreamcontext.md). |
 | `hook <name>` | Hook handlers (called by the platform, not you): `session-start`, `stop`, `subagent-start`, `pre-tool-use`, `user-prompt-submit`, `post-tool-use`, `pre-compact`, `ensure-dashboard`, `refresh-asset-drift`. |
@@ -326,8 +380,50 @@ The CLI writes `_dream_context/tmp/.council-live.json` automatically on state-ch
 | `DREAMCONTEXT_DASHBOARD_PORT` | Default dashboard port (else 4173). |
 | `DREAMCONTEXT_AUTO_UPGRADE=0` | Disable automatic CLI self-upgrade. |
 | `DREAMCONTEXT_VERSION_CHECK=0` | Disable the version-check nag. |
-| `DREAMCONTEXT_PERSON` | Current person for attribution (wins over the roster default). |
-| `DREAMCONTEXT_SNAPSHOT_BUDGET` | Token budget cap for the SessionStart snapshot. |
+| `DREAMCONTEXT_PERSON` | **Rung 1** of active-person resolution: the person slug for THIS process (constitution rendering + author stamping). Wins over the machine pin and git email. Must be a real roster key — an invalid value is rejected, recorded in the resolution `reason`, and resolution falls through to the next rung. See [People](#people--who-works-in-this-vault). |
+| `DREAMCONTEXT_SNAPSHOT_BUDGET` | Token budget cap for the SessionStart snapshot (default 4,500 tok ≈ 18,000 chars; `0`/`off` disables the ladder; clamped to a 2,000-tok floor). See [Snapshot budget](#snapshot-budget--the-harness-limit). |
 | `DREAMCONTEXT_SKILLS_HOOK=0` | Disable skill-suggestion injection on prompts. |
 | `DREAMCONTEXT_DRIFT_CHECK` / `DREAMCONTEXT_APP_AUTO_UPDATE` | Asset-drift check / desktop app auto-update toggles. |
 | `DREAMCONTEXT_DEBUG` | Verbose diagnostics (e.g. recall decisions to stderr). |
+
+---
+
+## Snapshot budget & the harness limit
+
+**The binding constraint is not the token budget — it is the harness.** Claude Code persists any hook output past **20,000 characters** to a file and injects only the first **2,000 chars** as a blind positional preview. That cut is positional and uncurated: it drops warnings, the knowledge index, and everything below wherever it lands. The token budget (`DREAMCONTEXT_SNAPSHOT_BUDGET`, default 4,500 tok ≈ 18,000 chars) exists to keep the render comfortably under that ceiling. **Raising the budget does not buy room — it only moves the failure from a curated demotion to the harness's blind cut.**
+
+**The ladder.** When the full render exceeds the budget, sections demote through progressively cheaper **curated** renders — full body → summaries → titles + paths. Nothing is ever raw-truncated, and no name is ever cut mid-string. Demotion happens in waves and stops the instant the snapshot fits, so a brain that is barely over loses almost nothing.
+
+**The soul and the active person's constitution never demote.** `core/0.soul.md` is the agent's constitution and `people/<slug>.md` is the person's, so both render **verbatim in every snapshot, at every budget** — never-evict, no rungs, no cap. Either one big enough to bust the harness limit is therefore a *content* problem the renderer deliberately will not paper over: it raises the loud banner and a `doctor` **error**, and the fix is to slim the file by extraction — conditional "when X, do Y" rules go to `knowledge/patterns/` (recall fetches them on demand), and anything in a constitution that is not about the *person* goes to `knowledge/` or the right core file.
+
+The never-evict `person` section covers all three shapes that block can take: the resolved constitution, the `## Person (Active — UNRESOLVED)` notice, and the retired `core/1.user.md` legacy render. The **roster of other people** is a different thing entirely and IS demotable (rank 110) — see the floors table below.
+
+**Demotion order (cheapest-loss first).** Order is a per-section rank on a 10–140 scale, independent of render order — so `memory` renders near the top but is given up well after the inventory sections below it:
+
+`warm-knowledge` → `changelog` → `releases` → `extended-core` → `connected-projects` → `knowledge-index` → `features` → `memory` → `bookmarks` → `tasks` → `people-roster` → `objectives` → `theses` → `lab`
+
+The chain **ends at `lab`**. When Lab reaches its floor the ladder is exhausted; anything still over the limit is a constitution that needs slimming, which the banner says out loud.
+
+**Floors — sections that stop early because their remaining content IS the point:**
+
+| Section | Floor | Why |
+|---|---|---|
+| `lab` | rung 1 | Metric names + latest values must survive, or you cannot tell a metric question is already answered here and you fetch it from outside (Operational Rule 13). |
+| `theses` | rung 1 | The top open claims survive; a bare `N open · N flipped` count tells you nothing. |
+| `objectives` | rung 2 | One compact line per objective survives; a bare `N objective(s)` count leaves "weigh decisions against these outcomes" unsatisfiable. |
+| `bookmarks` | rung 2 | ★★★ bookmarks stay verbatim — they are the primary consolidation signal. |
+| `people-roster` | rung 2 | Every OTHER person stays **named** with their `person:<slug>` tag — that tag is what makes them addressable at all. Rung 1 drops the role label; rung 2 collapses to one line of names. Never a bare count. |
+| `soul` | never demotes | The constitution renders verbatim at every budget. Rule *titles* are not a constitution — the agent would know a rule exists without knowing what it says, and read as compliant. |
+| `person` | never demotes | Same doctrine, for the person at this keyboard (`people/<slug>.md`). A preference reduced to its title is worse than an absent one: the agent sees that a rule about you exists, reads that as knowing it, and never opens the file. |
+
+**Everything demoted stays reachable.** Files keep their paths; in-file items (decisions, issues, bookmarks, changelog entries) keep their containing path plus the recovery command. Where a tail omits items, it names an accurate count and the exact command (`dreamcontext tasks list`, `knowledge index`, `memory recall`) — never an ellipsis through a name.
+
+**Three output bands:**
+
+| Render size | What you see |
+|---|---|
+| ≤ 18,000 chars | Nothing. Byte-identical to the unbudgeted format — small brains see zero change. |
+| Over budget, ≤ 20,000 chars | A loud `_Budget note:` footer naming the demoted sections and the fix. The snapshot is **complete and inline** — no truncation has happened. |
+| > 20,000 chars | A `⚠️ CONTEXT IS INCOMPLETE` banner directly under the H1, deliberately **inside the 2,000-char preview window** so it survives the harness cut. It names the never-evict byte count, the sections at their floor, and the oversized core files to trim. |
+
+**When you see the banner:** run `dreamcontext doctor`, then trim the files it flags (extract detail to `knowledge/`, keep a summary + reference) — starting with `core/0.soul.md` and the active `people/<slug>.md`, since those two the ladder cannot help with at all. See [troubleshooting.md](troubleshooting.md).

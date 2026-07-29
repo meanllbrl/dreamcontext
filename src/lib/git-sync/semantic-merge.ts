@@ -10,6 +10,7 @@ import {
 } from '../task-backend/merge.js';
 import { unionTaskMap, type TaskMapEntry } from '../task-backend/sync-state.js';
 import { TASKS_MAP_REL } from '../task-backend/paths.js';
+import { PEOPLE_JSON_REL, PEOPLE_SCHEMA_VERSION } from '../people-store.js';
 import { addPath, readOursTheirsBase } from './git.js';
 
 /**
@@ -23,6 +24,7 @@ export type MergeClass =
   | 'changelog-json'
   | 'releases-json'
   | 'config-json'
+  | 'people-json'
   | 'tasks-map-json'
   | 'task-md'
   | 'knowledge-md'
@@ -42,6 +44,7 @@ export function classifyPath(relPath: string): MergeClass {
   if (norm === 'core/CHANGELOG.json') return 'changelog-json';
   if (norm === 'core/RELEASES.json') return 'releases-json';
   if (norm === 'state/.config.json') return 'config-json';
+  if (norm === PEOPLE_JSON_REL) return 'people-json';
   if (norm === 'core/taxonomy.json') return 'taxonomy-json';
   if (norm === TASKS_MAP_REL) return 'tasks-map-json';
   if (/^state\/[^/]+\.md$/.test(norm)) return 'task-md';
@@ -141,19 +144,74 @@ function unionArrayValues(a: unknown, b: unknown): unknown[] {
   return [...arrA, ...arrB.filter((x) => !seen.has(JSON.stringify(x)))];
 }
 
-// ─── state/.config.json — roster/pack/platform union, peopleIdentity union ─
+// ─── state/.config.json — pack/platform union, peopleIdentity union ────────
 
 export function mergeConfigJson(_base: string, ours: string, theirs: string): { merged: string } {
   const o = parseJsonObject(ours);
   const t = parseJsonObject(theirs);
   const merged: Record<string, unknown> = { ...t, ...o };
-  merged.people = unionStringArray(o.people, t.people);
+  // `people` was RETIRED in 0.23.0 (the roster lives in `people/people.json`,
+  // which has its own union merge below). The spread above can resurrect the key
+  // from a pre-0.23 teammate who has not migrated yet, so it is deleted
+  // unconditionally — a ghost roster that nothing reads but `doctor` could
+  // surface is worse than no key at all.
+  delete merged.people;
   merged.packs = unionStringArray(o.packs, t.packs);
   merged.platforms = unionStringArray(o.platforms, t.platforms);
   const oIdentity = o.peopleIdentity && typeof o.peopleIdentity === 'object' ? (o.peopleIdentity as Record<string, unknown>) : {};
   const tIdentity = t.peopleIdentity && typeof t.peopleIdentity === 'object' ? (t.peopleIdentity as Record<string, unknown>) : {};
   merged.peopleIdentity = { ...tIdentity, ...oIdentity };
   return { merged: `${JSON.stringify(merged, null, 2)}\n` };
+}
+
+// ─── people/people.json — key-union roster, ours wins, emails unioned ──────
+
+/**
+ * The roster's own merge class (D16). Without it, moving the roster out of
+ * `.config.json` would silently regress two machines adding different people
+ * from a conflict-free union to a text conflict — the exact failure the config
+ * union was written to prevent.
+ *
+ * Rules: `version` = max (a newer schema never downgrades), `people` = key
+ * union, OURS wins on a collision (this machine's view of a person it also
+ * knows), `emails` unioned per key (the one field two machines genuinely both
+ * append to). Keys are emitted sorted so this agrees byte-for-byte with what
+ * `writePeople` would have produced locally.
+ *
+ * NOTE: `people rm` has no tombstone — a teammate whose roster still lists the
+ * removed person re-adds them on the next sync. Deliberate (D21): tombstones are
+ * YAGNI for a file that changes a few times a year, and `people rm` says so.
+ */
+export function mergePeopleJson(ours: string, theirs: string): { merged: string } {
+  const o = parseJsonObject(ours);
+  const t = parseJsonObject(theirs);
+  const versionOf = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const version = Math.max(versionOf(o.version), versionOf(t.version)) || PEOPLE_SCHEMA_VERSION;
+
+  const oPeople = o.people && typeof o.people === 'object' && !Array.isArray(o.people)
+    ? (o.people as Record<string, unknown>)
+    : {};
+  const tPeople = t.people && typeof t.people === 'object' && !Array.isArray(t.people)
+    ? (t.people as Record<string, unknown>)
+    : {};
+
+  const people: Record<string, unknown> = {};
+  for (const slug of [...new Set([...Object.keys(oPeople), ...Object.keys(tPeople)])].sort()) {
+    const mine = oPeople[slug];
+    const yours = tPeople[slug];
+    const isObj = (v: unknown): v is Record<string, unknown> =>
+      v !== null && typeof v === 'object' && !Array.isArray(v);
+    if (!isObj(mine)) {
+      people[slug] = yours;
+      continue;
+    }
+    if (!isObj(yours)) {
+      people[slug] = mine;
+      continue;
+    }
+    people[slug] = { ...yours, ...mine, emails: unionStringArray(mine.emails, yours.emails) };
+  }
+  return { merged: `${JSON.stringify({ version, people }, null, 2)}\n` };
 }
 
 // ─── core/taxonomy.json — union tag entries per facet ───────────────────────
@@ -411,6 +469,9 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
         break;
       case 'config-json':
         mergedContent = mergeConfigJson(base, ours, theirs).merged;
+        break;
+      case 'people-json':
+        mergedContent = mergePeopleJson(ours, theirs).merged;
         break;
       case 'taxonomy-json':
         mergedContent = mergeTaxonomyJson(base, ours, theirs).merged;

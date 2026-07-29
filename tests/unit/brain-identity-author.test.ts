@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { updateSetupConfig } from '../../src/lib/setup-config.js';
+import { addPerson } from '../../src/lib/people-store.js';
 import { FALLBACK_AUTHOR } from '../../src/lib/git-sync/brain-repo.js';
 import { mapLoginToPerson } from '../../src/lib/task-backend/identity.js';
 import * as git from '../../src/lib/git-sync/git.js';
@@ -91,9 +92,12 @@ describe('git-sync/sync-engine — authorFor person tier (C3)', () => {
   it('uses the mapped person as commit author when a signed-in login maps to a roster person', async () => {
     updateSetupConfig(projectRoot, {
       brainRepo: { mode: 'in-tree', enabled: true, autoSync: true },
-      people: ['Mehmet Nuraydin'],
       peopleIdentity: { 'mehmet-nuraydin': { githubLogin: 'mehmetnur' } },
     });
+    // 0.23.0: the DISPLAY NAME comes from the roster (`people/people.json`),
+    // not the retired `config.people`. `peopleIdentity` still owns the
+    // login→slug mapping; a slug with no roster entry falls back to the slug.
+    addPerson(contextRoot, { name: 'Mehmet Nuraydin' });
     const commitCalls: { message: string; author?: { name: string; email: string } }[] = [];
     await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(commitCalls, { identity: true, login: 'mehmetnur' }));
     expect(commitCalls[0].author).toEqual({ name: 'Mehmet Nuraydin', email: 'mehmetnur@users.noreply.github.com' });
@@ -102,9 +106,9 @@ describe('git-sync/sync-engine — authorFor person tier (C3)', () => {
   it('overrides even a set local git identity — the person tier is layered ON TOP', async () => {
     updateSetupConfig(projectRoot, {
       brainRepo: { mode: 'in-tree', enabled: true, autoSync: true },
-      people: ['Mehmet Nuraydin'],
       peopleIdentity: { 'mehmet-nuraydin': { githubLogin: 'mehmetnur' } },
     });
+    addPerson(contextRoot, { name: 'Mehmet Nuraydin' });
     const commitCalls: { message: string; author?: { name: string; email: string } }[] = [];
     await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(commitCalls, { identity: true, login: 'mehmetnur' }));
     expect(commitCalls[0].author).not.toBeUndefined();

@@ -1,5 +1,4 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
-import { dirname } from 'node:path';
 import { today } from '../../lib/id.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { currentSyncJob, startSyncJob } from '../sync-job.js';
@@ -8,7 +7,7 @@ import type { FieldChange } from '../change-tracker.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import { listObjectives } from '../../lib/objectives-store.js';
 import { resolveFeature, applyTaskFeatureLink } from '../../lib/feature-links.js';
-import { readSetupConfig } from '../../lib/setup-config.js';
+import { PeopleStoreError, listPeople } from '../../lib/people-store.js';
 import {
   loadTaskOverride,
   readTaskOverrideRaw,
@@ -453,20 +452,30 @@ function slugToName(slug: string): string {
 }
 
 /**
- * The project roster (`.config.json` `people`) as assignee candidates. This is
- * the source on LOCAL projects (no remote member list), so the dashboard can
- * offer a people dropdown instead of forcing the user to type `person:<slug>`.
+ * The vault roster (`people/people.json`) as assignee candidates. This is the
+ * source on LOCAL projects (no remote member list), so the dashboard can offer a
+ * people dropdown instead of forcing the user to type `person:<slug>`.
+ *
+ * D17 read-path rule: a corrupt roster degrades to NO candidates, not a 500 —
+ * `/api/tasks/members` still answers 200 (the picker falls back to the people
+ * already tagged on local tasks) and `doctor` is the loud channel.
  */
 function rosterMembers(contextRoot: string): RemoteMember[] {
-  const config = readSetupConfig(dirname(contextRoot));
-  const people = config?.people ?? [];
+  let roster: Array<{ slug: string; name: string }>;
+  try {
+    roster = listPeople(contextRoot);
+  } catch (err) {
+    if (!(err instanceof PeopleStoreError)) throw err;
+    console.warn(`[tasks] people/people.json unreadable (${err.message}) — assignee roster empty. Run \`dreamcontext doctor\`.`);
+    return [];
+  }
   // Roster candidates are keyed by slug — that slug becomes the `person:<slug>`
   // tag. The remote member id (if any) is resolved inside the backend at sync
   // time, so the route stays provider-agnostic and carries no remote id here.
-  return people.map((slug) => ({
-    slug,
+  return roster.map((person) => ({
+    slug: person.slug,
     id: '',
-    name: slugToName(slug),
+    name: person.name,
   }));
 }
 

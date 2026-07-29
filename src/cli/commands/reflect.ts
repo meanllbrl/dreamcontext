@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { buildCorpus, tokenize } from '../../lib/recall.js';
@@ -45,16 +45,25 @@ function buildBookmarkSessions(root: string): Map<string, string> {
 }
 
 /**
- * Tokenize soul + user files into a Set for the excludedExtra parameter.
- * These files are NOT in buildCorpus, so their terms must be passed in explicitly
- * to ensure they don't surface as spurious candidates.
+ * Tokenize the constitutions — the soul plus EVERY person file — into a Set for
+ * the excludedExtra parameter. These files are NOT in buildCorpus, so their
+ * terms must be passed in explicitly to ensure they don't surface as spurious
+ * candidates.
+ *
+ * The whole roster is scanned, not just the active person: any person's
+ * vocabulary is equally "already captured", and reflection candidates are a
+ * property of the vault, not of whoever happens to be at the keyboard.
+ * Exported for the unit test that pins this list.
  */
-function buildExcludedExtra(root: string): Set<string> {
+export function buildExcludedExtra(root: string): Set<string> {
   const excluded = new Set<string>();
-  const coreFiles = [
-    join(root, 'core', '0.soul.md'),
-    join(root, 'core', '1.user.md'),
-  ];
+  const coreFiles = [join(root, 'core', '0.soul.md')];
+  const peopleDir = join(root, 'people');
+  if (existsSync(peopleDir)) {
+    for (const entry of readdirSync(peopleDir).sort()) {
+      if (entry.endsWith('.md')) coreFiles.push(join(peopleDir, entry));
+    }
+  }
   for (const filePath of coreFiles) {
     if (!existsSync(filePath)) continue;
     try {

@@ -29,6 +29,7 @@ import {
 } from '../../lib/manifest.js';
 import { updateSetupConfig } from '../../lib/setup-config.js';
 import { writeProjectPlatformDefaults } from '../../lib/platform-defaults.js';
+import { resolveActivePerson } from '../../lib/people-resolve.js';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -299,11 +300,18 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
     await maybeInstallApp(opts);
 
     // ─── 6. Summary ───────────────────────────────────────────────────────
+    // Setup DELEGATES the vault scaffold to `init`, which owns creating the
+    // person — so the only thing left here is naming who that is. Never throws:
+    // an un-migrated vault (init skipped) simply has no line.
+    const activePerson = resolveActivePerson(contextDir);
     const manifestPath = '_dream_context/state/.install-manifest.json';
     console.log();
     console.log(miniBox([
       chalk.green.bold('✓ dreamcontext setup complete'),
       '',
+      ...(activePerson.slug
+        ? [`  Person:    ${chalk.white(`${activePerson.name} (person:${activePerson.slug})`)}`]
+        : []),
       `  Platforms: ${chalk.white(platforms.join(', '))}`,
       `  Packs:     ${chalk.white(packs.length > 0 ? packs.join(', ') : '(none)')}`,
       `  Products:  ${chalk.white(multiProduct === false ? 'single (default)' : multiProduct.join(', '))}`,

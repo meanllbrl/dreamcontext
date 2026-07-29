@@ -35,6 +35,7 @@ import {
 } from '../../lib/platforms.js';
 import { loadCatalog } from '../../lib/catalog.js';
 import { insertToJsonArray } from '../../lib/json-file.js';
+import { resolveAuthors } from '../../lib/people-resolve.js';
 import { today } from '../../lib/id.js';
 import { randomUUID } from 'node:crypto';
 import { isDesktop } from '../desktop.js';
@@ -1168,6 +1169,10 @@ export async function handleLauncherCapture(
         return;
       }
       const summary = text.length > 200 ? text.slice(0, 197) + '...' : text;
+      // Who captured this. `resolveAuthors` returns undefined on a vault with no
+      // `people/people.json` (D18), so the key is OMITTED there and an
+      // un-migrated vault's CHANGELOG stays byte-identical to pre-0.23.0.
+      const authors = resolveAuthors(join(cwd, '_dream_context'));
       insertToJsonArray(changelogPath, {
         date: today(),
         type: 'note',
@@ -1175,6 +1180,7 @@ export async function handleLauncherCapture(
         summary,
         description: text,
         breaking: false,
+        ...(authors && authors.length > 0 ? { authors } : {}),
       });
     } catch (err) {
       console.error('[launcher] capture changelog write failed:', err);

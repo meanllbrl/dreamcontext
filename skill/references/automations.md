@@ -18,6 +18,8 @@ automations/cache/<slug>.json               run history, status, telemetry
 
 All job semantics live in the manifest's prose. The CLI only carries schedule, model, and timeout. There is no built-in "digest" command or hardcoded job type. If you can write it as a prompt, it can be an automation.
 
+**Who a headless run's work is attributed to.** Nobody is at the keyboard, so a run's changelog entries and memory notes are stamped with whichever person the vault's active-person ladder resolves to on the dispatcher's machine — in practice the machine's git `user.email` matched against `people/people.json`. Set **`DREAMCONTEXT_PERSON=<slug>`** in the automation's environment to override that (rung 1, above the machine pin and git email; it must name a real roster slug). On a vault with no `people/people.json` the authors field is **omitted entirely**, not written empty. Full ladder → [cli-reference.md](cli-reference.md#people--who-works-in-this-vault).
+
 ---
 
 ## The pattern: an automation that gets better instead of repeating itself

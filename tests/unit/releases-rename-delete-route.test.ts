@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
@@ -18,6 +18,8 @@ import { getTaskBackend } from '../../src/lib/task-backend/index.js';
  * carrying the old version string and moves the active-planning pointer;
  * deleting drops the entry and clears the version off its tasks (warn+clear).
  * Both also operate on unregistered "ghosts" (a version present only on tasks).
+ * PATCH also DERIVES `contributors` when an entry transitions to `released` —
+ * the third describe below covers that half of the handler.
  */
 
 function makeRes(): { res: ServerResponse; status: () => number; body: () => any } {
@@ -142,6 +144,64 @@ describe('PATCH /api/releases/:version — rename', () => {
     expect(status()).toBe(200);
     expect(body().renamed).toBeUndefined();
     expect(getExistingReleases(root).find(r => r.version === 'S7')?.status).toBe('released');
+  });
+});
+
+/**
+ * Releasing a planning entry credits the people behind it, with the same
+ * derivation POST /api/releases uses: changelog `authors` ∪ the swept tasks'
+ * `person:` tags, deduped and sorted, and the key OMITTED (never `[]`) when
+ * there is nothing to attribute (D18).
+ */
+describe('PATCH /api/releases/:version — contributors on the transition to released', () => {
+  function writeTaskWithPerson(slug: string, id: string, person: string): void {
+    writeFileSync(
+      join(root, 'state', `${slug}.md`),
+      `---\nid: ${id}\nname: ${slug}\nstatus: completed\ncreated_at: '2026-06-01'\nupdated_at: '2026-06-01'\nversion: S7\ntags:\n  - person:${person}\n---\n\nbody\n`,
+    );
+  }
+
+  function planning(extra: Record<string, unknown>) {
+    return { ...rel('S7', 'planning'), ...extra };
+  }
+
+  it('unions the changelog authors with the swept tasks person: tags', async () => {
+    writeTaskWithPerson('ship-it', 'task_A', 'bob-builder');
+    writeReleases([planning({ tasks: ['task_A'], changelog: [{ authors: ['ada-lovelace'] }] })]);
+
+    const { res, status, body } = makeRes();
+    await handleReleasesUpdate(makeReq('PATCH', { status: 'released' }), res, { version: 'S7' }, root);
+
+    expect(status()).toBe(200);
+    expect(body().release.contributors).toEqual(['ada-lovelace', 'bob-builder']);
+    expect(getExistingReleases(root).find(r => r.version === 'S7')?.contributors)
+      .toEqual(['ada-lovelace', 'bob-builder']);
+  });
+
+  it('omits the key entirely when there is nothing to attribute', async () => {
+    writeReleases([planning({})]);
+
+    const { res, status, body } = makeRes();
+    await handleReleasesUpdate(makeReq('PATCH', { status: 'released' }), res, { version: 'S7' }, root);
+
+    expect(status()).toBe(200);
+    expect('contributors' in body().release).toBe(false);
+    const onDisk = JSON.parse(readFileSync(join(root, 'core', 'RELEASES.json'), 'utf-8'))[0];
+    expect('contributors' in onDisk).toBe(false);
+  });
+
+  it('never overwrites a contributors list that is already there', async () => {
+    writeTaskWithPerson('ship-it', 'task_A', 'bob-builder');
+    writeReleases([planning({
+      tasks: ['task_A'],
+      changelog: [{ authors: ['ada-lovelace'] }],
+      contributors: ['carol-danvers'],
+    })]);
+
+    const { res, body } = makeRes();
+    await handleReleasesUpdate(makeReq('PATCH', { status: 'released' }), res, { version: 'S7' }, root);
+
+    expect(body().release.contributors).toEqual(['carol-danvers']);
   });
 });
 

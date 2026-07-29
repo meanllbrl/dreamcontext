@@ -11,7 +11,14 @@ import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField } from './routes/tasks.js';
 import { handleSleepGet, handleSleepUpdate } from './routes/sleep.js';
 import { handleEmbeddingModelStatus, handleEmbeddingModelDownload, handleEmbeddingIndexStatus, handleEmbeddingIndexBuild } from './routes/embeddings.js';
-import { handleCoreList, handleCoreGet, handleCoreUpdate } from './routes/core.js';
+import {
+  handleCoreList,
+  handleCoreGet,
+  handleCoreUpdate,
+  handlePeopleList,
+  handlePersonGet,
+  handlePersonUpdate,
+} from './routes/core.js';
 import { handleKnowledgeList, handleKnowledgeGet, handleKnowledgeUpdate, handleKnowledgeAssets } from './routes/knowledge.js';
 import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleReleaseGet, handleReleasesCreate, handleReleasesUpdate, handleReleasesDelete, handleActiveVersionGet, handleActiveVersionSet } from './routes/changelog.js';
 import { handleGraphGet, handleGraphContentGet } from './routes/graph.js';
@@ -165,7 +172,12 @@ export interface ServerOptions {
   host?: string;
 }
 
-function buildRouter(): Router {
+/**
+ * Exported for tests: route ORDER is load-bearing (first match wins), so the
+ * only honest way to assert `/api/core/people` is not swallowed by
+ * `/api/core/:filename` is to match against the real router.
+ */
+export function buildRouter(): Router {
   const router = new Router();
 
   // Health
@@ -211,6 +223,12 @@ function buildRouter(): Router {
 
   // Core
   router.get('/api/core', handleCoreList);
+  // People routes are registered BEFORE `/api/core/:filename` — first match
+  // wins, so otherwise `/api/core/people` is swallowed as a core FILE named
+  // "people" and answers 404 instead of the roster.
+  router.get('/api/core/people', handlePeopleList);
+  router.get('/api/core/people/:slug', handlePersonGet);
+  router.put('/api/core/people/:slug', handlePersonUpdate);
   router.get('/api/core/:filename', handleCoreGet);
   router.put('/api/core/:filename', handleCoreUpdate);
 

@@ -39,7 +39,11 @@ describe('buildCoreIndex', () => {
     expect(entries).toEqual([]);
   });
 
-  it('does not include 0.soul, 1.user, 2.memory', () => {
+  // Slot 1 is RETIRED, not reused: the user file became `people/<slug>.md` in
+  // 0.23.0 and the numbering keeps its gap (0.soul, 2.memory, 3+). The `[3-9]*`
+  // glob never saw slot 1 either way, which is exactly why retiring it was free
+  // — this case pins that a leftover `1.user.md` still never reaches the index.
+  it('does not include 0.soul, the retired 1.user slot, or 2.memory', () => {
     writeFileSync(join(tmpDir, 'core', '0.soul.md'), '---\nname: s\n---\n\nS\n');
     writeFileSync(join(tmpDir, 'core', '1.user.md'), '---\nname: u\n---\n\nU\n');
     writeFileSync(join(tmpDir, 'core', '2.memory.md'), '---\nname: m\n---\n\nM\n');
@@ -47,6 +51,18 @@ describe('buildCoreIndex', () => {
     const entries = buildCoreIndex(tmpDir);
     expect(entries).toHaveLength(1);
     expect(entries[0].filename).toBe('3.style.md');
+  });
+
+  it('never indexes people/ — a constitution is not an extended core file', () => {
+    // The active one is rendered in full by the snapshot and the rest are listed
+    // by the roster section; neither belongs in the "files you have not been
+    // shown" index.
+    mkdirSync(join(tmpDir, 'people'), { recursive: true });
+    writeFileSync(join(tmpDir, 'people', 'people.json'), '{"version":1,"people":{"ada":{"name":"Ada","emails":[]}}}');
+    writeFileSync(join(tmpDir, 'people', 'ada.md'), '---\nname: ada\ntype: person\n---\n\nA.\n');
+    writeFileSync(join(tmpDir, 'core', '3.style.md'), '---\nname: style\ntype: style\n---\n\nStyle.\n');
+
+    expect(buildCoreIndex(tmpDir).map((e) => e.filename)).toEqual(['3.style.md']);
   });
 
   it('does not include CHANGELOG.json or RELEASES.json', () => {

@@ -22,6 +22,13 @@ interface ReleaseEntry {
   features?: string[];
   tasks?: string[];
   changelog?: ChangelogEntry[];
+  /**
+   * Person slugs derived at record time from the release's changelog `authors`
+   * and its tasks' `person:` tags. Absent (never `[]`) on a vault with no
+   * roster, and on every release recorded before 0.23.0 — so the section below
+   * renders only when there is something true to say.
+   */
+  contributors?: string[];
 }
 
 // ── Type badge colors ──
@@ -181,6 +188,17 @@ function ReleasePreview({ data }: { data: ReleaseEntry[] }) {
               {isExpanded && (
                 <div className="json-release-body">
                   <div className="json-release-summary">{release.summary}</div>
+
+                  {release.contributors && release.contributors.length > 0 && (
+                    <div className="json-release-section">
+                      <div className="json-release-section-title">Contributors</div>
+                      <div className="json-release-ids">
+                        {release.contributors.map(slug => (
+                          <span key={slug} className="json-id-chip json-id-chip--person">{slug}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {release.features && release.features.length > 0 && (
                     <div className="json-release-section">

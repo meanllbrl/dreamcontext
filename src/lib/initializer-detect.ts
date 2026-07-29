@@ -2,6 +2,7 @@ import { existsSync, statSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname, basename, extname, isAbsolute, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { featuresDir } from './features-path.js';
+import { resolveActivePerson } from './people-resolve.js';
 
 /**
  * Initializer auto-detection.
@@ -49,14 +50,19 @@ export interface InitTrigger {
 
 // ─── Brain classification ─────────────────────────────────────────────────────
 
-// Sentinel substrings that ship in the freshly-`init`ed core templates
-// (src/templates/init/*.md) and get replaced once the brain is genuinely
-// initialized. Their continued presence is the "untouched template stub" signal.
+// Sentinel substrings that ship in the freshly-`init`ed templates
+// (src/templates/init/*.md and src/templates/init/people/person.md) and get
+// replaced once the brain is genuinely initialized. Their continued presence is
+// the "untouched template stub" signal. The person-constitution entries
+// (`(Who this person is`, `(Decision-making patterns`, `(How the user prefers to
+// interact`) MUST stay in lockstep with the person template — a placeholder that
+// isn't listed here makes that slot inert: present, never counted.
 const TEMPLATE_PLACEHOLDERS = [
   "(Add your project's guiding principles",
   '(Add known constraints',
   '(Project-specific behaviors',
   '(Things that must never happen',
+  '(Who this person is',
   '(Decision-making patterns',
   '(How the user prefers to interact',
   '(Key project facts',
@@ -75,18 +81,27 @@ const KNOWLEDGE_STUB_DIRS = new Set([
 ]);
 
 /**
- * True when the always-loaded core files (soul/user/memory) are still the
- * untouched init template — i.e. ≥2 of the present files still carry template
- * placeholder prose, or any carries an unreplaced `{{TOKEN}}`. Conservative on
- * purpose: a single edited file is enough to NOT classify as untouched.
+ * True when the always-loaded constitutions (soul / memory / the ACTIVE person)
+ * are still the untouched init template — i.e. ≥2 of the present files still
+ * carry template placeholder prose, or any carries an unreplaced `{{TOKEN}}`.
+ * Conservative on purpose: a single edited file is enough to NOT classify as
+ * untouched.
+ *
+ * The third slot is `people/<active>.md`, not `core/1.user.md`: post-0.23.0 the
+ * person constitution is where user-facing template prose lives, and auditing a
+ * retired file would silently drop one of the three signals. An unresolved
+ * active person contributes nothing (`present` not incremented) — same
+ * conservatism, one fewer signal.
  */
 export function isUntouchedTemplateCore(root: string): boolean {
   try {
-    const files = ['0.soul.md', '1.user.md', '2.memory.md'];
+    const paths = [join(root, 'core', '0.soul.md'), join(root, 'core', '2.memory.md')];
+    const activeSlug = resolveActivePerson(root).slug;
+    if (activeSlug) paths.push(join(root, 'people', `${activeSlug}.md`));
+
     let present = 0;
     let templateCount = 0;
-    for (const f of files) {
-      const p = join(root, 'core', f);
+    for (const p of paths) {
       if (!existsSync(p)) continue;
       let content: string;
       try {

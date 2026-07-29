@@ -9,9 +9,12 @@ import type { RemoteMember } from '../../src/lib/task-backend/index.js';
 import { SyncLedger } from '../../src/lib/task-backend/index.js';
 
 /**
- * GET /api/tasks/members on a LOCAL project must surface the roster (config
- * `people`) as assignee candidates — that's what fills the dashboard people
- * dropdown so a user never has to type `person:<slug>` by hand.
+ * GET /api/tasks/members on a LOCAL project must surface the vault roster
+ * (`people/people.json`) as assignee candidates — that's what fills the
+ * dashboard people dropdown so a user never has to type `person:<slug>` by hand.
+ *
+ * The roster moved out of `.config.json` `people` in 0.23.0; the display name is
+ * now the roster's own `name`, not a title-cased slug.
  */
 
 function makeRes(): { res: ServerResponse; status: () => number; body: () => { members: RemoteMember[] } } {
@@ -36,20 +39,29 @@ beforeEach(() => {
   mkdirSync(join(contextRoot, 'state'), { recursive: true });
 });
 
+/** Seed `people/people.json` — the roster's home since 0.23.0. */
+function seedRoster(people: Record<string, { name: string; emails?: string[] }>): void {
+  mkdirSync(join(contextRoot, 'people'), { recursive: true });
+  const entries = Object.fromEntries(
+    Object.entries(people).map(([slug, p]) => [slug, { name: p.name, emails: p.emails ?? [] }]),
+  );
+  writeFileSync(
+    join(contextRoot, 'people', 'people.json'),
+    JSON.stringify({ version: 1, people: entries }, null, 2),
+    'utf-8',
+  );
+}
+
 afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
 describe('GET /api/tasks/members (roster fallback)', () => {
-  it('returns the project roster as members on a local project', async () => {
-    writeSetupConfig(tmpDir, {
-      platforms: ['claude'],
-      packs: [],
-      multiProduct: false,
-      setupVersion: '1',
-      disableNativeMemory: false,
-      people: ['mehmet-nuraydin', 'ada-lovelace'],
-    } as never);
+  it('returns the vault roster as members on a local project', async () => {
+    seedRoster({
+      'mehmet-nuraydin': { name: 'Mehmet Nuraydın' },
+      'ada-lovelace': { name: 'Ada Lovelace' },
+    });
 
     const { res, status, body } = makeRes();
     await handleTasksMembers(req, res, {}, contextRoot);
@@ -57,9 +69,9 @@ describe('GET /api/tasks/members (roster fallback)', () => {
     expect(status()).toBe(200);
     const slugs = body().members.map((m) => m.slug).sort();
     expect(slugs).toEqual(['ada-lovelace', 'mehmet-nuraydin']);
-    // Slugs are title-cased for display so the dropdown reads naturally.
-    const ada = body().members.find((m) => m.slug === 'ada-lovelace');
-    expect(ada?.name).toBe('Ada Lovelace');
+    // The display name is the roster's own — no lossy title-casing of the slug.
+    const mehmet = body().members.find((m) => m.slug === 'mehmet-nuraydin');
+    expect(mehmet?.name).toBe('Mehmet Nuraydın');
   });
 
   it('returns an empty member list when there is no roster and no tasks', async () => {
@@ -124,8 +136,8 @@ describe('GET /api/tasks/members (remote backend gates non-members)', () => {
       disableNativeMemory: false,
       taskBackend: 'clickup',
       clickup: { teamId: 't', spaceId: 's', listId: 'list1' },
-      people: ['emrecan', 'aylin-yilmaz'],
     } as never);
+    seedRoster({ emrecan: { name: 'Emrecan' }, 'aylin-yilmaz': { name: 'Aylin Yilmaz' } });
 
     writeFileSync(
       join(contextRoot, 'state', 'handoff.md'),

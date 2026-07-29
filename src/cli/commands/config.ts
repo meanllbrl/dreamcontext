@@ -1,10 +1,9 @@
 import { Command } from 'commander';
 import { dirname } from 'node:path';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import chalk from 'chalk';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
-import { ensurePeopleSection } from '../../lib/people.js';
+import { PeopleStoreError, listPeople } from '../../lib/people-store.js';
 import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
 import { header, success, error, info } from '../../lib/format.js';
 import { promptInput } from '../../lib/prompt.js';
@@ -31,6 +30,25 @@ function resolveProjectRoot(): string | null {
   return contextRoot ? dirname(contextRoot) : null;
 }
 
+/**
+ * The roster line for `config show`. The roster lives in
+ * `people/people.json` since 0.23.0, so this is a READ of the people store —
+ * and a decorative one. Per D17's asymmetry, a corrupt roster degrades to a
+ * named placeholder here rather than taking down `config show`, which is one of
+ * the commands people run when they are already trying to work out what broke.
+ * Returns null when there is no roster at all (solo vaults print nothing).
+ */
+function peopleLine(contextRoot: string | null): string | null {
+  if (!contextRoot) return null;
+  try {
+    const roster = listPeople(contextRoot);
+    return roster.length > 0 ? roster.map((p) => p.name).join(', ') : null;
+  } catch (err) {
+    if (err instanceof PeopleStoreError) return '<unreadable — run dreamcontext doctor>';
+    throw err;
+  }
+}
+
 function requireProjectRoot(): string | undefined {
   const projectRoot = resolveProjectRoot();
   if (!projectRoot) {
@@ -41,8 +59,25 @@ function requireProjectRoot(): string | undefined {
   return projectRoot;
 }
 
+/**
+ * Roster slugs for the `peopleIdentity` mapping checks. Advisory only — an
+ * unreadable/absent roster degrades to "no roster", which simply skips the
+ * "not on the roster" note. Mapping an external id is never blocked by the
+ * state of people.json.
+ */
+function rosterSlugs(contextRoot: string | null): string[] {
+  if (!contextRoot) return [];
+  try {
+    return listPeople(contextRoot).map((p) => p.slug);
+  } catch (err) {
+    if (err instanceof PeopleStoreError) return [];
+    throw err;
+  }
+}
+
 function printConfig(projectRoot: string): void {
   const cfg = readSetupConfig(projectRoot);
+  const people = peopleLine(resolveContextRoot());
   console.log(header('dreamcontext config'));
   if (!cfg) {
     info('No config file yet. Run `dreamcontext setup` to create one.');
@@ -54,8 +89,8 @@ function printConfig(projectRoot: string): void {
   console.log(`  Products:       ${chalk.white(products)}`);
   // Only surface a People line when a roster exists — single-person projects
   // (absent/empty roster) print nothing, keeping the output unchanged.
-  if (cfg.people && cfg.people.length > 0) {
-    console.log(`  People:         ${chalk.white(cfg.people.join(', '))}`);
+  if (people) {
+    console.log(`  People:         ${chalk.white(people)}`);
   }
   console.log(
     `  Native memory:  ${cfg.disableNativeMemory
@@ -433,76 +468,20 @@ export function registerConfigCommand(program: Command): void {
       }
     });
 
+  // D7 — REDIRECT, not an alias. The old command was a full-roster REPLACE
+  // (`--clear` wrote `[]`); `people add` GROWS a roster and has no counterpart
+  // for `--clear`, so forwarding would invert the semantics of a command people
+  // have in their scripts. This reads its arguments only so commander parses
+  // them, and writes NOTHING under any flag combination.
   config
     .command('people [names...]')
-    .description('Set the people roster (display names) and sync the ## People block in 1.user.md')
-    .option('--clear', 'Empty the roster (single-person project)')
-    .action((names: string[], opts: { clear?: boolean }) => {
-      const projectRoot = requireProjectRoot();
-      if (!projectRoot) return;
-
-      // Resolve the roster: --clear wins; otherwise dedupe the supplied display
-      // names (case-insensitive on slug) preserving first-seen order.
-      let roster: string[] = [];
-      if (!opts.clear) {
-        const seen = new Set<string>();
-        for (const raw of names) {
-          const name = raw.trim();
-          if (!name) continue;
-          const slug = slugify(name);
-          if (!slug || seen.has(slug)) continue;
-          seen.add(slug);
-          roster.push(name);
-        }
-        if (roster.length === 0) {
-          error('No valid names provided.', 'Usage: dreamcontext config people "Alice" "Bob"  (or --clear)');
-          process.exitCode = 1;
-          return;
-        }
-      }
-
-      // updateSetupConfig merges with `patch.people ?? existing.people`, so
-      // `undefined` would be a no-op (can't clear). An empty array IS a clear and
-      // reads as single-person via isMultiPerson([]) === false.
-      updateSetupConfig(projectRoot, { people: roster });
-
-      // Sync the ## People block in 1.user.md. ensurePeopleSection is a no-op for
-      // ≤1 person, so a cleared/single roster never adds a block (and an existing
-      // block is left in place — note that below so the user can prune it).
-      const contextRoot = resolveContextRoot();
-      let userMdSynced = false;
-      if (contextRoot) {
-        const userMdPath = join(contextRoot, 'core', '1.user.md');
-        if (existsSync(userMdPath)) {
-          try {
-            const before = readFileSync(userMdPath, 'utf-8');
-            const after = ensurePeopleSection(before, roster);
-            if (after !== before) {
-              writeFileSync(userMdPath, after, 'utf-8');
-              userMdSynced = true;
-            }
-          } catch (err: any) {
-            // Roster is already persisted to config; surface the sync failure
-            // cleanly rather than throwing a raw stack trace.
-            error(`Could not sync the ## People block in 1.user.md: ${err.message}`);
-            process.exitCode = 1;
-            return;
-          }
-        }
-      }
-
-      if (roster.length === 0) {
-        success('People roster cleared (single-person project).');
-        info(chalk.dim('Any existing "## People" block in 1.user.md was left as-is — remove it manually if no longer needed.'));
-        return;
-      }
-      const multi = roster.length > 1;
-      success(`People roster set: ${roster.join(', ')}.`);
-      info(chalk.dim(`Slugs: ${roster.map((p) => `person:${slugify(p)}`).join(', ')}`));
-      if (userMdSynced) info(chalk.dim('Synced the "## People" section in 1.user.md.'));
-      if (!multi) {
-        info(chalk.dim('Only one person — multi-person attribution stays off until a second person is added.'));
-      }
+    .description('[Moved in 0.23.0] The roster now lives in people/people.json — use `dreamcontext people`')
+    .option('--clear', '[Moved in 0.23.0] Use `dreamcontext people rm <slug>`')
+    .action(() => {
+      console.error(`${chalk.red('✖')} \`dreamcontext config people\` moved in 0.23.0.`);
+      console.error(chalk.dim('  The roster now lives in _dream_context/people/people.json.'));
+      console.error(chalk.dim('  Use: dreamcontext people list | people add <name> --email <e> | people rm <slug>'));
+      process.exitCode = 1;
     });
 
   config
@@ -523,9 +502,9 @@ export function registerConfigCommand(program: Command): void {
       };
       updateSetupConfig(projectRoot, { peopleIdentity: identity });
       success(`Mapped ${slug} → ClickUp member ${memberId}${opts.tokenEnv ? ` (token env: ${opts.tokenEnv})` : ''}.`);
-      const roster = (cfg?.people ?? []).map((p) => slugify(p));
+      const roster = rosterSlugs(resolveContextRoot());
       if (roster.length > 0 && !roster.includes(slug)) {
-        info(chalk.dim(`Note: '${slug}' is not in the people roster of .config.json — add them there for full multi-person support.`));
+        info(chalk.dim(`Note: '${slug}' is not on the people roster — add them with \`dreamcontext people add "${person}"\` for full multi-person support.`));
       }
     });
 
@@ -542,9 +521,9 @@ export function registerConfigCommand(program: Command): void {
       identity[slug] = { ...(identity[slug] ?? {}), githubLogin: login };
       updateSetupConfig(projectRoot, { peopleIdentity: identity });
       success(`Mapped ${slug} → GitHub login ${login}.`);
-      const roster = (cfg?.people ?? []).map((p) => slugify(p));
+      const roster = rosterSlugs(resolveContextRoot());
       if (roster.length > 0 && !roster.includes(slug)) {
-        info(chalk.dim(`Note: '${slug}' is not in the people roster of .config.json — add them there for full multi-person support.`));
+        info(chalk.dim(`Note: '${slug}' is not on the people roster — add them with \`dreamcontext people add "${person}"\` for full multi-person support.`));
       }
     });
 

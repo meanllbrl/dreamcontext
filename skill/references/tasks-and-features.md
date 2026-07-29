@@ -90,17 +90,23 @@ dreamcontext tasks create <name> --start 2026-06-25 --due 2026-07-01
 
 ## People & assignees (multi-person)
 
-Single-person projects ignore all of this. For teams:
+**The roster lives in `_dream_context/people/people.json`** (since 0.23.0 — `dreamcontext config people` is a redirect that writes nothing). Every person also has a constitution at `people/<slug>.md`. Full surface → [cli-reference.md](cli-reference.md#people--who-works-in-this-vault).
+
+Single-person projects ignore most of this. For teams:
 ```bash
-dreamcontext config people "Ada" "Mehmet"          # set the roster (syncs ## People in 1.user.md)
+dreamcontext people add "Ada" --email ada@example.com --role backend   # roster row + people/ada.md
+dreamcontext people list                           # who is on the roster; `← you` marks the active person
+dreamcontext people whoami --set ada               # bind THIS machine (machine-local, never synced)
 dreamcontext tasks create <name> --person "Ada"    # records a person:ada tag
 dreamcontext tasks tag <name> person:mehmet        # add another assignee
 dreamcontext tasks tag <name> person:ada --remove  # unassign
 ```
 - `person:<slug>` tags are the source of truth for assignment and support **multiple assignees**. The legacy scalar `assignee` field is deprecated (still read, not written).
+- **`--person` defaults to the active person.** Omit it and the work is attributed to whoever this machine resolves to (`DREAMCONTEXT_PERSON` → machine pin → git `user.email` → a solo vault's only person → nothing). Pass `--person`/`--authors` explicitly only to attribute to **someone else**. On a vault with no `people/people.json` at all, author stamping stays **absent** — the field is omitted, not written empty, so an un-migrated vault's output is byte-identical to before.
 - When a cloud backend is active, `--person`/`tag person:<slug>` **resolves the name against the real member roster** (`tasks members`): an exact or fuzzy match is canonicalized to the member's slug, an **ambiguous** match aborts (be more specific), and an unmatched name is recorded but **warns** that it won't sync until that person is a member. Assignments are never silently dropped.
 - With ClickUp enabled, the full assignee set round-trips to ClickUp's native `assignees[]` bidirectionally; map each person to a member with `dreamcontext config clickup-member <person> <memberId>`. With **GitHub** enabled, `person:<slug>` tags round-trip to issue assignees (repo collaborators; a non-collaborator is skipped, never a sync error). (see [integrations.md](integrations.md)).
-- `DREAMCONTEXT_PERSON` env names the current person for attribution.
+- `DREAMCONTEXT_PERSON` env names the current person for attribution — rung 1 of the resolution ladder, above the machine pin and git email. It must name a real roster slug.
+- A **release** records `contributors` (derived from the changelog authors and task `person:` tags of everything it discovered, sorted, deduped, bots dropped). The key is omitted when empty.
 
 ---
 

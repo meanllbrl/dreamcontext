@@ -9,7 +9,9 @@ import { promptInput } from '../../lib/prompt.js';
 import { slugify, today } from '../../lib/id.js';
 import { success, error, header, warn } from '../../lib/format.js';
 import { matchMember } from '../../lib/task-backend/member-match.js';
-import { readSetupConfig, isMultiPerson, writeBrainLocal } from '../../lib/setup-config.js';
+import { writeBrainLocal } from '../../lib/setup-config.js';
+import { isMultiPersonVault, listPeople, PeopleStoreError } from '../../lib/people-store.js';
+import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
 import { getExistingReleases } from '../../lib/release-discovery.js';
 import { foldAscii } from '../../lib/fold-ascii.js';
@@ -182,22 +184,70 @@ async function setCustomField(
 }
 
 /**
- * Resolve a human-entered person reference to a CANONICAL, member-backed slug
- * for a `person:<slug>` tag. On a remote backend whose members are known, the
- * input is fuzzy-matched against the real roster so we never mint an unmappable
- * slug — an unmapped slug is silently dropped on push and the remote then
- * defaults the assignee to the API-token owner. On a local backend (or when members are
- * unavailable) it falls back to a plain slugify with no warning, since free-text
- * assignment is harmless there.
+ * Match a human-entered person reference against THIS vault's roster
+ * (`people/people.json`): exact slug, then display name (case-insensitive), then
+ * the slugified name. Returns null when the roster is absent or has no match.
+ *
+ * D17 read-path rule: a corrupt roster degrades to "no roster" with one warning
+ * — `doctor` is the loud channel, and `tasks create` must not die because a
+ * teammate hand-edited a JSON file.
+ */
+function rosterPersonSlug(contextRoot: string, input: string): string | null {
+  let roster: Array<{ slug: string; name: string }>;
+  try {
+    roster = listPeople(contextRoot);
+  } catch (err) {
+    if (!(err instanceof PeopleStoreError)) throw err;
+    warn(`Could not read people/people.json (${err.message}) — falling back to a plain slug. Run \`dreamcontext doctor\`.`);
+    return null;
+  }
+  const raw = input.trim();
+  const lowered = raw.toLowerCase();
+  const slugged = slugify(raw);
+  return (
+    roster.find((p) => p.slug === lowered)?.slug
+    ?? roster.find((p) => p.name.toLowerCase() === lowered)?.slug
+    ?? roster.find((p) => p.slug === slugged)?.slug
+    ?? null
+  );
+}
+
+/**
+ * `isMultiPersonVault` that cannot crash a task command. A corrupt roster
+ * degrades to "solo" — i.e. to the pre-people-first behavior (no person tag)
+ * rather than a stack trace; `doctor` surfaces the corruption.
+ */
+function isMultiPersonVaultSafe(contextRoot: string): boolean {
+  try {
+    return isMultiPersonVault(contextRoot);
+  } catch (err) {
+    if (!(err instanceof PeopleStoreError)) throw err;
+    warn(`Could not read people/people.json (${err.message}) — treating this vault as single-person. Run \`dreamcontext doctor\`.`);
+    return false;
+  }
+}
+
+/**
+ * Resolve a human-entered person reference to a CANONICAL slug for a
+ * `person:<slug>` tag. On a remote backend whose members are known, the input is
+ * fuzzy-matched against the real roster so we never mint an unmappable slug — an
+ * unmapped slug is silently dropped on push and the remote then defaults the
+ * assignee to the API-token owner.
+ *
+ * When the remote cannot decide (local backend, offline, no members, no match)
+ * the vault's OWN roster canonicalizes the input, so `--person "Ada Lovelace"`
+ * records `person:ada-lovelace` rather than whatever slugify makes of the typed
+ * string; with no roster either, it falls back to a plain slugify.
  *
  * Returns `{ abort: true }` on an ambiguous match (a message is printed and the
  * caller must stop rather than guess an assignee).
  */
 async function resolvePersonSlug(
   backend: TaskBackend,
+  contextRoot: string,
   input: string,
 ): Promise<{ slug: string } | { abort: true }> {
-  const fallback = slugify(input);
+  const fallback = rosterPersonSlug(contextRoot, input) ?? slugify(input);
   if (!backend.listMembers) return { slug: fallback };
   let members;
   try {
@@ -451,7 +501,7 @@ export function registerTasksCommand(program: Command): void {
     .option('-t, --tags <tags>', 'Comma-separated tags')
     .option('-w, --why <why>', 'Why is this task needed?')
     .option('-v, --version <version>', 'Version/milestone')
-    .option('--person <name>', 'Responsible person (records a person:<slug> tag when multi-person)')
+    .option('--person <name>', 'Responsible person (records a person:<slug> tag when multi-person; defaults to the active person)')
     .option('--reach <n>', 'RICE reach (integer 1–10)')
     .option('--impact <n>', 'RICE impact (integer 1–5)')
     .option('--confidence <n>', 'RICE confidence (25, 50, 75, or 100)')
@@ -496,15 +546,25 @@ export function registerTasksCommand(program: Command): void {
       const tags = opts.tags ? opts.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
       // Person attribution rides the tags array as `person:<slug>` (no new
       // frontmatter field, so existing task-query tag handling just works). The
-      // tag is injected ONLY when the project is multi-person; single-person
-      // projects never get it (`--person` is a silent no-op there).
-      if (opts.person && opts.person.trim()) {
-        const projectRoot = dirname(ensureContextRoot());
-        if (isMultiPerson(readSetupConfig(projectRoot))) {
-          const resolved = await resolvePersonSlug(backend, opts.person);
-          if ('abort' in resolved) return;
-          const personTag = `person:${resolved.slug}`;
-          if (!tags.includes(personTag)) tags.push(personTag);
+      // tag is injected ONLY when the vault holds more than one person;
+      // single-person vaults never get it (`--person` is a silent no-op there).
+      // With no --person on a multi-person vault the ACTIVE person is recorded —
+      // "I made this" is the overwhelmingly common case, and an untagged task on
+      // a shared board is the thing the roster was always trying to prevent.
+      {
+        const contextRoot = ensureContextRoot();
+        if (isMultiPersonVaultSafe(contextRoot)) {
+          const explicit = opts.person?.trim();
+          if (explicit) {
+            const resolved = await resolvePersonSlug(backend, contextRoot, explicit);
+            if ('abort' in resolved) return;
+            const personTag = `person:${resolved.slug}`;
+            if (!tags.includes(personTag)) tags.push(personTag);
+          } else if (!tags.some((t) => t.startsWith('person:'))) {
+            // Never guess: an unresolved machine records no one.
+            const active = resolveActivePerson(contextRoot).slug;
+            if (active) tags.push(`person:${active}`);
+          }
         }
       }
       // Every task records why it exists (created_at covers the "when") — a
@@ -993,7 +1053,7 @@ export function registerTasksCommand(program: Command): void {
               error('Empty assignee: `person:` needs a slug, e.g. `person:emrecan-tetik` (see `dreamcontext tasks members`).');
               return;
             }
-            const resolved = await resolvePersonSlug(backend, raw);
+            const resolved = await resolvePersonSlug(backend, ensureContextRoot(), raw);
             if ('abort' in resolved) return;
             addTags.push(`person:${resolved.slug}`);
           } else {

@@ -106,11 +106,11 @@ Untracked, genuinely-separate work is invisible to future sessions — always li
 
 ### 2.5. Person attribution (multi-person projects only)
 
-When the project's `.config.json` `people` array has **>1 entry**, the person responsible for a task's progress this cycle must be recorded as a `person:<slug>` tag in the task's frontmatter `tags` array. Slug is kebab-case matching the roster (e.g., `person:mehmet`, `person:ada`). Determine attribution from the same signals sleep-state uses for Pass B.5 (git `%an` on the commits, self-identification in the session transcript), applying the **shared bot-filter** — drop any author whose kebab-case slug contains `github-actions` or `dependabot` (the `BOT_SLUG_FRAGMENTS` list in `src/lib/attribution.ts`, consumed by `attributeByPerson`). Never tag a task `person:github-actions`.
+When the roster in **`_dream_context/people/people.json`** has **>1 entry** (since 0.23.0 — the retired `.config.json` `people` key is gone; do not read it), the person responsible for a task's progress this cycle must be recorded as a `person:<slug>` tag in the task's frontmatter `tags` array. The slug is a roster **key** (e.g., `person:mehmet`, `person:ada`) — `dreamcontext people list` is the source of truth for which slugs exist, and a tag naming a slug that is not on the roster resolves to nobody. Determine attribution from the same signals sleep-state uses for Pass B.5 (git `%an` on the commits, self-identification in the session transcript), applying the **shared bot-filter** — drop any author whose kebab-case slug contains `github-actions` or `dependabot` (the `BOT_SLUG_FRAGMENTS` list in `src/lib/attribution.ts`, consumed by `attributeByPerson`). Never tag a task `person:github-actions`.
 
 ```bash
-# Read the current roster
-jq -r '.people // [] | join(", ")' _dream_context/state/.config.json 2>/dev/null
+# Read the current roster (people/people.json — never .config.json)
+dreamcontext people list
 ```
 
 - **New task**: pass `--person <name>` to `dreamcontext tasks create` (the CLI injects a `person:<slug>` tag automatically).

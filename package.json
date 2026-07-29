@@ -31,6 +31,7 @@
     "dev:dashboard": "cd dashboard && npm run dev",
     "test": "vitest",
     "test:e2e": "playwright test",
+    "verify:people": "node scripts/verify/people-first.mjs",
     "diagrams": "node scripts/diagrams/build-all.mjs",
     "prepublishOnly": "npm run build"
   },

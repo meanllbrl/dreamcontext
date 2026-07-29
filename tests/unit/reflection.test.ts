@@ -11,6 +11,7 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { CorpusDoc } from '../../src/lib/recall.js';
+import { tokenize } from '../../src/lib/recall.js';
 import {
   detectPatterns,
   formatReflection,
@@ -20,6 +21,7 @@ import {
   DEFAULT_MIN_SESSIONS,
   DEFAULT_MAX_CANDIDATES,
 } from '../../src/lib/reflection.js';
+import { buildExcludedExtra } from '../../src/cli/commands/reflect.js';
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -321,14 +323,16 @@ describe('formatReflection — AC4: bounded output', () => {
 
 // ── Pure function guarantees (AC5) ────────────────────────────────────────────
 
-describe('writeReflection — AC5: no core/ file modification', () => {
+describe('writeReflection — AC5: no constitution file modification', () => {
   let root: string;
 
   beforeEach(() => {
     root = makeTmpRoot();
-    // Create fake core files to check they are untouched
+    // Create fake constitution files to check they are untouched. Since 0.23.0
+    // the per-person constitution is people/<slug>.md, not core/1.user.md.
+    mkdirSync(join(root, 'people'), { recursive: true });
     writeFileSync(join(root, 'core', '0.soul.md'), '# Soul\nIdentity content.');
-    writeFileSync(join(root, 'core', '1.user.md'), '# User\nUser content.');
+    writeFileSync(join(root, 'people', 'ada.md'), '# Ada\nUser content.');
     writeFileSync(join(root, 'core', '2.memory.md'), '# Memory\nDecisions.');
   });
 
@@ -336,11 +340,11 @@ describe('writeReflection — AC5: no core/ file modification', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('writes ONLY state/.reflection.md, no core/ files modified', () => {
-    // Snapshot mtimes of core/ files before
+  it('writes ONLY state/.reflection.md, no constitution files modified', () => {
+    // Snapshot mtimes before
     const coreFiles = [
       join(root, 'core', '0.soul.md'),
-      join(root, 'core', '1.user.md'),
+      join(root, 'people', 'ada.md'),
       join(root, 'core', '2.memory.md'),
     ];
     const beforeMtimes = coreFiles.map((f) => statSync(f).mtimeMs);
@@ -513,5 +517,74 @@ describe('reflection.ts — AC7: no AI/network calls in source', () => {
         line.includes("'node:os'"); // allowed for type imports only
       expect(isAllowed, `Unexpected import: ${line}`).toBe(true);
     }
+  });
+});
+
+// ── Scan targets (0.23.0 people-first) ───────────────────────────────────────
+//
+// `buildExcludedExtra` tokenizes the files that are NOT in buildCorpus but ARE
+// already-captured vocabulary, so their terms never surface as "new" reflection
+// candidates. Since 0.23.0 that set is `core/0.soul.md` + EVERY `people/*.md`
+// — `core/1.user.md` is gone, and the roster (not just the active person) is
+// what counts, because any person's vocabulary is equally already-captured.
+
+describe('buildExcludedExtra — scan targets', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTmpRoot();
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function hasAll(excluded: Set<string>, text: string): boolean {
+    return tokenize(text).every((t) => excluded.has(t));
+  }
+
+  it('excludes the soul vocabulary', () => {
+    const soul = '# Soul\n\nWe optimise for zebrafish throughput.';
+    writeFileSync(join(root, 'core', '0.soul.md'), soul);
+    expect(hasAll(buildExcludedExtra(root), soul)).toBe(true);
+  });
+
+  it('excludes EVERY person constitution, not just one', () => {
+    writeFileSync(join(root, 'core', '0.soul.md'), '# Soul\n\nzebrafish');
+    mkdirSync(join(root, 'people'), { recursive: true });
+    writeFileSync(join(root, 'people', 'ada.md'), '## Identity\n\nAda prefers pelicanisms.');
+    writeFileSync(join(root, 'people', 'bob.md'), '## Identity\n\nBob prefers marmosets.');
+
+    const excluded = buildExcludedExtra(root);
+    expect(hasAll(excluded, 'pelicanisms')).toBe(true);
+    expect(hasAll(excluded, 'marmosets')).toBe(true);
+    expect(hasAll(excluded, 'zebrafish')).toBe(true);
+  });
+
+  it('no longer reads core/1.user.md', () => {
+    writeFileSync(join(root, 'core', '0.soul.md'), '# Soul\n\nzebrafish');
+    writeFileSync(join(root, 'core', '1.user.md'), '# User\n\nRetired vocabulary: aardvarks.');
+    const excluded = buildExcludedExtra(root);
+    expect(excluded.has(tokenize('aardvarks')[0])).toBe(false);
+    expect(hasAll(excluded, 'zebrafish')).toBe(true);
+  });
+
+  it('ignores non-markdown files in people/', () => {
+    writeFileSync(join(root, 'core', '0.soul.md'), '# Soul\n\nzebrafish');
+    mkdirSync(join(root, 'people'), { recursive: true });
+    writeFileSync(join(root, 'people', 'people.json'), '{"version":1,"people":{"ada":{"name":"marmosets","emails":[]}}}');
+    const excluded = buildExcludedExtra(root);
+    expect(excluded.has(tokenize('marmosets')[0])).toBe(false);
+  });
+
+  it('survives a missing people/ directory (every un-migrated vault)', () => {
+    writeFileSync(join(root, 'core', '0.soul.md'), '# Soul\n\nzebrafish');
+    expect(existsSync(join(root, 'people'))).toBe(false);
+    expect(() => buildExcludedExtra(root)).not.toThrow();
+    expect(hasAll(buildExcludedExtra(root), 'zebrafish')).toBe(true);
+  });
+
+  it('survives a missing soul AND a missing people/ (empty set, no throw)', () => {
+    expect(buildExcludedExtra(root).size).toBe(0);
   });
 });

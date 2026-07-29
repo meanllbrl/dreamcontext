@@ -50,7 +50,10 @@ describe('ClickUp assignee reconcile (#78)', () => {
     platforms: [], packs: [], multiProduct: false, setupVersion: '0.0.0',
     disableNativeMemory: true, taskBackend: 'clickup', cloudTaskManagement: true,
     clickup: { teamId: 'team1', spaceId: 'space1', listId: 'list1', changelogTarget: 'comments' },
-    people: ['Alice'], peopleIdentity: { alice: { clickupMemberId: '501' } },
+    // 0.23.0 (D19): identity resolution reads the peopleIdentity KEYS — the
+    // retired `.config.json.people` roster is gone (who exists now lives in
+    // people/people.json, which this layer never needs).
+    peopleIdentity: { alice: { clickupMemberId: '501' } },
   };
   let projectRoot: string, contextRoot: string, fake: FakeClickUp, backend: ClickUpTaskBackend, clock: number;
 

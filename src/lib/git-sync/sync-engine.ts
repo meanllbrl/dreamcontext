@@ -20,7 +20,7 @@ import { readGlobalGitHubLogin, readGlobalGitHubToken } from './auth-store.js';
 import { type ResolvedToken } from '../task-backend/secrets.js';
 import { BrainSyncTokenSession } from './token-fallback.js';
 import { mapLoginToPerson } from '../task-backend/identity.js';
-import { slugify } from '../id.js';
+import { getPerson } from '../people-store.js';
 
 /**
  * The sync-engine orchestrator — single entry point (`runBrainSync`) for
@@ -222,7 +222,15 @@ function personAuthorFor(ctx: Ctx): { name: string; email: string } | undefined 
   if (!login) return undefined;
   const slug = mapLoginToPerson(login, ctx.config);
   if (!slug) return undefined;
-  const displayName = (ctx.config?.people ?? []).find((p) => slugify(p) === slug) ?? slug;
+  // Display name from the roster (0.23.0: `people/people.json`, not the retired
+  // `config.people`). A corrupt roster must never block a commit — this only
+  // decorates the author line, so it degrades to the slug (D17's read-path half).
+  let displayName = slug;
+  try {
+    displayName = getPerson(ctx.contextRoot, slug)?.name ?? slug;
+  } catch {
+    displayName = slug;
+  }
   return { name: displayName, email: `${login}@users.noreply.github.com` };
 }
 
