@@ -11,8 +11,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  appendQueued, editQueued, removeQueued, shouldDrainQueue,
-  type QueuedMessage, type DrainProbe,
+  appendQueued, editQueued, removeQueued, shouldDrainQueue, canSteer, nextAutoSteer,
+  type QueuedMessage, type DrainProbe, type SteerProbe,
 } from '../../dashboard/src/components/sleepy/chat/chatQueue.js';
 
 const q = (id: string, text: string): QueuedMessage => ({ id, text, ts: 0 });
@@ -125,5 +125,123 @@ describe('shouldDrainQueue', () => {
 
   it('treats absent paused/ended as "not paused, not ended" (the fields are optional)', () => {
     expect(shouldDrainQueue({ busy: false, asking: false, socketOpen: true, queueLength: 2 })).toBe(true);
+  });
+});
+
+describe('canSteer', () => {
+  /** A turn in flight over a live socket, nothing being asked — the moment steering is FOR. */
+  const running: SteerProbe = { busy: true, asking: false, ended: false, socketOpen: true };
+
+  it('steers into a turn that is in flight — the case the whole feature exists for', () => {
+    expect(canSteer(running)).toBe(true);
+  });
+
+  it('is false with nothing running: there is no turn to steer, that is an ordinary send', () => {
+    expect(canSteer({ ...running, busy: false })).toBe(false);
+  });
+
+  it('refuses while a card is open — a message written now talks over the question', () => {
+    expect(canSteer({ ...running, asking: true })).toBe(false);
+  });
+
+  it('refuses into an ended / credential-less session (nothing is listening on that stdin)', () => {
+    expect(canSteer({ ...running, ended: true })).toBe(false);
+  });
+
+  it('refuses over a closed socket — the message would be lost, not delivered', () => {
+    expect(canSteer({ ...running, socketOpen: false })).toBe(false);
+  });
+
+  it('treats an absent `ended` as "not ended" (the field is optional)', () => {
+    expect(canSteer({ busy: true, asking: false, socketOpen: true })).toBe(true);
+  });
+
+  /**
+   * The asymmetry with `shouldDrainQueue`, pinned deliberately: `paused` is a statement about
+   * the queue draining BY ITSELF after Stop, and steering is the user acting by hand this
+   * instant. `canSteer` has no `paused` input at all — if one is ever added, this pair of
+   * assertions is what should have to be re-argued first.
+   */
+  it('is exactly the complement of shouldDrainQueue on `busy`, for the same live session', () => {
+    const live = { asking: false, ended: false, socketOpen: true };
+    expect(canSteer({ ...live, busy: true })).toBe(true);
+    expect(shouldDrainQueue({ ...live, busy: true, queueLength: 1 })).toBe(false);
+
+    expect(canSteer({ ...live, busy: false })).toBe(false);
+    expect(shouldDrainQueue({ ...live, busy: false, queueLength: 1 })).toBe(true);
+  });
+
+  it('does not care about a Stop pause: a hand-clicked "Send now" is not an auto-drain', () => {
+    // `SteerProbe` has no `paused` field — this asserts the shape, not just a value, so
+    // adding one silently would fail to compile here rather than change behaviour quietly.
+    const probe: SteerProbe = { busy: true, asking: false, ended: false, socketOpen: true };
+    expect('paused' in probe).toBe(false);
+    expect(canSteer(probe)).toBe(true);
+  });
+});
+
+describe('nextAutoSteer', () => {
+  const running: SteerProbe & { paused?: boolean } = {
+    busy: true, asking: false, ended: false, socketOpen: true,
+  };
+  /** A row parked by a ⏎ whose steer was refused — owed the first opening. */
+  const owed = (id: string, text: string): QueuedMessage => ({ ...q(id, text), steerWhenPossible: true });
+
+  it('picks up a row that only queued because ⏎ could not steer it at the time', () => {
+    expect(nextAutoSteer([owed('a', 'now please')], running)?.id).toBe('a');
+  });
+
+  it('leaves deliberately-held rows alone — ⇡ said "next turn", and it meant it', () => {
+    expect(nextAutoSteer([q('a', 'later'), q('b', 'also later')], running)).toBeNull();
+  });
+
+  it('lets an owed row overtake a held one: they asked for different things', () => {
+    // Order in the strip ranks EQUALS. A ⇡ row ahead of it does not make a ⏎ row wait out
+    // the turn — that is precisely the wait steering exists to remove.
+    expect(nextAutoSteer([q('held', 'next turn'), owed('now', 'this turn')], running)?.id).toBe('now');
+  });
+
+  it('takes the OLDEST owed row when several are waiting', () => {
+    expect(nextAutoSteer([owed('a', 'first'), owed('b', 'second')], running)?.id).toBe('a');
+  });
+
+  it('does nothing while a card is open — the same reason a manual steer is refused', () => {
+    expect(nextAutoSteer([owed('a', 'x')], { ...running, asking: true })).toBeNull();
+  });
+
+  it('does nothing once the turn has settled: the ordinary drain owns that edge', () => {
+    expect(nextAutoSteer([owed('a', 'x')], { ...running, busy: false })).toBeNull();
+  });
+
+  it('does NOT fire after Stop, even for an owed row — nothing automatic may outlive Stop', () => {
+    // The counterpart to `canSteer` ignoring `paused`: a hand on Send now still sends this
+    // row, but the session must not resume steering by itself the moment Stop lands.
+    expect(nextAutoSteer([owed('a', 'x')], { ...running, paused: true })).toBeNull();
+  });
+
+  it('does not steer into an ended session or a closed socket', () => {
+    expect(nextAutoSteer([owed('a', 'x')], { ...running, ended: true })).toBeNull();
+    expect(nextAutoSteer([owed('a', 'x')], { ...running, socketOpen: false })).toBeNull();
+  });
+
+  it('is null for an empty queue', () => {
+    expect(nextAutoSteer([], running)).toBeNull();
+  });
+});
+
+describe('appendQueued — steerWhenPossible', () => {
+  it('marks a row parked by a refused steer, and leaves a plain ⇡ row unmarked', () => {
+    const [fallback] = appendQueued([], 'now please', 'a', 1, { steerWhenPossible: true });
+    const [held] = appendQueued([], 'next turn', 'b', 2);
+    expect(fallback.steerWhenPossible).toBe(true);
+    // Absent, not `false` — `nextAutoSteer` finds by truthiness and the model stays minimal.
+    expect('steerWhenPossible' in held).toBe(false);
+  });
+
+  it('keeps the mark through an edit — fixing a typo does not demote it to "next turn"', () => {
+    const queue = appendQueued([], 'wrong', 'a', 1, { steerWhenPossible: true });
+    expect(editQueued(queue, 'a', 'right')[0]).toEqual({
+      id: 'a', text: 'right', ts: 1, steerWhenPossible: true,
+    });
   });
 });

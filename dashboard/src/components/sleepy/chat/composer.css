@@ -333,10 +333,11 @@
   color: var(--color-text-tertiary);
   cursor: default;
 }
-/* Send, while a turn is running: the same button, doing the queueing thing (⏎'s behaviour —
-   see Composer.tsx). Outlined in the accent rather than filled like Send, because the filled
-   solid belongs to "this goes now" and it sits one gap from the red Stop — two solid discs
-   side by side read as one control with a broken half. */
+/* Queue (⇡) — its OWN button beside Send while a turn runs, since ⏎/↑ now steer into that
+   turn and "hold it for the next one" needs somewhere to live (see Composer.tsx's `commit`).
+   Outlined in the accent rather than filled, because the filled solid belongs to "this goes
+   now" — and it sits between the red Stop and the solid Send, so it is also what keeps those
+   two discs from reading as one control with a broken half. */
 .chat-cmp-queue:not(:disabled) {
   background: transparent;
   border-color: var(--color-accent);
@@ -345,6 +346,12 @@
 .chat-cmp-queue:not(:disabled):hover {
   filter: none;
   background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
+}
+.chat-cmp-queue:disabled {
+  background: transparent;
+  border-color: var(--color-border-hover);
+  color: var(--color-text-tertiary);
+  cursor: default;
 }
 .chat-cmp-stop {
   background: var(--color-error);

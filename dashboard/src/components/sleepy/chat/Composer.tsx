@@ -44,10 +44,13 @@ import './composer.css';
  * ── Parity with the terminal's readline (07-26) ─────────────────────────────────────
  * Two things the terminal pane gets free from the CLI's own readline, which a headless chat
  * has to build, and whose absence made the DEFAULT surface worse than the fallback one:
- *   QUEUE   — ⏎ while `busy` no longer no-ops. `submit` routes to `session.enqueue`, and the
- *             message becomes an editable row in the strip above (QueuedMessages.tsx), sent
- *             when the turn settles. The queue itself lives on the session model, not here,
- *             so it survives minimize/restore and drains where the busy edge is observed.
+ *   QUEUE   — ⏎ while `busy` no longer no-ops. It STEERS: the message goes to the turn already
+ *             running and the CLI folds it in at its next tool boundary (07-29 — the first cut
+ *             held it back until the turn settled, which on a long turn made ⏎ useless for the
+ *             correction it exists for). "Not this turn, the next one" is still available, as
+ *             its own ⇡ button, and lands as an editable row in the strip above
+ *             (QueuedMessages.tsx). The queue lives on the session model, not here, so it
+ *             survives minimize/restore and drains where the busy edge is observed.
  *   HISTORY — ↑/↓ walk this conversation's own past prompts (`promptHistory`, newest first,
  *             `history` + `items` so a RESUMED chat can re-run its earlier turns). The nav
  *             state is local because it is a cursor into a view, not conversation state; the
@@ -456,7 +459,11 @@ export function Composer({
   const sendingRef = useRef(false);
   const [awaitingUpload, setAwaitingUpload] = useState(false);
 
-  const commit = () => {
+  /** `auto` — ⏎ and the ↑ button: send, or steer into the running turn.
+   *  `queue` — the ⇡ button: hold for the NEXT turn whatever is happening now. */
+  type SubmitMode = 'auto' | 'queue';
+
+  const commit = (mode: SubmitMode) => {
     const { draft: text, busy: isBusy, connected: isConnected, quote: liveQuote, skillChip: skill } = liveRef.current;
     if (!isConnected) return;
     const pathsText = attachmentsRef.current.filter((a) => !!a.path)
@@ -472,12 +479,23 @@ export function Composer({
     // draft: if the sign-in tab isn't what they wanted, their text is still here.
     if (isSignInCommand(message)) { onSignIn(); return; }
 
-    // ⏎ while Claude is working QUEUES rather than doing nothing — the CLI's own readline does
-    // this for the terminal pane, and this composer used to hard-return on `busy`, which is
-    // what made "line up the next instruction while a long turn runs" impossible here. The
-    // message leaves the composer either way: it is committed, just not in flight yet, and it
-    // stays editable as a row in the queue strip above (QueuedMessages.tsx).
-    if (isBusy) session.enqueue(message);
+    // Three deliveries, one commit — and which one it is depends on the gesture, not on luck:
+    //
+    //   idle,  ⏎/↑  → send. Starts a turn.
+    //   busy,  ⏎/↑  → STEER: written to the running turn now, folded in at the CLI's next tool
+    //                 boundary. This is the terminal's own behaviour, and the thing this
+    //                 surface was missing — ⏎ used to park the message until the whole turn
+    //                 settled, which on a long turn is the difference between a ten-second
+    //                 correction and a five-minute one.
+    //   any,   ⇡     → QUEUE: held as an editable row above (QueuedMessages.tsx) and sent when
+    //                 this turn settles. The other intent, kept as its own button precisely
+    //                 because it is no longer what ⏎ does.
+    //
+    // The steer can refuse (a card is open, the process is gone, the socket shut) and then the
+    // message falls back into the queue — the one thing that must never happen is ⏎ eating the
+    // text, which is what the original `if (busy) return` did.
+    if (mode === 'queue') session.enqueue(message);
+    else if (isBusy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
     else session.send(message);
     setDraft('');
     session.syncDraft('');
@@ -496,10 +514,10 @@ export function Composer({
     onClearQuote();
   };
 
-  const submit = () => {
+  const submit = (mode: SubmitMode = 'auto') => {
     if (!connected || !hasSendableContent || sendingRef.current) return;
     // Nothing in flight — the common case, and it stays synchronous.
-    if (uploadsRef.current.size === 0) { commit(); return; }
+    if (uploadsRef.current.size === 0) { commit(mode); return; }
     // A screenshot pasted and sent in the same breath: the message can only name the file
     // once the path exists, so hold the submit for the upload rather than sending a message
     // that references nothing. Loopback write of a clipboard image — milliseconds.
@@ -508,7 +526,7 @@ export function Composer({
     void Promise.allSettled([...uploadsRef.current]).then(() => {
       sendingRef.current = false;
       setAwaitingUpload(false);
-      commit();
+      commit(mode);
     });
   };
 
@@ -786,33 +804,49 @@ export function Composer({
           )}
         </Popover>
 
-        {/* A round icon button, sized to sit level with the model/effort text beside it —
-            the label would only repeat what ⏎ already does.
+        {/* Round icon buttons, sized to sit level with the model/effort text beside them —
+            a label would only repeat what ⏎ already does.
 
-            While a turn runs BOTH are offered, because both actions are live: Stop ends the
-            turn, and the send button becomes a queue button (⏎'s own behaviour — see `submit`).
-            Making the mouse path stop at Stop while ⏎ queued would leave the pointer user with
-            no way to reach the feature at all. The queue button appears only once there is
-            something to queue, so an idle-handed Stop stays the single obvious control. */}
+            While a turn runs, up to THREE are offered, because all three actions are live and
+            they are genuinely different asks: Stop ends the turn, ⇡ holds the message for the
+            next one, ↑ hands it to this one. ⏎ maps to ↑, so the pointer path and the keyboard
+            path agree — and ⇡ exists precisely because ⏎ no longer queues, which would
+            otherwise have left "not this turn, the next one" with no way to say it at all.
+            Both text buttons appear only once there is something to send, so an idle-handed
+            Stop stays the single obvious control. */}
         {busy && (
           <button type="button" className="chat-cmp-btn chat-cmp-stop" title="Interrupt the in-flight turn (⌃C)" aria-label="Stop" onClick={() => session.interrupt()}>
             <span aria-hidden>■</span>
           </button>
         )}
+        {busy && hasSendableContent && (
+          <button
+            type="button"
+            className="chat-cmp-btn chat-cmp-queue"
+            disabled={!connected || awaitingUpload}
+            onClick={() => submit('queue')}
+            title="Queue for the next turn — held above, editable until it goes"
+            aria-label="Queue for the next turn"
+          >
+            {/* A DASHED up arrow for the queue: the same gesture as Send, deferred — and
+                monochrome, like every other glyph on this surface. */}
+            <span aria-hidden>⇡</span>
+          </button>
+        )}
         {(!busy || hasSendableContent) && (
           <button
             type="button"
-            className={`chat-cmp-btn chat-cmp-send${busy ? ' chat-cmp-queue' : ''}`}
+            className="chat-cmp-btn chat-cmp-send"
             // Held (not dropped) while a pasted image finishes attaching — `submit` is
             // already waiting on it, so a second press would only be a double-send.
             disabled={!connected || !hasSendableContent || awaitingUpload}
-            onClick={submit}
-            title={awaitingUpload ? 'Attaching the pasted image…' : busy ? 'Queue for the next turn (⏎)' : 'Send (⏎)'}
-            aria-label={busy ? 'Queue message' : 'Send'}
+            onClick={() => submit('auto')}
+            title={awaitingUpload ? 'Attaching the pasted image…'
+              : busy ? 'Send into the running turn (⏎) — picked up at the next step'
+                : 'Send (⏎)'}
+            aria-label={busy ? 'Send into the running turn' : 'Send'}
           >
-            {/* A DASHED up arrow for the queue: same gesture as Send, deferred — and
-                monochrome, like every other glyph on this surface. */}
-            <span aria-hidden>{busy ? '⇡' : '↑'}</span>
+            <span aria-hidden>↑</span>
           </button>
         )}
         </div>

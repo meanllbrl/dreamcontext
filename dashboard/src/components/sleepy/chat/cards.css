@@ -156,6 +156,22 @@
   word-break: break-word;
 }
 
+/* "sent mid-turn" — under the bubble, aligned with it, tertiary and small. It exists to
+   explain a real discrepancy (this message went out while Claude was already working, so the
+   next few tool calls predate it) and nothing more, so it must never compete with the message
+   it annotates. */
+.chat-msg-steered {
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  cursor: default;
+}
+
 /* What the user ATTACHED, above their own words — a sent screenshot has to be visible as a
    screenshot, not as the path the message quoted for the agent's benefit. */
 .chat-msg-user-media {

@@ -118,6 +118,16 @@ function UserMessage({
         </div>
       )}
       {text && <div className="chat-msg-user-bubble">{text}</div>}
+      {/* The one item whose position in the transcript runs ahead of the truth: a steered
+          message appears the instant it goes on the wire, while the CLI only folds it in at
+          its next tool boundary — so the tool calls rendered just below it were decided
+          before it was read. Said once, quietly, rather than letting the gap read as the
+          agent having ignored it. */}
+      {item.steered && (
+        <div className="chat-msg-steered" title="Sent into a turn that was already running — Claude picks it up at its next step">
+          <span aria-hidden>⤵</span> sent mid-turn
+        </div>
+      )}
       {!readOnly && (
         <HoverActions>
           <IconButton label="Copy" onClick={() => copyText(item.text)}>⧉</IconButton>

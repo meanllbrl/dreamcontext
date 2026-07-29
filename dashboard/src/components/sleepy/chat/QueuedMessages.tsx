@@ -5,11 +5,14 @@ import type { ChatSession } from '../chatSession';
  * ORGANISM — the message queue: the strip of messages submitted while Claude was working,
  * docked directly above the composer, each editable and removable until it goes out.
  *
- * Why this surface exists at all: the terminal pane gets queueing for free from the CLI's own
- * readline (type while it works, press ⏎, it runs next). The Chat pane drives the same engine
- * headlessly, where no such buffer exists — its composer used to hard-return on `busy`, so ⏎
- * did nothing and the one thing you do constantly (line up the next instruction while a long
- * turn runs) was impossible on the surface that is now the default.
+ * What lands here, since 07-29: only what the user CHOSE to hold — the composer's ⇡. ⏎ steers
+ * into the running turn instead (Composer.tsx's `commit`), which is what the terminal's own
+ * readline does and what this strip's first cut got wrong: every ⏎ came here and waited out
+ * the whole turn, so a correction meant for the next tool call arrived after the last one.
+ *
+ * So these rows are a deliberate "not this turn, the next one", and each keeps a Send now that
+ * changes its mind — cutting that one message into the turn in flight while the rest keep
+ * their place in line.
  *
  * Why DOCKED rather than inline in the transcript (the BackgroundShellsTray precedent): a
  * queued message is not part of the conversation yet — it is pending input, it belongs beside
@@ -24,10 +27,14 @@ import type { ChatSession } from '../chatSession';
  */
 
 function QueuedRow({
-  index, text, onSave, onRemove,
+  index, text, sendNowTitle, onSendNow, onSave, onRemove,
 }: {
   index: number;
   text: string;
+  /** Why "Send now" is unavailable, or `null` when it is available — the row renders it as
+   *  the button's tooltip rather than just greying out with no reason given. */
+  sendNowTitle: string | null;
+  onSendNow: () => void;
   onSave: (next: string) => void;
   onRemove: () => void;
 }) {
@@ -95,6 +102,17 @@ function QueuedRow({
         title="Edit this queued message"
       >{text}</button>
       <span className="chat-queue-actions">
+        {/* Jump the line. First in the row because it is the action a queued message most
+            often wants once you have re-read it — "actually, say this now" — and because the
+            two beside it (Edit, ✕) are already reachable by clicking the text itself. */}
+        <button
+          type="button"
+          className="chat-queue-btn accent"
+          disabled={!!sendNowTitle}
+          title={sendNowTitle ?? 'Send this one into the running turn now'}
+          aria-label={`Send queued message ${index + 1} now`}
+          onClick={onSendNow}
+        >Send now</button>
         <button type="button" className="chat-queue-btn" onClick={() => setEditing(true)}>Edit</button>
         <button
           type="button"
@@ -107,12 +125,46 @@ function QueuedRow({
   );
 }
 
+/**
+ * What the strip is waiting FOR — the two kinds of row wait for different things, and saying
+ * "sends when this turn ends" over a row that is actually owed the next opening would be the
+ * same wrong promise this whole change is undoing.
+ *
+ * @param owed how many rows are `steerWhenPossible` — parked by a ⏎ that could not steer.
+ */
+function whenLabel(paused: boolean, total: number, owed: number): string {
+  if (paused) return ' · paused';
+  if (owed === 0) return ' · sends when this turn ends';
+  if (owed === total) return ' · sends at the first opening';
+  return ` · ${owed} at the first opening, the rest when this turn ends`;
+}
+
 export function QueuedMessages({ session }: { session: ChatSession }) {
   const conv = session.getModel();
   const queued = conv.queued;
   if (queued.length === 0) return null;
 
   const paused = !!conv.queuePaused;
+  const ended = !!conv.exited || !!conv.authRequired;
+  const owed = queued.filter((q) => q.steerWhenPossible).length;
+
+  /**
+   * Why a row's "Send now" is unavailable, or null when it isn't — one place, so the tooltip
+   * and the disabled state can never disagree about it.
+   *
+   * The `asking` case is the interesting one: a card is open, so the CLI is parked on that
+   * answer and a message written now would be talking over it — and the thing the user
+   * actually wants (say no, and say why) is the card's own deny-with-a-message. Deliberately
+   * NOT blocked by `paused`: Stop held the queue from draining BY ITSELF, and clicking this
+   * button is the opposite of by itself.
+   */
+  const sendNowTitle = ended || session.status === 'closed'
+    ? 'This session has ended — Resume it first'
+    : session.asking
+      ? 'Answer the open card first — this would talk over it'
+      : session.busy && !session.canSteer()
+        ? 'Not connected'
+        : null;
 
   return (
     <div className="chat-queue" data-paused={paused || undefined}>
@@ -122,13 +174,24 @@ export function QueuedMessages({ session }: { session: ChatSession }) {
             neutral strip reads as a warning rather than as "waiting its turn". */}
         <span className="chat-queue-glyph" aria-hidden>{paused ? '‖' : '◷'}</span>
         <span className="chat-queue-title">
-          {queued.length} message{queued.length === 1 ? '' : 's'} queued
+          {queued.length} message{queued.length === 1 ? '' : 's'} held
           {/* Says WHEN, because a queue that looks stalled and a queue that is waiting its turn
-              are indistinguishable from the rows alone. */}
-          <span className="chat-queue-when">{paused ? ' · paused' : ' · sends when this turn ends'}</span>
+              are indistinguishable from the rows alone — and the two kinds of row genuinely
+              wait for different things, so a single "sends when this turn ends" would be a
+              lie about half of them the moment a card forced a ⏎ in here. */}
+          <span className="chat-queue-when">{whenLabel(paused, queued.length, owed)}</span>
         </span>
+        {/* "Resume", not "Send now": every ROW now has a Send now that means one specific
+            message, and this one means something else entirely — lift the Stop pause and let
+            the queue go back to draining on its own. Two buttons reading "Send now" a few
+            pixels apart and doing different things is the confusion worth spending a word on. */}
         {paused && (
-          <button type="button" className="chat-queue-btn accent" onClick={() => session.flushQueue()}>Send now</button>
+          <button
+            type="button"
+            className="chat-queue-btn accent"
+            title="Lift the pause Stop put on this queue and let it drain again"
+            onClick={() => session.flushQueue()}
+          >Resume</button>
         )}
         <button type="button" className="chat-queue-btn" onClick={() => session.removeQueued()}>Clear</button>
       </div>
@@ -138,6 +201,8 @@ export function QueuedMessages({ session }: { session: ChatSession }) {
             key={q.id}
             index={i}
             text={q.text}
+            sendNowTitle={sendNowTitle}
+            onSendNow={() => session.sendQueuedNow(q.id)}
             onSave={(next) => session.editQueued(q.id, next)}
             onRemove={() => session.removeQueued(q.id)}
           />

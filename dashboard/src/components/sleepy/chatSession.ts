@@ -59,6 +59,12 @@ export interface ChatUserItem {
    *  rewind anchor. Present on history-seeded items immediately; backfilled onto live-sent
    *  items from the transcript after each turn (the protocol never echoes them back). */
   uuid?: string;
+  /** Written INTO a turn that was already running (see {@link ChatSession.steer}) rather than
+   *  starting one. Worth marking, because this is the one item whose position in the
+   *  transcript runs ahead of the truth: it appears the moment it goes on the wire, while the
+   *  CLI only folds it in at the next tool boundary, so the tool calls rendered just below it
+   *  were decided before it was read. */
+  steered?: true;
 }
 export interface ChatTextItem { kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number }
 export interface ChatThinkingItem { kind: 'thinking'; id: string; index: number; text: string; done: boolean; ts: number }
@@ -116,10 +122,11 @@ export interface PendingPlan {
  *  non-empty. */
 export type PendingItem = PendingPermission | PendingQuestion | PendingPlan;
 
-/** One message the user submitted while a turn was already in flight — held client-side and
- *  sent, in order, as each turn settles. The CLI's own readline does this for the terminal
- *  surface; the headless engine has no equivalent, so the queue lives here. Re-exported from
- *  chatQueue.ts (which owns the rules, testably) so consumers have one import for the model. */
+/** One message the user DELIBERATELY held back (the composer's ⇡) rather than handing to the
+ *  running turn — kept client-side and sent, in order, as each turn settles. Note this is no
+ *  longer where ⏎-while-busy lands: that steers into the turn in flight, and the queue is for
+ *  the other intent, "not this turn, the next one". Re-exported from chatQueue.ts (which owns
+ *  the rules, testably) so consumers have one import for the model. */
 export type QueuedMessage = queue.QueuedMessage;
 
 export interface ChatResultInfo {
@@ -259,10 +266,31 @@ export interface ChatSession {
   /** Submit a user message: sends the `user` control frame and appends it to the
    *  transcript optimistically (the protocol never echoes the user's own text back). */
   send: (text: string) => void;
-  /** Park a message for the NEXT turn (the composer's ⏎ while `busy`). Appends to
-   *  `conv.queued`; `maybeFlushQueue` sends it when the in-flight turn settles. Whitespace-only
-   *  text is ignored, exactly as `send` ignores it. */
-  enqueue: (text: string) => void;
+  /**
+   * Hand a message to the turn ALREADY in flight — the composer's ⏎ while `busy`. The CLI
+   * folds it in at its next tool boundary (measured on 2.1.220: same turn, one `result`), so
+   * a correction lands in seconds instead of waiting out a long turn.
+   *
+   * Returns FALSE when this is not such a moment — a card is open, the process is gone, the
+   * socket is shut — and the caller is expected to {@link enqueue} instead rather than let
+   * the text evaporate.
+   */
+  steer: (text: string) => boolean;
+  /** Whether {@link steer} would land right now, for callers that must decide BEFORE they
+   *  have text to send (labelling ⏎, enabling a row's "Send now"). */
+  canSteer: () => boolean;
+  /** Park a message for the NEXT turn — the composer's ⇡ button, deliberately distinct from
+   *  ⏎ now that ⏎ steers. Appends to `conv.queued`; `maybeFlushQueue` sends it when the
+   *  in-flight turn settles. Whitespace-only text is ignored, exactly as `send` ignores it.
+   *
+   *  `steerWhenPossible` marks a row that is here only because {@link steer} refused — it
+   *  still wants the first opening rather than the end of the turn, and `maybeFlushQueue`
+   *  gives it one as soon as there is one. Callers falling back from a refused steer should
+   *  always pass it; the ⇡ button never does. */
+  enqueue: (text: string, opts?: { steerWhenPossible?: boolean }) => void;
+  /** Send ONE queued row this instant — the row's "Send now". Steers when a turn is running,
+   *  sends when none is; leaves the rest of the queue's order and pause untouched. */
+  sendQueuedNow: (id: string) => void;
   /** Rewrite a queued message in place. Empty/whitespace text REMOVES the row — "select all,
    *  delete, save" is how anyone expects to drop a message they no longer want, and a queue
    *  holding an empty entry would send a frame the CLI rejects. */
@@ -467,9 +495,12 @@ export function createChatSession(
     subscribe,
     getModel: () => conv,
     send,
+    steer,
+    canSteer: steerable,
     enqueue,
     editQueued,
     removeQueued,
+    sendQueuedNow,
     flushQueue,
     answer,
     answerQuestion,
@@ -1014,26 +1045,68 @@ export function createChatSession(
   ws.onclose = stopOnClose;
   ws.onerror = stopOnClose;
 
-  function send(text: string): boolean {
+  /**
+   * Write one user message onto the wire and show it in the transcript. The single place a
+   * `user` frame leaves this client, shared by `send` (start a turn) and `steer` (cut into
+   * the one already running) — the two differ only in what they may claim afterwards.
+   */
+  function writeUser(text: string, opts: { steered: boolean }): boolean {
     const clean = text.trim();
     if (!clean || ws.readyState !== WebSocket.OPEN) return false;
     const frame: ClientControl = { type: 'user', text: clean };
     try { ws.send(JSON.stringify(frame)); } catch { return false; }
     applyAndNotify(() => {
-      const item: ChatUserItem = { kind: 'user', id: nextItemId(), text: clean, ts: Date.now() };
-      // A deliberate send lifts a pause: the user has just said "carry on", so the queue behind
-      // this message is wanted again. (Held while busy — a queued message is not this edge.)
-      conv = { ...conv, items: [...conv.items, item], draft: '', queuePaused: undefined };
+      const item: ChatUserItem = {
+        kind: 'user', id: nextItemId(), text: clean, ts: Date.now(),
+        ...(opts.steered ? { steered: true as const } : {}),
+      };
+      conv = {
+        ...conv,
+        items: [...conv.items, item],
+        draft: '',
+        // A deliberate send lifts a pause: the user has just said "carry on", so the queue
+        // behind this message is wanted again. A STEER says no such thing — it is one message
+        // handed to the turn in flight, and the rows Stop held back stay held.
+        ...(opts.steered ? {} : { queuePaused: undefined }),
+      };
       session.busy = true;
     });
     return true;
   }
 
+  function send(text: string): boolean {
+    return writeUser(text, { steered: false });
+  }
+
+  /**
+   * Hand a message to the turn ALREADY in flight. Returns false when this is not a moment the
+   * message would reach it, so the caller can fall back to queueing rather than silently
+   * dropping the user's text (Composer.tsx does exactly that).
+   *
+   * `busy` is already true here; `writeUser` setting it again is a no-op the turn clock's
+   * false→true edge never sees.
+   */
+  function steer(text: string): boolean {
+    if (!steerable()) return false;
+    return writeUser(text, { steered: true });
+  }
+
+  /** Whether {@link steer} would land right now — read by the composer to label ⏎ honestly
+   *  and by the queue strip to enable/disable each row's "Send now". */
+  function steerable(): boolean {
+    return queue.canSteer({
+      busy: session.busy,
+      asking: session.asking,
+      ended: !!conv.exited || !!conv.authRequired,
+      socketOpen: ws.readyState === WebSocket.OPEN,
+    });
+  }
+
   // ── Message queue (submitted while a turn was in flight) ──────────────────────────
 
-  function enqueue(text: string): void {
+  function enqueue(text: string, opts?: { steerWhenPossible?: boolean }): void {
     applyAndNotify(() => {
-      const next = queue.appendQueued(conv.queued, text, `q-${id}-${++queuedSeq}`, Date.now());
+      const next = queue.appendQueued(conv.queued, text, `q-${id}-${++queuedSeq}`, Date.now(), opts);
       if (next !== conv.queued) conv = { ...conv, queued: next };
     });
   }
@@ -1044,6 +1117,32 @@ export function createChatSession(
 
   function removeQueued(qid?: string): void {
     applyAndNotify(() => { setQueued(queue.removeQueued(conv.queued, qid)); });
+  }
+
+  /**
+   * Send ONE queued row this instant instead of waiting for its turn — the row's "Send now".
+   * Steers into the running turn when there is one, and is an ordinary send when there is not,
+   * so the button means the same thing either side of the busy edge.
+   *
+   * Only this row jumps: the rest of the queue keeps its order and, if Stop paused it, stays
+   * paused. Picking one message out of the strip is not "resume everything".
+   */
+  function sendQueuedNow(qid: string): void {
+    const at = conv.queued.findIndex((q) => q.id === qid);
+    if (at < 0) return;
+    const row = conv.queued[at];
+    if (session.busy ? !steerable() : ws.readyState !== WebSocket.OPEN) return;
+    // Dropped from the strip and appended to the transcript in one visible step, exactly as
+    // `maybeFlushQueue` does it — and put BACK WHERE IT WAS on the one failure `writeUser` can
+    // still report (a socket that closed between the guard and the write), so neither the
+    // message nor the order the strip was showing is lost.
+    applyAndNotify(() => { conv = { ...conv, queued: conv.queued.filter((q) => q.id !== qid) }; });
+    if (session.busy ? steer(row.text) : send(row.text)) return;
+    applyAndNotify(() => {
+      const restored = [...conv.queued];
+      restored.splice(Math.min(at, restored.length), 0, row);
+      conv = { ...conv, queued: restored };
+    });
   }
 
   /** Commit a new queue, dropping the pause with the last row: there is nothing left to hold
@@ -1066,8 +1165,25 @@ export function createChatSession(
    * Deliberately one message per turn, not a concatenated batch: each queued message is its
    * own instruction and deserves its own turn, which is also what makes the strip's ordering
    * mean anything.
+   *
+   * Two flushes, tried in that order — see the two intents in chatQueue.ts's header. First any
+   * row that only landed in the queue because ⏎ could not steer it at the time; those are owed
+   * the first opening, and without this pass a card open at the wrong moment would quietly
+   * turn a steer back into a wait-for-the-turn-to-end, which is the whole bug.
    */
   function maybeFlushQueue(): void {
+    const owed = queue.nextAutoSteer(conv.queued, {
+      busy: session.busy,
+      asking: session.asking,
+      paused: conv.queuePaused,
+      ended: !!conv.exited || !!conv.authRequired,
+      socketOpen: ws.readyState === WebSocket.OPEN,
+    });
+    if (owed) {
+      applyAndNotify(() => { conv = { ...conv, queued: conv.queued.filter((q) => q.id !== owed.id) }; });
+      if (!steer(owed.text)) applyAndNotify(() => { conv = { ...conv, queued: [owed, ...conv.queued] }; });
+      return;
+    }
     const drainable = queue.shouldDrainQueue({
       busy: session.busy,
       asking: session.asking,

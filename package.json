@@ -32,6 +32,7 @@
     "test": "vitest",
     "test:e2e": "playwright test",
     "verify:people": "node scripts/verify/people-first.mjs",
+    "verify:chat-steer": "node scripts/verify/chat-steer.mjs",
     "diagrams": "node scripts/diagrams/build-all.mjs",
     "prepublishOnly": "npm run build"
   },

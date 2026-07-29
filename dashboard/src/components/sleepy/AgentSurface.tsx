@@ -952,9 +952,11 @@ export function AgentSurface() {
     const chat = session as ChatSession;
     // `send`, not `sendText` — the owner's "Submit sends the filled-in list back as ONE
     // message" means a real user turn, not a composer-draft append (`sendText` only
-    // appends to the draft). Mid-turn, queue it exactly like the composer's own
-    // ⏎-while-busy path (Composer.tsx: `busy ? session.enqueue(message) : session.send(message)`).
-    if (chat.busy) chat.enqueue(payload.markdown);
+    // appends to the draft). Mid-turn it follows the composer's ⏎ exactly (Composer.tsx's
+    // `commit`): steer it into the running turn, and fall back to the queue only when that
+    // cannot land. A checklist is filled in WHILE the agent works and is answering the thing
+    // it is doing right now — making it wait for the turn to end is the whole bug.
+    if (chat.busy) { if (!chat.steer(payload.markdown)) chat.enqueue(payload.markdown, { steerWhenPossible: true }); }
     else chat.send(payload.markdown);
     return true;
   }, [sessionList]);
