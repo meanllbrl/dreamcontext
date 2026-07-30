@@ -1,7 +1,7 @@
 ---
 id: fork-resume-builder-sessions
 name: "Fork/Resume Builder Sessions (CLI session lifecycle for goal-skill v2)"
-description: "CLI session mechanics for goal-skill v2's builder lane: claude -p --output-format json mints a session with a session_id; claude -p --resume <id> continues that session at cache-read price (~10 new input tokens per delta); claude -p --resume <id> --fork-session mints a NEW session that inherits the full parent context while the parent stays independently resumable. The fork base must be a CLI-resumable builder session (e.g. the goal-planner), never the orchestrator's own Claude Code chat, which cannot be resumed via the CLI. Builders (planner, implementers) use this lifecycle; judges (plan-reviewers, code reviewer, validator) never fork or resume — they stay clean and fresh every round. Provenance: requested by the user post-board, as a 'learn while building it' instruction, not itself a board item."
+description: "Builders resume and fork; judges stay fresh. `claude -p --resume <id>` continues a session at cache-read price, `--fork-session` inherits its context while leaving the parent resumable — so planners/implementers share one lineage and every reviewer starts clean. The fork base must be a CLI-minted builder session, never the orchestrator's own chat."
 tags: ["architecture", "topic:agents", "sdd"]
 pinned: false
 date: "2026-07-18"

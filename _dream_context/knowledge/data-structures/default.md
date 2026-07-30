@@ -6,10 +6,10 @@ tags:
   - domain:database
   - database
   - topic:schema
-updated: "2026-07-09"
+updated: "2026-07-30"
 ---```sql
 -- Data Structures — dreamcontext
--- Updated: 2026-07-09
+-- Updated: 2026-07-30
 --
 -- dreamcontext has no database. All data is stored as files in _dream_context/.
 -- This file documents the file-based data schemas instead.
@@ -122,7 +122,9 @@ updated: "2026-07-09"
 --   "platforms":           ["cli"],               -- PlatformId[]
 --   "packs":               ["default"],           -- installed skill packs
 --   "multiProduct":        false | ["api", ...],  -- multi-product monorepo products
---   "people":              ["alice", "bob"],      -- optional roster (derived multi-person flag)
+--   -- "people": RETIRED in 0.23.0 (retire-config-roster). The roster moved to
+--   -- people/people.json; `dreamcontext config people` now redirects and exits 1,
+--   -- and the config merger strips a stale `people` key on sync.
 --   "setupVersion":        "1.2.0",
 --   "disableNativeMemory": true,                  -- disable Claude's auto MEMORY.md
 --   "taskBackend":         "local" | "clickup" | "github",  -- where tasks live
@@ -173,5 +175,64 @@ updated: "2026-07-09"
 --   }],
 --   "compaction_log": [{                 -- LIFO, capped at 20
 --     "timestamp", "trigger", "debt", "session_count", "bookmark_count"
---   }]
--- }```
+--   }],
+--   "pendingMigrationNotices": ["..."]   -- written by update/sleep, cleared by sleep start
+-- }
+-- NOTE: session records gained "novel_tokens" + "scoring_version" (weighted
+-- scoring, 2026-07-28); 0.23.0's rescale-legacy-sleep-debt migration rewrites
+-- legacy records in place.
+
+
+-- ============================================================
+-- PEOPLE: _dream_context/people/  (0.23.0 people-first, replaces core/1.user.md)
+-- Managed by: dreamcontext people *, init/setup, migration 0.23.0
+-- ============================================================
+
+-- ROSTER: people/people.json  — STRUCTURE only, never prose.
+-- {
+--   "version": 1,
+--   "people": {
+--     "<slug>": {                        -- slug: PERSON_SLUG_RE-safe, roster membership
+--       "name":  "Mehmet Nuraydın",      -- display name (non-ASCII preserved)
+--       "emails": ["a@b.com", ...],      -- git identity match; union-merged on sync
+--       "role":  "owner" | "..."         -- free text, rendered in the snapshot roster line
+--     }
+--   }
+-- }
+-- Sorted slug keys for byte-stable merges; semantic-merge kind "people-json"
+-- (key-union, ours-wins, email-union). Sanitize-on-read drops unaddressable
+-- entries. Concurrency guarded by people/.people.lock (gitignored, both brain
+-- repo modes).
+
+-- CONSTITUTION: people/<slug>.md — ONE WRITER PER FILE (conflict surface zero).
+-- Identity + unconditional Preferences + Communication Style ONLY.
+-- The ACTIVE person's file renders VERBATIM in every snapshot (never-evict, no
+-- rungs), so it is audited on the same ~4,000-char ceiling as core files.
+-- Deliberately NOT indexed for recall — read with `dreamcontext people show <slug>`.
+
+-- ACTIVE-PERSON RESOLUTION (machine-local, never written into the synced brain):
+--   env DREAMCONTEXT_PERSON -> pin (activePersonSlug on .brain-local.json)
+--   -> git email match -> solo fallback -> none.
+-- Invariant P: charset regex AND roster membership checked at EVERY slug entry
+-- point, so the env var can never traverse the filesystem.
+
+
+-- ============================================================
+-- MIGRATION LEDGER: _dream_context/state/.migrations.json
+-- Managed by: dreamcontext update / sleep start / migrations record
+-- ============================================================
+
+-- Array of applied steps (atomic tmp+rename write; defensive read -> [] on
+-- missing/malformed, never throws):
+-- [{
+--   "version":      "0.23.0",            -- ORDERING key only, NOT an identity:
+--                                        -- two migrations may share a version
+--   "step":         "split-user-file",   -- the identity; gating is per-step
+--   "executor":     "code" | "agent" | "detected",
+--   "timestamp":    "2026-07-30T...Z",
+--   "filesTouched": ["core/1.user.md", ...],
+--   "summary":      "..."
+-- }]
+-- The ledger — not setupVersion — is the only honest answer to "what is left to
+-- do": unfinishedAgentTasks() requires a code/detected entry to exist and no
+-- matching agent entry with the same step id.```

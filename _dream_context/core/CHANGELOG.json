@@ -1,5 +1,213 @@
 [
   {
+    "date": "2026-07-30",
+    "type": "refactor",
+    "scope": "snapshot",
+    "description": "Two owner orders landed on one section. RENDER BY NAME: tasks displayed their SLUG as the title, so a mangled legacy Turkish slug read as the task name in every snapshot. The frontmatter NAME is now displayed everywhere with Turkish intact, and the slug became the ADDRESS, carried on a subline pointing at _dream_context/state/<slug>.md under each detailed entry; roster names come from frontmatter with folded YAML collapsed and a slug fallback, status markers ride on names, ActiveTaskEntry gained a name field, and the sub-agent briefing inherits it. ACCOUNTING MODEL (a sub-agent judge verdict adopted verbatim): a demoted render is no longer a name roster of everything. It is detailed entries (activity-sorted head always, then in_progress only, whole blocks packed, rung 1 at TASKS_DETAIL_CHARS=1100 max 3 and the floor at 400 max 1), plus a needs-attention line naming every not-detailed task whose status is outside todo and planned OR whose priority is critical — INCLUDING overflow in_progress carrying an [in_progress] marker, which is the concurrent-thread continue-this case — plus a per-status COUNT line for the routine queue and a filter-teaching footer. Level 0 is UNCHANGED, so small vaults keep the whole board and both goldens stayed byte-identical without regeneration. The acceptance criterion moved from every task being NAMED to every task being ACCOUNTED FOR (detailed plus named plus counted equals the total), asserted on 60-task and 200-task fixtures; TASKS_L1, TASKS_L2 and the old roster constant retired. The judge rationale is worth keeping: 30 routine names had no session-start consumer, since the recall hook and a taught tasks list own that discovery, while exceptions and concurrent threads are the real signal. Live: Active Tasks 2,731 to about 900 chars, snapshot 17,575 to 16,320. UNCOMMITTED.",
+    "breaking": false,
+    "summary": "Active Tasks renders frontmatter NAMES with the slug as the address, and demoted rungs switch to a per-status accounting model (UNCOMMITTED)",
+    "references": [
+      "file:src/cli/commands/snapshot.ts",
+      "file:src/lib/snapshot-caps.ts",
+      "file:src/lib/snapshot-budget.ts",
+      "task:soul-becomes-constitution-only-and-always-loads-verbatim-while-conditionals-move-to-keyword-prioritized-patterns-across-the-whole-system"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "feat",
+    "scope": "snapshot",
+    "description": "A screenshot review found the changelog floor had ZERO recovery pointer: the render dropped to three titles with nothing telling the agent how to reach the rest. Standing search-and-browse FOOTERS now ride every inventory section at every rung including the floors — changelog (recall --types changelog plus changelog list), tasks (recall --types task plus a line teaching the whole filter surface), bookmarks (bookmark list, with the quieter tail deduped to a count only), features (recall --types feature plus the PRDs path) — while objectives, lab, memory and knowledge already carried theirs; theses keeps its board pointer. The owner generalized the ask mid-turn to cover tasks, bookmarks and the remaining sections. Under the same density doctrine the Knowledge Index stopped listing non-pinned, non-pattern knowledge AT ALL: one accurate count plus a search-commands line at level 0 AND at the floor, with the grouped-folder inventory, its preamble, the per-diagram board rollup and KNOWLEDGE_L2_CHARS all retired; pinned entries and patterns keep full treatment, and the naming contract for knowledge is now the COUNT. Goldens regenerated with the diff reduced to the footer lines and the inventory-to-count line, identical in both fixtures. Live on a mature peer: 21,470 to 17,575 chars, under the harness limit, no banner, fully inline even with a transient migrations report present. UNCOMMITTED.",
+    "breaking": false,
+    "summary": "Every inventory section carries a standing search/browse footer at EVERY rung, and the knowledge index becomes a count plus search commands (UNCOMMITTED)",
+    "references": [
+      "file:src/cli/commands/snapshot.ts",
+      "file:src/lib/snapshot-caps.ts",
+      "file:src/lib/snapshot-budget.ts"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "feat",
+    "scope": "cli",
+    "description": "Recall answers \"what do we know about X\" by relevance; nothing answered \"what happened, in order\". dreamcontext changelog list is a paginated CHRONOLOGICAL browse of CHANGELOG.json with LIFO preserved: --page, --size (max 50), --type, --scope, --grep (case-insensitive over summary, description and scope, Turkish-safe) and --json, with pages past the end staying empty while totals stay honest. The logic is pure core in src/lib/changelog-list.ts behind a thin printer command, registered in the CLI and documented in a SKILL.md router row and the cli-reference. Separately tasks list gained --since and --until (YYYY-MM-DD, inclusive, evaluated on updated_at, flags validated, and a task with no date never matches a bounded query), which together with the existing status, assignee, version, objective and feature filters covers the unfinished, sprint, completed and date-range reads. Live on a mature vault: 489 entries across 163 browsable pages, with a grep probe returning 41 hits. UNCOMMITTED.",
+    "breaking": false,
+    "summary": "New dreamcontext changelog list — paginated chronological browse of CHANGELOG.json — and tasks list gains --since/--until date filters (UNCOMMITTED)",
+    "references": [
+      "file:src/lib/changelog-list.ts",
+      "file:src/cli/commands/changelog.ts",
+      "file:src/lib/task-query.ts",
+      "file:src/cli/commands/tasks.ts",
+      "file:skill/references/cli-reference.md"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "feat",
+    "scope": "snapshot",
+    "description": "An honest audit after the soul split found the moved rules were not pinned, and at a mature vault rung they rendered as one anonymous folder line — the project RULES demoted to trivia. Patterns now have their OWN block at EVERY rung carrying PATTERNS_BANNER in the same register as PINNED_BANNER (these patterns are the project rules, read them). Level 0 renders title, path and brief; rung 1 drops the briefs; rung 2 and the floor pack bare slugs into PATTERNS_FLOOR_CHARS=1000 with a named tail. They are never folded into folder grouping at any level. Deliberately NOT marked pinned=true per file: the pin block is unbounded at level 0, a dozen-plus pins with long descriptions would push a mature vault back over 20,000 chars, and pinning is the user curation channel — the banner block is the structural equivalent for rules. New floors test asserts the banner plus every slug at the floor, briefs only at level 0, and never inside folder grouping; two stale integration tests moved to the new level-0 contract and registry uniqueness was reshaped because 0.23.0 holds TWO migrations by design. Live: a peer vault at 19,920 chars, no banner, with all 19 pattern slugs visible at its floor. UNCOMMITTED.",
+    "breaking": false,
+    "summary": "Patterns get their own block with a HARD warning banner at every rung — project rules can no longer demote into an anonymous folder line (UNCOMMITTED)",
+    "references": [
+      "file:src/cli/commands/snapshot.ts",
+      "file:src/lib/snapshot-caps.ts",
+      "file:src/lib/snapshot-budget.ts"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "fix",
+    "scope": "migrations",
+    "description": "Found live on the first real 0.23.0 run: update applied the code steps and advanced setupVersion to 0.23.0 while the distribute-user-md-residue agentTask was still unfinished, so migrations pending computed its range as the half-open interval from setupVersion to cliVersion — 0.23.0 to 0.23.0, empty — and printed \"No pending agent migration tasks\". The residue file itself instructs the user that pending prints the full instruction, so on a real vault the residue would have rotted forever unless a human happened to open the file. New unfinishedAgentTasks(contextRoot, cliVersion) in src/migrations/index.ts is LEDGER-judged and setupVersion-blind: a migration is unfinished if and only if its code and detected steps are in the ledger AND no executor:agent entry exists for its agentTask id, with a started guard keeping fresh vaults silent; the pending command dropped its setupVersion range code entirely. The honest filter surfaced one side effect — 0.7.2 diagrams-folder-convention is an OFFER whose agent entry is only ever written by apply-diagrams, so it would have nagged forever — handled by a new MigrationAgentTask.optIn flag that exempts offers, with 0.7.2 marked. Six regression cases (fresh vault silent, same-version pending, agent entry silences, wrong-step entry does not, newer-than-CLI hidden, opt-in exempt) plus a live replay against a pre-migration clone where pending now prints exactly the 0.23.0 residue task. UNCOMMITTED.",
+    "breaking": false,
+    "summary": "migrations pending no longer goes blind after update advances setupVersion past an unfinished agentTask (UNCOMMITTED)",
+    "references": [
+      "file:src/migrations/index.ts",
+      "file:src/cli/commands/migrations.ts",
+      "file:src/migrations/0.7.2.ts",
+      "file:src/migrations/types.ts",
+      "task:migrations-pending-goes-blind-after-update-advances-setupversion-past-an-unfinished-agenttask"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "feat",
+    "scope": "migrations",
+    "description": "The soul is constitution-only — always-unconditionally-valid rules plus the agent behavior and voice — and it renders FULL and VERBATIM with no compression rungs, so enforcement has to be systemic rather than render-time. src/migrations/0.23.0-soul-split.ts registers as a SECOND 0.23.0 entry: the runner now merges same-version changelogs and gates steps by id, and its agentTask check was tightened to match the STEP id, because a loose version-only match would have let the people-first residue task hide the soul split entirely. A code step detects an oversized soul (detection only); an agentTask carries the full split doctrine — constitution-only soul, verbatim moves, nothing discarded, a 4,000-char target, doctor verification. Executed live on a real peer vault, parser-driven so every move is verbatim by construction: soul 32,912 to 3,983 chars, keeping identity, brand and philosophy plus 16 tightened unconditional rules with the originals byte-exact in knowledge/archive/0.soul-2026-07-pre-split.md, and moving 37 conditional rules into 10 clustered pattern files. Combined with the same run people-first migration, that vault snapshot went 53,668 to 16,320 chars — under the harness limit, no banner, fully inline for the first time. Recall was verified to surface the moved rules. RELEASE-CRITICAL: the migration cannot fire anywhere until package.json bumps to 0.23.0, because the applied range is half-open. UNCOMMITTED in this repo.",
+    "breaking": false,
+    "summary": "New 0.23.0 soul-split migration detects a bloated legacy soul and splits it into a constitution plus pattern files; executed live (32,912 to 3,983 chars)",
+    "references": [
+      "file:src/migrations/0.23.0-soul-split.ts",
+      "file:src/migrations/index.ts",
+      "file:src/lib/migration-runner.ts",
+      "task:soul-becomes-constitution-only-and-always-loads-verbatim-while-conditionals-move-to-keyword-prioritized-patterns-across-the-whole-system"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "refactor",
+    "scope": "snapshot",
+    "description": "Owner voice directive 2026-07-30 plus two picks: the compression ladder had been fixing at the rungs what level 0 should never have emitted. FEATURES render name, status and path only, active-first, packed into a single rung with a named tail — the Why, Tasks and Latest detail blocks are gone, because the PRD is one Read away. KNOWLEDGE: only PINNED entries carry descriptions at ANY level; every pattern is titled with one short word-safe clause (PATTERN_BRIEF_CHARS=80) under a Patterns heading; the rest is grouped folder names; rung 1 drops the pattern briefs and rung 2 folds patterns into grouping with a bounded pin block. The WARM KNOWLEDGE section is deleted entirely under the same doctrine — non-pinned is named, never summarized. THESES render one summary line plus the top TWO open ones and a board pointer. LAB keeps name and value and now has NO rungs at all, because Rule 13 is the whole purpose of the section and no cheaper render exists, plus a detail and sync pointer line. AUTOMATIONS collapse routine ok runs into ONE aggregate line with a list pointer, while failures, blocked and orphan runs keep per-item detail and render first. Goldens regenerated with the diff reviewed down to exactly the four intended hunks, identical across both fixtures (diff-of-diffs empty). Docs updated in lockstep: the cli-reference ladder chain and the README pinned/warm copy and mermaid label. FEATURES_L1_CHARS is now unused in caps — a cleanup candidate. UNCOMMITTED.",
+    "breaking": false,
+    "summary": "Level-0 density doctrine: the DEFAULT render is itself compact — non-pinned inventory is named, never summarized; warm knowledge deleted (UNCOMMITTED)",
+    "references": [
+      "file:src/cli/commands/snapshot.ts",
+      "file:src/lib/snapshot-caps.ts",
+      "file:src/lib/automations/snapshot.ts",
+      "file:skill/references/cli-reference.md"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "fix",
+    "scope": "cli",
+    "description": "slugify stripped non-ASCII characters outright, so a Turkish task or tag name lost its leading and internal accented letters — a name beginning with O-umlaut and containing a soft-g slugged down to retmen-fiyat, which then rendered as the task title everywhere the snapshot displayed a slug. New foldToAscii in src/lib/id.ts (NFD normalize, strip combining marks, explicit dotless-i map) runs ahead of the strip and applies to slugify AND slugifyTag, so both new task slugs and new taxonomy tags survive the fold. Existing slugs are deliberately untouched — those files are on disk and are never renamed — so this shapes new slugs only. Six new slugify cases; the old caf-ber expectation was pinning the bug and was replaced. UNCOMMITTED.",
+    "breaking": false,
+    "summary": "Turkish and accented titles fold to ASCII before slugifying, so a name like Ogretmen fiyati keeps its letters instead of losing them (UNCOMMITTED)",
+    "references": [
+      "file:src/lib/id.ts",
+      "file:src/lib/taxonomy.ts"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "refactor",
+    "scope": "snapshot",
+    "description": "The snapshot was full of raw slice(n) plus ellipsis truncations that cut mid-word: three in the Recent Changelog block (headline fallback 200, tier-1 body preview 300, Older line 140), six more across task Why, feature Why and Latest, extractFirstParagraph and the sub-agent briefing project summary, and two in federation-peer-summary (whatItIs 200, activity headline 120). All of them now go through capAtWordBoundary, exported from snapshot-compress with the module surface pin updated and its rationale recorded. A global no-ellipsis tripwire on the mature fixture fails the suite if any raw cut comes back, and a floors test proves every capped line is a clean word-boundary prefix of its source. Two adjacent hygiene fixes rode along: excalidraw boards are excluded from BOTH feature enumerators (the snapshot and the sub-agent briefing) after a peer vault had a board rendering as a feature PRD — boards are knowledge, not PRDs — and per-diagram board folders roll up under the folder above them instead of taking one grouped line each, which freed enough budget that the patterns folder became fully named at the grouped rung instead of falling into the unnamed overflow tail. UNCOMMITTED.",
+    "breaking": false,
+    "summary": "Every raw slice-plus-ellipsis cut in the snapshot became a word-boundary cap, with a tripwire test that fails if one is reintroduced (UNCOMMITTED)",
+    "references": [
+      "file:src/lib/snapshot-compress.ts",
+      "file:src/cli/commands/snapshot.ts",
+      "file:src/lib/federation-peer-summary.ts"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "fix",
+    "scope": "snapshot",
+    "description": "A section-by-section owner review of the rendered snapshot produced one round of floor fixes. RELEASES: Latest Release was selected by ARRAY POSITION, so a superseded and never-published 0.20.2 sat on top and got crowned while 0.21.0 sat below 0.20.1 — planning and superseded are now filtered out and the highest semver wins; absent date and summary fields no longer render as empty parens or a dangling colon; and the latest summary is capped at 300 word-safe chars at the demoted rung only, level 0 keeping full prose. BOOKMARKS: with zero three-star entries the floor collapsed to a bare count, and now keeps the two-star tier as first-sentence compact lines with one-star behind an accurate quieter tail. EXTENDED CORE: the demoted rung keeps a 90-char first-sentence summary per file, since bare name-and-path lines gave the agent no reason to open anything. CONNECTED PROJECTS: the floor was a bare name roster that reproduced the original complaint — the agent sees a peer name and learns nothing — and now renders each peer with a first-sentence identity, plus two builder prefix bugs fixed (a name prefix that could not see through leading markdown emphasis, and filename-shaped soul names). OBJECTIVES: the floor counter breaks down into N active plus M done, because a bare count over a six-line list read as a silent drop. LAB and LEARNING headers dropped a duplicated blank line. ACTIVE TASKS: the roster tail names first and counts after (the old copy read as if the colon introduced the omitted names), and only EXCEPTIONAL statuses outside in_progress/todo/planned carry a marker — marking every todo ate the naming budget and broke the accounting assertion outright. UNCOMMITTED.",
+    "breaking": false,
+    "summary": "Snapshot section review round: Releases picks by semver, Bookmarks keeps its two-star tier at the floor, extended core and peers keep their identity (UNCOMMITTED)",
+    "references": [
+      "file:src/cli/commands/snapshot.ts",
+      "file:src/lib/snapshot-caps.ts",
+      "file:src/lib/federation-peer-summary.ts"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "feat",
+    "scope": "snapshot",
+    "description": "Owner decision 2026-07-29: sleep is memory compressor, so render-time rungs were double taxation on a file the sleep cycle already distills to the ceiling and archives past. A core/2.memory.md at or under CORE_FILE_CHAR_CEILING (4,000 raw chars, the same measurement doctor uses) now renders VERBATIM at every budget level, with a single pointer line noting it is the working set only and that full history is reachable through memory recall. Over-ceiling files — vaults that have not slept — keep the existing three-rung ladder plus the doctor error. The same change fixed the exhausted-footer duplication in snapshot-budget.ts: the doubled section list was about 250 bytes and could push an otherwise-fitting snapshot past 20,000 chars into banner state, and its \"every section is never-evict\" claim became \"nothing the ladder can shrink\", since a compliant memory is demotable-typed with no rungs. Two new floors tests (AT the ceiling stays verbatim at maximum pressure, ceiling plus one character walks the rungs); both goldens regenerated with the diff gated at exactly the pointer line plus a blank. Measured live at 19,975 chars, fully inline, full memory, no banner. OPEN STRUCTURAL ISSUE recorded at the time: healthy-mature-vault fit is razor-thin, and a worst case with soul, person and memory all at their 4,000 ceilings mathematically busts 20,000 against current inventory floors. UNCOMMITTED in the working tree.",
+    "breaking": false,
+    "summary": "core/2.memory.md at or under 4,000 chars now renders IN FULL in every snapshot — no rungs, one recall pointer (UNCOMMITTED)",
+    "references": [
+      "file:src/cli/commands/snapshot.ts",
+      "file:src/lib/snapshot-caps.ts",
+      "file:src/lib/snapshot-budget.ts",
+      "task:soul-becomes-constitution-only-and-always-loads-verbatim-while-conditionals-move-to-keyword-prioritized-patterns-across-the-whole-system"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Owner report: a queued message was supposed to go out at the first opening but only left at the end of the turn. Measured against real CLI 2.1.220 through this route own stdin, a user frame written MID-TURN is delivered at the very next tool boundary in the SAME turn (num_turns 2, one result), and two frames written a second apart both land at that one boundary together. First-opening delivery had been free the whole time: maybeFlushQueue gating on busy === false was the entire latency. On a long turn that is a ten-second correction instead of a five-minute one. The answer is two gestures rather than a better queue — Enter or Up steers into the running turn via session.steer, the up-arrow gesture holds for the next one on the editable strip unchanged, and a per-row Send now cuts ONE queued message in while the rest stay in line.",
+    "breaking": false,
+    "summary": "Enter steers a queued message into the RUNNING turn instead of waiting it out; the up-arrow strip holds it for the next one",
+    "references": [
+      "commit:78292ef",
+      "file:dashboard/src/components/sleepy/chat/chatQueue.ts",
+      "file:dashboard/src/components/sleepy/chat/Composer.tsx",
+      "task:chat-queued-messages-steer-into-the-running-turn-instead-of-waiting-for-it-to-end",
+      "feature:in-app-agent-terminal"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "fix",
+    "scope": "sleep",
+    "description": "The per-session scorer was max(scoreFromChangeCount, scoreFromToolCount, scoreFromSubstance) over three saturating 0-3 buckets. Measured across 395 real transcripts in this project history, 77% of sessions scored exactly 3 — the MEDIAN session sat at the ceiling (observed medians 6 changes and 47 tools against bucket ceilings of 9 and 41, maxima 188 and 691) — so a 42-change/155-tool session was worth precisely as much as a 13-change/103-tool one and total debt had degenerated into a session counter. Token volume was not an input in any form, which was the reported bug: burning 100k extra tokens inside an already-scored session moved debt by exactly zero. scoreSession is now a log-compressed weighted SUM over novel tokens (weight 4), file changes (3), tool calls (1.5) and substance (1.5), rounded to an integer in 0..SESSION_SCORE_MAX (10) — log rather than linear because the quantities are log-normal, with novel tokens spanning 105k at p10 to 15.6M at p100. Debt thresholds were rescaled to the new range and consolidation is capped at about three cycles a day so a heavy day does not demand a sleep every hour.",
+    "breaking": false,
+    "summary": "Sleep debt scores sessions by a log-compressed weighted sum so token volume finally counts, and consolidation caps at roughly 3 cycles a day",
+    "references": [
+      "commit:69437c9",
+      "file:src/lib/sleep-consolidation.ts",
+      "file:src/cli/commands/hook.ts",
+      "feature:sleep-consolidation"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "feat",
+    "scope": "people",
+    "description": "The user file becomes a PERSON constitution: people/<slug>.md holding Identity, unconditional Preferences and Communication Style only, with a ~4,000-char authoring ceiling, rendered verbatim and never-evict in the snapshot; alongside it a structural people/people.json roster mapping slug to name, emails and role. One writer per file, so the team conflict surface is zero by construction. Resolution ladder is env, then pin, then git-email, then solo, then none, with Invariant P enforcing a charset regex AND roster membership at every slug entry point so DREAMCONTEXT_PERSON traversal is neutralized; the machine binding lives in .brain-local.json and never enters the synced brain. Changelog auto-stamps authors through resolveAuthors, which returns undefined when no people.json exists, making unmigrated vaults a universal no-op; ReleaseEntry gained contributors derived from changelog union task tags. Also ships doctor conditional people matrix, a people-json semantic-merge kind, /api/core/people dashboard routes behind a double slug gate, and init creating people/ from git identity with no 1.user.md. Committed as one unit because snapshot.ts alone has 11 hunks touching the people layout and the budget ladder in the same edit. Validated end to end by scripts/verify/people-first.mjs at 108/108 checks over 22 steps, including traversal probes, crash-resume and idempotency-via-ledger-removal.",
+    "breaking": false,
+    "summary": "People-first vault layout: per-person constitutions in people/, active-person resolution with Invariant P, and the snapshot person block",
+    "references": [
+      "commit:4046163",
+      "file:src/lib/people-store.ts",
+      "file:src/lib/people-resolve.ts",
+      "file:src/cli/commands/snapshot.ts",
+      "task:soul-becomes-constitution-only-and-always-loads-verbatim-while-conditionals-move-to-keyword-prioritized-patterns-across-the-whole-system"
+    ]
+  },
+  {
+    "date": "2026-07-30",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Follow-up to the 07-28 anchor-hold fix, which the owner re-reported as still jumping: \"I scroll up in a long chat and it suddenly teleports me somewhere else because it is loading more context.\" The re-verification came back CLEAN on a synthetic transcript — 7 conditions, all held — and the fixture was the flaw. Generated rows are tall, so a scrollbar drag never reaches the ceiling. Replayed against the owner real heaviest conversation (2,884 lines, 18MB, 500 replayed items, 397 of them SHORT collapsed tool cards) the drag does reach the top and two conditions go red at once. Traced frame by frame with the pane own scrollTop writes intercepted. Lesson worth keeping: a scroll-anchoring fixture that does not reproduce the real row-height distribution proves nothing.",
+    "breaking": false,
+    "summary": "A scrollbar drag no longer unspools the transcript under the reader — the reveal path re-verified against a real 500-item conversation, not a synthetic one",
+    "references": [
+      "commit:6a023e5",
+      "file:dashboard/src/components/sleepy/ChatPane.tsx",
+      "task:chat-transcript-holds-an-unpinned-reader-s-place-when-history-loads-above-them",
+      "feature:in-app-agent-terminal"
+    ]
+  },
+  {
     "date": "2026-07-28",
     "type": "refactor",
     "scope": "snapshot",

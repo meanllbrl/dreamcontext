@@ -1,7 +1,7 @@
 ---
 id: feature-integration-pattern
 name: "Feature Integration Pattern (wire every new feature into the whole system)"
-description: "MANDATORY checklist pattern: any feature added to dreamcontext must be wired into every surface the main agent learns the system from — SKILL.md capabilities + Entity Router, a reference-file section, sleep docs when sleep touches it, sub-agent contracts, and a scan of all shipped skill packs for integration points. A feature the skill doesn't describe is invisible: the main agent can't route to it, sleep can't maintain it, and it rots. Apply BEFORE finishing any feature work — awake, without waiting for a sleep cycle. Sleep may also create/update/retire patterns like this one."
+description: "MANDATORY: a feature the skill doesn't describe is invisible — the agent can't route to it, sleep can't maintain it, and it rots. Wire every new feature into all nine surfaces (SKILL.md row + Entity Router, reference section, sleep docs, sub-agent contracts, skill packs, cross-refs, marker test, propagate) AWAKE, in the same session — never deferred to sleep."
 tags: ["architecture", "decisions", "onboarding", "topic:agents", "topic:skills"]
 pinned: true
 date: "2026-07-20"

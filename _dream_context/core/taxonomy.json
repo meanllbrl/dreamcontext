@@ -22,7 +22,8 @@
       "kind:design",
       "kind:decisions",
       "kind:onboarding",
-      "kind:pattern"
+      "kind:pattern",
+      "kind:archive"
     ],
     "topic": [
       "topic:recall",
@@ -49,7 +50,9 @@
       "topic:embeddings",
       "topic:lab",
       "topic:macos",
-      "topic:automations"
+      "topic:automations",
+      "topic:task",
+      "topic:memory"
     ]
   },
   "bareTags": [
@@ -98,6 +101,13 @@
     "analytics": "topic:lab",
     "area:dashboard": "topic:dashboard",
     "clickup": "topic:clickup",
-    "area:backend": "backend"
+    "area:backend": "backend",
+    "layer:cli": "topic:cli",
+    "layer:server": "layer:backend",
+    "kind:process": "kind:pattern",
+    "automations": "topic:automations",
+    "macos": "topic:macos",
+    "knowledge": "domain:knowledge",
+    "task": "topic:task"
   }
 }

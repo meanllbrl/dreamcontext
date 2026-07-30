@@ -8,8 +8,8 @@ description: >-
   insert, before Changelog. Never insert placeholder content.
 tags:
   - 'kind:decisions'
-  - 'topic:tasks'
-  - 'layer:cli'
+  - 'topic:task'
+  - 'topic:cli'
 pinned: true
 date: '2026-07-23'
 ---

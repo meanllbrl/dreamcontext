@@ -2,7 +2,7 @@
 id: feat_LDQn2Bi8
 status: in_review
 created: '2026-02-25'
-updated: '2026-07-28'
+updated: '2026-07-30'
 released_version: v0.19.0
 tags:
   - backend
@@ -45,6 +45,7 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] As a developer, I want fuzzy task lookup by name so I don't have to type the exact slug every time.
 - [x] As a developer, I want tasks stored as Markdown files with YAML frontmatter so they are human-readable and editable outside the CLI.
 - [x] As a developer, I want to filter `tasks list` by tag, version, priority, status, and feature so I can surface the right subset without reading all task files.
+- [x] As an AI agent whose snapshot no longer lists the routine task queue, I can recover any subset from the taught filter surface — including a date range (`--since` / `--until`) — so the compact board costs me nothing.
 - [x] As a developer, I want to group `tasks list` output by version, priority, status, or tags so I can see planned work organized by milestone.
 - [x] As a developer, I want `tasks list --json` to emit machine-readable output so I can pipe tasks into scripts and other tools.
 - [x] As an AI agent, I want to RICE-score tasks (reach, impact, confidence, effort) so that work can be prioritized quantitatively.
@@ -96,6 +97,7 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - Active tasks in the snapshot show: slug name, status, priority, and last updated date.
 - Task IDs are generated with `generateId('task')` (nanoid-based, prefixed).
 - [x] `tasks list --tag <t>` (repeatable, AND semantics) and `--any-tag <t>` (OR semantics) filter by tags; `--version`, `--priority`, `--feature` filter by those frontmatter fields; all filters compose (case-insensitive).
+- [x] `tasks list --since <YYYY-MM-DD>` / `--until <YYYY-MM-DD>` filter by last activity (`updated_at`, which falls back to `created_at` at parse time), inclusive at both ends, comparing the ISO date part lexicographically. Malformed dates are rejected at the flag with `--since must be YYYY-MM-DD`; a task with no parseable date never matches a date-bounded query. Composes with every other filter, so "July's completed sprint work" is one call.
 - [x] `tasks list --group-by version|priority|status|tag` emits sectioned output with per-group counts.
 - [x] `tasks list --json` emits the filtered result set as a JSON array suitable for piping.
 - [x] `tasks list --long` shows version and tags inline alongside slug/status/priority.
@@ -176,6 +178,7 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - **[2026-06-15]** ClickUp rate-limit contract: ratePerMinute=90 (10 req/min headroom below the 100/min hard cap) ensures a full post-sleep bulk push completes in ONE window without hitting 429 at the rate-window edge. maxRetries=5 with Retry-After-respecting exponential backoff in ApiAdapter. SyncReport.failedPushes is a structural field — a partial push can never look like success. sleep done auto-retries once on failedPushes, then errors loudly if any remain.
 - **[2026-06-15]** `person:<slug>` tags are the source of truth for assignment (multiple assignees supported). The legacy scalar `assignee` frontmatter field is deprecated — still readable but not written. ClickUp push sends the full set of person-tag slugs resolved to ClickUp member IDs; pull maps ALL remote `assignees` back to `person:<slug>` tags. Set deltas computed on each sync cycle (add/remove set operations) to avoid clobbering.
 - **[2026-06-15]** ClickUp version-tag drift: the PUT response (not the base snapshot) is the authoritative source for live remote tags after a push. Version tag reconciliation must happen against the POST/PUT response, because a bound ClickUp version FIELD can change other tags server-side between the base snapshot and the push.
+- **[2026-07-30]** `tasks list` date filters exist because the **snapshot stopped listing the routine queue**: the Active Tasks section now renders exceptions + counts + a footer that teaches the filter surface, so that surface had to actually cover unfinished / sprint / completed / date-range questions. `--since`/`--until` close the last gap. A date-less task deliberately never matches a bounded query — silently including undated tasks would make "what moved in July" wrong in the direction the user cannot see.
 - **[2026-06-09]** `tasks list` filter flags (`--tag`, `--any-tag`, `--version`, `--priority`, `--feature`) all compose as AND; `--any-tag` is OR within its own set. Multiple `--tag` flags require ALL tags present. Case-insensitive matching throughout. `--json` uses the same filter pipeline, emitting raw JSON for scripting.
 - **[2026-06-09]** RICE score = `(reach × impact × confidence/100) / effort`; computed server-side on create/update; stored in frontmatter as `rice: {reach, impact, confidence, effort, score}`. `tasks rice <name>` prints current values; `--clear` removes them. Score powers the Scatter view and RICE sort in the dashboard.
 - **[2026-02-25]** Tasks live in `_dream_context/state/` as individual `.md` files (one file per task). This makes each task independently readable and allows the snapshot to glob them efficiently.
@@ -223,7 +226,7 @@ custom_fields:          # populated by `tasks field` or dashboard; synced to Cli
 ---```
 **Commands** (`src/cli/commands/tasks.ts`):
 - `tasks create <name>` — interactive or flag-driven (`-d`, `-p`, `-t`, `-w`). RICE flags: `--reach`, `--impact`, `--confidence`, `--effort` (additive).
-- `tasks list` — multi-filter: `--tag` (AND), `--any-tag` (OR), `--version`, `--priority`, `--feature`, `--status`, `--all`; compose freely. `--group-by version|priority|status|tag` for sectioned output. `--long` adds version+tags inline. `--json` emits raw JSON array.
+- `tasks list` — multi-filter: `--tag` (AND), `--any-tag` (OR), `--version`, `--priority`, `--feature`, `--objective`, `--status`, `--all`, `--since`/`--until` (ISO date range on `updated_at`, inclusive, validated at the flag; implemented in `filterTasks` in `src/lib/task-query.ts`); compose freely. `--group-by version|priority|status|tag` for sectioned output. `--long` adds version+tags inline. `--json` emits raw JSON array.
 - `tasks tags [--all]` — distinct tag counts (includes completed when `--all`).
 - `tasks rice <name>` — print or update RICE fields; `--clear` removes all.
 - `tasks log <name> [content]` — LIFO insert into `## Changelog`.

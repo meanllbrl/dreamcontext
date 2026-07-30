@@ -5,7 +5,7 @@ created: '2026-05-09'
 updated: '2026-07-08'
 released_version: v0.8.7
 tags:
-  - tasks
+  - 'topic:task'
   - prioritization
   - 'topic:dashboard'
   - 'topic:cli'

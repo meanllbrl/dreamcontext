@@ -1,17 +1,20 @@
 ---
-
 name: sleep-debt
 description: >-
-  How dreamcontext scores sleep debt and what limits consolidation frequency. Session score is a
-  log-compressed weighted sum over four axes (novel tokens 4, file changes 3, tool calls 1.5,
-  substance 1.5) rounded to 0-10; cache_read tokens are deliberately excluded and sub-agent
-  transcripts are folded in. Debt levels Alert 0-23 / Drowsy 24-39 / Sleepy 40-59 / Must Sleep
-  60+, with destructive deep authority split off at 90. Thresholds are calibrated against 30 days
-  of measured daily volume so the busiest day demands at most 3 consolidations, and a 3-hour
-  post-consolidation cooldown enforces the time floor between them.
-tags: [architecture, sleep, excalidraw]
+  How dreamcontext scores sleep debt and what limits consolidation frequency.
+  Session score is a log-compressed weighted sum over four axes (novel tokens 4,
+  file changes 3, tool calls 1.5, substance 1.5) rounded to 0-10; cache_read
+  tokens are deliberately excluded and sub-agent transcripts are folded in. Debt
+  levels Alert 0-23 / Drowsy 24-39 / Sleepy 40-59 / Must Sleep 60+, with
+  destructive deep authority split off at 90. Thresholds are calibrated against
+  30 days of measured daily volume so the busiest day demands at most 3
+  consolidations, and a 3-hour post-consolidation cooldown enforces the time
+  floor between them.
+tags:
+  - architecture
+  - 'topic:sleep'
+  - 'topic:excalidraw'
 excalidraw-plugin: parsed
-
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 

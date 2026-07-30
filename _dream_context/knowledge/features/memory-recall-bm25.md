@@ -2,7 +2,7 @@
 id: feat_mem0Recall1
 status: active
 created: '2026-05-23'
-updated: '2026-07-28'
+updated: '2026-07-30'
 released_version: v0.14.0
 tags:
   - 'domain:knowledge'
@@ -38,6 +38,7 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - [x] As a user typing queries in Turkish or mixed Turkish/English, I get sensible results because the tokenizer handles the diacritics.
 - [x] As a developer, I can run `dreamcontext memory remember "<text>"` to log a quick decision/note — it writes a CHANGELOG entry (`type=note`, `scope=quick` by default) instead of appending to a LIFO section.
 - [x] As a developer, my session snapshot shows recent CHANGELOG entries tiered (top 3 detailed with summary + body, next 10 titles-only) so I can scan history quickly without bloating context.
+- [x] As a developer, I can PAGE THROUGH the whole changelog chronologically with `dreamcontext changelog list` (`--page/--size/--type/--scope/--grep/--json`) — recall ranks by relevance, this reads the timeline.
 - [x] As a Turkish-speaking developer, my recall results are dramatically improved (37.5→75.0% recall@1) because the engine folds agglutinative suffix inflections before BM25 scoring.
 - [x] As a developer, decisions captured automatically from my sessions (via salience detectors) are searchable by the next session before any sleep consolidation runs.
 - [x] As a developer, auto-captured session content never crowds out curated knowledge files in recall results, thanks to the capture rank penalty.
@@ -254,6 +255,17 @@ The SessionStart snapshot used to render the last 5 (then 3) CHANGELOG entries w
 - **Next 10 (titles-only):** rendered as a compact list under an `### Older` subheading. Just `[type/scope]` + `summary` per line.
 
 Both tier sizes (3 detailed, 10 titles-only, ~300 char body cap) are configurable via constants at the top of `src/cli/commands/snapshot.ts`. Older entries beyond the title tier are still indexed for recall — the snapshot is the always-loaded surface, recall is the on-demand surface.
+
+## Browse vs. recall — `dreamcontext changelog list` (2026-07-30, UNCOMMITTED)
+
+Recall answers **"where did we do X?"** (relevance-ranked, cross-type). It cannot answer **"what happened, in order?"** — and the snapshot's Recent Changelog only ever shows the head of the timeline. `dreamcontext changelog list` is the chronological counterpart:
+
+- Paginated browse of `core/CHANGELOG.json` with LIFO order preserved: `--page` (1-based, clamps to 1) / `--size` (default 10, clamped to [1, 50]) / `--type` / `--scope` / `--grep` (case-insensitive substring over summary + description + scope, Turkish-safe) / `--json`.
+- A page past the end returns empty entries with honest totals rather than throwing.
+- Pure core in `src/lib/changelog-list.ts` (`listChangelogEntries` → `{entries, total, page, pages, size}`); `src/cli/commands/changelog.ts` is a thin printer. Registered in the CLI, added to the SKILL.md router (HISTORY row) and `cli-reference`.
+- Live on the mature peer vault: 489 entries across 163 pages; `--grep quiz` returned 41 hits.
+
+**Why it exists now:** the 2026-07-30 snapshot redesign made every inventory section carry a standing "search AND browse" footer at every rung — the changelog floor previously had *zero* recovery pointer. A footer must point at something real, so the browse half had to exist. The same requirement produced `tasks list --since/--until` (see `features/task-management.md`).
 
 ## Open follow-ups (NOT v1)
 

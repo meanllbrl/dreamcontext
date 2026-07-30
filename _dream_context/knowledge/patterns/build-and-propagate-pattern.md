@@ -1,10 +1,20 @@
 ---
 id: build-and-propagate-pattern
-name: "Build & Propagate Pattern (CLI → every vault, then the Tauri app)"
-description: "The two-stage release-side build for dreamcontext, in the only order that works: build the DASHBOARD before the CLI (tsup copies dashboard/dist into dist/ behind an existsSync guard that fails SILENTLY), then propagate to every registered vault with `dreamcontext update`, then build the Tauri app LAST because it bundles dist/ as a resource. Pins the two footguns that make a build look successful while shipping stale or missing code: the silent dashboard copy, and resolve_cli preferring a globally-linked CLI over the bundled one so a locally-run .app never actually exercises its own bundle."
-tags: ["architecture", "topic:desktop", "topic:cli", "onboarding", "kind:process"]
+name: 'Build & Propagate Pattern (CLI → every vault, then the Tauri app)'
+description: >-
+  Build order is not a preference: dashboard, then CLI, then `dreamcontext
+  update` to every vault, then the Tauri app LAST. Two footguns make a build
+  look successful while shipping stale code — tsup's dashboard copy fails
+  SILENTLY behind an existsSync guard, and resolve_cli prefers a globally-linked
+  CLI over the bundled one, so a locally-run .app never exercises its own bundle.
+tags:
+  - architecture
+  - 'topic:desktop'
+  - 'topic:cli'
+  - onboarding
+  - 'kind:pattern'
 pinned: true
-date: "2026-07-26"
+date: '2026-07-26'
 ---
 
 ## Why This Exists

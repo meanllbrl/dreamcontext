@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_Qw3aTmXo",
+    "version": "0.23.0",
+    "date": "2026-07-30",
+    "summary": "The snapshot stops apologising for its own size. Three changes make the session-start brain fit a real, mature vault without a compression ladder papering over content that should never have been emitted. LEVEL 0 IS NOW DENSE BY DEFAULT: features are name, status and path; only PINNED knowledge carries a description at any level, non-pinned knowledge is an honest count plus the search commands to reach it, and the warm-knowledge section is gone entirely; theses show a summary and the top two open; Lab keeps name and value with no rungs at all because Rule 13 is the whole point of the section; automations collapse routine successes into one aggregate line and lead with failures. PATTERNS BECAME LOUD: the reusable playbooks that carry a project's conditional rules get their own block at EVERY rung under a hard warning banner, so rules can no longer demote into an anonymous folder line. ACTIVE TASKS GOT HONEST: tasks display their frontmatter NAME with the slug demoted to an address line, and under pressure the section switches from a name roster to an accounting model — detailed in-progress entries, a needs-attention line naming every exception and every overflowing concurrent thread, a per-status count for the routine queue, and a footer teaching the filters. Nothing is silently dropped; everything is accounted for. Memory earns the same trust: core/2.memory.md at or under 4,000 chars renders IN FULL at every budget level with a recall pointer, because sleep is memory's compressor and render-time rungs were double taxation. Every inventory section now ends in a standing search-and-browse footer at every rung including the floors, and two new discovery surfaces back them: 'dreamcontext changelog list' paginates the changelog chronologically (--page/--size/--type/--scope/--grep/--json) where recall only ranked it by relevance, and 'tasks list' gained --since/--until date filters. Under all of it, the 0.23.0 migrations reshape the vault itself: PEOPLE-FIRST replaces 1.user.md with per-person constitutions in people/ plus a structural roster, machine-local active-person resolution and auto-stamped changelog authors, while the new SOUL-SPLIT migration detects a bloated legacy soul and splits it into a constitution-only soul plus clustered pattern files. Executed live on a real 53,668-char vault, the pair brought it to 16,320 — inline, no banner, for the first time. Plus: 'migrations pending' no longer goes blind when update advances setupVersion past an unfinished agent task, Turkish and accented titles fold to ASCII before slugifying, sleep debt scores sessions by a weighted sum so token volume finally counts, and Enter steers a queued chat message into the running turn instead of waiting it out.",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_FHD7EMKt",
     "version": "0.22.0",
     "date": "2026-07-28",
