@@ -45,8 +45,10 @@ export function HypothesesPage({ focus }: HypothesesPageProps = {}) {
         <div className="hyp-off-icon" aria-hidden="true">⊘</div>
         <h2 className="hyp-off-title">The Proactive Learning Layer is off</h2>
         <p className="hyp-off-body">
-          Hypotheses, the board, and this nav item stay hidden while the layer is disabled — and sleep cycles stop
-          re-testing open hypotheses. Turn it on to let the brain form and validate falsifiable claims across cycles.
+          A hypothesis is a falsifiable claim about your project that the brain writes down, pre-registers a prediction
+          for, and re-tests against fresh evidence on every sleep cycle — flipping it to validated or invalidated when
+          the evidence decides. While the layer is off, no hypotheses are formed and sleep cycles stop re-testing the
+          open ones. Turning it on is reversible from Settings; nothing existing is touched.
         </p>
         <button
           type="button"

@@ -1,5 +1,5 @@
 import type { AutomationSummary } from '../../hooks/useAutomations';
-import { useRunAutomation } from '../../hooks/useAutomations';
+import { useRunAutomation, useSetAutomationEnabled } from '../../hooks/useAutomations';
 import './AutomationCard.css';
 
 /**
@@ -81,6 +81,7 @@ export function AutomationCard({
   onDragEnd?: (e: React.DragEvent) => void;
 }) {
   const runNow = useRunAutomation();
+  const setEnabled = useSetAutomationEnabled();
   const thisRunning = runningSlug === summary.slug;
   const otherRunning = runningSlug !== null && !thisRunning;
 
@@ -99,6 +100,22 @@ export function AutomationCard({
         : summary.cache?.status === 'orphaned'
           ? 'An orphaned run must be killed first (CLI)'
           : 'Run now';
+
+  /**
+   * The manifest's own on/off switch (CLI `automations enable|disable`).
+   * Deliberately NOT an approval-class action: `enabled` is not a hashed field,
+   * so flipping it never re-blocks an approved automation — and turning one ON
+   * still cannot make it run, because approval and the installed dispatcher are
+   * both still in front of it.
+   */
+  const handleToggleEnabled = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const next = !summary.enabled;
+    setEnabled.mutate({ slug: summary.slug, enabled: next }, {
+      onSuccess: () => onToast(`${summary.title}: ${next ? 'enabled' : 'disabled'}.`),
+      onError: (err) => onToast(`${summary.title}: could not ${next ? 'enable' : 'disable'} — ${(err as Error).message}`),
+    });
+  };
 
   const handleRun = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -141,14 +158,30 @@ export function AutomationCard({
         <span className="auto-card-lastrun">
           last run: {fmtWhen(summary.cache?.lastRunAt ?? null)}
         </span>
-        <button
-          className="auto-card-run-btn"
-          onClick={handleRun}
-          disabled={runDisabled}
-          title={runTitle}
-        >
-          {thisRunning || runNow.isPending ? 'Running…' : '▶ Run now'}
-        </button>
+        <div className="auto-card-actions">
+          <button
+            className={`auto-card-toggle${summary.enabled ? ' auto-card-toggle--on' : ''}`}
+            onClick={handleToggleEnabled}
+            disabled={setEnabled.isPending}
+            role="switch"
+            aria-checked={summary.enabled}
+            aria-label={`${summary.title} — scheduled`}
+            title={summary.enabled
+              ? 'Enabled — the scheduler will run this when it is due. Click to disable.'
+              : 'Disabled — the scheduler skips this. Click to enable.'}
+          >
+            <span className="auto-card-toggle-track" aria-hidden="true"><span className="auto-card-toggle-knob" /></span>
+            {summary.enabled ? 'on' : 'off'}
+          </button>
+          <button
+            className="auto-card-run-btn"
+            onClick={handleRun}
+            disabled={runDisabled}
+            title={runTitle}
+          >
+            {thisRunning || runNow.isPending ? 'Running…' : '▶ Run now'}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -95,7 +95,9 @@ Automations are usually born from a conversation, not a form. When a user descri
 6. **Live-test it with the user watching.** `dreamcontext automations run <slug> --force` runs it right now, ignoring the schedule, and shows the user the actual output before they trust it to run unattended.
 7. **Confirm.** Once the user is happy with a live-tested run, the automation is ready. `automations create` already auto-approved it on this machine, since the creator is the local human who wrote the prompt. Nothing further is required here, but see the approval section below for what happens the moment anyone else touches it.
 
-If the dispatcher isn't installed yet, mention `dreamcontext automations install`. Nothing will actually fire on a schedule until that's done, even though the automation itself is created and approved.
+If the dispatcher isn't installed yet, mention `dreamcontext automations install`. Nothing will actually fire on a schedule until that's done, even though the automation itself is created and approved. The dashboard's Automations page carries the same switch — a scheduler row above the board (and in its zero-state) that reads on/off and turns it on in place, so a user who never opens a terminal is not stranded with a page full of automations that silently never run. That row also catches the two states an "installed" dispatcher can still be wrong in: a **stale** install (baked against a `dreamcontext` that has since moved — it wakes on time and fails) and a project **the registry doesn't know about** (the usual shape when the manifests arrived over brain sync rather than being created here). Both reinstall in one click.
+
+Turning the scheduler on from the dashboard grants nothing extra: it installs the clock, not permission. Every automation still needs its own machine-local approval before that clock will run it, and each automation's own `enabled` flag is a separate switch again — flippable per card in the dashboard or with `automations enable|disable <slug>`. That flag is deliberately not approval-hashed, so toggling it never re-blocks an approved automation.
 
 ---
 

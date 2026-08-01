@@ -521,6 +521,30 @@
   border-color: color-mix(in srgb, var(--color-warning, #d98324) 35%, transparent);
 }
 
+/* Off variant — a surface whose layer is switched off. Neutral grey, because
+   this is a state, not a warning: the item stays in the rail precisely so the
+   layer can be found and turned on from its own page. */
+.sidebar-off-tag {
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-border);
+}
+
+/* The row itself dims to match — enough to read as inactive at a glance, never
+   so much that it looks disabled (it is fully clickable, and clicking it is
+   exactly how the layer gets turned on). */
+.sidebar-item--off .sidebar-icon,
+.sidebar-item--off .sidebar-label {
+  opacity: 0.62;
+}
+
+.sidebar-item--off:hover .sidebar-icon,
+.sidebar-item--off:hover .sidebar-label,
+.sidebar-item--off.sidebar-item--active .sidebar-icon,
+.sidebar-item--off.sidebar-item--active .sidebar-label {
+  opacity: 1;
+}
+
 /* Sleepy rail mascot — the two eyes blink, mirroring the Ask-idle face. */
 @keyframes sidebarSleepyBlink {
   0%, 90%, 100% { transform: scaleY(1); }

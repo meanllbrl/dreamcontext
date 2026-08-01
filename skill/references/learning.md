@@ -140,7 +140,7 @@ The switch is user-flippable from three places: the CLI (`theses enable|disable`
 Gates, hard, on this flag:
 - `sleep-learn` dispatch (sleep.md skips it entirely when off — no speculative dispatch).
 - The SessionStart snapshot's theses section (omitted, not just demoted, when off).
-- The dashboard nav item + `hypotheses` page (nav item hidden; the page itself renders a "the layer is off" state with an Enable CTA when reached directly).
+- The `hypotheses` page's CONTENT — the board and everything on it. The **nav item itself is not gated**: it stays in the rail for every project, dimmed with an `Off` tag, and the page renders a "the layer is off" explainer with an Enable CTA. (It used to be hidden entirely, which made the layer undiscoverable by exactly the people who had never enabled it — the page carrying the switch was reachable only once the switch was already on.)
 - **Agent behavior (awake capture): when `learning.enabled` is off, do NOT propose, extract, or capture theses** — no offer-and-confirm prompts, no "anything worth testing?" suggestions, no candidate staging from source material. If the user explicitly asks for a thesis while the layer is off, tell them the layer is disabled and offer `dreamcontext theses enable` first; never work around the switch.
 
 **Not** gated: the `theses` CLI verbs themselves stay callable when off (a dim `⚗ Learning layer is off — run 'dreamcontext theses enable' to turn it on.` hint prints, then the command proceeds) — this keeps CLI scripting and doctor checks simple and consistent rather than special-casing every verb. Recall indexing is likewise ungated (naturally a no-op when `theses/` is empty).

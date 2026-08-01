@@ -112,11 +112,17 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   const { data: authStatus } = useAuthStatus();
   const { data: brainStatus } = useBrainStatus();
   const { unread } = useAnnouncementInbox();
-  // The Hypotheses nav item is hidden entirely while the learning layer is
-  // off — `enabled` is undefined until the query resolves, so it's kept
-  // hidden until we positively know it's on (no flash-then-hide).
+  // Hypotheses is in the rail for everyone, on or off. It used to be hidden
+  // while the learning layer was disabled, which made the layer undiscoverable
+  // by exactly the people who had never turned it on: the page that explains it
+  // and carries its enable button was only reachable once it was already
+  // enabled. Off now reads as a dimmed item with an "off" tag, and the page
+  // itself is the explainer + switch.
+  // `=== false`, never `!enabled`: the field is undefined until the query
+  // resolves, and a rail that says "off" for a beat before flipping to on is
+  // worse than one that simply doesn't label it yet.
   const { data: thesesData } = useTheses();
-  const learningEnabled = thesesData?.enabled === true;
+  const learningOff = thesesData?.enabled === false;
   const vaultLabel = readVaultLabel();
 
   // 3-state cloud-sync CTA: not signed in → invite sign-in; signed in but no
@@ -171,15 +177,19 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
         <div key={group.labelKey} className="sidebar-group">
           <span className="sidebar-group-label">{t(group.labelKey)}</span>
           <ul className="sidebar-nav">
-            {group.items.filter(({ page }) => page !== 'hypotheses' || learningEnabled).map(({ page, labelKey, lab, beta }) => {
+            {group.items.map(({ page, labelKey, lab, beta }) => {
               staggerIndex += 1;
               const label = t(labelKey);
-              const tag = lab ? t('nav.lab') : beta ? t('nav.beta') : null;
+              // An off layer replaces its Lab tag rather than adding a second
+              // one — two tags on one row is noise, and "off" is the more
+              // useful of the two to whoever is looking.
+              const off = page === 'hypotheses' && learningOff;
+              const tag = off ? t('nav.off') : lab ? t('nav.lab') : beta ? t('nav.beta') : null;
               const isAbout = page === 'about';
               return (
                 <li key={page} className={`animate-stagger animate-stagger-${staggerIndex}`}>
                   <button
-                    className={`sidebar-item ${activePage === page ? 'sidebar-item--active' : ''}${isAbout && nudgeAbout ? ' sidebar-item--nudge' : ''}`}
+                    className={`sidebar-item ${activePage === page ? 'sidebar-item--active' : ''}${isAbout && nudgeAbout ? ' sidebar-item--nudge' : ''}${off ? ' sidebar-item--off' : ''}`}
                     onClick={isAbout ? openAbout : () => onNavigate(page)}
                     title={tag ? `${label} — ${tag}` : label}
                     aria-current={activePage === page ? 'page' : undefined}
@@ -189,8 +199,9 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
                     {page === 'announcements' && unread.length > 0 && (
                       <span className="sidebar-badge">{unread.length}</span>
                     )}
-                    {lab && <span className="sidebar-lab-tag">{t('nav.lab')}</span>}
-                    {beta && <span className="sidebar-lab-tag sidebar-beta-tag">{t('nav.beta')}</span>}
+                    {off && <span className="sidebar-lab-tag sidebar-off-tag">{t('nav.off')}</span>}
+                    {!off && lab && <span className="sidebar-lab-tag">{t('nav.lab')}</span>}
+                    {!off && beta && <span className="sidebar-lab-tag sidebar-beta-tag">{t('nav.beta')}</span>}
                   </button>
                 </li>
               );

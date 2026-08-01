@@ -19,6 +19,9 @@ const translations: Record<string, Record<string, string>> = {
     'nav.announcements': 'Announcements',
     'nav.lab': 'Lab',
     'nav.beta': 'Beta',
+    // Shown in place of the Lab tag on a surface whose layer is switched off —
+    // the item stays in the rail so the layer can be found and turned on.
+    'nav.off': 'Off',
     'nav.group.workspace': 'Workspace',
     'nav.group.memory': 'Memory',
     'nav.group.brain': 'Brain',
@@ -258,7 +261,7 @@ const translations: Record<string, Record<string, string>> = {
     'settings.brain': 'Cloud sync',
     'settings.learning.title': 'Learning layer (Hypotheses)',
     'settings.learning.label': 'Enable the proactive learning layer',
-    'settings.learning.hint': 'When off, the layer is fully inert: no Hypotheses board or nav item, no sleep-learn dispatch, no snapshot section — and the agent will not capture or propose hypotheses.',
+    'settings.learning.hint': 'When off, the layer is fully inert: no Hypotheses board, no sleep-learn dispatch, no snapshot section — and the agent will not capture or propose hypotheses. The nav item stays, marked Off, so the layer can be turned back on from its own page.',
     'settings.native_memory.label': "Disable Claude's native memory",
     'settings.native_memory.hint': 'Recommended — dreamcontext becomes the single source of project memory instead of Claude Code’s built-in MEMORY.md.',
     'settings.recall.title': 'Memory recall',

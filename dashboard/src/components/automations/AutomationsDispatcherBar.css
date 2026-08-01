@@ -1,0 +1,114 @@
+/* ────────────────────────────────────────
+   Scheduler switch — one row above the board (and inside the zero-state).
+   Three semantic states share the layout and differ only in the dot + border
+   tint, so "on / needs attention / off" reads before the sentence does.
+   ──────────────────────────────────────── */
+
+.auto-dispatch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  text-align: left;
+}
+
+.auto-dispatch-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-text-tertiary);
+}
+
+.auto-dispatch--on {
+  border-color: color-mix(in srgb, var(--color-success) 32%, var(--color-border));
+}
+
+.auto-dispatch--on .auto-dispatch-dot {
+  background: var(--color-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 22%, transparent);
+}
+
+.auto-dispatch--warn {
+  border-color: color-mix(in srgb, var(--color-warning) 40%, var(--color-border));
+  background: var(--color-warning-subtle);
+}
+
+.auto-dispatch--warn .auto-dispatch-dot {
+  background: var(--color-warning);
+}
+
+.auto-dispatch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.auto-dispatch-text strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.auto-dispatch-text span {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.auto-dispatch-text code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--color-text);
+}
+
+.auto-dispatch-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border-radius: var(--radius-sm);
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.auto-dispatch-btn:hover:not(:disabled) {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+.auto-dispatch-btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* The "turn it off" affordance is deliberately quieter than the "turn it on"
+   one — same row, but it must never be the thing the eye lands on first. */
+.auto-dispatch-btn--ghost {
+  border-color: var(--color-border);
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+
+.auto-dispatch-btn--ghost:hover:not(:disabled) {
+  background: transparent;
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
+/* Inside the zero-state the bar is centred prose, not a board header: it sits
+   in a narrower column and loses the bottom margin the board layout needs. */
+.auto-intro .auto-dispatch {
+  width: 100%;
+  max-width: 580px;
+  margin: var(--space-2) 0 0;
+}

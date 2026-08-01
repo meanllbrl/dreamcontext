@@ -83,6 +83,11 @@ import {
   handleAutomationsRunNow,
   handleAutomationsApprove,
   handleAutomationsSession,
+  handleAutomationsEnable,
+  handleAutomationsDisable,
+  handleAutomationsDispatcherStatus,
+  handleAutomationsDispatcherInstall,
+  handleAutomationsDispatcherUninstall,
 } from './routes/automations.js';
 import {
   handleThesesList,
@@ -438,12 +443,23 @@ export function buildRouter(): Router {
   // inside `runAutomation`, not in these handlers.
   router.get('/api/automations', handleAutomationsList);
   router.get('/api/automations/runs', handleAutomationsRunStatus);
+  // `dispatcher` is the machine-local scheduler switch — the dashboard half of
+  // `automations install`. Same ordering constraint as `runs`: it MUST precede
+  // `/:slug` or it is captured as a slug named "dispatcher". Installing writes
+  // a launchd plist, so it is a POST and nothing but `force` travels in its
+  // body; it grants no execution rights on its own (every automation still
+  // needs its own machine-local approval before the dispatcher will run it).
+  router.get('/api/automations/dispatcher', handleAutomationsDispatcherStatus);
+  router.post('/api/automations/dispatcher/install', handleAutomationsDispatcherInstall);
+  router.post('/api/automations/dispatcher/uninstall', handleAutomationsDispatcherUninstall);
   // Before `/:slug` — a literal sub-path registered after a param route is
   // swallowed by it, the same ordering constraint `runs` above documents.
   router.get('/api/automations/:slug/session', handleAutomationsSession);
   router.get('/api/automations/:slug', handleAutomationsShow);
   router.post('/api/automations/:slug/run', handleAutomationsRunNow);
   router.post('/api/automations/:slug/approve', handleAutomationsApprove);
+  router.post('/api/automations/:slug/enable', handleAutomationsEnable);
+  router.post('/api/automations/:slug/disable', handleAutomationsDisable);
 
   // Theses (proactive learning layer, opt-in via learning.enabled). Read
   // routes (list/show) work regardless of the flag — they surface `enabled`

@@ -3,6 +3,7 @@ import { useAutomations, useAutomationRunJob } from '../../hooks/useAutomations'
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { AutomationCard } from './AutomationCard';
 import { AutomationDetailPanel } from './AutomationDetailPanel';
+import { AutomationsDispatcherBar } from './AutomationsDispatcherBar';
 import { AutomationsEmptyState } from './AutomationsEmptyState';
 import './AutomationsBoard.css';
 
@@ -74,16 +75,23 @@ export function AutomationsBoard() {
     );
   }
 
+  // The zero-state carries the scheduler switch too: "there is nothing here
+  // yet" and "nothing would fire if there were" are two different problems, and
+  // a user who only ever creates automations from the CLI would otherwise never
+  // meet the switch at all.
   if (!automations || automations.length === 0) {
     return (
       <div className="auto-board auto-board--empty">
-        <AutomationsEmptyState />
+        <AutomationsEmptyState onToast={setToast} />
+        {toast && <div className="auto-toast">{toast}</div>}
       </div>
     );
   }
 
   return (
     <div className="auto-board">
+      <AutomationsDispatcherBar onToast={setToast} />
+
       <div
         className="auto-board-grid"
         onDragOver={(e) => {

@@ -1,5 +1,6 @@
 import { BrandMark } from '../brand/BrandMark';
 import { AutomationsShowcase } from './AutomationsShowcase';
+import { AutomationsDispatcherBar } from './AutomationsDispatcherBar';
 import './AutomationsEmptyState.css';
 
 /**
@@ -7,11 +8,13 @@ import './AutomationsEmptyState.css';
  * no automations to list, the board's chrome would be noise, so it shows a
  * compact "What is Automations?" explainer instead — brand mark · kicker ·
  * gradient heading · lead · the animated cadence stage — ending in the one thing
- * a user can do about it, scaffolding their first automation from the CLI. The
- * footnote carries the security stance, because the approval tripwire is the
- * thing a first-time reader most needs to understand about this page.
+ * a user can do about it: turn the scheduler on (the one thing that IS doable
+ * from here with nothing created yet), then scaffold their first automation
+ * from the CLI. The footnote carries the security stance, because the approval
+ * tripwire is the thing a first-time reader most needs to understand about
+ * this page.
  */
-export function AutomationsEmptyState() {
+export function AutomationsEmptyState({ onToast }: { onToast?: (msg: string) => void }) {
   return (
     <div className="auto-intro">
       <div className="auto-intro-mark">
@@ -31,6 +34,8 @@ export function AutomationsEmptyState() {
       </p>
 
       <AutomationsShowcase />
+
+      <AutomationsDispatcherBar onToast={onToast} />
 
       <p className="auto-intro-scaffold">Scaffold your first automation from the CLI:</p>
       <code className="auto-intro-cmd">

@@ -126,6 +126,73 @@
   white-space: nowrap;
 }
 
+.auto-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* The manifest's own on/off switch. A real switch rather than a menu item:
+   it is the single most-flipped control on the card, and its state has to be
+   readable at a glance from across the grid (the "disabled" badge says the
+   same thing, but only once it is already off). */
+.auto-card-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.auto-card-toggle--on {
+  color: var(--color-success);
+}
+
+.auto-card-toggle:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.auto-card-toggle-track {
+  display: inline-block;
+  position: relative;
+  width: 24px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.auto-card-toggle--on .auto-card-toggle-track {
+  background: color-mix(in srgb, var(--color-success) 30%, transparent);
+  border-color: var(--color-success);
+}
+
+.auto-card-toggle-knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-full);
+  background: var(--color-text-tertiary);
+  transition: transform var(--transition-fast), background var(--transition-fast);
+}
+
+.auto-card-toggle--on .auto-card-toggle-knob {
+  transform: translateX(10px);
+  background: var(--color-success);
+}
+
 .auto-card-run-btn {
   flex-shrink: 0;
   border: 1px solid var(--color-border);

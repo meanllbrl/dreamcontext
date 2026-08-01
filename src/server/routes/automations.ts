@@ -1,12 +1,37 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
-import { sendJson, sendError } from '../middleware.js';
-import { getAutomation, listAutomations, readAutomationCache, readPattern } from '../../lib/automations/store.js';
+import { sendJson, sendError, parseJsonBody } from '../middleware.js';
+import {
+  getAutomation,
+  listAutomations,
+  readAutomationCache,
+  readPattern,
+  setAutomationEnabled,
+} from '../../lib/automations/store.js';
 import { resolveRunSession, readSessionDigest } from '../../lib/automations/session.js';
-import { checkApproval, approveAutomation } from '../../lib/automations/registry.js';
+import {
+  checkApproval,
+  approveAutomation,
+  listRegisteredProjects,
+  registerProject,
+  readDispatcherHeartbeat,
+} from '../../lib/automations/registry.js';
+import {
+  inspectDispatcher,
+  installDispatcher,
+  uninstallDispatcher,
+  type InstallCheck,
+} from '../../lib/automations/launchd.js';
+import {
+  buildNotifierApp,
+  inspectNotifier,
+  notifyViaBundle,
+  removeNotifierApp,
+  NOTIFY_SOUND_OK,
+} from '../../lib/automations/notifier.js';
 import { formatSchedule } from '../../lib/automations/schedule.js';
 import { startAutomationJob, currentAutomationJob } from '../automation-job.js';
-import type { AutomationCache, AutomationManifest } from '../../lib/automations/types.js';
+import { AutomationError, type AutomationCache, type AutomationManifest } from '../../lib/automations/types.js';
 
 /**
  * `/api/automations*` — the dashboard's read + "run now" + approve surface
@@ -281,5 +306,271 @@ export async function handleAutomationsApprove(
     sendJson(res, 200, { slug: manifest.slug, approval: entry });
   } catch {
     sendError(res, 500, 'approve_failed', 'Failed to approve the automation.');
+  }
+}
+
+/**
+ * POST /api/automations/:slug/enable | /disable — flip the manifest's own
+ * `enabled` switch (the CLI's `automations enable|disable`, same primitive).
+ *
+ * `enabled` is deliberately NOT one of the approval-hashed fields, and this
+ * write must keep it that way: `setAutomationEnabled` goes through
+ * `updateFrontmatterFields`, which rewrites frontmatter only and never touches
+ * the body — so `## Prompt` / `## Output instructions`, the two hashed body
+ * sections, come back byte-identical and an approved automation stays
+ * approved across a toggle. (The response re-summarizes through the same
+ * `checkApproval` the list route uses, so a regression here would show up as
+ * an automation that goes `blocked` the moment it is toggled.)
+ *
+ * Enabling is NOT a trust elevation: a disabled automation that is flipped on
+ * still cannot run until it is approved on this machine, and still cannot fire
+ * on a schedule until the dispatcher is installed.
+ */
+async function setEnabled(
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+  enabled: boolean,
+): Promise<void> {
+  const verb = enabled ? 'enable' : 'disable';
+  try {
+    if (!getAutomation(contextRoot, params.slug)) {
+      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
+      return;
+    }
+    const updated = setAutomationEnabled(contextRoot, params.slug, enabled);
+    sendJson(res, 200, { automation: summarize(dirname(contextRoot), contextRoot, updated) });
+  } catch (err) {
+    if (err instanceof AutomationError) {
+      sendError(res, 400, `${verb}_rejected`, err.message);
+      return;
+    }
+    console.error(`[automations] ${verb} failed:`, err);
+    sendError(res, 500, `${verb}_failed`, `Failed to ${verb} the automation.`);
+  }
+}
+
+export async function handleAutomationsEnable(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  await setEnabled(res, params, contextRoot, true);
+}
+
+export async function handleAutomationsDisable(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  await setEnabled(res, params, contextRoot, false);
+}
+
+// ─── Dispatcher (the machine-local scheduler switch) ─────────────────────────
+
+/**
+ * What the dashboard needs to answer one question — "is the scheduler on for
+ * this machine, and does it cover this project?" — plus the two states that
+ * make an installed dispatcher a liar: a STALE install (the CLI moved, so the
+ * baked wrapper points somewhere else) and a project that was never registered
+ * (manifests exist, the dispatcher ticks, but never looks here — the shape a
+ * teammate-synced `automations/` directory arrives in).
+ */
+interface DispatcherView {
+  /** macOS-only in v1; Linux cron is a later backend behind the same seam. */
+  supported: boolean;
+  platform: string;
+  /** Both halves on disk AND booted into launchd — anything less never fires. */
+  installed: boolean;
+  /** Installed AND byte-current: re-rendering now would reproduce both files. */
+  current: boolean;
+  bootstrapped: boolean;
+  plistPresent: boolean;
+  plistCurrent: boolean;
+  wrapperPresent: boolean;
+  wrapperCurrent: boolean;
+  /** The dispatcher would run a DIFFERENT `dreamcontext` than this server. */
+  mismatch: boolean;
+  resolvedBin: string | null;
+  runningBin: string | null;
+  logPath: string;
+  logSizeBytes: number;
+  /** Is THIS project in the machine-local registry the dispatcher walks? */
+  projectRegistered: boolean;
+  lastTickStartedAt: string | null;
+  lastTickCompletedAt: string | null;
+  notifier: { supported: boolean; present: boolean; current: boolean };
+}
+
+function dispatcherView(check: InstallCheck, contextRoot: string): DispatcherView {
+  const installed = check.plistPresent && check.wrapperPresent && check.bootstrapped;
+  const notifier = inspectNotifier();
+  const heartbeat = readDispatcherHeartbeat();
+  return {
+    supported: process.platform === 'darwin',
+    platform: process.platform,
+    installed,
+    current: installed && check.plistCurrent && check.wrapperCurrent,
+    bootstrapped: check.bootstrapped,
+    plistPresent: check.plistPresent,
+    plistCurrent: check.plistCurrent,
+    wrapperPresent: check.wrapperPresent,
+    wrapperCurrent: check.wrapperCurrent,
+    mismatch: check.mismatch,
+    resolvedBin: check.resolved.bin,
+    runningBin: check.runningBin,
+    logPath: check.logPath,
+    logSizeBytes: check.logSizeBytes,
+    projectRegistered: listRegisteredProjects().includes(dirname(contextRoot)),
+    lastTickStartedAt: heartbeat.lastTickStartedAt,
+    lastTickCompletedAt: heartbeat.lastTickCompletedAt,
+    notifier: {
+      supported: notifier.supported,
+      present: notifier.bundlePresent,
+      current: notifier.bundlePresent && notifier.scriptCurrent,
+    },
+  };
+}
+
+/**
+ * GET /api/automations/dispatcher — read-only scheduler state. Writes nothing
+ * (`inspectDispatcher` is the same read-only primitive `install --check` uses).
+ *
+ * MUST be registered before `/api/automations/:slug` for the same reason
+ * `/runs` is — a literal sub-path registered after a param route is swallowed
+ * by it.
+ */
+export async function handleAutomationsDispatcherStatus(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    sendJson(res, 200, { dispatcher: dispatcherView(await inspectDispatcher(), contextRoot) });
+  } catch (err) {
+    console.error('[automations] dispatcher status failed:', err);
+    sendError(res, 500, 'dispatcher_status_failed', 'Failed to inspect the automations dispatcher.');
+  }
+}
+
+/**
+ * POST /api/automations/dispatcher/install — turn the scheduler on for this
+ * machine. The dashboard half of `dreamcontext automations install`.
+ *
+ * This does NOT weaken the feature's "ships completely disabled, opt-in only"
+ * stance — it adds a second surface for the SAME explicit human opt-in, and
+ * nothing about what runs changes: every automation still needs its own
+ * machine-local SHA256 approval before the dispatcher will execute it, and the
+ * approval tripwire, sleep deference and orphan guard all still live inside
+ * the runner. What this route can do is exactly what a user sitting at the CLI
+ * can do; it accepts no path, no prompt and no schedule from the request.
+ *
+ * The only body field is `force`, which mirrors `install --force`: it overrides
+ * a resolution MISMATCH (the dispatcher would bake in a different
+ * `dreamcontext` than the one serving this request). Without it, a mismatch
+ * writes nothing and comes back as a warning for the human to decide on —
+ * the same soft refusal the CLI gives.
+ *
+ * `registerProject` is called here but NOT by the CLI's `install`, deliberately:
+ * the CLI registers at `automations create`, which is the only way a manifest
+ * reaches disk through it. A dashboard user can be looking at manifests that
+ * arrived over brain sync from a teammate, where nothing local ever registered
+ * this project — so the dispatcher would tick forever and never look here.
+ * Registration is idempotent and carries no execution rights of its own.
+ */
+export async function handleAutomationsDispatcherInstall(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const body = await parseJsonBody(req);
+    const force = body?.force === true;
+    const result = await installDispatcher({ force });
+
+    // `installed` is read off the same view the response embeds, so the flag can
+    // never contradict the state next to it — and it means "this will actually
+    // fire", not "some bytes were written". Two paths write files and still fire
+    // nothing: the soft mismatch refusal (writes nothing at all) and a
+    // `launchctl bootstrap` that failed after both files landed. Both must come
+    // back as NOT installed, with the reason in `warnings`.
+    const view = dispatcherView(result.check, contextRoot);
+    const installed = view.installed;
+    if (installed) registerProject(dirname(contextRoot));
+
+    // The notifier rides install for the same reason it does in the CLI:
+    // building a bundle means osacompile + codesign + lsregister, which has no
+    // business running while an automation is trying to finish. A failure is
+    // never fatal — runs fall back to a generic system icon and still notify.
+    let notifierBuilt = false;
+    let notifierReason: string | null = null;
+    if (installed) {
+      const built = buildNotifierApp();
+      notifierBuilt = built.built;
+      notifierReason = built.built ? null : built.reason;
+      if (built.built) {
+        // Prime macOS's permission prompt NOW, while a human is at the screen
+        // and has just clicked something. macOS does not error on an
+        // unauthorised notification — it files it away invisibly, so without
+        // this the first real failure of an unattended run is a notification
+        // that never appears and never explains itself.
+        notifyViaBundle('dreamcontext', 'Notifications are set up. Allow them if macOS just asked.', undefined, {
+          sound: NOTIFY_SOUND_OK,
+        });
+      }
+    }
+
+    sendJson(res, 200, {
+      installed,
+      method: result.method,
+      warnings: result.warnings,
+      notifier: { built: notifierBuilt, reason: notifierReason },
+      dispatcher: view,
+    });
+  } catch (err) {
+    if (err instanceof AutomationError) {
+      // Unsupported platform / unresolvable CLI — a refusal with a reason the
+      // user can act on, not a server fault.
+      sendError(res, 400, 'install_rejected', err.message);
+      return;
+    }
+    console.error('[automations] dispatcher install failed:', err);
+    sendError(res, 500, 'install_failed', 'Failed to install the automations dispatcher.');
+  }
+}
+
+/**
+ * POST /api/automations/dispatcher/uninstall — turn the scheduler back off.
+ * Boots the agent out and deletes the plist + wrapper; approvals, manifests and
+ * run history are all left untouched (uninstall removes the scheduler, not the
+ * automations), exactly as the CLI verb does.
+ */
+export async function handleAutomationsDispatcherUninstall(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const result = await uninstallDispatcher();
+    const notifier = removeNotifierApp();
+    sendJson(res, 200, {
+      bootedOut: result.bootedOut,
+      removedPlist: result.removedPlist,
+      removedWrapper: result.removedWrapper,
+      removedNotifier: notifier.removedBundle,
+      dispatcher: dispatcherView(await inspectDispatcher(), contextRoot),
+    });
+  } catch (err) {
+    if (err instanceof AutomationError) {
+      sendError(res, 400, 'uninstall_rejected', err.message);
+      return;
+    }
+    console.error('[automations] dispatcher uninstall failed:', err);
+    sendError(res, 500, 'uninstall_failed', 'Failed to remove the automations dispatcher.');
   }
 }

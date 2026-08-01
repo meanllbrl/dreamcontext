@@ -244,6 +244,108 @@ export function useRunAutomation() {
   });
 }
 
+/**
+ * The machine-local scheduler's state — mirrors `DispatcherView` in
+ * `src/server/routes/automations.ts`. Read-only; polled slowly so an install
+ * done from the CLI in another window shows up here without a refresh.
+ */
+export interface AutomationDispatcher {
+  supported: boolean;
+  platform: string;
+  /** Both files on disk AND booted into launchd — anything less never fires. */
+  installed: boolean;
+  /** Installed AND byte-current (a moved CLI leaves a stale wrapper behind). */
+  current: boolean;
+  bootstrapped: boolean;
+  plistPresent: boolean;
+  plistCurrent: boolean;
+  wrapperPresent: boolean;
+  wrapperCurrent: boolean;
+  mismatch: boolean;
+  resolvedBin: string | null;
+  runningBin: string | null;
+  logPath: string;
+  logSizeBytes: number;
+  /** Manifests can exist here (brain sync) with this project never registered. */
+  projectRegistered: boolean;
+  lastTickStartedAt: string | null;
+  lastTickCompletedAt: string | null;
+  notifier: { supported: boolean; present: boolean; current: boolean };
+}
+
+export interface DispatcherInstallResult {
+  installed: boolean;
+  method: 'bootstrap' | 'load' | 'none';
+  /** A resolution mismatch refuses SOFTLY: nothing written, reason in here. */
+  warnings: string[];
+  notifier: { built: boolean; reason: string | null };
+  dispatcher: AutomationDispatcher;
+}
+
+export function useAutomationDispatcher() {
+  return useQuery({
+    queryKey: ['automations-dispatcher'],
+    queryFn: () => api.get<{ dispatcher: AutomationDispatcher }>('/automations/dispatcher').then((r) => r.dispatcher),
+    // `launchctl print` is a subprocess per call — poll on the minute, not the
+    // second. Focus refetch covers "I just installed it from the CLI".
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+    retry: 0,
+  });
+}
+
+/**
+ * Turn the scheduler on for this machine — the dashboard half of
+ * `dreamcontext automations install`. `force` overrides a resolution mismatch,
+ * exactly as `--force` does; without it a mismatch writes nothing and comes
+ * back in `warnings` for the human to decide on.
+ *
+ * Installing the dispatcher does NOT make anything run: each automation still
+ * needs its own machine-local approval before the scheduler will execute it.
+ */
+export function useInstallDispatcher() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (opts: { force?: boolean } = {}) =>
+      api.post<DispatcherInstallResult>('/automations/dispatcher/install', { force: opts.force === true }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['automations-dispatcher'] });
+      queryClient.invalidateQueries({ queryKey: ['automations'] });
+    },
+  });
+}
+
+/** Turn the scheduler back off. Manifests, approvals and run history all stay. */
+export function useUninstallDispatcher() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ bootedOut: boolean; removedNotifier: boolean; dispatcher: AutomationDispatcher }>(
+        '/automations/dispatcher/uninstall',
+        {},
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['automations-dispatcher'] });
+      queryClient.invalidateQueries({ queryKey: ['automations'] });
+    },
+  });
+}
+
+/** Flip one automation's own `enabled` switch (CLI `automations enable|disable`).
+ *  Not approval-relevant: `enabled` is not a hashed field, so a toggle never
+ *  blocks an already-approved automation. */
+export function useSetAutomationEnabled() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slug, enabled }: { slug: string; enabled: boolean }) =>
+      api.post<{ automation: AutomationSummary }>(`/automations/${slug}/${enabled ? 'enable' : 'disable'}`, {}),
+    onSuccess: (_data, { slug }) => {
+      queryClient.invalidateQueries({ queryKey: ['automations'] });
+      queryClient.invalidateQueries({ queryKey: ['automations', slug] });
+    },
+  });
+}
+
 /** Approve the manifest as it currently stands (the same primitive the CLI's
  *  `approve -y` calls after the human reviews every hashed field in full —
  *  see `AutomationDetailPanel`, which renders that same review before this
