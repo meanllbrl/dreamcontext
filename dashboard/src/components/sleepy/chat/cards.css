@@ -143,13 +143,22 @@
   max-width: min(640px, 80%);
   position: relative;
 }
+
+/* Tinted surface, not a filled swatch. A solid --color-accent fill forces snow-on-violet,
+   which is the one text pairing in the app that fails to read at long-message length — the
+   user's own words end up the HARDEST thing in the transcript to re-read. So the bubble
+   borrows the sleep tracker's pill recipe (SleepDebtTracker.css): accent mixed a little
+   way into a surface for the fill, accent mixed further into the border for the edge, and
+   the ordinary primary text colour on top. Still unmistakably "mine, and violet" against
+   the ungutter'd assistant blocks, but now at full body-text contrast in both themes. */
 .chat-msg-user-bubble {
   align-self: flex-end;
   max-width: 100%;
   padding: var(--space-3) var(--space-5);
   border-radius: var(--radius-2xl);
-  background: var(--color-accent);
-  color: var(--color-accent-text);
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-tertiary));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  color: var(--color-text);
   font-size: var(--chat-text, var(--font-size-base));
   line-height: var(--line-height-normal);
   white-space: pre-wrap;
