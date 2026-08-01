@@ -1,7 +1,7 @@
 {
   "name": "dreamcontext",
   "version": "0.23.0",
-  "description": "dreamcontext — the persistent brain for your AI agents. Remembers what you built, knows how your project works.",
+  "description": "dreamcontext \u2014 the persistent brain for your AI agents. Remembers what you built, knows how your project works.",
   "type": "module",
   "bin": {
     "dreamcontext": "./dist/index.js"
@@ -36,7 +36,8 @@
     "verify:past-chats": "node scripts/verify/past-chats.mjs",
     "verify:past-chats-ui": "node scripts/verify/past-chats-ui.mjs",
     "diagrams": "node scripts/diagrams/build-all.mjs",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "verify:chat-toolrows": "node scripts/verify/chat-toolrows.mjs"
   },
   "keywords": [
     "ai",
