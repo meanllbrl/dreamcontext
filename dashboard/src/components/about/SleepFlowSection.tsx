@@ -3,13 +3,17 @@ import { FlowDiagram } from './FlowDiagram';
 import { SLEEP_FLOW_SPEC } from './flow-specs';
 import './SleepFlowSection.css';
 
-// Real debt thresholds from the sleep-consolidation feature: session score is
-// max(changeScore, toolScore); debt accumulates across sessions until reset.
+// Real debt thresholds from the sleep-consolidation feature: each session
+// scores 0–10 as a log-compressed WEIGHTED SUM over novel tokens, file changes,
+// tool calls and substance; debt accumulates across sessions until reset.
+// MUST mirror DEBT_DROWSY / DEBT_SLEEPY / DEBT_MUST_SLEEP in
+// src/lib/sleep-consolidation.ts — guarded by
+// tests/unit/dashboard-sleep-thresholds.test.ts.
 const DEBT_LEVELS: { level: string; range: string; note: string }[] = [
-  { level: 'Alert', range: '0–3', note: 'fresh — nothing to consolidate yet' },
-  { level: 'Drowsy', range: '4–6', note: 'consolidation offered' },
-  { level: 'Sleepy', range: '7–9', note: 'advisory note prepended' },
-  { level: 'Must Sleep', range: '10+', note: 'critical directive prepended' },
+  { level: 'Alert', range: '0–23', note: 'fresh — nothing to consolidate yet' },
+  { level: 'Drowsy', range: '24–39', note: 'consolidation offered' },
+  { level: 'Sleepy', range: '40–59', note: 'advisory note prepended' },
+  { level: 'Must Sleep', range: '60+', note: 'critical directive prepended' },
 ];
 
 // Each specialist owns a non-overlapping file domain and runs in parallel.
@@ -52,7 +56,9 @@ export function SleepFlowSection(): JSX.Element {
         <article className="sleepf-card sleepf-card--debt">
           <h3 className="sleepf-card-title">Debt accumulates across sessions</h3>
           <p className="sleepf-card-body">
-            Each session scores by how much changed; the score adds to a running debt total that
+            Each session scores 0–10 — a weighted blend of the tokens it burned, the files it
+            changed, the tools it ran and the substance of what it said, log-compressed so one
+            marathon session can't swamp the scale. Those scores add to a running debt total that
             crosses graduated thresholds, so consolidation urgency is never ambiguous.
           </p>
           <ul className="sleepf-debt">

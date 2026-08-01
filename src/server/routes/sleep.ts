@@ -1,5 +1,7 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { readSleepState, writeSleepState } from '../../cli/commands/sleep.js';
+import { effectiveDebt } from '../../lib/sleep-consolidation.js';
+import type { SleepState } from '../../lib/sleep-consolidation.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
@@ -7,6 +9,37 @@ import type { FieldChange } from '../change-tracker.js';
 /** Allowed recall modes — mirrors RECALL_MODES in src/cli/commands/sleep.ts. */
 const RECALL_MODES = ['haiku', 'raw', 'hybrid', 'off'] as const;
 type RecallMode = typeof RECALL_MODES[number];
+
+/** The persisted state plus the derived effective-debt trio the UI levels on. */
+export interface SleepStatePayload extends SleepState {
+  /** persisted + provisional — the value directives and the UI threshold on. */
+  effective_debt: number;
+  /** Estimated debt for sessions still awaiting analysis (score === null). */
+  provisional_debt: number;
+  /** How many sessions that estimate covers. */
+  pending_sessions: number;
+}
+
+/**
+ * Decorate the persisted state with the DERIVED effective debt that
+ * `getConsolidationDirective` already thresholds on, so the dashboard and the
+ * terminal cannot disagree. Claude Code flushes transcripts lazily: until a
+ * session's transcript lands, its score is `null` and it contributes ZERO to
+ * the persisted ledger, so a raw `debt` under-reads real work for hours.
+ *
+ * `debt` stays the exact persisted ledger — it is what PATCH writes and what
+ * `sleep done` resets. The provisional estimate is display-only and never
+ * written to disk (see effectiveDebt in src/lib/sleep-consolidation.ts).
+ */
+function withEffectiveDebt(state: SleepState): SleepStatePayload {
+  const eff = effectiveDebt(state);
+  return {
+    ...state,
+    effective_debt: eff.effective,
+    provisional_debt: eff.provisional,
+    pending_sessions: eff.pendingCount,
+  };
+}
 
 /**
  * GET /api/sleep - Get sleep state
@@ -18,7 +51,7 @@ export async function handleSleepGet(
   contextRoot: string,
 ): Promise<void> {
   const state = readSleepState(contextRoot);
-  sendJson(res, 200, state);
+  sendJson(res, 200, withEffectiveDebt(state));
 }
 
 /**
@@ -73,5 +106,5 @@ export async function handleSleepUpdate(
   }
 
   const updatedState = readSleepState(contextRoot);
-  sendJson(res, 200, updatedState);
+  sendJson(res, 200, withEffectiveDebt(updatedState));
 }

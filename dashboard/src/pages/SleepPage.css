@@ -130,6 +130,19 @@
   border-radius: var(--radius-full);
 }
 
+/* Provisional slice of the hero debt — the estimate covering sessions whose
+   transcript hasn't flushed yet. Deliberately muted against the cloud-count
+   pill: it is an estimate, not part of the persisted ledger. */
+.sleep-hero-provisional {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+  border: 1px dashed var(--color-border);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  cursor: help;
+}
+
 .sleep-hero-tagline {
   font-size: var(--font-size-base);
   line-height: var(--line-height-normal);

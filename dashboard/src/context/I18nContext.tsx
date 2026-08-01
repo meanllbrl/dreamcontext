@@ -108,6 +108,9 @@ const translations: Record<string, Record<string, string>> = {
     'priority.low': 'Low',
     'sleep.title': 'Sleep State',
     'sleep.debt': 'Debt',
+    'sleep.provisional': 'provisional',
+    'sleep.provisional.hint':
+      "Estimated debt for sessions whose transcript hasn't been written yet. It counts toward the level, but isn't in the persisted ledger until each session is scored.",
     'sleep.level': 'Level',
     'sleep.last_sleep': 'Last Sleep',
     'sleep.sessions': 'Sessions',

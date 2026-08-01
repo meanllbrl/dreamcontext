@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useI18n } from '../../context/I18nContext';
-import { useSleep, getSleepLevelKey, getSleepMood, SLEEP_DEBT_MAX } from '../../hooks/useSleep';
+import { useSleep, getSleepLevelKey, getSleepMood, displayDebt, SLEEP_DEBT_MAX } from '../../hooks/useSleep';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
 import { readAgentSettings, AGENT_SETTINGS_EVENT, type AgentSettings } from '../../lib/agentSettings';
 import {
@@ -87,7 +87,7 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
   // Nothing to show until the first fetch resolves — keep the header quiet.
   if (!sleep) return null;
 
-  const debt = Math.max(0, sleep.debt);
+  const debt = displayDebt(sleep);
   // A consolidation is live when the epoch is stamped (`sleep start`, cleared by
   // `sleep done`). That's the authoritative "sleep is active" signal.
   const sleeping = !!sleep.sleep_started_at;

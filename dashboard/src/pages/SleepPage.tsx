@@ -4,6 +4,7 @@ import {
   getSleepLevel,
   getSleepLevelKey,
   getSleepMood,
+  displayDebt,
   type SessionRecord,
   type DashboardChange,
 } from '../hooks/useSleep';
@@ -150,9 +151,13 @@ export function SleepPage() {
     return <div className="error-state">Failed to load sleep state. {error?.message}</div>;
   }
 
-  const level = getSleepLevel(sleep.debt);
-  const levelKey = getSleepLevelKey(sleep.debt);
-  const mood = getSleepMood(sleep.debt);
+  // Level on EFFECTIVE debt (persisted + provisional for un-flushed sessions),
+  // the same value the CLI's consolidation directives threshold on.
+  const debt = displayDebt(sleep);
+  const provisional = sleep.provisional_debt ?? 0;
+  const level = getSleepLevel(debt);
+  const levelKey = getSleepLevelKey(debt);
+  const mood = getSleepMood(debt);
 
   // Split the changelog: entries dated after the last sleep will fold into the
   // next consolidation (surfaced up front, before the history); the rest is the
@@ -194,9 +199,17 @@ export function SleepPage() {
             <div className="sleep-hero-headline">
               <span className="sleep-hero-level">{level}</span>
               <span className="sleep-hero-debt">
-                <span className="sleep-hero-debt-num">{sleep.debt}</span>
+                <span className="sleep-hero-debt-num">{debt}</span>
                 <span className="sleep-hero-debt-unit">{t('sleep.debt')}</span>
               </span>
+              {provisional > 0 && (
+                <span
+                  className="sleep-hero-provisional"
+                  title={t('sleep.provisional.hint')}
+                >
+                  +{provisional} {t('sleep.provisional')}
+                </span>
+              )}
               {cloudTotal > 0 && (
                 <span className="sleep-hero-cloud-count">
                   {cloudTotal} {cloudTotal === 1 ? t('sleep.cloud.item') : t('sleep.cloud.items')}
