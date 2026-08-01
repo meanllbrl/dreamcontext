@@ -1,0 +1,827 @@
+/**
+ * The Space launcher.
+ *
+ * One rotating frame holds everything positional: the sky SVG (rings, clouds,
+ * wires) and the project chips. A single `--spin` custom property, written by
+ * rAF on `.space-rotor`, drives both — so the sky and its bodies can never drift
+ * out of phase with each other the way two independent CSS animations would.
+ * Chips counter-rotate by the same amount, which keeps every label upright.
+ */
+
+.space {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background:
+    radial-gradient(120% 90% at 50% 45%, rgba(103, 65, 217, 0.16) 0%, rgba(10, 10, 18, 0) 62%),
+    radial-gradient(80% 60% at 12% 88%, rgba(56, 189, 248, 0.08) 0%, rgba(10, 10, 18, 0) 70%),
+    #08080f;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.space:active {
+  cursor: grabbing;
+}
+
+.space-status {
+  padding: var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.space-status--error {
+  color: #f87171;
+}
+
+/* ─── Stage: one shared scale for the sky and everything in it ─────────────── */
+
+.space-stage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  transform: scale(var(--zoom, 1));
+  transform-origin: center;
+  transition: transform 180ms ease-out;
+}
+
+.space-rotor {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+}
+
+.space-sky {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  overflow: visible;
+  pointer-events: none;
+  /* reset.css caps every svg at `max-width: 100%`, and this one's containing
+     block (.space-rotor) is a 0×0 anchor point — so the cap resolved to 0, the
+     box collapsed, and `translate(-50%)` shifted by nothing. The sky still
+     PAINTED (overflow is visible), just half a canvas to the right of the
+     projects it belongs to: clouds and wires silently off-screen while the DOM
+     said they were there. Opt out so the width attribute is honoured. */
+  max-width: none;
+}
+
+.space-rotating {
+  transform: rotate(var(--spin, 0deg));
+}
+
+/* Stars turn on their own clock — much slower than the sky, so depth reads as
+   parallax rather than as one rigid diorama. */
+.space-stars {
+  animation: space-star-drift 900s linear infinite;
+}
+
+@keyframes space-star-drift {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.space-ringline {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.045);
+  stroke-width: 1;
+}
+
+/* ─── Clouds ──────────────────────────────────────────────────────────────── */
+
+.space-cloud circle {
+  fill: hsl(var(--hue) 78% 62% / 0.13);
+  transition: fill 220ms ease;
+}
+
+.space-cloud.is-live circle {
+  fill: hsl(var(--hue) 82% 66% / 0.26);
+}
+
+/* ─── Wires ───────────────────────────────────────────────────────────────── */
+
+/* The clickable band around a wire. Wide on purpose: the drawn wire is ~2px and
+   sits on a rotating canvas, so aiming at the ink itself is a game of darts. The
+   band is invisible but generous, and `.is-hovered` thickens the VISIBLE wire so
+   you can see what you are about to hit. */
+.space-wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 40;
+  stroke-linecap: round;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.space-wire-group.is-hovered .space-wire {
+  stroke: #c9b8ff;
+  stroke-width: 3.4;
+}
+
+.space-wire {
+  fill: none;
+  pointer-events: none;
+  transition: stroke 200ms ease, opacity 200ms ease;
+}
+
+.space-wire.is-active {
+  stroke: rgba(139, 108, 246, 0.55);
+  stroke-width: 1.6;
+  stroke-dasharray: 5 7;
+  animation: space-flow 2.4s linear infinite;
+}
+
+.space-wire.is-inert {
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 1.2;
+  stroke-dasharray: 2 8;
+}
+
+.space-wire.is-lit {
+  stroke: rgba(167, 139, 250, 0.95);
+  stroke-width: 2.1;
+}
+
+.space-wire.is-focused {
+  stroke: #c9b8ff;
+  stroke-width: 2.6;
+}
+
+/* A wire that just came into existence draws attention to itself once. */
+.space-wire.is-fresh {
+  animation: space-wire-born 1s ease-out;
+}
+
+@keyframes space-wire-born {
+  0% {
+    stroke: #ffffff;
+    stroke-width: 5;
+  }
+  100% {
+    stroke: rgba(139, 108, 246, 0.55);
+    stroke-width: 1.6;
+  }
+}
+
+@keyframes space-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+/* ─── Bodies ──────────────────────────────────────────────────────────────── */
+
+/* A zero-size holder pinned at the centre, swung out to the body's polar spot.
+   Children inherit that rotated frame, so anything upright must cancel it. */
+.space-body {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform: rotate(calc(var(--a) + var(--spin, 0deg))) translateX(var(--r));
+}
+
+.space-chip {
+  position: absolute;
+  /* Above the satellite arms, so each tether looks like it comes OUT of the
+     chip instead of crossing over it. */
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  padding: 9px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(23, 23, 36, 0.92);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+  /* Anchor the transform at the element's TOP-LEFT. With the default centre
+     origin, the trailing `translate(-50%, -50%)` stops being a centering step and
+     becomes a spurious half-a-box shove — every chip then sits off its own ring
+     by half its width, which is invisible until something (a tether) is drawn to
+     it and misses. */
+  transform-origin: 0 0;
+  /* ORDER MATTERS: cancel the sky's rotation FIRST, then centre. Centering
+     before the rotation centres in the ROTATED frame, which slides the chip off
+     its own ring by an amount that grows with the chip's width — the reason a
+     long project name used to sit visibly inside its orbit. */
+  transform: rotate(calc(-1 * (var(--a) + var(--spin, 0deg)))) translate(-50%, -50%);
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease,
+    opacity 200ms ease;
+}
+
+.space-chip:hover,
+.space-chip:focus-visible {
+  border-color: rgba(167, 139, 250, 0.75);
+  background: rgba(33, 30, 54, 0.97);
+  box-shadow: 0 12px 34px rgba(103, 65, 217, 0.4);
+  outline: none;
+}
+
+/* Outer rings hold more, so their chips get quieter — the sky stays readable
+   as projects accumulate instead of turning into a wall of equal-weight pills. */
+.space-body.ring-2 .space-chip,
+.space-body.ring-3 .space-chip {
+  padding: 6px 11px;
+  font-size: var(--font-size-xs);
+  opacity: 0.82;
+}
+
+.space-body.ring-3 .space-chip {
+  opacity: 0.66;
+}
+
+.space-body.ring-2 .space-chip:hover,
+.space-body.ring-3 .space-chip:hover,
+.space-body.ring-2 .space-chip:focus-visible,
+.space-body.ring-3 .space-chip:focus-visible {
+  opacity: 1;
+}
+
+/* A selected project's satellites fan out over its neighbours' orbits, so the
+   whole body has to come forward — otherwise a nearby chip paints on top of the
+   satellite the user is reaching for. */
+.space-body.is-selected {
+  z-index: 5;
+}
+
+.space-body.is-selected .space-chip {
+  border-color: #a78bfa;
+  background: rgba(46, 38, 76, 0.98);
+  box-shadow: 0 0 0 4px rgba(167, 139, 250, 0.16), 0 14px 40px rgba(103, 65, 217, 0.5);
+  opacity: 1;
+}
+
+.space-body.is-kin .space-chip {
+  border-color: rgba(167, 139, 250, 0.45);
+}
+
+/* While one project is selected, its satellites fan across orbits that other
+   projects already occupy — an unavoidable consequence of a radial layout. Rather
+   than fight for space, the rest of the sky recedes: the satellites stay legible
+   over it, and the eye is left in no doubt which project is being acted on. Kin
+   fade less, because the cloud you belong to is part of what you're inspecting. */
+.space--focus .space-body:not(.is-selected) .space-chip {
+  opacity: 0.22;
+  box-shadow: none;
+}
+
+.space--focus .space-body.is-kin .space-chip {
+  opacity: 0.5;
+}
+
+/* Hovering a faded chip brings it back — the sky never becomes unreachable. */
+.space--focus .space-body:not(.is-selected) .space-chip:hover,
+.space--focus .space-body:not(.is-selected) .space-chip:focus-visible {
+  opacity: 1;
+}
+
+/* ─── Reaction pulses ─────────────────────────────────────────────────────── */
+
+/* A ripple off the chip whenever its world changed: a wire drawn (violet), a
+   wire cut (red), or the project itself newly registered (green). box-shadow is
+   the only safe thing to animate here — the chip's transform is already carrying
+   its orbital position, and touching it would fling the body across the sky. */
+.space-body.pulse-wire .space-chip {
+  animation: space-pulse-wire 1s ease-out;
+}
+
+.space-body.pulse-unwire .space-chip {
+  animation: space-pulse-unwire 1s ease-out;
+}
+
+.space-body.pulse-new .space-chip {
+  animation: space-pulse-new 1.1s ease-out;
+}
+
+@keyframes space-pulse-wire {
+  0% {
+    box-shadow: 0 0 0 0 rgba(167, 139, 250, 0.85), 0 10px 26px rgba(0, 0, 0, 0.5);
+  }
+  100% {
+    box-shadow: 0 0 0 30px rgba(167, 139, 250, 0), 0 10px 26px rgba(0, 0, 0, 0.5);
+  }
+}
+
+@keyframes space-pulse-unwire {
+  0% {
+    box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.7), 0 10px 26px rgba(0, 0, 0, 0.5);
+  }
+  100% {
+    box-shadow: 0 0 0 26px rgba(248, 113, 113, 0), 0 10px 26px rgba(0, 0, 0, 0.5);
+  }
+}
+
+@keyframes space-pulse-new {
+  0% {
+    box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.9), 0 10px 26px rgba(0, 0, 0, 0.5);
+  }
+  60% {
+    box-shadow: 0 0 0 22px rgba(74, 222, 128, 0.12), 0 10px 26px rgba(0, 0, 0, 0.5);
+  }
+  100% {
+    box-shadow: 0 0 0 34px rgba(74, 222, 128, 0), 0 10px 26px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* Search misses stay in place and fade — the sky must not reshuffle under the
+   user's eyes while they type. */
+.space-body.is-dim .space-chip {
+  opacity: 0.14;
+  pointer-events: none;
+  box-shadow: none;
+}
+
+.space-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.space-chip.status-ok .space-chip-dot {
+  background: #4ade80;
+  box-shadow: 0 0 10px rgba(74, 222, 128, 0.7);
+}
+
+.space-chip.status-stale .space-chip-dot {
+  background: #fbbf24;
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.7);
+}
+
+.space-chip.status-gone .space-chip-dot {
+  background: #f87171;
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.6);
+}
+
+.space-chip.status-gone .space-chip-name {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.space-chip-flag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+/* ─── The expanded card ───────────────────────────────────────────────────── */
+
+/* Selecting a project grows its pill into a card ON THE SPOT. The alternative —
+   a fan of satellites orbiting the pill — put the answers somewhere other than
+   the thing that was clicked, and no amount of tethering fully repaired that.
+   One object, two sizes. */
+.space-card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 296px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid #a78bfa;
+  background: rgba(20, 17, 34, 0.98);
+  color: var(--color-text);
+  text-align: left;
+  box-shadow: 0 0 0 4px rgba(167, 139, 250, 0.14), 0 24px 60px rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(10px);
+  cursor: default;
+  /* Same anchoring rule as the chip: cancel the sky's rotation FIRST, then
+     centre — see the note on .space-chip. */
+  transform-origin: 0 0;
+  transform: rotate(calc(-1 * (var(--a) + var(--spin, 0deg)))) translate(-50%, -50%)
+    translate(var(--card-dx, 0px), var(--card-dy, 0px));
+  animation: space-card-open 190ms cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+
+/* Grows from roughly pill-size, anchored on its own centre, so the card reads as
+   the chip opening rather than a panel appearing over it. */
+@keyframes space-card-open {
+  from {
+    opacity: 0;
+    box-shadow: none;
+    transform: rotate(calc(-1 * (var(--a) + var(--spin, 0deg)))) translate(-50%, -50%)
+      translate(var(--card-dx, 0px), var(--card-dy, 0px)) scale(0.55);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(calc(-1 * (var(--a) + var(--spin, 0deg)))) translate(-50%, -50%)
+      translate(var(--card-dx, 0px), var(--card-dy, 0px)) scale(1);
+  }
+}
+
+.space-card.status-ok .space-chip-dot {
+  background: #4ade80;
+  box-shadow: 0 0 10px rgba(74, 222, 128, 0.7);
+}
+
+.space-card.status-stale .space-chip-dot {
+  background: #fbbf24;
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.7);
+}
+
+.space-card.status-gone .space-chip-dot {
+  background: #f87171;
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.6);
+}
+
+.space-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.space-card-name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.space-card.status-gone .space-card-name {
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+
+.space-card-close {
+  margin-left: auto;
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.space-card-close:hover {
+  color: var(--color-text);
+}
+
+.space-card-path {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  word-break: break-all;
+}
+
+/* Facts: statements, never controls. No border, no hover, not focusable — the
+   card's buttons are the only things that look pressable. */
+.space-card-facts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.space-card-facts li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.35;
+}
+
+.space-card-glyph {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+.space-card.status-ok .space-card-facts li:first-child .space-card-glyph {
+  color: #4ade80;
+}
+
+.space-card.status-stale .space-card-facts li:first-child .space-card-glyph,
+.space-card.status-stale .space-card-facts li:first-child {
+  color: #fbbf24;
+}
+
+.space-card.status-gone .space-card-facts li:first-child .space-card-glyph,
+.space-card.status-gone .space-card-facts li:first-child {
+  color: #f87171;
+}
+
+.space-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: 2px;
+}
+
+/* ─── Core ────────────────────────────────────────────────────────────────── */
+
+.space-core {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px 12px;
+  border: none;
+  background: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.space-core-halo {
+  position: absolute;
+  left: 50%;
+  top: 56px;
+  width: 240px;
+  height: 240px;
+  margin: -120px 0 0 -120px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(139, 108, 246, 0.4) 0%, rgba(139, 108, 246, 0) 68%);
+  animation: space-breathe 6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.space-core:hover .space-core-label {
+  color: var(--color-text);
+}
+
+.space-core-label {
+  position: relative;
+  transition: color 160ms ease;
+}
+
+@keyframes space-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.75;
+  }
+  50% {
+    transform: scale(1.16);
+    opacity: 1;
+  }
+}
+
+/* ─── Rubber band ─────────────────────────────────────────────────────────── */
+
+.space-rubber {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.space-rubber line {
+  stroke: #a78bfa;
+  stroke-width: 2;
+  stroke-dasharray: 6 6;
+}
+
+.space-rubber circle {
+  fill: #a78bfa;
+}
+
+/* ─── HUD + cockpit ───────────────────────────────────────────────────────── */
+
+.space-hud {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  pointer-events: none;
+}
+
+.space-hud-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.space-hud-zoom {
+  display: flex;
+  gap: 4px;
+  pointer-events: auto;
+}
+
+.space-hud-zoom button {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(20, 20, 32, 0.8);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.space-hud-zoom button:hover {
+  border-color: rgba(167, 139, 250, 0.6);
+  color: var(--color-text);
+}
+
+.space-empty {
+  position: absolute;
+  left: 50%;
+  bottom: 22%;
+  transform: translateX(-50%);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.space-cockpit {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(640px, calc(100% - 2 * var(--space-4)));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(16, 16, 26, 0.96);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  cursor: default;
+  animation: space-cockpit-in 160ms ease-out both;
+}
+
+/* The cockpit docks opposite the selected project. Without this a body in the
+   lower half fans its satellites straight under a bottom-docked panel, which
+   then eats every click aimed at them. */
+.space-cockpit--bottom {
+  bottom: var(--space-4);
+}
+
+.space-cockpit--top {
+  top: var(--space-4);
+}
+
+@keyframes space-cockpit-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.space-cockpit-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+}
+
+.space-cockpit-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.space-cockpit-dot.status-ok {
+  background: #4ade80;
+}
+
+.space-cockpit-dot.status-stale {
+  background: #fbbf24;
+}
+
+.space-cockpit-dot.status-gone {
+  background: #f87171;
+}
+
+.space-cockpit-meta,
+.space-cockpit-arrow {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
+}
+
+.space-cockpit-close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.space-cockpit-close:hover {
+  color: var(--color-text);
+}
+
+.space-cockpit-path {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  word-break: break-all;
+}
+
+.space-cockpit-warn {
+  font-size: var(--font-size-xs);
+  color: #f87171;
+}
+
+.space-cockpit-warn--stale {
+  color: #d99a1c;
+}
+
+.space-cockpit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: 2px;
+}
+
+.space-btn {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.space-btn:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+}
+
+.space-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.space-btn--primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+.space-btn--update {
+  border-color: #d99a1c;
+  color: #d99a1c;
+}
+
+.space-btn--on {
+  border-color: #a78bfa;
+  color: #c9b8ff;
+}
+
+.space-btn--danger:hover:not(:disabled) {
+  border-color: #f87171;
+  color: #f87171;
+}
+
+/* Motion is decoration here: the sky's drift, the breathing halo, and the
+   satellite fade all stop, but every position and interaction is unchanged. */
+@media (prefers-reduced-motion: reduce) {
+  .space-stars,
+  .space-core-halo,
+  .space-wire.is-active,
+  .space-wire.is-fresh,
+  .space-body.pulse-wire .space-chip,
+  .space-body.pulse-unwire .space-chip,
+  .space-body.pulse-new .space-chip,
+  .space-card {
+    animation: none;
+  }
+
+  .space-stage {
+    transition: none;
+  }
+}

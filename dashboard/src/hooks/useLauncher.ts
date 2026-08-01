@@ -30,7 +30,7 @@ export interface RegisterPayload {
 /**
  * Every query key that feeds a launcher surface (cards, graph, federation, and
  * the per-project connections lists). Any mutation that adds a project, draws or
- * removes a wire, or flips the shareable gate must invalidate ALL of these so the
+ * or removes a wire must invalidate ALL of these so the
  * graph + lists refetch immediately — otherwise the new node/edge only appears
  * after an app restart.
  */
@@ -280,8 +280,13 @@ export interface VaultStatus {
   latestVersion: string;
   /** Folder exists AND setupVersion is behind latestVersion → YELLOW + Update. */
   needsUpdate: boolean;
-  /** Federation read gate — peers may recall this vault when true. */
-  shareable: boolean;
+  /**
+   * ISO timestamp of the last launcher-initiated open, or null when never opened
+   * (or registered before the field existed). The Space view turns this into
+   * orbital radius — never treat a null as "just now" or cold projects would
+   * jump to the centre.
+   */
+  lastOpenedAt: string | null;
 }
 
 interface StatusResponse {
@@ -290,7 +295,7 @@ interface StatusResponse {
 }
 
 /**
- * Per-project launcher status (exists / needs-update / shareable).
+ * Per-project launcher status (exists / needs-update).
  *
  * `enabled` lets always-mounted consumers (the ⌘P switcher, present in every
  * window) opt OUT of the background poll until they're actually shown — without
@@ -318,6 +323,65 @@ export function useUpdateProject() {
   });
 }
 
+/** Outcome of an `Update all` run: which projects updated, and which refused. */
+export interface UpdateAllResult {
+  updated: string[];
+  failed: { name: string; message: string }[];
+}
+
+/**
+ * Run `dreamcontext update` across several projects, ONE AT A TIME.
+ *
+ * Sequential on purpose: each update spawns a CLI process that writes skills and
+ * agents into a project, and firing ten of those at once turns a slow machine
+ * into a stalled one. A project that fails does not abort the rest — the caller
+ * gets the full picture and can retry just the stragglers.
+ *
+ * `onProgress` fires after each project so the button can count up instead of
+ * sitting on a spinner for a minute.
+ */
+export function useUpdateAllProjects() {
+  const queryClient = useQueryClient();
+  return useMutation<UpdateAllResult, Error, { names: string[]; onProgress?: (done: number) => void }>({
+    mutationFn: async ({ names, onProgress }) => {
+      const result: UpdateAllResult = { updated: [], failed: [] };
+      for (const name of names) {
+        try {
+          await api.post<{ ok: true; status: VaultStatus }>('/launcher/update', { name });
+          result.updated.push(name);
+        } catch (err) {
+          result.failed.push({ name, message: err instanceof Error ? err.message : String(err) });
+        }
+        onProgress?.(result.updated.length + result.failed.length);
+      }
+      return result;
+    },
+    onSettled: () => {
+      invalidateLauncher(queryClient);
+    },
+  });
+}
+
+/**
+ * Stamp a project as just-opened so the Space view can order by recency. Fire
+ * and forget: the open must never wait on (or fail because of) this write, so
+ * errors are swallowed and only the status query is refreshed.
+ */
+export function useTouchVault() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      api.post<{ ok: true; touched: boolean }>('/launcher/touch', { name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['launcher-status'] });
+      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+    },
+    onError: () => {
+      /* recency is decoration — never surface this */
+    },
+  });
+}
+
 /** Remove a (typically deleted) project from the global registry. */
 export function useUnregisterVault() {
   const queryClient = useQueryClient();
@@ -336,8 +400,6 @@ export function useUnregisterVault() {
 export interface FederationEdge {
   source: string;
   target: string;
-  /** Target has opted into being read (`shareable`); inert edge when false. */
-  active: boolean;
 }
 
 /** One vault's stored connection direction toward a peer (raw, for the graph). */
@@ -386,14 +448,3 @@ export function useRemoveLauncherConnection() {
   });
 }
 
-/** Flip a vault's `shareable` read gate from the launcher graph. */
-export function useToggleShareable() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: { name: string; shareable: boolean }) =>
-      api.post<{ ok: true }>('/launcher/shareable', payload),
-    onSuccess: () => {
-      invalidateLauncher(queryClient);
-    },
-  });
-}

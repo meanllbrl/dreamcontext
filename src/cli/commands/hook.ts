@@ -1856,7 +1856,7 @@ export function registerHookCommand(program: Command): void {
               }
 
               // ── Cross-vault LIVE READ (read-only federation) ──────────────
-              // When this vault has read connections (out/both) to shareable
+              // When this vault has read connections (out/both) to connected
               // peers, surface THEIR canonical docs at query time — a live
               // reference, never a copy. Zero added cost when there are no
               // connections: resolveConnectedVaults returns only the current

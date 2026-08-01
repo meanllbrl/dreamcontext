@@ -35,6 +35,7 @@ import {
   handleLauncherCapture,
   handleLauncherCaptureStatus,
   handleLauncherStatus,
+  handleLauncherTouch,
   handleLauncherUnregister,
   handleLauncherUpdate,
   handleLauncherUpgrade,
@@ -45,7 +46,6 @@ import {
   handleLauncherConnectionRemove,
   handleLauncherSyncCreate,
   handleLauncherSyncRemove,
-  handleLauncherShareable,
   handleLauncherGithubRepos,
   handleLauncherClone,
   handleLauncherCloneStatus,
@@ -307,6 +307,7 @@ export function buildRouter(): Router {
   // Launcher project status (green/yellow/red) + per-project update + the
   // cross-vault federation "reads" graph (nodes, edges, connect/disconnect).
   router.get('/api/launcher/status', handleLauncherStatus);
+  router.post('/api/launcher/touch', handleLauncherTouch);
   router.post('/api/launcher/unregister', handleLauncherUnregister);
   router.post('/api/launcher/update', handleLauncherUpdate);
   router.post('/api/launcher/upgrade', handleLauncherUpgrade);
@@ -317,7 +318,6 @@ export function buildRouter(): Router {
   router.post('/api/launcher/connection/remove', handleLauncherConnectionRemove);
   router.post('/api/launcher/sync', handleLauncherSyncCreate);
   router.post('/api/launcher/sync/remove', handleLauncherSyncRemove);
-  router.post('/api/launcher/shareable', handleLauncherShareable);
   router.get('/api/launcher/github/repos', handleLauncherGithubRepos);
   router.post('/api/launcher/clone', handleLauncherClone);
   router.get('/api/launcher/clone/status', handleLauncherCloneStatus);

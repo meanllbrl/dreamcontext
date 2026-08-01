@@ -12,7 +12,7 @@ import { header, success, info, warn } from '../../lib/format.js';
 
 /**
  * Federation is READ-ONLY (live reference). A connection means "this vault may
- * READ a shareable peer's CANONICAL docs at recall time" — nothing is ever
+ * READ a connected peer's CANONICAL docs at recall time" — nothing is ever
  * copied across a vault boundary. The copy-based digest path (`sync` push +
  * `drain` ingest) is PARKED on the roadmap pending a redesign: it produced
  * lossy, write-once-stale duplicates that broke single-source-of-truth. The
@@ -70,7 +70,7 @@ export function registerFederationCommand(program: Command): void {
       if (peers.length === 0) {
         info(
           chalk.dim(
-            'No readable peers (need an out/both connection to a shareable vault). ' +
+            'No readable peers (need an out/both connection to a registered vault). ' +
               'Connect with `dreamcontext connect <vault> --direction out`.',
           ),
         );

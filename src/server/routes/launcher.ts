@@ -11,6 +11,7 @@ import {
   listVaults,
   removeVault,
   resolveVaultContextRoot,
+  touchVault,
   VaultError,
   type Vault,
 } from '../../lib/vaults.js';
@@ -1375,28 +1376,38 @@ export interface VaultStatus {
   latestVersion: string;
   /** True iff the folder exists AND setupVersion is behind latestVersion. */
   needsUpdate: boolean;
-  /** Federation read gate — whether peers may recall this vault's corpus. */
-  shareable: boolean;
+  /**
+   * ISO timestamp of the last launcher-initiated open, or null when the project
+   * has never been opened from the launcher (or predates the field). The Space
+   * view maps this onto orbital radius — recent projects sit near the centre.
+   */
+  lastOpenedAt: string | null;
 }
 
 /** Compute one vault's launcher status (pure-ish: reads disk, never throws). */
 function computeVaultStatus(v: Vault, latest: string): VaultStatus {
   const exists = existsSync(resolve(v.path));
   let setupVersion = '0.0.0';
-  let shareable = false;
   if (exists) {
     try {
       const cfg = readSetupConfig(resolve(v.path));
       if (cfg) {
         setupVersion = cfg.setupVersion || '0.0.0';
-        shareable = cfg.shareable === true;
       }
     } catch {
       /* leave defaults — a project we can't read is treated as up-to-date */
     }
   }
   const needsUpdate = exists && compareVersions(setupVersion, latest) < 0;
-  return { name: v.name, path: v.path, exists, setupVersion, latestVersion: latest, needsUpdate, shareable };
+  return {
+    name: v.name,
+    path: v.path,
+    exists,
+    setupVersion,
+    latestVersion: latest,
+    needsUpdate,
+    lastOpenedAt: typeof v.lastOpenedAt === 'string' ? v.lastOpenedAt : null,
+  };
 }
 
 /**
@@ -1414,6 +1425,33 @@ export async function handleLauncherStatus(
   const latest = dreamcontextVersion();
   const vaults = listVaults().map((v) => computeVaultStatus(v, latest));
   sendJson(res, 200, { vaults, latestVersion: latest });
+}
+
+/**
+ * POST /api/launcher/touch — stamp `lastOpenedAt` on a vault. The Space launcher
+ * fires this when it opens a project window, so orbital radius (recency) reflects
+ * real use. Mutation; behind the CSRF guard. STRICT-PICK: only `name` is read.
+ * An unknown name is NOT an error — recency is decoration, and failing the open
+ * flow over a bookkeeping write would be a bad trade.
+ */
+export async function handleLauncherTouch(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) {
+    sendError(res, 400, 'invalid_name', 'name must be a non-empty string.');
+    return;
+  }
+  const touched = touchVault(name);
+  sendJson(res, 200, { ok: true, touched });
 }
 
 /**
@@ -1480,7 +1518,23 @@ export async function handleLauncherUpdate(
   try {
     await defaultCliRunner(['update'], target);
     const latest = dreamcontextVersion();
-    sendJson(res, 200, { ok: true, status: computeVaultStatus(vault, latest) });
+    const status = computeVaultStatus(vault, latest);
+    // VERIFY, don't assume. `dreamcontext update` prints "No installed platforms
+    // found" and still exits 0 (tracked separately), so a zero exit code is not
+    // evidence that anything happened. Without this check the launcher reports
+    // success, the dot stays yellow, and "Update all" claims to have fixed
+    // projects it never touched.
+    if (status.needsUpdate) {
+      sendError(
+        res,
+        500,
+        'update_incomplete',
+        `Update ran but "${name}" is still on v${status.setupVersion} (expected v${latest}). ` +
+          'The project may have no installed agent platform — run `dreamcontext install-skill` in it.',
+      );
+      return;
+    }
+    sendJson(res, 200, { ok: true, status });
   } catch (err) {
     console.error('[launcher] update failed:', err);
     const detail = err instanceof Error ? err.message : 'unknown error';
@@ -1672,16 +1726,14 @@ export async function handleLauncherRelaunch(
 // "reads" edges between them. A directed edge A→B means "A reads B" — A's
 // `--connected` recall reaches into B's corpus. Per the federation model
 // (federation-recall.ts), that holds iff A's connection to B has direction
-// `out` or `both` AND B is `shareable`. We surface BOTH the edge and the
-// shareable state so the UI can flag a reads-edge whose target hasn't opted in.
+// `out` or `both`. Drawing the wire IS the consent — there is no second opt-in
+// on the target, so every edge the graph reports is a live one.
 
 export interface FederationEdge {
   /** Reader vault name (the source of the "reads" arrow). */
   source: string;
   /** Source vault that is read. */
   target: string;
-  /** True when the target vault has opted into being read (`shareable`). */
-  active: boolean;
 }
 
 /**
@@ -1699,12 +1751,11 @@ export async function handleLauncherFederationGraph(
   const latest = dreamcontextVersion();
   const vaults = listVaults();
   const nodes = vaults.map((v) => computeVaultStatus(v, latest));
-  const shareableByName = new Map(nodes.map((n) => [n.name, n.shareable]));
   const known = new Set(vaults.map((v) => v.name));
 
   const edges: FederationEdge[] = [];
   // Raw per-vault directions so the frontend can derive BOTH the live-read wires
-  // (out/both + target shareable) and the digest-sync wires ("to listens to from"
+  // (out/both) and the digest-sync wires ("to listens to from"
   // = from out/both->to AND to in/both->from).
   const connections: { from: string; to: string; direction: ConnectionDirection }[] = [];
   const seen = new Set<string>();
@@ -1720,7 +1771,7 @@ export async function handleLauncherFederationGraph(
       const key = `${v.name} ${c.vault}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      edges.push({ source: v.name, target: c.vault, active: shareableByName.get(c.vault) === true });
+      edges.push({ source: v.name, target: c.vault });
     }
   }
 
@@ -1927,45 +1978,3 @@ export async function handleLauncherSyncRemove(
   sendJson(res, 200, { ok: true });
 }
 
-/**
- * POST /api/launcher/shareable — flip a vault's federation read gate so peers may
- * (or may not) recall its corpus. Mutation; behind the CSRF guard. STRICT-PICK:
- * `name` + boolean `shareable`. Lets the user enable sharing on a reads-edge's
- * target directly from the launcher graph (otherwise the edge is inert). Private
- * by default stays intact — this only changes the named vault on explicit action.
- */
-export async function handleLauncherShareable(
-  req: IncomingMessage,
-  res: ServerResponse,
-  _params: Record<string, string>,
-  _contextRoot: string | null,
-): Promise<void> {
-  const body = await parseJsonBody(req);
-  if (!body) {
-    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
-    return;
-  }
-  const name = typeof body.name === 'string' ? body.name.trim() : '';
-  const shareable = body.shareable === true;
-  if (!name) {
-    sendError(res, 400, 'invalid_name', 'name must be a non-empty string.');
-    return;
-  }
-  const vault = listVaults().find((v) => v.name === name);
-  if (!vault) {
-    sendError(res, 400, 'unknown_vault', `No registered vault named "${name}".`);
-    return;
-  }
-  const root = resolve(vault.path);
-  if (!existsSync(root)) {
-    sendError(res, 400, 'missing_vault', `Vault path no longer exists: ${root}`);
-    return;
-  }
-  try {
-    updateSetupConfig(root, { shareable });
-    sendJson(res, 200, { ok: true, name, shareable });
-  } catch (err) {
-    console.error('[launcher] shareable toggle failed:', err);
-    sendError(res, 500, 'shareable_failed', 'Failed to update sharing.');
-  }
-}

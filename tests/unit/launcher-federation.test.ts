@@ -11,7 +11,6 @@ import {
   handleLauncherFederationGraph,
   handleLauncherConnectionCreate,
   handleLauncherConnectionRemove,
-  handleLauncherShareable,
 } from '../../src/server/routes/launcher.js';
 import {
   handleBrainSettingsGet,
@@ -50,13 +49,12 @@ let base: string;
 let originalHome: string | undefined;
 
 /** Create a registered vault with a setup config, return its project root. */
-function makeVault(name: string, opts?: { setupVersion?: string; shareable?: boolean }): string {
+function makeVault(name: string, opts?: { setupVersion?: string }): string {
   const projectRoot = join(base, name);
   mkdirSync(join(projectRoot, '_dream_context', 'state'), { recursive: true });
   addVault(name, projectRoot);
   updateSetupConfig(projectRoot, {
     setupVersion: opts?.setupVersion ?? dreamcontextVersion(),
-    shareable: opts?.shareable ?? false,
   });
   return projectRoot;
 }
@@ -148,7 +146,7 @@ describe('POST /api/launcher/update', () => {
 describe('federation graph', () => {
   it('aggregates out/both connections into directed reads-edges', async () => {
     makeVault('a');
-    makeVault('b', { shareable: true });
+    makeVault('b');
     // a reads b.
     await handleLauncherConnectionCreate(
       makeReq('POST', { from: 'a', to: 'b' }), makeRes().res, {}, null,
@@ -163,23 +161,13 @@ describe('federation graph', () => {
     await handleLauncherFederationGraph(makeReq('GET'), res, {}, null);
     expect(status()).toBe(200);
     expect(body().nodes.map((n: any) => n.name).sort()).toEqual(['a', 'b']);
-    expect(body().edges).toEqual([{ source: 'a', target: 'b', active: true }]);
+    expect(body().edges).toEqual([{ source: 'a', target: 'b' }]);
   });
 
-  it('marks an edge inactive when the target is not shareable', async () => {
-    makeVault('a');
-    makeVault('b', { shareable: false });
-    await handleLauncherConnectionCreate(
-      makeReq('POST', { from: 'a', to: 'b' }), makeRes().res, {}, null,
-    );
-    const { res, body } = makeRes();
-    await handleLauncherFederationGraph(makeReq('GET'), res, {}, null);
-    expect(body().edges[0].active).toBe(false);
-  });
 
   it('removes a connection', async () => {
     makeVault('a');
-    makeVault('b', { shareable: true });
+    makeVault('b');
     await handleLauncherConnectionCreate(
       makeReq('POST', { from: 'a', to: 'b' }), makeRes().res, {}, null,
     );
@@ -199,18 +187,7 @@ describe('federation graph', () => {
   });
 });
 
-// ─── Shareable toggle ───────────────────────────────────────────────────────────
 
-describe('POST /api/launcher/shareable', () => {
-  it('flips the read gate in the project config', async () => {
-    const root = makeVault('p', { shareable: false });
-    const { res, status, body } = makeRes();
-    await handleLauncherShareable(makeReq('POST', { name: 'p', shareable: true }), res, {}, null);
-    expect(status()).toBe(200);
-    expect(body().shareable).toBe(true);
-    expect(readSetupConfig(root)?.shareable).toBe(true);
-  });
-});
 
 // ─── Brain settings persistence ─────────────────────────────────────────────────
 

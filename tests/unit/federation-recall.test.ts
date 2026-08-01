@@ -32,11 +32,11 @@ const BASE: SetupConfig = {
 function makeVault(
   base: string,
   name: string,
-  opts: { shareable?: boolean; home: string },
+  opts: { home: string },
 ): string {
   const projectRoot = join(base, name);
   mkdirSync(join(projectRoot, '_dream_context', 'knowledge'), { recursive: true });
-  writeSetupConfig(projectRoot, { ...BASE, shareable: opts.shareable });
+  writeSetupConfig(projectRoot, { ...BASE });
   addVault(name, projectRoot, opts.home);
   return projectRoot;
 }
@@ -78,8 +78,8 @@ describe('crossVaultRecall (federation P1.2/P1.3)', () => {
   });
 
   it('namespaces hits <vault>::<type>/<slug> and does not collide on a shared slug (P1.3)', () => {
-    const cur = makeVault(base, 'cur', { home, shareable: false });
-    const peer = makeVault(base, 'peer', { home, shareable: true });
+    const cur = makeVault(base, 'cur', { home });
+    const peer = makeVault(base, 'peer', { home });
     // SAME slug in both vaults — must produce two distinct namespaced keys.
     writeKnowledge(cur, 'auth-design', 'shared widget authentication design notes');
     writeKnowledge(peer, 'auth-design', 'shared widget authentication design notes');
@@ -97,29 +97,31 @@ describe('crossVaultRecall (federation P1.2/P1.3)', () => {
     expect(new Set(keys).size).toBe(2);
   });
 
-  it('silently excludes a non-shareable peer (no warning)', () => {
-    const cur = makeVault(base, 'cur', { home, shareable: false });
-    const priv = makeVault(base, 'priv', { home, shareable: false });
+  it('reads every targeted peer — there is no second opt-in to withhold one', () => {
+    // The retired `shareable` flag used to make this peer silently return
+    // nothing. A peer reaches this function only because the caller wired it up,
+    // so being targeted IS the grant.
+    const cur = makeVault(base, 'cur', { home });
+    const peer = makeVault(base, 'peer', { home });
     writeKnowledge(cur, 'cur-doc', 'caching strategy notes for the gateway');
-    writeKnowledge(priv, 'priv-doc', 'caching strategy notes for the gateway');
+    writeKnowledge(peer, 'peer-doc', 'caching strategy notes for the gateway');
 
     const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { hits, skipped } = crossVaultRecall('caching strategy gateway', {
-      vaults: [{ name: 'cur', current: true }, { name: 'priv' }],
+      vaults: [{ name: 'cur', current: true }, { name: 'peer' }],
       home,
       topK: 10,
     });
 
     const vaults = hits.map((h) => h.vault);
     expect(vaults).toContain('cur');
-    expect(vaults).not.toContain('priv'); // non-shareable peer excluded
-    expect(skipped).toEqual([]); // exclusion is NOT a skip
-    expect(warn).not.toHaveBeenCalled(); // silent — privacy is the default, not an error
+    expect(vaults).toContain('peer');
+    expect(skipped).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
   });
 
-  it('ALWAYS includes the current vault regardless of its own shareable flag', () => {
-    // Current vault is NOT shareable, yet its own docs must still be searched.
-    const cur = makeVault(base, 'cur', { home, shareable: false });
+  it('ALWAYS includes the current vault', () => {
+    const cur = makeVault(base, 'cur', { home });
     writeKnowledge(cur, 'local-secret', 'private internal deployment runbook');
 
     const { hits } = crossVaultRecall('deployment runbook internal', {
@@ -132,8 +134,8 @@ describe('crossVaultRecall (federation P1.2/P1.3)', () => {
   });
 
   it('skips a stale peer (resolution fails) without throwing, warning once, others continue', () => {
-    const cur = makeVault(base, 'cur', { home, shareable: false });
-    const peer = makeVault(base, 'gone', { home, shareable: true });
+    const cur = makeVault(base, 'cur', { home });
+    const peer = makeVault(base, 'gone', { home });
     writeKnowledge(cur, 'cur-doc', 'rate limiting middleware design');
     writeKnowledge(peer, 'peer-doc', 'rate limiting middleware design');
 
@@ -154,8 +156,8 @@ describe('crossVaultRecall (federation P1.2/P1.3)', () => {
   });
 
   it('excludes federated:true docs from cross-vault serving (transitive-leak guard)', () => {
-    const cur = makeVault(base, 'cur', { home, shareable: false });
-    const peer = makeVault(base, 'peer', { home, shareable: true });
+    const cur = makeVault(base, 'cur', { home });
+    const peer = makeVault(base, 'peer', { home });
     // The peer has a NATIVE doc and an INGESTED-from-elsewhere doc on the same topic.
     writeKnowledge(peer, 'native', 'observability tracing pipeline native to peer');
     writeKnowledge(peer, 'ingested', 'observability tracing pipeline ingested from a third vault', {
@@ -175,8 +177,8 @@ describe('crossVaultRecall (federation P1.2/P1.3)', () => {
   });
 
   it('serves the CURRENT vault\'s automations but never a peer\'s', () => {
-    const cur = makeVault(base, 'cur', { home, shareable: false });
-    const peer = makeVault(base, 'peer', { home, shareable: true });
+    const cur = makeVault(base, 'cur', { home });
+    const peer = makeVault(base, 'peer', { home });
     writeAutomation(cur, 'my-digest', 'nightly paddle revenue digest run');
     writeAutomation(peer, 'their-digest', 'nightly paddle revenue digest run');
 
@@ -196,8 +198,8 @@ describe('crossVaultRecall (federation P1.2/P1.3)', () => {
   });
 
   it('honours minLevel across vaults', () => {
-    const cur = makeVault(base, 'cur', { home, shareable: false });
-    const peer = makeVault(base, 'peer', { home, shareable: true });
+    const cur = makeVault(base, 'cur', { home });
+    const peer = makeVault(base, 'peer', { home });
     writeKnowledge(cur, 'cur-pinned', 'kubernetes ingress rollout notes', { pinned: true });
     writeKnowledge(cur, 'cur-plain', 'kubernetes ingress rollout notes');
     writeKnowledge(peer, 'peer-pinned', 'kubernetes ingress rollout notes', { pinned: true });
@@ -213,21 +215,20 @@ describe('crossVaultRecall (federation P1.2/P1.3)', () => {
     expect(hits.map((h) => h.doc.slug).sort()).toEqual(['cur-pinned', 'peer-pinned']);
   });
 
-  it('resolveAllShareableVaults spans current + shareable peers only', () => {
-    makeVault(base, 'cur', { home, shareable: false });
-    makeVault(base, 'open', { home, shareable: true });
-    makeVault(base, 'closed', { home, shareable: false });
+  it('resolveAllShareableVaults spans the current vault + EVERY registered vault', () => {
+    makeVault(base, 'cur', { home });
+    makeVault(base, 'one', { home });
+    makeVault(base, 'two', { home });
 
     const current: CrossVaultTarget = { name: 'cur', current: true };
-    const targets = resolveAllShareableVaults(current, home);
-    const names = targets.map((t) => t.name).sort();
-    expect(names).toContain('cur');
-    expect(names).toContain('open');
-    expect(names).not.toContain('closed'); // non-shareable peer not even attempted
+    const names = resolveAllShareableVaults(current, home).map((t) => t.name).sort();
+    // `--all-vaults` is an explicit flag: it means all of them, with no hidden
+    // per-vault opt-in deciding which ones actually answer.
+    expect(names).toEqual(['cur', 'one', 'two']);
   });
 
   it('currentVaultTarget resolves a registered current vault by name', () => {
-    const cur = makeVault(base, 'cur', { home, shareable: false });
+    const cur = makeVault(base, 'cur', { home });
     const { name, target } = currentVaultTarget(cur, home);
     expect(name).toBe('cur');
     expect(target.current).toBe(true);
@@ -253,10 +254,10 @@ describe('resolveConnectedVaults (federation P2)', () => {
   const ctx = (projectRoot: string): string => join(projectRoot, '_dream_context');
   const current: CrossVaultTarget = { name: 'cur', current: true };
 
-  it('spans out/both connections intersected with shareable, current first', () => {
-    const cur = makeVault(base, 'cur', { home, shareable: false });
-    makeVault(base, 'outPeer', { home, shareable: true });
-    makeVault(base, 'bothPeer', { home, shareable: true });
+  it('spans out/both connections, current first', () => {
+    const cur = makeVault(base, 'cur', { home });
+    makeVault(base, 'outPeer', { home });
+    makeVault(base, 'bothPeer', { home });
     addConnection(ctx(cur), 'cur', 'outPeer', 'out', null, home);
     addConnection(ctx(cur), 'cur', 'bothPeer', 'both', null, home);
 
@@ -268,8 +269,8 @@ describe('resolveConnectedVaults (federation P2)', () => {
   });
 
   it('excludes an in-only connection (this vault does not reach across it)', () => {
-    const cur = makeVault(base, 'cur', { home, shareable: false });
-    makeVault(base, 'inPeer', { home, shareable: true });
+    const cur = makeVault(base, 'cur', { home });
+    makeVault(base, 'inPeer', { home });
     addConnection(ctx(cur), 'cur', 'inPeer', 'in', null, home);
 
     const names = resolveConnectedVaults(current, ctx(cur), home).map((t) => t.name);
@@ -277,18 +278,20 @@ describe('resolveConnectedVaults (federation P2)', () => {
     expect(names).toEqual(['cur']);
   });
 
-  it('excludes an out connection to a NON-shareable peer (∩ shareable)', () => {
-    const cur = makeVault(base, 'cur', { home, shareable: false });
-    makeVault(base, 'closed', { home, shareable: false });
-    addConnection(ctx(cur), 'cur', 'closed', 'both', null, home);
+  it('INCLUDES every out/both peer — drawing the connection is the grant', () => {
+    // This is the inverse of the retired `shareable` gate: a peer you connected
+    // to can no longer be wired-but-silent.
+    const cur = makeVault(base, 'cur', { home });
+    makeVault(base, 'peer', { home });
+    addConnection(ctx(cur), 'cur', 'peer', 'both', null, home);
 
     const names = resolveConnectedVaults(current, ctx(cur), home).map((t) => t.name);
-    expect(names).not.toContain('closed');
+    expect(names).toContain('peer');
   });
 
-  it('excludes a stale connection even when out/both and shareable', () => {
-    const cur = makeVault(base, 'cur', { home, shareable: false });
-    makeVault(base, 'dead', { home, shareable: true });
+  it('excludes a stale connection even when out/both', () => {
+    const cur = makeVault(base, 'cur', { home });
+    makeVault(base, 'dead', { home });
     addConnection(ctx(cur), 'cur', 'dead', 'both', null, home);
     markStale(ctx(cur), 'dead');
 
@@ -297,7 +300,7 @@ describe('resolveConnectedVaults (federation P2)', () => {
   });
 
   it('degenerates to current-only with no connections', () => {
-    const cur = makeVault(base, 'cur', { home, shareable: false });
+    const cur = makeVault(base, 'cur', { home });
     expect(resolveConnectedVaults(current, ctx(cur), home).map((t) => t.name)).toEqual(['cur']);
   });
 });

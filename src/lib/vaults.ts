@@ -7,6 +7,13 @@ import { homedir } from 'node:os';
 export interface Vault {
   name: string;
   path: string; // resolved absolute path
+  /**
+   * ISO timestamp of the last time this vault's window was opened from the
+   * launcher. Absent for projects registered before this field existed (and for
+   * ones never opened) — consumers must treat "missing" as "coldest", never as
+   * "now". The Space launcher reads it to place recent projects near the centre.
+   */
+  lastOpenedAt?: string;
 }
 
 export interface VaultRegistry {
@@ -116,6 +123,30 @@ export function addVault(name: string, dirPath: string, home?: string): Vault {
   writeRegistry(filePath, registry);
 
   return vault;
+}
+
+// ─── Touch ────────────────────────────────────────────────────────────────────
+
+/**
+ * Stamp `lastOpenedAt` on a vault — called when its window is opened from the
+ * launcher, so the Space view can order projects by recency (recent = near the
+ * centre). Idempotent and forgiving: an unknown name is a no-op returning false,
+ * and a write failure is swallowed (recency is decoration, never a blocker).
+ */
+export function touchVault(name: string, home?: string, now: Date = new Date()): boolean {
+  const existing = listVaults(home);
+  const index = existing.findIndex((v) => v.name === name);
+  if (index === -1) return false;
+
+  const updated = existing.map((v, i) =>
+    i === index ? { ...v, lastOpenedAt: now.toISOString() } : v,
+  );
+  try {
+    writeRegistry(vaultsFilePath(home), { vaults: updated });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ─── Resolve ──────────────────────────────────────────────────────────────────

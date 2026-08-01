@@ -20,28 +20,20 @@ import './ConnectionsManager.css';
 const DIRECTIONS: ConnectionDirection[] = ['out', 'in', 'both'];
 
 interface ConnectionsManagerProps {
-  /** Current `shareable` value from the loaded config (default false). */
-  shareable: boolean;
-  /** Persist the shareable flag via PATCH /api/config. */
-  onToggleShareable: (next: boolean) => void;
   /** True while the config PATCH is in flight (disables the switch). */
-  shareablePending: boolean;
 }
 
 /**
  * Federation Connections control plane (P2.3). Lists registered vaults with the
  * current one highlighted, an add-connection form, and per-connection controls:
  * a 3-way direction toggle, an editable topic filter, and a remove button. The
- * `shareable` switch flips the cross-vault READ gate via PATCH /api/config.
+ * Connecting to a peer IS the read grant — there is no separate gate to flip.
  *
  * NOTE FOR PHASE 3: the inbox view (GET /api/federation/inbox) and the
  * "Preview sync" button (POST /api/federation/sync, dry-run) attach BELOW the
  * connections list — see the marked placeholder near the end of the render.
  */
 export function ConnectionsManager({
-  shareable,
-  onToggleShareable,
-  shareablePending,
 }: ConnectionsManagerProps) {
   const { t } = useI18n();
   const { data: vaultsData } = useVaults();
@@ -100,20 +92,8 @@ export function ConnectionsManager({
 
   return (
     <section className="settings-section">
-      {/* Lean header: title + the one key control (this project's read gate) on
-          a single row, so the map can lead immediately below. */}
       <div className="fed-head">
         <h2 className="settings-section-title">{t('settings.federation')}</h2>
-        <label className="fed-sharing-toggle settings-checkbox-label" title={t('federation.shareable.hint')}>
-          <input
-            type="checkbox"
-            className="settings-checkbox"
-            checked={shareable}
-            disabled={shareablePending}
-            onChange={(e) => onToggleShareable(e.target.checked)}
-          />
-          <span>{t('federation.shareable.label')}</span>
-        </label>
       </div>
 
       {/* Interactive connection map — the panel's primary surface (same board as

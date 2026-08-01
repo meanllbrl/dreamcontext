@@ -48,10 +48,10 @@ export interface SetupConfig {
    */
   peopleIdentity?: Record<string, PersonIdentity>;
   /**
-   * Cross-project federation read gate (issue #25). When true, peer vaults may
-   * pull this vault's corpus into a cross-vault recall. Default FALSE (private
-   * by default): absent / legacy / migrated configs are NOT shareable until the
-   * owner opts in. Gates READS only — never required to read a shareable peer.
+   * @deprecated RETIRED — nothing reads this. The federation read gate is now the
+   * CONNECTION itself: if A is wired to B, A can read B. Parsed and round-tripped
+   * only so an existing `.config.json` is not silently rewritten without a key it
+   * still carries; no code branches on it.
    */
   shareable?: boolean;
   /** Cloud collaboration for the brain repo (github-cloud-collaboration-brain-repo-sync). */
@@ -315,8 +315,7 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
       clickup: sanitizeClickUp(parsed.clickup),
       github: sanitizeGitHub(parsed.github),
       peopleIdentity: sanitizePeopleIdentity(parsed.peopleIdentity),
-      // Federation read gate (issue #25). Absent / non-boolean ⇒ undefined,
-      // which `isShareable` treats as private (the default-false invariant).
+      // Retired flag, preserved verbatim so a rewrite never drops it silently.
       shareable: typeof parsed.shareable === 'boolean' ? parsed.shareable : undefined,
       brainRepo: sanitizeBrainRepo(parsed.brainRepo),
       linkedRepos: sanitizeLinkedRepos(parsed.linkedRepos),

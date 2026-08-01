@@ -2146,7 +2146,7 @@ export function measureSnapshot(
   if (peerCache && peerCache.peers.length > 0) {
     const lines: string[] = ['## Connected projects\n'];
     lines.push(
-      'These projects are READABLE from here (out/both connection + shareable). ' +
+      'These projects are READABLE from here (out/both connection). ' +
         'Recall reads their CANONICAL docs live (a reference — nothing is copied into this vault). ' +
         'You have ambient awareness of what each is and what was last done there.\n',
     );

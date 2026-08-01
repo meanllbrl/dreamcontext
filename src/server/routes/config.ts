@@ -47,7 +47,6 @@ export async function handleConfigUpdate(
     cloudTaskManagement?: boolean;
     clickup?: ClickUpConfig;
     github?: GitHubConfig;
-    shareable?: boolean;
   } = {};
 
   if (body.platforms !== undefined) {
@@ -102,15 +101,6 @@ export async function handleConfigUpdate(
     if (patch.taskBackend === undefined) {
       patch.taskBackend = body.cloudTaskManagement ? 'clickup' : 'local';
     }
-  }
-
-  // Federation read gate (issue #25 P2.4) — strict-pick, boolean-only.
-  if (body.shareable !== undefined) {
-    if (typeof body.shareable !== 'boolean') {
-      sendError(res, 400, 'invalid_shareable', 'shareable must be a boolean.');
-      return;
-    }
-    patch.shareable = body.shareable;
   }
 
   if (body.clickup !== undefined) {
@@ -176,10 +166,9 @@ export async function handleConfigUpdate(
     patch.taskBackend === undefined &&
     patch.cloudTaskManagement === undefined &&
     patch.clickup === undefined &&
-    patch.github === undefined &&
-    patch.shareable === undefined
+    patch.github === undefined
   ) {
-    sendError(res, 400, 'no_changes', 'Provide at least one of: platforms, packs, disableNativeMemory, taskBackend, cloudTaskManagement, clickup, github, shareable.');
+    sendError(res, 400, 'no_changes', 'Provide at least one of: platforms, packs, disableNativeMemory, taskBackend, cloudTaskManagement, clickup, github.');
     return;
   }
 
