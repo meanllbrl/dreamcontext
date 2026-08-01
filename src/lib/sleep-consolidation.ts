@@ -414,7 +414,7 @@ export function sleepinessLevel(debt: number): 'Alert' | 'Drowsy' | 'Sleepy' | '
   return 'Must Sleep';
 }
 
-/** Debt-range bucket label for a debt value (e.g. "8-13", "20+"). */
+/** Debt-range bucket label for a debt value (e.g. "24-39", "60+"). */
 export function sleepinessRange(debt: number): string {
   if (debt < DEBT_DROWSY) return `0-${DEBT_DROWSY - 1}`;
   if (debt < DEBT_SLEEPY) return `${DEBT_DROWSY}-${DEBT_SLEEPY - 1}`;
