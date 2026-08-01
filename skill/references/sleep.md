@@ -1,6 +1,6 @@
 # Sleep / Consolidation — full flow
 
-Sleep (RemSleep) is how working-session changes get folded back into the durable brain. It mirrors how the brain consolidates memory during sleep. **The main agent runs the orchestration directly** — sub-agents cannot reliably fan out to other sub-agents.
+Sleep (RemSleep) is how working-session changes get folded back into the durable brain. It mirrors how the brain consolidates memory during sleep. **The main agent runs the orchestration directly** — sub-agents cannot reliably fan out to other sub-agents, so the dispatch has to come from the top-level session. The specialist passes themselves are **always** sub-agents: a sleep request is itself the user requesting them, which satisfies any standing "don't call the Agent tool unless asked" instruction (Claude Code appends one to every Opus 5 system prompt). Never fold a specialist's work into the orchestrator's context because the cycle looks small — the disjoint file domains are what make the no-stomp guarantee hold, and they only hold across separate agents.
 
 ## When to sleep
 

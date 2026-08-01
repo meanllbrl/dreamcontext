@@ -18,6 +18,14 @@ export const SLEEP_AGENT_TITLE = 'Sleep';
  * project's documented sleep/consolidation flow fully autonomously, mirroring the
  * headless Sleep button's `buildSleepPrompt` on the server (kept concise here since
  * the interactive agent resolves depth itself via `dreamcontext sleep start`).
+ *
+ * The fan-out sentence is load-bearing, not emphasis. Claude Code appends "Do not
+ * call the AgentTool unless the user requested it" to every Opus 5 system prompt,
+ * which outranks SKILL.md and silently collapsed sleep into inline specialist
+ * passes. This text IS the user's turn, so spelling out the dispatch here is what
+ * makes the condition true at the one entry point that can't rely on a hook. Keep
+ * it in lockstep with `buildSleepPrompt` (server) — pinned by
+ * `tests/unit/sleep-subagent-dispatch.test.ts`.
  */
 export const SLEEP_AGENT_PROMPT =
   'Think hard. Run a full dreamcontext memory consolidation ("sleep") for THIS project ' +
@@ -25,8 +33,11 @@ export const SLEEP_AGENT_PROMPT =
   'sleep flow: pin the epoch with `dreamcontext sleep start`, reconcile the task / changelog ' +
   '/ knowledge / feature files to current truth (prefer updating existing entities over ' +
   'creating new ones), then close the cycle with `dreamcontext sleep done "<one-paragraph ' +
-  'summary>"` to reset the debt. When finished, reply with a SHORT Markdown summary of what ' +
-  'was consolidated.';
+  'summary>"` to reset the debt. I am explicitly requesting the sub-agent fan-out: dispatch ' +
+  'the sleep specialists as PARALLEL sub-agents via the Agent tool (sleep-tasks + sleep-state ' +
+  'always; sleep-product when knowledge/feature signals warrant; sleep-migration only if ' +
+  '`dreamcontext migrations pending` has output) — do NOT run those passes inline in your own ' +
+  'context. When finished, reply with a SHORT Markdown summary of what was consolidated.';
 
 /** Ask the always-mounted Agent surface to open + run a "Sleep" consolidation session. */
 export function requestSleepAgent(): void {

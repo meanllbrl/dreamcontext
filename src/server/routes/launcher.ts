@@ -1087,6 +1087,12 @@ export function buildAskPrompt(question: string): string {
  * destructive-authorization line ONLY at `deep` (per `isDestructiveAllowed`);
  * at light/standard it injects an explicit non-destructive guard so the agent
  * never silently merges/summarize-replaces/deletes knowledge from this path.
+ *
+ * It also states the sub-agent fan-out in the user's own voice. Claude Code appends
+ * "Do not call the AgentTool unless the user requested it" to every Opus 5 system
+ * prompt, which outranks SKILL.md and collapsed sleep into inline specialist passes;
+ * this prompt IS the user turn, so the request has to be here. Kept in lockstep with
+ * the desktop `SLEEP_AGENT_PROMPT` by `tests/unit/sleep-subagent-dispatch.test.ts`.
  */
 export function buildSleepPrompt(depth: ConsolidationDepth): string {
   const depthLine = isDestructiveAllowed(depth)
@@ -1104,8 +1110,13 @@ export function buildSleepPrompt(depth: ConsolidationDepth): string {
     `start\`, reconcile the task/changelog/knowledge/feature files to current truth ` +
     `as warranted (prefer updating existing entities over creating new ones), then ` +
     `close the cycle with \`dreamcontext sleep done "<one-paragraph summary>"\` to ` +
-    `reset the debt. ${depthLine} When finished, reply with a SHORT GitHub-flavored ` +
-    `Markdown summary (a few bullets) of what was consolidated. Keep it concise.`
+    `reset the debt. ${depthLine} I am explicitly requesting the sub-agent fan-out: ` +
+    `dispatch the sleep specialists as PARALLEL sub-agents via the Agent tool ` +
+    `(sleep-tasks + sleep-state always; sleep-product when knowledge/feature signals ` +
+    `warrant; sleep-migration only if \`dreamcontext migrations pending\` has output) — ` +
+    `do NOT run those passes inline in your own context. When finished, reply with a ` +
+    `SHORT GitHub-flavored Markdown summary (a few bullets) of what was consolidated. ` +
+    `Keep it concise.`
   );
 }
 
