@@ -28,6 +28,9 @@ _dream_context/state/
 _dream_context/council/
 # Ephemeral runtime scratch — images dropped into the in-app agent, etc. Never tracked.
 _dream_context/tmp/
+# Repo-root scratch: where the verify scripts write their screenshots and where one-off
+# probes land. Anchored with a leading slash so it can never match a source `tmp/` folder.
+/tmp/
 # Secrets are never tracked, regardless of the above
 _dream_context/**/.env
 # Lab (analytics insights) credentials — insights + cache DO sync, only this doesn't
