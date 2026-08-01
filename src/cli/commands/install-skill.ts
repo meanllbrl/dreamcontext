@@ -28,6 +28,7 @@ import {
   type ManagedFileKind,
 } from '../../lib/manifest.js';
 import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
+import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
 
 // ─── Hook Constants (Claude) ───────────────────────────────────────────────
@@ -943,7 +944,10 @@ export function registerInstallSkillCommand(program: Command): void {
         }
 
         writeManifest(projectRoot, manifest);
-        updateSetupConfig(projectRoot, { platforms, setupVersion: dreamcontextVersion() });
+        // Migrate BEFORE stamping setupVersion. `update` tells a platform-less
+        // vault to run this command first, so stamping here without migrating
+        // silently discarded every pending migration (see migrate-and-stamp.ts).
+        migrateThenStampSetupVersion(projectRoot, { platforms });
 
         console.log();
         console.log(miniBox([

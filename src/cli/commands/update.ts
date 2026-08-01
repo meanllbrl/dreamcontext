@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import chalk from 'chalk';
 import { confirm } from '@inquirer/prompts';
 import { error, info, warn, miniBox } from '../../lib/format.js';
-import { readSleepState, writeSleepState } from './sleep.js';
 import { SUPPORTED_PLATFORMS, type PlatformId } from '../../lib/platforms.js';
 import {
   installCoreForPlatform,
@@ -25,8 +24,7 @@ import {
   PRE_MANIFEST_VERSION,
   type Manifest,
 } from '../../lib/manifest.js';
-import { updateSetupConfig, readSetupConfig } from '../../lib/setup-config.js';
-import { runMigrations } from '../../lib/migration-runner.js';
+import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 
 // ─── Update Summary ──────────────────────────────────────────────────────────
 
@@ -303,61 +301,15 @@ export function registerUpdateCommand(program: Command): void {
 
         writeManifest(projectRoot, newManifest);
 
-        // Capture fromVersion BEFORE bumping setupVersion so migrations run
-        // over the correct (from, to] range.
-        const fromVersion =
-          readSetupConfig(projectRoot)?.setupVersion ?? '0.0.0';
-
         // Bump setupVersion only when core was refreshed (not packs-only).
         // packs-only does NOT refresh skill/agents/hooks, so drift must remain.
+        //
+        // Migrations run BEFORE setupVersion is persisted, and a partial failure
+        // pins it so the next `update` retries — the shared contract in
+        // migrate-and-stamp.ts, which install-skill and setup follow too.
         let newSetupVersion: string | null = null;
         if (!opts.packsOnly) {
-          const ver = dreamcontextVersion();
-
-          // Run pending structural migrations for the (fromVersion, ver] range
-          // BEFORE persisting setupVersion. setupVersion gates which migrations
-          // are considered "pending" (migration-runner.ts pendingMigrations) —
-          // bumping it first would make a mid-run failure invisible to the next
-          // `update`, silently orphaning un-migrated source files.
-          const ctxRoot = join(projectRoot, '_dream_context');
-          const migResult = runMigrations(ctxRoot, fromVersion, ver);
-          if (migResult.applied.length > 0) {
-            const codeApplied = migResult.applied.filter(
-              (e) => e.executor === 'code',
-            );
-            if (codeApplied.length > 0) {
-              info(
-                `Applied ${codeApplied.length} migration step(s): ${codeApplied.map((e) => `${e.version}/${e.step}`).join(', ')}`,
-              );
-              // Queue notices into .sleep.json so the next SessionStart snapshot
-              // surfaces "Migrations applied since last session" (AC-7).
-              const codeNotices = codeApplied.map(
-                (e) => `${e.version} ${e.step}: ${e.summary}`,
-              );
-              const sleepState = readSleepState(ctxRoot);
-              sleepState.pendingMigrationNotices = [
-                ...sleepState.pendingMigrationNotices,
-                ...codeNotices,
-              ];
-              writeSleepState(ctxRoot, sleepState);
-            }
-          }
-
-          // Persist setupVersion ONLY on a fully-clean migration run. A partial
-          // failure pins setupVersion at fromVersion so the next `update` retries
-          // the pending migration (idempotent) instead of silently skipping it.
-          // Dual-purpose caveat: setupVersion also drives setup-drift.ts's
-          // asset-freshness check — a persistently-failing migration keeps the
-          // brain flagged "stale" (a perpetual update nag). Accepted tradeoff: a
-          // nag is strictly safer than silently orphaning migrated-away sources.
-          if (migResult.failedSteps === 0) {
-            updateSetupConfig(projectRoot, { setupVersion: ver });
-            newSetupVersion = ver;
-          } else {
-            warn(
-              `Migration partially failed (${migResult.failedSteps} file(s)) — setupVersion left at ${fromVersion}. The next \`dreamcontext update\` will retry.`,
-            );
-          }
+          newSetupVersion = migrateThenStampSetupVersion(projectRoot).stamped;
         }
 
         // Print relay-able summary always (covers packs-only too).

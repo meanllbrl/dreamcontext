@@ -25,9 +25,9 @@ import { installInstructions } from './install-claude-md.js';
 import {
   writeManifest,
   recordPlatform,
-  dreamcontextVersion,
 } from '../../lib/manifest.js';
 import { updateSetupConfig } from '../../lib/setup-config.js';
+import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 import { writeProjectPlatformDefaults } from '../../lib/platform-defaults.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 
@@ -123,13 +123,16 @@ export async function installPlatformIntegration(
     }
   }
 
-  // Persist manifest + config.
+  // Persist manifest + config. Migrations run BEFORE setupVersion is stamped:
+  // a `setup` over an EXISTING vault would otherwise advance the migration
+  // range's lower bound past migrations that never ran (see migrate-and-stamp.ts).
+  // On a fresh vault `init` has already stamped the current version, so the
+  // range is empty and this is a no-op.
   writeManifest(projectRoot, manifest);
-  updateSetupConfig(projectRoot, {
+  migrateThenStampSetupVersion(projectRoot, {
     platforms,
     packs,
     multiProduct: opts.multiProduct ?? false,
-    setupVersion: dreamcontextVersion(),
   });
 
   return { installed, notes, fileCount: Object.keys(manifest.files).length };
