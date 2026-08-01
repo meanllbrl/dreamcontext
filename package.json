@@ -35,6 +35,7 @@
     "verify:chat-steer": "node scripts/verify/chat-steer.mjs",
     "verify:past-chats": "node scripts/verify/past-chats.mjs",
     "verify:past-chats-ui": "node scripts/verify/past-chats-ui.mjs",
+    "verify:chat-scroll": "node scripts/verify/chat-scroll.mjs",
     "diagrams": "node scripts/diagrams/build-all.mjs",
     "prepublishOnly": "npm run build",
     "verify:chat-toolrows": "node scripts/verify/chat-toolrows.mjs"
