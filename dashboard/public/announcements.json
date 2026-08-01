@@ -3,27 +3,16 @@
     "id": "v0-23-0",
     "date": "2026-08-01",
     "version": "0.23.0",
-    "title": "Everything your agent knows, in a third of the context",
-    "summary": "The session-start preload now loads a real mature vault at 16,320 characters instead of 48,964 — fully inline, nothing dropped. Each person gets their own constitution, the soul keeps only what is unconditionally true, and the conditional rules move into patterns that can never be demoted into silence. Ships together with v0.22.0, which was built but never published.",
+    "title": "It keeps its own hours, and travels a third as heavy",
+    "summary": "Two releases in one upgrade — v0.22.0 was built but never reached anyone, so Automations arrives here alongside the snapshot rework. Give the brain a job on a schedule and leave it alone: a headless Claude run that learns from every run, replays the session it had, and tells you what it actually found. And when you do sit down together, everything it knows loads in 16,320 characters instead of 48,964 — each person with their own constitution, the soul keeping only what is unconditionally true, and the conditional rules moved into patterns that can never be demoted into silence.",
     "tags": [
+      "automations",
       "snapshot",
       "memory",
+      "chat",
       "migrations"
     ],
     "story": "v0-23-0.json"
-  },
-  {
-    "id": "v0-22-0-automations",
-    "date": "2026-07-28",
-    "version": "0.22.0",
-    "title": "Put the brain on a schedule — automations that learn from every run",
-    "summary": "An automation is a headless Claude run on a cadence you set: you describe the job in plain language, one dispatcher runs what is due, and the result lands as a dated document. Each one keeps a pattern it reads before every run and adds to after one, you can replay the session a run actually had, and the notification carries the result rather than announcing that a file was written.",
-    "tags": [
-      "automations",
-      "agent",
-      "scheduling"
-    ],
-    "story": "v0-22-0-automations.json"
   },
   {
     "id": "v0-21-0",

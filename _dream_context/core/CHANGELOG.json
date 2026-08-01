@@ -1,6 +1,23 @@
 [
   {
     "date": "2026-08-01",
+    "type": "docs",
+    "scope": "announcements",
+    "description": "The feed carried two entries — v0.22.0 (Automations) and v0.23.0 (the snapshot rework) — which described a history nobody lived. npm topped out at 0.21.0 and no v0.22.0 tag or GitHub Release was ever cut, so every reader upgrading from 0.21.0 receives BOTH payloads in a single install. Two entries told them to read it as two events and, worse, the 0.23.0 story ended on a note pointing at \"its own story below this one in the feed\" — a cross-reference to a release that does not exist for them.\n\nNow ONE story: \"It keeps its own hours, and travels a third as heavy\", 15 blocks in two movements. Automations first (a job is a prompt and a clock; it gets better at the job; you can watch the work, not just the result; the measured cost of one real run; the four things that keep an unattended job locked down; and the note explaining why the pattern is deliberately OUTSIDE the approval fingerprint), then the lighter brain (48,964 → 16,320 characters, the per-person constitutions, the soul split, and patterns that can no longer be demoted into silence).\n\nEverything that landed between the two cuts and had no story of its own is covered in three `points` blocks plus a `terminal`: Chat's steering / past-chats picker / sub-agent rendering / object-named tool rows; the render-time fixes (memory in full, tasks accounted for, no dead ends, Turkish names surviving); and the plumbing (nine-channel recall, Lab's child-process isolation, weighted sleep scoring, non-blind pending migrations).\n\nMECHANICS, which the feed's own contract forces: `parseAnnouncements` keeps exactly ONE entry per version, and the manifest test pins every shot under `shots/<id>/` while failing on any asset no story references. So merging is not just deleting an entry — the four automations captures were `git mv`d into `shots/v0-23-0/` under `automations-*` names, `v0-22-0-automations.json` was deleted, and its manifest entry removed. The surviving id stays `v0-23-0`, so nobody's unread state is disturbed.\n\nVERIFIED end to end: 43 manifest tests green; all 15 authored blocks survive `parseAnnouncementStory` — checked block by block rather than inferred from the suite, because a malformed block is dropped SILENTLY and the suite would still pass; and the story was driven in the real dashboard, where all 7 screenshots load, the splits alternate, and the feed shows a single 0.23.0 hero with v0.21.0 directly beneath it.",
+    "breaking": false,
+    "summary": "0.22.0 and 0.23.0 merged into ONE announcement — 0.22.0 never reached a user, so the feed no longer claims it did",
+    "references": [
+      "file:dashboard/public/announcements.json",
+      "file:dashboard/public/announcements/v0-23-0.json",
+      "feature:automations-scheduled-headless-claude-jobs",
+      "feature:context-snapshot"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-01",
     "type": "chore",
     "scope": "repo",
     "description": "Three small corrections that had been sitting in the working tree unattributed. (1) `.gitignore` now ignores `/tmp/` — the repo-root scratch dir where the `scripts/verify/*` harnesses write their screenshots and where one-off probes land. Anchored with a LEADING SLASH deliberately: a bare `tmp/` would match any nested source folder of that name anywhere in the tree, which is a trap worth not setting. Until now every verify run left a pile of untracked PNGs in `git status`, which is how a genuinely dirty tree gets ignored by eye. (2) `package.json` — the `description` field held a literal `\\\\u2014` escape rather than the em dash itself; both parse identically, but the escape is what shows up in `npm view` output and in some registry surfaces. De-escaped to `—`. Also moved `verify:chat-scroll` up next to the other `verify:chat-*` scripts (it had been appended at the bottom when it was registered). (3) `sleepinessRange()`'s JSDoc still gave `\"8-13\", \"20+\"` as its worked example — numbers from the PRE-rescale debt scale, dead since thresholds moved to 24/40/60. Corrected to `\"24-39\", \"60+\"`. This is the same class of residue the 2026-08-01 docs pass swept for and the last one left standing: the function computes its ranges from the constants, so only the example ever went stale — but a stale example in the file that DEFINES the constants is exactly where a reader would trust it.",

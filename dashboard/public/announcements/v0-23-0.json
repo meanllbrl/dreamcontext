@@ -1,46 +1,147 @@
 {
   "hero": {
-    "eyebrow": "v0.23.0  ·  1 August 2026",
-    "headline": "Everything your agent knows, in a third of the context",
-    "sub": "The session-start preload had grown faster than the vault it describes. On a real mature brain it now loads at 16,320 characters instead of 48,964 — fully inline, no truncation banner, and nothing dropped. What got cut was repetition, not knowledge.",
+    "eyebrow": "v0.23.0  ·  1 August 2026  ·  including v0.22.0",
+    "headline": "It keeps its own hours, and travels a third as heavy",
+    "sub": "Two releases in one upgrade. v0.22.0 was built but never reached anyone, so everything it carried arrives here. Your brain can now be given work on a schedule and left alone with it — and when you do sit down together, everything it knows loads in 16,320 characters instead of 48,964. Nothing was dropped. What got cut was repetition.",
     "shot": {
-      "src": "shots/v0-23-0/core.png",
-      "alt": "The Core page of a real vault: a PEOPLE section listing Mehmet Nuraydın as active, above the core files — soul, memory, style guide, tech stack, changelog, releases and taxonomy — with the soul document open in the reader beside them",
-      "caption": "The shape of a brain after 0.23.0: a person, and a constitution-only soul."
+      "src": "shots/v0-23-0/automations-loop.png",
+      "alt": "The Automations page before you own one: the headline \"Put the brain on a schedule\" over a diagram of three scheduled jobs — a daily digest, a Friday report, a Tuesday research prompt — feeding one dispatcher, which spawns a headless claude session that writes a dated file, sends a notification, and reads and updates a pattern",
+      "caption": "The whole loop, before you write your first one."
     }
   },
   "blocks": [
     {
-      "kind": "stats",
-      "items": [
-        { "value": "48,964 → 16,320", "label": "Characters at session start", "note": "measured on a real mature vault" },
-        { "value": "32,912 → 3,983", "label": "Soul, after the split", "note": "37 conditional rules moved out" },
-        { "value": "10", "label": "Pattern files written", "note": "clustered by rule, not by bullet" }
-      ]
-    },
-    {
       "kind": "split",
-      "title": "Your brain knows who is at the keyboard",
-      "body": "The old 1.user.md was one file trying to be a person, a roster and a junk drawer. It is gone. Each person now gets their own constitution in people/, loaded verbatim when they are the one working — resolved from your git email, with nothing about your machine written into the shared brain.\n\nExisting vaults are migrated for you: the deterministic half runs on upgrade, and the prose that needed judgement is handed to an agent rather than guessed at.",
+      "title": "A job is a prompt and a clock",
+      "body": "There is no built-in digest command and no hardcoded job type. What the job IS lives entirely in the prompt you write; the CLI carries only the schedule, the model, the effort and the timeout.\n\nIf you can say it, it can run at six every evening.",
       "shot": {
-        "src": "shots/v0-23-0/people.png",
-        "alt": "The Core file list: a PEOPLE heading with Mehmet Nuraydın marked active, then CORE FILES listing soul, active-decisions, style-guide, tech-stack, System Flow, CHANGELOG, RELEASES and taxonomy — with no 1.user.md among them",
-        "caption": "No 1.user.md. A person, then the core files.",
+        "src": "shots/v0-23-0/automations-board.png",
+        "alt": "Three automation cards: End of day digest every day at 18:00 with a last run this afternoon, Dependency drift check on Tuesdays at 09:00, and Friday weekly report at 17:00, each with a Run now button",
         "frame": "plain"
       },
       "side": "right"
     },
     {
       "kind": "split",
-      "title": "Rules stopped hiding in a folder line",
-      "body": "A soul that holds every conditional rule is a soul nobody can read, and under budget pressure those rules used to collapse into an anonymous folder count. Now the conditional half lives in knowledge/patterns/ as clustered files, and patterns get their own block in every snapshot at every budget level, under a hard warning banner.\n\nA rule can be demoted in detail. It can no longer be demoted into silence.",
+      "title": "It gets better at the job",
+      "body": "Something that starts from zero every time repeats its mistakes forever, and nobody is there to watch it happen. So every automation keeps a pattern of its own: a standing playbook, and a short ledger of what it learned.\n\nIt reads that before it starts, and adds to it when it finishes. A run that hit a broken endpoint on Sunday knows that next Sunday.",
+      "shot": {
+        "src": "shots/v0-23-0/automations-pattern.png",
+        "alt": "The pattern of a real automation: a playbook the run wrote itself describing the order to gather in, above four dated lessons about which commands work on this vault",
+        "caption": "Every line here was written by the run itself. None of it by hand.",
+        "frame": "plain"
+      },
+      "side": "left"
+    },
+    {
+      "kind": "split",
+      "title": "You can watch the work, not just the result",
+      "body": "The document a run leaves behind is the conclusion with the working thrown away — which is the wrong half the moment it surprises you.\n\nSo every run keeps its session. Open it and the whole thing replays: each tool call and what it was given, which ones failed, how long it took and what it cost.",
+      "shot": {
+        "src": "shots/v0-23-0/automations-session.png",
+        "alt": "A run's session: 32 tool calls, 2 failed, 33 turns, $1.8097, above the list of Bash calls it made, with two of them marked in red",
+        "frame": "plain"
+      },
+      "side": "right"
+    },
+    {
+      "kind": "stats",
+      "items": [
+        { "value": "32", "label": "tool calls", "note": "one real end-of-day digest" },
+        { "value": "2", "label": "of them failed", "note": "shown, not buried" },
+        { "value": "4m 54s", "label": "start to finish" },
+        { "value": "$1.81", "label": "what it cost" }
+      ]
+    },
+    {
+      "kind": "points",
+      "title": "It runs with nobody watching, so it starts locked",
+      "items": [
+        {
+          "title": "Nothing runs until you say so",
+          "text": "The whole thing ships switched off. You install the dispatcher yourself, and approve each automation on this machine, before anything fires."
+        },
+        {
+          "title": "Approval is a fingerprint of what will happen",
+          "text": "The prompt, the output instructions, the model, the effort, the timeout, where it writes and whether it learns. Change any of them — including a teammate's synced edit — and the job stops until a person looks again."
+        },
+        {
+          "title": "It stays on your machine",
+          "text": "A new automation, its history and its output stay off the team's shared brain until you share it. Unsharing stops what happens next; it cannot retrieve what already left."
+        },
+        {
+          "title": "The notification says what happened",
+          "text": "Not \"a file was written\" — the run's own first sentence, titled by the automation, with the document one click away. Success and failure sound different."
+        }
+      ]
+    },
+    {
+      "kind": "note",
+      "text": "The pattern is deliberately outside that fingerprint. It changes on every run, and a job that asked for approval daily would only teach you to approve without reading — so it reaches the model as notes, ordered after the approved prompt, framed as observations that lose to the instructions."
+    },
+    {
+      "kind": "stats",
+      "items": [
+        { "value": "48,964 → 16,320", "label": "Characters at session start", "note": "measured on a real mature vault" },
+        { "value": "32,912 → 3,983", "label": "The soul, after the split", "note": "37 conditional rules moved out" },
+        { "value": "10", "label": "Pattern files written", "note": "clustered by rule, not by bullet" }
+      ]
+    },
+    {
+      "kind": "shot",
+      "title": "The same brain. A third of the weight.",
+      "body": "The session-start preload had been growing faster than the vault it describes, until it needed a compression ladder to fit — which is a way of hiding content that should never have been sent. So the default got denser instead. Features are a name, a status and a path. Knowledge that isn't pinned is an honest count and the command to reach the rest. The warm-knowledge section is simply gone.\n\nIt now arrives whole, with no truncation banner, on a vault where it used to be cut in half.",
+      "shot": {
+        "src": "shots/v0-23-0/core.png",
+        "alt": "The Core page of a real vault: a PEOPLE section listing Mehmet Nuraydın as active, above the core files — soul, memory, style guide, tech stack, changelog, releases and taxonomy — with the soul document open in the reader beside them",
+        "caption": "The shape of a brain after 0.23.0: a person, and a constitution-only soul."
+      }
+    },
+    {
+      "kind": "split",
+      "title": "It knows who is at the keyboard",
+      "body": "The old user file was one document trying to be a person, a roster and a junk drawer at once. It's gone. Everyone gets their own constitution now, loaded word for word when they're the one working, resolved from your git identity — with nothing about your machine written into the shared brain.\n\nYour existing vault is moved for you. The mechanical half happens on upgrade; the prose that needed judgement is handed to your agent rather than guessed at.",
+      "shot": {
+        "src": "shots/v0-23-0/people.png",
+        "alt": "The Core file list: a PEOPLE heading with Mehmet Nuraydın marked active, then CORE FILES listing soul, active-decisions, style-guide, tech-stack, System Flow, CHANGELOG, RELEASES and taxonomy — with no 1.user.md among them",
+        "caption": "No user file. A person, then the core files.",
+        "frame": "plain"
+      },
+      "side": "left"
+    },
+    {
+      "kind": "split",
+      "title": "A rule can be shortened. It can no longer be silenced.",
+      "body": "A soul holding every conditional rule is a soul nobody reads — and when space got tight, those rules used to collapse into an anonymous folder count. The conditional half now lives in patterns, clustered by the rule it carries.\n\nPatterns get their own block in every snapshot, at every size, under a warning you can't miss.",
       "shot": {
         "src": "shots/v0-23-0/patterns.png",
         "alt": "The Knowledge page with the Patterns folder expanded to 17 entries, showing pattern cards whose descriptions are the rule itself — budget demotion floor prevents blinding, build and propagate order, byte-surgical section editing — each tagged by domain",
         "caption": "17 patterns, each described by the rule it carries.",
         "frame": "plain"
       },
-      "side": "left"
+      "side": "right"
+    },
+    {
+      "kind": "points",
+      "title": "Chat, refined",
+      "items": [
+        {
+          "title": "Enter reaches the turn that's already running",
+          "text": "A message you send mid-turn is picked up at the next tool boundary, inside the same turn. Holding one for later is now its own button, with the editable row it always had."
+        },
+        {
+          "title": "Every conversation is still there",
+          "text": "A searchable picker reopens anything this project has on disk — 372 of them here, cold in half a second. The 119 that were machine-spawned are set aside by default, and one click brings them back."
+        },
+        {
+          "title": "A headless run reads as an agent",
+          "text": "Work your agent hands to another Claude now renders as a sub-agent with its own card, not as an anonymous background shell. Its tool calls group under the run that made them."
+        },
+        {
+          "title": "A row names the thing, not the type",
+          "text": "The skill, the pattern, the host, the file — with the folder truncated instead of the filename, because the filename was the only part that differed. And a new tab names itself in a moment rather than a minute."
+        }
+      ]
     },
     {
       "kind": "terminal",
@@ -61,37 +162,55 @@
     },
     {
       "kind": "points",
-      "title": "Also in this version",
+      "title": "The brain reads better",
       "items": [
         {
-          "title": "Memory renders in full",
-          "text": "A memory file at or under 4,000 characters is no longer compressed at render time. Sleep is memory's compressor; doing it twice was just taxation."
+          "title": "Memory arrives whole",
+          "text": "A memory file at or under 4,000 characters is no longer squeezed again at render time. Sleep is memory's compressor; doing it twice was just taxation."
         },
         {
           "title": "Tasks are accounted for",
-          "text": "Tasks show their real name instead of a slug. Under pressure the list becomes an accounting: detailed, named and counted always sum to the total."
+          "text": "They show their real name, with the slug demoted to an address. Under pressure the list turns into an accounting: detailed, named and counted always add up to the total."
         },
         {
           "title": "Nothing is a dead end",
-          "text": "Every inventory section carries a search-and-browse footer at every level, including its floor — so a compressed section always tells you how to reach the rest."
+          "text": "Every inventory ends with how to reach the rest of it — at every size, including the smallest. A shortened section always tells you where the remainder went."
         },
         {
           "title": "Turkish names survive",
-          "text": "Accented and Turkish titles fold to ASCII before slugifying, so a name like \"Öğretmen fiyatı\" keeps its letters instead of being mangled."
+          "text": "Accented and Turkish titles fold to ASCII before they're turned into a filename, so \"Öğretmen fiyatı\" keeps its letters instead of arriving mangled."
+        }
+      ]
+    },
+    {
+      "kind": "points",
+      "title": "And underneath",
+      "items": [
+        {
+          "title": "Recall reaches everything",
+          "text": "Nine channels now — automations, insights, hypotheses and objectives join the five that were already searchable — with a filter for how much something matters."
+        },
+        {
+          "title": "Lab scripts are never stale",
+          "text": "A custom script runs in its own short-lived process, so a shared library you just edited can't keep answering from a cache that outlived the edit."
+        },
+        {
+          "title": "Sleep counts what the work cost",
+          "text": "A session is scored by weight rather than by its loudest signal, so token volume finally counts — and consolidation lands about three times on the busiest day instead of every half hour."
+        },
+        {
+          "title": "Upgrades can be seen through",
+          "text": "Pending migrations no longer go blind when an upgrade moves the version past an unfinished step, so a vault mid-migration can still tell you what it is waiting for."
         }
       ]
     },
     {
       "kind": "note",
-      "text": "This release also carries v0.22.0, which was built but never published — if you are coming from 0.21.0 you get Automations and the Chat work in the same upgrade. Its own story sits directly below this one in the feed."
-    },
-    {
-      "kind": "note",
-      "text": "One caveat worth knowing: verifying the migrations above turned up a defect where running install-skill before update could silently skip them. That is fixed in this release, and guarded by a test that fails if anyone reopens it — but it is the reason to upgrade with dreamcontext update rather than around it."
+      "text": "One thing worth knowing before you upgrade: verifying the migrations above turned up a defect where running install-skill first could silently skip them, permanently. That is fixed here, and guarded by a test that fails if anyone reopens it — but it is the reason to upgrade with dreamcontext update rather than around it."
     }
   ],
   "closer": {
-    "title": "Upgrade and let it migrate",
-    "body": "dreamcontext upgrade, then dreamcontext update in each project. The structural migrations run on that command, and anything needing judgement is handed to your agent with instructions."
+    "title": "Upgrade, and let it move itself",
+    "body": "dreamcontext upgrade, then dreamcontext update in each project. The structural migrations run on that command, and anything that needs judgement is handed to your agent with instructions."
   }
 }
