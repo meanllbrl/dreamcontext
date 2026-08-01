@@ -1,6 +1,8 @@
 import { memo, useState } from 'react';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
-import { parseEditDiff, deriveDiffStartLine, GENERIC_RESULT_CHAR_CAP } from './chatEntities';
+import {
+  parseEditDiff, deriveDiffStartLine, GENERIC_RESULT_CHAR_CAP, toolSubject, isDreamcontextSkill,
+} from './chatEntities';
 import { Duration, DiffStat, MetaText, CopyButton } from './atoms';
 import { ToolHeader, TerminalBlock, DiffView } from './molecules';
 import type { ChatToolItem } from '../chatSession';
@@ -25,17 +27,6 @@ function safeStringify(v: unknown): string {
   try { return JSON.stringify(v, null, 2); } catch { return String(v); }
 }
 
-/** The tool's primary path/file argument, if it has one — the header's clickable chip. */
-function primaryPath(input: unknown): string | null {
-  if (!input || typeof input !== 'object') return null;
-  const obj = input as Record<string, unknown>;
-  for (const key of ['file_path', 'path', 'notebook_path']) {
-    const v = obj[key];
-    if (typeof v === 'string' && v) return v;
-  }
-  return null;
-}
-
 function inputString(input: unknown, key: string): string | undefined {
   if (!input || typeof input !== 'object') return undefined;
   const v = (input as Record<string, unknown>)[key];
@@ -49,9 +40,14 @@ function formatByteCount(chars: number): string {
   return `${(chars / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** A short "N lines" meta label for a string result — omitted for anything else. */
+/** A short "N lines" meta label for a result. Goes through {@link resultText} so it counts
+ *  the BLOCK-ARRAY shape (`[{type:'text',text}]`) too — a `tool_result` arrives either way,
+ *  and a string-only check silently dropped the line count for every result that came as
+ *  blocks, in the same rows this pass exists to make informative. */
 function resultLineCount(result: unknown): number | null {
-  return typeof result === 'string' && result.length ? result.split('\n').length : null;
+  if (result === undefined) return null;
+  const text = resultText(result);
+  return text.length ? text.split('\n').length : null;
 }
 
 /** Flatten a tool_result `content` value (string, or an array of `{type:'text',text}`
@@ -132,15 +128,20 @@ function ToolCardInner({ item, onOpenFile }: { item: ChatToolItem; onOpenFile: (
   const isBash = item.name === 'Bash';
   const plan = item.name === 'ExitPlanMode' ? inputString(item.input, 'plan') : undefined;
   const diff = isBash || plan ? null : parseEditDiff(item.input);
-  const path = primaryPath(item.input);
+  const subject = toolSubject(item.name, item.input);
+  const skill = item.name === 'Skill' ? inputString(item.input, 'skill') : undefined;
+  const brand = !!skill && isDreamcontextSkill(skill);
   const lineCount = resultLineCount(item.result);
   const duration = item.endedAt != null ? item.endedAt - item.startedAt : null;
 
-  // Bash names what it is doing; a file tool names how much it read. Either way the
-  // header stays one line — the body is where the detail lives.
-  const subtitle = isBash
-    ? inputString(item.input, 'description')
-    : (lineCount != null && !diff ? `· ${lineCount} lines` : undefined);
+  // A `prose` subject IS the subtitle (Bash: its description, or failing that its command —
+  // a Bash row is never left as the bare word "Bash"). A FILE row instead says how much it
+  // read. A line count is only meaningful when the subject is a file: `Skill · 1 lines`
+  // (owner report 08-01) measured the length of a skill invocation's ack and called it
+  // information.
+  const subtitle = subject?.kind === 'prose'
+    ? subject.text
+    : (subject?.kind === 'path' && lineCount != null && !diff ? `· ${lineCount} lines` : undefined);
 
   const meta = diff
     ? <DiffStat added={diff.addedN} removed={diff.removedN} />
@@ -153,8 +154,11 @@ function ToolCardInner({ item, onOpenFile }: { item: ChatToolItem; onOpenFile: (
       <ToolHeader
         status={item.status}
         name={item.name}
-        path={path}
+        subject={subject}
+        brand={brand}
+        badge={brand ? 'dreamcontext skill' : undefined}
         subtitle={subtitle}
+        subtitleTitle={isBash ? inputString(item.input, 'command') : undefined}
         meta={meta}
         open={open}
         onToggle={() => setOverride(!open)}

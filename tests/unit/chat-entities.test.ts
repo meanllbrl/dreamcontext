@@ -13,11 +13,16 @@ import {
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
   turnHasVisibleProgress, nextStickToBottom, nextRestoreTop, isAtBottom, BOTTOM_SLACK,
   wheelIntent, keyIntent, touchIntent,
-  isAgentRun, runDurationMs, formatModelName, runMetaChips,
+  isAgentRun, isDispatchedAgent, isBackgroundShell, isHeadlessAgentShell, looksLikeHeadlessClaude,
+  bashCommandFor, runDurationMs, formatModelName, runMetaChips,
   isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote, startSubAgentRun,
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_TAIL, WINDOW_STEP, clampLines,
-  rememberMediaBox, knownMediaBox, shouldAutoReveal, WINDOW_REVEAL_PX,
+  rememberMediaBox, knownMediaBox, shouldAutoReveal, WINDOW_REVEAL_PX, TRIM_SLACK,
+  remainingSettleMs, SCROLL_SETTLE_MS,
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV,
+  pathChipLabel, toolSubject, isDreamcontextSkill,
+  segmentToolRuns, toolRunPhase, toolRunKeyItem, summarizeToolRun, toolRunHeadline, MIN_TOOL_RUN,
+  condenseCommand, COMMAND_LABEL_CAP,
   type SubAgentRun, type ProgressProbe, type HistoryNav, type AutoRevealMetrics,
 } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 
@@ -257,6 +262,18 @@ describe('subAgentToolUseIds', () => {
   it('empty input → empty set', () => {
     expect(subAgentToolUseIds([])).toEqual(new Set());
   });
+
+  it('a headless `claude` run does NOT suppress its own Bash card, even though it renders as an agent', () => {
+    // The regression this guards: promoting these runs into the sub-agent card made them
+    // pass `isAgentRun`, and suppression keyed off that predicate would have hidden the
+    // `Bash` tool card whose id this is — erasing the command the user most wants to read.
+    const runs = [
+      run({ taskId: 'a', toolUseId: 'toolu_agent', taskType: 'local_agent' }),
+      run({ taskId: 'b', toolUseId: 'toolu_bash', taskType: 'local_bash', command: 'claude -p "go"' }),
+    ];
+    expect(isAgentRun(runs[1])).toBe(true);
+    expect(subAgentToolUseIds(runs)).toEqual(new Set(['toolu_agent']));
+  });
 });
 
 // ─── Group collapse (SubAgentCard / BackgroundShellsTray) ────────────────────────
@@ -353,8 +370,8 @@ describe('isAgentRun', () => {
     expect(isAgentRun(run({ taskType: 'local_agent' }))).toBe(true);
   });
 
-  it('a shell command the CLI auto-backgrounded is NOT an agent (it has no model to show)', () => {
-    expect(isAgentRun(run({ taskType: 'local_bash' }))).toBe(false);
+  it('a plain shell command the CLI auto-backgrounded is NOT an agent (it has no model to show)', () => {
+    expect(isAgentRun(run({ taskType: 'local_bash', command: 'npm test' }))).toBe(false);
   });
 
   it('a workflow run counts as an agent', () => {
@@ -363,6 +380,201 @@ describe('isAgentRun', () => {
 
   it('no taskType at all → treated as an agent (under-reporting a real agent is the worse error)', () => {
     expect(isAgentRun(run({ taskType: undefined }))).toBe(true);
+  });
+
+  it('a backgrounded headless `claude` IS an agent, even though the CLI calls it local_bash', () => {
+    const r = run({ taskType: 'local_bash', command: 'claude -p "review the diff" --output-format json' });
+    expect(isAgentRun(r)).toBe(true);
+    expect(isHeadlessAgentShell(r)).toBe(true);
+    // …and is therefore NOT the tray's business any more.
+    expect(isBackgroundShell(r)).toBe(false);
+  });
+
+  it('a local_bash run whose command was never resolved stays a shell (no command → no claim)', () => {
+    const r = run({ taskType: 'local_bash', command: undefined });
+    expect(isAgentRun(r)).toBe(false);
+    expect(isBackgroundShell(r)).toBe(true);
+  });
+
+  it('isDispatchedAgent is narrower than isAgentRun: a headless run is an agent but was NOT dispatched', () => {
+    const r = run({ taskType: 'local_bash', command: 'claude -p "go"' });
+    expect(isAgentRun(r)).toBe(true);
+    expect(isDispatchedAgent(r)).toBe(false);
+  });
+});
+
+// ─── looksLikeHeadlessClaude (owner report 08-01) ────────────────────────────────
+//
+// The whole promotion hangs on this one predicate, and it is parsed rather than pattern-
+// matched precisely because the false positives are the interesting cases: a command that
+// merely MENTIONS `claude -p` must stay a shell, since the tray is the only surface that
+// offers it a Stop.
+
+describe('looksLikeHeadlessClaude', () => {
+  it('recognizes the invocations this project actually spawns', () => {
+    expect(looksLikeHeadlessClaude('claude -p "<brief>" --model opus --output-format json')).toBe(true);
+    expect(looksLikeHeadlessClaude('claude -p --resume abc123 "round 2 delta"')).toBe(true);
+    expect(looksLikeHeadlessClaude('claude -p --resume abc --fork-session "task T3"')).toBe(true);
+    expect(looksLikeHeadlessClaude('claude --print "summarize" < /dev/null')).toBe(true);
+    expect(looksLikeHeadlessClaude('claude -p --input-format stream-json --output-format stream-json')).toBe(true);
+    expect(looksLikeHeadlessClaude('claude --permission-mode bypassPermissions -p "go"')).toBe(true);
+  });
+
+  it('sees through env assignments, wrappers, and a path-qualified binary', () => {
+    expect(looksLikeHeadlessClaude('ANTHROPIC_MODEL=opus claude -p "go"')).toBe(true);
+    expect(looksLikeHeadlessClaude('nohup claude -p "go" &')).toBe(true);
+    expect(looksLikeHeadlessClaude('npx -y claude -p "go"')).toBe(true);
+    expect(looksLikeHeadlessClaude('~/.local/bin/claude -p "go"')).toBe(true);
+    expect(looksLikeHeadlessClaude('/usr/local/bin/claude --print "go"')).toBe(true);
+  });
+
+  it('finds it after a pipe — the prompt is often fed in on stdin', () => {
+    expect(looksLikeHeadlessClaude('cat brief.md | claude -p --output-format json')).toBe(true);
+    expect(looksLikeHeadlessClaude('cd /tmp && claude -p "go"')).toBe(true);
+  });
+
+  it('a command that only MENTIONS the invocation is still a shell', () => {
+    expect(looksLikeHeadlessClaude('grep -rn "claude -p" src/')).toBe(false);
+    expect(looksLikeHeadlessClaude('echo "run claude -p later"')).toBe(false);
+    expect(looksLikeHeadlessClaude('git commit -m "use claude -p; fix"')).toBe(false);
+  });
+
+  it('interactive or non-agent `claude` invocations are not headless runs', () => {
+    expect(looksLikeHeadlessClaude('claude')).toBe(false);
+    expect(looksLikeHeadlessClaude('claude --version')).toBe(false);
+    expect(looksLikeHeadlessClaude('claude mcp list')).toBe(false);
+    // `--resume` alone is a modifier on either mode, not a headless marker.
+    expect(looksLikeHeadlessClaude('claude --resume abc123')).toBe(false);
+  });
+
+  it('ordinary shells stay shells, and a missing command is never a match', () => {
+    expect(looksLikeHeadlessClaude('npm test')).toBe(false);
+    expect(looksLikeHeadlessClaude('')).toBe(false);
+    expect(looksLikeHeadlessClaude(undefined)).toBe(false);
+  });
+});
+
+// ─── bashCommandFor ──────────────────────────────────────────────────────────────
+//
+// The step the whole promotion depends on: no `task_*` frame carries the command, so a run
+// is only ever recognized as headless if this recovers it off the spawning `Bash` call.
+
+describe('bashCommandFor', () => {
+  const tool = (over: Partial<{ toolUseId: string; name: string; input: unknown }>) => ({
+    kind: 'tool', toolUseId: 'toolu_x', name: 'Bash', input: {}, ...over,
+  });
+  const text = { kind: 'text', text: 'claude -p "not a tool call"' };
+
+  it('resolves by tool_use_id — the exact link the task_started frame provides', () => {
+    const items = [
+      text,
+      tool({ toolUseId: 'toolu_a', input: { command: 'npm test' } }),
+      tool({ toolUseId: 'toolu_b', input: { command: 'claude -p "go"' } }),
+    ];
+    expect(bashCommandFor([items], 'toolu_b')).toBe('claude -p "go"');
+  });
+
+  it('falls back to the Bash description for a roster-adopted run, which has no tool_use_id', () => {
+    const items = [
+      tool({ toolUseId: 'toolu_a', input: { command: 'npm test', description: 'Run the tests' } }),
+      tool({ toolUseId: 'toolu_b', input: { command: 'claude -p "audit"', description: 'Audit the diff' } }),
+    ];
+    expect(bashCommandFor([items], undefined, 'Audit the diff')).toBe('claude -p "audit"');
+  });
+
+  it('searches items before history, and each list newest-first — a re-run resolves to the latest', () => {
+    const history = [tool({ toolUseId: 'toolu_old', input: { command: 'claude -p "v1"', description: 'Review' } })];
+    const items = [
+      tool({ toolUseId: 'toolu_new1', input: { command: 'claude -p "v2"', description: 'Review' } }),
+      tool({ toolUseId: 'toolu_new2', input: { command: 'claude -p "v3"', description: 'Review' } }),
+    ];
+    expect(bashCommandFor([items, history], undefined, 'Review')).toBe('claude -p "v3"');
+  });
+
+  it('an unknown id with no description falls through to undefined rather than the wrong command', () => {
+    const items = [tool({ toolUseId: 'toolu_a', input: { command: 'claude -p "go"' } })];
+    expect(bashCommandFor([items], 'toolu_missing')).toBeUndefined();
+    expect(bashCommandFor([items], undefined, undefined)).toBeUndefined();
+  });
+
+  it('a non-tool item is never mistaken for a command, however it reads', () => {
+    expect(bashCommandFor([[text]], undefined, 'anything')).toBeUndefined();
+  });
+
+  it('a tool call with no command in its input (Read, Edit) contributes nothing', () => {
+    const items = [tool({ toolUseId: 'toolu_a', name: 'Read', input: { file_path: '/tmp/x' } })];
+    expect(bashCommandFor([items], 'toolu_a')).toBeUndefined();
+  });
+});
+
+// ─── Captured end-to-end: a real backgrounded `claude -p` ────────────────────────
+//
+// Frames below are VERBATIM from two live CLI spikes (2026-08-01, `claude -p --output-format
+// stream-json --verbose`), one backgrounding `sleep 8` and one backgrounding a nested
+// `claude -p`. They pin the two facts the whole promotion rests on, neither of which is
+// documented anywhere and both of which would silently break it:
+//
+//   1. ORDER — the `Bash` tool_use frame lands BEFORE `task_started` (13 → 15 → 16 and
+//      15 → 17 → 18 in the two captures), so the tool item is always already in the
+//      transcript when the reducer goes looking for its command.
+//   2. `task_started.tool_use_id` is exactly the `Bash` call's own id.
+//
+// The second capture also produced the surprise the `name` fallback exists for: that Bash
+// call carried NO `description`, and the CLI used the COMMAND ITSELF as the task description.
+
+describe('captured: a backgrounded `claude -p` reduces to a headless agent run', () => {
+  // Spike 2, frame 15 — note the absent `description`.
+  const BASH_TOOL_USE = {
+    kind: 'tool',
+    toolUseId: 'toolu_01C8ibKVzKw5ZUMc28b5QPuh',
+    name: 'Bash',
+    input: { command: "claude -p 'reply with the word hi only' --output-format json .", run_in_background: true },
+  };
+  // Spike 2, frame 18, as `fromTaskStarted` maps it.
+  const TASK_STARTED = {
+    taskId: 'b6do09grx',
+    toolUseId: 'toolu_01C8ibKVzKw5ZUMc28b5QPuh',
+    description: "claude -p 'reply with the word hi only' --output-format json .",
+    taskType: 'local_bash',
+  };
+
+  it('resolves the command off the spawning Bash call and classifies the run as an agent', () => {
+    const command = bashCommandFor([[BASH_TOOL_USE]], TASK_STARTED.toolUseId, TASK_STARTED.description);
+    expect(command).toBe("claude -p 'reply with the word hi only' --output-format json .");
+    const r = run({ taskId: TASK_STARTED.taskId, name: TASK_STARTED.description, taskType: 'local_bash', command });
+    expect(isHeadlessAgentShell(r)).toBe(true);
+    expect(isAgentRun(r)).toBe(true);
+    expect(isBackgroundShell(r)).toBe(false);
+    // Its Bash card must survive — the command is the point.
+    expect(subAgentToolUseIds([r])).toEqual(new Set());
+  });
+
+  it('classifies from the name alone when the command could not be correlated', () => {
+    // The roster-adopted / resumed case: no tool_use_id, nothing in the transcript to match.
+    // The CLI named the task after its command, so the run is still recognized.
+    const r = run({ taskId: TASK_STARTED.taskId, name: TASK_STARTED.description, taskType: 'local_bash', command: undefined });
+    expect(isHeadlessAgentShell(r)).toBe(true);
+  });
+
+  it('a PROSE description naming claude is not an invocation, and stays a shell', () => {
+    const r = run({ name: 'Run headless claude -p for the audit', taskType: 'local_bash', command: undefined });
+    expect(isHeadlessAgentShell(r)).toBe(false);
+    expect(isBackgroundShell(r)).toBe(true);
+  });
+
+  it('the `sleep 8` capture — a described, non-claude shell — is untouched by any of this', () => {
+    // Spike 1, frames 13/15/16: the Bash call DID carry a description, and the roster echoed it.
+    const items = [{
+      kind: 'tool',
+      toolUseId: 'toolu_01B8kcNw93fSALQKjMYAwhKP',
+      name: 'Bash',
+      input: { command: 'sleep 8', description: 'Sleep for 8 seconds in the background', run_in_background: true },
+    }];
+    const command = bashCommandFor([items], 'toolu_01B8kcNw93fSALQKjMYAwhKP', 'Sleep for 8 seconds in the background');
+    expect(command).toBe('sleep 8');
+    const r = run({ taskId: 'b3tcflkjd', name: 'Sleep for 8 seconds in the background', taskType: 'local_bash', command });
+    expect(isBackgroundShell(r)).toBe(true);
+    expect(isAgentRun(r)).toBe(false);
   });
 });
 
@@ -872,7 +1084,7 @@ describe('nextRestoreTop', () => {
 // unbounded mount it replaced, wearing a slice.
 
 describe('nextFirstShown — pinned (following the conversation)', () => {
-  it('keeps exactly the last WINDOW_TAIL entries mounted', () => {
+  it('snaps to the last WINDOW_TAIL entries once it lags by TRIM_SLACK', () => {
     expect(nextFirstShown(0, { total: 500, pinned: true })).toBe(500 - WINDOW_TAIL);
   });
 
@@ -883,15 +1095,45 @@ describe('nextFirstShown — pinned (following the conversation)', () => {
     expect(260 - b).toBe(WINDOW_TAIL);   // still exactly a tail's worth mounted
   });
 
-  it('mounts everything while the conversation is shorter than the window', () => {
+  it('holds still while the lag is inside TRIM_SLACK — no per-token unmount churn', () => {
+    // One unmount per streamed frame shrank scrollHeight every event: clamp, re-pin,
+    // scrollbar wobbling on every token (part of the 08-01 flicker report). The window
+    // sheds a chunk at once instead, so mounted rows drift WINDOW_TAIL..WINDOW_TAIL+SLACK.
+    const start = nextFirstShown(0, { total: 500, pinned: true });
+    let head = start;
+    for (let total = 501; total < 500 + TRIM_SLACK; total += 1) {
+      head = nextFirstShown(head, { total, pinned: true });
+      expect(head).toBe(start);   // frozen while the lag is under the slack
+    }
+    head = nextFirstShown(head, { total: 500 + TRIM_SLACK, pinned: true });
+    expect(head).toBe(500 + TRIM_SLACK - WINDOW_TAIL);   // then one whole-chunk snap
+  });
+
+  it('never mounts more than WINDOW_TAIL + TRIM_SLACK while pinned', () => {
+    let head = 0;
+    for (let total = 0; total <= 2000; total += 1) {
+      head = nextFirstShown(head, { total, pinned: true });
+      expect(total - head).toBeLessThanOrEqual(WINDOW_TAIL + TRIM_SLACK);
+    }
+  });
+
+  it('mounts everything while the conversation is shorter than the window (plus its slack)', () => {
     expect(nextFirstShown(0, { total: 0, pinned: true })).toBe(0);
     expect(nextFirstShown(0, { total: 1, pinned: true })).toBe(0);
     expect(nextFirstShown(0, { total: WINDOW_TAIL, pinned: true })).toBe(0);
-    expect(nextFirstShown(0, { total: WINDOW_TAIL + 1, pinned: true })).toBe(1);
+    // One entry past the tail is inside the slack: nothing is shed for it.
+    expect(nextFirstShown(0, { total: WINDOW_TAIL + 1, pinned: true })).toBe(0);
+    expect(nextFirstShown(0, { total: WINDOW_TAIL + TRIM_SLACK, pinned: true })).toBe(TRIM_SLACK);
   });
 
   it('re-pinning after reading far back shrinks the window straight back to the tail', () => {
     expect(nextFirstShown(0, { total: 400, pinned: true })).toBe(400 - WINDOW_TAIL);
+  });
+
+  it('a rewind past the head still lands on a populated tail, never an over-trimmed one', () => {
+    // prev beyond the new tail clamps back to the tail (rule 4) — the slack must not read
+    // that as "lagging by less than TRIM_SLACK is fine" and leave fewer than a tail mounted.
+    expect(nextFirstShown(300, { total: 120, pinned: true })).toBe(120 - WINDOW_TAIL);
   });
 });
 
@@ -1365,7 +1607,7 @@ describe('remembered image boxes', () => {
 
 describe('shouldAutoReveal', () => {
   const at = (o: Partial<AutoRevealMetrics> = {}): AutoRevealMetrics => ({
-    hiddenCount: 200, scrollTop: 100, userDriven: true, dragging: false, ...o,
+    hiddenCount: 200, scrollTop: 100, userDriven: true, dragging: false, settled: true, ...o,
   });
 
   it('reveals when the reader has read up to the ceiling under their own steam', () => {
@@ -1378,6 +1620,15 @@ describe('shouldAutoReveal', () => {
 
   it('a drag does not become acceptable just by being at the very top', () => {
     expect(shouldAutoReveal(at({ dragging: true, scrollTop: 0 }))).toBe(false);
+  });
+
+  it('never reveals while the scroller is still in motion — momentum is the drag with a different animator', () => {
+    // WKWebView's out-of-process animator overwrites (or is killed by) a mid-momentum
+    // correction exactly as the thumb overwrote it. The reveal waits for quiet; being
+    // user-driven or at the very top buys no exception (owner report 08-01, the flicker).
+    expect(shouldAutoReveal(at({ settled: false }))).toBe(false);
+    expect(shouldAutoReveal(at({ settled: false, scrollTop: 0 }))).toBe(false);
+    expect(shouldAutoReveal(at({ settled: false, userDriven: true }))).toBe(false);
   });
 
   it('refuses an offset the user did not ask for — our own correction, a clamp, a re-home', () => {
@@ -1394,5 +1645,379 @@ describe('shouldAutoReveal', () => {
     expect(shouldAutoReveal(at({ scrollTop: WINDOW_REVEAL_PX - 1 }))).toBe(true);
     expect(shouldAutoReveal(at({ scrollTop: WINDOW_REVEAL_PX }))).toBe(false);
     expect(shouldAutoReveal(at({ scrollTop: 9999 }))).toBe(false);
+  });
+});
+
+// ─── remainingSettleMs (the quiet timer's arithmetic) ───────────────────────────
+//
+// The pane's settle timer sleeps, wakes, asks this how much quiet is still owed, and
+// re-arms for exactly that. The arithmetic lives here because the timer itself needs a
+// document and a WebSocket to exist at all.
+
+describe('remainingSettleMs', () => {
+  it('is settled once a full quiet period has passed', () => {
+    expect(remainingSettleMs(1000, 1000 - SCROLL_SETTLE_MS)).toBe(0);
+    expect(remainingSettleMs(1000, 0)).toBe(0);
+  });
+
+  it('owes the remainder while activity is fresher than the quiet period', () => {
+    expect(remainingSettleMs(1000, 1000)).toBe(SCROLL_SETTLE_MS);
+    expect(remainingSettleMs(1000, 990)).toBe(SCROLL_SETTLE_MS - 10);
+    expect(remainingSettleMs(1000, 1000 - SCROLL_SETTLE_MS + 1)).toBe(1);
+  });
+
+  it('treats "no activity ever" (-Infinity) as settled — a fresh pane may reveal at once', () => {
+    expect(remainingSettleMs(1000, -Infinity)).toBe(0);
+  });
+
+  it('clamps activity stamped in the future to one full quiet period, never more', () => {
+    // performance.now() going backwards across a re-home should cost at most one settle,
+    // not a timer armed for a negative-since eternity.
+    expect(remainingSettleMs(1000, 5000)).toBe(SCROLL_SETTLE_MS);
+  });
+
+  it('honours a caller-supplied quiet period', () => {
+    expect(remainingSettleMs(1000, 950, 200)).toBe(150);
+    expect(remainingSettleMs(1000, 700, 200)).toBe(0);
+  });
+});
+
+// ─── pathChipLabel + toolSubject (owner report 08-01) ───────────────────────────
+//
+// The row names its OBJECT, not its type. Three screenshots drove this: seven `Read`
+// rows whose chips all read `/Users/<me>/proje…` (right-truncated, so the filename —
+// the only differing part — was the part thrown away), and a `Skill · 1 lines` row
+// that named neither the skill nor anything useful.
+
+describe('pathChipLabel', () => {
+  it('keeps the filename and exactly ONE parent for context', () => {
+    expect(pathChipLabel('/Users/me/projects/dc/dashboard/src/chat/chatEntities.ts'))
+      .toEqual({ dir: 'chat', name: 'chatEntities.ts' });
+  });
+
+  it('has no parent to show at the root, or for a bare filename', () => {
+    expect(pathChipLabel('/foo.txt')).toEqual({ dir: null, name: 'foo.txt' });
+    expect(pathChipLabel('foo.txt')).toEqual({ dir: null, name: 'foo.txt' });
+  });
+
+  it('names a directory by its own last segment, not the trailing slash', () => {
+    expect(pathChipLabel('/a/b/c/')).toEqual({ dir: 'b', name: 'c' });
+    expect(pathChipLabel('/a/b/c///')).toEqual({ dir: 'b', name: 'c' });
+  });
+
+  it('normalises a leading ./ and windows separators', () => {
+    expect(pathChipLabel('./src/app.ts')).toEqual({ dir: 'src', name: 'app.ts' });
+    expect(pathChipLabel('src\\lib\\app.ts')).toEqual({ dir: 'lib', name: 'app.ts' });
+  });
+
+  it('never returns an empty name — a degenerate path still says something', () => {
+    expect(pathChipLabel('/').name).toBeTruthy();
+    expect(pathChipLabel('').name).toBe('');
+  });
+
+  it('is the fix: the differing half survives, the shared prefix is what goes', () => {
+    const rows = [
+      '/Users/me/dc/dashboard/src/components/sleepy/chat/ToolCard.tsx',
+      '/Users/me/dc/dashboard/src/components/sleepy/chat/atoms.tsx',
+      '/Users/me/dc/dashboard/src/components/sleepy/ChatPane.tsx',
+    ].map(pathChipLabel);
+    // Every row is now distinguishable by its name alone — which is what the raw-path
+    // chip could not do, because CSS ellipsis cut from the right.
+    expect(new Set(rows.map((r) => r.name)).size).toBe(3);
+  });
+});
+
+describe('toolSubject', () => {
+  it('Skill names the SKILL, which is sitting right there in the input', () => {
+    expect(toolSubject('Skill', { skill: 'excalidraw', args: 'x' }))
+      .toEqual({ kind: 'text', text: 'excalidraw' });
+  });
+
+  it('Read/Edit/Write name the file, and the chip stays openable', () => {
+    expect(toolSubject('Read', { file_path: '/a/b.ts' })).toEqual({ kind: 'path', path: '/a/b.ts' });
+    expect(toolSubject('Write', { file_path: '/a/b.ts' })).toEqual({ kind: 'path', path: '/a/b.ts' });
+    expect(toolSubject('NotebookEdit', { notebook_path: '/a/n.ipynb' }))
+      .toEqual({ kind: 'path', path: '/a/n.ipynb' });
+  });
+
+  it('Grep/Glob name the pattern — the question being asked', () => {
+    expect(toolSubject('Grep', { pattern: 'useGroupCollapse', path: '/repo' }))
+      .toEqual({ kind: 'text', text: 'useGroupCollapse' });
+    expect(toolSubject('Glob', { pattern: '**/*.tsx' })).toEqual({ kind: 'text', text: '**/*.tsx' });
+  });
+
+  it('Grep falls back to its path when it somehow has no pattern', () => {
+    expect(toolSubject('Grep', { path: '/repo/src' })).toEqual({ kind: 'path', path: '/repo/src' });
+  });
+
+  it('WebFetch names the host, not the whole url', () => {
+    expect(toolSubject('WebFetch', { url: 'https://docs.anthropic.com/en/api/x?y=1' }))
+      .toEqual({ kind: 'text', text: 'docs.anthropic.com' });
+  });
+
+  it('a url the URL parser rejects still names itself rather than vanishing', () => {
+    expect(toolSubject('WebFetch', { url: 'not a url' })).toEqual({ kind: 'text', text: 'not a url' });
+  });
+
+  it('WebSearch names the query', () => {
+    expect(toolSubject('WebSearch', { query: 'excalidraw plugin format' }))
+      .toEqual({ kind: 'text', text: 'excalidraw plugin format' });
+  });
+
+  it('Agent/Task name WHICH agent — for the case its group card never materialised', () => {
+    expect(toolSubject('Agent', { subagent_type: 'reviewer', description: 'review it' }))
+      .toEqual({ kind: 'text', text: 'reviewer' });
+    expect(toolSubject('Task', { description: 'review it' }))
+      .toEqual({ kind: 'text', text: 'review it' });
+  });
+
+  it('Bash is prose, never a chip — and the description wins over the raw command', () => {
+    // Superseded "no subject at all": a Bash row without one rendered as the bare word
+    // "Bash" (owner report 08-01, second pass). The full behaviour is pinned in the
+    // dedicated `toolSubject — Bash` describe below.
+    expect(toolSubject('Bash', { command: 'ls -la', description: 'List files' }))
+      .toEqual({ kind: 'prose', text: 'List files' });
+  });
+
+  it('returns null rather than an empty chip when the input holds nothing to name', () => {
+    expect(toolSubject('Skill', {})).toBeNull();
+    expect(toolSubject('Skill', { skill: '   ' })).toBeNull();
+    expect(toolSubject('Read', {})).toBeNull();
+    expect(toolSubject('TodoWrite', undefined)).toBeNull();
+    expect(toolSubject('Anything', null)).toBeNull();
+  });
+
+  it('an unknown tool still shows its path if it has one', () => {
+    expect(toolSubject('SomeMcpTool', { path: '/x/y.md' })).toEqual({ kind: 'path', path: '/x/y.md' });
+  });
+});
+
+describe('isDreamcontextSkill', () => {
+  it('recognises our own skills — the ones install-skill writes', () => {
+    for (const s of ['dreamcontext', 'initializer', 'curator', 'dreamcontext-deep-research',
+      'dream-sync', 'announcements', 'patterns', 'task-manager']) {
+      expect(isDreamcontextSkill(s)).toBe(true);
+    }
+  });
+
+  it('does NOT brand the skill-packs library — distributing a skill is not being it', () => {
+    expect(isDreamcontextSkill('brand-voice')).toBe(false);
+    expect(isDreamcontextSkill('council')).toBe(false);
+    expect(isDreamcontextSkill('business-idea-discovery')).toBe(false);
+  });
+
+  it('does not brand an unrelated third-party skill', () => {
+    expect(isDreamcontextSkill('remotion-render')).toBe(false);
+    expect(isDreamcontextSkill('')).toBe(false);
+  });
+
+  it('is tolerant of casing and stray whitespace from the wire', () => {
+    expect(isDreamcontextSkill('  Dreamcontext  ')).toBe(true);
+    expect(isDreamcontextSkill('Task-Manager')).toBe(true);
+  });
+});
+
+// ─── Tool runs (owner report 08-01) ─────────────────────────────────────────────
+//
+// A contiguous stretch of tool calls renders as ONE collapsing card. The two things
+// that can go wrong are (a) a run swallowing an item that renders as something else,
+// and (b) the group flickering open/closed once per tool call.
+
+const tool = (id: string, over: Partial<{ name: string; status: 'running' | 'done' | 'error'; startedAt: number; endedAt: number }> = {}) => ({
+  kind: 'tool' as const, id, name: 'Read', status: 'done' as const, startedAt: 0, endedAt: 1, ...over,
+});
+const text = (id: string) => ({ kind: 'text' as const, id });
+const isTool = (i: { kind: string }) => i.kind === 'tool';
+
+describe('segmentToolRuns', () => {
+  it('folds a stretch of adjacent tool calls into one run', () => {
+    const segs = segmentToolRuns([tool('a'), tool('b'), tool('c')], isTool);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].kind).toBe('run');
+  });
+
+  it('leaves a run shorter than MIN_TOOL_RUN as plain singles — chrome must earn its place', () => {
+    expect(segmentToolRuns([tool('a'), tool('b')], isTool).every((s) => s.kind === 'single')).toBe(true);
+    expect(segmentToolRuns([tool('a')], isTool).every((s) => s.kind === 'single')).toBe(true);
+    expect(MIN_TOOL_RUN).toBe(3);
+  });
+
+  it('a non-groupable item BREAKS the run — it never disappears into one', () => {
+    const segs = segmentToolRuns(
+      [tool('a'), tool('b'), tool('c'), text('t'), tool('d'), tool('e'), tool('f')],
+      isTool,
+    );
+    expect(segs.map((s) => s.kind)).toEqual(['run', 'single', 'run']);
+  });
+
+  it('preserves every item, in order, exactly once', () => {
+    const items = [tool('a'), text('t1'), tool('b'), tool('c'), tool('d'), text('t2'), tool('e')];
+    const flat = segmentToolRuns(items, isTool)
+      .flatMap((s) => (s.kind === 'run' ? s.items : [s.item]));
+    expect(flat).toEqual(items);
+  });
+
+  it('the predicate is the CALLER\'s — an item that renders as a board or a bypass receipt is not groupable', () => {
+    // Mirrors ChatPane's isPlainToolCard: kind==='tool' is necessary, not sufficient.
+    const notBoard = (i: { kind: string; id: string }) => i.kind === 'tool' && i.id !== 'board';
+    const segs = segmentToolRuns(
+      [tool('a'), tool('b'), tool('board'), tool('c'), tool('d'), tool('e')],
+      notBoard,
+    );
+    expect(segs.map((s) => s.kind)).toEqual(['single', 'single', 'single', 'run']);
+  });
+
+  it('handles an empty transcript', () => {
+    expect(segmentToolRuns([], isTool)).toEqual([]);
+  });
+});
+
+// ─── toolRunKeyItem (owner report 08-01, second pass) ───────────────────────────
+//
+// The run card's React key must come from the run edge the window cannot move. Keyed on the
+// first item, a reveal that merged 40 older calls into the head run was a key change: the
+// card REMOUNTED, the user's open toggle reset (the card snapped back to its collapsed first
+// frame), and the revealed history sat invisible inside it — "load older messages does
+// nothing". Keyed on the last item, the accruing live tail would remount on every call.
+
+describe('toolRunKeyItem', () => {
+  const run = ['a', 'b', 'c', 'd'];
+
+  it('a landed run keys off its LAST item — the edge a reveal cannot move', () => {
+    expect(toolRunKeyItem(run, false)).toBe('d');
+    // The reveal's merge: 40 older entries prepend, the tail stays — SAME key, no remount.
+    expect(toolRunKeyItem(['x', 'y', ...run], false)).toBe('d');
+  });
+
+  it('the accruing tail keys off its FIRST item — the edge an append cannot move', () => {
+    expect(toolRunKeyItem(run, true)).toBe('a');
+    // The stream's append: a new call joins at the end — SAME key, no per-call remount.
+    expect(toolRunKeyItem([...run, 'e'], true)).toBe('a');
+  });
+
+  it('the two rules cross over exactly when the run lands (accruing → false)', () => {
+    // One remount at landing, which is when the phase-stamped toggle is released and the
+    // auto-collapse fires anyway — the reader never sees a state this reset could lose.
+    expect(toolRunKeyItem(run, true)).not.toBe(toolRunKeyItem(run, false));
+  });
+});
+
+describe('toolRunPhase', () => {
+  const done = [{ status: 'done' as const }, { status: 'done' as const }];
+
+  it('is running while any call is still in flight', () => {
+    expect(toolRunPhase([{ status: 'done' }, { status: 'running' }], false)).toBe('running');
+  });
+
+  it('stays running in the GAP between two calls — this is the anti-flicker rule', () => {
+    // Every item is momentarily `done` between calls. Reading liveness off the items alone
+    // would collapse the group here and re-open it a frame later, once per tool call.
+    expect(toolRunPhase(done, true)).toBe('running');
+  });
+
+  it('lands the moment the run stops being the tail of a live turn', () => {
+    expect(toolRunPhase(done, false)).toBe('done');
+  });
+
+  it('an errored call does not hold the group open', () => {
+    expect(toolRunPhase([{ status: 'error' }, { status: 'done' }], false)).toBe('done');
+  });
+
+  it('drives the SAME phase-stamped override the sub-agent group card uses', () => {
+    // Collapsing a live run sticks while it is live, and is released when it lands.
+    expect(isGroupOpen(toolRunPhase(done, true), { phase: 'running', open: false })).toBe(false);
+    expect(isGroupOpen(toolRunPhase(done, false), { phase: 'running', open: false })).toBe(false);
+    // Re-opening a landed run sticks — the auto-collapse does not fire twice.
+    expect(isGroupOpen(toolRunPhase(done, false), { phase: 'done', open: true })).toBe(true);
+  });
+});
+
+describe('summarizeToolRun / toolRunHeadline', () => {
+  const run = [
+    tool('1', { name: 'Read', startedAt: 100, endedAt: 900 }),
+    tool('2', { name: 'Read', startedAt: 200, endedAt: 1000 }),
+    tool('3', { name: 'Bash', startedAt: 300, endedAt: 1200 }),
+    tool('4', { name: 'Edit', startedAt: 400, endedAt: 1500 }),
+    tool('5', { name: 'Grep', status: 'error', startedAt: 500, endedAt: 1400 }),
+  ];
+
+  it('counts what the reader actually wants to know', () => {
+    const s = summarizeToolRun(run);
+    expect(s).toMatchObject({ steps: 5, reads: 2, commands: 1, edits: 1, failed: 1 });
+  });
+
+  it('measures the run\'s wall-clock SPAN, not the sum of its parts', () => {
+    // Sum would be 800+800+900+1100+900 = 4500ms for a run that took 1400ms of real time.
+    expect(summarizeToolRun(run).durationMs).toBe(1400);
+  });
+
+  it('has no duration to report until something has finished', () => {
+    expect(summarizeToolRun([tool('1', { name: 'Read', startedAt: 5, endedAt: undefined })]).durationMs).toBeNull();
+  });
+
+  it('says only the counts that are non-zero', () => {
+    expect(toolRunHeadline(summarizeToolRun(run)))
+      .toBe('5 steps · 2 files read · 1 command · 1 edited · 1 failed');
+    expect(toolRunHeadline(summarizeToolRun([tool('1'), tool('2'), tool('3')])))
+      .toBe('3 steps · 3 files read');
+  });
+
+  it('never claims a failure that did not happen', () => {
+    expect(toolRunHeadline(summarizeToolRun([tool('1', { name: 'Bash' })]))).not.toContain('failed');
+  });
+});
+
+// ─── Bash rows are never nameless (owner report 08-01, second pass) ─────────────
+//
+// `description` is OPTIONAL on the wire. Three rows in the original screenshot read as
+// the bare word "Bash" with nothing beside them, because the card only ever looked at
+// `description`. A row is not allowed to be nameless when its input says what it did.
+
+describe('toolSubject — Bash', () => {
+  it('prefers the description the CLI gave it', () => {
+    expect(toolSubject('Bash', { command: 'git status', description: 'Show working tree status' }))
+      .toEqual({ kind: 'prose', text: 'Show working tree status' });
+  });
+
+  it('falls back to the COMMAND when there is no description — the nameless-row fix', () => {
+    expect(toolSubject('Bash', { command: 'git rev-parse HEAD' }))
+      .toEqual({ kind: 'prose', text: 'git rev-parse HEAD' });
+  });
+
+  it('is prose, not a chip — a command is a sentence, a filename is a label', () => {
+    expect(toolSubject('Bash', { command: 'ls' })?.kind).toBe('prose');
+    expect(toolSubject('Read', { file_path: '/a.ts' })?.kind).toBe('path');
+    expect(toolSubject('Skill', { skill: 'curator' })?.kind).toBe('text');
+  });
+
+  it('an empty description does not beat a real command', () => {
+    expect(toolSubject('Bash', { command: 'make', description: '   ' }))
+      .toEqual({ kind: 'prose', text: 'make' });
+  });
+
+  it('only returns null when the input genuinely names nothing', () => {
+    expect(toolSubject('Bash', {})).toBeNull();
+  });
+});
+
+describe('condenseCommand', () => {
+  it('flattens a multi-line command into one line of header prose', () => {
+    expect(condenseCommand('cat <<EOF\nhello\nworld\nEOF')).toBe('cat <<EOF hello world EOF');
+    expect(condenseCommand('a &&\n  b   &&\tc')).toBe('a && b && c');
+  });
+
+  it('trims, so a row never starts with whitespace', () => {
+    expect(condenseCommand('   npm test   ')).toBe('npm test');
+  });
+
+  it('caps its length — the DOM bound, not the visible one (CSS still ellipsizes)', () => {
+    const long = 'x'.repeat(500);
+    const out = condenseCommand(long);
+    expect(out).toHaveLength(COMMAND_LABEL_CAP);
+    expect(out.endsWith('…')).toBe(true);
+  });
+
+  it('leaves a command that already fits completely alone', () => {
+    expect(condenseCommand('npm run build')).toBe('npm run build');
   });
 });

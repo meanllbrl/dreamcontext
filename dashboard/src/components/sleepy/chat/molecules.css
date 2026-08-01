@@ -6,13 +6,22 @@
 
 /* ── Tool card header ────────────────────────────────────────────────────────────── */
 
+/* 32px, not 40 (owner report 08-01): a 12-call run is routine, and at the old height plus
+   the transcript's 16px gap each call cost 58px — one run filled a whole pane with rows
+   whose only readable content was a duration. The type inside is unchanged; only the dead
+   space around it went. */
 .chat-m-toolhead {
   position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: var(--space-10);
-  padding: var(--space-2) var(--space-4);
+  min-height: var(--space-8);
+  /* No VERTICAL padding: the tallest thing in the row (the path chip, ~26px with its own
+     padding and border) plus 4px either side overshot the 32px target and the row measured
+     35px. `min-height` + `align-items: center` gives the same optical breathing room and
+     lets the row actually be 32 — measured in scripts/verify/chat-toolrows.mjs, which is
+     why this is a fact rather than an intention. */
+  padding: 0 var(--space-4);
   border-radius: inherit;
 }
 /* Stretched hit area: the whole row toggles from ONE control, and everything else in the

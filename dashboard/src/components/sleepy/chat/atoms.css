@@ -39,6 +39,20 @@
   opacity: 0.85;
 }
 
+/* The dreamcontext mark, for a Skill row running one of our OWN skills. Drawn in CSS (a
+   rotated rounded square in the brand accent) rather than <img src="logo.png">: the bitmap
+   carries a gradient backdrop that reads as a grey smudge at 10px, and a glyph slot should
+   not cost a network request per row. Same optical size as the emoji it replaces. */
+.chat-a-glyph-brand {
+  width: 11px;
+  height: 11px;
+  align-self: center;
+  border-radius: 3px;
+  background: var(--color-accent);
+  transform: rotate(45deg);
+  opacity: 1;
+}
+
 .chat-a-toolname {
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
@@ -47,7 +61,13 @@
   white-space: nowrap;
 }
 
+/* The chip is a FLEX row of two halves so the truncation has a direction: the folder may
+   shrink to nothing, the filename never shrinks. A single text node with `text-overflow`
+   could only ever cut the tail — which is exactly the bug this replaced, since the tail is
+   the filename and the head is the `/Users/<me>/…` prefix every row shares. */
 .chat-a-pathchip {
+  display: inline-flex;
+  align-items: baseline;
   min-width: 0;
   max-width: 44ch;
   padding: 2px var(--space-2);
@@ -60,13 +80,33 @@
   line-height: 1.5;
   cursor: pointer;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   transition: border-color var(--transition-fast), background var(--transition-fast);
 }
+/* The context half. `flex-shrink` is the whole point; `min-width: 0` is what lets it
+   actually shrink below its content width inside a flex row. */
+.chat-a-pathchip-dir {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.62;
+}
+/* The identity half — pinned. */
+.chat-a-pathchip-name { flex: 0 0 auto; }
+
 .chat-a-pathchip:hover { border-color: var(--color-accent); }
 .chat-a-pathchip:active { transform: scale(0.98); }
 .chat-a-pathchip:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+
+/* A subject with nothing behind it to open (skill name, grep pattern, host) — same shape,
+   no affordance: no pointer, no hover border, no press. */
+.chat-a-pathchip[data-static] {
+  cursor: default;
+  text-overflow: ellipsis;
+}
+.chat-a-pathchip[data-static]:hover { border-color: transparent; }
+.chat-a-pathchip[data-static]:active { transform: none; }
 
 /* ── Meta readouts ───────────────────────────────────────────────────────────────── */
 

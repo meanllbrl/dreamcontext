@@ -23,6 +23,7 @@ export const TOOL_GLYPHS: Record<string, string> = {
   Edit: '✎',
   Write: '✎',
   MultiEdit: '✎',
+  NotebookEdit: '✎',
   Grep: '🔎',
   Glob: '📁',
   LS: '📁',
@@ -31,6 +32,8 @@ export const TOOL_GLYPHS: Record<string, string> = {
   Agent: '⚡',
   Task: '⚡',
   AskUserQuestion: '❓',
+  TodoWrite: '☑',
+  Skill: '✦',
 };
 
 /** Fallback glyph for a tool name not in {@link TOOL_GLYPHS}. */
@@ -38,6 +41,32 @@ export const DEFAULT_TOOL_GLYPH = '✦';
 
 export function toolGlyph(name: string): string {
   return TOOL_GLYPHS[name] ?? DEFAULT_TOOL_GLYPH;
+}
+
+/**
+ * dreamcontext's OWN skills — the ones `dreamcontext install-skill` writes into `.claude/`
+ * from this repo's `skill/` and `skill-…` folders. A `Skill` row for one of these wears the
+ * dreamcontext mark instead of the generic ✦, so the app is visibly recognising itself at
+ * work rather than reporting a nameless third-party call.
+ *
+ * Deliberately NOT extended to `skill-packs` (brand-voice, council, business-idea-…):
+ * those are a library dreamcontext DISTRIBUTES, not skills that ARE dreamcontext, and
+ * branding them would make the mark mean "shipped in the tarball" instead of "this is us".
+ * Names are the `name:` frontmatter each SKILL.md declares — the string the CLI invokes.
+ */
+export const DREAMCONTEXT_SKILLS: ReadonlySet<string> = new Set([
+  'dreamcontext',
+  'initializer',
+  'curator',
+  'dreamcontext-deep-research',
+  'dream-sync',
+  'announcements',
+  'patterns',
+  'task-manager',
+]);
+
+export function isDreamcontextSkill(skill: string): boolean {
+  return DREAMCONTEXT_SKILLS.has(skill.trim().toLowerCase());
 }
 
 // ─── Reference classification (state 3/4 — file/entity chips) ─────────────────────
@@ -63,6 +92,142 @@ function basename(path: string): string {
   const clean = path.replace(/\/+$/, '');
   const i = clean.lastIndexOf('/');
   return i === -1 ? clean : clean.slice(i + 1);
+}
+
+/** A path chip's two halves — see {@link pathChipLabel}. */
+export interface PathChipLabel {
+  /** The immediate parent folder, WITHOUT a trailing slash. `null` at the root. */
+  dir: string | null;
+  /** The basename — the half that must never be the one that gets truncated. */
+  name: string;
+}
+
+/**
+ * Split a path into the two things a chip should show: one parent folder for context, and
+ * the FILENAME.
+ *
+ * The bug this exists to kill (owner report 08-01): the chip rendered the raw absolute path
+ * and let CSS `max-width` + `text-overflow: ellipsis` cut it — which cuts from the RIGHT.
+ * Every row therefore kept `/Users/<me>/proje…`, identical across all of them, and threw
+ * away the only part that differed. Seven `Read` rows in one screenshot, not one of them
+ * naming its file.
+ *
+ * Only ONE parent survives on purpose: `chat/chatEntities.ts` locates the file for a reader
+ * who already knows the project, and any more of the path is the same shared prefix that
+ * caused the problem. The full path is still exact in the chip's `title`, so nothing is lost
+ * — it just stops being what you read first.
+ */
+export function pathChipLabel(path: string): PathChipLabel {
+  const raw = String(path);
+  const clean = raw.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+  const cut = clean.lastIndexOf('/');
+  // `dir` is one segment, never a path: the parent of `/a/b/c.ts` is `b`, not `/a/b`.
+  const parent = cut === -1 ? '' : basename(clean.slice(0, cut));
+  // `"/"` cleans to the empty string — fall back to the raw input so the root still renders
+  // as something. A chip that draws nothing is worse than a chip that draws a slash.
+  return { dir: parent || null, name: basename(clean) || clean || raw };
+}
+
+// ─── What a tool row is ABOUT (owner report 08-01) ─────────────────────────────────
+
+/**
+ * The subject of a tool call — the thing it acted ON, as opposed to the tool's own name.
+ * `path` is openable (the chip stays a button into the file panel); `text` is an identity
+ * with nothing behind it to open (a skill name, a search pattern, a host).
+ */
+export type ToolSubject =
+  | { kind: 'path'; path: string }
+  | { kind: 'text'; text: string }
+  /** Reads as a sentence, not a label — the header renders it as the muted subtitle rather
+   *  than a chip. A shell command is prose of this kind; a filename is not. */
+  | { kind: 'prose'; text: string };
+
+function inputStr(input: unknown, key: string): string | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const v = (input as Record<string, unknown>)[key];
+  return typeof v === 'string' && v.trim() ? v : undefined;
+}
+
+/** `https://docs.anthropic.com/x` → `docs.anthropic.com`. Falls back to the raw string for
+ *  anything `URL` won't parse, so a malformed url still names itself rather than vanishing. */
+function hostOf(url: string): string {
+  try { return new URL(url).host || url; } catch { return url; }
+}
+
+/** How much of a command survives into the one-line header. The row also ellipsizes in CSS;
+ *  this bound is about `innerText` and the DOM, not about the visible width. */
+export const COMMAND_LABEL_CAP = 120;
+
+/**
+ * A shell command as ONE line of header prose.
+ *
+ * Newlines are the reason this exists: a heredoc or a `&&`-chained script arrives with real
+ * line breaks, and dropping that into a fixed-height row either blows the row open or renders
+ * as a ragged fragment. Collapsed to single spaces and capped, it reads as one sentence — and
+ * the complete, unmodified command is a click away in the terminal block below.
+ */
+export function condenseCommand(command: string): string {
+  const flat = String(command).replace(/\s+/g, ' ').trim();
+  return flat.length > COMMAND_LABEL_CAP ? `${flat.slice(0, COMMAND_LABEL_CAP - 1)}…` : flat;
+}
+
+/**
+ * What this tool call is ABOUT — the row's identity.
+ *
+ * The rule, generalised from three separate owner reports on 08-01: **a row names its
+ * OBJECT, not its type.** `Skill · 1 lines` names neither — it reports the tool's class and
+ * then the character count of its result, which for a skill invocation means nothing at all,
+ * while the skill's actual name sits unread in `input.skill`. The same held for `Read` (the
+ * file was in `input.file_path`, truncated away by CSS) and would hold for `Grep`, `Glob`,
+ * `WebFetch`.
+ *
+ * `Bash` is `prose`, not a chip — a command is a sentence. It prefers the CLI's own
+ * `description`, but FALLS BACK TO THE COMMAND, which is the whole point: `description` is
+ * optional on the wire, and a Bash call that arrived without one used to render as the bare
+ * word "Bash" with nothing beside it (owner report 08-01, second pass — three such rows in
+ * the original screenshot). A row is never allowed to be nameless when its input says what
+ * it did.
+ */
+export function toolSubject(name: string, input: unknown): ToolSubject | null {
+  const path = inputStr(input, 'file_path') ?? inputStr(input, 'notebook_path') ?? inputStr(input, 'path');
+
+  switch (name) {
+    case 'Bash': {
+      const description = inputStr(input, 'description');
+      if (description) return { kind: 'prose', text: description };
+      const command = inputStr(input, 'command');
+      return command ? { kind: 'prose', text: condenseCommand(command) } : null;
+    }
+    case 'Skill': {
+      const skill = inputStr(input, 'skill');
+      return skill ? { kind: 'text', text: skill } : null;
+    }
+    case 'Grep':
+    case 'Glob': {
+      // A pattern IS the question being asked; the directory it ran in is context the row
+      // has no room for (and is usually just the project root).
+      const pattern = inputStr(input, 'pattern');
+      if (pattern) return { kind: 'text', text: pattern };
+      return path ? { kind: 'path', path } : null;
+    }
+    case 'WebFetch': {
+      const url = inputStr(input, 'url');
+      return url ? { kind: 'text', text: hostOf(url) } : null;
+    }
+    case 'WebSearch': {
+      const query = inputStr(input, 'query');
+      return query ? { kind: 'text', text: query } : null;
+    }
+    case 'Agent':
+    case 'Task': {
+      // Normally suppressed into the SubAgentCard, so this only fires for a run whose group
+      // card never materialised — it should still say WHICH agent rather than "Task".
+      const sub = inputStr(input, 'subagent_type') ?? inputStr(input, 'description');
+      return sub ? { kind: 'text', text: sub } : null;
+    }
+    default:
+      return path ? { kind: 'path', path } : null;
+  }
 }
 
 /**
@@ -335,9 +500,15 @@ export interface SubAgentRun {
   name: string;
   subagentType?: string;
   /** `local_agent` (a real sub-agent), `local_bash` (a shell command the CLI auto-
-   *  backgrounded), or `local_workflow`. Drives {@link isAgentRun} — a bash task has no
-   *  model and no token accounting, and must not be labelled an "agent". */
+   *  backgrounded), or `local_workflow`. Drives {@link isDispatchedAgent} — a bash task has
+   *  no model and no token accounting, and must not be labelled a dispatched sub-agent. */
   taskType?: string;
+  /** For a `local_bash` task only: the shell command it is running, resolved from the
+   *  spawning `Bash` call's own input (see chatSession.ts's `bashCommandFor`). Load-bearing
+   *  for {@link isHeadlessAgentShell} — the command is the ONLY channel that says a "shell"
+   *  is in fact a headless `claude` session. Absent when the run was adopted off the roster
+   *  and its spawning tool call is not in this conversation. */
+  command?: string;
   prompt?: string;
   /** `stopped` is its own terminal state, not a flavour of `completed` or `error`: a run the
    *  USER killed (`task_updated{status:'killed'}` / `task_notification{status:'stopped'}`,
@@ -361,22 +532,171 @@ export interface SubAgentRun {
   modelsUsed?: string[];
 }
 
-/** Is this a real dispatched sub-agent, as opposed to a shell command the CLI auto-
- *  backgrounded? `local_bash` tasks ride the exact same `task_*` frames (verified on CLI
- *  2.1.220: a sub-agent's own `sleep 20` produced its own task_started/task_notification
- *  pair), so the type tag — not the mere presence of a run — is what may call something an
- *  agent. A run with no `taskType` at all is treated as an agent: that is the shape every
- *  pre-2.1.220 spike recorded, and under-reporting a real agent is the worse error. */
-export function isAgentRun(run: SubAgentRun): boolean {
+/** Was this run dispatched through the Agent/Task TOOL, as opposed to riding a `local_bash`
+ *  task? `local_bash` tasks ride the exact same `task_*` frames (verified on CLI 2.1.220: a
+ *  sub-agent's own `sleep 20` produced its own task_started/task_notification pair), so the
+ *  type tag — not the mere presence of a run — is what may call something a dispatch. A run
+ *  with no `taskType` at all counts as a dispatch: that is the shape every pre-2.1.220 spike
+ *  recorded, and under-reporting a real agent is the worse error.
+ *
+ *  This, NOT {@link isAgentRun}, is the predicate for anything that depends on the Agent-tool
+ *  machinery: a sidechain transcript to drill into, and a spawning tool card to suppress. */
+export function isDispatchedAgent(run: SubAgentRun): boolean {
   return run.taskType !== 'local_bash';
 }
 
-/** A shell command the CLI is running in the background — the complement of
+// ─── Headless `claude` runs: a shell by transport, an agent by nature ──────────────
+//
+// Owner report (08-01): "we run a LOT of headless claude through the shell — show it as a
+// sub-agent, not as a shell." Every fan-out this project actually performs (council personas,
+// goal-skill builder lanes, automations) is a backgrounded `claude -p …`, which the CLI
+// reports as `task_type:'local_bash'` — indistinguishable, at the frame level, from `npm
+// test`. So the whole fleet landed in the background-shells TRAY: a strip of anonymous
+// "shells" over the composer, while the sub-agent card the user actually watches sat empty.
+//
+// The command is the only channel that tells the two apart, so it is carried on the run (see
+// `SubAgentRun.command`) and classified here. A run that passes is presented as an AGENT —
+// agent card, agent rail, "3 agents running" — while keeping the affordances its transport
+// really has: no sidechain transcript exists for it, so its drill-in is its live output, and
+// it can be stopped.
+
+/** Command-position wrappers to skip when looking for the executable. `env`/assignments cover
+ *  `FOO=bar claude -p`, the rest cover the launchers a spawn actually gets written with. */
+const COMMAND_WRAPPERS: ReadonlySet<string> = new Set([
+  'npx', 'bunx', 'pnpm', 'yarn', 'nohup', 'exec', 'command', 'time', 'env', 'stdbuf', 'caffeinate',
+]);
+
+/** The flags that make a `claude` invocation HEADLESS — i.e. a one-shot agent run rather
+ *  than the interactive TUI. `--resume` alone is deliberately not enough: resuming is a
+ *  modifier on either mode, and only `-p`/`--print` (or an explicit stream format) says the
+ *  process will run to completion on its own. */
+const HEADLESS_CLAUDE_FLAG_RE = /(?:^|\s)(?:-p|--print|--output-format|--input-format)(?:[\s=]|$)/;
+
+/**
+ * Is this shell command a headless Claude Code session?
+ *
+ * Parsed rather than pattern-matched against the whole string, because the whole string is
+ * exactly where the false positives live: `grep -rn claude src/`, `git commit -m "use claude
+ * -p"` and `echo "claude -p"` all CONTAIN the invocation without being one. The command is
+ * split on shell separators, each segment's leading env-assignments/wrappers/flags are
+ * skipped, and only a segment whose EXECUTABLE is literally `claude` (bare or path-qualified)
+ * and whose own arguments carry a headless flag counts.
+ *
+ * Splitting on separators is what makes `printf … | claude -p` work; it can only ever produce
+ * MORE segments, never merge two, so it cannot manufacture a match that the shell wouldn't.
+ * A `claude` buried inside `bash -c "…"` is missed on purpose — mislabelling a real shell as
+ * an agent is the worse error, since the tray is the only surface offering it a Stop.
+ */
+export function looksLikeHeadlessClaude(command: string | undefined): boolean {
+  if (!command) return false;
+  for (const segment of command.split(/\|\||&&|[|;\n]/)) {
+    const tokens = segment.trim().split(/\s+/).filter(Boolean);
+    let i = 0;
+    while (i < tokens.length) {
+      const t = tokens[i];
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t) || t.startsWith('-') || COMMAND_WRAPPERS.has(t)) { i += 1; continue; }
+      break;
+    }
+    const exe = tokens[i];
+    if (!exe) continue;
+    // Strip a subshell/brace opener, quotes, and any leading path: `(claude`, `"claude"`,
+    // `~/.local/bin/claude` and `claude` are the same executable.
+    const base = exe.replace(/^[({'"]+/, '').replace(/['"]+$/, '').replace(/^.*\//, '');
+    if (base !== 'claude') continue;
+    if (HEADLESS_CLAUDE_FLAG_RE.test(tokens.slice(i + 1).join(' '))) return true;
+  }
+  return false;
+}
+
+/** The subset of a transcript item {@link bashCommandFor} reads. Structural for the same
+ *  reason as {@link ProgressProbe}: this module's invariant is zero dependency on
+ *  chatSession.ts (`ChatItem[]` satisfies it). */
+export interface CommandProbe { kind: string; toolUseId?: string; name?: string; input?: unknown }
+
+function probeCommand(item: CommandProbe): string | undefined {
+  if (!item.input || typeof item.input !== 'object') return undefined;
+  const cmd = (item.input as Record<string, unknown>).command;
+  return typeof cmd === 'string' && cmd ? cmd : undefined;
+}
+
+/**
+ * The shell command behind a `local_bash` task, recovered from the `Bash` call that spawned
+ * it — the field {@link isHeadlessAgentShell} needs to tell a headless `claude -p` fan-out
+ * apart from `npm test`, since the CLI reports both as `task_type:'local_bash'` and no
+ * `task_*` frame carries the command itself.
+ *
+ * Two lookups, in order of trust:
+ *   1. `toolUseId` — exact. The `task_started` frame carries the id of the `Bash` call the
+ *      CLI just backgrounded, and that tool item is already in the transcript (the tool_use
+ *      frame is what STARTED the task, so it always precedes this).
+ *   2. the Bash `description` — for a run adopted off the `background_tasks_changed` roster,
+ *      which carries no tool_use_id at all. The roster's `description` IS the Bash tool's own
+ *      `description` argument, so matching on it recovers the command for a shell whose
+ *      `task_started` was never seen (a resumed conversation with work already in flight).
+ *      A wrong match here can only mislabel one row; it can never lose a command.
+ *
+ * Every list is walked NEWEST-first, and the caller passes `items` before `history`: running
+ * the same command twice is ordinary, and the run being resolved is the most recent one.
+ */
+export function bashCommandFor(
+  lists: readonly CommandProbe[][], toolUseId?: string, description?: string,
+): string | undefined {
+  const find = (match: (item: CommandProbe) => boolean): string | undefined => {
+    for (const list of lists) {
+      for (let i = list.length - 1; i >= 0; i -= 1) {
+        if (list[i].kind === 'tool' && match(list[i])) {
+          const cmd = probeCommand(list[i]);
+          if (cmd) return cmd;
+        }
+      }
+    }
+    return undefined;
+  };
+  if (toolUseId) {
+    const byId = find((it) => it.toolUseId === toolUseId);
+    if (byId) return byId;
+  }
+  if (!description) return undefined;
+  return find((it) => (
+    it.name === 'Bash' && !!it.input && typeof it.input === 'object'
+    && (it.input as Record<string, unknown>).description === description
+  ));
+}
+
+/**
+ * A backgrounded shell that is really a headless Claude session. Presented as an agent (see
+ * {@link isAgentRun}) but drilled into as a shell — there is no sidechain transcript on disk
+ * for a process the CLI only ever spawned as a command.
+ *
+ * The `name` fallback is not a guess: when a `Bash` call omits its `description` argument the
+ * CLI uses the COMMAND ITSELF as the task's description (captured live — a backgrounded
+ * `claude -p '…' --output-format json` produced `task_started.description` equal to that exact
+ * command line), and `name` is that description. So a run whose command could not be
+ * correlated — adopted off the roster, resumed conversation, spawning tool call outside the
+ * window — is still classified correctly whenever the CLI named it after its command.
+ *
+ * Safe because {@link looksLikeHeadlessClaude} requires `claude` to be the first non-wrapper
+ * token: a PROSE description like "Run headless claude -p for the audit" fails at `Run` and
+ * stays a shell, which is the right answer — that string is a label, not an invocation.
+ */
+export function isHeadlessAgentShell(run: SubAgentRun): boolean {
+  if (run.taskType !== 'local_bash') return false;
+  return looksLikeHeadlessClaude(run.command ?? run.name);
+}
+
+/** Does this run belong in the sub-agent card and rail? A dispatched sub-agent, or a
+ *  backgrounded headless `claude` — both are an agent doing work on your behalf, and the
+ *  transport that carried them is not what the user is watching for. */
+export function isAgentRun(run: SubAgentRun): boolean {
+  return isDispatchedAgent(run) || isHeadlessAgentShell(run);
+}
+
+/** A plain shell command the CLI is running in the background — the complement of
  *  {@link isAgentRun}. These get their own surface (`BackgroundShellsTray`) rather than a row
  *  in the sub-agent card: a shell has no sidechain transcript to drill into, but it does have
- *  live output on disk and can be stopped, which an agent run cannot. */
+ *  live output on disk and can be stopped. */
 export function isBackgroundShell(run: SubAgentRun): boolean {
-  return run.taskType === 'local_bash';
+  return run.taskType === 'local_bash' && !isHeadlessAgentShell(run);
 }
 
 /**
@@ -416,6 +736,9 @@ export function startSubAgentRun(runs: SubAgentRun[], started: SubAgentRun): Sub
     toolUseId: started.toolUseId ?? cur.toolUseId,
     subagentType: started.subagentType ?? cur.subagentType,
     taskType: started.taskType ?? cur.taskType,
+    // The roster arm cannot resolve a command (it carries no tool_use_id), so the started
+    // frame is usually what upgrades an anonymous "shell" row into a named agent one.
+    command: started.command ?? cur.command,
     prompt: started.prompt ?? cur.prompt,
     // The earlier of the two stamps: the roster is what actually told us first, and the row's
     // clock should measure the run, not the frame that happened to name it.
@@ -558,6 +881,157 @@ export function useGroupCollapse(runs: SubAgentRun[]): { open: boolean; onToggle
   return { open, onToggle: () => setToggle({ phase, open: !open }) };
 }
 
+// ─── Tool RUNS — a contiguous stretch of tool calls as one card (owner report 08-01) ──
+//
+// The same argument the sub-agent group card already makes, applied one level down. A turn
+// is mostly tool calls; at one card each, a routine 12-call stretch filled a whole pane and
+// pushed the actual answer off screen. A finished run is a RECORD, and a record that keeps N
+// rows of the transcript forever is just cost — so it collapses to its header the moment the
+// agent speaks again, and a click brings it back for good.
+
+/** One rendered position in the transcript: either a lone item, or a run of adjacent ones. */
+export type RunSegment<T> = { kind: 'single'; item: T } | { kind: 'run'; items: T[] };
+
+/** A run must be worth the chrome. Two cards under one header saves nothing and costs a
+ *  disclosure the reader has to operate, so a pair stays two plain cards. */
+export const MIN_TOOL_RUN = 3;
+
+/**
+ * Fold maximal stretches of adjacent groupable items into runs, leaving everything else
+ * exactly where it was.
+ *
+ * `isGroupable` is the caller's, not ours, and that is the point: `ChatPane` renders some
+ * tool items as something OTHER than a tool card (a board it drew, the sub-agent group card,
+ * a bypass receipt). Those must break a run rather than disappear into one — so the predicate
+ * asks "does this render as a plain tool card?", which only the caller can answer.
+ *
+ * Order is preserved exactly; no item is dropped, duplicated, or reordered.
+ */
+export function segmentToolRuns<T>(
+  items: readonly T[],
+  isGroupable: (item: T) => boolean,
+  minRun: number = MIN_TOOL_RUN,
+): RunSegment<T>[] {
+  const out: RunSegment<T>[] = [];
+  let run: T[] = [];
+  const flush = () => {
+    if (run.length >= minRun) out.push({ kind: 'run', items: run });
+    else for (const item of run) out.push({ kind: 'single', item });
+    run = [];
+  };
+  for (const item of items) {
+    if (isGroupable(item)) run.push(item);
+    else { flush(); out.push({ kind: 'single', item }); }
+  }
+  flush();
+  return out;
+}
+
+/**
+ * Live vs. landed for a tool run.
+ *
+ * `stillAccruing` is what keeps this from flickering, and it is why the phase can't be read
+ * off the items alone. Between two calls every item in the run is momentarily `done` — an
+ * items-only rule would collapse the group in that gap and re-open it a frame later, once
+ * per tool call, for the whole turn. The caller instead answers "is this run still the tail
+ * of a turn that hasn't finished talking?", which goes false exactly once: when the agent
+ * emits its next block, or the turn ends.
+ */
+export function toolRunPhase(
+  items: readonly { status: 'running' | 'done' | 'error' }[],
+  stillAccruing: boolean,
+): RunGroupPhase {
+  if (items.some((i) => i.status === 'running')) return 'running';
+  return stillAccruing ? 'running' : 'done';
+}
+
+export interface ToolRunSummary {
+  steps: number;
+  reads: number;
+  commands: number;
+  edits: number;
+  failed: number;
+  /** Wall-clock SPAN of the run (first start → last end), not the sum of its parts — the
+   *  calls can overlap, and a total that exceeds the turn would be a lie. `null` until
+   *  something has finished. */
+  durationMs: number | null;
+}
+
+const READ_TOOLS = new Set(['Read', 'NotebookRead']);
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+
+export function summarizeToolRun(
+  items: readonly { name: string; status: 'running' | 'done' | 'error'; startedAt: number; endedAt?: number }[],
+): ToolRunSummary {
+  let reads = 0; let commands = 0; let edits = 0; let failed = 0;
+  let first = Infinity; let last = -Infinity;
+  for (const i of items) {
+    if (READ_TOOLS.has(i.name)) reads += 1;
+    else if (i.name === 'Bash') commands += 1;
+    else if (EDIT_TOOLS.has(i.name)) edits += 1;
+    if (i.status === 'error') failed += 1;
+    if (i.startedAt < first) first = i.startedAt;
+    if (i.endedAt != null && i.endedAt > last) last = i.endedAt;
+  }
+  return {
+    steps: items.length,
+    reads,
+    commands,
+    edits,
+    failed,
+    durationMs: last > -Infinity && first < Infinity ? Math.max(0, last - first) : null,
+  };
+}
+
+/**
+ * What a COLLAPSED run says about itself. Only the counts that are non-zero: a header
+ * reading "0 files read" spends the eye on a number that means nothing (same rule as
+ * {@link groupOutcomeNote}). Steps always leads, because the count is the reason the group
+ * exists.
+ */
+export function toolRunHeadline(s: ToolRunSummary): string {
+  const parts = [`${s.steps} steps`];
+  if (s.reads) parts.push(`${s.reads} ${s.reads === 1 ? 'file' : 'files'} read`);
+  if (s.commands) parts.push(`${s.commands} ${s.commands === 1 ? 'command' : 'commands'}`);
+  if (s.edits) parts.push(`${s.edits} edited`);
+  if (s.failed) parts.push(`${s.failed} failed`);
+  return parts.join(' · ');
+}
+
+/** {@link useGroupCollapse} for a tool run — same phase-stamped override, so the two group
+ *  cards in the transcript open, collapse, and respect the user in exactly the same way. */
+export function useToolRunCollapse(
+  items: readonly { status: 'running' | 'done' | 'error' }[],
+  stillAccruing: boolean,
+): { open: boolean; onToggle: () => void } {
+  const [toggle, setToggle] = useState<GroupToggle | null>(null);
+  const phase = toolRunPhase(items, stillAccruing);
+  const open = isGroupOpen(phase, toggle);
+  return { open, onToggle: () => setToggle({ phase, open: !open }) };
+}
+
+/**
+ * The item whose id KEYS a run card — the identity that must survive the window moving.
+ *
+ * A run's membership is recomputed from the windowed slice on every render, and its two
+ * edges move for different reasons: a REVEAL moves the slice's head backwards and merges
+ * the newly mounted older items into the head run (its FIRST item changes), while the run
+ * still accruing at the live tail gains items at the end (its LAST item changes). So the
+ * key comes from the edge that particular run cannot change: the LAST item for a landed
+ * run, the FIRST for the accruing tail.
+ *
+ * Keyed on the first item unconditionally (as it originally was), a reveal REMOUNTED the
+ * head run — React saw a new key — which reset the user's open toggle and rebuilt every
+ * row node. The owner saw exactly that (report 08-01, second pass): "load older messages"
+ * flashed the card back to its collapsed first frame with the revealed history invisible
+ * inside it, and the anchor hold had nothing left to measure. Keyed on the last item
+ * unconditionally, the accruing tail would remount on EVERY tool call instead — a full row
+ * rebuild per call, and a mid-run collapse toggle slamming back open each time.
+ */
+export function toolRunKeyItem<T>(items: readonly T[], accruing: boolean): T {
+  return accruing ? items[0] : items[items.length - 1];
+}
+
 /** What a COLLAPSED group must still admit to beyond its count: how many failed, how many the
  *  user killed. Empty when everything landed cleanly — a header that says "0 failed" spends
  *  the eye's attention on a number that means nothing. */
@@ -639,15 +1113,20 @@ export function runMetaChips(run: SubAgentRun, now: number): string[] {
  * already represents it). Keyed by `tool_use_id`, not by tool name — correct
  * regardless of whether the CLI streams the tool as `Agent` or `Task`.
  *
- * AGENT runs only. A background shell rides the identical `task_*` frames, so before this
- * filter existed its spawning tool_use_id landed here too — and that id belongs to the
- * `Bash` call itself, so backgrounding a command SILENTLY ERASED its tool card from the
- * transcript and the user never saw the command that was now running. A shell's card must
- * always render; the tray represents its lifecycle, not its invocation.
+ * DISPATCHED runs only — {@link isDispatchedAgent}, deliberately NOT {@link isAgentRun}. A
+ * `local_bash` task rides the identical `task_*` frames, so before this filter existed its
+ * spawning tool_use_id landed here too — and that id belongs to the `Bash` call itself, so
+ * backgrounding a command SILENTLY ERASED its tool card from the transcript and the user
+ * never saw the command that was now running.
+ *
+ * That is also why the headless-`claude` runs promoted into the agent card (see
+ * {@link isHeadlessAgentShell}) still do NOT suppress anything: their card IS the `Bash`
+ * card, and hiding it would re-open the same hole for exactly the commands the user most
+ * wants to read. The group card represents their lifecycle, not their invocation.
  */
 export function subAgentToolUseIds(runs: SubAgentRun[]): Set<string> {
   return new Set(
-    runs.filter(isAgentRun).map((r) => r.toolUseId).filter((id): id is string => !!id),
+    runs.filter(isDispatchedAgent).map((r) => r.toolUseId).filter((id): id is string => !!id),
   );
 }
 
@@ -931,6 +1410,58 @@ export const WINDOW_STEP = 40;
  *  continuous rather than like hitting a wall and waiting. */
 export const WINDOW_REVEAL_PX = 800;
 
+/**
+ * How long the scroller must be QUIET — no scroll, wheel, touch or key activity — before
+ * the pane may run an action that is paid for by writing `scrollTop` (a reveal's prepend
+ * correction) or by unmounting rows above the fold (the pinned window snapping forward).
+ *
+ * This is the scrollbar-drag lesson (see {@link shouldAutoReveal}) generalized to every
+ * other way the scroller can still be in motion. The app ships in a WKWebView, where
+ * scrolling is animated OUT OF PROCESS: during trackpad momentum the compositor keeps
+ * deriving the offset from its own animation curve, so a JS `scrollTop` write that lands
+ * mid-momentum is either overwritten on the next compositor frame (the drag cascade all
+ * over again — reveal, correction undone, "near the ceiling" again, reveal…) or it kills
+ * the momentum dead, which reads as the transcript stuttering. Playwright cannot emit real
+ * momentum, which is exactly why this failure mode survived every synthetic re-verification
+ * (task `chat-transcript-holds-…`, "STILL OPEN") while the owner kept hitting it on a real
+ * trackpad. The one mode we could reproduce — the thumb drag — showed the mechanism frame
+ * by frame, and momentum is the same fight with a different animator.
+ *
+ * So the rule is: NEVER fight the animator — wait it out. macOS momentum keeps emitting
+ * wheel events for its whole decay, and every one of them re-arms the quiet timer, so
+ * "settled" genuinely means the compositor has nothing in flight and a write will stick.
+ * 150ms sits between a trackpad's intra-gesture event gaps (~16ms, so a glide never counts
+ * as settled) and the pause between deliberate wheel notches (~200ms+, so paced scrolling
+ * still reveals between notches and keeps its continuous feel).
+ */
+export const SCROLL_SETTLE_MS = 150;
+
+/**
+ * Milliseconds still to wait before a settled-only action may run; 0 means "settled, go".
+ * Pure so the re-arm arithmetic is testable: the pane's timer calls this again when it
+ * fires, and re-arms for the remainder if activity arrived while it slept. A non-finite
+ * `sinceMs` (no activity ever recorded — `lastActivity` starts at `-Infinity`) is settled
+ * by definition.
+ */
+export function remainingSettleMs(nowMs: number, lastActivityMs: number, settleMs = SCROLL_SETTLE_MS): number {
+  const since = nowMs - lastActivityMs;
+  if (!Number.isFinite(since)) return 0;
+  if (since >= settleMs) return 0;
+  return settleMs - Math.max(0, since);
+}
+
+/**
+ * How far the PINNED window may lag behind the tail before it snaps forward. Without slack
+ * the window slid forward on every applied event, unmounting one row from above the fold per
+ * streamed frame — each unmount shrinks `scrollHeight`, the browser clamps, the layout
+ * effect re-pins, and the scrollbar thumb wobbled on every token (part of the owner's
+ * "flicker" report 08-01). With slack, mounted rows drift from {@link WINDOW_TAIL} up to
+ * `WINDOW_TAIL + TRIM_SLACK` and then shed a whole chunk at once — the same bounded memory,
+ * a twentieth of the churn. The snap itself is still invisible content-wise (corrected
+ * before paint); making it rare is what steadies the scrollbar.
+ */
+export const TRIM_SLACK = 20;
+
 export interface WindowInput {
   /** `history.length + items.length` — the whole conversation. */
   total: number;
@@ -947,10 +1478,13 @@ export interface WindowInput {
  *
  * 1. REVEAL steps the window {@link WINDOW_STEP} further back, clamped at the beginning.
  *    It wins over everything, because it is the only input that came from the user asking.
- * 2. PINNED slides the window forward to the last {@link WINDOW_TAIL} entries. This is the
- *    memory release valve: a long busy session sheds old DOM continuously instead of only
- *    ever growing, so a conversation that runs for an hour costs the same as one that just
- *    started.
+ * 2. PINNED slides the window forward to the last {@link WINDOW_TAIL} entries — but only
+ *    once it lags the tail by {@link TRIM_SLACK}, so the shed happens in rare chunks rather
+ *    than as one unmount per streamed frame (see TRIM_SLACK for what the churn cost). This
+ *    is the memory release valve: a long busy session sheds old DOM continuously instead of
+ *    only ever growing, so a conversation that runs for an hour costs the same as one that
+ *    just started — the ceiling is merely `WINDOW_TAIL + TRIM_SLACK` now instead of exactly
+ *    `WINDOW_TAIL`.
  * 3. UNPINNED FREEZES the window's head. A reader who has scrolled up must never have
  *    content taken out from ABOVE them while they read — that is a scroll jump with no
  *    cause they can see, and it would happen on every streamed token. `Math.min` is what
@@ -963,8 +1497,9 @@ export function nextFirstShown(prev: number, input: WindowInput): number {
   const total = Math.max(0, input.total);
   const tail = Math.max(0, total - WINDOW_TAIL);
   if (input.reveal) return Math.max(0, Math.min(prev, tail) - WINDOW_STEP);
-  if (input.pinned) return tail;
-  return Math.min(Math.max(0, prev), tail);
+  const held = Math.min(Math.max(0, prev), tail);
+  if (input.pinned) return tail - held >= TRIM_SLACK ? tail : held;
+  return held;
 }
 
 /** What the scroll handler knows when it decides whether to extend the window. */
@@ -976,6 +1511,9 @@ export interface AutoRevealMetrics {
   userDriven: boolean;
   /** Is the scrollbar thumb currently held? */
   dragging: boolean;
+  /** Has the scroller been quiet for {@link SCROLL_SETTLE_MS}? See rule below — in motion,
+   *  the offset is the animator's, not ours. */
+  settled: boolean;
 }
 
 /**
@@ -995,11 +1533,19 @@ export interface AutoRevealMetrics {
  * So a drag is exactly the state that most looks like intent and least permits the response.
  * ChatPane makes the deferred reveal on pointer-release instead, where the offset is its own
  * again — dragging to the ceiling still extends the window, once, and holds.
+ *
+ * `settled` is the same clause for every OTHER way the scroller can still be in motion —
+ * above all WKWebView trackpad momentum, whose out-of-process animator overwrites or is
+ * killed by a mid-flight correction exactly as the thumb was (see {@link SCROLL_SETTLE_MS}).
+ * A scroll event can never be settled by definition (it IS activity), so in practice the
+ * reveal always runs from the pane's quiet timer or from pointer-release — never from inside
+ * the event that asked for it.
  */
 export function shouldAutoReveal(m: AutoRevealMetrics): boolean {
   if (m.hiddenCount <= 0) return false;
   if (m.scrollTop >= WINDOW_REVEAL_PX) return false;
   if (m.dragging) return false;
+  if (!m.settled) return false;
   return m.userDriven;
 }
 

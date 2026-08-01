@@ -299,10 +299,64 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-toolcard:hover { border-color: var(--color-border-hover); }
 .chat-toolcard[data-status='error'] { border-color: var(--color-error); }
 
+/* Two tool cards in a row belong to the SAME piece of work, so they sit closer than the
+   transcript's message rhythm (`.chat-scroll-inner`'s 16px gap, which separates turns).
+   Expressed as a negative margin because the parent owns the gap and a run of tool calls
+   is the one place it is too generous — 16px → 8px, which with the 32px header above is
+   the 58px→40px-per-call half of the density pass (owner report 08-01). */
+.chat-toolcard + .chat-toolcard {
+  margin-top: calc(var(--space-2) - var(--space-4));
+}
+/* …but a card that is OPEN is a body being read, not a receipt in a list — give it back
+   its breathing room on both sides so a diff never butts against the next row. */
+.chat-toolcard[data-open] + .chat-toolcard,
+.chat-toolcard + .chat-toolcard[data-open] {
+  margin-top: 0;
+}
+
 .chat-toolcard-body { border-top: 1px solid var(--color-border); }
 /* A body block is the card's last row: square its top corners so it meets the header
    flush, and let the card's own radius + overflow clip the bottom pair. */
 .chat-toolcard-body > .chat-m-terminal { border-radius: 0; }
+
+/* ── Tool run group (owner report 08-01) ─────────────────────────────────────────────
+   A contiguous stretch of tool calls under one collapsing header. Same box as a tool
+   card, so a run and a single call read as the same KIND of thing in the transcript. */
+.chat-toolrun {
+  align-self: stretch;
+  width: 100%;
+  max-width: var(--chat-line-width, 100%);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  contain: content;   /* same rationale as .chat-toolcard — see its note */
+}
+.chat-toolrun[data-live] { border-color: var(--color-accent); }
+.chat-toolrun-rows { border-top: 1px solid var(--color-border); }
+
+/* Inside a run, a tool card is a ROW: the card chrome would be a box drawn inside a box,
+   and the transcript's between-cards spacing has nothing to separate here. Everything the
+   card DOES — collapse, expand, show a diff or a terminal block — is untouched; only its
+   frame is dropped, which is why the rows are real ToolCards rather than a bespoke widget
+   that would have had to re-earn all of it. */
+.chat-toolrun .chat-toolcard {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  contain: none;      /* the row no longer clips its own box; let the run's `contain` hold */
+}
+.chat-toolrun .chat-toolcard + .chat-toolcard { margin-top: 0; }
+.chat-toolrun .chat-toolcard:hover { background: var(--color-bg-tertiary); }
+/* A row that opened is a body being read — separate it from the rows either side. */
+.chat-toolrun .chat-toolcard[data-open] {
+  background: var(--color-bg-tertiary);
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+.chat-toolrun .chat-toolcard[data-status='error'] { background: var(--color-error-subtle, transparent); }
 
 /* Generic body (any tool that is neither Bash nor an edit) */
 .chat-toolcard-generic {

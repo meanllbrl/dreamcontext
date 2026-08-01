@@ -7,9 +7,11 @@ import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
   nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent,
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
-  type SubAgentRun, type ScrollIntent,
+  remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem,
+  type SubAgentRun, type ScrollIntent, type RunSegment,
 } from './chat/chatEntities';
 import { ItemView } from './chat/TranscriptItem';
+import { ToolRunCard } from './chat/ToolRunCard';
 import { SurveyCard } from './chat/SurveyCard';
 import { PermissionCard } from './chat/PermissionCard';
 import { PlanCard } from './chat/PlanCard';
@@ -388,6 +390,54 @@ export function ChatPane({
   }, []);
   const userDriving = () => draggingRef.current || performance.now() - upIntentAtRef.current < GESTURE_MS;
 
+  // ── Settle: when is the scroller OURS to write? ─────────────────────────────────────
+  //
+  // The scrollbar-drag lesson (see shouldAutoReveal) turned out to be one case of a class:
+  // in this app's WKWebView the offset is animated out of process, so ANY gesture still in
+  // flight — above all trackpad momentum, which keeps decaying for a second-plus after the
+  // fingers lift — can overwrite a `scrollTop` the pane writes, or be killed dead by it.
+  // Either one is the owner's "flicker" (report 08-01): the reveal's correction landing
+  // mid-momentum either cascades (the drag trace, replayed) or stops the glide with a jerk.
+  // Playwright cannot emit momentum, which is why 07-28's re-verification held 7/7 and the
+  // report came back anyway.
+  //
+  // So every window mutation that is paid for by writing `scrollTop` now waits for QUIET:
+  // no user input for SCROLL_SETTLE_MS. Tracked off INPUT events only (wheel/touch/key,
+  // plus the drag's own flag) — never off scroll events, because our own pin re-asserts
+  // dispatch those constantly while a turn streams, and counting them would hold the window
+  // frozen forever. macOS momentum keeps emitting wheel events for its whole decay, so the
+  // quiet timer genuinely outlives the animator.
+  const lastActivityAtRef = useRef(-Infinity);
+  const markActivity = useCallback(() => { lastActivityAtRef.current = performance.now(); }, []);
+  /** Pending settled-reveal timer, so a burst of scroll events keeps exactly one alive. */
+  const settleTimerRef = useRef(0);
+
+  /**
+   * Reveal once the scroller has settled. Re-armed by every scroll event that still wants a
+   * reveal (so a momentum train that moves the offset keeps pushing it out) and self-re-armed
+   * while input activity is fresher than {@link SCROLL_SETTLE_MS} (so a train that is clamped
+   * at the ceiling — moving nothing, but still emitting wheel events — pushes it out too).
+   * The conditions are re-checked at fire time: the reader may have scrolled back down, or a
+   * drag may have started, in which case its release owns the reveal.
+   */
+  const armSettledReveal = useCallback(() => {
+    if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
+    const tick = () => {
+      settleTimerRef.current = 0;
+      const wait = remainingSettleMs(performance.now(), lastActivityAtRef.current);
+      if (wait > 0) { settleTimerRef.current = window.setTimeout(tick, wait); return; }
+      if (draggingRef.current) return;
+      const el = scrollRef.current;
+      if (!el || el.clientHeight === 0 || el.scrollTop >= WINDOW_REVEAL_PX) return;
+      revealEarlierRef.current();
+    };
+    settleTimerRef.current = window.setTimeout(tick, SCROLL_SETTLE_MS);
+  }, []);
+
+  useEffect(() => () => {
+    if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
+  }, []);
+
   // Pressing the scrollbar gutter is a scroll gesture; pressing a card is not — clicking one
   // open changes the content height, and counting that as "the user scrolled" would unpin
   // the view on a click that never touched the scrollbar.
@@ -431,9 +481,20 @@ export function ChatPane({
   //     render later. In that gap an arriving token would otherwise still see "pinned" and
   //     slide the window forward — pulling content out from above a reader who has just
   //     this instant scrolled up, which is the one thing rule 3 exists to prevent.
+  //
+  // The pin is ALSO gated on the scroller being settled. Re-sticking happens mid-gesture
+  // (momentum carries the reader into the bottom and rule 1 pins immediately), and an
+  // unsettled "pinned" here would snap the window to the tail in that same instant —
+  // unmounting every row the reader had revealed, collapsing `scrollHeight` and forcing a
+  // clamp + rewrite while the animator still owns the offset. That snap-under-momentum is
+  // the "removing old entries breaks my scroll" half of the 08-01 flicker report. Frozen
+  // until quiet, the snap runs at rest, where its pre-paint correction really is invisible.
+  // (Read at render time, not reactively: if no event arrives after the quiet elapses, the
+  // snap simply waits for the next one — a delay in a memory optimization, not a leak.)
   const [firstShownState, setFirstShownState] = useState(0);
   const windowTotal = conv.history.length + conv.items.length;
-  const firstShown = nextFirstShown(firstShownState, { total: windowTotal, pinned: stickRef.current });
+  const settledNow = remainingSettleMs(performance.now(), lastActivityAtRef.current) === 0;
+  const firstShown = nextFirstShown(firstShownState, { total: windowTotal, pinned: stickRef.current && settledNow });
   if (firstShown !== firstShownState) setFirstShownState(firstShown);
   const { hiddenCount, historyFrom, itemsFrom, showsHistory } = splitWindow(
     conv.history.length, conv.items.length, firstShown,
@@ -485,6 +546,15 @@ export function ChatPane({
    * that happened to BE that card would leave the correction with nothing to measure and the
    * reader jumped by the whole prepend. The spares make that unreachable without this code
    * having to know anything about SubAgentCard.
+   *
+   * An OPEN run card is seen through, not held: its ROWS stand in as candidates. The card
+   * groups a whole stretch of tool calls, and a reveal merges older calls into that same
+   * group — INSIDE the card, above the reader, without moving the card's own top edge. A
+   * hold on the card would measure zero and leave the reader shoved down by the entire
+   * prepend (owner report 08-01, second pass: reading back through a folded run only works
+   * "if I open the card and scroll" — this is what makes that read hold still). The rows are
+   * plain `ToolCard`s keyed by `item.id`, so they survive the merge the card itself is
+   * having. A CLOSED card holds as itself: it has no rows, and its header is its top.
    */
   const captureAnchor = useCallback((prepend = false) => {
     const el = scrollRef.current;
@@ -492,13 +562,20 @@ export function ChatPane({
     if (!el || !inner || el.clientHeight === 0) { heldAnchorRef.current = null; return; }
     const fold = el.getBoundingClientRect().top;
     const candidates: Array<{ node: Element; top: number }> = [];
-    const rows = inner.children;
-    for (let i = 0; i < rows.length && candidates.length < ANCHOR_CANDIDATES; i += 1) {
-      const node = rows[i];
+    const rows: Element[] = [];
+    for (const child of Array.from(inner.children)) {
       // Never the "show earlier" button: it is the one row a reveal can DELETE rather than
       // move (the last step exhausts the window), so holding against it measures its own
       // disappearance.
-      if (node.classList.contains('chat-window-more')) continue;
+      if (child.classList.contains('chat-window-more')) continue;
+      const runRows = child.classList.contains('chat-toolrun')
+        ? child.querySelectorAll(':scope > .chat-toolrun-rows > *')
+        : null;
+      if (runRows && runRows.length) rows.push(...Array.from(runRows));
+      else rows.push(child);
+    }
+    for (const node of rows) {
+      if (candidates.length >= ANCHOR_CANDIDATES) break;
       if (node.getBoundingClientRect().bottom <= fold) continue;
       candidates.push({ node, top: contentTopOf(node, el) });
     }
@@ -579,6 +656,23 @@ export function ChatPane({
     setFirstShownState(next);
   }, [firstShown, windowTotal, setStick, captureAnchor]);
   revealEarlierRef.current = revealEarlier;
+
+  /** The INPUT-side arm for the settled reveal — the path that works when there is nothing
+   *  to scroll. When the whole window folds into one collapsed run card the content can be
+   *  SHORTER than the scroller, so no scroll event can ever fire; and at a clamped ceiling
+   *  (scrollTop already 0) further wheel-up dispatches none either. Reading upward still has
+   *  to extend the window (owner report 08-01, second pass: "scrolling doesn't load older
+   *  messages" over a folded run). Same gates as the scroll handler's arm, minus the metrics
+   *  only a scroll event has — the settled tick re-checks position and drag before firing.
+   *  Not a useCallback: it closes over this render's `hiddenCount`, exactly like the JSX
+   *  handlers that call it. */
+  const armRevealFromInput = (intent: ScrollIntent) => {
+    if (intent !== 'up') return;
+    if (hiddenCount <= 0 || draggingRef.current) return;
+    const el = scrollRef.current;
+    if (!el || el.clientHeight === 0 || el.scrollTop >= WINDOW_REVEAL_PX) return;
+    armSettledReveal();
+  };
 
   // The reveal's own commit: React has just prepended the entries, so the hold is settled here,
   // synchronously, before the browser paints a single frame of the un-corrected position.
@@ -663,9 +757,10 @@ export function ChatPane({
     const el = scrollRef.current;
     if (!el) return;
     const step = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1;
+    markActivity();
     markIntent(wheelIntent(e.deltaY));
     el.scrollTop += e.deltaY * step;
-  }, [markIntent]);
+  }, [markActivity, markIntent]);
 
   // Height changes React never rendered: an image or clip finishing its load, a tool card
   // expanding, the composer growing a line (which SHRINKS the scroller), a split or window
@@ -787,7 +882,15 @@ export function ChatPane({
     setSlideOver({ mode: 'file', path });
   }, []);
   const handleOpenBoard = useCallback((path: string) => setBoardFull(path), []);
-  const handleDrillIn = useCallback((run: SubAgentRun) => setSlideOver({ mode: 'subagent', run }), []);
+  // The sub-agent card now also holds headless `claude` runs (see `isHeadlessAgentShell`),
+  // and those are `local_bash` tasks: the CLI writes no sidechain transcript for them, so
+  // `subagent` mode would open a panel about a file that is never going to exist. Their
+  // drill-in is the SAME live-output panel the shells tray opens — which is also the only
+  // surface offering them a Stop. Keyed off the task type rather than the headless test on
+  // purpose: any `local_bash` run that reaches here belongs in shell mode.
+  const handleDrillIn = useCallback((run: SubAgentRun) => (
+    setSlideOver({ mode: run.taskType === 'local_bash' ? 'shell' : 'subagent', run })
+  ), []);
   const handleOpenShell = useCallback((run: SubAgentRun) => setSlideOver({ mode: 'shell', run }), []);
   const handleStopShell = useCallback((run: SubAgentRun) => session.stopTask(run.taskId), [session]);
   const handleQuote = useCallback((text: string) => setReplyQuote(text), []);
@@ -882,11 +985,56 @@ export function ChatPane({
     return view;
   };
 
+  // ── Tool RUNS (owner report 08-01): a contiguous stretch of tool calls renders as ONE
+  //    collapsing card instead of N. What may join a run is exactly "what renders as a plain
+  //    tool card" — every branch ABOVE this point produces something else (the sub-agent
+  //    group card, a drawn board, a bypass receipt riding along in a Fragment), and those
+  //    must BREAK a run rather than disappear into one. Hence the predicate mirrors
+  //    `itemNode`'s branches rather than just testing `kind === 'tool'`. ──────────────────
+  const isPlainToolCard = (item: ChatItem): boolean => {
+    if (item.kind !== 'tool') return false;
+    if (suppressedToolUseIds.has(item.toolUseId)) return false;
+    const path = primaryToolPath(item.input);
+    if (path && classifyReference(path).kind === 'board' && item.status !== 'running') return false;
+    if (inBypass) {
+      const command = bashCommand(item);
+      if (command && isGuardedCommand(command)) return false;
+    }
+    return true;
+  };
+  // `stillAccruing` (see `toolRunPhase`) is true only for a run that is the LAST thing in the
+  // live transcript while the turn is still going — i.e. the next tool call would join it.
+  // The moment the agent emits its answer, that run stops being the tail and collapses.
+  //
+  // The KEY comes from `toolRunKeyItem` — the run edge the window cannot move — because a
+  // reveal merges newly mounted older items into the head run. Keyed on the first item, that
+  // merge was a key change: React remounted the card, the open toggle reset to the collapsed
+  // first frame, every row node was rebuilt (so the anchor hold had nothing left to measure),
+  // and "Show earlier messages" read as doing nothing at all (owner report 08-01, second
+  // pass). See the helper's own doc for why the accruing tail keys off its head instead.
+  const renderSegment = (seg: RunSegment<ChatItem>, isLastLive: boolean): React.ReactNode => {
+    if (seg.kind === 'single') return itemNode(seg.item);
+    const accruing = isLastLive && session.busy;
+    return (
+      <ToolRunCard
+        key={`run-${toolRunKeyItem(seg.items, accruing).id}`}
+        items={seg.items as ChatToolItem[]}
+        stillAccruing={accruing}
+        onOpenFile={handleOpenFile}
+      />
+    );
+  };
+
   // Only the WINDOW is mapped — see the window section above. Everything older than
   // `firstShown` is not rendered at all (not hidden with CSS: not mounted), which is what
   // bounds this pane's DOM and its memory regardless of how long the conversation runs.
-  const historyNodes = conv.history.slice(historyFrom).map(itemNode);
-  const liveNodes = conv.items.slice(itemsFrom).map(itemNode);
+  // Segmentation happens INSIDE each windowed slice, so a run can never straddle the window
+  // edge (revealing older entries would otherwise re-shape a group the reader is looking at)
+  // nor the history/live boundary.
+  const historySegments = segmentToolRuns(conv.history.slice(historyFrom), isPlainToolCard);
+  const liveSegments = segmentToolRuns(conv.items.slice(itemsFrom), isPlainToolCard);
+  const historyNodes = historySegments.map((seg) => renderSegment(seg, false));
+  const liveNodes = liveSegments.map((seg, i) => renderSegment(seg, i === liveSegments.length - 1));
   // A sub-agent run whose spawning tool call never appeared as its own ChatToolItem (an
   // edge case in raw frame ordering) still needs its card SOMEWHERE — append it once, after
   // the live transcript, rather than silently dropping the whole group. This ALSO covers the
@@ -1010,29 +1158,54 @@ export function ChatPane({
             // unambiguous user gesture there is (which is exactly why it counts for unpinning)
             // and simultaneously the one state where our offset is not ours to set.
             //
-            // So the reveal waits for the release, where `handlePointerDown` makes it. The
-            // wheel, keyboard and touch paths are unaffected: none of them re-derive the
-            // offset from a pointer, and their corrections were measured landing exactly.
+            // So the reveal waits for the release, where `handlePointerDown` makes it. And
+            // the wheel, keyboard and touch paths wait for QUIET, for the same reason with a
+            // different animator: WKWebView trackpad momentum re-derives the offset from its
+            // own decay curve exactly as the drag re-derives it from the thumb, so a reveal
+            // paid for mid-momentum is a reveal undone — and re-tripped — per compositor
+            // frame. A scroll event is never itself settled (it is the motion), so this
+            // handler only ever ARMS the quiet timer; the reveal runs from `armSettledReveal`
+            // once nothing has moved for SCROLL_SETTLE_MS. At rest the corrections were
+            // measured landing exactly.
             //
             // The rule itself lives in `shouldAutoReveal` — this pane cannot be unit-tested
-            // without a WebSocket, a document and a vault, and the drag clause is the one
-            // thing here that must never regress.
+            // without a WebSocket, a document and a vault, and the drag + settle clauses are
+            // the two things here that must never regress. `settled: true` below is not a
+            // claim about NOW: it asks "would this event deserve a reveal once quiet?", and
+            // arming re-checks the live conditions when the quiet actually arrives.
             if (shouldAutoReveal({
               hiddenCount, scrollTop: el.scrollTop,
               userDriven: metrics.userDriven, dragging: draggingRef.current,
+              settled: true,
             })) {
-              revealEarlier();
+              armSettledReveal();
             }
           }}
-          onWheel={(e) => markIntent(wheelIntent(e.deltaY))}
+          onWheel={(e) => {
+            const intent = wheelIntent(e.deltaY);
+            markActivity();
+            markIntent(intent);
+            // The scroll handler can only arm a reveal if a scroll EVENT fires, and a window
+            // folded into one collapsed run card can be shorter than the scroller — nothing
+            // to scroll, no event, ever. Reading upward is the ask either way.
+            armRevealFromInput(intent);
+          }}
           onTouchStart={(e) => { touchYRef.current = e.touches[0]?.clientY ?? 0; }}
           onTouchMove={(e) => {
+            markActivity();
             const y = e.touches[0]?.clientY ?? touchYRef.current;
-            markIntent(touchIntent(y - touchYRef.current));
+            const intent = touchIntent(y - touchYRef.current);
+            markIntent(intent);
             touchYRef.current = y;
+            armRevealFromInput(intent);
           }}
           onPointerDown={handlePointerDown}
-          onKeyDown={(e) => markIntent(keyIntent(e.key))}
+          onKeyDown={(e) => {
+            const intent = keyIntent(e.key);
+            if (intent) markActivity();
+            markIntent(intent);
+            armRevealFromInput(intent);
+          }}
           onClick={(e) => {
             // Click-to-focus, mirroring how clicking anywhere in an xterm focuses its input:
             // without this a click on the transcript parks focus on <body>, killing the

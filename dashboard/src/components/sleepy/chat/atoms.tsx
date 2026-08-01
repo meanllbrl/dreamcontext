@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { toolGlyph, formatTokenCount, formatDuration, avatarHue, splitInlineCode } from './chatEntities';
+import {
+  toolGlyph, formatTokenCount, formatDuration, avatarHue, splitInlineCode, pathChipLabel,
+} from './chatEntities';
 import './atoms.css';
 
 /**
@@ -34,7 +36,14 @@ export function StatusWord({ status }: { status: ToolStatus }) {
 
 // ─── Tool identity ─────────────────────────────────────────────────────────────────
 
-export function ToolGlyph({ name }: { name: string }) {
+/**
+ * The tool's icon. `brand` swaps the generic glyph for the dreamcontext mark — used when a
+ * `Skill` row is one of dreamcontext's OWN skills (see `isDreamcontextSkill`), so the app
+ * visibly recognises itself at work. Drawn as a CSS mark rather than the logo bitmap:
+ * `logo.png` carries a gradient backdrop that reads as a grey smudge at glyph size.
+ */
+export function ToolGlyph({ name, brand = false }: { name: string; brand?: boolean }) {
+  if (brand) return <span className="chat-a-glyph chat-a-glyph-brand" aria-hidden />;
   return <span className="chat-a-glyph" aria-hidden>{toolGlyph(name)}</span>;
 }
 
@@ -42,13 +51,33 @@ export function ToolName({ children }: { children: ReactNode }) {
   return <span className="chat-a-toolname">{children}</span>;
 }
 
-/** A clickable file/path reference — opens the slide-over or lightbox for that path. */
+/**
+ * A clickable file reference — opens the slide-over or lightbox for that path.
+ *
+ * Shows `parent/**filename**`, not the raw path. The chip used to render the whole absolute
+ * path and let CSS ellipsis trim it, which trims from the RIGHT: the shared `/Users/<me>/…`
+ * prefix survived on every row and the filename — the only part that differed — was thrown
+ * away (owner report 08-01). Now the FOLDER is the half that yields under pressure
+ * (`flex-shrink` in atoms.css) and the name is pinned, so a narrow pane loses context
+ * instead of losing identity. The exact path stays in `title`.
+ */
 export function PathChip({ path, onOpen }: { path: string; onOpen: (path: string) => void }) {
+  const { dir, name } = pathChipLabel(path);
   return (
     <button type="button" className="chat-a-pathchip" title={path} onClick={() => onOpen(path)}>
-      {path}
+      {dir && <span className="chat-a-pathchip-dir">{dir}/</span>}
+      <span className="chat-a-pathchip-name">{name}</span>
     </button>
   );
+}
+
+/**
+ * The same chip shape for a subject with nothing to open behind it — a skill name, a grep
+ * pattern, a fetched host. A `<span>`, not a `<button>`: it carries identity, not an action,
+ * and a control that does nothing when clicked is worse than no control.
+ */
+export function SubjectChip({ text, title }: { text: string; title?: string }) {
+  return <span className="chat-a-pathchip" data-static="" title={title ?? text}>{text}</span>;
 }
 
 // ─── Meta readouts ─────────────────────────────────────────────────────────────────

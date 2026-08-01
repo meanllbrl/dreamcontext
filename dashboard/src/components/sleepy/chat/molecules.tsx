@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from 'react';
 import {
-  StatusDot, StatusWord, ToolGlyph, ToolName, PathChip, Caret, CopyButton, TokenBadge,
-  PillDivider, type ToolStatus,
+  StatusDot, StatusWord, ToolGlyph, ToolName, PathChip, SubjectChip, Caret, CopyButton,
+  TokenBadge, PillDivider, type ToolStatus,
 } from './atoms';
 import {
-  classifyOutputLine, clampLines, TERMINAL_HEAD_LINES, TERMINAL_TAIL_LINES, type EditDiff,
+  classifyOutputLine, clampLines, TERMINAL_HEAD_LINES, TERMINAL_TAIL_LINES,
+  type EditDiff, type ToolSubject,
 } from './chatEntities';
 import './molecules.css';
 
@@ -23,28 +24,49 @@ import './molecules.css';
 /**
  * The one-line header every tool card shares:
  *
- *   ● 📄 Read  [src/server/routes/agent-chat.ts]  · 142 lines .......... 0.3s ▸
+ *   ● 📄 Read  [routes/agent-chat.ts]  · 142 lines ................... 0.3s ▸
+ *   ● ◆  excalidraw  [dreamcontext skill] ........................... 5.4s ▸
+ *
+ * The row's SUBJECT (see `toolSubject`) is what identifies it — the file, the skill, the
+ * pattern. When the subject is a text identity with a tool name that adds nothing over it
+ * (`Skill excalidraw` reads as a stutter), the subject becomes the row's name outright and
+ * the tool name is dropped; `title` keeps it for anyone who needs to know which tool ran.
  *
  * The whole row toggles: a single stretched hit-area button (one control, one
  * `aria-expanded`) sits under the row, and only the path chip re-enables pointer events
  * over it — so the row is clickable without ever nesting a button inside a button.
  */
 export function ToolHeader({
-  status, name, path, subtitle, meta, open, onToggle, onOpenPath,
+  status, name, subject, brand = false, badge, subtitle, subtitleTitle, meta, open, onToggle, onOpenPath,
 }: {
   status: ToolStatus;
   name: string;
-  path?: string | null;
+  /** What the call acted on. A `path` chip opens; a `text` chip only names. */
+  subject?: ToolSubject | null;
+  /** Draw the dreamcontext mark instead of the tool glyph (our own skills). */
+  brand?: boolean;
+  /** A chip shown where the subject chip would be when the subject became the row's NAME —
+   *  it says what kind of thing the name is (`dreamcontext skill`), which is the sentence the
+   *  mark alone can't finish. */
+  badge?: string;
   /** Left-side context after the chip — `· 142 lines`, a Bash command description. */
   subtitle?: ReactNode;
+  /** Hover text for the subtitle — the UNcondensed command, for a Bash row labelled by its
+   *  command rather than a description. */
+  subtitleTitle?: string;
   /** Right-side readout before the caret — a duration or a diff stat. */
   meta?: ReactNode;
   open: boolean;
   onToggle: () => void;
   onOpenPath?: (path: string) => void;
 }) {
+  // A `Skill` whose subject is `excalidraw` should read "excalidraw", not "Skill excalidraw"
+  // — the tool name is a category the subject already implies. Only for the tools whose name
+  // is pure category (Skill/Agent/Task); `Grep "useGroupCollapse"` genuinely needs both,
+  // because the pattern alone doesn't say it was a search.
+  const nameIsRedundant = subject?.kind === 'text' && (name === 'Skill' || name === 'Agent' || name === 'Task');
   return (
-    <div className="chat-m-toolhead">
+    <div className="chat-m-toolhead" title={nameIsRedundant ? name : undefined}>
       <button
         type="button"
         className="chat-m-toolhead-hit"
@@ -53,10 +75,22 @@ export function ToolHeader({
         onClick={onToggle}
       />
       <StatusDot status={status} />
-      <ToolGlyph name={name} />
-      <ToolName>{name || 'Tool'}</ToolName>
-      {path && onOpenPath && <PathChip path={path} onOpen={onOpenPath} />}
-      {subtitle && <span className="chat-m-toolhead-sub">{subtitle}</span>}
+      <ToolGlyph name={name} brand={brand} />
+      {nameIsRedundant
+        ? (
+          <>
+            <ToolName>{(subject as { text: string }).text}</ToolName>
+            {badge && <SubjectChip text={badge} title={`${name}: ${(subject as { text: string }).text}`} />}
+          </>
+        )
+        : (
+          <>
+            <ToolName>{name || 'Tool'}</ToolName>
+            {subject?.kind === 'path' && onOpenPath && <PathChip path={subject.path} onOpen={onOpenPath} />}
+            {subject?.kind === 'text' && <SubjectChip text={subject.text} />}
+          </>
+        )}
+      {subtitle && <span className="chat-m-toolhead-sub" title={subtitleTitle}>{subtitle}</span>}
       <span className="chat-m-toolhead-meta">
         <StatusWord status={status} />
         {meta}

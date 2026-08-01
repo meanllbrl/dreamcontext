@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  summarizeSubAgents, formatClock, runMetaChips, isAgentRun, useGroupCollapse, groupOutcomeNote,
+  summarizeSubAgents, formatClock, runMetaChips, isAgentRun, isHeadlessAgentShell,
+  useGroupCollapse, groupOutcomeNote,
   type SubAgentRun,
 } from './chatEntities';
 import { AgentAvatar, TypeBadge, ProgressTrack } from './atoms';
@@ -47,6 +48,10 @@ function runLine(run: SubAgentRun): string {
     if (run.activity) return run.activity;
     if (run.lastToolName) return `${run.lastToolName}…`;
     if (run.summary) return run.summary;
+    // A headless `claude` run reports no progress frames of its own (it is a shell task to
+    // the CLI), so its COMMAND is the most honest thing to show while it works — the prompt
+    // it was launched with is right there in it. Collapsed to one line; the row truncates.
+    if (run.command) return run.command.replace(/\s+/g, ' ').trim();
     return 'Working…';
   }
   if (run.summary) return run.summary;
@@ -55,10 +60,11 @@ function runLine(run: SubAgentRun): string {
 }
 
 /**
- * What the group card may honestly call itself. `local_bash` tasks ride the exact same
- * `task_*` frames as dispatched sub-agents (the CLI auto-backgrounds a long shell command),
- * so a card holding one is showing TASKS, not agents — and "task" is also the honest word for
- * a mixed set. Only an all-agent card says "agent".
+ * What the group card may honestly call itself. Every row here is an agent by
+ * `isAgentRun` — a dispatched sub-agent or a headless `claude` run — so the count and the
+ * noun normally agree. "task" survives for the case they don't: a row this card was handed
+ * that `summarizeSubAgents` does not count as an agent should not be summed into a number
+ * calling itself agents.
  */
 function groupNoun(agents: number, total: number): string {
   return agents === total ? 'agent' : 'task';
@@ -137,7 +143,13 @@ export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId
               <span className="chat-subagents-row-body">
                 <span className="chat-subagents-row-head">
                   <span className="chat-subagents-row-name">{run.name}</span>
-                  {run.subagentType && <TypeBadge>{run.subagentType}</TypeBadge>}
+                  {/* A headless run has no `subagent_type` — nothing dispatched it, a command
+                      line did — so the badge names its NATURE instead. Without it the row is
+                      indistinguishable from an Agent-tool dispatch, and the two do not open
+                      the same thing when clicked. */}
+                  {run.subagentType
+                    ? <TypeBadge>{run.subagentType}</TypeBadge>
+                    : isHeadlessAgentShell(run) && <TypeBadge>headless</TypeBadge>}
                 </span>
                 <span className="chat-subagents-row-sub">
                   <span className="chat-subagents-row-line">{runLine(run)}</span>
@@ -153,7 +165,12 @@ export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId
               </span>
               <ProgressTrack status={run.status} />
               <span className="chat-subagents-row-mark" data-status={run.status} aria-hidden>{statusMark(run.status)}</span>
-              <span className="chat-subagents-row-open" aria-hidden>open →</span>
+              {/* Says what the click actually does. A dispatch opens its sidechain transcript;
+                  a headless run has none on disk, so its drill-in is the live output panel —
+                  which is also where its Stop button lives. */}
+              <span className="chat-subagents-row-open" aria-hidden>
+                {isHeadlessAgentShell(run) ? 'output →' : 'open →'}
+              </span>
             </button>
           ))}
         </div>

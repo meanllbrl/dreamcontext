@@ -6,7 +6,7 @@ import {
   type ChatEvent, type QuestionSpec, type ClientControl,
 } from '../../lib/chatProtocol';
 import type { TermStatus } from './agentSession';
-import { runStatusFrom, startSubAgentRun, type SubAgentRun } from './chat/chatEntities';
+import { runStatusFrom, startSubAgentRun, bashCommandFor, type SubAgentRun } from './chat/chatEntities';
 import * as queue from './chat/chatQueue';
 import { createNotifyCoalescer } from './chat/notifyCoalescer';
 
@@ -771,6 +771,12 @@ export function createChatSession(
           name: ev.description,
           subagentType: ev.subagentType,
           taskType: ev.taskType,
+          // Only a shell task has a command to recover — and recovering it is what lets a
+          // backgrounded `claude -p` be presented as the agent it is rather than as an
+          // anonymous shell (see chatEntities' `isHeadlessAgentShell`).
+          command: ev.taskType === 'local_bash'
+            ? bashCommandFor([conv.items, conv.history], ev.toolUseId, ev.description)
+            : undefined,
           prompt: ev.prompt,
           status: 'running',
           startedAt: Date.now(),
@@ -850,13 +856,23 @@ export function createChatSession(
         const known = new Set(conv.subAgents.map((r) => r.taskId));
         const adopted: SubAgentRun[] = ev.tasks
           .filter((t) => !known.has(t.taskId))
-          .map((t) => ({
-            taskId: t.taskId,
-            name: t.description ?? 'Background shell',
-            taskType: t.taskType ?? 'local_bash',
-            status: 'running' as const,
-            startedAt: Date.now(),
-          }));
+          .map((t) => {
+            const taskType = t.taskType ?? 'local_bash';
+            return {
+              taskId: t.taskId,
+              name: t.description ?? 'Background shell',
+              taskType,
+              // Shell tasks only — the roster also carries `local_agent` entries, and a
+              // description-matched command on one of those would be a coincidence, not a
+              // fact. No tool_use_id here either, so this often finds nothing: the row then
+              // starts as a shell and is promoted the moment `task_started` lands with the id.
+              command: taskType === 'local_bash'
+                ? bashCommandFor([conv.items, conv.history], undefined, t.description)
+                : undefined,
+              status: 'running' as const,
+              startedAt: Date.now(),
+            };
+          });
         const reconciled = conv.subAgents.map((r) => (
           // Only ever a SHELL, and only one this roster could have spoken for: an agent run
           // is not tracked here at all, so its absence says nothing.

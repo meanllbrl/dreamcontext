@@ -4,6 +4,7 @@ import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { ItemView } from './TranscriptItem';
 import {
   inlineMediaKind, joinChildPath, formatEntrySize, dirTruncationNote, revealPath,
+  isHeadlessAgentShell,
   type Reference, type SubAgentRun,
 } from './chatEntities';
 import type { ChatItem } from '../chatSession';
@@ -363,6 +364,11 @@ function ShellSlideOver({ run, conversationId, onStop, onClose }: SlideOverShell
   }>({ loading: true, content: '', truncated: false, exists: true, error: null });
 
   const isRunning = run.status === 'running';
+  // Same panel, same route, different WORD: a headless `claude` run is a shell only in how it
+  // was launched, and the user reached this panel from the agent card. Calling it a shell here
+  // would contradict the row that opened it.
+  const headless = isHeadlessAgentShell(run);
+  const noun = headless ? 'run' : 'shell';
 
   useEffect(() => {
     let cancelled = false;
@@ -408,7 +414,7 @@ function ShellSlideOver({ run, conversationId, onStop, onClose }: SlideOverShell
             <span aria-hidden>←</span> Main chat <span aria-hidden>▸</span> {run.name}
           </button>
           <span className="chat-slideover-subagent-meta">
-            <span className="chat-slideover-subagent-badge">background shell</span>
+            <span className="chat-slideover-subagent-badge">{headless ? 'headless agent' : 'background shell'}</span>
             <span className="chat-slideover-subagent-status" data-status={run.status}>{run.status}</span>
           </span>
         </div>
@@ -417,7 +423,7 @@ function ShellSlideOver({ run, conversationId, onStop, onClose }: SlideOverShell
       <div className="chat-slideover-actions">
         {isRunning && (
           <button type="button" className="chat-btn danger" onClick={() => onStop(run)}>
-            <span aria-hidden>■</span> Stop shell
+            <span aria-hidden>■</span> Stop {noun}
           </button>
         )}
         <button
@@ -439,8 +445,8 @@ function ShellSlideOver({ run, conversationId, onStop, onClose }: SlideOverShell
             {state.exists
               ? 'No output yet.'
               : isRunning
-                ? 'This shell has not written anything yet.'
-                : 'This shell produced no output.'}
+                ? `This ${noun} has not written anything yet.`
+                : `This ${noun} produced no output.`}
           </p>
         )}
         {state.content && <pre className="chat-slideover-shellout">{state.content}</pre>}
