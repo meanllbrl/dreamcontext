@@ -1,0 +1,97 @@
+{
+  "hero": {
+    "eyebrow": "v0.23.0  ·  1 August 2026",
+    "headline": "Everything your agent knows, in a third of the context",
+    "sub": "The session-start preload had grown faster than the vault it describes. On a real mature brain it now loads at 16,320 characters instead of 48,964 — fully inline, no truncation banner, and nothing dropped. What got cut was repetition, not knowledge.",
+    "shot": {
+      "src": "shots/v0-23-0/core.png",
+      "alt": "The Core page of a real vault: a PEOPLE section listing Mehmet Nuraydın as active, above the core files — soul, memory, style guide, tech stack, changelog, releases and taxonomy — with the soul document open in the reader beside them",
+      "caption": "The shape of a brain after 0.23.0: a person, and a constitution-only soul."
+    }
+  },
+  "blocks": [
+    {
+      "kind": "stats",
+      "items": [
+        { "value": "48,964 → 16,320", "label": "Characters at session start", "note": "measured on a real mature vault" },
+        { "value": "32,912 → 3,983", "label": "Soul, after the split", "note": "37 conditional rules moved out" },
+        { "value": "10", "label": "Pattern files written", "note": "clustered by rule, not by bullet" }
+      ]
+    },
+    {
+      "kind": "split",
+      "title": "Your brain knows who is at the keyboard",
+      "body": "The old 1.user.md was one file trying to be a person, a roster and a junk drawer. It is gone. Each person now gets their own constitution in people/, loaded verbatim when they are the one working — resolved from your git email, with nothing about your machine written into the shared brain.\n\nExisting vaults are migrated for you: the deterministic half runs on upgrade, and the prose that needed judgement is handed to an agent rather than guessed at.",
+      "shot": {
+        "src": "shots/v0-23-0/people.png",
+        "alt": "The Core file list: a PEOPLE heading with Mehmet Nuraydın marked active, then CORE FILES listing soul, active-decisions, style-guide, tech-stack, System Flow, CHANGELOG, RELEASES and taxonomy — with no 1.user.md among them",
+        "caption": "No 1.user.md. A person, then the core files.",
+        "frame": "plain"
+      },
+      "side": "right"
+    },
+    {
+      "kind": "split",
+      "title": "Rules stopped hiding in a folder line",
+      "body": "A soul that holds every conditional rule is a soul nobody can read, and under budget pressure those rules used to collapse into an anonymous folder count. Now the conditional half lives in knowledge/patterns/ as clustered files, and patterns get their own block in every snapshot at every budget level, under a hard warning banner.\n\nA rule can be demoted in detail. It can no longer be demoted into silence.",
+      "shot": {
+        "src": "shots/v0-23-0/patterns.png",
+        "alt": "The Knowledge page with the Patterns folder expanded to 17 entries, showing pattern cards whose descriptions are the rule itself — budget demotion floor prevents blinding, build and propagate order, byte-surgical section editing — each tagged by domain",
+        "caption": "17 patterns, each described by the rule it carries.",
+        "frame": "plain"
+      },
+      "side": "left"
+    },
+    {
+      "kind": "terminal",
+      "title": "Two new ways to find things",
+      "lines": [
+        "$ dreamcontext changelog list --size 3",
+        "Changelog — page 1/185 (554 matching entries, newest first)",
+        "",
+        "- 2026-07-30 [feat] cli: New dreamcontext changelog list — paginated",
+        "  chronological browse of CHANGELOG.json",
+        "- 2026-07-30 [feat] snapshot: Patterns get their own block with a HARD",
+        "  warning banner at every rung",
+        "",
+        "$ dreamcontext tasks list --since 2026-07-01 --until 2026-07-31",
+        "",
+        "# recall ranks by relevance. these two answer \"what happened, in order\"."
+      ]
+    },
+    {
+      "kind": "points",
+      "title": "Also in this version",
+      "items": [
+        {
+          "title": "Memory renders in full",
+          "text": "A memory file at or under 4,000 characters is no longer compressed at render time. Sleep is memory's compressor; doing it twice was just taxation."
+        },
+        {
+          "title": "Tasks are accounted for",
+          "text": "Tasks show their real name instead of a slug. Under pressure the list becomes an accounting: detailed, named and counted always sum to the total."
+        },
+        {
+          "title": "Nothing is a dead end",
+          "text": "Every inventory section carries a search-and-browse footer at every level, including its floor — so a compressed section always tells you how to reach the rest."
+        },
+        {
+          "title": "Turkish names survive",
+          "text": "Accented and Turkish titles fold to ASCII before slugifying, so a name like \"Öğretmen fiyatı\" keeps its letters instead of being mangled."
+        }
+      ]
+    },
+    {
+      "kind": "note",
+      "text": "This release also carries v0.22.0, which was built but never published — if you are coming from 0.21.0 you get Automations and the Chat work in the same upgrade. Its own story sits directly below this one in the feed."
+    },
+    {
+      "kind": "note",
+      "text": "One caveat worth knowing: verifying the migrations above turned up a defect where running install-skill before update could silently skip them. That is fixed in this release, and guarded by a test that fails if anyone reopens it — but it is the reason to upgrade with dreamcontext update rather than around it."
+    }
+  ],
+  "closer": {
+    "title": "Upgrade and let it migrate",
+    "body": "dreamcontext upgrade, then dreamcontext update in each project. The structural migrations run on that command, and anything needing judgement is handed to your agent with instructions."
+  }
+}
