@@ -40,6 +40,7 @@ import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
 import { pickFiles, pickFolders } from '../../lib/desktop';
 import { listenForChecklistSubmits, type ChecklistSubmitPayload } from '../../lib/checklistBridge';
+import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
 
 /**
  * Agent — the REAL interactive Claude Code, in-app, MULTI-SESSION. Each session is
@@ -207,6 +208,10 @@ export function AgentSurface() {
   // cursor crossed the gap between caret and menu, so the menu was unreachable.
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const newSplitRef = useRef<HTMLDivElement>(null);
+  // The "Past chats" picker (⌘⇧O, or the header's ◷ button) — every conversation this
+  // project has on disk, searchable, resumable. Rendered OUTSIDE `.agent-surface`; see
+  // the note at its render site.
+  const [historyOpen, setHistoryOpen] = useState(false);
   // Agents (beta) surface preferences (Settings → Agents): feature on/off, restore
   // past tabs, default agent, in-app toggle hotkey. Seeded synchronously from
   // localStorage, then reconciled with the server file on mount, and kept live via
@@ -703,6 +708,52 @@ export function AgentSurface() {
     if (owner) setActivePaneId(owner.id);
     focusTerm(sid);
   }, [panes, focusTerm]);
+
+  // ── Past chats: reopen a conversation that no longer has a tab ────────────────────
+  //
+  // Claude Code keeps every conversation this project has ever had on disk, and `--resume`
+  // reopens any of them — but the surface could only ever reach the ones still holding a
+  // roster entry, so closing a tab lost the chat. `ChatHistoryPicker` lists the rest
+  // (`GET /api/agent/chat-sessions`); picking one lands here and becomes an ordinary
+  // resumed tab — the same path `resumeSession` walks for a dormant roster entry, just
+  // sourced from disk instead of from the roster.
+  //
+  // A conversation that IS already open is brought forward instead of resumed: two live
+  // CLIs `--resume`d onto one transcript would interleave their appends, and neither
+  // would see the other's turns.
+  const resumePastSession = useCallback((past: PastSession) => {
+    setHistoryOpen(false);
+    setExpanded(true);
+    const existing = sessionList.find((m) => m.claudeId === past.id);
+    if (existing) {
+      if (existing.dormant) resumeSession(existing.id);
+      else if (minimizedIds.includes(existing.id)) restoreMinimized(existing.id);
+      else focusSession(existing.id);
+      return;
+    }
+    // Resumed in the CURRENTLY chosen Agent screen, like every other resume path — the
+    // transcript is the conversation, not the surface it was originally typed into.
+    const s = spawn(bypass, past.id, true, claudeKind);
+    // Titled with the row's own label (the session's first prompt, clipped) rather than
+    // "Chat 7": it is the only thing that tells two resumed tabs apart. The result falls
+    // outside DEFAULT_TAB_TITLE_RE, so auto-titling correctly leaves it alone.
+    const title = past.title.length > 34 ? `${past.title.slice(0, 33).trimEnd()}…` : past.title;
+    setSessionList((prev) => [...prev, {
+      id: s.id, title: title || titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId,
+    }]);
+    if (panes.length === 0) {
+      const pid = nextPaneId();
+      setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
+      setActivePaneId(pid);
+    } else {
+      const apid = panes.some((p) => p.id === activePaneId) ? activePaneId : panes[0].id;
+      setPanes((prev) => prev.map((p) => (p.id === apid ? { ...p, tabs: [...p.tabs, s.id], active: s.id } : p)));
+      setActivePaneId(apid);
+    }
+  }, [
+    sessionList, minimizedIds, resumeSession, restoreMinimized, focusSession,
+    spawn, bypass, claudeKind, panes, activePaneId,
+  ]);
 
   // ── Run sleep agent (from the header's Sleep-debt tracker) ────────────────────────
   // Spawn a dedicated "Sleep" agent that auto-runs the project's consolidation flow, and
@@ -1490,7 +1541,10 @@ export function AgentSurface() {
       if (document.querySelector('.agent-new-menu')) return;  // the "＋ New" menu owns Esc
       const ae = document.activeElement as Element | null;
       if (ae?.closest('.agent-pane-slot')) return;   // Claude's TUI owns Esc
-      if (ae?.closest('.command-palette')) return;    // the palette owns Esc
+      // Any centered command surface on top of us owns Esc — ⌘K palette, ⌘P switcher,
+      // ⌘⇧O past-chats picker. Matched on the shared <CommandModal> shell class rather
+      // than each variant, so a future one is covered without editing this list.
+      if (ae?.closest('.cmd-modal')) return;
       if (ae?.closest('.agent-composer')) return;     // the composer field owns Esc (don't discard a draft)
       // The composer's popover menus portal to <body> (outside .agent-composer), so a
       // focused skill chip / model row must also own Esc — close the menu, not the overlay.
@@ -1669,6 +1723,12 @@ export function AgentSurface() {
     if (!host || !started) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.altKey) return;
+      // ⌘⇧O → Past chats. Deliberately ABOVE the composer guard: reaching for an earlier
+      // conversation mid-draft is exactly when you want it, and unlike ⌘W it destroys
+      // nothing (the draft is still there when the picker closes).
+      if (e.metaKey && !e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'o') {
+        e.preventDefault(); e.stopPropagation(); setHistoryOpen(true); return;
+      }
       // Typing in the composer field must never trigger the ⌘D/⌘⇧D/⌘T/⌘W/⌃` session chords
       // (⌘W would close the focused session mid-compose).
       if ((document.activeElement as Element | null)?.closest('.agent-composer')) return;
@@ -1937,6 +1997,14 @@ export function AgentSurface() {
                 {caps.openTerminal && (
                   <button onClick={openExternal} style={secondaryBtn}>↗ Open in Terminal</button>
                 )}
+                {/* Past chats belongs HERE too, not only in the header: `started` is
+                    `sessionList.length > 0`, so a launch with no restored tabs shows this
+                    screen and the header's ◷ button does not exist yet — which is exactly
+                    the moment "reopen what I was working on" is the thing you want. Gated
+                    on the CLI alone: resuming spawns `claude --resume`, no node-pty. */}
+                {caps.claudeCli && (
+                  <button onClick={() => setHistoryOpen(true)} style={secondaryBtn}>◷ Past chats</button>
+                )}
               </div>
               {!terminalReady && (
                 <>
@@ -2063,6 +2131,21 @@ export function AgentSurface() {
                           <kbd className="agent-new-menu-kbd">⌃`</kbd>
                         </button>
                       )}
+                      {/* Past chats lives in THIS menu rather than as its own header button:
+                          the header is a tab strip, and a second pill beside ＋ New competes
+                          with it for the one action that should read as primary. Separated
+                          by a rule because it is the odd one out — everything above starts
+                          something new, this one goes back to something that already exists. */}
+                      <div className="agent-new-menu-rule" role="separator" />
+                      <button
+                        className="agent-new-menu-item"
+                        role="menuitem"
+                        onClick={() => { setNewMenuOpen(false); setHistoryOpen(true); }}
+                      >
+                        <span className="agent-new-menu-glyph" aria-hidden>◷</span>
+                        <span className="agent-new-menu-label">Past chats</span>
+                        <kbd className="agent-new-menu-kbd">⌘⇧O</kbd>
+                      </button>
                     </div>
                   )}
                 </div>
@@ -2074,6 +2157,18 @@ export function AgentSurface() {
         {/* Each pane renders its OWN composer strip (files + skills + that agent's live
             model & effort) pinned to its bottom — see the `composer` prop above. */}
       </div>
+      {/* Past chats picker. A SIBLING of `.agent-surface`, never a child: the surface
+          declares `contain: layout paint`, which would make it the containing block for the
+          modal's `position: fixed` scrim and trap the popup inside the pane area (the same
+          trap `AgentDock` documents). Mounted only while open — its fetch is scoped to that. */}
+      {historyOpen && (
+        <ChatHistoryPicker
+          open
+          onClose={() => setHistoryOpen(false)}
+          onPick={resumePastSession}
+          openIds={sessionList.map((m) => m.claudeId).filter(Boolean)}
+        />
+      )}
       {/* Minimized sessions — a live progress dock floating ABOVE the expanded overlay, so
           you can free terminal space yet still watch them. Click a chip to restore it to a
           pane. Rendered OUTSIDE the overlay (its `contain`/`>*` rules would deform a child

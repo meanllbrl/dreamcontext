@@ -231,6 +231,12 @@
   color: var(--color-accent);
 }
 .agent-new-menu-label { flex: 1 1 auto; }
+/* Separates the "start something new" items above from "go back to something that exists". */
+.agent-new-menu-rule {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--color-border);
+}
 .agent-new-menu-kbd {
   flex: 0 0 auto;
   font-family: var(--font-mono);

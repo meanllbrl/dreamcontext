@@ -127,6 +127,7 @@ import {
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
 import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
+import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleAgentSessionsGet, handleAgentSessionsPut } from './routes/agent-sessions.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
@@ -349,6 +350,10 @@ export function buildRouter(): Router {
   router.get('/api/agent/session-model', handleAgentSessionModel);
   router.get('/api/agent/session-stats', handleAgentSessionStats);
   router.get('/api/agent/chat-history', handleAgentChatHistory);
+  // Every past conversation of THIS project, for the surface's "Past chats" picker —
+  // registered before the bare /chat-history above only in reading order; they are
+  // distinct exact paths.
+  router.get('/api/agent/chat-sessions', handleAgentChatSessions);
   // The live output of a background shell, read straight off the CLI's own task-output file
   // (server-derived path) so the Chat view can show it for zero model tokens.
   router.get('/api/agent/bg-output', handleAgentBackgroundOutput);

@@ -48,6 +48,46 @@ export function truncateValue(v: unknown): unknown {
 }
 
 /**
+ * The text a HUMAN typed in one `user` transcript entry — `''` when the entry is not a
+ * human prompt at all: a tool result, a meta/synthetic entry, or a `<…>`-wrapped command
+ * stub / system reminder / caveat block (the CLI writes several of those as ordinary
+ * `user` entries).
+ *
+ * Shared by the transcript REPLAY below and the past-sessions index
+ * (`transcript-sessions.ts`), so "what counts as something the user said" is decided in
+ * exactly ONE place. The two disagreeing is how a resumed conversation replays clean while
+ * the same session shows up in the history picker titled `<command-name>clear</command-name>`.
+ *
+ * Does NOT apply the `isSidechain` guard — that one means opposite things in a parent
+ * transcript and in a sub-agent's own file, so it stays with each caller (see the note in
+ * {@link parseTranscriptHistory}).
+ */
+export function userPromptOf(obj: unknown): string {
+  if (!obj || typeof obj !== 'object') return '';
+  const o = obj as {
+    type?: unknown; isMeta?: unknown; isSynthetic?: unknown;
+    message?: { content?: unknown };
+  };
+  if (o.type !== 'user') return '';
+  if (o.isMeta === true || o.isSynthetic === true) return '';
+  const content = o.message?.content;
+  if (typeof content === 'string') {
+    const text = content.trim();
+    return text && !text.startsWith('<') ? text : '';
+  }
+  if (!Array.isArray(content)) return '';
+  const texts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    const b = block as { type?: unknown; text?: unknown };
+    if (b.type !== 'text' || typeof b.text !== 'string') continue;
+    const t = b.text.trim();
+    if (t && !t.startsWith('<')) texts.push(t);
+  }
+  return texts.join('\n').trim();
+}
+
+/**
  * Parse a Claude Code transcript JSONL into replayable history items. Exported pure for
  * unit tests. Tolerates every foreign entry type (`summary`, `file-history-snapshot`,
  * queued-command stubs, …) and malformed lines by skipping them — a transcript is an
@@ -89,17 +129,14 @@ export function parseTranscriptHistory(raw: string, opts: { sidechain?: boolean 
       if (obj.isMeta === true || obj.isSynthetic === true) continue;
       const content = obj.message?.content;
       const uuid = typeof obj.uuid === 'string' ? obj.uuid : undefined;
-      if (typeof content === 'string') {
-        const text = content.trim();
-        if (text && !text.startsWith('<')) items.push({ kind: 'user', uuid, text });
-        continue;
-      }
-      if (!Array.isArray(content)) continue;
-      const texts: string[] = [];
-      for (const block of content) {
-        if (!block || typeof block !== 'object') continue;
-        const b = block as { type?: unknown; text?: unknown; tool_use_id?: unknown; content?: unknown; is_error?: unknown };
-        if (b.type === 'tool_result' && typeof b.tool_use_id === 'string') {
+      // tool_result backfill — the one part of a user entry that MUTATES an
+      // already-pushed item, so it can't live in the shared text extractor. Runs
+      // before the push below, exactly as it did when both were one loop.
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (!block || typeof block !== 'object') continue;
+          const b = block as { type?: unknown; tool_use_id?: unknown; content?: unknown; is_error?: unknown };
+          if (b.type !== 'tool_result' || typeof b.tool_use_id !== 'string') continue;
           const pos = toolPos.get(b.tool_use_id);
           if (pos !== undefined) {
             items[pos] = {
@@ -108,12 +145,9 @@ export function parseTranscriptHistory(raw: string, opts: { sidechain?: boolean 
               result: truncateValue(b.content),
             };
           }
-        } else if (b.type === 'text' && typeof b.text === 'string') {
-          const t = b.text.trim();
-          if (t && !t.startsWith('<')) texts.push(t);
         }
       }
-      const text = texts.join('\n').trim();
+      const text = userPromptOf(obj);
       if (text) items.push({ kind: 'user', uuid, text });
       continue;
     }
