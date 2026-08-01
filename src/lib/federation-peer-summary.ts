@@ -19,9 +19,9 @@ import { resolveConnectedVaults, currentVaultTarget } from './federation-recall.
  * connect/disconnect.
  *
  * READ model (same as recall): peer B is readable from current vault A iff
- *   A→B connection direction is out/both AND not stale AND B has shareable:true.
- * `resolveConnectedVaults` already applies exactly that gate (out/both ∩ not
- * stale ∩ shareable), so we reuse it as the single source of truth.
+ *   A→B connection direction is out/both AND not stale.
+ * `resolveConnectedVaults` already applies exactly that gate, so we reuse it as
+ * the single source of truth.
  */
 
 /** One peer's compact, glance-sized summary. Persisted in the cache file. */
@@ -281,8 +281,8 @@ function readPinnedTitles(peerRoot: string): string[] {
  */
 export function refreshPeerSummaries(contextRoot: string, home?: string): PeerSummary[] {
   const { name, target } = currentVaultTarget(dirname(contextRoot), home);
-  // resolveConnectedVaults applies the READ gate: out/both ∩ not-stale ∩ shareable,
-  // current vault first. Drop the current vault — it is not a "peer".
+  // resolveConnectedVaults applies the READ gate: out/both ∩ not-stale, current
+  // vault first. Drop the current vault — it is not a "peer".
   const targets = resolveConnectedVaults(target, contextRoot, home).filter(
     (t) => t.current !== true && t.name !== name,
   );

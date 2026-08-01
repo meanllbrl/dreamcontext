@@ -8,7 +8,6 @@ import {
   useFederationGraph,
   useCreateConnection,
   useRemoveLauncherConnection,
-  useToggleShareable,
   useUpdateProject,
   type VaultStatus,
   type FederationConnection,
@@ -51,15 +50,12 @@ interface Rel {
   from: string;
   to: string;
   kind: WireKind;
-  /** reads: target is Readable (shareable) → the wire is live. */
-  active: boolean;
 }
 
 interface GLink {
   source: string | GNode;
   target: string | GNode;
   kind: WireKind;
-  active: boolean;
   twoWay: boolean;
   /** Bow so opposite directions never lie on top of each other. */
   curv: number;
@@ -153,14 +149,14 @@ function arrowHead(
  * The interactive cross-project federation board (Excalidraw-style). Every vault
  * is a rounded card; a single kind of wire connects them:
  *   • **reads** (violet): A→B = A reads B's CANONICAL memory LIVE during recall —
- *     a reference, never a copy. The target must be Readable (shareable) for the
- *     wire to be active; otherwise it is stored but inert.
+ *     a reference, never a copy. Drawing the wire IS the consent: there is no
+ *     second opt-in on the target, so every wire here is live.
  *
  * One modeless interaction model (no Connect/View toggle):
  *   • drag from a card onto another card → wire a read
  *   • click a card → inspect it (detail panel; can arm click-to-connect)
  *   • click a wire → in-place editor (remove per direction, or make the target
- *     Readable when the wire is inert)
+ *     per direction)
  *   • drag empty canvas → pan; wheel / buttons → zoom
  *
  * Reusable widget: the Launcher mounts it full-screen (`variant="full"`, the
@@ -180,7 +176,6 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
   const { data, isLoading, isError, error } = useFederationGraph();
   const createConn = useCreateConnection();
   const removeConn = useRemoveLauncherConnection();
-  const toggleShareable = useToggleShareable();
   const updateProject = useUpdateProject();
 
   const fgRef = useRef<any>(undefined);
@@ -235,12 +230,11 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
 
   // Derive the ordered read relationships from raw per-vault connection
   // directions. Read-only federation: every qualifying out/both edge becomes a
-  // live READS wire; `active` = the target is Readable (shareable).
+  // live READS wire. There is no second gate — the connection is the consent.
   const rels = useMemo<Rel[]>(() => {
     const nodes = data?.nodes ?? [];
     const conns: FederationConnection[] = data?.connections ?? [];
     const present = new Set(nodes.map((n) => n.name));
-    const shareable = new Map(nodes.map((n) => [n.name, n.shareable]));
     const dir = new Map<string, 'out' | 'in' | 'both'>();
     for (const c of conns) dir.set(`${c.from}→${c.to}`, c.direction);
     const hasOut = (a: string, b: string) => {
@@ -251,7 +245,7 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
     for (const c of conns) {
       if (!present.has(c.from) || !present.has(c.to)) continue;
       if (!hasOut(c.from, c.to)) continue;
-      out.push({ from: c.from, to: c.to, kind: 'reads', active: shareable.get(c.to) === true });
+      out.push({ from: c.from, to: c.to, kind: 'reads' });
     }
     return out;
   }, [data]);
@@ -272,7 +266,6 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
         source: r.from,
         target: r.to,
         kind: r.kind,
-        active: r.active || (rev?.active ?? false),
         twoWay: !!rev,
         // Opposite directions bow opposite ways so reciprocal wires don't overlap.
         curv: (r.from < r.to ? 1 : -1) * 0.13,
@@ -417,24 +410,6 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
     return { x: e.clientX - (rect?.left ?? 0), y: e.clientY - (rect?.top ?? 0) };
   }
 
-  const makeReadable = useCallback(
-    (id: string, name: string) => {
-      toggleShareable.mutate(
-        { name: id, shareable: true },
-        {
-          onSuccess: () => {
-            setNote({ kind: 'success', text: fmt(t('federation.map.note.readable'), { name }) });
-          },
-          onError: (err) =>
-            setNote({
-              kind: 'error',
-              text: err instanceof Error ? err.message : t('federation.map.note.failed'),
-            }),
-        },
-      );
-    },
-    [toggleShareable, t],
-  );
 
   const wire = useCallback(
     (src: GNode, dst: GNode) => {
@@ -443,23 +418,10 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
         { from: src.id, to: dst.id },
         {
           onSuccess: () => {
-            if (dst.shareable) {
-              setNote({
-                kind: 'success',
-                text: fmt(t('federation.map.note.connected'), { from: src.name, to: dst.name }),
-              });
-            } else {
-              // The one confusing state — the wire exists but is inert. Hand the
-              // user the fix as a one-click action instead of prose instructions.
-              setNote({
-                kind: 'warn',
-                text: fmt(t('federation.map.note.inert'), { from: src.name, to: dst.name }),
-                action: {
-                  label: t('federation.map.note.makeReadable'),
-                  run: () => makeReadable(dst.id, dst.name),
-                },
-              });
-            }
+            setNote({
+              kind: 'success',
+              text: fmt(t('federation.map.note.connected'), { from: src.name, to: dst.name }),
+            });
           },
           onError: (err) =>
             setNote({
@@ -469,7 +431,7 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
         },
       );
     },
-    [createConn, makeReadable, t],
+    [createConn, t],
   );
 
   // ── Modeless pointer model on the canvas wrapper ──────────────────────────
@@ -632,8 +594,7 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
 
   // The detail panel renders LIVE graph data — `selected` only remembers WHICH
   // card is open. Rendering the click-time snapshot went stale the moment the
-  // 15s polling refetched or Readable was toggled elsewhere (e.g. the Settings
-  // Sharing card), showing a wrong checkbox against the card's live pip.
+  // 15s polling refetched or a wire was drawn elsewhere.
   const sel = selected ? (nodeById.get(selected.id) ?? selected) : null;
 
   // Plain-language label + direct (no-confirm) removal for the always-on list.
@@ -641,10 +602,7 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
     const from = nameOf(endId(l.source));
     const to = nameOf(endId(l.target));
     if (l.twoWay) return fmt(t('federation.map.conns.mutual'), { a: from, b: to });
-    return (
-      fmt(t('federation.map.conns.reads'), { from, to }) +
-      (l.active ? '' : t('federation.map.conns.inert'))
-    );
+    return fmt(t('federation.map.conns.reads'), { from, to });
   }
 
   function removeLink(l: GLink) {
@@ -667,7 +625,6 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
   useEffect(() => {
     if (wireMenu && menuRels.length === 0) setWireMenu(null);
   }, [wireMenu, menuRels]);
-  const menuInert = menuRels.find((r) => !r.active);
 
   // Plain-language relationships for the selected card (the clarity anchor).
   const selectedRels = useMemo(() => {
@@ -677,8 +634,7 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
       if (r.from !== sel.id && r.to !== sel.id) continue;
       const text =
         r.from === sel.id
-          ? fmt(t('federation.map.detail.youRead'), { name: nameOf(r.to) }) +
-            (r.active ? '' : t('federation.map.detail.notLive'))
+          ? fmt(t('federation.map.detail.youRead'), { name: nameOf(r.to) })
           : fmt(t('federation.map.detail.readsYou'), { name: nameOf(r.from) });
       out.push({ text, onRemove: () => removeConn.mutate({ from: r.from, to: r.to }) });
     }
@@ -797,9 +753,6 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
               <i className="lgwire lgwire--read" /> {t('federation.map.legend.live')}
             </span>
             <span>
-              <i className="lgwire lgwire--inert" /> {t('federation.map.legend.inert')}
-            </span>
-            <span>
               <i className="lgchip lgchip--ok" /> {t('federation.map.legend.ok')}
               <i className="lgchip lgchip--stale" /> {t('federation.map.legend.stale')}
               <i className="lgchip lgchip--gone" /> {t('federation.map.legend.gone')}
@@ -836,7 +789,7 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
             linkColor={() => 'rgba(0,0,0,0)'}
             linkDirectionalArrowLength={0}
             linkCurvature={(l: GLink) => l.curv}
-            linkDirectionalParticles={(l: GLink) => (l.active ? 3 : 0)}
+            linkDirectionalParticles={() => 3}
             linkDirectionalParticleSpeed={0.006}
             linkDirectionalParticleWidth={3.4}
             linkDirectionalParticleColor={() => '#c9b8ff'}
@@ -867,22 +820,18 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
 
               ctx.save();
               ctx.lineCap = 'round';
-              if (l.active) {
-                ctx.strokeStyle = isHover ? READ : READ_SOFT;
-                ctx.lineWidth = isHover ? 3.2 : 2.2;
-                ctx.setLineDash([]);
-              } else {
-                ctx.strokeStyle = isHover ? 'rgba(180,180,200,0.85)' : 'rgba(150,150,170,0.55)';
-                ctx.lineWidth = isHover ? 2.4 : 1.6;
-                ctx.setLineDash([5, 5]);
-              }
+              // Every wire is live: connecting IS the consent, so there is no
+              // second "inert" style to fall back to.
+              ctx.strokeStyle = isHover ? READ : READ_SOFT;
+              ctx.lineWidth = isHover ? 3.2 : 2.2;
+              ctx.setLineDash([]);
               ctx.beginPath();
               ctx.moveTo(sx, sy);
               ctx.quadraticCurveTo(cpx, cpy, tx, ty);
               ctx.stroke();
               ctx.setLineDash([]);
 
-              const head = l.active ? READ : 'rgba(150,150,170,0.75)';
+              const head = READ;
               arrowHead(ctx, tx, ty, angT, 7, head);
               if (l.twoWay) arrowHead(ctx, sx, sy, angS, 7, head);
 
@@ -965,16 +914,6 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
                 ctx.restore();
               }
 
-              // Shareable: a violet "Readable" pip on the top-right corner.
-              if (n.shareable) {
-                ctx.beginPath();
-                ctx.arc(x + w - 7, y + 7, 3.2, 0, 2 * Math.PI);
-                ctx.fillStyle = READ;
-                ctx.fill();
-                ctx.lineWidth = 1.2;
-                ctx.strokeStyle = '#0b0b12';
-                ctx.stroke();
-              }
 
               ctx.fillStyle = INK;
               ctx.textAlign = 'center';
@@ -1013,10 +952,7 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
             ) : (
               graphData.links.map((l, i) => (
                 <div className="lgraph-conn-row" key={i}>
-                  <span
-                    className={`lgchip-wire${l.active ? '' : ' lgchip-wire--inert'}`}
-                    aria-hidden
-                  />
+                  <span className="lgchip-wire" aria-hidden />
                   <span className="lgraph-conn-label">{linkLabel(l)}</span>
                   <button
                     className="lgraph-conn-del"
@@ -1061,11 +997,6 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
                       to: nameOf(r.to),
                     })}
                   </span>
-                  {!r.active && (
-                    <span className="lgraph-wiremenu-warn">
-                      {fmt(t('federation.map.wiremenu.notLive'), { name: nameOf(r.to) })}
-                    </span>
-                  )}
                 </div>
                 <button
                   className="lgraph-wiremenu-del"
@@ -1075,15 +1006,6 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
                 </button>
               </div>
             ))}
-            {menuInert && (
-              <button
-                className="lgraph-wiremenu-fix"
-                onClick={() => makeReadable(menuInert.to, nameOf(menuInert.to))}
-                disabled={toggleShareable.isPending}
-              >
-                {fmt(t('federation.map.wiremenu.makeReadable'), { name: nameOf(menuInert.to) })}
-              </button>
-            )}
           </div>
         )}
       </div>
@@ -1131,29 +1053,6 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
               </button>
             )}
           </div>
-          <label className="lgraph-detail-row lgraph-share">
-            <input
-              type="checkbox"
-              checked={sel.shareable}
-              disabled={!sel.exists || toggleShareable.isPending}
-              onChange={(e) =>
-                // No local patch needed: the mutation invalidates the graph
-                // query and the panel re-derives from live data.
-                toggleShareable.mutate(
-                  { name: sel.name, shareable: e.target.checked },
-                  {
-                    onError: (err) =>
-                      setNote({
-                        kind: 'error',
-                        text:
-                          err instanceof Error ? err.message : t('federation.map.note.failed'),
-                      }),
-                  },
-                )
-              }
-            />
-            <span>{t('federation.map.detail.readable')}</span>
-          </label>
 
           {sel.exists && vaults.length >= 2 && (
             <button

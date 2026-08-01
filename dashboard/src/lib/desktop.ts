@@ -255,6 +255,7 @@ export function vaultWindowLabel(name: string): string {
  * pinned to that vault via the `?vault=` param.
  */
 export async function openVaultWindow(name: string): Promise<void> {
+  const url = `/?vault=${encodeURIComponent(name)}`;
   if (isDesktop()) {
     // Use the BUILT-IN WebviewWindow API (governed by the granted
     // `core:webview:allow-create-webview-window` permission) rather than a custom
@@ -272,7 +273,7 @@ export async function openVaultWindow(name: string): Promise<void> {
     // relative URL would resolve against Tauri's bundled frontendDist
     // (the "starting…" placeholder), not the real dashboard.
     const win = new WebviewWindow(label, {
-      url: `${window.location.origin}/?vault=${encodeURIComponent(name)}`,
+      url: `${window.location.origin}${url}`,
       title: `dreamcontext — ${name}`,
       width: 1280,
       height: 800,
@@ -288,7 +289,7 @@ export async function openVaultWindow(name: string): Promise<void> {
     await awaitWindowCreated(win, `vault "${name}"`);
     return;
   }
-  window.open(`/?vault=${encodeURIComponent(name)}`, '_blank');
+  window.open(url, '_blank');
 }
 
 /**

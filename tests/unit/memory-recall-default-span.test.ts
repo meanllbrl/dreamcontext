@@ -23,11 +23,11 @@ function makeDir(prefix: string): string {
   return dir;
 }
 
-function makeVault(base: string, name: string, home: string, shareable: boolean): string {
+function makeVault(base: string, name: string, home: string): string {
   const projectRoot = join(base, name);
   mkdirSync(join(projectRoot, '_dream_context', 'knowledge'), { recursive: true });
   mkdirSync(join(projectRoot, '_dream_context', 'state'), { recursive: true });
-  writeSetupConfig(projectRoot, { ...BASE, shareable });
+  writeSetupConfig(projectRoot, { ...BASE });
   addVault(name, projectRoot, home);
   return projectRoot;
 }
@@ -82,13 +82,13 @@ describe('memory recall default-span (cross-project read by default)', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  // (a) default recall (no flags) spans connected shareable peers.
-  it('spans connected shareable peers BY DEFAULT with no federation flags', async () => {
-    const cur = makeVault(base, 'cur', home, false);
-    const peer = makeVault(base, 'peer', home, true);
+  // (a) default recall (no flags) spans connected peers.
+  it('spans connected peers BY DEFAULT with no federation flags', async () => {
+    const cur = makeVault(base, 'cur', home);
+    const peer = makeVault(base, 'peer', home);
     writeKnowledge(cur, 'cur-doc', 'rate limiting middleware design for the gateway');
     writeKnowledge(peer, 'peer-doc', 'rate limiting middleware design for the gateway');
-    // Active out/both connection to a shareable peer → eligible for default span.
+    // Active out/both connection → eligible for default span.
     addConnection(join(cur, '_dream_context'), 'cur', 'peer', 'both', null, home);
     process.chdir(cur);
 
@@ -107,9 +107,9 @@ describe('memory recall default-span (cross-project read by default)', () => {
   // (b) default recall with NO eligible connections stays local-only and is
   //     byte-identical to the legacy single-vault recall path.
   it('stays local-only (byte-identical legacy path) when there are no eligible connections', async () => {
-    const cur = makeVault(base, 'cur', home, false);
-    // A peer exists and is shareable, but there is NO connection to it.
-    const peer = makeVault(base, 'peer', home, true);
+    const cur = makeVault(base, 'cur', home);
+    // A peer exists, but there is NO connection to it.
+    const peer = makeVault(base, 'peer', home);
     writeKnowledge(cur, 'cur-doc', 'rate limiting middleware design for the gateway');
     writeKnowledge(peer, 'peer-doc', 'rate limiting middleware design for the gateway');
     process.chdir(cur);
@@ -137,8 +137,8 @@ describe('memory recall default-span (cross-project read by default)', () => {
 
   // (b') an in-only connection is NOT eligible → still local-only.
   it('treats an in-only connection as ineligible (local-only)', async () => {
-    const cur = makeVault(base, 'cur', home, false);
-    const peer = makeVault(base, 'peer', home, true);
+    const cur = makeVault(base, 'cur', home);
+    const peer = makeVault(base, 'peer', home);
     writeKnowledge(cur, 'cur-doc', 'rate limiting middleware design for the gateway');
     writeKnowledge(peer, 'peer-doc', 'rate limiting middleware design for the gateway');
     addConnection(join(cur, '_dream_context'), 'cur', 'peer', 'in', null, home);
@@ -150,10 +150,11 @@ describe('memory recall default-span (cross-project read by default)', () => {
     expect(JSON.stringify(parsed.hits)).not.toContain('peer-doc');
   });
 
-  // (b'') a connection to a NON-shareable peer is NOT eligible → local-only.
-  it('treats an out connection to a non-shareable peer as ineligible (local-only)', async () => {
-    const cur = makeVault(base, 'cur', home, false);
-    const peer = makeVault(base, 'peer', home, false); // peer NOT shareable
+  // (b'') an out connection makes the peer eligible on its own — the retired
+  // `shareable` flag can no longer leave a wired peer silently unreadable.
+  it('spans an out connection with no further opt-in on the peer', async () => {
+    const cur = makeVault(base, 'cur', home);
+    const peer = makeVault(base, 'peer', home);
     writeKnowledge(cur, 'cur-doc', 'rate limiting middleware design for the gateway');
     writeKnowledge(peer, 'peer-doc', 'rate limiting middleware design for the gateway');
     addConnection(join(cur, '_dream_context'), 'cur', 'peer', 'both', null, home);
@@ -161,8 +162,7 @@ describe('memory recall default-span (cross-project read by default)', () => {
 
     const out = await capture(() => runMemory(['memory', 'recall', 'rate limiting middleware', '--json']));
     const parsed = JSON.parse(out);
-    expect(parsed).toHaveProperty('corpusSize'); // local-only shape
-    expect(JSON.stringify(parsed.hits)).not.toContain('peer-doc');
+    expect(JSON.stringify(parsed.hits)).toContain('peer-doc');
   });
 
   // (c) the always-on hook path stays LOCAL even when eligible connections exist.
@@ -170,10 +170,10 @@ describe('memory recall default-span (cross-project read by default)', () => {
   //     local corpus — it never builds a peer corpus or resolves peer vaults, and
   //     it does NOT route through the default-spanning CLI action. We reproduce
   //     the hook's exact data source (local buildCorpus) WITH an active out/both
-  //     connection to a shareable peer present and assert no peer content appears.
+  //     connection present and assert no peer content appears.
   it('hook recall data source stays local-only even with an eligible connection', async () => {
-    const cur = makeVault(base, 'cur', home, false);
-    const peer = makeVault(base, 'peer', home, true);
+    const cur = makeVault(base, 'cur', home);
+    const peer = makeVault(base, 'peer', home);
     writeKnowledge(cur, 'cur-doc', 'rate limiting middleware design for the gateway');
     const PEER_SENTINEL = 'ZZZ_PEER_SENTINEL_NEVER_IN_HOOK_RECALL';
     writeKnowledge(peer, 'peer-doc', `${PEER_SENTINEL} rate limiting middleware design for the gateway`);
@@ -195,7 +195,7 @@ describe('memory recall default-span (cross-project read by default)', () => {
 
   // (d) topK default is now 10.
   it('returns up to 10 hits by default (topK 5 → 10)', async () => {
-    const cur = makeVault(base, 'cur', home, false);
+    const cur = makeVault(base, 'cur', home);
     // 12 distinct local docs all matching the query.
     for (let i = 0; i < 12; i++) {
       writeKnowledge(cur, `caching-${i}`, `cache invalidation strategy note number ${i}`);

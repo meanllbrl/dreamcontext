@@ -198,8 +198,8 @@ export function registerMemoryCommand(program: Command): void {
     .option('--json', 'Emit JSON for piping into other tools')
     .option('--plain', 'Plain text output without colors')
     .option('--vault <name>', 'Also search this vault (repeatable; registered name or path)', collectVault, [])
-    .option('--connected', 'Span the current vault + its out/both connections (shareable peers only)')
-    .option('--all-vaults', 'Span the current vault + every shareable registered vault')
+    .option('--connected', 'Span the current vault + its out/both connections')
+    .option('--all-vaults', 'Span the current vault + every registered vault')
     .action(
       async (
         queryParts: string[],
@@ -232,7 +232,7 @@ export function registerMemoryCommand(program: Command): void {
         // ── DEFAULT-SPAN (cross-project read by default) ───────────────────────
         // With NO federation flag, the interactive `memory recall` CLI spans the
         // current vault's eligible peers BY DEFAULT — same target set as
-        // `--connected` (out/both, non-stale, shareable peers). This is the
+        // `--connected` (out/both, non-stale peers). This is the
         // explicit agent/Explore path; the always-on hook does NOT come through
         // here (it calls bm25Search on a local-only corpus directly), so the
         // SessionStart/generateSnapshot hot-path stays local-only (P1.6 LOCKED).

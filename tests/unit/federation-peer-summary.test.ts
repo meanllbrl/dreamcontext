@@ -27,7 +27,6 @@ function makeDir(prefix: string): string {
 }
 
 interface SeedOpts {
-  shareable?: boolean;
   soul?: string;
   changelog?: Array<Record<string, unknown>>;
   task?: { name: string; status: string };
@@ -51,7 +50,7 @@ function makeVault(base: string, name: string, home: string, opts: SeedOpts = {}
   mkdirSync(join(ctx, 'knowledge'), { recursive: true });
   mkdirSync(join(ctx, 'core', 'features'), { recursive: true });
   mkdirSync(join(ctx, 'state'), { recursive: true });
-  writeSetupConfig(projectRoot, { ...BASE, shareable: opts.shareable ?? true });
+  writeSetupConfig(projectRoot, { ...BASE });
   addVault(name, projectRoot, home);
 
   if (opts.soul !== undefined) {
@@ -227,9 +226,9 @@ describe('refreshPeerSummaries', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('includes a readable peer (out/both + shareable) and writes the cache', () => {
+  it('includes a readable peer (out/both) and writes the cache', () => {
     const cur = makeVault(base, 'cur', home, {});
-    makeVault(base, 'readable', home, { shareable: true, soul: 'Readable peer purpose line.' });
+    makeVault(base, 'readable', home, { soul: 'Readable peer purpose line.' });
     const curCtx = join(cur, '_dream_context');
     addConnection(curCtx, 'cur', 'readable', 'both', null, home);
 
@@ -246,19 +245,19 @@ describe('refreshPeerSummaries', () => {
     expect(parsed.peers[0].whatItIs).toContain('Readable peer');
   });
 
-  it('excludes non-shareable peers', () => {
+  it('summarises every out/both peer — connecting is the grant', () => {
     const cur = makeVault(base, 'cur', home, {});
-    makeVault(base, 'private', home, { shareable: false, soul: 'Private peer.' });
+    makeVault(base, 'peer', home, { soul: 'A connected peer.' });
     const curCtx = join(cur, '_dream_context');
-    addConnection(curCtx, 'cur', 'private', 'both', null, home);
+    addConnection(curCtx, 'cur', 'peer', 'both', null, home);
 
     const peers = refreshPeerSummaries(curCtx, home);
-    expect(peers).toEqual([]);
+    expect(peers.map((p) => p.vault)).toEqual(['peer']);
   });
 
   it('excludes in-only connections (no out/both reach across)', () => {
     const cur = makeVault(base, 'cur', home, {});
-    makeVault(base, 'inbound', home, { shareable: true, soul: 'Inbound peer.' });
+    makeVault(base, 'inbound', home, { soul: 'Inbound peer.' });
     const curCtx = join(cur, '_dream_context');
     addConnection(curCtx, 'cur', 'inbound', 'in', null, home);
 
@@ -268,7 +267,7 @@ describe('refreshPeerSummaries', () => {
 
   it('excludes stale connections', () => {
     const cur = makeVault(base, 'cur', home, {});
-    makeVault(base, 'gone', home, { shareable: true, soul: 'Gone peer.' });
+    makeVault(base, 'gone', home, { soul: 'Gone peer.' });
     const curCtx = join(cur, '_dream_context');
     addConnection(curCtx, 'cur', 'gone', 'both', null, home);
     // Hand-mark the connection stale.
@@ -282,8 +281,8 @@ describe('refreshPeerSummaries', () => {
   });
 
   it('never includes the current vault as a peer', () => {
-    const cur = makeVault(base, 'cur', home, { shareable: true });
-    makeVault(base, 'other', home, { shareable: true });
+    const cur = makeVault(base, 'cur', home, {});
+    makeVault(base, 'other', home, {});
     const curCtx = join(cur, '_dream_context');
     addConnection(curCtx, 'cur', 'other', 'both', null, home);
 

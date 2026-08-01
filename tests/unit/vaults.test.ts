@@ -6,6 +6,7 @@ import {
   addVault,
   listVaults,
   removeVault,
+  touchVault,
   vaultsFilePath,
   VaultError,
   type Vault,
@@ -212,5 +213,58 @@ describe('removeVault', () => {
     addVault('dr', vaultDir, home);
     removeVault('dr', home);
     expect(removeVault('dr', home)).toBe(false);
+  });
+});
+
+describe('touchVault', () => {
+  let home: string;
+  let projectBase: string;
+
+  beforeEach(() => {
+    home = makeHome();
+    projectBase = makeHome();
+  });
+
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(projectBase, { recursive: true, force: true });
+  });
+
+  it('stamps lastOpenedAt on the named vault', () => {
+    addVault('opened', makeVaultDir(projectBase, 'opened'), home);
+    const when = new Date('2026-08-01T12:34:56.000Z');
+
+    expect(touchVault('opened', home, when)).toBe(true);
+    expect(listVaults(home)[0].lastOpenedAt).toBe('2026-08-01T12:34:56.000Z');
+  });
+
+  it('leaves every other vault untouched', () => {
+    addVault('a', makeVaultDir(projectBase, 'a'), home);
+    addVault('b', makeVaultDir(projectBase, 'b'), home);
+
+    touchVault('a', home, new Date('2026-08-01T00:00:00.000Z'));
+    const byName = new Map(listVaults(home).map((v) => [v.name, v]));
+    expect(byName.get('a')!.lastOpenedAt).toBe('2026-08-01T00:00:00.000Z');
+    expect(byName.get('b')!.lastOpenedAt).toBeUndefined();
+  });
+
+  it('overwrites an earlier stamp rather than accumulating', () => {
+    addVault('again', makeVaultDir(projectBase, 'again'), home);
+    touchVault('again', home, new Date('2026-01-01T00:00:00.000Z'));
+    touchVault('again', home, new Date('2026-08-01T00:00:00.000Z'));
+    expect(listVaults(home)[0].lastOpenedAt).toBe('2026-08-01T00:00:00.000Z');
+  });
+
+  it('preserves name and path — recency is additive, never destructive', () => {
+    const dir = makeVaultDir(projectBase, 'keep');
+    addVault('keep', dir, home);
+    touchVault('keep', home);
+    const [v] = listVaults(home);
+    expect(v.name).toBe('keep');
+    expect(v.path).toBe(dir);
+  });
+
+  it('returns false for an unknown vault instead of throwing', () => {
+    expect(touchVault('ghost', home)).toBe(false);
   });
 });

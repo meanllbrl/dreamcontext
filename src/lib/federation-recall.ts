@@ -6,9 +6,8 @@ import {
   type CorpusType,
   type RecallHit,
 } from './recall.js';
-import { isShareable } from './federation-config.js';
 import { listConnections } from './connections.js';
-import { listVaults, resolveVaultContextRoot, VaultError, type Vault } from './vaults.js';
+import { listVaults, resolveVaultContextRoot, VaultError } from './vaults.js';
 
 /**
  * A single cross-vault recall hit: a normal {@link RecallHit} annotated with the
@@ -82,12 +81,9 @@ export function namespacedKey(vault: string, type: string, slug: string): string
  *      `VaultError` means the path went stale; that vault is skipped with reason
  *      'stale', warned ONCE on stderr, and the others continue — never-throw
  *      registry contract).
- *   2. Gate by `shareable`: the current vault is ALWAYS searched; peer vaults
- *      are searched only when shareable. Non-shareable peers are SILENTLY
- *      excluded (no warning — privacy is the default, not an error).
- *   3. Build the corpus and DROP every `federated: true` doc (serving exclusion —
+ *   2. Build the corpus and DROP every `federated: true` doc (serving exclusion —
  *      a third vault must never see content this vault merely ingested).
- *   4. BM25-search per vault, tag each hit with its vault + namespaced key.
+ *   3. BM25-search per vault, tag each hit with its vault + namespaced key.
  *
  * Hits are merged, sorted by `rankScore` descending, and sliced to `topK`. Ties
  * are broken current-vault-first (stable), so the local vault leads on a draw.
@@ -119,12 +115,9 @@ export function crossVaultRecall(
       throw err;
     }
 
-    // Shareable gate: the current vault is always included; peers must opt in.
+    // No second gate here. The CONNECTION is the consent: a caller only reaches
+    // this point for the current vault or for a peer it deliberately wired up.
     const isCurrent = target.current === true;
-    if (!isCurrent) {
-      const projectRoot = dirname(contextRoot);
-      if (!isShareable(projectRoot)) continue; // silently excluded — not warned
-    }
 
     const corpus = buildCorpus(contextRoot, {
       ...(opts.types ? { types: opts.types } : {}),
@@ -174,13 +167,15 @@ export function crossVaultRecall(
  *
  * Reads the current vault's `.connections.json` and keeps a peer iff its
  * direction is `out` or `both` (this vault reaches across) AND its status is not
- * `stale`. The resulting peer names are then intersected with `shareable`: a
- * peer that has not opted into being read is silently dropped here so the recall
- * never even attempts it (the same fail-closed gate `crossVaultRecall` applies).
- * The current vault always leads the list.
+ * `stale`. The current vault always leads the list.
+ *
+ * There is no second opt-in: DRAWING the connection is the consent. The old
+ * `shareable` flag meant a peer could be wired up and still silently return
+ * nothing, which read as "federation is broken" far more often than it read as
+ * "privacy" — these are all one person's own projects on one machine.
  *
  * Never throws — connection reads are never-throw, and a peer whose registry
- * entry vanished is skipped (it can't be intersected with `shareable`).
+ * entry vanished is skipped.
  */
 export function resolveConnectedVaults(
   current: CrossVaultTarget,
@@ -200,8 +195,7 @@ export function resolveConnectedVaults(
     // Never re-add the current vault (a malformed self-link can't sneak in).
     if (conn.vault === current.name || conn.vault === currentLabel) continue;
     const peer = vaults.find((v) => v.name === conn.vault);
-    if (!peer) continue; // registry entry gone — nothing to intersect with shareable
-    if (!isShareable(peer.path)) continue; // not opted into being read — silently excluded
+    if (!peer) continue; // registry entry gone — nothing to resolve
     targets.push({ name: peer.name });
   }
   return targets;
@@ -209,8 +203,9 @@ export function resolveConnectedVaults(
 
 /**
  * Resolve the `--all-vaults` target set: the current vault plus every other
- * registered vault that is `shareable` (P1.2). Non-shareable peers are excluded
- * here so the CLI never even attempts to search them.
+ * registered vault. `--all-vaults` is an explicit, deliberate flag — it now means
+ * exactly what it says rather than "all vaults that happened to have opted in",
+ * which was impossible to predict from the outside.
  */
 export function resolveAllShareableVaults(
   current: CrossVaultTarget,
@@ -223,14 +218,9 @@ export function resolveAllShareableVaults(
     // (the current target's `name` is a path when the current vault is
     // unregistered, so compare both to avoid a duplicate self-entry).
     if (v.name === current.name || v.name === currentLabel || v.path === current.name) continue;
-    if (isShareableVault(v)) targets.push({ name: v.name });
+    targets.push({ name: v.name });
   }
   return targets;
-}
-
-/** A registered vault is shareable iff its project root opts in. */
-function isShareableVault(vault: Vault): boolean {
-  return isShareable(vault.path);
 }
 
 /**

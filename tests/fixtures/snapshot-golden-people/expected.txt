@@ -181,7 +181,7 @@ Detail: `dreamcontext lab show <slug>` · sync: `dreamcontext lab sync <slug>` o
 
 ## Connected projects
 
-These projects are READABLE from here (out/both connection + shareable). Recall reads their CANONICAL docs live (a reference — nothing is copied into this vault). You have ambient awareness of what each is and what was last done there.
+These projects are READABLE from here (out/both connection). Recall reads their CANONICAL docs live (a reference — nothing is copied into this vault). You have ambient awareness of what each is and what was last done there.
 
 - **fixture-peer** — A sibling fixture vault used to prove the connected-projects block renders without any clock read.
   Last: Recorded the join lemma as an executable property

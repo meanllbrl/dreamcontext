@@ -3,54 +3,58 @@ import {
   useLauncherStatus,
   useUpdateProject,
   useUnregisterVault,
+  useTouchVault,
+  useUpdateAllProjects,
   type VaultStatus,
 } from '../hooks/useLauncher';
-import { useTeamUpdates, useTeamFetch, type TeamVaultUpdate } from '../hooks/useBrainStatus';
+import { useTeamUpdates, useTeamFetch } from '../hooks/useBrainStatus';
 import { openVaultWindow, startTitleBarDrag, toggleMaximizeWindow } from '../lib/desktop';
 import { VaultDot } from '../components/layout/VaultDot';
-import { TeamUpdatesBadge } from '../components/brain/TeamUpdatesBadge';
+import { VaultSyncChip } from '../components/brain/VaultSyncChip';
 import { OnboardingWizard } from './OnboardingWizard';
-import { LauncherGraph } from './LauncherGraph';
+import { SpaceLauncher } from './space/SpaceLauncher';
 import './LauncherPage.css';
 
-type View = 'cards' | 'graph';
+/**
+ * `space` IS the launcher — projects in orbit, with federation drawn in the same
+ * sky. `list` is the plain fallback for when you want names in a column (very
+ * long project lists, muscle memory). The old separate `graph` ("Network") view
+ * is gone: its wiring now lives in the Space, so there is ONE surface answering
+ * both "where are my projects" and "how are they related" instead of two that
+ * had to be kept in sync.
+ */
+type View = 'space' | 'list';
+
+const VIEW_STORAGE_KEY = 'dreamcontext.launcher.view';
 
 /** How often the launcher checks every project's brain repo for team pushes (background, cache-friendly). */
 const TEAM_FETCH_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
- * Per-project brain-sync chip: reuses `VaultDot`'s green/yellow/red language
- * (`ok`/`stale`/`gone` mapped onto synced/updates-pending/not-connected) so the
- * card reads with the same at-a-glance vocabulary as the freshness dot above it.
+ * List leads for now — Space is the new surface and has to be CHOSEN before it
+ * becomes someone's launcher. But the choice is sticky in both directions: pick
+ * Space once and every later launch opens in Space, until you pick List again.
  */
-function LauncherBrainChip({ vault }: { vault?: TeamVaultUpdate }) {
-  if (!vault || !vault.enabled || vault.mode !== 'full-repo') {
-    return (
-      <span className="launcher-brain-chip launcher-brain-chip--unconnected" title="Cloud sync not set up for this project">
-        <VaultDot exists={false} needsUpdate={false} />
-        Set up team sync
-      </span>
-    );
+function readStoredView(): View {
+  try {
+    return window.localStorage.getItem(VIEW_STORAGE_KEY) === 'space' ? 'space' : 'list';
+  } catch {
+    return 'list';
   }
-  if (vault.updates > 0 || vault.pendingAgentMerge) {
-    return <TeamUpdatesBadge vaultName={vault.name} />;
-  }
-  return (
-    <span className="launcher-brain-chip launcher-brain-chip--synced" title="Brain repo is up to date">
-      <VaultDot exists={true} needsUpdate={false} />
-      Synced
-    </span>
-  );
 }
 
 export function LauncherPage() {
   const { data, isLoading, isError, error } = useLauncherStatus();
   const updateProject = useUpdateProject();
   const unregister = useUnregisterVault();
+  const touch = useTouchVault();
+  const updateAll = useUpdateAllProjects();
   const [search, setSearch] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [view, setView] = useState<View>('cards');
+  const [view, setView] = useState<View>(readStoredView);
+  /** How many projects `Update all` has got through, for the button's counter. */
+  const [updateAllDone, setUpdateAllDone] = useState(0);
 
   const { data: teamVaults } = useTeamUpdates();
   const teamFetch = useTeamFetch();
@@ -72,10 +76,6 @@ export function LauncherPage() {
 
   const vaults = data?.vaults ?? [];
 
-  // Cards is ALWAYS the default surface — the network graph is opt-in via the
-  // toggle. (We used to auto-switch to the graph at ≥2 vaults; that surprised
-  // users who expected the familiar card list on every launch.)
-
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return vaults;
@@ -86,6 +86,9 @@ export function LauncherPage() {
 
   async function openVault(name: string) {
     setActionError(null);
+    // Recency drives orbital radius in the Space view, so every open stamps the
+    // registry. Fire-and-forget: a failed stamp must never block the open.
+    touch.mutate(name);
     try {
       await openVaultWindow(name);
     } catch (err) {
@@ -111,20 +114,50 @@ export function LauncherPage() {
     });
   }
 
+  /** Every project the running CLI could bring forward right now. */
+  const stale = useMemo(() => vaults.filter((v) => v.exists && v.needsUpdate), [vaults]);
+
+  function handleUpdateAll() {
+    if (stale.length === 0) return;
+    setActionError(null);
+    setUpdateAllDone(0);
+    updateAll.mutate(
+      { names: stale.map((v) => v.name), onProgress: setUpdateAllDone },
+      {
+        onSuccess: (result) => {
+          // Partial failure is the interesting case: say exactly which projects
+          // are still behind instead of a silent "done".
+          if (result.failed.length > 0) {
+            setActionError(
+              `Updated ${result.updated.length} of ${stale.length}. Failed: ` +
+                result.failed.map((f) => `${f.name} (${f.message})`).join(', '),
+            );
+          }
+        },
+        onError: (err) => setActionError(err instanceof Error ? err.message : String(err)),
+      },
+    );
+  }
+
   function pickView(v: View) {
     setView(v);
+    try {
+      window.localStorage.setItem(VIEW_STORAGE_KEY, v);
+    } catch {
+      /* private mode — the choice just won't persist */
+    }
   }
 
   return (
     <div
-      className="launcher"
+      className={`launcher${view === 'space' ? ' launcher--space' : ''}`}
       // The Launcher window uses TitleBarStyle::Overlay (traffic lights float
       // over the content) and has no native title bar, so without this the
       // window is only draggable from the tiny native strip. The ENTIRE page
       // background is the drag handle (same threshold gesture as the vault
       // Header) — the top bar alone is mostly filled with controls, leaving
-      // only a sliver to grab. Cards, the graph board, and the wizard opt out
-      // via data-no-drag so their own interactions are never hijacked.
+      // only a sliver to grab. Cards, the Space, and the wizard opt out via
+      // data-no-drag so their own interactions are never hijacked.
       onMouseDown={startTitleBarDrag}
     >
       <header
@@ -132,33 +165,42 @@ export function LauncherPage() {
         onDoubleClick={(e) => void toggleMaximizeWindow(e.target)}
       >
         <div className="launcher-actions">
-          {vaults.length >= 2 && (
-            <div className="launcher-viewtoggle" role="group" aria-label="View">
-              <button
-                type="button"
-                className={`launcher-btn${view === 'cards' ? ' launcher-btn-active' : ''}`}
-                onClick={() => pickView('cards')}
-              >
-                Cards
-              </button>
-              <button
-                type="button"
-                className={`launcher-btn${view === 'graph' ? ' launcher-btn-active' : ''}`}
-                onClick={() => pickView('graph')}
-              >
-                Network
-              </button>
-            </div>
-          )}
-          {view === 'cards' && (
-            <input
-              type="search"
-              className="launcher-search"
-              placeholder="Search projects…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              aria-label="Search projects"
-            />
+          <div className="launcher-viewtoggle" role="group" aria-label="View">
+            <button
+              type="button"
+              className={`launcher-btn${view === 'space' ? ' launcher-btn-active' : ''}`}
+              onClick={() => pickView('space')}
+            >
+              Space
+            </button>
+            <button
+              type="button"
+              className={`launcher-btn${view === 'list' ? ' launcher-btn-active' : ''}`}
+              onClick={() => pickView('list')}
+            >
+              List
+            </button>
+          </div>
+          <input
+            type="search"
+            className="launcher-search"
+            placeholder="Search projects…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search projects"
+          />
+          {stale.length > 0 && (
+            <button
+              type="button"
+              className="launcher-btn launcher-btn-update"
+              disabled={updateAll.isPending}
+              title={`Run dreamcontext update in: ${stale.map((v) => v.name).join(', ')}`}
+              onClick={handleUpdateAll}
+            >
+              {updateAll.isPending
+                ? `Updating ${updateAllDone}/${stale.length}…`
+                : `Update all (${stale.length})`}
+            </button>
           )}
           <button
             type="button"
@@ -179,9 +221,15 @@ export function LauncherPage() {
         </div>
       )}
 
-      {!isLoading && !isError && view === 'graph' && <LauncherGraph />}
+      {!isLoading && !isError && view === 'space' && (
+        <SpaceLauncher
+          query={search}
+          onAddProject={() => setWizardOpen(true)}
+          onError={setActionError}
+        />
+      )}
 
-      {!isLoading && !isError && view === 'cards' && (
+      {!isLoading && !isError && view === 'list' && (
         <>
           {filtered.length === 0 && (
             <div className="launcher-empty">
@@ -228,7 +276,7 @@ export function LauncherPage() {
 
                   {vault.exists && (
                     <div className="launcher-card-brain">
-                      <LauncherBrainChip vault={brainByVault.get(vault.name)} />
+                      <VaultSyncChip vault={brainByVault.get(vault.name)} />
                     </div>
                   )}
 

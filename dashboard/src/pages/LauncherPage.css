@@ -8,6 +8,14 @@
   flex-direction: column;
 }
 
+/* The Space fills the window and owns its own scrolling/zooming, so the page
+   must not also scroll — otherwise a wheel gesture meant for zoom scrolls the
+   launcher instead. The List view keeps the default (growing) page. */
+.launcher--space {
+  height: 100vh;
+  overflow: hidden;
+}
+
 .launcher-bar {
   display: flex;
   align-items: center;
