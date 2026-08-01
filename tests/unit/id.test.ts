@@ -64,9 +64,21 @@ describe('id', () => {
       expect(slugify('Version 2.0')).toBe('version-2-0');
     });
 
-    it('handles unicode characters', () => {
-      // Unicode chars are not a-z0-9, so they become hyphens
-      expect(slugify('Café Über')).toBe('caf-ber');
+    it('folds Latin diacritics instead of dropping the letters', () => {
+      expect(slugify('Café Über')).toBe('cafe-uber');
+    });
+
+    it('folds Turkish letters to readable ASCII', () => {
+      // The old behavior dropped non-ASCII letters wholesale and produced
+      // mangled slugs like "retmen-fiyat".
+      expect(slugify('Öğretmen fiyatı')).toBe('ogretmen-fiyati');
+      expect(slugify('Çalışma şekli')).toBe('calisma-sekli');
+      expect(slugify('İstanbul IĞDIR')).toBe('istanbul-igdir');
+      expect(slugify('öğrenci bazında aylık görünüm')).toBe('ogrenci-bazinda-aylik-gorunum');
+    });
+
+    it('still drops non-Latin scripts rather than guessing', () => {
+      expect(slugify('日本語 test')).toBe('test');
     });
 
     it('handles single word', () => {

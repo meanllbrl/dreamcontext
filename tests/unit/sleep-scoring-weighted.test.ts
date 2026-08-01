@@ -437,8 +437,14 @@ describe('migration 0.23.0 — rescale-legacy-sleep-debt', () => {
     expect(r.filesTouched).toHaveLength(0);
   });
 
-  it('is registered in the migration registry exactly once', () => {
-    expect(REGISTRY.filter(m => m.version === '0.23.0')).toHaveLength(1);
+  it('the rescale step is registered exactly once (0.23.0 holds TWO migrations by design)', () => {
+    // people-first + soul-split both ship as 0.23.0 — the runner gates steps
+    // by id, so the invariant is per-STEP uniqueness, not one-entry-per-version.
+    const v0230 = REGISTRY.filter(m => m.version === '0.23.0');
+    expect(v0230).toHaveLength(2);
+    // Steps only reveal their ids when run (which would touch a vault), so the
+    // per-entry uniqueness is asserted on the statically-known agentTask ids.
+    expect(new Set(v0230.map((m) => m.agentTask?.id)).size).toBe(2);
   });
 
   it('does not import the CLI sleep module (no circular registry import)', async () => {

@@ -100,6 +100,8 @@ Current focus: proving the snapshot's section joins are byte-stable.
   absent. Each is clock-dependent and is covered by its own suite plus the live
   meta-marketer canary.
 
+> Working set only — full history (archived decisions, changelog, sessions): `dreamcontext memory recall "<keywords>"`.
+
 ## Extended Core Files
 
 - **Tech Stack** (_dream_context/core/3.tech_stack.md): Node 18+, TypeScript ESM, vitest. No runtime deps in the fixture.
@@ -107,20 +109,26 @@ Current focus: proving the snapshot's section joins are byte-stable.
 
 ## Active Tasks
 
-- alpha-harness-fit (status: in_progress, priority: high, updated: 2026-01-05)
+- **Fit the snapshot under the harness persist limit** (status: in_progress, priority: high, updated: 2026-01-05)
+  -> _dream_context/state/alpha-harness-fit.md
   Why: The snapshot is the zero-tool-call promise, so it has to arrive whole.
   Objectives: improve-recall-mechanism
   Feature: login-flow
   Custom fields: estimate=3d
-- beta-doctor-check (status: todo, priority: medium, updated: 2026-01-04)
+- **Report snapshot size from doctor** (status: todo, priority: medium, updated: 2026-01-04)
+  -> _dream_context/state/beta-doctor-check.md
   Why: A failure nobody can see from the outside is a failure that stays.
   Custom fields: estimate=⚠ UNSET (required)
+
+(search: `dreamcontext memory recall "<q>" --types task` · filter/browse: `dreamcontext tasks list [-s todo|in_progress|in_review|completed | -a] [--version <sprint>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--objective <slug>] [--feature <slug>]`)
 
 ## Bookmarks
 
 - *** The never-evict tier is what busts the harness limit, not the demotable sections. (task: alpha-harness-fit)
 - ** Splitting a flush at any element boundary is byte-neutral because join inserts exactly one newline either way.
 - * Golden fixtures must be date-free or they rot.
+
+(all bookmarks: `dreamcontext bookmark list`)
 
 ## Sleep — Pending Analysis
 
@@ -139,6 +147,8 @@ Current focus: proving the snapshot's section joins are byte-stable.
 - 2026-01-02 [chore] fixtures: Fixture vault seeded
 - 2026-01-01 [docs] fixtures: Recorded why this vault has no dated frontmatter
 
+(search: `dreamcontext memory recall "<q>" --types changelog` · browse: `dreamcontext changelog list --page 1`)
+
 ## Upcoming Versions
 
 - v0.3.0: Byte-aware demotion rungs (2 task(s))
@@ -150,19 +160,16 @@ Current focus: proving the snapshot's section joins are byte-stable.
 
 ## Lab (Analytics Insights)
 
-
 - Active Vaults [Adoption]: no data yet vaults · never synced
 
-Sync: `dreamcontext lab sync <slug>` or `--all`.
+Detail: `dreamcontext lab show <slug>` · sync: `dreamcontext lab sync <slug>` or `--all`.
 
 ## Features
 
-- **login-flow** (status: in_progress, tags: topic:auth)
-  Why: Sessions need an identity before anything else is worth loading.
-  Tasks: alpha-harness-fit
-  Latest: 2026-01-05 - Wired the session token refresh path.
-- **search-v2** (status: planned, tags: topic:recall)
-  Why: Blind exploration costs more tokens than a ranked index ever will.
+- **login-flow** (status: in_progress) -> _dream_context/knowledge/features/login-flow.md
+- **search-v2** (status: planned) -> _dream_context/knowledge/features/search-v2.md
+
+(search: `dreamcontext memory recall "<q>" --types feature` · PRDs live in `_dream_context/knowledge/features/`)
 
 ## Knowledge Index
 
@@ -170,20 +177,7 @@ Sync: `dreamcontext lab sync <slug>` or `--all`.
 
 - 📌 **arch-overview** (_dream_context/knowledge/arch-overview.md): How the snapshot is assembled from budget sections. [domain:knowledge, kind:architecture]
 
-### Other knowledge:
-
-- **deploy-runbook** (_dream_context/knowledge/deploy-runbook.md): Steps to cut a release of the fixture project. [topic:snapshot]
-- **runbooks/rollback** (_dream_context/knowledge/runbooks/rollback.md): Reverting a bad release without losing the changelog trail. [topic:cli]
-
-## Warm Knowledge (Recently Relevant)
-
-### Deploy Runbook
-Build, run the unit suite, then verify the rendered snapshot is still under the harness persist limit before tagging.
--> Read full: _dream_context/knowledge/deploy-runbook.md
-
-### Rollback Runbook
-Revert the tag, keep the changelog entry, and record why in the task changelog.
--> Read full: _dream_context/knowledge/runbooks/rollback.md
+(+2 more knowledge file(s), not listed — search: `dreamcontext memory recall "<q>" --types knowledge` · full index with descriptions: `dreamcontext knowledge index`)
 
 ## Connected projects
 

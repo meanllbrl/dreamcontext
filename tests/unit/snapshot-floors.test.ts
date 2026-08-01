@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -14,8 +14,9 @@ import {
   PINNED_KNOWLEDGE_CHARS,
   TASKS_ROSTER_CHARS,
 } from '../../src/lib/snapshot-caps.js';
+import { CORE_FILE_CHAR_CEILING } from '../../src/lib/core-index.js';
 import { createInsight, writeCache } from '../../src/lib/lab/store.js';
-import { createObjective } from '../../src/lib/objectives-store.js';
+import { createObjective, updateObjective } from '../../src/lib/objectives-store.js';
 import { createThesis } from '../../src/lib/theses/store.js';
 import { writeSetupConfig, type SetupConfig } from '../../src/lib/setup-config.js';
 import { writePeople, type PeopleMap } from '../../src/lib/people-store.js';
@@ -280,6 +281,8 @@ interface Vault {
   projectRoot: string;
   ctxRoot: string;
   taskSlugs: string[];
+  /** Frontmatter names of the tasks — what the roster now displays. */
+  taskNames: string[];
   featureSlugs: string[];
   knowledgeSlugs: string[];
   pinnedSlugs: string[];
@@ -317,7 +320,7 @@ function buildVault(dir: string, spec: VaultSpec): Vault {
 
   const vault: Vault = {
     projectRoot, ctxRoot,
-    taskSlugs: [], featureSlugs: [], knowledgeSlugs: [], pinnedSlugs: [],
+    taskSlugs: [], taskNames: [], featureSlugs: [], knowledgeSlugs: [], pinnedSlugs: [],
     objectiveSlugs: [], insightTitles: [], insightValues: [], criticalMessages: [],
     thesisClaims: [], peerNames: [], peopleSlugs: [], peopleNames: [],
   };
@@ -417,6 +420,7 @@ function buildVault(dir: string, spec: VaultSpec): Vault {
       'utf-8',
     );
     vault.taskSlugs.push(slug);
+    vault.taskNames.push(`Task ${pad(i, 2)}`);
   }
 
   // Bookmarks live in state/.sleep.json; readSleepState merges with defaults, so
@@ -705,27 +709,31 @@ describe('fixture #1 — the pre-change never-evict tier now fits', () => {
     }
   });
 
-  it('names every knowledge slug, feature slug and task slug (AC3)', () => {
+  it('names every feature slug and task name; knowledge is counted, not listed (AC3, revised 2026-07-30)', () => {
     const text = withBudget(MAX_PRESSURE_BUDGET, () => generateSnapshot(vault.ctxRoot));
 
-    // The deepest knowledge rung groups by folder — `- **…/folder-00/** (10):
-    // kb-000, kb-008, …` — so a slug is named as folder-header + basename, not
-    // as one contiguous string. Assert the shape the render actually uses, or
-    // the check silently demands a format the design deliberately dropped.
+    // Owner decision 2026-07-30: non-pinned knowledge left the naming contract
+    // entirely — the section carries an accurate COUNT + the search commands
+    // (asserted in its own test below). Features and tasks keep AC3.
     const knowledgeBlock = sectionBlock(text, '## Knowledge Index');
-    for (const slug of vault.knowledgeSlugs) {
-      const [folder, basename] = slug.split('/');
-      const groupLine = knowledgeBlock.split('\n')
-        .find((l) => l.includes(`**_dream_context/knowledge/${folder}/**`));
-      expect(groupLine, `no group line for ${folder}/`).toBeDefined();
-      expect(containsWholeToken(groupLine as string, basename), `${slug} not named`).toBe(true);
-    }
+    expect(knowledgeBlock).toContain(`(+${vault.knowledgeSlugs.length} more knowledge file(s), not listed`);
 
     expectAllPresent(text, vault.featureSlugs, 'feature slugs');
-    // 60 slugs x 22 chars = 1,320 <= TASKS_ROSTER_CHARS, so the whole roster fits.
-    expect(vault.taskSlugs.reduce((n, s) => n + s.length + 2, 0))
-      .toBeLessThanOrEqual(TASKS_ROSTER_CHARS);
-    expectAllPresent(text, vault.taskSlugs, 'task slugs');
+
+    // Tasks contract (Fable judge verdict, 2026-07-30): every active task is
+    // ACCOUNTED FOR — detailed, named on the needs-attention line, or inside
+    // the per-status count. The three must sum to the true total.
+    const tasksBlock = sectionBlock(text, '## Active Tasks');
+    const detailedCount = tasksBlock.split('\n').filter((l) => l.startsWith('- **')).length;
+    const attention = /\(\+(\d+) more task\(s\) needing attention:/.exec(tasksBlock);
+    const counted = /\(\+(\d+) more active task\(s\),/.exec(tasksBlock);
+    const accounted = detailedCount
+      + (attention ? Number(attention[1]) : 0)
+      + (counted ? Number(counted[1]) : 0);
+    expect(accounted, 'detailed + attention + counted must equal the active total')
+      .toBe(vault.taskSlugs.length);
+    // The routine queue is NEVER name-listed — that is the point.
+    expect(tasksBlock).not.toContain('Task 01,');
   });
 
   it('never cuts a name mid-string in any remainder tail (AC3)', () => {
@@ -743,6 +751,29 @@ describe('fixture #1 — the pre-change never-evict tier now fits', () => {
     // The rung this replaced was literally `- N objective(s) — …`.
     expect(text).not.toMatch(/- \d+ objective\(s\)/);
     expectAllPresent(text, vault.objectiveSlugs, 'objective slugs');
+  });
+
+  it('the objectives floor counter breaks down active vs done', () => {
+    // A DONE objective is counted but not listed at the floor — an undivided
+    // total over a shorter list read as if one had been silently dropped.
+    // (createObjective always writes status: null; done is a PO override
+    // applied via updateObjective.)
+    createObjective(vault.ctxRoot, {
+      slug: 'objective-finished',
+      title: 'Objective finished — already landed',
+    });
+    updateObjective(vault.ctxRoot, 'objective-finished', { status: 'done' });
+
+    const text = withBudget(MAX_PRESSURE_BUDGET, () => generateSnapshot(vault.ctxRoot));
+    expect(text).toContain('4 active + 1 done objective(s)');
+  });
+
+  it('renders exactly one blank line under the Lab and Learning headers', () => {
+    const text = withBudget(MAX_PRESSURE_BUDGET, () => generateSnapshot(vault.ctxRoot));
+    expect(text).toContain('## Lab (Analytics Insights)\n\n- ');
+    expect(text).not.toContain('## Lab (Analytics Insights)\n\n\n');
+    expect(text).toContain('## Learning (Hypotheses)\n\n- ');
+    expect(text).not.toContain('## Learning (Hypotheses)\n\n\n');
   });
 
   it('keeps the theses claims, not just the counts (AC3)', () => {
@@ -767,6 +798,257 @@ describe('fixture #1 — the pre-change never-evict tier now fits', () => {
     const text = withBudget(MAX_PRESSURE_BUDGET, () => generateSnapshot(vault.ctxRoot));
     expect(vault.criticalMessages).toHaveLength(3);
     for (const message of vault.criticalMessages) expect(text).toContain(message);
+  });
+
+  it('keeps a short summary per extended core file at the demoted rung', () => {
+    const text = withBudget(MAX_PRESSURE_BUDGET, () => generateSnapshot(vault.ctxRoot));
+    const block = sectionBlock(text, '## Extended Core Files');
+
+    // Name + path + the summary's FIRST SENTENCE (word-safe cap): the name says
+    // what the file is, the clause says what is IN it. Bare name+path lines
+    // gave the agent no reason to ever open the file (owner call 2026-07-29).
+    expect(block).toContain(
+      '- **Extended 00** (_dream_context/core/3.extended_00.md): Extended 00 rationale detail',
+    );
+    // The cap is real: the 180-char multi-sentence summary never survives whole.
+    expect(block).not.toContain(prose(180, 'Extended 00'));
+  });
+
+  it('with no ★★★, the bookmark floor keeps the ★★ tier instead of a bare count', () => {
+    const vault = buildVault(join(base, 'no-critical-bookmarks'), {
+      soul: constitutionSoul(),
+      user: constitutionUser(),
+      memory: memoryFile(130, 25),
+      bookmarks: 8,
+      criticalBookmarks: 0,
+    });
+
+    const text = withBudget(MAX_PRESSURE_BUDGET, () => generateSnapshot(vault.ctxRoot));
+    const block = sectionBlock(text, '## Bookmarks');
+
+    // Fixture salience alternates: odd indexes are ★★, even are ★. The floor
+    // keeps every ★★ (first sentence each) — a count-only section read as
+    // "nothing worth knowing here" (owner call 2026-07-29).
+    expect(block).toContain('** QUIET_BOOKMARK_01');
+    expect(block).toContain('** QUIET_BOOKMARK_07');
+    expect(block).toContain('Bookmark 01 rationale detail');
+    // First sentence only — the 260-char prose never survives the floor.
+    expect(block).not.toContain(prose(260, 'Bookmark 01'));
+    // The ★ tier stays behind an ACCURATE count, and is never listed.
+    expect(block).toContain('- (+4 quieter bookmark(s)');
+    expect(block).not.toContain('- * QUIET_BOOKMARK_00');
+  });
+
+  it('changelog previews cut at word boundaries, never mid-word', () => {
+    const vault = buildVault(join(base, 'changelog-words'), {
+      soul: constitutionSoul(),
+      user: constitutionUser(),
+      memory: memoryFile(130, 25),
+    });
+    const longDesc = prose(400, 'Changelog Wordcap');
+    const entries = [
+      // No summary → the headline is the capped description (200).
+      { date: '2026-07-28', type: 'feat', scope: 'alpha', description: longDesc },
+      // Summary + long description → the body preview is capped (300).
+      { date: '2026-07-27', type: 'fix', scope: 'beta', summary: 'Beta headline', description: longDesc },
+      { date: '2026-07-26', type: 'fix', scope: 'gamma', summary: 'Gamma headline', description: longDesc },
+      // The next 10 land in the Older tier → lines capped at 140.
+      ...Array.from({ length: 10 }, (_, i) => ({
+        date: `2026-07-${pad(25 - i, 2)}`, type: 'chore', scope: `old-${pad(i, 2)}`, description: longDesc,
+      })),
+    ];
+    writeFileSync(join(vault.ctxRoot, 'core', 'CHANGELOG.json'), JSON.stringify(entries, null, 2), 'utf-8');
+
+    const text = withBudget('off', () => generateSnapshot(vault.ctxRoot));
+    const block = sectionBlock(text, '## Recent Changelog');
+
+    // The caps engaged with the single-char ellipsis — never the old raw
+    // mid-word '...' cut, which read as broken data.
+    expect(block).toContain('…');
+    expect(block).not.toContain('...');
+
+    // Every capped fragment is a clean PREFIX of its source ending on a word
+    // boundary: the next source character is exactly the space the cut landed on.
+    const capped = block.split('\n').filter((l) => l.endsWith('…'));
+    expect(capped.length).toBeGreaterThanOrEqual(13); // 1 headline + 2 bodies + 10 Older
+    for (const line of capped) {
+      const fragment = line
+        .replace(/^ {4}/, '')
+        .replace(/^- \S+ \[\w+\] \S+: /, '')
+        .slice(0, -1); // drop the ellipsis itself
+      expect(longDesc.startsWith(fragment), `not a clean prefix: …${fragment.slice(-40)}`).toBe(true);
+      expect(longDesc[fragment.length]).toBe(' ');
+    }
+  });
+
+  it('Latest Release picks the highest RELEASED semver and drops empty fields', () => {
+    const vault = buildVault(join(base, 'releases-latest'), {
+      soul: constitutionSoul(),
+      user: constitutionUser(),
+      memory: memoryFile(130, 25),
+    });
+    writeFileSync(join(vault.ctxRoot, 'core', 'RELEASES.json'), JSON.stringify([
+      { version: '0.9.0', status: 'planning', summary: 'next up', tasks: [] },
+      // Never published — and deliberately sitting on top of the array, which
+      // is exactly how dc's own file once crowned a superseded 0.20.2.
+      { version: '0.8.5', status: 'superseded', summary: 'folded into 0.8.0' },
+      // Out of order: an older release ABOVE the true latest.
+      { version: '0.7.0', status: 'released', date: '2026-06-01', summary: 'older' },
+      { version: '0.8.0', status: 'released', date: '2026-07-20', summary: '' },
+    ], null, 2), 'utf-8');
+
+    // Same verdict at level 0 AND at the demoted rung — selection is shared.
+    for (const budget of ['off', MAX_PRESSURE_BUDGET]) {
+      const text = withBudget(budget, () => generateSnapshot(vault.ctxRoot));
+      const block = sectionBlock(text, '## Latest Release');
+      expect(block, `@ budget=${budget}`).toContain('- 0.8.0 (2026-07-20)');
+      expect(block).not.toContain('0.8.5');
+      expect(block).not.toContain('0.7.0');
+      // Empty summary → no dangling colon; an empty date drops its parens too.
+      expect(block).not.toMatch(/0\.8\.0 \(2026-07-20\):/);
+      expect(block).not.toContain('()');
+    }
+  });
+
+  it('the releases floor caps the latest summary at a word boundary', () => {
+    const vault = buildVault(join(base, 'releases-floor-cap'), {
+      soul: constitutionSoul(),
+      user: constitutionUser(),
+      memory: memoryFile(130, 25),
+    });
+    const narrative = singleSentence(600, 'Release Cap');
+    writeFileSync(join(vault.ctxRoot, 'core', 'RELEASES.json'), JSON.stringify([
+      { version: '0.9.0', status: 'planning', summary: 'next up', tasks: [] },
+      { version: '0.8.0', status: 'released', date: '2026-07-20', summary: narrative },
+    ], null, 2), 'utf-8');
+
+    // Level 0 keeps the whole narrative…
+    const full = withBudget('off', () => generateSnapshot(vault.ctxRoot));
+    expect(full).toContain(narrative);
+
+    // …the demoted rung bounds it, word-safe, so the one line the section
+    // cannot demote further never scales with unbudgeted prose.
+    const text = withBudget(MAX_PRESSURE_BUDGET, () => generateSnapshot(vault.ctxRoot));
+    const block = sectionBlock(text, '## Latest Release');
+    expect(block).not.toContain(narrative);
+    expect(block).toContain('…');
+    const line = block.split('\n').find((l) => l.startsWith('- 0.8.0'));
+    expect(line).toBeDefined();
+    expect((line as string).length).toBeLessThan(400);
+    // Word boundary: the fragment before the ellipsis is a clean source prefix.
+    const fragment = /: (.*)…$/.exec(line as string)?.[1] as string;
+    expect(narrative.startsWith(fragment)).toBe(true);
+    expect(narrative[fragment.length]).toBe(' ');
+  });
+
+  it('an excalidraw board under features/ never renders as a feature', () => {
+    writeFileSync(
+      join(vault.ctxRoot, 'knowledge', 'features', 'sneaky-board.excalidraw.md'),
+      '---\nname: sneaky-board\ntype: excalidraw\n---\n\n## Text Elements\n\nBOARD_TEXT_SENTINEL\n',
+      'utf-8',
+    );
+    for (const budget of ['off', MAX_PRESSURE_BUDGET]) {
+      const text = withBudget(budget, () => generateSnapshot(vault.ctxRoot));
+      const block = sectionBlock(text, '## Features');
+      expect(block, `board leaked as a feature @ budget=${budget}`).not.toContain('sneaky-board');
+    }
+  });
+
+  it('no render-side mid-word elision survives anywhere (the word-safe sweep)', () => {
+    // Six render sites once cut prose with raw slice()+'...'. All of them now
+    // go through capAtWordBoundary, so the ASCII triple-dot must never appear
+    // in a render of this fixture at any budget.
+    for (const budget of [undefined, MAX_PRESSURE_BUDGET]) {
+      const text = withBudget(budget, () => generateSnapshot(vault.ctxRoot));
+      expect(text, `raw elision @ budget=${budget ?? 'default'}`).not.toContain('...');
+    }
+  });
+
+  it('non-pinned knowledge is never listed — one honest count + the search commands', () => {
+    // Owner decision 2026-07-30: the snapshot does not inventory non-pinned,
+    // non-pattern knowledge at all; it teaches how to SEARCH it. The count must
+    // be accurate at level 0 AND at the floor.
+    for (const budget of ['off', MAX_PRESSURE_BUDGET]) {
+      const text = withBudget(budget, () => generateSnapshot(vault.ctxRoot));
+      const block = sectionBlock(text, '## Knowledge Index');
+
+      expect(block, `@ budget=${budget}`).toContain(
+        `(+${vault.knowledgeSlugs.length} more knowledge file(s), not listed — search: `
+        + '`dreamcontext memory recall "<q>" --types knowledge` · full index with descriptions: '
+        + '`dreamcontext knowledge index`)',
+      );
+      // No grouped folder inventory, no per-file lines.
+      expect(block).not.toContain('grouped by folder');
+      expect(block).not.toContain('- **_dream_context/knowledge/folder-00/**');
+      expect(block).not.toContain('kb-00');
+    }
+  });
+
+  it('keeps each peer IDENTIFIED at the connected-projects floor, not just named', () => {
+    const text = withBudget(MAX_PRESSURE_BUDGET, () => generateSnapshot(vault.ctxRoot));
+    const block = sectionBlock(text, '## Connected projects');
+
+    // Name + first-sentence identity: a bare name reproduced the original
+    // soul-review complaint — the agent sees "Tilki", learns nothing.
+    expect(block).toContain('- **peer-vault-00** — Peer 00 rationale detail');
+    // First sentence only — the 160-char multi-sentence blurb never survives —
+    // and the old bare-names roster line is gone.
+    expect(block).not.toContain(prose(160, 'Peer 00'));
+    expect(block).not.toContain('- Readable peers:');
+    // Peers past the budget stay NAMED in the accurate tail.
+    expect(block).toContain('peer-vault-04');
+  });
+
+  it('patterns keep their own WARNED block at every rung — never anonymous inventory', () => {
+    // The soul-split migration moves rule-bearing conditionals into
+    // knowledge/patterns/ — rendered as ordinary folder inventory they would
+    // demote RULES to trivia (owner requirement 2026-07-30: "pinlenmiş
+    // haliyle, sert uyarılarla").
+    mkdirSync(join(vault.ctxRoot, 'knowledge', 'patterns'), { recursive: true });
+    for (let i = 0; i < 3; i++) {
+      writeFileSync(
+        join(vault.ctxRoot, 'knowledge', 'patterns', `rule-pack-${pad(i, 2)}.md`),
+        `---\nname: Rule pack ${pad(i, 2)}\ndescription: "PATTERN_RULE_${pad(i, 2)}: ${prose(200, `Pattern ${pad(i, 2)}`)}"\ntags: [patterns]\n---\n\nBody.\n`,
+        'utf-8',
+      );
+    }
+
+    // Level 0: banner + title + path + a short first-sentence brief.
+    const full = withBudget('off', () => generateSnapshot(vault.ctxRoot));
+    expect(full).toContain('### Patterns (kurallar):');
+    expect(full).toContain("Bu pattern'lar projenin KURALLARIDIR");
+    expect(full).toContain(
+      '- **patterns/rule-pack-00** (_dream_context/knowledge/patterns/rule-pack-00.md): PATTERN_RULE_00',
+    );
+    // The brief is capped word-safe — never the whole description.
+    expect(full).not.toContain(prose(200, 'Pattern 00'));
+
+    // FLOOR: the banner and every slug survive; briefs drop; and patterns
+    // never appear in the anonymous folder grouping.
+    const { text, budget } = withBudget(MAX_PRESSURE_BUDGET, () => measureSnapshot(vault.ctxRoot));
+    expect(budget.demoted.find((d) => d.id === 'knowledge-index')?.level).toBe(2);
+    const block = sectionBlock(text, '## Knowledge Index');
+    expect(block).toContain("Bu pattern'lar projenin KURALLARIDIR");
+    for (let i = 0; i < 3; i++) expect(block).toContain(`- **patterns/rule-pack-${pad(i, 2)}**`);
+    expect(block).not.toContain('- **_dream_context/knowledge/patterns/**');
+    expect(block).not.toContain('PATTERN_RULE_00:');
+  });
+
+  it('every inventory section keeps its search/browse footer at the FLOOR', () => {
+    // Owner ask 2026-07-30: a section head must never be a dead end — the
+    // recovery line (how to SEARCH the history + how to BROWSE it) survives
+    // every rung, including the deepest.
+    const text = withBudget(MAX_PRESSURE_BUDGET, () => generateSnapshot(vault.ctxRoot));
+
+    expect(text).toContain('`dreamcontext changelog list --page 1`');
+    expect(text).toContain('--types changelog');
+    // The tasks footer TEACHES the filters (status/sprint/date-range) — the
+    // stable spine is asserted, not the whole flag list.
+    expect(text).toContain('filter/browse: `dreamcontext tasks list');
+    expect(text).toContain('--since YYYY-MM-DD');
+    expect(text).toContain('(all bookmarks: `dreamcontext bookmark list`)');
+    expect(text).toContain('--types feature');
+    expect(text).toContain('Board: `dreamcontext theses list`');
   });
 
   it('keeps every compressed core file recoverable by path', () => {
@@ -800,7 +1082,9 @@ describe('fixture #1 — the pre-change never-evict tier now fits', () => {
       budget.demoted.find((d) => d.id === id)?.level;
 
     // Floored sections: the level IS the guarantee, so it is asserted exactly.
-    expect(levelOf('lab')).toBe(1);
+    // Lab is absent by design — it has NO rungs at all since 2026-07-30 (name +
+    // latest value at every budget is the section's purpose, Rule 13).
+    expect(levelOf('lab')).toBeUndefined();
     expect(levelOf('theses')).toBe(1);
     expect(levelOf('objectives')).toBe(2);
 
@@ -837,8 +1121,8 @@ describe('fixture #1 — the pre-change never-evict tier now fits', () => {
   });
 });
 
-describe('fixture #1 variant — a task roster larger than its bound', () => {
-  it('omits whole slugs behind an accurate count, never a cut name (AC3)', () => {
+describe('fixture #1 variant — a backlog far larger than any name budget', () => {
+  it('accounts for every task: detailed + attention-named/unnamed + per-status count (AC3, revised)', () => {
     const longSlug = (i: number) => `fixture-task-${pad(i, 3)}-with-a-deliberately-long-name`;
     const vault = buildVault(join(base, 'long-slugs'), {
       soul: constitutionSoul(),
@@ -850,22 +1134,62 @@ describe('fixture #1 variant — a task roster larger than its bound', () => {
 
     const text = withBudget(MAX_PRESSURE_BUDGET, () => generateSnapshot(vault.ctxRoot));
     const block = sectionBlock(text, '## Active Tasks');
-    const tail = block.split('\n').find((l) => /^- \(\+\d+ more active task\(s\)/.test(l));
 
-    expect(tail, 'the roster tail is missing').toBeDefined();
-    const parsed = /^- \(\+(\d+) more active task\(s\) — (\d+) named, (\d+) omitted: (.*) — `dreamcontext tasks list`\)$/
-      .exec(tail as string);
-    expect(parsed, `tail did not match the named-roster shape: ${tail}`).not.toBeNull();
-
-    const [, restCount, named, omitted, list] = parsed as RegExpExecArray;
-    expect(Number(named) + Number(omitted)).toBe(Number(restCount));
-
+    // 40 in_progress (every 5th of 200): the sorted head is detailed, the
+    // overflow in_progress land on the needs-attention line — named while the
+    // budget lasts, then an accurate unnamed count. Never a cut name.
+    const attention = block.split('\n').find((l) => /needing attention/.test(l));
+    expect(attention, 'the needs-attention line is missing').toBeDefined();
+    const parsed = /^- \(\+(\d+) more task\(s\) needing attention: (.*?)(?: — \+(\d+) unnamed)? — `dreamcontext tasks list`\)$/
+      .exec(attention as string);
+    expect(parsed, `attention line did not match: ${attention}`).not.toBeNull();
+    const [, attTotal, list, unnamed] = parsed as RegExpExecArray;
     const listed = list.split(', ');
-    expect(listed).toHaveLength(Number(named));
-    // Every listed name is a WHOLE slug — the bound omits items, it never cuts one.
-    for (const name of listed) expect(vault.taskSlugs).toContain(name);
-    expect(tail).not.toContain('…');
-    expect(tail).toContain('dreamcontext tasks list');
+    expect(listed.length + Number(unnamed ?? 0)).toBe(Number(attTotal));
+    for (const item of listed) {
+      const m = /^(.*) \[in_progress\]$/.exec(item);
+      expect(m, `attention item lacks its status marker: ${item}`).not.toBeNull();
+      expect(vault.taskNames).toContain((m as RegExpExecArray)[1]);
+    }
+    expect(attention).not.toContain('…');
+
+    // The routine 160 todo are a COUNT, never names.
+    expect(block).toContain('- (+160 more active task(s), all todo — see commands below)');
+
+    // Full accounting: detailed + attention + counted = 200.
+    const detailedCount = block.split('\n').filter((l) => l.startsWith('- **')).length;
+    expect(detailedCount + Number(attTotal) + 160).toBe(200);
+  });
+
+  it('marks EXCEPTIONAL statuses on the named roster, and only those', () => {
+    const vault = buildVault(join(base, 'status-markers'), {
+      soul: constitutionSoul(),
+      user: constitutionUser(),
+      memory: memoryFile(130, 25),
+      tasks: 30,
+    });
+    // The fixture writes only routine statuses; flip two tasks into the states
+    // worth surfacing. String-replace keeps the rest of the frontmatter intact.
+    const flip = (slug: string, status: string): void => {
+      const file = join(vault.ctxRoot, 'state', `${slug}.md`);
+      const raw = readFileSync(file, 'utf-8');
+      const next = raw.replace(/^status: .*$/m, `status: ${status}`);
+      expect(next).not.toBe(raw);
+      writeFileSync(file, next, 'utf-8');
+    };
+    flip('fixture-task-03-slug', 'blocked');
+    flip('fixture-task-07-slug', 'in_review');
+
+    const text = withBudget(MAX_PRESSURE_BUDGET, () => generateSnapshot(vault.ctxRoot));
+    const block = sectionBlock(text, '## Active Tasks');
+
+    expect(block).toContain('Task 03 [blocked]');
+    expect(block).toContain('Task 07 [in_review]');
+    // The routine queue stays a count — [todo] markers never render. Overflow
+    // in_progress DO ride the attention line with their marker (Fable judge
+    // verdict 2026-07-30): a second concurrent thread is exactly what "continue
+    // X" needs to see.
+    expect(block).not.toContain('[todo]');
   });
 });
 
@@ -967,7 +1291,14 @@ describe('fixture #3 — over the ladder target but still inline (B7 band)', () 
     expect(text).not.toMatch(/2KB preview/i);
 
     expect(text).toContain('_Budget note: the demotion ladder is EXHAUSTED');
-    expect(text).toContain('At their floor, unable to shrink further:');
+    // This fixture is all constitution: the soul is never-evict and its tiny
+    // memory file is ceiling-compliant (no rungs), so the ladder has NOTHING
+    // to demote — and the footer must say that without the old doubled list
+    // (which once cost exactly the margin that tipped a fitting snapshot
+    // into the banner).
+    expect(budget.demoted).toEqual([]);
+    expect(text).toContain('Demoted: none — nothing the ladder can shrink.');
+    expect(text).not.toContain('At their floor, unable to shrink further:');
   });
 });
 
@@ -1053,5 +1384,64 @@ describe('demotion ranks', () => {
     // Above the largest plausible array index, so a section that escaped the
     // typed constructors sorts FIRST (demoted first) instead of interleaving.
     for (const value of values) expect(value).toBeGreaterThanOrEqual(10);
+  });
+});
+
+describe('memory — a ceiling-compliant file renders in full; only an oversized one walks the rungs', () => {
+  // Owner decision 2026-07-29: SLEEP is the memory file's compressor. It
+  // distills the working set to the same CORE_FILE_CHAR_CEILING that
+  // `dreamcontext doctor` audits and archives the rest, so a render-time rung
+  // on a compliant file would compress the compressed and discard that work.
+  // The render therefore trusts the ceiling: at or under it the file renders
+  // VERBATIM plus one pointer line to the history beyond it; over it (an
+  // unslept vault) the pre-existing ladder still applies — that cut is honest
+  // because every demoted entry is one `memory recall` away.
+
+  /** The render-added pointer under a full memory block. */
+  const FULL_TAIL = '> Working set only — full history (archived decisions, changelog, sessions): `dreamcontext memory recall "<keywords>"`.';
+
+  /**
+   * A memory file whose RAW length is exactly `target` — the same measurement
+   * `auditCoreFileSizes` makes, so the boundary tests below sit exactly ON the
+   * doctor's verdict rather than near it.
+   */
+  function memoryOfRawLength(target: number): string {
+    const head = [
+      '---', 'name: Fixture Memory', 'type: memory', '---', '',
+      '## Active Memory', '',
+      '- MEMORY_SENTINEL: the render must keep this body verbatim.', '',
+      '## Technical Decisions', '',
+    ].join('\n');
+    const lead = '- **DEC_PAD (2026-07-01)**: ';
+    const pad = target - head.length - lead.length - 1;
+    if (pad <= 0) throw new Error(`target ${target} too small for the skeleton`);
+    const file = `${head}${lead}${'x'.repeat(pad)}\n`;
+    expect(file.length).toBe(target);
+    return file;
+  }
+
+  it('AT the ceiling: verbatim at maximum pressure, never demoted, pointer line present', () => {
+    const memory = memoryOfRawLength(CORE_FILE_CHAR_CEILING);
+    const vault = buildVault(join(base, 'memory-full'), { ...matureVaultSpec(), memory });
+
+    const { text, budget } = withBudget(MAX_PRESSURE_BUDGET, () => measureSnapshot(vault.ctxRoot));
+
+    expect(text).toContain(memory.trim());
+    expect(text).toContain(FULL_TAIL);
+    expect(budget.demoted.map((d) => d.id)).not.toContain('memory');
+  });
+
+  it('one char OVER the ceiling: the guarantee is gone and the ladder takes the block', () => {
+    const memory = memoryOfRawLength(CORE_FILE_CHAR_CEILING + 1);
+    const vault = buildVault(join(base, 'memory-over'), { ...matureVaultSpec(), memory });
+
+    const { text, budget } = withBudget(MAX_PRESSURE_BUDGET, () => measureSnapshot(vault.ctxRoot));
+
+    expect(budget.demoted.find((d) => d.id === 'memory')?.level).toBeGreaterThanOrEqual(1);
+    expect(text).not.toContain(FULL_TAIL);
+    // The deep rung's shape: the pad prose is cut…
+    expect(text).not.toContain('x'.repeat(500));
+    // …but the entry survives as its title — demotion never silently drops it.
+    expect(text).toContain('DEC_PAD');
   });
 });

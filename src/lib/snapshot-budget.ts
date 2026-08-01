@@ -288,15 +288,31 @@ function renderExhaustedFooter(
   tokens: number,
   budgetTokens: number,
 ): string {
-  const ids = demoted.length > 0 ? demoted.map((d) => d.id).join(', ') : 'none — every section is never-evict';
-  const floored = flooredSectionIds.length > 0 ? flooredSectionIds.join(', ') : 'none';
+  // When every demoted section is also at its floor — the usual exhausted state
+  // — one list tells the whole story. The old footer printed the same ids
+  // twice, and those ~250 bytes were once the exact margin that pushed an
+  // otherwise-inline snapshot over the harness limit and into the banner.
+  const flooredSet = new Set(flooredSectionIds);
+  const sameSet = demoted.length === flooredSectionIds.length
+    && demoted.every((d) => flooredSet.has(d.id));
+  let inventory: string;
+  if (demoted.length === 0) {
+    // NOT "every section is never-evict": a ceiling-compliant memory file is
+    // demotable-typed but carries no rungs, so an empty demoted list no longer
+    // implies the never-evict tier is all there is.
+    inventory = 'Demoted: none — nothing the ladder can shrink.';
+  } else if (sameSet) {
+    inventory = `Demoted to their floors: ${demoted.map((d) => d.id).join(', ')}.`;
+  } else {
+    inventory = `Demoted: ${demoted.map((d) => d.id).join(', ')}. At their floor, unable to shrink further: ${flooredSectionIds.length > 0 ? flooredSectionIds.join(', ') : 'none'}.`;
+  }
   return [
     '\n\n---',
     `_Budget note: the demotion ladder is EXHAUSTED and the snapshot is still over budget (${tokens} tok vs ${budgetTokens} tok).`,
-    `Demoted: ${ids}. At their floor, unable to shrink further: ${floored}.`,
+    inventory,
     'Every demoted item keeps its file path above, and `dreamcontext memory recall "<keywords>"` surfaces the full content —',
-    'but you are reading a thinner brain than this project has. FIX: trim the oversized core files;',
-    '`dreamcontext doctor` names them._',
+    'but you are reading a thinner brain than this project has. FIX: slim the core files below their',
+    'ceilings or extract content to knowledge — `dreamcontext doctor` audits every size._',
   ].join('\n');
 }
 

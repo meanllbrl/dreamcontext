@@ -391,6 +391,8 @@ export function registerTasksCommand(program: Command): void {
     .option('--priority <level>', 'Filter by priority (critical, high, medium, low)')
     .option('--feature <slug>', 'Filter by related_feature')
     .option('--objective <slug>', 'Filter by objective (task serves the given roadmap objective)')
+    .option('--since <date>', 'Only tasks last active ON/AFTER this date (YYYY-MM-DD, uses updated_at)')
+    .option('--until <date>', 'Only tasks last active ON/BEFORE this date (YYYY-MM-DD)')
     .option('-g, --group-by <field>', `Group output by ${GROUP_BY_FIELDS.join('|')}`)
     .option('--long', 'Show tags + version inline in human output')
     .option('--tags', 'List distinct tags with counts (respects -s/--all; ignores other filters)')
@@ -398,6 +400,7 @@ export function registerTasksCommand(program: Command): void {
     .action(async (opts: {
       status?: string; all?: boolean; tag?: string[]; anyTag?: string[];
       version?: string; priority?: string; feature?: string; objective?: string;
+      since?: string; until?: string;
       groupBy?: string; long?: boolean; tags?: boolean; json?: boolean;
     }) => {
       const backend = getTaskBackend();
@@ -406,6 +409,12 @@ export function registerTasksCommand(program: Command): void {
       if (opts.status && !validStatuses.includes(opts.status)) {
         error(`Status must be one of: ${validStatuses.join(', ')}`);
         return;
+      }
+      for (const [flag, v] of [['--since', opts.since], ['--until', opts.until]] as const) {
+        if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+          error(`${flag} must be YYYY-MM-DD`);
+          return;
+        }
       }
       const validPriorities = ['critical', 'high', 'medium', 'low'];
       if (opts.priority && !validPriorities.includes(opts.priority)) {
@@ -440,6 +449,8 @@ export function registerTasksCommand(program: Command): void {
         priority: opts.priority,
         feature: opts.feature,
         objective: opts.objective,
+        since: opts.since,
+        until: opts.until,
       };
       const matched = await backend.list(filter);
 

@@ -33,11 +33,17 @@ More content here.`;
     expect(result).toBe('');
   });
 
-  it('caps long paragraphs at 300 chars', () => {
-    const content = 'A'.repeat(400);
+  it('caps long paragraphs at 300 chars, word-safe', () => {
+    const content = 'alpha bravo charlie delta '.repeat(20).trim();
     const result = extractFirstParagraph(content);
     expect(result.length).toBeLessThanOrEqual(300);
-    expect(result).toContain('...');
+    // capAtWordBoundary, not the old raw slice()+'...': the fragment before
+    // the ellipsis is a clean prefix of the source ending on a whole word.
+    expect(result.endsWith('…')).toBe(true);
+    expect(result).not.toContain('...');
+    const fragment = result.slice(0, -1);
+    expect(content.startsWith(fragment)).toBe(true);
+    expect(content[fragment.length]).toBe(' ');
   });
 
   it('skips frontmatter markers', () => {

@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-07-30",
+    "type": "change",
+    "scope": "migration",
+    "description": "Migration 0.23.0 applied: seed-people-from-config, split-user-file",
+    "breaking": false,
+    "summary": "Seeded people/people.json with 1 person(s): mehmet-nuraydin. added mehmet-nuraydin from git identity (meanllbrl@gmail.com); Split core/1.user.md (5 section(s)); 2 → people/mehmet-nuraydin.md; 3 → inbox/1.user-residue.md; run `dreamcontext migrations pending` — an agent must distribute inbox/1.user-residue.md; deleted core/1.user.md",
+    "references": [
+      "file:state/.migrations.json"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-07-30",
     "type": "refactor",
     "scope": "snapshot",
     "description": "Two owner orders landed on one section. RENDER BY NAME: tasks displayed their SLUG as the title, so a mangled legacy Turkish slug read as the task name in every snapshot. The frontmatter NAME is now displayed everywhere with Turkish intact, and the slug became the ADDRESS, carried on a subline pointing at _dream_context/state/<slug>.md under each detailed entry; roster names come from frontmatter with folded YAML collapsed and a slug fallback, status markers ride on names, ActiveTaskEntry gained a name field, and the sub-agent briefing inherits it. ACCOUNTING MODEL (a sub-agent judge verdict adopted verbatim): a demoted render is no longer a name roster of everything. It is detailed entries (activity-sorted head always, then in_progress only, whole blocks packed, rung 1 at TASKS_DETAIL_CHARS=1100 max 3 and the floor at 400 max 1), plus a needs-attention line naming every not-detailed task whose status is outside todo and planned OR whose priority is critical — INCLUDING overflow in_progress carrying an [in_progress] marker, which is the concurrent-thread continue-this case — plus a per-status COUNT line for the routine queue and a filter-teaching footer. Level 0 is UNCHANGED, so small vaults keep the whole board and both goldens stayed byte-identical without regeneration. The acceptance criterion moved from every task being NAMED to every task being ACCOUNTED FOR (detailed plus named plus counted equals the total), asserted on 60-task and 200-task fixtures; TASKS_L1, TASKS_L2 and the old roster constant retired. The judge rationale is worth keeping: 30 routine names had no session-start consumer, since the recall hook and a taught tasks list own that discovery, while exceptions and concurrent threads are the real signal. Live: Active Tasks 2,731 to about 900 chars, snapshot 17,575 to 16,320. UNCOMMITTED.",

@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
 import { readJsonArray } from './json-file.js';
+import { capAtWordBoundary } from './snapshot-compress.js';
 import { listVaults, resolveVaultContextRoot } from './vaults.js';
 import { resolveConnectedVaults, currentVaultTarget } from './federation-recall.js';
 
@@ -133,13 +134,18 @@ function readWhatItIs(peerRoot: string): string {
       .map((l) => l.trim())
       .find((l) => l && !l.startsWith('#') && !l.startsWith('>') && !l.startsWith('<!--') && !l.startsWith('---'));
     let text = line ?? '';
-    // Prefix the soul `name` only if it isn't already how the line opens.
-    if (name && text && !text.toLowerCase().startsWith(name.toLowerCase())) {
+    // Prefix the soul `name` only if it isn't already how the line opens —
+    // compared with leading markdown emphasis stripped, or "Marketing Brain:
+    // **Marketing Brain** is…" duplicates itself. A name that is just a core
+    // FILENAME ("0.soul") is no identity at all and never prefixes.
+    const plainOpen = text.replace(/^[*_]+/, '');
+    const filenameName = /^\d+\./.test(name);
+    if (name && !filenameName && text && !plainOpen.toLowerCase().startsWith(name.toLowerCase())) {
       text = `${name}: ${text}`;
-    } else if (name && !text) {
+    } else if (name && !filenameName && !text) {
       text = name;
     }
-    return text.length > WHAT_IT_IS_CHARS ? text.slice(0, WHAT_IT_IS_CHARS - 1).trimEnd() + '…' : text;
+    return capAtWordBoundary(text, WHAT_IT_IS_CHARS);
   } catch {
     return '';
   }
@@ -156,7 +162,7 @@ function readLastActivity(peerRoot: string): string[] {
       const date = String(e.date ?? '');
       const summary = typeof e.summary === 'string' ? e.summary : '';
       const desc = String(e.description ?? '');
-      const headline = summary || (desc.length > 120 ? desc.slice(0, 117) + '...' : desc);
+      const headline = summary || capAtWordBoundary(desc, 120);
       if (!headline) continue;
       out.push(date ? `${date} — ${headline}` : headline);
     }

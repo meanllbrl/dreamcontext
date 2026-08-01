@@ -41,6 +41,14 @@ export interface MigrationAgentTask {
   id: string;
   /** Instruction text for the agent: start by checking the filesystem. */
   instruction: string;
+  /**
+   * true for tasks that are an OFFER, not an obligation (e.g. 0.7.2's
+   * organize-your-diagram-boards): they are never "unfinished", so
+   * `migrations pending` does not list them — they run only through their own
+   * explicit command and record their ledger entry there. Without this flag a
+   * ledger-judged pending would nag about them forever on every old vault.
+   */
+  optIn?: boolean;
 }
 
 /**

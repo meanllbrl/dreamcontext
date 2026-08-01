@@ -206,13 +206,13 @@ describe('snapshot (integration)', () => {
       ].join('\n'),
     );
     const output = runSnapshot(tmpDir);
+    // Level 0 is name + status + path ONLY (owner decision 2026-07-30) — the
+    // PRD is one Read away; Why/Tasks/Latest detail blocks are gone.
     expect(output).toContain('## Features');
-    expect(output).toContain('auth');
-    expect(output).toContain('status: active');
-    expect(output).toContain('security, user');
-    expect(output).toContain('Why: Users need to log in securely');
-    expect(output).toContain('Tasks: implement-jwt');
-    expect(output).toContain('Added OAuth flow');
+    expect(output).toContain('- **auth** (status: active) -> _dream_context/knowledge/features/auth.md');
+    expect(output).not.toContain('Why: Users need to log in securely');
+    expect(output).not.toContain('Tasks: implement-jwt');
+    expect(output).not.toContain('Added OAuth flow');
   });
 
   it('outputs features summary without details when minimal', () => {
@@ -288,7 +288,7 @@ describe('snapshot (integration)', () => {
     expect(output).not.toContain('## Memory');
   });
 
-  it('outputs knowledge index with descriptions and tags', () => {
+  it('outputs the knowledge index as grouped names — descriptions only for pinned', () => {
     const ctx = scaffold(tmpDir);
     mkdirSync(join(ctx, 'knowledge'), { recursive: true });
     writeFileSync(
@@ -296,9 +296,14 @@ describe('snapshot (integration)', () => {
       '---\nid: k1\nname: Auth System\ndescription: JWT-based auth flow\ntags:\n  - auth\n  - security\ndate: "2026-02-24"\n---\n\nDetailed auth content.\n',
     );
     const output = runSnapshot(tmpDir);
+    // Owner decision 2026-07-30 (revised same day): non-pinned knowledge is
+    // not even listed — an accurate count + the search commands replace the
+    // inventory. Descriptions live behind `knowledge index` and recall.
     expect(output).toContain('## Knowledge Index');
-    expect(output).toContain('_dream_context/knowledge/auth-system.md');
-    expect(output).toContain('JWT-based auth flow [auth, security]');
+    expect(output).toContain('(+1 more knowledge file(s), not listed — search:');
+    expect(output).toContain('--types knowledge');
+    expect(output).not.toContain('auth-system');
+    expect(output).not.toContain('JWT-based auth flow');
   });
 
   it('surfaces pinned knowledge as a prioritized index reference (body not inlined)', () => {

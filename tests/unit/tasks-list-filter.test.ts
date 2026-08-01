@@ -264,3 +264,35 @@ describe('collectTags', () => {
     expect(collectTags(tasks).map((c) => c.tag)).toEqual(['alpha', 'Beta', 'Gamma']);
   });
 });
+
+describe('filterTasks — date range (--since/--until, owner ask 2026-07-30)', () => {
+  const tasks = [
+    rec({ name: 'old', updated_at: '2026-06-15' }),
+    rec({ name: 'july', updated_at: '2026-07-10T09:30:00Z' }),
+    rec({ name: 'edge', updated_at: '2026-07-31' }),
+    rec({ name: 'dateless', updated_at: '-' }),
+  ];
+
+  it('bounds on the DATE part of updated_at, inclusive at both ends', () => {
+    const july = filterTasks(tasks, { since: '2026-07-01', until: '2026-07-31' });
+    expect(july.map((t) => t.name)).toEqual(['july', 'edge']);
+  });
+
+  it('since-only and until-only work independently', () => {
+    expect(filterTasks(tasks, { since: '2026-07-11' }).map((t) => t.name)).toEqual(['edge']);
+    expect(filterTasks(tasks, { until: '2026-06-30' }).map((t) => t.name)).toEqual(['old']);
+  });
+
+  it('a task with no parseable date never matches a date-bounded query', () => {
+    expect(filterTasks(tasks, { since: '2000-01-01' }).map((t) => t.name))
+      .toEqual(['old', 'july', 'edge']);
+  });
+
+  it('date range composes with status visibility', () => {
+    const withDone = [...tasks, rec({ name: 'done-july', status: 'completed', updated_at: '2026-07-12' })];
+    expect(filterTasks(withDone, { since: '2026-07-01' }).map((t) => t.name))
+      .toEqual(['july', 'edge']);
+    expect(filterTasks(withDone, { since: '2026-07-01', all: true }).map((t) => t.name))
+      .toEqual(['july', 'edge', 'done-july']);
+  });
+});

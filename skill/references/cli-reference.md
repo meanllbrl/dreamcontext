@@ -88,7 +88,7 @@ A slug is a filesystem path segment and a dashboard route segment, so the charse
 
 | Command | Description |
 |---|---|
-| `tasks list` | List/filter/group tasks (excludes completed by default). Flags: `-s/--status`, `-a/--all`, `--tag <t>` (repeatable, AND), `--any-tag <t>` (repeatable, OR), `--version <id>`, `--priority <level>`, `--feature <slug>`, `--objective <slug>`, `-g/--group-by tag\|version\|priority\|status`, `--long`, `--tags`, `--json`. Filters compose (AND), case-insensitive. |
+| `tasks list` | List/filter/group tasks (excludes completed by default). Flags: `-s/--status`, `-a/--all`, `--tag <t>` (repeatable, AND), `--any-tag <t>` (repeatable, OR), `--version <id>` (sprint/milestone), `--priority <level>`, `--feature <slug>`, `--objective <slug>`, `--since YYYY-MM-DD` / `--until YYYY-MM-DD` (inclusive, on `updated_at`), `-g/--group-by tag\|version\|priority\|status`, `--long`, `--tags`, `--json`. Filters compose (AND), case-insensitive. The snapshot's Active Tasks footer teaches this surface. |
 | `tasks tags` | Distinct task tags with counts. `-a/--all`, `--json`. |
 | `tasks create <name>` | Create a task. Flags: `-d/--description`, `-p/--priority critical\|high\|medium\|low`, `-u/--urgency …`, `-s/--status`, `-t/--tags <csv>`, `-w/--why`, `-v/--version`, `--person <name>`, `--reach <1-10>`, `--impact <1-5>`, `--confidence 25\|50\|75\|100`, `--effort <weeks>`, `--start YYYY-MM-DD`, `--due YYYY-MM-DD`, `--objectives <csv>` (roadmap objective slugs this task serves; slugs must exist), `--field <key=value>` (repeatable; sets declared custom fields), `--allow-missing-required` (create a draft even when a required custom field is unset). **Fails** if a required custom field is unset and `--allow-missing-required` is not given. |
 | `tasks rice <name>` | Print or update RICE values. `--reach`/`--impact`/`--confidence`/`--effort`, `--clear`. |
@@ -245,6 +245,7 @@ Sections for `features insert`: `changelog`, `notes`, `technical_details`, `cons
 | Command | Description |
 |---|---|
 | `memory recall <query...>` | Search all nine channels (knowledge, feature, task, memory, changelog, objective, insight, thesis, automation). `-t/--top <n>`, `--types <csv>`, `--level 1\|2\|3` (min importance ★/★★/★★★), `--json`, `--plain`, `--vault <name>` (repeatable), `--connected`, `--all-vaults`. |
+| `changelog list` | Page through `core/CHANGELOG.json` chronologically (newest first) — the "what happened, in order?" counterpart to recall's relevance search. `--page <n>`, `--size <n>` (max 50), `--type <t>`, `--scope <s>`, `--grep <text>` (case-insensitive over summary+description+scope), `--json`. The snapshot's Recent Changelog footer points here at every rung. |
 | `memory remember <text...>` | Quick-append a CHANGELOG entry (`type=note`, `scope=quick`). `--summary`, `--type`, `--scope`, `--references <csv>`, `--person <csv>`. |
 | `memory update <slug>` | Update a knowledge file. `-d/--description`, `-t/--tags`, `-c/--content`, `--append <text>`, `--pin`, `--unpin`. |
 | `memory delete <slug>` | Delete a knowledge file (irreversible; recover via git). `-f/--force`. |
@@ -398,21 +399,24 @@ The CLI writes `_dream_context/tmp/.council-live.json` automatically on state-ch
 
 The never-evict `person` section covers all three shapes that block can take: the resolved constitution, the `## Person (Active — UNRESOLVED)` notice, and the retired `core/1.user.md` legacy render. The **roster of other people** is a different thing entirely and IS demotable (rank 110) — see the floors table below.
 
+**Memory demotes only when it is over the core ceiling.** `core/2.memory.md` is sleep's already-distilled working set: at or under the 4,000-char core ceiling it renders **in full, no rungs**, with one pointer line to the history beyond it (`dreamcontext memory recall`) — a rung there would compress what sleep already compressed. Over the ceiling (an unslept vault) the ladder below applies, and the `doctor` core-size error names the file so the fix lands on sleep, not the renderer. Unlike the constitutions this cut is safe: every demoted entry stays one `memory recall` away.
+
 **Demotion order (cheapest-loss first).** Order is a per-section rank on a 10–140 scale, independent of render order — so `memory` renders near the top but is given up well after the inventory sections below it:
 
-`warm-knowledge` → `changelog` → `releases` → `extended-core` → `connected-projects` → `knowledge-index` → `features` → `memory` → `bookmarks` → `tasks` → `people-roster` → `objectives` → `theses` → `lab`
+`changelog` → `releases` → `extended-core` → `connected-projects` → `knowledge-index` → `features` → `memory` → `bookmarks` → `tasks` → `people-roster` → `objectives` → `theses`
 
-The chain **ends at `lab`**. When Lab reaches its floor the ladder is exhausted; anything still over the limit is a constitution that needs slimming, which the banner says out loud.
+The chain **ends at `theses`**. Lab has no rungs at all (every insight's name + latest value renders at every budget — Rule 13), and level 0 is itself compact since 2026-07-30: features are name + status + path lines, non-pinned knowledge is grouped folder names (only PINNED entries carry descriptions; every pattern is titled with one short clause), and the old Warm Knowledge preview section is gone. When the ladder is exhausted, anything still over the limit is a constitution that needs slimming, which the banner says out loud.
 
 **Floors — sections that stop early because their remaining content IS the point:**
 
 | Section | Floor | Why |
 |---|---|---|
-| `lab` | rung 1 | Metric names + latest values must survive, or you cannot tell a metric question is already answered here and you fetch it from outside (Operational Rule 13). |
+| `lab` | no rungs — never demotes | Metric names + latest values must survive, or you cannot tell a metric question is already answered here and you fetch it from outside (Operational Rule 13). There is no cheaper render at all. |
 | `theses` | rung 1 | The top open claims survive; a bare `N open · N flipped` count tells you nothing. |
 | `objectives` | rung 2 | One compact line per objective survives; a bare `N objective(s)` count leaves "weigh decisions against these outcomes" unsatisfiable. |
-| `bookmarks` | rung 2 | ★★★ bookmarks stay verbatim — they are the primary consolidation signal. |
+| `bookmarks` | rung 2 | ★★★ bookmarks stay verbatim — they are the primary consolidation signal. With no ★★★ at all, the floor keeps the ★★ tier (first sentence each) instead of a bare count; ★ stays behind an accurate count. |
 | `people-roster` | rung 2 | Every OTHER person stays **named** with their `person:<slug>` tag — that tag is what makes them addressable at all. Rung 1 drops the role label; rung 2 collapses to one line of names. Never a bare count. |
+| `memory` | no rungs at ≤ core ceiling | Sleep already distilled the working set to the 4,000-char ceiling — a compliant file renders in full with a recall pointer. Only an over-ceiling file walks the rungs. |
 | `soul` | never demotes | The constitution renders verbatim at every budget. Rule *titles* are not a constitution — the agent would know a rule exists without knowing what it says, and read as compliant. |
 | `person` | never demotes | Same doctrine, for the person at this keyboard (`people/<slug>.md`). A preference reduced to its title is worse than an absent one: the agent sees that a rule about you exists, reads that as knowing it, and never opens the file. |
 

@@ -117,7 +117,7 @@ flowchart LR
         PROMPT["UserPromptSubmit\n(persistent reminders)"]
         PRETOOL["PreToolUse Hook\n(context-first exploration)"]
         PRECOMPACT["PreCompact Hook\n(save state)"]
-        SNAPSHOT["Compiled Snapshot\n+ warm knowledge\n+ contextual reminders"]
+        SNAPSHOT["Compiled Snapshot\n+ pinned knowledge\n+ contextual reminders"]
         AGENT["Agent starts with\nfull context loaded"]
     end
 
@@ -716,7 +716,7 @@ dreamcontext taxonomy vocab               # Canonical faceted tag vocabulary
 dreamcontext taxonomy audit [--fix]       # Surface / bulk-normalize non-canonical tags (--dry-run to preview)
 ```
 
-Set `pinned: true` in frontmatter to auto-load a file in every snapshot. Files not accessed in 30+ days flag as stale; recently accessed ones ride a "warm knowledge" tier with first-paragraph previews.
+Set `pinned: true` in frontmatter to surface a file prominently (with its description) in every snapshot — pinned entries are the only knowledge that carries descriptions there; everything else is named by folder, and patterns are titled with one short clause. Full descriptions are one `dreamcontext knowledge index` or recall away.
 
 ### Memory
 

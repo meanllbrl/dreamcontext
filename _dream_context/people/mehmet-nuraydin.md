@@ -1,10 +1,10 @@
 ---
-name: user-preferences
-type: user
+name: mehmet-nuraydin
+type: person
 updated: "2026-07-30"
 ---
 
-## User Preferences
+## Preferences
 
 - Direct decisions on clear choices; explain why. Don't ask permission on obvious paths.
 - Rich content in context files. Template placeholders are failure.
@@ -27,27 +27,3 @@ updated: "2026-07-30"
 - Options: max 2-3, lead with recommendation, one line each.
 - Concise progress. Don't narrate steps.
 - Flag problems in one line + propose fix. No apologies.
-
-## Project Details
-
-- **Repo**: `~/projects/dreamcontext`, GitHub: `meanllbrl/dreamcontext`
-- **Package**: `dreamcontext` (npm), binary: `dreamcontext`
-- **Version**: npm 0.22.0 (prepped but not published; no git tag; npm serves 0.21.0)
-- **Tests**: vitest. Unit: `tests/unit/` (no build). Integration: `tests/integration/` (requires `npm run build`).
-- **Build**: `npm run build` (tsup: dist/), dev: `npm run dev` (watch)
-- **Node**: >= 18
-
-## Project Rules
-
-- **ESM everywhere**: `"type": "module"`, `.js` extensions on TS imports, no `require()`.
-- **Strict TypeScript**: no implicit any, no unused locals.
-- **No default exports for lib**: named only; default only where frameworks require.
-- **Register pattern**: commands export `registerXyzCommand(program)`, registered in `src/cli/index.ts`.
-- **Commit format**: Conventional commits (feat/fix/refactor/chore/docs/test) + Co-Authored-By.
-- **No `.claude/` in this repo**: skill/agents for distribution; install via `dreamcontext install-skill`.
-
-## Workflow Notes
-
-> Extended workflow patterns (sub-agent orchestration, stacked PRs, multi-account gh, issue+test-first, high-effort review, desktop verification, always-run-tests) archived to knowledge/archive/1.user-2026-h2.md (2026-07-28 ceiling enforcement).
-
-- **Dashboard changes: root `npm run build` REQUIRED** — `dashboard/npm run build` only updates `dashboard/dist/`; CLI serves from `dist/dashboard/` (populated by tsup `onSuccess`). Always verify `dist/dashboard/assets/` timestamps match source.

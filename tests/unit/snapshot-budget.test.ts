@@ -320,7 +320,9 @@ describe('applyBudget', () => {
       expect(res.overBudget).toBe(true);
       expect(res.demoted).toEqual([]);
       expect(res.text).toContain('Budget note');
-      expect(res.text).toContain('every section is never-evict');
+      // Not "every section is never-evict" — a compliant memory file is
+      // demotable-typed with no rungs, so an empty list doesn't imply that.
+      expect(res.text).toContain('nothing the ladder can shrink');
     });
 
     it('decides overBudget on the PRE-footer text, so the footer cannot flip its own variant', () => {

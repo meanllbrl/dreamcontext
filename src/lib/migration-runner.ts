@@ -164,13 +164,17 @@ export function runMigrations(
   }
 
   // Collect pending agent tasks: migrations with agentTask that don't yet
-  // have an executor:'agent' entry in the ledger
+  // have an executor:'agent' entry in the ledger. Matched by the agentTask's
+  // OWN step id — two migrations can share a version (0.23.0 people-first +
+  // soul-split), and a loose version-only match would let either recorded
+  // task hide the other.
   const finalLedger = readLedger(contextRoot);
   const pendingAgentTasks: PendingAgentTask[] = [];
   for (const migration of pending) {
     if (!migration.agentTask) continue;
     const hasAgentEntry = finalLedger.some(
-      (e) => e.version === migration.version && e.executor === 'agent',
+      (e) => e.version === migration.version && e.executor === 'agent'
+        && e.step === migration.agentTask!.id,
     );
     if (!hasAgentEntry) {
       pendingAgentTasks.push({

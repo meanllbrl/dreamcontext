@@ -51,6 +51,11 @@ export const CORE_L2 = { itemChars: 80, paraChars: 120 } as const;
 export const CORE_L3 = { itemChars: 70, paraChars: 110, titleOnly: true } as const;
 
 // ─── Memory (core/2.memory.md) ──────────────────────────────────────────────
+//
+// These rungs engage ONLY when the file is OVER the core ceiling
+// (CORE_FILE_CHAR_CEILING): a compliant memory file is sleep's already-distilled
+// working set and renders in full, no rungs at all. See the memory block in
+// snapshot.ts for the doctrine.
 
 /**
  * PER INNER H2 of `2.memory.md`, not per file. Both acceptance vaults have 3
@@ -68,30 +73,25 @@ export const MEMORY_DEEP_PER_SECTION_CHARS = 350;
 export const MEMORY_DEEP_ITEM_CHARS = 70;
 
 // ─── Active tasks ───────────────────────────────────────────────────────────
+// Demoted design (Fable judge verdict, owner-approved 2026-07-30): detailed
+// in_progress entries + a named "needs attention" exceptions line + a
+// per-status count + the filter-teaching footer. The routine queue (todo/
+// planned names) is NOT listed — the contract is "every active task ACCOUNTED
+// FOR": detailed, named with a status marker, or inside a count whose sum
+// equals the true total.
 
-/** Rung 1: how many chars of full task entry blocks survive. */
-export const TASKS_L1_CHARS = 2_000;
-/** Rung 2: the floor. At a ~340-400 char mean entry, roughly one entry fits. */
-export const TASKS_L2_CHARS = 600;
-/**
- * The Active Tasks remainder tail packs WHOLE slugs while they fit this budget,
- * then emits `(+N more — \`dreamcontext tasks list\`)`.
- *
- * This reconciles two opposing review findings and neither is negotiable:
- *   - a slug is NEVER cut mid-string (a positional slice through a user-visible
- *     name is exactly the harness behaviour this whole module exists to prevent),
- *   - and the tail is BOUNDED, so the ladder has no unbounded term that could
- *     re-create "the ladder cannot win by construction" as the backlog grows.
- * Omission with an accurate count plus the exact recovery command is the same
- * tail contract features, knowledge-index and bookmarks already use.
- *
- * 1,400 no longer holds every slug on either live vault (measured full rosters
- * are 1,882 chars / 27 active and 1,765 / 41 active), so the counted tail now
- * fires in normal operation rather than only in the tail case — costing ~482 and
- * ~365 chars of names to buy the same back for the sections that cannot degrade
- * this gracefully. That is the trade the bound exists to make.
- */
-export const TASKS_ROSTER_CHARS = 1_400;
+/** Rung 1: char budget for whole detailed entry blocks (max 3 entries). */
+export const TASKS_DETAIL_CHARS = 1_100;
+/** Max detailed entries at rung 1. */
+export const TASKS_DETAIL_MAX = 3;
+/** Floor: one detailed entry's budget. */
+export const TASKS_DETAIL_FLOOR_CHARS = 400;
+/** Exceptions line name-packing budget at rung 1 / at the floor. */
+export const TASKS_EXCEPTIONS_CHARS = 450;
+export const TASKS_EXCEPTIONS_FLOOR_CHARS = 250;
+// TASKS_ROSTER_CHARS was retired 2026-07-30: the routine-name roster is no
+// longer rendered (Fable judge verdict) — exceptions are named, the rest is a
+// per-status count, and the footer teaches the filter surface.
 
 // ─── Features ───────────────────────────────────────────────────────────────
 
@@ -145,21 +145,9 @@ export const FEATURES_ROSTER_CHARS = 450;
 
 // ─── Knowledge index ────────────────────────────────────────────────────────
 
-/**
- * Rung 2 groups non-pinned entries by folder. Measured grouped renders are
- * 1,990 and 2,680 chars, so this cap keeps EVERY slug named on both acceptance
- * vaults; only a larger corpus starts collapsing tail folders to counts.
- *
- * DO NOT tune this DOWN to buy bytes. It reads like a size lever and it is not:
- * a folder that overflows the cap is re-rendered as
- * `(N files — \`dreamcontext knowledge index\`)` (~42 chars), which is LONGER
- * than listing the files of any small folder. dreamcontext's tail is a run of
- * one-file `diagrams/**` folders, so tightening the cap makes the section grow.
- * Measured: 2,800 → 2,500 moved the rendered snapshot +31 (dreamcontext) and +3
- * (Tilki) — the wrong direction on both. Only a vault whose tail folders hold
- * many files gets a saving here.
- */
-export const KNOWLEDGE_L2_CHARS = 2_800;
+// KNOWLEDGE_L2_CHARS was retired 2026-07-30: non-pinned knowledge is no
+// longer listed in the snapshot at all (count + search commands instead), so
+// the grouped-by-folder rung and its cap are gone with it.
 
 /**
  * Pinned 📌 knowledge is a user MUST-READ signal, so it is the LAST thing the
@@ -185,14 +173,49 @@ export const BOOKMARK_ITEM_CHARS = 120;
 
 // ─── Small inventory sections ───────────────────────────────────────────────
 
-/** Extended core index at rung 1 = name + path, summaries dropped. */
+/** Extended core index at rung 1 = name + path + a SHORT summary. */
 export const EXTENDED_CORE_L1_CHARS = 1_200;
+/**
+ * Per-file summary cap at that rung (first sentence, word-safe). The file NAME
+ * says what a core file is; this one clause says what is IN it — without it the
+ * demoted index on a mature vault read as bare "tech-stack, style-guide" lines
+ * and the agent had no reason to ever open them (owner call 2026-07-29).
+ */
+export const EXTENDED_CORE_SUMMARY_CHARS = 90;
 /** Upcoming versions + latest release at rung 1, summaries dropped. */
 export const RELEASES_L1_CHARS = 400;
+/**
+ * The LATEST release's summary at the demoted rung, word-safe. Level 0 keeps
+ * it whole — but a release narrative can run 1.5K+ chars (0.21.0 did), and an
+ * unbounded line at the FLOOR made the one section that cannot demote further
+ * scale with prose nobody budgeted.
+ */
+export const RELEASES_LATEST_SUMMARY_CHARS = 300;
 /** Connected peers at rung 1: one line per peer, no activity/tags/pinned docs. */
 export const CONNECTED_L1_CHARS = 800;
-/** Connected peers at rung 2: a single named roster line + the recall pointer. */
+/** Connected peers at rung 2: name + a SHORT identity per peer, packed. */
 export const CONNECTED_L2_CHARS = 300;
+/**
+ * Per-peer identity cap at rung 2 (first sentence, word-safe). A peer named
+ * without its "what it is" reproduced the original soul-review complaint —
+ * the agent sees "Tilki" and has no idea Tilki is a B2B tutoring SaaS.
+ */
+export const CONNECTED_PEER_ID_CHARS = 90;
+/**
+ * Per-pattern brief in the Knowledge Index (first sentence, word-safe). Owner
+ * decision 2026-07-30: every pattern title is ALWAYS visible with one short
+ * clause — enough to know the pattern exists and when it applies; the deep
+ * keyword-ranked pattern surface is the patterns run's scope.
+ */
+export const PATTERN_BRIEF_CHARS = 80;
+/**
+ * The patterns block at the knowledge index FLOOR: slugs only, packed whole
+ * with a named tail. Rules must never fold into anonymous folder inventory
+ * (the soul-split migration moves rule-bearing conditionals here), so unlike
+ * every other knowledge folder the patterns list keeps its own warned block
+ * at the deepest rung. ~19 live patterns on the largest vault fit under this.
+ */
+export const PATTERNS_FLOOR_CHARS = 1_000;
 /**
  * The other-people roster at rung 1: one `- **Name** (`person:slug`) — role`
  * line per teammate. Sized like the peer roster above because it is the same
@@ -314,6 +337,9 @@ export const DEMOTION_RANKS: Record<DemotableSectionId, number> = {
   'connected-projects': 50,
   'knowledge-index': 60,
   features: 70,
+  // Only reachable when core/2.memory.md is OVER the core ceiling — a compliant
+  // file gets no rungs at all (sleep already compressed it), so this rank never
+  // fires on a well-slept vault.
   memory: 80,
   bookmarks: 90,
   tasks: 100,

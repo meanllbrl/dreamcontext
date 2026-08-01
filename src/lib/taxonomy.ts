@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { foldToAscii } from './id.js';
 import { STANDARD_TAGS } from './knowledge-index.js';
 
 // ─── Facets ──────────────────────────────────────────────────────────────────
@@ -84,19 +85,19 @@ export const DEFAULT_VOCABULARY: Vocabulary = {
 /**
  * Slugify the VALUE side of a faceted tag, or the whole bare tag.
  * E.g. `topic:My Feature` -> `topic:my-feature`; `My Tag` -> `my-tag`.
+ * Diacritics fold instead of dropping (`topic:Öğretmen` -> `topic:ogretmen`),
+ * same as filename slugs — see foldToAscii.
  */
 export function slugifyTag(tag: string): string {
   const colonIdx = tag.indexOf(':');
   if (colonIdx === -1) {
-    return tag
-      .toLowerCase()
+    return foldToAscii(tag.toLowerCase())
       .trim()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '');
   }
   const facet = tag.slice(0, colonIdx);
-  const value = tag.slice(colonIdx + 1)
-    .toLowerCase()
+  const value = foldToAscii(tag.slice(colonIdx + 1).toLowerCase())
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');

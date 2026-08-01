@@ -52,6 +52,14 @@ export interface TaskFilter {
   feature?: string;
   /** Task must serve this objective (its `objectives` list contains the slug). */
   objective?: string;
+  /**
+   * Date-range on the task's last activity (`updated_at`, which falls back to
+   * `created_at` at parse time). ISO `YYYY-MM-DD`, inclusive at both ends —
+   * `since: '2026-07-01', until: '2026-07-31'` is "July's tasks". A task with
+   * no parseable date never matches a date-bounded query.
+   */
+  since?: string;
+  until?: string;
 }
 
 export interface TaskGroup {
@@ -164,6 +172,14 @@ export function filterTasks(tasks: TaskRecord[], filter: TaskFilter = {}): TaskR
     }
     if (filter.objective) {
       if (!t.objectives.some((o) => ieq(o, filter.objective!))) return false;
+    }
+    if (filter.since || filter.until) {
+      // updated_at already falls back to created_at at parse time; compare the
+      // DATE part lexicographically (ISO), inclusive at both ends.
+      const day = t.updated_at.slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+      if (filter.since && day < filter.since) return false;
+      if (filter.until && day > filter.until) return false;
     }
     return true;
   });

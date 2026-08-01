@@ -115,6 +115,36 @@ describe('buildPeerSummary', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
+  it('does not double-prefix when the soul line opens with the name in bold', () => {
+    const root = makeVault(base, 'brandy', home, {});
+    // "Marketing Brain: **Marketing Brain** is…" — the prefix check must see
+    // through leading markdown emphasis.
+    writeFileSync(
+      join(root, '_dream_context', 'core', '0.soul.md'),
+      '---\nname: "Marketing Brain"\ntype: soul\n---\n\n## Project Identity\n\n**Marketing Brain** is a self-learning marketing organism.\n',
+      'utf-8',
+    );
+
+    const summary = buildPeerSummary(join(root, '_dream_context'), 'brandy');
+
+    expect(summary.whatItIs).toBe('**Marketing Brain** is a self-learning marketing organism.');
+    expect(summary.whatItIs).not.toContain('Marketing Brain: **');
+  });
+
+  it('never prefixes a filename-shaped soul name like "0.soul"', () => {
+    const root = makeVault(base, 'filey', home, {});
+    writeFileSync(
+      join(root, '_dream_context', 'core', '0.soul.md'),
+      '---\nname: "0.soul"\ntype: soul\n---\n\n## Project Identity\n\n**Tilki Öğretmen** is a B2B SaaS product.\n',
+      'utf-8',
+    );
+
+    const summary = buildPeerSummary(join(root, '_dream_context'), 'filey');
+
+    expect(summary.whatItIs).toBe('**Tilki Öğretmen** is a B2B SaaS product.');
+    expect(summary.whatItIs).not.toContain('0.soul:');
+  });
+
   it('produces a compact summary from a seeded peer', () => {
     const root = makeVault(base, 'apollo', home, {
       soul: 'Apollo is a rocket-telemetry dashboard for launch operators.',

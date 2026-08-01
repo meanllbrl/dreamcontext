@@ -9,12 +9,29 @@ export function generateId(prefix: string): string {
 }
 
 /**
+ * Fold a lowercased string to plain ASCII letters: NFD-decompose and strip the
+ * combining marks (ö→o, ü→u, ç→c, ğ→g, ş→s, and any other Latin diacritic),
+ * then map the dotless ı — which has no decomposition — to i. (İ needs no rule
+ * of its own: toLowerCase turns it into i + a combining dot, which the mark
+ * strip removes.)
+ *
+ * Without this, slugify DROPPED non-ASCII letters wholesale and Turkish names
+ * arrived mangled: "Öğretmen fiyatı" → "retmen-fiyat" instead of
+ * "ogretmen-fiyati". Existing slugs are files on disk and are never renamed.
+ */
+export function foldToAscii(lower: string): string {
+  return lower
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ı/g, 'i');
+}
+
+/**
  * Slugify a name for use as a filename.
- * "My Feature Name" -> "my-feature-name"
+ * "My Feature Name" -> "my-feature-name"; "Öğretmen fiyatı" -> "ogretmen-fiyati"
  */
 export function slugify(name: string): string {
-  return name
-    .toLowerCase()
+  return foldToAscii(name.toLowerCase())
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');

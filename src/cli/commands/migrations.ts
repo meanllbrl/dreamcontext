@@ -1,11 +1,9 @@
 import { Command } from 'commander';
 import { ensureContextRoot } from '../../lib/context-path.js';
-import { pendingMigrations } from '../../migrations/index.js';
-import { readSetupConfig } from '../../lib/setup-config.js';
+import { unfinishedAgentTasks } from '../../migrations/index.js';
 import { appendLedger } from '../../lib/migration-ledger.js';
 import { migrateDiagramsToFolders } from '../../lib/diagrams-migration.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
-import { dirname } from 'node:path';
 import { success, error, info, warn } from '../../lib/format.js';
 import type { LedgerEntry } from '../../lib/migration-ledger.js';
 
@@ -25,13 +23,13 @@ export function registerMigrationsCommand(program: Command): void {
     .description('Print pending agent task instructions for any unfinished migrations')
     .action(() => {
       const root = ensureContextRoot();
-      const projectRoot = dirname(root);
-      const config = readSetupConfig(projectRoot);
-      const fromVersion = config?.setupVersion ?? '0.0.0';
-      const toVersion = dreamcontextVersion();
 
-      const pending = pendingMigrations(fromVersion, toVersion);
-      const tasks = pending.filter((m) => m.agentTask);
+      // LEDGER-judged, deliberately NOT setupVersion-ranged: `update` advances
+      // setupVersion as soon as the code steps land, which used to make this
+      // command compute the empty range (cliVersion, cliVersion] and go blind
+      // to the unfinished agentTask it exists to print. See
+      // unfinishedAgentTasks for the full story.
+      const tasks = unfinishedAgentTasks(root, dreamcontextVersion());
 
       if (tasks.length === 0) {
         info('No pending agent migration tasks.');

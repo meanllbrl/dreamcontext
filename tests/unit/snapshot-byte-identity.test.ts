@@ -72,8 +72,11 @@ import {
  * people-first change was gated on the legacy golden's diff being *exactly one
  * added line* (the deprecation notice); any other delta would have been an
  * unintended render change, to be fixed in the renderer rather than absorbed
- * into the golden. `BASE_SHA` still records the last SHA at which leg (a) was
- * non-circular.
+ * into the golden. The memory full-render pointer (also 0.23.0: a
+ * ceiling-compliant `2.memory.md` renders verbatim plus one recall-pointer
+ * line) re-ran the same gate — *exactly two added lines* (the pointer + a
+ * blank) in BOTH goldens. `BASE_SHA` still records the last SHA at which
+ * leg (a) was non-circular.
  *
  * `expected.txt` intentionally has NO trailing newline: `generateSnapshot`
  * returns trimmed text and the golden is that text verbatim. An editor or

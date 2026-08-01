@@ -82,7 +82,7 @@ function stripLeadingFrontmatter(text: string): string {
  * PROSE remainders — never for a title, a slug, or any other identifier the
  * agent needs to be able to act on.
  */
-function capAtWordBoundary(text: string, cap: number): string {
+export function capAtWordBoundary(text: string, cap: number): string {
   if (text.length <= cap) return text;
   if (cap <= 1) return '…';
   const cut = text.lastIndexOf(' ', cap - 1);

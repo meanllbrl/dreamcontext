@@ -124,6 +124,7 @@ export function buildAutomationsSnapshot(
   const recentLines: string[] = [];
   const blockedLines: string[] = [];
   const orphanLines: string[] = [];
+  const okRuns = new Map<string, number>();
   let hasFailure = false;
 
   for (const manifest of listAutomations(contextRoot)) {
@@ -140,11 +141,13 @@ export function buildAutomationsSnapshot(
         const finishedMs = Date.parse(event.finishedAt);
         if (!Number.isFinite(finishedMs) || now.getTime() - finishedMs > windowMs) continue;
 
-        const age = relativeAge(event.finishedAt, now);
         if (event.status === 'ok') {
-          recentLines.push(`- ${manifest.slug}: ok — ran ${age} (${Math.round(event.durationMs / 1000)}s)`);
+          // Routine success aggregates to ONE line below (owner decision
+          // 2026-07-30): only failures earn per-run detail.
+          okRuns.set(manifest.slug, (okRuns.get(manifest.slug) ?? 0) + 1);
         } else {
           if (event.status === 'failed' || event.status === 'timeout') hasFailure = true;
+          const age = relativeAge(event.finishedAt, now);
           const reason = event.error ? ` — ${event.error}` : '';
           recentLines.push(`- ${manifest.slug}: ${event.status.toUpperCase()} — ${age}${reason}`);
         }
@@ -182,8 +185,19 @@ export function buildAutomationsSnapshot(
     );
   }
 
+  // One line for all routine success — actionable states keep their detail
+  // and render first.
+  const okLines: string[] = [];
+  if (okRuns.size > 0) {
+    const total = [...okRuns.values()].reduce((a, b) => a + b, 0);
+    const listed = [...okRuns.entries()]
+      .map(([slug, n]) => (n > 1 ? `${slug} x${n}` : slug))
+      .join(', ');
+    okLines.push(`- ${total} ok run(s) in the last 24h: ${listed} — \`dreamcontext automations list\``);
+  }
+
   return {
-    lines: [...recentLines, ...blockedLines, ...orphanLines, ...pendingLines],
+    lines: [...recentLines, ...blockedLines, ...orphanLines, ...pendingLines, ...okLines],
     hasBlocked: blockedLines.length > 0,
     hasFailure,
     hasOrphan: orphanLines.length > 0,

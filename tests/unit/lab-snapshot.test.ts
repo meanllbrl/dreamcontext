@@ -85,7 +85,9 @@ describe('SessionStart snapshot — Lab section (AC15)', () => {
     process.env.DREAMCONTEXT_SNAPSHOT_BUDGET = '2000';
     try {
       const { text, budget } = measureSnapshot(root);
-      expect(budget.demoted).toContainEqual({ id: 'lab', level: 1 }); // demoted, and floored there
+      // Lab has NO rungs at all now (owner decision 2026-07-30): name + latest
+      // value at every budget is the section's whole purpose (Rule 13).
+      expect(budget.demoted.map((d) => d.id)).not.toContain('lab');
       expect(text).toContain('Budget note');                 // the ladder really ran…
       expect(text).toContain('Monthly Recurring Revenue');   // …but the name survived
       expect(text).toContain('156');                         // …and so did the value

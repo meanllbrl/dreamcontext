@@ -283,7 +283,10 @@ describe('recent runs and failures', () => {
 
     const snap = buildAutomationsSnapshot(contextRoot, { now: NOW, home });
     expect(snap.hasFailure).toBe(false);
-    expect(snap.lines).toEqual([`- ${m.slug}: ok — ran 2h ago (4s)`]);
+    // Routine success is ONE aggregate line — only failures earn per-run detail.
+    expect(snap.lines).toEqual([
+      `- 1 ok run(s) in the last 24h: ${m.slug} — \`dreamcontext automations list\``,
+    ]);
   });
 
   it('renders a failed run within the window and sets hasFailure', () => {
@@ -360,11 +363,11 @@ describe('multiple automations', () => {
     const ccc = makeAutomation('ccc-research'); // never approved -> blocked
 
     const lines = renderAutomationsSection(contextRoot, { now: NOW, home });
-    // listAutomations sorts by slug: aaa-digest, bbb-report, ccc-research.
+    // Actionable state first; routine success collapses to ONE aggregate line
+    // at the end (slug-ordered inside it, since listAutomations sorts by slug).
     expect(lines).toEqual([
-      `- ${aaa.slug}: ok — ran 30m ago (4s)`,
-      `- ${bbb.slug}: ok — ran 1h ago (4s)`,
       `- ${ccc.slug}: blocked pending approval (never-approved) — run \`dreamcontext automations approve ${ccc.slug}\``,
+      `- 2 ok run(s) in the last 24h: ${aaa.slug}, ${bbb.slug} — \`dreamcontext automations list\``,
     ]);
   });
 });

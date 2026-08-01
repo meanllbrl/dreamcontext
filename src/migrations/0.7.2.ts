@@ -39,6 +39,9 @@ export const migration072: Migration = {
   ],
   agentTask: {
     id: 'diagrams-folder-convention',
+    // An OFFER, not an obligation: surfaced only through `migrations
+    // apply-diagrams`, never by `migrations pending` (see MigrationAgentTask.optIn).
+    optIn: true,
     instruction:
       'Opt-in: organize Excalidraw boards into knowledge/diagrams/<title>/ per-title folders. ' +
       'STEP 1 — Behavioral judgment (do this BEFORE running any command): ' +

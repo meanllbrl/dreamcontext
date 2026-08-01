@@ -20,11 +20,10 @@ import {
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { loadTaskOverride, renderOverrideBriefing } from '../../lib/overrides.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
-import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge } from '../../lib/version-check.js';
+import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge, compareVersions } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { buildDriftDirective, resolveDriftState } from '../../lib/setup-drift.js';
 import { readAssetDriftCache, cacheConfidentlyClean } from '../../lib/asset-drift-cache.js';
-import { computeFeatureFreshness, freshnessSnapshotNote } from '../../lib/feature-freshness.js';
 import { featuresDir, featureSlug } from '../../lib/features-path.js';
 import { pendingInboxCount } from '../../lib/federation-inbox.js';
 import { buildRoadmapModel, type RoadmapObjective } from '../../lib/roadmap-model.js';
@@ -40,7 +39,7 @@ import {
   type BudgetSection, type BudgetRung, type BudgetResult,
 } from '../../lib/snapshot-budget.js';
 import {
-  compressMarkdownBlock, compressedCoreFile, packToCharBudget, shrinkBody,
+  capAtWordBoundary, compressMarkdownBlock, compressedCoreFile, packToCharBudget, shrinkBody,
   type CompressOptions,
 } from '../../lib/snapshot-compress.js';
 import {
@@ -48,11 +47,13 @@ import {
   // both never-evict now, so no core file has a compression rung to configure.
   // See the note on `renderCoreFile` below and in `snapshot-caps.ts`.
   MEMORY_DEEP_ITEM_CHARS, MEMORY_DEEP_PER_SECTION_CHARS,
-  TASKS_L1_CHARS, TASKS_L2_CHARS, TASKS_ROSTER_CHARS,
-  FEATURES_L1_CHARS, FEATURES_L2_CHARS, FEATURES_ROSTER_CHARS,
-  KNOWLEDGE_L2_CHARS, PINNED_ITEM_CHARS, PINNED_KNOWLEDGE_CHARS,
+  TASKS_DETAIL_CHARS, TASKS_DETAIL_MAX, TASKS_DETAIL_FLOOR_CHARS,
+  TASKS_EXCEPTIONS_CHARS, TASKS_EXCEPTIONS_FLOOR_CHARS,
+  FEATURES_L2_CHARS, FEATURES_ROSTER_CHARS,
+  PINNED_ITEM_CHARS, PINNED_KNOWLEDGE_CHARS,
   BOOKMARKS_L1_CHARS, BOOKMARK_ITEM_CHARS,
-  EXTENDED_CORE_L1_CHARS, RELEASES_L1_CHARS,
+  EXTENDED_CORE_L1_CHARS, EXTENDED_CORE_SUMMARY_CHARS, RELEASES_L1_CHARS, RELEASES_LATEST_SUMMARY_CHARS,
+  CONNECTED_PEER_ID_CHARS, PATTERN_BRIEF_CHARS, PATTERNS_FLOOR_CHARS,
   CONNECTED_L1_CHARS, CONNECTED_L2_CHARS, PEOPLE_ROSTER_L1_CHARS,
   OBJECTIVES_L2_CHARS, OBJECTIVE_ITEM_CHARS, THESES_CLAIM_CHARS,
   BANNER_MAX_CORE_FILES, DEMOTION_RANKS,
@@ -75,6 +76,17 @@ export const DEFAULT_PINNED_PREVIEW_LINES = 60;
  */
 const PINNED_BANNER =
   '> !!! ÇOK ÖNEMLİ !!! Kullanıcı bu bilgiyi pinlemiş — yapacağın bir işle ilişkisi varsa MUTLAKA OKU!\n';
+
+/**
+ * The patterns block's hard warning — same register as PINNED_BANNER, and like
+ * it, NEVER dropped at any rung: the soul-split migration moves rule-bearing
+ * conditionals into `knowledge/patterns/`, so a patterns list rendered as
+ * ordinary inventory would demote RULES to trivia the moment they left the
+ * soul (owner requirement 2026-07-30: referenced "pinlenmiş haliyle, sert
+ * uyarılarla").
+ */
+const PATTERNS_BANNER =
+  '> !!! ÇOK ÖNEMLİ !!! Bu pattern\'lar projenin KURALLARIDIR (çoğu soul\'dan taşınmıştır) — yapacağın işle ilişkili olanları MUTLAKA OKU!\n';
 
 /**
  * The pinned 📌 block for the DEMOTED (rung-2) knowledge index.
@@ -164,16 +176,40 @@ function namedRosterTail(names: string[], budget: number, noun: string, recovery
     used += cost;
   }
   const omitted = names.length - named.length;
-  const head = omitted > 0
-    ? `+${names.length} more ${noun} — ${named.length} named, ${omitted} omitted`
-    : `+${names.length} more ${noun}`;
-  return `- (${head}: ${named.join(', ')} — ${recovery})`;
+  // The omitted count comes AFTER the list: the old "N named, M omitted: <list>"
+  // read as if the colon introduced the omitted names.
+  const tail = omitted > 0 ? ` — +${omitted} unnamed` : '';
+  return `- (+${names.length} more ${noun}: ${named.join(', ')}${tail} — ${recovery})`;
 }
 
 /** Recovery pointer for anything that lives inside `core/2.memory.md`. */
 function memoryRecallTail(count: number): string {
   return `- (+${count} more in \`_dream_context/core/2.memory.md\` — \`dreamcontext memory recall "<keywords>"\`)`;
 }
+
+/**
+ * Standing recovery footers — one line, present at EVERY rung including the
+ * floor (owner ask 2026-07-30: each inventory section teaches how to SEARCH
+ * its history and how to BROWSE it, so the section head is never a dead end).
+ */
+const CHANGELOG_FOOTER =
+  '(search: `dreamcontext memory recall "<q>" --types changelog` · browse: `dreamcontext changelog list --page 1`)';
+const TASKS_FOOTER =
+  '(search: `dreamcontext memory recall "<q>" --types task` · filter/browse: `dreamcontext tasks list '
+  + '[-s todo|in_progress|in_review|completed | -a] [--version <sprint>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] '
+  + '[--objective <slug>] [--feature <slug>]`)';
+const BOOKMARKS_FOOTER =
+  '(all bookmarks: `dreamcontext bookmark list`)';
+const FEATURES_FOOTER =
+  '(search: `dreamcontext memory recall "<q>" --types feature` · PRDs live in `_dream_context/knowledge/features/`)';
+
+/**
+ * Tail line under a memory file rendered IN FULL (at or under the core
+ * ceiling): the file is sleep's distilled working set, so instead of ever
+ * cutting it the render adds one pointer to everything beyond it.
+ */
+const MEMORY_FULL_TAIL =
+  '> Working set only — full history (archived decisions, changelog, sessions): `dreamcontext memory recall "<keywords>"`.';
 
 /**
  * Deepest Memory rung: every entry compressed to its title, then each H2 packed
@@ -326,7 +362,7 @@ export function extractFirstParagraph(content: string): string {
   }
 
   const result = paragraphLines.join(' ');
-  return result.length > 300 ? result.slice(0, 297) + '...' : result;
+  return capAtWordBoundary(result, 300);
 }
 
 /**
@@ -336,12 +372,12 @@ export function extractFirstParagraph(content: string): string {
 interface ActiveTaskEntry {
   text: string;
   /**
-   * The task's file slug. Carried explicitly so a demoted rung can name the
-   * tasks it omitted without regexing them back out of the rendered `text` —
-   * the roster must reproduce the slug exactly, since it is what
-   * `dreamcontext tasks <slug>` takes.
+   * The task's file slug — the ADDRESS (`dreamcontext tasks <slug>`, the file
+   * path). Never displayed as a title: legacy slugs mangled Turkish names.
    */
   slug: string;
+  /** The HUMAN name from frontmatter (falls back to the slug) — what renders. */
+  name: string;
   status: string;
   priority: string;
   updated: string;
@@ -352,6 +388,13 @@ interface ActiveTaskEntry {
  * under-budget snapshots stay byte-identical): in_progress first, then
  * priority, then most recently updated.
  */
+/**
+ * Statuses the demoted task roster does NOT mark: the routine "being worked /
+ * queued" states. Anything else (blocked, in_review, unknown, custom) rides
+ * along as a ` [status]` marker on the slug — the exceptions are the signal.
+ */
+const QUIET_TASK_STATUSES = new Set(['in_progress', 'todo', 'planned']);
+
 export function sortTaskEntriesByActivity(entries: ActiveTaskEntry[]): ActiveTaskEntry[] {
   const statusRank = (s: string): number => (s === 'in_progress' ? 0 : s === 'blocked' ? 1 : 2);
   const prioRank = (p: string): number =>
@@ -377,11 +420,20 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
       const { data } = readFrontmatter(file);
       const status = String(data.status ?? 'unknown');
       if (status === 'completed') continue;
-      const name = basename(file, '.md');
+      const slug = basename(file, '.md');
+      // Display the HUMAN name from frontmatter, never the slug: legacy slugs
+      // dropped Turkish letters wholesale ("retmen-fte-yeniden-tasar-m…"), and
+      // the files are never renamed — so the slug is an address, not a title
+      // (owner order 2026-07-30: "görevleri olduğu gibi göster"). Folded YAML
+      // names carry newlines; collapse to one line.
+      const name = String(data.name ?? slug).replace(/\s+/g, ' ').trim() || slug;
       const priority = String(data.priority ?? '-');
       const updated = String(data.updated_at ?? data.created_at ?? '');
 
-      let line = `- ${name} (status: ${status}, priority: ${priority}, updated: ${updated})`;
+      let line = `- **${name}** (status: ${status}, priority: ${priority}, updated: ${updated})`;
+      // The slug stays one subline away — it is what `dreamcontext tasks
+      // <slug>` and the file path take.
+      line += `\n  -> _dream_context/state/${slug}.md`;
 
       // Why (from ## Why section, first real line)
       // Strip HTML comments first (template placeholders like
@@ -392,8 +444,7 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
           const stripped = whyContent.replace(/<!--[\s\S]*?-->/g, '');
           const firstLine = stripped.split('\n').find(l => l.trim() && !l.trim().startsWith('('))?.trim();
           if (firstLine) {
-            const capped = firstLine.length > 250 ? firstLine.slice(0, 247) + '...' : firstLine;
-            line += `\n  Why: ${capped}`;
+            line += `\n  Why: ${capAtWordBoundary(firstLine, 250)}`;
           }
         }
       } catch { /* skip */ }
@@ -432,7 +483,7 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
         line += `\n  Custom fields: ${rendered.join(', ')}`;
       }
 
-      entries.push({ text: line, slug: name, status, priority, updated });
+      entries.push({ text: line, slug, name, status, priority, updated });
     } catch {
       // skip unreadable files
     }
@@ -843,9 +894,12 @@ function renderObjectivesSection(root: string): { full: string; demotions: strin
     for (const o of active) level1.push(objectiveSnapshotLine(o));
     level1.push('');
 
+    // The count breaks down active vs done: "7 objective(s)" over a 6-line
+    // list read as if one had been silently dropped.
+    const doneCount = model.objectives.length - active.length;
     const level2 = [
       '## Objectives (Roadmap)\n',
-      `${model.objectives.length} objective(s)${slippingCount > 0 ? ` — ${slippingCount} SLIPPING` : ''}. Board: \`dreamcontext roadmap\`.`,
+      `${active.length} active${doneCount > 0 ? ` + ${doneCount} done` : ''} objective(s)${slippingCount > 0 ? ` — ${slippingCount} SLIPPING` : ''}. Board: \`dreamcontext roadmap\`.`,
       '',
       ...packToCharBudget(
         active,
@@ -903,14 +957,20 @@ function renderLabSection(root: string): { full: string; demotions: string[] } |
     const insights = listInsights(root);
     if (insights.length === 0) return null;
 
-    const headerLines = ['## Lab (Analytics Insights)\n', ''];
+    // No '' element after the header: its trailing '\n' already yields the one
+    // conventional blank line — a second one rendered as a double gap.
+    const headerLines = ['## Lab (Analytics Insights)\n'];
     const lines = insights.map((m) =>
       insightSnapshotLine(root, m.slug, m.title, m.group, m.unit, m.refresh.ttl_minutes));
 
-    const fullBody = [...headerLines, ...lines, '', 'Sync: `dreamcontext lab sync <slug>` or `--all`.', ''];
-    const level1 = [...headerLines, ...lines, ''];
+    // Name + latest value for EVERY insight, at every budget (owner decision
+    // 2026-07-30 reaffirmed: this is what lets Rule 13 answer "what's our MRR?"
+    // from the snapshot). The pointer line survives with them, so there is no
+    // cheaper render at all — the section simply never demotes.
+    const fullBody = [...headerLines, ...lines, '',
+      'Detail: `dreamcontext lab show <slug>` · sync: `dreamcontext lab sync <slug>` or `--all`.', ''];
 
-    return { full: fullBody.join('\n'), demotions: [level1.join('\n')] };
+    return { full: fullBody.join('\n'), demotions: [] };
   } catch {
     return null; // the snapshot must never crash on a malformed manifest
   }
@@ -957,15 +1017,16 @@ function buildThesesSection(root: string, config: SetupConfig | null): BudgetSec
       return !Number.isNaN(updated) && updated >= cutoff;
     });
     const blocked = theses.filter((t) => t.blocked_on_instrumentation);
+    // Top TWO open claims + one summary line + the pointer (owner decision
+    // 2026-07-30: "the most active one or two are enough — the rest is a
+    // 'go here' sentence").
     const topOpen = [...open]
       .sort((a, b) => Math.abs(b.confidence - 0.5) - Math.abs(a.confidence - 0.5))
-      .slice(0, 3);
+      .slice(0, 2);
 
-    const headerLines = ['## Learning (Hypotheses)\n', ''];
+    const headerLines = ['## Learning (Hypotheses)\n'];
     const summaryLines = [
-      `- ${open.length} open`,
-      `- ${recentFlips.length} flipped this week`,
-      `- ${blocked.length} awaiting instrumentation`,
+      `- ${open.length} open · ${recentFlips.length} flipped this week · ${blocked.length} awaiting instrumentation`,
     ];
     const topLines = topOpen.length > 0
       ? ['', 'Top open:', ...topOpen.map(thesisSnapshotLine)]
@@ -979,11 +1040,13 @@ function buildThesesSection(root: string, config: SetupConfig | null): BudgetSec
     // hypotheses exist while hiding every claim being tested. Counts alone
     // cannot be acted on, so the claims come with them at every level of
     // pressure — there is no cheaper rung for the ladder to reach for.
+    // The board pointer survives the rung too — a section head must never be
+    // a dead end (owner ask 2026-07-30).
     const level1 = [
       ...headerLines,
       ...summaryLines,
       ...(topOpen.length > 0 ? ['', 'Top open:', ...topOpen.map(thesisCompactLine)] : []),
-      '',
+      ...footer,
     ].join('\n');
 
     return demotableSection('theses', fullText, [level1], 1);
@@ -1319,24 +1382,45 @@ export function measureSnapshot(
   }
 
   // 3. Memory file (full content) — WHAT the agent knows.
-  // Rungs 1-2: Technical Decisions keeps the newest N bullets, older collapse to
-  // titles. Rung 3 compresses EVERY entry to its title and packs each H2 into
-  // its own budget — that is what finally shrinks `## Known Issues`, which the
-  // heading-specific rungs above never touched.
+  //
+  // Two regimes, split on the SAME ceiling `dreamcontext doctor` audits
+  // (CORE_FILE_CHAR_CEILING, measured on the raw file exactly like
+  // `auditCoreFileSizes` so the two verdicts can never disagree):
+  //
+  //   AT OR UNDER the ceiling — the file renders IN FULL, no rungs. SLEEP is
+  //   this file's compressor: it already distilled the working set to fit the
+  //   ceiling and archived the rest, so a render-time rung here compresses the
+  //   compressed and throws that work away. One pointer line under the block
+  //   says where everything beyond the working set lives.
+  //
+  //   OVER the ceiling (an unslept vault) — the ladder applies. Rungs 1-2:
+  //   Technical Decisions keeps the newest N bullets, older collapse to titles.
+  //   Rung 3 compresses EVERY entry to its title and packs each H2 into its own
+  //   budget — that is what finally shrinks `## Known Issues`, which the
+  //   heading-specific rungs above never touched. Unlike the constitutions this
+  //   cut is honest: every demoted entry is one `memory recall` away, and the
+  //   doctor core-size error still names the file so the fix lands on sleep.
   const MEMORY_HEADER = '## Memory (Technical Decisions, Known Issues, Session Log)\n';
   const memoryPath = join(root, 'core', '2.memory.md');
   if (existsSync(memoryPath)) {
-    const content = readFileSync(memoryPath, 'utf-8').trim();
+    const raw = readFileSync(memoryPath, 'utf-8');
+    const content = raw.trim();
     if (content) {
       parts.push(MEMORY_HEADER);
       parts.push(content);
       parts.push('');
-      const full = parts.join('\n');
-      flushDemotable('memory', [
-        () => demoteMemoryBlock(full, 8),
-        () => demoteMemoryBlock(full, 4),
-        () => demoteMemoryBlockDeep(MEMORY_HEADER, content),
-      ]);
+      if (raw.length <= CORE_FILE_CHAR_CEILING) {
+        parts.push(MEMORY_FULL_TAIL);
+        parts.push('');
+        flushDemotable('memory', []);
+      } else {
+        const full = parts.join('\n');
+        flushDemotable('memory', [
+          () => demoteMemoryBlock(full, 8),
+          () => demoteMemoryBlock(full, 4),
+          () => demoteMemoryBlockDeep(MEMORY_HEADER, content),
+        ]);
+      }
     }
   }
 
@@ -1355,12 +1439,21 @@ export function measureSnapshot(
       parts.push(line);
     }
     parts.push('');
+    // The demoted index keeps a SHORT summary per file (first sentence,
+    // word-safe): the name says what a core file is, the clause says what is
+    // IN it — a bare "tech-stack (path)" line gave the agent no reason to ever
+    // open the file (owner call 2026-07-29).
     flushDemotable('extended-core', [
       () => [
         '## Extended Core Files\n',
         ...packToCharBudget(
           coreExtras,
-          (entry) => `- **${entry.name}** (${entry.path})`,
+          (entry) => {
+            const brief = entry.summary
+              ? shrinkBody(entry.summary, EXTENDED_CORE_SUMMARY_CHARS, false)
+              : '';
+            return `- **${entry.name}** (${entry.path})${brief ? `: ${brief}` : ''}`;
+          },
           EXTENDED_CORE_L1_CHARS,
           (rest) => namedRosterTail(
             rest.map((entry) => entry.name), EXTENDED_CORE_L1_CHARS,
@@ -1378,26 +1471,71 @@ export function measureSnapshot(
   // here: 8 entries is 3KB on one vault and 900 chars on another.
   const activeTasks = getActiveTaskEntries(root);
   if (activeTasks.length > 0) {
+    // Level 0: every active entry in full, file order — small vaults keep
+    // their whole board, byte-identical.
     parts.push('## Active Tasks\n');
     parts.push(activeTasks.map((t) => t.text).join('\n'));
     parts.push('');
+    parts.push(TASKS_FOOTER);
+    parts.push('');
+
+    // Demoted design (Fable judge verdict, owner-approved 2026-07-30):
+    //   1. Detailed entries — the activity-sorted head always, then only
+    //      in_progress entries, whole blocks packed into a char budget.
+    //   2. "Needs attention" line — every not-detailed task whose status is
+    //      not routine-queue (todo/planned) OR whose priority is critical,
+    //      named with a [status] marker via the namedRosterTail contract.
+    //   3. A per-status COUNT for the routine rest (never their names — the
+    //      hook's recall and the taught `tasks list` filters own discovery).
+    //   4. The filter-teaching footer.
+    // Contract: every active task is ACCOUNTED FOR — detailed, named, or
+    // counted; the three sum to the true total.
     const sorted = sortTaskEntriesByActivity(activeTasks);
-    const renderTasks = (keptChars: number): string => [
-      '## Active Tasks\n',
-      packToCharBudget(
-        sorted,
-        (entry) => entry.text,
-        keptChars,
-        (rest) => namedRosterTail(
-          rest.map((entry) => entry.slug), TASKS_ROSTER_CHARS,
-          'active task(s)', '`dreamcontext tasks list`',
-        ),
-      ).join('\n'),
-      '',
-    ].join('\n');
+    const renderTasks = (detailChars: number, detailMax: number, exceptionsChars: number): string => {
+      const detailCandidates = [
+        sorted[0],
+        ...sorted.slice(1).filter((e) => e.status === 'in_progress'),
+      ];
+      const detailed: typeof sorted = [];
+      let used = 0;
+      for (const e of detailCandidates) {
+        if (detailed.length >= detailMax) break;
+        const cost = e.text.length + 1;
+        if (detailed.length > 0 && used + cost > detailChars) break;
+        detailed.push(e);
+        used += cost;
+      }
+      const detailedSet = new Set(detailed);
+      const rest = sorted.filter((e) => !detailedSet.has(e));
+
+      const attention = rest.filter((e) =>
+        !QUIET_TASK_STATUSES.has(e.status) || e.status === 'in_progress' || e.priority === 'critical');
+      const routine = rest.filter((e) => !attention.includes(e));
+
+      const out: string[] = ['## Active Tasks\n'];
+      out.push(...detailed.map((e) => e.text));
+      if (attention.length > 0) {
+        out.push(namedRosterTail(
+          attention.map((e) => (e.status === 'in_progress' && e.priority === 'critical'
+            ? `${e.name} [critical]`
+            : `${e.name} [${e.status}]`)), exceptionsChars,
+          'task(s) needing attention', '`dreamcontext tasks list`',
+        ));
+      }
+      if (routine.length > 0) {
+        const byStatus = new Map<string, number>();
+        for (const e of routine) byStatus.set(e.status, (byStatus.get(e.status) ?? 0) + 1);
+        const breakdown = [...byStatus.entries()].map(([s, n]) => `${n} ${s}`).join(' · ');
+        out.push(byStatus.size === 1
+          ? `- (+${routine.length} more active task(s), all ${[...byStatus.keys()][0]} — see commands below)`
+          : `- (+${routine.length} more active task(s), not listed: ${breakdown} — see commands below)`);
+      }
+      out.push('', TASKS_FOOTER, '');
+      return out.join('\n');
+    };
     flushDemotable('tasks', [
-      () => renderTasks(TASKS_L1_CHARS),
-      () => renderTasks(TASKS_L2_CHARS),
+      () => renderTasks(TASKS_DETAIL_CHARS, TASKS_DETAIL_MAX, TASKS_EXCEPTIONS_CHARS),
+      () => renderTasks(TASKS_DETAIL_FLOOR_CHARS, 1, TASKS_EXCEPTIONS_FLOOR_CHARS),
     ]);
   }
 
@@ -1456,28 +1594,68 @@ export function measureSnapshot(
       }).replace(/^- /, '');
       return `- ${salienceLabels[b.salience] || '*'} ${message}${taskRef}`;
     };
+    // Count-only: the standing BOOKMARKS_FOOTER below carries the command at
+    // every rung, so the tail no longer repeats it.
     const quieterTail = (rest: typeof sorted): string =>
-      `- (+${rest.length} quieter bookmark(s) — \`dreamcontext bookmark list\`)`;
+      `- (+${rest.length} quieter bookmark(s))`;
 
     parts.push('## Bookmarks\n');
     for (const b of sorted) parts.push(bookmarkLine(b));
     parts.push('');
+    parts.push(BOOKMARKS_FOOTER);
+    parts.push('');
 
     const critical = sorted.filter((b) => b.salience === 3);
+    // The floor keeps the HIGHEST tier that exists: ★★★ verbatim when there
+    // are any; otherwise the ★★ tier, first-sentence each, packed into the
+    // same budget as rung 1. With zero critical bookmarks the old floor was a
+    // bare count, which read as "nothing worth knowing here" (owner call
+    // 2026-07-29). ★ always stays behind the accurate tail.
+    const floorRung = (): string => {
+      if (critical.length > 0) {
+        return [
+          '## Bookmarks\n',
+          ...critical.map(bookmarkLine),
+          ...(sorted.length > critical.length
+            ? [quieterTail(sorted.slice(critical.length))]
+            : []),
+          '',
+          BOOKMARKS_FOOTER,
+          '',
+        ].join('\n');
+      }
+      const twoStar = sorted.filter((b) => b.salience === 2);
+      const oneStar = sorted.filter((b) => b.salience < 2);
+      // Whole-item prefix packing, same contract as packToCharBudget — but the
+      // tail must count the ★ tier even when every ★★ line fits, which the
+      // omitted-only tail callback cannot express.
+      const keptLines: string[] = [];
+      let used = 0;
+      for (const b of twoStar) {
+        const line = compactLine(b);
+        if (keptLines.length > 0 && used + line.length + 1 > BOOKMARKS_L1_CHARS) break;
+        keptLines.push(line);
+        used += line.length + 1;
+      }
+      const rest = [...twoStar.slice(keptLines.length), ...oneStar];
+      return [
+        '## Bookmarks\n',
+        ...keptLines,
+        ...(rest.length > 0 ? [quieterTail(rest)] : []),
+        '',
+        BOOKMARKS_FOOTER,
+        '',
+      ].join('\n');
+    };
     flushDemotable('bookmarks', [
       () => [
         '## Bookmarks\n',
         ...packToCharBudget(sorted, compactLine, BOOKMARKS_L1_CHARS, quieterTail),
         '',
-      ].join('\n'),
-      () => [
-        '## Bookmarks\n',
-        ...critical.map(bookmarkLine),
-        ...(sorted.length > critical.length
-          ? [quieterTail(sorted.slice(critical.length))]
-          : []),
+        BOOKMARKS_FOOTER,
         '',
       ].join('\n'),
+      floorRung,
     ], 2);
   }
 
@@ -1595,7 +1773,9 @@ export function measureSnapshot(
         const scope = String(e.scope ?? '');
         const summary = typeof e.summary === 'string' ? e.summary : '';
         const desc = String(e.description ?? '');
-        const headline = summary || (desc.length > 200 ? desc.slice(0, 197) + '...' : desc);
+        // Word-boundary caps everywhere — a mid-word '...' cut left the agent
+        // unable to tell truncation from broken data.
+        const headline = summary || capAtWordBoundary(desc, 200);
         return `- ${date} [${type}] ${scope}: ${headline}${authorSuffix(e)}`;
       };
       const tier2LineOf = (e: Record<string, unknown>): string => {
@@ -1605,9 +1785,7 @@ export function measureSnapshot(
         const summary = typeof e.summary === 'string' ? e.summary : '';
         const desc = String(e.description ?? '');
         const raw = summary || desc;
-        const line = raw.length > TIER2_LINE_CHARS
-          ? raw.slice(0, TIER2_LINE_CHARS - 3) + '...'
-          : raw;
+        const line = capAtWordBoundary(raw, TIER2_LINE_CHARS);
         return `- ${date} [${type}] ${scope}: ${line}${authorSuffix(e)}`;
       };
       const renderChangelog = (withBodies: boolean, tier2Count: number): string[] => {
@@ -1619,10 +1797,7 @@ export function measureSnapshot(
           // Body preview only when summary is present (otherwise headline is
           // already the description). Avoids printing the same text twice.
           if (withBodies && summary && desc && desc !== summary) {
-            const body = desc.length > TIER1_BODY_CHARS
-              ? desc.slice(0, TIER1_BODY_CHARS - 3) + '...'
-              : desc;
-            out.push(`    ${body}`);
+            out.push(`    ${capAtWordBoundary(desc, TIER1_BODY_CHARS)}`);
           }
         }
         const t2 = tier2.slice(0, tier2Count);
@@ -1631,6 +1806,8 @@ export function measureSnapshot(
           out.push('### Older (titles only — use `dreamcontext memory recall --types changelog` for detail):');
           for (const e of t2) out.push(tier2LineOf(e));
         }
+        out.push('');
+        out.push(CHANGELOG_FOOTER);
         out.push('');
         return out;
       };
@@ -1657,7 +1834,26 @@ export function measureSnapshot(
       const releases = readJsonArray<Record<string, unknown>>(releasesPath);
       if (releases.length > 0) {
         const planning = releases.filter(r => r.status === 'planning');
-        const released = releases.filter(r => r.status !== 'planning');
+        // 'superseded' entries were never published, and the ARRAY ORDER of a
+        // hand-edited RELEASES.json is not a timeline — pick the latest
+        // actually-released version by semver, not by position. (This vault's
+        // own file had a superseded 0.20.2 sitting above 0.21.0, and the
+        // snapshot proudly called it the Latest Release.)
+        const released = releases.filter(r => r.status !== 'planning' && r.status !== 'superseded');
+        const latestReleased = released.length > 0
+          ? [...released].sort((a, b) =>
+            compareVersions(String(b.version ?? ''), String(a.version ?? '')))[0]
+          : null;
+        // Empty fields disappear instead of rendering as '()' or a dangling
+        // ':'. `sumCap` bounds the summary at the demoted rung (word-safe) —
+        // level 0 keeps the full narrative.
+        const latestLine = (latest: Record<string, unknown>, sumCap?: number): string => {
+          const date = String(latest.date ?? '');
+          const rawSum = String(latest.summary ?? '');
+          const sum = sumCap === undefined ? rawSum : capAtWordBoundary(rawSum, sumCap);
+          const brk = latest.breaking ? ' (BREAKING)' : '';
+          return `- ${String(latest.version ?? '')}${date ? ` (${date})` : ''}${brk}${sum ? `: ${sum}` : ''}`;
+        };
 
         releasesRung = (): string => {
           const out: string[] = [];
@@ -1677,11 +1873,9 @@ export function measureSnapshot(
             ));
             out.push('');
           }
-          if (released.length > 0) {
-            const latest = released[0];
-            const brk = latest.breaking ? ' (BREAKING)' : '';
+          if (latestReleased) {
             out.push('## Latest Release\n');
-            out.push(`- ${String(latest.version ?? '')} (${String(latest.date ?? '')})${brk}: ${String(latest.summary ?? '')}`);
+            out.push(latestLine(latestReleased, RELEASES_LATEST_SUMMARY_CHARS));
             out.push('');
           }
           return out.join('\n');
@@ -1698,16 +1892,11 @@ export function measureSnapshot(
           parts.push('');
         }
 
-        if (released.length > 0) {
-          const latest = released[0];
-          const ver = String(latest.version ?? '');
-          const relDate = String(latest.date ?? '');
-          const sum = String(latest.summary ?? '');
-          const taskCount = Array.isArray(latest.tasks) ? latest.tasks.length : 0;
-          const featCount = Array.isArray(latest.features) ? latest.features.length : 0;
-          const brk = latest.breaking ? ' (BREAKING)' : '';
+        if (latestReleased) {
+          const taskCount = Array.isArray(latestReleased.tasks) ? latestReleased.tasks.length : 0;
+          const featCount = Array.isArray(latestReleased.features) ? latestReleased.features.length : 0;
           parts.push('## Latest Release\n');
-          parts.push(`- ${ver} (${relDate})${brk}: ${sum}`);
+          parts.push(latestLine(latestReleased));
           if (taskCount > 0 || featCount > 0) {
             parts.push(`  Includes: ${taskCount} task(s), ${featCount} feature(s)`);
           }
@@ -1740,7 +1929,9 @@ export function measureSnapshot(
   // already answered here instead of at some external API (Rule 13).
   const labSection = renderLabSection(root);
   if (labSection) {
-    sections.push(demotableSection('lab', labSection.full, labSection.demotions, 1));
+    // No rungs at all — see renderLabSection: every insight's name + latest
+    // value is the section's whole purpose (Rule 13).
+    sections.push(demotableSection('lab', labSection.full, labSection.demotions));
   }
 
   // 7.8 Learning (proactive learning layer — theses) — hard-gated on
@@ -1750,17 +1941,18 @@ export function measureSnapshot(
     sections.push(thesesSection);
   }
 
-  // 8. Features summary (with Why, related tasks, and latest changelog).
-  // Demotion: active + recently-updated features keep their detail block; the
-  // rest collapse to a name+status+path line (PRD is one Read away).
+  // 8. Features index — NAME + STATUS + PATH, nothing more (owner decision
+  // 2026-07-30: the PRD is one Read away, and the old per-feature Why/Tasks/
+  // Latest detail blocks were budget spent restating files the agent can open).
+  // Active features sort first so the working set leads the list.
   const featuresPath = featuresDir(root);
   if (existsSync(featuresPath)) {
     // Recurse so features grouped into topical/product subfolders are listed too.
-    const featureFiles = fg.sync('**/*.md', { cwd: featuresPath, absolute: true });
-    const features: string[] = [];
-    const featureMeta: Array<{
-      detail: string; nameLine: string; slug: string; status: string; updated: string;
-    }> = [];
+    // Excalidraw boards are knowledge, not PRDs — one living under features/
+    // (misplaced content) must not be presented as a feature.
+    const featureFiles = fg.sync('**/*.md', { cwd: featuresPath, absolute: true })
+      .filter((f) => !f.endsWith('.excalidraw.md'));
+    const featureMeta: Array<{ nameLine: string; slug: string; status: string; updated: string }> = [];
 
     for (const file of featureFiles) {
       try {
@@ -1769,65 +1961,7 @@ export function measureSnapshot(
         // nested features (flat features round-trip to their basename).
         const name = featureSlug(featuresPath, file);
         const status = String(data.status ?? 'unknown');
-        const tags = Array.isArray(data.tags) ? data.tags.join(', ') : '';
-
-        // Why (from ## Why section, first real line; HTML template comments stripped)
-        let why = '';
-        try {
-          const whyContent = readSection(file, 'Why');
-          if (whyContent) {
-            const stripped = whyContent.replace(/<!--[\s\S]*?-->/g, '');
-            const firstLine = stripped.split('\n').find(l => l.trim() && !l.trim().startsWith('('))?.trim();
-            if (firstLine) {
-              why = firstLine.length > 250 ? firstLine.slice(0, 247) + '...' : firstLine;
-            }
-          }
-        } catch { /* skip */ }
-
-        // Related tasks (from frontmatter)
-        const relatedTasks = Array.isArray(data.related_tasks) && data.related_tasks.length > 0
-          ? data.related_tasks.join(', ')
-          : '';
-
-        // Latest changelog entry (from ## Changelog section)
-        let latest = '';
-        try {
-          const changelogContent = readSection(file, 'Changelog');
-          if (changelogContent) {
-            const lines = changelogContent.split('\n');
-            const headerLine = lines.find(l => l.startsWith('### '));
-            if (headerLine) {
-              const header = headerLine.replace(/^###\s*/, '').trim();
-              if (!header.endsWith('- Created')) {
-                const bulletIdx = lines.indexOf(headerLine) + 1;
-                const bullet = lines.slice(bulletIdx).find(l => l.trim().startsWith('-'));
-                if (bullet) {
-                  const entry = `${header.split(' - ')[0]} - ${bullet.trim().replace(/^-\s*/, '')}`;
-                  latest = entry.length > 120 ? entry.slice(0, 117) + '...' : entry;
-                }
-              }
-            }
-          }
-        } catch { /* skip */ }
-
-        // Build output
-        const freshness = computeFeatureFreshness(
-          String(data.created ?? ''),
-          String(data.updated ?? ''),
-        );
-        const freshnessNote = freshnessSnapshotNote(freshness);
-        let featureLine = `- **${name}** (status: ${status}${tags ? `, tags: ${tags}` : ''})${freshnessNote}`;
-        const details: string[] = [];
-        if (why) details.push(`  Why: ${why}`);
-        if (relatedTasks) details.push(`  Tasks: ${relatedTasks}`);
-        if (latest) details.push(`  Latest: ${latest}`);
-
-        if (details.length > 0) {
-          featureLine += '\n' + details.join('\n');
-        }
-        features.push(featureLine);
         featureMeta.push({
-          detail: featureLine,
           nameLine: `- **${name}** (status: ${status}) -> _dream_context/knowledge/features/${name}.md`,
           slug: name,
           status,
@@ -1838,216 +1972,139 @@ export function measureSnapshot(
       }
     }
 
-    if (features.length > 0) {
-      parts.push('## Features\n');
-      parts.push(features.join('\n'));
-      parts.push('');
+    if (featureMeta.length > 0) {
       const activeFirst = [...featureMeta].sort((a, b) => {
         const rank = (s: string): number =>
           s === 'in_progress' || s === 'active' ? 0 : s === 'planned' || s === 'todo' ? 1 : 2;
         return rank(a.status) - rank(b.status) || b.updated.localeCompare(a.updated);
       });
-      // Rung 1 keeps as many full detail blocks as fit, then falls back to
-      // name+status+path lines for the rest. Rung 2 keeps only name lines, and
-      // its own tail names whole slugs — a feature the agent cannot name is a
-      // feature it will rebuild.
-      const renderFeatureDetails = (): string => [
-        '## Features\n',
-        packToCharBudget(
-          activeFirst,
-          (f) => f.detail,
-          FEATURES_L1_CHARS,
-          (rest) => rest.map((f) => f.nameLine).join('\n'),
-        ).join('\n'),
-        '',
-      ].join('\n');
-      const renderFeatureNames = (): string => [
-        '## Features\n',
-        packToCharBudget(
-          activeFirst,
-          (f) => f.nameLine,
-          FEATURES_L2_CHARS,
-          (rest) => namedRosterTail(
-            rest.map((f) => f.slug), FEATURES_ROSTER_CHARS,
-            'feature(s)', 'PRDs in `_dream_context/knowledge/features/`',
-          ),
-        ).join('\n'),
-        '',
-      ].join('\n');
-      flushDemotable('features', [renderFeatureDetails, renderFeatureNames]);
+      parts.push('## Features\n');
+      parts.push(activeFirst.map((f) => f.nameLine).join('\n'));
+      parts.push('');
+      parts.push(FEATURES_FOOTER);
+      parts.push('');
+      // The one rung packs name lines and names the remainder whole — a
+      // feature the agent cannot name is a feature it will rebuild.
+      flushDemotable('features', [
+        () => [
+          '## Features\n',
+          packToCharBudget(
+            activeFirst,
+            (f) => f.nameLine,
+            FEATURES_L2_CHARS,
+            (rest) => namedRosterTail(
+              rest.map((f) => f.slug), FEATURES_ROSTER_CHARS,
+              'feature(s)', 'PRDs in `_dream_context/knowledge/features/`',
+            ),
+          ).join('\n'),
+          '',
+          FEATURES_FOOTER,
+          '',
+        ].join('\n'),
+      ]);
     }
   }
 
-  // 9. Knowledge Index + Pinned Knowledge
+  // 9. Knowledge Index — level 0 is ALREADY compact (owner decision
+  // 2026-07-30): ONLY pinned entries carry descriptions; every pattern is
+  // listed by title with ONE short clause (the deep keyword-ranked pattern
+  // surface is the patterns run's scope — until then the titles must never be
+  // invisible); everything else is grouped folder names. Descriptions for the
+  // rest live one `dreamcontext knowledge index` / recall away — and the old
+  // Warm Knowledge previews are gone with the same doctrine: non-pinned
+  // knowledge is NAMED, never summarized.
   const knowledgeEntries = buildKnowledgeIndex(root);
   if (knowledgeEntries.length > 0) {
-    const indexLines: string[] = [];
-    const compactLines: string[] = [];
-    const pinnedEntries: typeof knowledgeEntries = [];
-    const warmEntries: typeof knowledgeEntries = [];
-
-    // Gather active task tags for warm knowledge matching
-    const activeTaskTags: string[] = [];
-    const stDir = join(root, 'state');
-    if (existsSync(stDir)) {
-      const tFiles = fg.sync('*.md', { cwd: stDir, absolute: true });
-      for (const file of tFiles) {
-        try {
-          const { data } = readFrontmatter(file);
-          if (String(data.status ?? '') === 'completed') continue;
-          if (Array.isArray(data.tags)) {
-            activeTaskTags.push(...data.tags.map((t: string) => String(t).toLowerCase()));
-          }
-        } catch { /* skip */ }
-      }
-    }
-
-    for (const entry of knowledgeEntries) {
-      const tagsStr = entry.tags.length > 0 ? ` [${entry.tags.join(', ')}]` : '';
-      // Staleness indicator
-      const accessRecord = sleepState.knowledge_access[entry.slug];
-      let stalenessNote = '';
-      if (accessRecord) {
-        const daysSince = Math.floor((Date.now() - new Date(accessRecord.last_accessed).getTime()) / (1000 * 60 * 60 * 24));
-        if (daysSince > 30) {
-          stalenessNote = ' (stale: not accessed in 30+ days)';
-        }
-      } else if (entry.date) {
-        const daysSinceCreation = Math.floor((Date.now() - new Date(entry.date).getTime()) / (1000 * 60 * 60 * 24));
-        if (daysSinceCreation > 30) {
-          stalenessNote = ' (stale: never accessed)';
-        }
-      }
-
-      indexLines.push(`- **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}${stalenessNote}`);
-      compactLines.push(`- **${entry.slug}**${tagsStr}${stalenessNote ? ' (stale)' : ''}`);
-      if (entry.pinned) {
-        pinnedEntries.push(entry);
-      } else if (!stalenessNote) {
-        // Warm candidate: recently accessed or task-relevant
-        const isRecentlyAccessed = accessRecord && accessRecord.count > 0 &&
-          (Date.now() - new Date(accessRecord.last_accessed).getTime()) < 7 * 24 * 60 * 60 * 1000; // 7 days
-        const isTaskRelevant = entry.tags.some(t => activeTaskTags.includes(t.toLowerCase()));
-        if (isRecentlyAccessed || isTaskRelevant) {
-          warmEntries.push(entry);
-        }
-      }
-    }
-
-    parts.push('## Knowledge Index\n');
+    const pinnedEntries = knowledgeEntries.filter((e) => e.pinned);
+    const pinnedSlugs = new Set(pinnedEntries.map((e) => e.slug));
+    const nonPinnedEntries = knowledgeEntries.filter((e) => !pinnedSlugs.has(e.slug));
 
     // Pinned entries surface at the TOP with a prominent warning. Body is
     // intentionally NOT inlined — `memory recall` fetches on demand and the
     // agent can Read the file when the warning applies.
+    const pinnedBlockFull: string[] = [];
     if (pinnedEntries.length > 0) {
-      parts.push(PINNED_BANNER);
+      pinnedBlockFull.push(PINNED_BANNER);
       for (const entry of pinnedEntries) {
         const tagsStr = entry.tags.length > 0 ? ` [${entry.tags.join(', ')}]` : '';
-        parts.push(`- 📌 **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}`);
+        pinnedBlockFull.push(`- 📌 **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}`);
       }
-      parts.push('');
+      pinnedBlockFull.push('');
     }
 
-    const pinnedSlugs = new Set(pinnedEntries.map(e => e.slug));
-    const nonPinnedLines = indexLines.filter((_, i) => !pinnedSlugs.has(knowledgeEntries[i]?.slug));
-    if (nonPinnedLines.length > 0) {
-      if (pinnedEntries.length > 0) parts.push('### Other knowledge:\n');
-      parts.push(nonPinnedLines.join('\n'));
-    }
-    parts.push('');
-    {
-      // Demoted index: pinned entries keep their full warning block; non-pinned
-      // entries drop descriptions but keep slug + tags (the discovery surface
-      // survives — descriptions come back via `dreamcontext knowledge index`).
-      const compactNonPinned = compactLines.filter((_, i) => !pinnedSlugs.has(knowledgeEntries[i]?.slug));
-      const compact: string[] = ['## Knowledge Index\n'];
-      if (pinnedEntries.length > 0) {
-        compact.push(PINNED_BANNER);
-        for (const entry of pinnedEntries) {
-          const tagsStr = entry.tags.length > 0 ? ` [${entry.tags.join(', ')}]` : '';
-          compact.push(`- 📌 **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}`);
-        }
-        compact.push('');
-        compact.push('### Other knowledge:\n');
-      }
-      compact.push('(slugs only — files at _dream_context/knowledge/<slug>.md; descriptions via `dreamcontext knowledge index` or memory recall)');
-      compact.push(compactNonPinned.join('\n'));
-      compact.push('');
+    const patternEntries = nonPinnedEntries.filter((e) => e.slug.startsWith('patterns/'));
+    const restEntries = nonPinnedEntries.filter((e) => !e.slug.startsWith('patterns/'));
+    const patternLines = (withBrief: boolean): string[] => patternEntries.map((e) => {
+      const brief = withBrief && e.description
+        ? `: ${shrinkBody(e.description, PATTERN_BRIEF_CHARS, false)}`
+        : '';
+      return `- **${e.slug}** (_dream_context/knowledge/${e.slug}.md)${brief}`;
+    });
 
-      // Rung 2 groups non-pinned slugs by folder. Even the compact rung is 9KB on
-      // both live vaults because it is one line per file; grouping collapses that
-      // to ~2KB while still naming every slug.
-      //
-      // This is also the ONLY rung where the pinned block is bounded. Carrying it
-      // verbatim here left the design with one unbounded term — 3,530 chars on a
-      // 6-pin vault, and nothing stopping a 40-pin one — which is exactly the
-      // class of defect every other tail was reworked to remove. It still degrades
-      // last, and every pin keeps its slug and path (see renderPinnedBlock).
-      const nonPinnedEntries = knowledgeEntries.filter((e) => !pinnedSlugs.has(e.slug));
-      const folders = new Map<string, string[]>();
-      for (const entry of nonPinnedEntries) {
-        const segments = entry.slug.split('/');
-        const folder = segments.length > 1
-          ? `_dream_context/knowledge/${segments.slice(0, -1).join('/')}/`
-          : '_dream_context/knowledge/';
-        const bucket = folders.get(folder);
-        if (bucket) bucket.push(segments[segments.length - 1]);
-        else folders.set(folder, [segments[segments.length - 1]]);
-      }
-      const grouped: string[] = ['## Knowledge Index\n'];
-      if (pinnedEntries.length > 0) {
-        grouped.push(...renderPinnedBlock(pinnedEntries, PINNED_ITEM_CHARS, PINNED_KNOWLEDGE_CHARS));
-        grouped.push('### Other knowledge:\n');
-      }
-      grouped.push('(grouped by folder — every file is named; descriptions via `dreamcontext knowledge index` or memory recall)');
-      grouped.push(...packToCharBudget(
-        [...folders.entries()],
-        ([folder, slugs]) => `- **${folder}** (${slugs.length}): ${slugs.join(', ')}`,
-        KNOWLEDGE_L2_CHARS,
-        (rest) => rest
-          .map(([folder, slugs]) => `- **${folder}** (${slugs.length} files — \`dreamcontext knowledge index\`)`)
-          .join('\n'),
-      ));
-      grouped.push('');
+    // Non-pinned, non-pattern knowledge is NOT listed at all (owner decision
+    // 2026-07-30: "pinlenmemiş knowledge'ları listelemeyelim — sadece
+    // komutlarla nasıl aranabileceğini gösterelim"). One honest count + the
+    // search/browse commands replace the old grouped folder inventory.
+    const restLine = `(+${restEntries.length} more knowledge file(s), not listed — search: `
+      + '`dreamcontext memory recall "<q>" --types knowledge` · full index with descriptions: '
+      + '`dreamcontext knowledge index`)';
 
-      flushDemotable('knowledge-index', [compact.join('\n'), grouped.join('\n')]);
-    }
+    const renderBody = (patternsWithBrief: boolean): string[] => {
+      const out: string[] = [];
+      if (patternEntries.length > 0) {
+        out.push('### Patterns (kurallar):\n');
+        out.push(PATTERNS_BANNER);
+        out.push(...patternLines(patternsWithBrief));
+        out.push('');
+      }
+      if (restEntries.length > 0) {
+        out.push(restLine);
+        out.push('');
+      }
+      return out;
+    };
 
-    // 9.5 Warm Knowledge (recently relevant, first paragraph only)
-    if (warmEntries.length > 0) {
-      // Option A (maintainer decision): no pinned-preview inline feature built.
-      // entry.content is already extracted text (not scene JSON) for Excalidraw
-      // boards — see knowledge-index.ts. So extractFirstParagraph(entry.content)
-      // here and the token estimate are always JSON-free and size-independent.
-      // A 2MB-scene board and a tiny-scene board with identical Text Elements
-      // yield equal token estimates. No functional change needed.
-      const renderWarm = (cap: number): string[] => {
-        const out: string[] = ['## Warm Knowledge (Recently Relevant)\n'];
-        for (const entry of warmEntries.slice(0, cap)) {
-          out.push(`### ${entry.name}`);
-          const firstParagraph = extractFirstParagraph(entry.content);
-          if (firstParagraph) {
-            out.push(firstParagraph);
-          }
-          out.push(`-> Read full: _dream_context/knowledge/${entry.slug}.md`);
-          out.push('');
-        }
-        if (warmEntries.length > cap) {
-          out.push(`(+${warmEntries.length - cap} more warm file(s) — listed in the Knowledge Index above)`);
-          out.push('');
-        }
-        return out;
-      };
-      parts.push(...renderWarm(warmEntries.length));
-      // First to demote and the only section whose deepest rung is a full drop —
-      // deliberately no floor. Every warm file is ALSO named, with its path, by
-      // the Knowledge Index directly above, so dropping this is the one place
-      // where nothing becomes unreachable. Cheapest loss in the whole ladder.
-      flushDemotable('warm-knowledge', [
-        () => renderWarm(4).join('\n'),
-        '(Warm knowledge omitted for budget — the Knowledge Index above lists every file; recall surfaces them on demand.)\n',
-      ]);
-    }
+    // The FLOOR keeps the patterns block too — slugs only, banner intact,
+    // packed with a named tail. Rules must never fold into anonymous folder
+    // inventory, however deep the ladder goes.
+    const patternsFloorBlock = (): string[] => (patternEntries.length > 0
+      ? [
+        '### Patterns (kurallar):\n',
+        PATTERNS_BANNER,
+        ...packToCharBudget(
+          patternEntries,
+          (e) => `- **${e.slug}**`,
+          PATTERNS_FLOOR_CHARS,
+          (rest) => namedRosterTail(
+            rest.map((e) => e.slug), PATTERNS_FLOOR_CHARS,
+            'pattern(s)', '`dreamcontext knowledge index`',
+          ),
+        ),
+        '',
+      ]
+      : []);
+
+    parts.push('## Knowledge Index\n');
+    parts.push(...pinnedBlockFull);
+    parts.push(...renderBody(true));
+
+    flushDemotable('knowledge-index', [
+      // Rung 1: pattern briefs drop — titles + paths only, banner intact.
+      () => ['## Knowledge Index\n', ...pinnedBlockFull, ...renderBody(false)].join('\n'),
+      // Rung 2: the pinned block is BOUNDED (the only rung where it is — an
+      // unbounded pin block was the one term nothing capped; see
+      // renderPinnedBlock); patterns keep their own warned block (slugs only);
+      // the rest stays the same count + search-commands line as level 0.
+      () => [
+        '## Knowledge Index\n',
+        ...(pinnedEntries.length > 0
+          ? renderPinnedBlock(pinnedEntries, PINNED_ITEM_CHARS, PINNED_KNOWLEDGE_CHARS)
+          : []),
+        ...patternsFloorBlock(),
+        ...(restEntries.length > 0 ? [restLine] : []),
+        '',
+      ].join('\n'),
+    ]);
   }
 
   // 11. Marketing snapshot (skill-pack scoped — only present when bootstrapped)
@@ -2110,9 +2167,12 @@ export function measureSnapshot(
     lines.push('');
     parts.push(lines.join('\n'));
 
-    // Rung 1 drops each peer's activity/tags/pinned-doc detail; rung 2 collapses
-    // to a single roster line. Both keep every peer NAMED, which is what makes
-    // `memory recall --vault <name>` reachable at all.
+    // Rung 1 drops each peer's activity/tags/pinned-doc detail; rung 2 keeps
+    // name + a SHORT identity per peer. Both keep every peer NAMED, which is
+    // what makes `memory recall --vault <name>` reachable at all — and the
+    // identity survives to the floor because a bare name reproduced the
+    // original soul-review complaint: the agent sees "Tilki" and has no idea
+    // Tilki is a B2B tutoring SaaS.
     const recallPointer = 'Recall already spans these. To search one directly: '
       + '`dreamcontext memory recall <q> --vault <name>`.';
     flushDemotable('connected-projects', [
@@ -2131,21 +2191,20 @@ export function measureSnapshot(
         recallPointer,
         '',
       ].join('\n'),
-      () => {
-        const names = packToCharBudget(
+      () => [
+        '## Connected projects\n',
+        ...packToCharBudget(
           peerCache.peers,
-          (p) => p.vault,
+          (p) => `- **${p.vault}**${p.whatItIs ? ` — ${shrinkBody(p.whatItIs, CONNECTED_PEER_ID_CHARS, false)}` : ''}`,
           CONNECTED_L2_CHARS,
-          (rest) => `+${rest.length} more (\`dreamcontext federation peers\`)`,
-        );
-        return [
-          '## Connected projects\n',
-          `- Readable peers: ${names.join(', ')}`,
-          '',
-          recallPointer,
-          '',
-        ].join('\n');
-      },
+          (rest) => namedRosterTail(
+            rest.map((p) => p.vault), CONNECTED_L2_CHARS, 'peer(s)', '`dreamcontext federation peers`',
+          ),
+        ),
+        '',
+        recallPointer,
+        '',
+      ].join('\n'),
     ]);
   }
 
@@ -2243,8 +2302,7 @@ export function generateSubagentBriefing(): string {
     if (projectName || summaryLine) {
       let summary = projectName ? `**${projectName}**` : '';
       if (summaryLine) {
-        const trimmed = summaryLine.trim();
-        const capped = trimmed.length > 120 ? trimmed.slice(0, 117) + '...' : trimmed;
+        const capped = capAtWordBoundary(summaryLine.trim(), 120);
         summary += summary ? `: ${capped}` : capped;
       }
       parts.push(`Project: ${summary}\n`);
@@ -2279,7 +2337,10 @@ export function generateSubagentBriefing(): string {
   const featuresPath = featuresDir(root);
   if (existsSync(featuresPath)) {
     // Recurse so features grouped into topical/product subfolders are listed too.
-    const featureFiles = fg.sync('**/*.md', { cwd: featuresPath, absolute: true });
+    // Excalidraw boards are knowledge, not PRDs — one living under features/
+    // (misplaced content) must not be presented as a feature.
+    const featureFiles = fg.sync('**/*.md', { cwd: featuresPath, absolute: true })
+      .filter((f) => !f.endsWith('.excalidraw.md'));
     const features: string[] = [];
 
     for (const file of featureFiles) {
@@ -2296,7 +2357,7 @@ export function generateSubagentBriefing(): string {
           if (whyContent) {
             const firstLine = whyContent.split('\n').find(l => l.trim() && !l.trim().startsWith('('))?.trim();
             if (firstLine) {
-              why = firstLine.length > 120 ? firstLine.slice(0, 117) + '...' : firstLine;
+              why = capAtWordBoundary(firstLine, 120);
             }
           }
         } catch { /* skip */ }

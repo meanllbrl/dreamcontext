@@ -182,6 +182,7 @@ The SessionStart hook injects this automatically every session — answer from i
 | **READ** | Full file needed | `Read _dream_context/core/<file>` |
 | **SKIM** | Recent entries only | First ~20 lines (LIFO: newest at top) |
 | **SEARCH** | Specific info across files | `dreamcontext memory recall` first, then `Grep` |
+| **HISTORY** | "What happened, in order?" — ship events over time | `dreamcontext changelog list --page <n>` (paginated, `--grep`/`--type`/`--scope`); recall answers "where did we do X?", this answers the timeline |
 
 ### Load Based on Task Intent
 

@@ -384,9 +384,13 @@ describe('module surface — no verbatim-pinning surface exists', () => {
   const read = (rel: string): string =>
     readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8');
 
-  it('exports exactly the four documented functions', async () => {
+  it('exports exactly the five documented functions', async () => {
     const mod = await import('../../src/lib/snapshot-compress.js');
     expect(Object.keys(mod).sort()).toEqual([
+      // capAtWordBoundary joined the surface 2026-07-29: the changelog block's
+      // three raw `slice(0, n) + '...'` cuts moved onto the shared word-safe
+      // primitive instead of hand-rolling a fourth truncation style.
+      'capAtWordBoundary',
       'compressMarkdownBlock',
       'compressedCoreFile',
       'packToCharBudget',

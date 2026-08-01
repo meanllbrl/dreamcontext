@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runMigrations } from '../../src/lib/migration-runner.js';
 import { appendLedger, readLedger } from '../../src/lib/migration-ledger.js';
-import { pendingMigrations } from '../../src/migrations/index.js';
+import { pendingMigrations, unfinishedAgentTasks } from '../../src/migrations/index.js';
 import type { Migration, MigrationAgentTask } from '../../src/migrations/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -101,5 +101,126 @@ describe('migration-agent-task', () => {
     const ledger = readLedger(root);
     expect(ledger).toHaveLength(1);
     expect(ledger[0].executor).toBe('agent');
+  });
+});
+
+describe('unfinishedAgentTasks — ledger-judged, setupVersion-blind (the 0.23.0 live regression)', () => {
+  // The live failure (Tilki, 2026-07-30): `update` ran the 0.23.0 code steps
+  // and advanced setupVersion to 0.23.0, so the old setupVersion-ranged
+  // `migrations pending` computed the empty range (0.23.0, 0.23.0] and printed
+  // "No pending agent migration tasks" while the residue distribution task
+  // sat unfinished. The LEDGER is the truth: started (code/detected recorded)
+  // and not done (no agent entry for the agentTask id) ⇒ pending.
+  let root: string;
+
+  beforeEach(() => {
+    root = makeRoot();
+  });
+
+  const codeEntry = (version: string) => ({
+    version,
+    step: 'split-user-file',
+    executor: 'code' as const,
+    timestamp: new Date().toISOString(),
+    filesTouched: [],
+    summary: 'code step ran',
+  });
+
+  it('a fresh vault (empty ledger) has NO unfinished agent tasks', () => {
+    // init'ing at the current version never ran the code steps, so a fresh
+    // vault must not be told to distribute a residue that does not exist.
+    expect(unfinishedAgentTasks(root, '0.23.0')).toEqual([]);
+  });
+
+  it('code steps recorded + agent steps missing ⇒ BOTH 0.23.0 tasks pending, same version', () => {
+    appendLedger(root, codeEntry('0.23.0'));
+    const tasks = unfinishedAgentTasks(root, '0.23.0');
+    expect(tasks.map((m) => m.agentTask?.id))
+      .toEqual(['distribute-user-md-residue', 'split-soul-into-patterns']);
+  });
+
+  it('recording BOTH agent steps silences the version entirely', () => {
+    appendLedger(root, codeEntry('0.23.0'));
+    for (const step of ['distribute-user-md-residue', 'split-soul-into-patterns']) {
+      appendLedger(root, {
+        version: '0.23.0',
+        step,
+        executor: 'agent',
+        timestamp: new Date().toISOString(),
+        filesTouched: [],
+        summary: 'done',
+      });
+    }
+    expect(unfinishedAgentTasks(root, '0.23.0')).toEqual([]);
+  });
+
+  it('an agent entry for a DIFFERENT step does not count as done', () => {
+    appendLedger(root, codeEntry('0.23.0'));
+    appendLedger(root, {
+      version: '0.23.0',
+      step: 'some-other-agent-step',
+      executor: 'agent',
+      timestamp: new Date().toISOString(),
+      filesTouched: [],
+      summary: 'unrelated',
+    });
+    expect(unfinishedAgentTasks(root, '0.23.0').map((m) => m.agentTask?.id))
+      .toEqual(['distribute-user-md-residue', 'split-soul-into-patterns']);
+  });
+
+  it('a migration newer than the running CLI never surfaces', () => {
+    appendLedger(root, codeEntry('0.23.0'));
+    expect(unfinishedAgentTasks(root, '0.22.0')).toEqual([]);
+  });
+
+  it('two agentTasks under the SAME version are judged independently (0.23.0)', () => {
+    // people-first (distribute-user-md-residue) and soul-split
+    // (split-soul-into-patterns) both ship as 0.23.0 — recording one must not
+    // hide the other.
+    appendLedger(root, codeEntry('0.23.0'));
+    appendLedger(root, {
+      version: '0.23.0',
+      step: 'detect-oversized-soul',
+      executor: 'detected',
+      timestamp: new Date().toISOString(),
+      filesTouched: [],
+      summary: 'soul over ceiling',
+    });
+    appendLedger(root, {
+      version: '0.23.0',
+      step: 'distribute-user-md-residue',
+      executor: 'agent',
+      timestamp: new Date().toISOString(),
+      filesTouched: [],
+      summary: 'distributed',
+    });
+
+    const stillPending = unfinishedAgentTasks(root, '0.23.0');
+    expect(stillPending.map((m) => m.agentTask?.id)).toEqual(['split-soul-into-patterns']);
+
+    appendLedger(root, {
+      version: '0.23.0',
+      step: 'split-soul-into-patterns',
+      executor: 'agent',
+      timestamp: new Date().toISOString(),
+      filesTouched: [],
+      summary: 'split',
+    });
+    expect(unfinishedAgentTasks(root, '0.23.0')).toEqual([]);
+  });
+
+  it('an opt-in agentTask (0.7.2 diagrams) is an offer, never "unfinished"', () => {
+    // Its code step ran ('detected') on every old vault and its agent entry is
+    // only ever written by `migrations apply-diagrams` — without the optIn
+    // exemption a ledger-judged pending would nag about it forever.
+    appendLedger(root, {
+      version: '0.7.2',
+      step: 'detect-flat-diagram-boards',
+      executor: 'detected',
+      timestamp: new Date().toISOString(),
+      filesTouched: [],
+      summary: 'no flat boards',
+    });
+    expect(unfinishedAgentTasks(root, '0.23.0')).toEqual([]);
   });
 });
