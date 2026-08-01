@@ -571,6 +571,12 @@ export function createOutputPump(
  * unless the desktop gate is on, the request is loopback, and node-pty is present.
  */
 export function attachAgentTerminal(server: Server): void {
+  // Pre-resolve the `claude` binary for auto-title: the login-shell PATH probe costs
+  // 1–2s and used to be paid by the FIRST title request. Warming it at attach time
+  // (desktop only — the title route 403s elsewhere) makes even the first title a
+  // direct spawn. A failed probe isn't cached (see resolveTitleCli), so this can't
+  // poison titling on a machine where claude gets installed later.
+  if (isDesktop()) void resolveTitleCli();
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     let url: URL;
     try { url = new URL(req.url || '/', `http://${req.headers.host}`); }
@@ -678,7 +684,7 @@ function liveTranscriptPath(contextRoot: string | null, id: string): string | nu
  * tool results and the `<...>`-wrapped system-reminder / command-stub lines so the
  * title reflects what the human actually typed. Returns null if none is found yet.
  */
-function firstUserMessage(jsonlPath: string): string | null {
+export function firstUserMessage(jsonlPath: string): string | null {
   let raw: string;
   try { raw = readFileSync(jsonlPath, 'utf-8'); } catch { return null; }
   for (const line of raw.split('\n')) {
@@ -706,11 +712,24 @@ function firstUserMessage(jsonlPath: string): string | null {
   return null;
 }
 
+/** Validate a client-supplied first-message candidate down to the same shape
+ *  `firstUserMessage` yields — trimmed, not a `<...>` wrapper, capped at 800 chars —
+ *  or null when it can't title a tab. The chat surface holds the text it sent (its own
+ *  composer submit / the server's spawn-prompt echo), so it can pass the message with
+ *  the title request instead of waiting for the hook entry or the flushed transcript
+ *  to land on disk. */
+export function sanitizeClientTitleMessage(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim();
+  if (!text || text.startsWith('<')) return null;
+  return text.slice(0, 800);
+}
+
 /** Trim Haiku's reply to a clean tab title: one line, no wrapping quotes/markdown,
  *  no trailing punctuation, ≤7 words / 52 chars. The cap is generous so the title
  *  can stay specific and descriptive rather than clipped to a vague label. Returns
  *  null if nothing usable. */
-function sanitizeTitle(raw: string): string | null {
+export function sanitizeTitle(raw: string): string | null {
   let t = raw.replace(/[\r\n]+/g, ' ').trim();
   t = t.replace(/^["'`*]+/, '').replace(/["'`*.]+$/, '').trim();
   t = t.split(/\s+/).slice(0, 7).join(' ');
@@ -809,11 +828,14 @@ function generateTitle(message: string, cwd: string): Promise<string | null> {
 }
 
 /**
- * POST /api/agent/title  { claudeId }
+ * POST /api/agent/title  { claudeId, message? }
  * Returns `{ title }` — a Haiku-generated tab title from the session's first user
  * message — or `{ title: null }` if there's no transcript/message yet or Haiku
- * failed. Desktop-gated + vault-scoped (same posture as /agent/drop). Idempotent
- * and side-effect-free: the client decides whether to apply the rename.
+ * failed. `message` is the client's own copy of the first user message (chat tabs
+ * hold it); it's the LAST resort after the transcript and the hook's session-map
+ * entry, so a fresh tab can be titled on the first attempt instead of burning a
+ * retry on 'no_message'. Desktop-gated + vault-scoped (same posture as /agent/drop).
+ * Idempotent and side-effect-free: the client decides whether to apply the rename.
  */
 export async function handleAgentTitle(
   req: IncomingMessage,
@@ -826,12 +848,14 @@ export async function handleAgentTitle(
     return;
   }
   let claudeId = '';
+  let clientMessage: string | null = null;
   try {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
     if (chunks.length) {
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { claudeId?: unknown };
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { claudeId?: unknown; message?: unknown };
       claudeId = sanitizeUuid(typeof body.claudeId === 'string' ? body.claudeId : null);
+      clientMessage = sanitizeClientTitleMessage(body.message);
     }
   } catch { /* invalid body → 400 below */ }
   if (!claudeId) {
@@ -853,9 +877,13 @@ export async function handleAgentTitle(
   // the first prompt the UserPromptSubmit hook captured into the tab's session-map
   // entry — only when it belongs to the SAME live conversation.
   const entry = readAgentSessionEntry(contextRoot, claudeId);
+  // Last resort: the message the CLIENT sent along. On a fresh tab neither the transcript
+  // (buffered in memory until exit/rotation) nor the hook entry (races the first turn) may
+  // exist yet — but the chat surface already holds the text it submitted, so the idle→busy
+  // edge can title on the FIRST attempt instead of returning 'no_message'.
   const message = (path ? firstUserMessage(path) : null)
     ?? (entry?.current === liveId ? entry.firstPrompt : null)
-    ?? null;
+    ?? clientMessage;
   if (!message) { sendJson(res, 200, { title: null, reason: path ? 'no_message' : 'no_transcript' }); return; }
   // Home dir, not the vault: a titling call must not fire the project's SessionStart
   // brain preload — keep it lean.

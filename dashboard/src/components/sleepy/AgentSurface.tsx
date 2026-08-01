@@ -9,7 +9,7 @@ import {
   createSession, currentZoom,
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
-import { createChatSession, type ChatSession } from './chatSession';
+import { createChatSession, type ChatSession, type ChatUserItem } from './chatSession';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
@@ -1602,10 +1602,12 @@ export function AgentSurface() {
   // first prompt into the very same session-map entry `/agent/title` reads. Nothing about
   // the route is terminal-specific, so gating this on `kind === 'agent'` was the only
   // reason chat tabs sat at "Chat N" forever. The idle→busy edge (turn START) is
-  // the fast path: the UserPromptSubmit hook has usually already captured the first prompt
-  // into the tab's session-map entry, so the server can title the tab seconds after the
-  // user types — no waiting for the whole first turn to finish. The busy→idle edge (turn
-  // COMPLETE) is the safety net for tabs the hook missed (the transcript exists by then).
+  // the fast path: a chat tab sends its own copy of the first message with the request
+  // (see below), and for terminal tabs the UserPromptSubmit hook has usually already
+  // captured the first prompt into the tab's session-map entry — so the server can title
+  // the tab seconds after the user types, no waiting for the whole first turn to finish.
+  // The busy→idle edge (turn COMPLETE) is the safety net for tabs the hook missed (the
+  // transcript exists by then).
   // The title is applied ONLY if the tab still carries its default "Agent N"/"Chat N"
   // name (a tab you renamed is never overwritten). It settles to at most ONE successful
   // Haiku call per tab, but a call that finds nothing yet (an unwritten hook entry or an
@@ -1630,7 +1632,18 @@ export function AgentSurface() {
       if (attempts >= 8) { autoTitledRef.current.add(id); return; }
       titleAttemptsRef.current.set(id, attempts + 1);
       titleInFlightRef.current.add(id);           // one outstanding call at a time
-      void api.post<{ title: string | null; reason?: string }>('/agent/title', { claudeId: s.claudeId })
+      // A chat session already HOLDS its first user message (its composer sent it, or the
+      // server echoed a spawn prompt into the model) — pass it along so the idle→busy edge
+      // titles on the FIRST attempt even before the hook entry / flushed transcript exists
+      // on disk. The server still prefers those on-disk sources; this is its last resort.
+      // Terminal tabs have no client-side copy (the PTY stream is raw bytes) and omit it.
+      const firstUserText = s.kind === 'chat'
+        ? (s as ChatSession).getModel().items.find((it): it is ChatUserItem => it.kind === 'user')?.text.trim()
+        : undefined;
+      void api.post<{ title: string | null; reason?: string }>(
+        '/agent/title',
+        firstUserText ? { claudeId: s.claudeId, message: firstUserText } : { claudeId: s.claudeId },
+      )
         .then((r) => {
           const title = r?.title?.trim();
           // No title yet: leave the id retryable so the NEXT completed turn names this
