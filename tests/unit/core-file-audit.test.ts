@@ -65,6 +65,9 @@ describe('auditCoreFileSizes', () => {
         lines: COMPLIANT.split('\n').length,
         overChars: false,
         overLines: false,
+        // Soul renders verbatim in the snapshot, so its chars ARE a per-session
+        // bill — unlike the extended files (3+), which are one index line.
+        alwaysLoaded: true,
       },
     ]);
   });

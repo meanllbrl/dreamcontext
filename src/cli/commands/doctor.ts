@@ -699,13 +699,19 @@ export function checkPeople(root: string): CheckResult[] {
 }
 
 /**
- * Anti-bloat ceilings for the always-loaded core files.
+ * Anti-bloat ceilings for the constitution-class core files.
  *
  * Reports BOTH axes, chars first, because the line ceiling the skill has always
  * stated is not a usable size proxy on its own: measured on this repo,
  * `core/0.soul.md` is 69 lines but 13,573 chars and `core/2.memory.md` is 165
  * lines / 92,249 chars — a line-only check calls the two worst offenders fine.
- * The SessionStart snapshot pays these chars on every single session.
+ *
+ * The remedy text is TIER-AWARE (`audit.alwaysLoaded`). Files 0–2 and the active
+ * `people/*.md` render verbatim, so their chars are a per-session bill. Extended
+ * files (3+) are one index line in the snapshot no matter their size — telling
+ * the user those are billed every session is simply false, and it was: the
+ * warning drove an extraction plan for two files that together cost 297 chars
+ * per session against 27,005 on disk.
  */
 export function checkCoreFileSizes(root: string): CheckResult[] {
   const NAME = 'Core file size';
@@ -732,13 +738,21 @@ export function checkCoreFileSizes(root: string): CheckResult[] {
     const exceeded: string[] = [];
     if (a.overChars) exceeded.push(`${withThousands(CORE_FILE_CHAR_CEILING)}-char`);
     if (a.overLines) exceeded.push(`${CORE_FILE_LINE_CEILING}-line`);
+    // Only the verbatim tier is billed per session. Saying so about an extended
+    // file (3+) overstates the cost by two orders of magnitude — the snapshot
+    // carries ~150 chars of index for it however big it gets — and pushes the
+    // user to gut a file that was never the problem.
+    const cost = a.alwaysLoaded
+      ? 'The SessionStart snapshot pays this every session; '
+        + 'extract detail to knowledge/ and keep a summary + reference.'
+      : 'Read on demand — the snapshot carries only a one-line summary, so this '
+        + 'costs nothing per session; it costs when the agent opens it.';
     return {
       name: NAME,
       status: 'warn' as const,
       message:
         `${a.relPath}: ${withThousands(a.chars)} chars / ${withThousands(a.lines)} lines — over the `
-        + `${exceeded.join(' and ')} ceiling. The SessionStart snapshot pays this every session; `
-        + 'extract detail to knowledge/ and keep a summary + reference.',
+        + `${exceeded.join(' and ')} ceiling. ${cost}`,
     };
   });
 }

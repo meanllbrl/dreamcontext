@@ -47,6 +47,21 @@ export interface CoreFileSizeAudit {
   lines: number;
   overChars: boolean;
   overLines: boolean;
+  /**
+   * Does the SessionStart snapshot pay this file's size on EVERY session?
+   *
+   * True for the constitution tier that renders VERBATIM — `core/0.soul.md`,
+   * the legacy `core/1.user.md` slot, `core/2.memory.md`, and `people/*.md`
+   * (the active person's constitution is never-evict). For these, on-disk size
+   * IS per-session token cost, and the ceiling means exactly what it says.
+   *
+   * False for the extended core files (`core/[3-9]*`): the snapshot renders
+   * them as a one-line index entry — name, path, and a truncated first-sentence
+   * summary — and the agent opens them only when relevant. A 16K extended file
+   * costs ~150 chars per session, not 16K. Callers MUST NOT tell the user that
+   * an extended file is billed every session; it is not.
+   */
+  alwaysLoaded: boolean;
 }
 
 // ─── Index Builder ─────────────────────────────────────────────────────────
@@ -115,11 +130,15 @@ export function buildCoreIndex(contextRoot: string): CoreFileEntry[] {
 // ─── Anti-bloat audit ──────────────────────────────────────────────────────
 
 /**
- * Measure every always-loaded constitution-class markdown file against the
- * anti-bloat ceilings.
+ * Measure every constitution-class markdown file against the anti-bloat
+ * ceilings, tagging each with whether the snapshot actually pays for it.
  *
  * Covers `core/[0-9]*.md` — soul (0), the retired user slot (1), memory (2) and
  * the extended files (3+) — AND `people/*.md`, the per-person constitutions.
+ * NOT all of these are always-loaded: only 0–2 and the active person's file
+ * render verbatim; 3+ appear as a one-line index entry and are read on demand.
+ * `alwaysLoaded` carries that distinction, and callers must respect it before
+ * claiming a per-session cost.
  * The people files earn the same ceiling on the same grounds: the ACTIVE one is
  * never-evict and renders verbatim on every single session, so an oversized
  * constitution is a content problem the ladder cannot absorb. (The inactive ones
@@ -145,6 +164,17 @@ export function auditCoreFileSizes(contextRoot: string): CoreFileSizeAudit[] {
   ];
   audits.sort((a, b) => a.relPath.localeCompare(b.relPath, undefined, { numeric: true }));
   return audits;
+}
+
+/**
+ * Which tier does this core file belong to? Mirrors the snapshot's own split:
+ * `core/[0-2]*` render in full (see snapshot sections 1–3), `core/[3-9]*` are
+ * the "Extended Core Files" INDEX (section 4). Anything outside `core/` reaching
+ * here is a `people/*.md` constitution, which is always-loaded when active.
+ */
+function isAlwaysLoaded(relPrefix: string, filename: string): boolean {
+  if (!relPrefix.endsWith('/core')) return true; // people/<slug>.md
+  return /^[0-2]\D/.test(filename);
 }
 
 /** One directory's worth of the audit. Total: never throws, whatever it finds. */
@@ -178,6 +208,7 @@ function auditDir(dir: string, glob: string, relPrefix: string): CoreFileSizeAud
       lines,
       overChars: chars > CORE_FILE_CHAR_CEILING,
       overLines: lines > CORE_FILE_LINE_CEILING,
+      alwaysLoaded: isAlwaysLoaded(relPrefix, filename),
     });
   }
   return audits;

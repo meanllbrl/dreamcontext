@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { buildCoreIndex } from '../../src/lib/core-index.js';
+import { buildCoreIndex, auditCoreFileSizes } from '../../src/lib/core-index.js';
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `ac-cidx-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -149,5 +149,55 @@ describe('buildCoreIndex', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].filename).toBe('3.plain.md');
     expect(entries[0].path).toBe('_dream_context/core/3.plain.md');
+  });
+});
+
+describe('auditCoreFileSizes — always-loaded vs read-on-demand tier', () => {
+  let tmpDir: string;
+  const BIG = 'x'.repeat(20_000);
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    mkdirSync(join(tmpDir, 'core'), { recursive: true });
+    mkdirSync(join(tmpDir, 'people'), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * The snapshot renders core 0–2 and the active people/*.md VERBATIM, but
+   * core 3+ as a one-line index entry. `doctor` phrases its remedy off this
+   * flag, and it got the claim wrong before: it told the user two extended
+   * files costing 297 chars per session were "paid every session" at their
+   * full 27,005 on-disk size. Pin the split.
+   */
+  it.each([
+    ['core/0.soul.md', true],
+    ['core/1.user.md', true],
+    ['core/2.memory.md', true],
+    ['core/3.style_guide.md', false],
+    ['core/4.tech_stack.md', false],
+    ['core/6.system_flow.md', false],
+  ])('%s → alwaysLoaded=%s', (relPath, expected) => {
+    writeFileSync(join(tmpDir, relPath), BIG);
+    const audit = auditCoreFileSizes(tmpDir).find((a) => a.relPath.endsWith(relPath));
+    expect(audit).toBeDefined();
+    expect(audit!.alwaysLoaded).toBe(expected);
+  });
+
+  it('treats every person constitution as always-loaded', () => {
+    writeFileSync(join(tmpDir, 'people', 'mehmet.md'), BIG);
+    const audit = auditCoreFileSizes(tmpDir).find((a) => a.relPath.includes('people/'));
+    expect(audit!.alwaysLoaded).toBe(true);
+  });
+
+  it('flags the ceiling on both tiers — the tier changes the REMEDY, not the ceiling', () => {
+    writeFileSync(join(tmpDir, 'core', '0.soul.md'), BIG);
+    writeFileSync(join(tmpDir, 'core', '4.tech_stack.md'), BIG);
+    const audits = auditCoreFileSizes(tmpDir);
+    expect(audits.every((a) => a.overChars)).toBe(true);
+    expect(audits.map((a) => a.alwaysLoaded)).toEqual([true, false]);
   });
 });
