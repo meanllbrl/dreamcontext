@@ -40,7 +40,8 @@ The brain consolidates what happened but never learns forward: no hypotheses, no
 - [x] As a user, I can connect an insight to a thesis (and a thesis to roadmap objectives), so evidence flows structurally: roadmap has insights + theses + tasks; insights connect to roadmap + theses.
 - [x] As a user, I can list/search theses via CLI (`dreamcontext theses …`, recall-indexed as their own corpus type) and browse a thesis board page in the dashboard (draft/open/validated/invalidated columns with confidence + evidence trail) — plus see related theses on the roadmap objective detail page.
 - [x] As a user, a validated thesis is promoted into canonical knowledge/decision — or, when it governs a procedure and its effect is significant enough, into a RULE in the matching workflow (`knowledge/workflows/`, see knowledge-workflows task) — with the thesis retired to a pointer; an invalidated one is kept as anti-knowledge — every win and every failure is a learning.
-- [x] As a user, I can disable the entire layer with one config switch: no sleep-learn dispatch, no CLI/snapshot noise, dashboard page hidden.
+- [x] As a user, I can disable the entire layer with one config switch: no sleep-learn dispatch, no CLI/snapshot noise, and the page reduced to its own off-state. **(Amended 2026-08-01, `3bed3d0`: the nav item is no longer hidden — see below.)**
+- [x] As a user who has never turned this on, I can still FIND it: the Hypotheses nav item stays in the rail for every project, dimmed with an `Off` tag, because the page that explains the layer and carries its Enable button was previously reachable only once the layer was already enabled.
 - [x] As the agent (any session), the dreamcontext skill has an Entity Router row + reference-file section for theses, so "create a thesis" routes correctly and future sessions know the subsystem exists.
 
 ## Acceptance Criteria
@@ -86,10 +87,10 @@ The brain consolidates what happened but never learns forward: no hypotheses, no
 
 **Surfaces:**
 - CLI: `dreamcontext theses` (17 verbs: list/show/create/predict/evidence/status/link/unlink/changelog/block/unblock/promote/retire/restore/enable/disable/candidates); `thesis` corpus type in `buildCorpus`; SessionStart snapshot line (open count + recent flips), budget-demotable.
-- Dashboard: "Hypotheses" page (`HypothesesPage.tsx`, hidden when disabled) — thesis board (draft/open/validated/invalidated columns via `ThesisBoard/Column/Card/Toolbar.tsx`, confidence bar `ConfidenceBar.tsx`, evidence trail, understanding changelog timeline in `ThesisDetailModal.tsx`); roadmap objective detail gains a Learning section (`LearningSection.tsx` embedded in `ObjectiveDetailPanel.tsx`). Full-page off-state with enable CTA when disabled.
+- Dashboard: "Hypotheses" page (`HypothesesPage.tsx` — **always in the rail as of 2026-08-01**, dimmed with an `Off` tag when the layer is disabled; gated on `enabled === false`, never `!enabled`, because the field is `undefined` until the query resolves and a rail that says "off" for a beat before flipping to on is worse than one that does not label it yet) — thesis board (draft/open/validated/invalidated columns via `ThesisBoard/Column/Card/Toolbar.tsx`, confidence bar `ConfidenceBar.tsx`, evidence trail, understanding changelog timeline in `ThesisDetailModal.tsx`); roadmap objective detail gains a Learning section (`LearningSection.tsx` embedded in `ObjectiveDetailPanel.tsx`). Full-page off-state with enable CTA when disabled.
 - Skill: SKILL.md capabilities row + Entity Router row ("form/track a hypothesis" → thesis, NOT knowledge) + new `references/learning.md` reference file (entity, formula, awake-capture offer-and-confirm protocol).
 
-**Disable switch:** `state/.config.json` flag (`learning.enabled`, default OFF until PO validates). Gates: sleep-flow dispatch mention, CLI discoverability output, snapshot section, dashboard nav item + routes.
+**Disable switch:** `state/.config.json` flag (`learning.enabled`, default OFF until PO validates). Gates: sleep-flow dispatch mention, CLI discoverability output, snapshot section, and the dashboard page's CONTENT. It no longer gates the nav item itself (2026-08-01) — hiding the entrance hid the explainer and the Enable button from exactly the people who had never turned the layer on.
 
 **Key files:**
 - `src/lib/theses/types.ts`, `confidence.ts` — `ThesisManifest`, `deriveConfidence()`, enums, `THESIS_RULE_PROMOTION_THRESHOLD`
@@ -109,6 +110,11 @@ The brain consolidates what happened but never learns forward: no hypotheses, no
 - **For you (PO):** (1) eyeball the dashboard Hypotheses board/detail/create UIs against the design export (`Hypothesis.dc.html`), (2) decide when to run `dreamcontext theses enable` on this project, (3) confirm the autonomous validation-method default (tests + build + CLI smoke — no visual E2E).
 
 ## Changelog
+
+### 2026-08-01 - Hypotheses stays visible to everyone (`3bed3d0`)
+- The nav item was hidden whenever `learning.enabled` was off, so the page that EXPLAINS the layer and carries its Enable button was reachable only once the layer was already enabled — a closed loop. It now stays in the rail for every project, dimmed with an `Off` tag, and the page itself is the explainer plus the switch.
+- Gated on `enabled === false`, deliberately not `!enabled`: the field is `undefined` until the query resolves, and a rail that says "off" for a beat before flipping to on is worse than one that does not label it yet.
+- Verified live: the Hypotheses Enable button turns the layer on and swaps in the board.
 <!-- LIFO: newest entry at top -->
 
 ### 2026-07-20 - Feature shipped v0.19.0 (uncommitted, in_review)

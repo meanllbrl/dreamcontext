@@ -119,7 +119,7 @@ Every AI session starts blind — no memory of previous work, no knowledge of pr
 1. Soul (`core/0.soul.md`) — full file content, **never-evict and rung-less**
 2. Person (`people/<slug>.md`, active person) — full constitution, never-evict and rung-less; other people render one role-only line each (demotable rank 110). `core/1.user.md` is the retired legacy layout, migrated by 0.23.0.
 3. Memory (`core/2.memory.md`) — **full content when ≤ `CORE_FILE_CHAR_CEILING`**, plus a "Working set only — full history … `memory recall`" pointer; only an over-ceiling file walks the 3 rungs.
-4. Extended Core Files index — `buildCoreIndex()` in `src/lib/core-index.ts`; scans `core/[3-9]*`, reads frontmatter `name`/`type`/`summary`. Demoted rung keeps a 90-char word-safe summary per file.
+4. Extended Core Files index — `buildCoreIndex()` in `src/lib/core-index.ts`; scans `core/[3-9]*`, reads frontmatter `name`/`type`/`summary`. Demoted rung keeps a 90-char word-safe summary per file. **These files are read ON DEMAND, not billed per session** — measured on this vault, `4.tech_stack.md` + `6.system_flow.md` are 27,005 chars on disk and **297 chars in the rendered snapshot**. `CoreFileSizeAudit` carries `alwaysLoaded` (`core/[0-2]` and `people/*.md` true, `core/[3-9]` false) so `doctor` phrases its remedy off the real tier (2026-08-01, `e50935c`): the old warning claimed the snapshot pays for every core file every session, overstating the extended tier's cost by two orders of magnitude and driving a plan to gut two files that were never the problem. The ceiling and the warn status are UNCHANGED on both tiers — a 16K file is still expensive when the agent opens it — only the stated reason changed, because it was wrong. `tests/unit/core-index.test.ts` pins the split per path.
 5. Active Tasks — fast-glob `state/*.md`, frontmatter, skips `status: completed`. Renders the **name**, with `-> _dream_context/state/<slug>.md` beneath. Demoted: detailed head → needs-attention line → per-status counts → filter-teaching footer.
 6. ~~Sleep State~~ — **removed 2026-05-23.** Consolidation pressure surfaces via the SessionStart consolidation directive prepend + UserPromptSubmit hook one-liner.
 7. Recent CHANGELOG — tiered: top 3 detailed (summary + word-safe ~300-char body), next 10 titles-only under `### Older`, then the standing search+browse footer.
@@ -176,6 +176,11 @@ Doctor integration (`src/lib/core-index.ts`, `src/cli/commands/doctor.ts`, wave 
 - Snapshot size can grow large on projects with many pinned knowledge files. The recommendation is to pin sparingly — only files that are needed in nearly every session.
 
 ## Changelog
+
+### 2026-08-01 - `doctor` stops billing the extended core tier every session (`e50935c`)
+- `checkCoreFileSizes` warned on every `core/[0-9]*.md` with ONE remedy — *"The SessionStart snapshot pays this every session; extract detail to knowledge/"* — but that is true only of the VERBATIM tier (core 0-2 + the active `people/*.md`). Everything from 3 up renders as the Extended Core Files INDEX: name, path, truncated first-sentence summary.
+- `auditCoreFileSizes`' own docstring carried the contradiction: it opened with "every always-loaded file" and then listed "the extended files (3+)" among them.
+- `CoreFileSizeAudit.alwaysLoaded` now carries the tier and `doctor` phrases the remedy off it. Ceiling and warn status unchanged on both tiers; moving the threshold for read-on-demand files is a separate product call. Pinned per path by `tests/unit/core-index.test.ts`, since this is exactly the kind of claim that drifts unnoticed.
 <!-- LIFO: newest entry at top -->
 
 ### 2026-07-30 - Level-0 density redesign + constitution-verbatim doctrine (UNCOMMITTED in the working tree)

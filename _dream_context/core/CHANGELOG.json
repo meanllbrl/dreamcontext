@@ -1,5 +1,226 @@
 [
   {
+    "date": "2026-08-01",
+    "type": "chore",
+    "scope": "repo",
+    "description": "Three small corrections that had been sitting in the working tree unattributed. (1) `.gitignore` now ignores `/tmp/` — the repo-root scratch dir where the `scripts/verify/*` harnesses write their screenshots and where one-off probes land. Anchored with a LEADING SLASH deliberately: a bare `tmp/` would match any nested source folder of that name anywhere in the tree, which is a trap worth not setting. Until now every verify run left a pile of untracked PNGs in `git status`, which is how a genuinely dirty tree gets ignored by eye. (2) `package.json` — the `description` field held a literal `\\\\u2014` escape rather than the em dash itself; both parse identically, but the escape is what shows up in `npm view` output and in some registry surfaces. De-escaped to `—`. Also moved `verify:chat-scroll` up next to the other `verify:chat-*` scripts (it had been appended at the bottom when it was registered). (3) `sleepinessRange()`'s JSDoc still gave `\"8-13\", \"20+\"` as its worked example — numbers from the PRE-rescale debt scale, dead since thresholds moved to 24/40/60. Corrected to `\"24-39\", \"60+\"`. This is the same class of residue the 2026-08-01 docs pass swept for and the last one left standing: the function computes its ranges from the constants, so only the example ever went stale — but a stale example in the file that DEFINES the constants is exactly where a reader would trust it.",
+    "breaking": false,
+    "summary": "Repo hygiene: root /tmp/ ignored so verify screenshots stop showing up as changes, package description de-escaped, and a stale debt example in a JSDoc corrected",
+    "references": [
+      "file:.gitignore",
+      "file:package.json",
+      "file:src/lib/sleep-consolidation.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-01",
+    "type": "test",
+    "scope": "recall",
+    "description": "`recall-capture-stress.test.ts` measures TRUE top-3 displacement at flood sizes 50/100/200 captures, then asserts the worst case (200) displaces nothing. It computed N=200 TWICE: once inside the informational sweep, and again inside the `expect(...)`. The sweep is fully deterministic — same corpus, same queries, same result — so the second run bought nothing and cost roughly a quarter of the file's runtime, which was enough to push the whole file past `FLOOD_MEASUREMENT_TIMEOUT_MS` on a loaded machine. The file then failed on a TIMEOUT while reporting a displacement failure, which is the worst possible signal: a red test that names the wrong cause. Now the loop keeps the last sweep's result (`worstCase`) and the assertion consumes it — same flood, same sizes, same guarantee (`expect(worstCase).toEqual([])`), one measurement instead of two. Note this is a DIFFERENT failure mode from the tracked `full-suite-runs-intermittently-fail-on-a-vitest-reporter-rpc-timeout-under-load`: that one is the reporter's RPC channel dying under parallel load, this one was a single file honestly outrunning its own budget. Removing it takes one recurring red off the suite without touching the other.",
+    "breaking": false,
+    "summary": "The recall flood-stress test was failing on its own runtime, not on a displacement — the worst-case sweep ran twice for one assertion",
+    "references": [
+      "file:tests/unit/recall-capture-stress.test.ts",
+      "task:full-suite-runs-intermittently-fail-on-a-vitest-reporter-rpc-timeout-under-load"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-01",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Owner correction, raised with a screenshot in-session (\"benim mesajlarım nedense okunması güç duruyor\"). `.chat-msg-user-bubble` was a solid `--color-accent` fill with `--color-accent-text` on top — snow on violet. That pairing is fine on a chip or a button, which is what it was borrowed from, but it is the one combination in the app that stops reading at LONG-MESSAGE length: a paragraph the user typed themselves became the hardest thing in their own transcript to re-scan, which is exactly backwards for the text they are most likely to re-read. Replaced with the recipe the sleep tracker's pills already use (`SleepDebtTracker.css`) rather than inventing a third treatment: `color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-tertiary))` for the fill, `color-mix(in srgb, var(--color-accent) 45%, var(--color-border))` for a 1px edge, and the ordinary `--color-text` on top. The bubble stays unmistakably \"mine, and violet\" against the un-guttered assistant blocks — identity was never carried by the fill's saturation, it is carried by the alignment, the radius and the hue — and it now sits at full body-text contrast in BOTH themes, because a mix against a theme surface tracks the theme instead of pinning one hardcoded pair. 13 lines, one file. Landed via a worktree branch (`worktree-chat-user-bubble`) that was fast-forward merged and deleted; the standing repo rule that a worktree needs its own dashboard deps still applied.",
+    "breaking": false,
+    "summary": "The user's own chat message was the hardest text in the transcript to re-read — the solid-accent bubble became a tinted surface at full body-text contrast",
+    "references": [
+      "commit:fa06c2a",
+      "file:dashboard/src/components/sleepy/chat/cards.css",
+      "feature:in-app-agent-terminal",
+      "task:agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-01",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Three latency fixes to `POST /api/agent/title`, all aimed at the same symptom: a fresh tab sat at \"Chat N\"/\"Agent N\" for far longer than the work it was already doing. (1) WARM PROBE — `resolveTitleCli()` runs a login-shell `command -v claude` to find the binary, which costs 1–2s and used to be paid in full by whichever title request happened to be first. `attachAgentTerminal()` now kicks it off at server attach (desktop only, since the route 403s everywhere else), so by the time any tab asks for a title the resolution is already cached. Safe because a FAILED probe is deliberately not cached (`resolveTitleCli` clears `titleCliCache` on null), so warming on a machine where `claude` is installed later cannot poison titling forever. (2) CLIENT-CARRIED FIRST MESSAGE — the route resolved the first user message from two on-disk sources only: the flushed transcript and the UserPromptSubmit hook's session-map entry. On a brand-new chat tab BOTH are still racing to disk at the idle→busy edge, so the first attempt returned `no_message` and the tab had to burn retries (capped at 8) waiting for a write it could not observe. The chat surface already HOLDS that text — its own composer submitted it, or the server echoed a spawn prompt into the model — so `AgentSurface`'s title effect now reads `getModel().items.find(kind === 'user').text` and passes it as an optional `message` on the request. Ordering is deliberate: transcript > hook entry > client message. The client copy is the LAST resort, never a shortcut past a real on-disk source, because the client cannot prove which conversation its text belongs to while the on-disk sources are keyed to the live session. Terminal (`kind === 'agent'`) tabs omit it — a PTY stream is raw bytes and the client holds no parsed copy. New `sanitizeClientTitleMessage()` puts the client value through the same shape `firstUserMessage()` yields: trimmed, rejected when empty or `<…>`-wrapped (system-reminder / command-stub lines), capped at 800 chars. (3) TEST COVER — new `tests/unit/agent-title.test.ts` (169 lines) exercises the whole fallback chain end to end against a mocked spawn: `sanitizeTitle`, `sanitizeClientTitleMessage`, `firstUserMessage` and `handleAgentTitle`. `firstUserMessage` and `sanitizeTitle` were exported for it — the route's helpers had been private, which is why the fallback ladder had never been covered as a ladder. The route stays idempotent and side-effect-free: it returns a title, the client alone decides whether to apply it, and a tab the user renamed is still never overwritten.",
+    "breaking": false,
+    "summary": "Tab auto-titling stops paying a 1–2s PATH probe on the first request, and a chat tab now carries its own first message so it titles on the FIRST attempt",
+    "references": [
+      "commit:3ec1b53",
+      "file:src/server/routes/agent-terminal.ts",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:tests/unit/agent-title.test.ts",
+      "feature:in-app-agent-terminal"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-01",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Closing a chat tab lost the conversation, even though 'claude --resume' could always have brought it back — the surface could only reach sessions still holding a roster entry. NEW GET /api/agent/chat-sessions[?q=&limit=&agentRuns=1] over a new src/lib/transcript-sessions.ts: bounded HEAD (128 KB — the first prompt sits at p50 65 KB / max 90 KB behind the SessionStart preamble, measured over this repo's 388 files) plus, only when the file is bigger, a 64 KB TAIL read; NEVER a whole transcript, because a real project dir is ~1 GB across ~400 of them. Memoized on (path, mtimeMs, size) — append-only means same stat implies same summary — capped at MAX_SCANNED_FILES 1200 per listing and MAX_CACHED_SUMMARIES 5000 across vaults. Read size comes from fstatSync ON THE OPEN FD, never the caller's earlier stat, or a file that grew in between truncates the tail's last line, the one holding the newest prompt. Search is SERVER-side over a per-session haystack built during the same read (title + up to 12 head prompts + newest prompt + branch, 4 KB cap, stripped from the response), tokens ANDed, so a query matches words spoken in the MIDDLE of a conversation and costs no I/O once warm. userPromptOf() was extracted from parseTranscriptHistory so replay and the index share ONE definition of 'what a human typed'. Measured live: cold 551 ms / 372 conversations, warm 5 ms, query 3 ms. THE FILTER: 119 of this repo's 372 listed conversations were never the user's — 27 Sleep-chip consolidations, ~60 goal-skill planners/implementers, scheduled automations, council personas, delegate agents. An Agent-TOOL sub-agent is already excluded structurally (isSidechain; own file under <id>/subagents/), but a session spawned by 'claude -p \"<brief>\"' from inside another one carries NO structural marker — same entrypoint, userType and promptSource as a human's, checked FIELD BY FIELD against known pairs before a line of filter was written — so the only honest signal is the FIRST PROMPT: (1) exact prefixes for the briefs this project writes verbatim (each entry naming its source constant so the two stay in step), (2) the role-assignment shape every orchestrated brief opens with, optionally behind an ultrathink directive or a '# Your role' heading. 372 -> 253 shown / 119 withheld, every withheld title inspected, zero false positives. Never destructive: the footer reads 'N agent runs hidden — show', ?agentRuns=1 returns them, and the count is computed AFTER the query so it describes the current LIST rather than the corpus. CLIENT: ChatHistoryPicker on the shared <CommandModal> shell, rendered as a SIBLING of .agent-surface (whose 'contain: layout paint' would otherwise become the containing block for the modal's fixed scrim). Entry point is the header's + New menu item '◷ Past chats' below a rule — everything above starts something new, this one returns to something that exists — plus Cmd+Shift+O plus an empty-state button, and deliberately NOT a header button of its own (owner decision: the header is a tab strip with ONE primary action). Picking a row resumes it as an ordinary tab titled from the row, landing outside DEFAULT_TAB_TITLE_RE; a conversation already holding a tab is FOCUSED, never resumed twice — two CLIs --resumed onto one transcript interleave their appends and neither sees the other's turns. Verified: 55 unit tests, 'npm run verify:past-chats' 30 route checks against the real server, 'npm run verify:past-chats-ui' 58 browser checks in BOTH themes — all against an isolated fake HOME with synthesized transcripts and a stand-in claude, so no real conversation was read and no tokens spent. LANDED as 5d92f1d, with the two runtime harnesses registered alongside it (a583d00, 1fec2fc, f853b5d).",
+    "breaking": false,
+    "summary": "Past chats: a searchable picker reopens ANY conversation this project has on disk, with the 119-of-372 machine-spawned runs withheld by default",
+    "references": [
+      "commit:5d92f1d",
+      "feature:in-app-agent-terminal",
+      "file:src/lib/transcript-sessions.ts",
+      "file:src/server/routes/agent-chat-sessions.ts",
+      "file:dashboard/src/components/sleepy/ChatHistoryPicker.tsx",
+      "task:past-chats-reopen-any-conversation-from-the-new-menu"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-01",
+    "type": "docs",
+    "scope": "brain",
+    "description": "Three PRESENT-TENSE docs survived the 2026-07-29 weighted-scorer rescale unchanged. The dated changelog entries alongside them are correct and were left FROZEN; these are the lines that claim what the system does TODAY. core/6.system_flow.md: directive thresholds (debt >= 20 / >= 14, 5+ sessions) became 60 required / 40 recommended / 24 offered on EFFECTIVE debt, 12+ sessions; the Stop-hook scorer 'max(changeScore, toolScore) -> 0-3' became the log-compressed weighted sum over novel tokens, changes, tools and substance folding in sub-agent transcripts, 0-10; and the consolidation trigger. The 2026-07-30 sleep reported this file's debt table corrected to 24/40/60/90 — a table elsewhere in it was, these three lines were missed. Rewrapped to stay at 149 lines so the edit does not trip the doctor's line ceiling. knowledge/features/context-snapshot.md and knowledge/patterns/hook-delivered-must-not-miss-rules.md: same stale thresholds, plus a banner string THE CODE DOES NOT EMIT ('>>> CRITICAL: CONSOLIDATION REQUIRED <<<'; it is '>>> CONSOLIDATION REQUIRED <<<'). Both had also compressed each hook surface to a single threshold; verified against hook.ts that SessionStart and UserPromptSubmit BOTH fire from DEBT_DROWSY up and escalate at DEBT_SLEEPY and DEBT_MUST_SLEEP. They now cite the CONSTANTS rather than bare numbers, since this scale has rescaled twice. LANDED as 41e894a.",
+    "breaking": false,
+    "summary": "Three present-tense docs still describing the pre-rescale sleep scale corrected to cite the constants, not bare numbers — this scale has rescaled twice",
+    "references": [
+      "commit:41e894a",
+      "file:_dream_context/core/6.system_flow.md",
+      "knowledge:patterns/hook-delivered-must-not-miss-rules",
+      "feature:context-snapshot"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-01",
+    "type": "fix",
+    "scope": "doctor",
+    "description": "checkCoreFileSizes warned on every core/[0-9]*.md with ONE remedy — 'The SessionStart snapshot pays this every session; extract detail to knowledge/' — but that is only true for the VERBATIM tier. The snapshot renders core 0-2 and the active people/*.md in full (sections 1-3) and everything from 3 up as the 'Extended Core Files' INDEX (section 4): name, path, and a truncated first-sentence summary, read on demand. Measured on this vault: 4.tech_stack.md and 6.system_flow.md are 27,005 chars ON DISK and 297 chars IN THE RENDERED SNAPSHOT. The warning overstated their per-session cost by two orders of magnitude and DROVE A PLAN to gut two files that were never the problem. auditCoreFileSizes' own docstring carried the contradiction — it opened with 'every always-loaded file' and then listed 'the extended files (3+)' among them. CoreFileSizeAudit now carries alwaysLoaded (core/[0-2] and people/*.md true, core/[3-9] false) and doctor phrases the remedy off it. The ceiling and the warn status are UNCHANGED on both tiers: a 16K file is still expensive when the agent opens it, and moving the threshold for read-on-demand files is a separate product call. Only the stated REASON changes, because it was wrong. tests/unit/core-index.test.ts pins the split per path, since this is exactly the kind of claim that drifts unnoticed. LANDED as e50935c.",
+    "breaking": false,
+    "summary": "doctor stopped claiming extended core files are billed every session — the warning overstated their per-session cost by two orders of magnitude",
+    "references": [
+      "commit:e50935c",
+      "file:src/lib/core-index.ts",
+      "file:src/cli/commands/doctor.ts",
+      "feature:context-snapshot"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-01",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "The dashboard hand-mirrors DEBT_DROWSY/DEBT_SLEEPY/DEBT_MUST_SLEEP because it is a separate Vite package with no import path into src/. That mirror was left on the pre-2026-07-29 scale (8/14/20) while the weighted-scorer rescale moved the backend to 24/40/60, so the two disagreed on EVERY debt value: at a real debt of 33 the header read 'Must Sleep 33/20' — a count past its own maximum, a 100%-clamped bar and the fully-asleep mascot — while 'sleep status' said '33 (24-39) Drowsy'. The About page was TWO rescales behind (0-3/4-6/7-9/10+) and still described the retired max(changeScore, toolScore) scorer. This is the SECOND silent drift of the same mirror; the file's own comment documented the first (the 2026-06-29 x2 rescale) and nothing guarded it. tests/unit/dashboard-sleep-thresholds.test.ts now PARSES useSleep.ts and SleepFlowSection.tsx AS TEXT — they are TSX/ESM outside this package's tsconfig and cannot simply be imported — and fails the build if either disagrees with sleep-consolidation.ts or with sleepinessRange(). Confirmed to bite by flipping DEBT_SLEEPY to 41. Separately, GET/PATCH /api/sleep now carry effective_debt/provisional_debt/pending_sessions via effectiveDebt(), so the UI levels on the SAME value getConsolidationDirective does: Claude Code flushes transcripts lazily, so until one lands the session scores null and adds nothing to the ledger, and a raw 'debt' under-reads real work for hours while the terminal already warns. 'debt' stays the exact persisted ledger — what PATCH writes and what 'sleep done' resets — and the provisional estimate is NEVER written to disk. displayDebt() = effective_debt ?? debt drives both surfaces, degrading cleanly against an older server; the Sleep page shows a '+N provisional' pill while sessions await analysis. Verified against the running dashboard: header and hero both render 'Drowsy 33/60' at ~55%, matching 'sleep status' exactly. LANDED as 5f0c5ba.",
+    "breaking": false,
+    "summary": "The dashboard's hand-mirrored debt thresholds drifted a SECOND time — realigned to 24/40/60, guarded by a text-parsing tripwire, and /api/sleep now serves effective debt",
+    "references": [
+      "commit:5f0c5ba",
+      "feature:sleep-consolidation",
+      "file:dashboard/src/hooks/useSleep.ts",
+      "file:src/server/routes/sleep.ts",
+      "task:rescale-sleep-debt-scoring-weighted-sum-token-signal"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-01",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Every fan-out this project actually performs — council personas, goal-skill builder lanes, automations — is a backgrounded 'claude -p …', which the CLI reports as task_type:'local_bash', INDISTINGUISHABLE at the frame level from 'npm test'. The whole fleet therefore landed in the background-shells tray as anonymous rows over the composer while the sub-agent card the user actually watches sat empty. The COMMAND is the only channel that tells them apart, so it is carried on SubAgentRun.command (recovered by bashCommandFor from the spawning Bash call by tool_use_id, falling back to the Bash description) and classified by looksLikeHeadlessClaude, which PARSES rather than pattern-matches: split on shell separators, skip leading env-assignments/wrappers/flags per segment, require the executable to literally be 'claude' AND its own args to carry -p/--print/--output-format/--input-format. 'grep -rn \"claude -p\" src/', 'echo \"claude -p\"' and 'claude --resume <id>' all stay shells. VOCABULARY: isDispatchedAgent (Agent-tool machinery: sidechain transcript, card suppression) subset of isAgentRun (belongs in the agent card + rail) superset of isHeadlessAgentShell; isBackgroundShell is the tray's complement. Card suppression keys off isDispatchedAgent, NOT the widened isAgentRun — a promoted run's card IS its Bash card, and suppressing it would erase the command the user most wants to read. A promoted run keeps the affordances its TRANSPORT really has: any local_bash drill-in routes to SlideOver mode:'shell' (live output + Stop) rather than a sidechain transcript that will never exist; the row wears a 'headless' badge, says 'output ->', and shows its command as the live line. SPIKED LIVE against the CLI (two captures: one backgrounding 'sleep 8', one a nested 'claude -p'), pinned as verbatim fixtures — three facts documented nowhere: the Bash tool_use frame always PRECEDES system:task_started; task_started.tool_use_id is the Bash call's own id; and when a Bash call omits its description the CLI uses THE COMMAND ITSELF as the task description, which is why classification safely falls back to run.name. ALSO CARRIED (parallel session, same files, file-level inseparable): tool-run grouping (ToolRunCard + segmentToolRuns folds 3+ adjacent groupable items into one card), pathChipLabel/toolSubject so a tool row names its OBJECT rather than its type, window-trim slack, the dreamcontext skill mark, and the second-pass folded-run scroll fixes (armRevealFromInput, toolRunKeyItem, captureAnchor seeing through an open card). LANDED as 2d3df3c.",
+    "breaking": false,
+    "summary": "Headless claude runs render as sub-agents, not anonymous background shells — plus tool-run grouping, object-named tool rows, and the folded-run scroll fixes",
+    "references": [
+      "commit:2d3df3c",
+      "feature:in-app-agent-terminal",
+      "task:chat-tool-rows-name-their-object-not-their-type-plus-run-grouping-and-density",
+      "task:chat-scroll-settles-before-the-window-mutates-momentum-safe-reveal-chunked-trim"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-01",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Two layers were reachable only from a terminal, and one was invisible to exactly the people who had never turned it on. HYPOTHESES: the nav item was hidden whenever learning.enabled was off, so the page that EXPLAINS the layer and carries its Enable button was reachable only once the layer was already enabled. It now stays in the rail for every project, dimmed with an Off tag — gated on '=== false', never '!enabled', because the field is undefined until the query resolves and a rail that says 'off' for a beat before flipping to on is worse than one that doesn't label it yet. AUTOMATIONS: 'automations install' was the only way to turn the scheduler on, so the board could list a full set of automations that silently never fire. A scheduler row (AutomationsDispatcherBar) now sits above the board and inside the zero-state and turns it on in place, separating the states that FAIL DIFFERENTLY — off, on, stale (installed against a dreamcontext that has since moved: it wakes on time and fails), and not-registered (healthy dispatcher, but this project is absent from the machine-local registry — the shape brain-synced manifests arrive in). Each automation also gets its own on/off toggle on its card. New routes: GET /api/automations/dispatcher, POST /dispatcher/install and /uninstall, POST /:slug/enable and /disable ('dispatcher' precedes '/:slug' for the same reason 'runs' does). THIS DOES NOT LOOSEN THE FEATURE'S STANCE: installing from the browser installs the CLOCK, not permission — every automation still needs its own machine-local SHA256 approval, and the tripwire, sleep deference and orphan guard all still live inside the runner. The install route reads one body field (force, mirroring --force); no prompt, path or schedule travels over HTTP, and a resolution mismatch still refuses softly, writing nothing. It calls registerProject where the CLI's install does not, deliberately: the CLI registers at create, but a dashboard user can be looking at manifests that arrived over brain sync where nothing local ever did. Enabling one automation is not approval either — and because 'enabled' is not a hashed field, toggling never re-blocks an approved manifest, pinned by a regression lock since that is precisely the class of bug the upsertSection prompt-rewrite was. 19 new tests; launchd and the notifier mocked throughout, so no test ever bootstraps a real agent. Verified live against the running dashboard. LANDED as 3bed3d0.",
+    "breaking": false,
+    "summary": "Hypotheses stays in the rail for every project (dimmed 'Off'), and the automations scheduler is installed and toggled from the UI instead of only the terminal",
+    "references": [
+      "commit:3bed3d0",
+      "feature:automations-scheduled-headless-claude-jobs",
+      "feature:proactive-learning-layer",
+      "file:dashboard/src/components/automations/AutomationsDispatcherBar.tsx",
+      "file:src/server/routes/automations.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-01",
+    "type": "docs",
+    "scope": "release",
+    "description": "v0.22.0 was built but never reached users — npm stopped at 0.21.0, no tag, no GitHub Release. Rather than publish it retroactively, 0.23.0 carries BOTH payloads, so anyone upgrading from 0.21.0 gets Automations and the Chat work alongside the snapshot rework. RELEASES.json: 0.22.0 becomes superseded with a pointer to where its payload shipped (the convention 0.20.2 already uses) and its full description is FOLDED INTO 0.23.0's summary rather than discarded; 0.23.0's entry also picked up the migrate-and-stamp fix, which landed after the entry was first written. The announcement is a new v0-23-0 story covering 0.23.0's own content, with three screenshots driven from a real vault: the Core page as hero (a PEOPLE roster where 1.user.md used to be), a tight crop of that list, and the Patterns folder with 17 rule-described entries. The existing v0-22-0-automations entry is LEFT IN PLACE — one announcement per version, and a reader coming from 0.21.0 sees both unread, which is exactly what a combined release means; duplicating its screenshots under v0-23-0 would have failed the manifest's orphan check for no benefit. Both note blocks are deliberate: one explains the combined release, the other OWNS the install-skill migration defect found while verifying this work, because a caveat stated plainly buys more trust than omitting it. Capture and verify scripts (e2e/announce-shots-0-23.mjs, e2e/announce-verify-0-23.mjs) are checked in so the next release adapts them rather than rediscovering the selectors — both crops needed real bounding boxes, since guessed pixel offsets silently clipped the labels. LANDED as 269749d.",
+    "breaking": false,
+    "summary": "0.23.0 cut as a COMBINED release carrying v0.22.0's undelivered payload too; 0.22.0 marked superseded and announced as its own story",
+    "references": [
+      "commit:269749d",
+      "file:_dream_context/core/RELEASES.json",
+      "file:dashboard/public/announcements/v0-23-0.json"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-01",
+    "type": "fix",
+    "scope": "migrations",
+    "description": "setupVersion is the LOWER BOUND of the migration runner's half-open range (setupVersion, cliVersion]. install-skill and setup stamped it without migrating first, so the next update computed (cliVersion, cliVersion] = EMPTY and applied nothing — the vault silently and permanently stranded. The safety valve could not see it either: unfinishedAgentTasks requires a code/detected ledger entry before it will report an agent task, so a vault with an EMPTY ledger reads as FRESH. Recovery meant hand-editing state/.config.json. Not hypothetical — update REFUSES on a platform-less vault with 'run dreamcontext install-skill first', so following the CLI's own instruction was enough to permanently discard the 0.23.0 people-first and soul-split migrations. Reproduced on a copy of a real 0.18.0 vault (ouromedia: soul 18,390 chars, 1.user.md 17,895 chars). FIX: update.ts's ordering extracted into src/lib/migrate-and-stamp.ts and all three commands routed through it — capture fromVersion before any write, run migrations over (fromVersion, cliVersion], queue code-step notices, persist setupVersion ONLY on a fully-clean run, otherwise PIN it so the next run retries. update.ts refactored onto the helper rather than keeping a second copy of the contract to drift. Non-gated keys (platforms, packs, multiProduct) still persist on a partial failure — the install genuinely happened and only the stamp is an interlock. A missing _dream_context/ stamps and returns instead of running the registry against an absent root. init stays the deliberate exception: a brand-new vault has nothing to migrate, and its stamp is what makes the following install step compute an empty range. A SOURCE TRIPWIRE guards the defect CLASS rather than the three call sites — nothing outside init may stamp setupVersion directly — and was verified to bite by reintroducing the old line. LANDED as 24ac8b7.",
+    "breaking": false,
+    "summary": "install-skill and setup no longer strand a vault: migrations run BEFORE setupVersion is stamped, all three commands routed through one shared helper",
+    "references": [
+      "commit:24ac8b7",
+      "file:src/lib/migrate-and-stamp.ts",
+      "feature:migration-system",
+      "task:install-skill-and-setup-advance-setupversion-without-running-migrations-silently-skipping-them-forever"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-01",
+    "type": "chore",
+    "scope": "brain",
+    "description": "feat/unified-dashboard (6a4af92, 2026-06-14) was never merged and its file state predates six weeks of consolidation, so merging it would have REVERTED 2.memory.md, 4.tech_stack.md and desktop-beta-tauri-multivault.md. The recovery rule applied: salvage only what never reached main, and reconcile each piece against current reality rather than restoring it. knowledge/features/continuous-app-update.md recovered and relocated from the retired core/features/ path — Faz 1 has since shipped (.github/workflows/desktop-release.yml), so status went in_progress to active, released_version null to v0.8.1, both remaining criteria ticked, and two related_tasks that no longer exist on main were dropped. CHANGELOG.json gained two verbatim 2026-06-13 entries (thin-shell .app delivery without Apple notarization; default-on background CLI auto-upgrade) as history. knowledge/archive/2.memory-2026-h2.md gained two decisions (auto-update strategy, macOS no-notarization delivery), each noting that auto-upgrade.ts and app-manifest.ts are GONE and the logic now lives in app.ts, hook.ts and version-check.ts. 4.tech_stack.md lists the app command, ensure-cli and version-check. Deliberately not salvaged: the branch's older copies of memory/tech_stack/desktop knowledge. Doctor warnings 8 to 6; snapshot cost +7 chars (18,360 to 18,367). LANDED as daf5524.",
+    "breaking": false,
+    "summary": "Stranded auto-update context recovered from the abandoned feat/unified-dashboard branch — salvaged by reconciliation, never merged wholesale",
+    "references": [
+      "commit:daf5524",
+      "feature:continuous-app-update",
+      "file:_dream_context/knowledge/archive/2.memory-2026-h2.md"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-07-30",
     "type": "change",
     "scope": "migration",
@@ -17,9 +238,9 @@
     "date": "2026-07-30",
     "type": "refactor",
     "scope": "snapshot",
-    "description": "Two owner orders landed on one section. RENDER BY NAME: tasks displayed their SLUG as the title, so a mangled legacy Turkish slug read as the task name in every snapshot. The frontmatter NAME is now displayed everywhere with Turkish intact, and the slug became the ADDRESS, carried on a subline pointing at _dream_context/state/<slug>.md under each detailed entry; roster names come from frontmatter with folded YAML collapsed and a slug fallback, status markers ride on names, ActiveTaskEntry gained a name field, and the sub-agent briefing inherits it. ACCOUNTING MODEL (a sub-agent judge verdict adopted verbatim): a demoted render is no longer a name roster of everything. It is detailed entries (activity-sorted head always, then in_progress only, whole blocks packed, rung 1 at TASKS_DETAIL_CHARS=1100 max 3 and the floor at 400 max 1), plus a needs-attention line naming every not-detailed task whose status is outside todo and planned OR whose priority is critical — INCLUDING overflow in_progress carrying an [in_progress] marker, which is the concurrent-thread continue-this case — plus a per-status COUNT line for the routine queue and a filter-teaching footer. Level 0 is UNCHANGED, so small vaults keep the whole board and both goldens stayed byte-identical without regeneration. The acceptance criterion moved from every task being NAMED to every task being ACCOUNTED FOR (detailed plus named plus counted equals the total), asserted on 60-task and 200-task fixtures; TASKS_L1, TASKS_L2 and the old roster constant retired. The judge rationale is worth keeping: 30 routine names had no session-start consumer, since the recall hook and a taught tasks list own that discovery, while exceptions and concurrent threads are the real signal. Live: Active Tasks 2,731 to about 900 chars, snapshot 17,575 to 16,320. UNCOMMITTED.",
+    "description": "Two owner orders landed on one section. RENDER BY NAME: tasks displayed their SLUG as the title, so a mangled legacy Turkish slug read as the task name in every snapshot. The frontmatter NAME is now displayed everywhere with Turkish intact, and the slug became the ADDRESS, carried on a subline pointing at _dream_context/state/<slug>.md under each detailed entry; roster names come from frontmatter with folded YAML collapsed and a slug fallback, status markers ride on names, ActiveTaskEntry gained a name field, and the sub-agent briefing inherits it. ACCOUNTING MODEL (a sub-agent judge verdict adopted verbatim): a demoted render is no longer a name roster of everything. It is detailed entries (activity-sorted head always, then in_progress only, whole blocks packed, rung 1 at TASKS_DETAIL_CHARS=1100 max 3 and the floor at 400 max 1), plus a needs-attention line naming every not-detailed task whose status is outside todo and planned OR whose priority is critical — INCLUDING overflow in_progress carrying an [in_progress] marker, which is the concurrent-thread continue-this case — plus a per-status COUNT line for the routine queue and a filter-teaching footer. Level 0 is UNCHANGED, so small vaults keep the whole board and both goldens stayed byte-identical without regeneration. The acceptance criterion moved from every task being NAMED to every task being ACCOUNTED FOR (detailed plus named plus counted equals the total), asserted on 60-task and 200-task fixtures; TASKS_L1, TASKS_L2 and the old roster constant retired. The judge rationale is worth keeping: 30 routine names had no session-start consumer, since the recall hook and a taught tasks list own that discovery, while exceptions and concurrent threads are the real signal. Live: Active Tasks 2,731 to about 900 chars, snapshot 17,575 to 16,320. LANDED on main 2026-08-01 as d25e618 (feat(snapshot): level-0 density, loud patterns, and the 0.23.0 soul-split migration).",
     "breaking": false,
-    "summary": "Active Tasks renders frontmatter NAMES with the slug as the address, and demoted rungs switch to a per-status accounting model (UNCOMMITTED)",
+    "summary": "Active Tasks renders frontmatter NAMES with the slug as the address, and demoted rungs switch to a per-status accounting model",
     "references": [
       "file:src/cli/commands/snapshot.ts",
       "file:src/lib/snapshot-caps.ts",
@@ -31,9 +252,9 @@
     "date": "2026-07-30",
     "type": "feat",
     "scope": "snapshot",
-    "description": "A screenshot review found the changelog floor had ZERO recovery pointer: the render dropped to three titles with nothing telling the agent how to reach the rest. Standing search-and-browse FOOTERS now ride every inventory section at every rung including the floors — changelog (recall --types changelog plus changelog list), tasks (recall --types task plus a line teaching the whole filter surface), bookmarks (bookmark list, with the quieter tail deduped to a count only), features (recall --types feature plus the PRDs path) — while objectives, lab, memory and knowledge already carried theirs; theses keeps its board pointer. The owner generalized the ask mid-turn to cover tasks, bookmarks and the remaining sections. Under the same density doctrine the Knowledge Index stopped listing non-pinned, non-pattern knowledge AT ALL: one accurate count plus a search-commands line at level 0 AND at the floor, with the grouped-folder inventory, its preamble, the per-diagram board rollup and KNOWLEDGE_L2_CHARS all retired; pinned entries and patterns keep full treatment, and the naming contract for knowledge is now the COUNT. Goldens regenerated with the diff reduced to the footer lines and the inventory-to-count line, identical in both fixtures. Live on a mature peer: 21,470 to 17,575 chars, under the harness limit, no banner, fully inline even with a transient migrations report present. UNCOMMITTED.",
+    "description": "A screenshot review found the changelog floor had ZERO recovery pointer: the render dropped to three titles with nothing telling the agent how to reach the rest. Standing search-and-browse FOOTERS now ride every inventory section at every rung including the floors — changelog (recall --types changelog plus changelog list), tasks (recall --types task plus a line teaching the whole filter surface), bookmarks (bookmark list, with the quieter tail deduped to a count only), features (recall --types feature plus the PRDs path) — while objectives, lab, memory and knowledge already carried theirs; theses keeps its board pointer. The owner generalized the ask mid-turn to cover tasks, bookmarks and the remaining sections. Under the same density doctrine the Knowledge Index stopped listing non-pinned, non-pattern knowledge AT ALL: one accurate count plus a search-commands line at level 0 AND at the floor, with the grouped-folder inventory, its preamble, the per-diagram board rollup and KNOWLEDGE_L2_CHARS all retired; pinned entries and patterns keep full treatment, and the naming contract for knowledge is now the COUNT. Goldens regenerated with the diff reduced to the footer lines and the inventory-to-count line, identical in both fixtures. Live on a mature peer: 21,470 to 17,575 chars, under the harness limit, no banner, fully inline even with a transient migrations report present. LANDED on main 2026-08-01 as d25e618 (feat(snapshot): level-0 density, loud patterns, and the 0.23.0 soul-split migration).",
     "breaking": false,
-    "summary": "Every inventory section carries a standing search/browse footer at EVERY rung, and the knowledge index becomes a count plus search commands (UNCOMMITTED)",
+    "summary": "Every inventory section carries a standing search/browse footer at EVERY rung, and the knowledge index becomes a count plus search commands",
     "references": [
       "file:src/cli/commands/snapshot.ts",
       "file:src/lib/snapshot-caps.ts",
@@ -44,9 +265,9 @@
     "date": "2026-07-30",
     "type": "feat",
     "scope": "cli",
-    "description": "Recall answers \"what do we know about X\" by relevance; nothing answered \"what happened, in order\". dreamcontext changelog list is a paginated CHRONOLOGICAL browse of CHANGELOG.json with LIFO preserved: --page, --size (max 50), --type, --scope, --grep (case-insensitive over summary, description and scope, Turkish-safe) and --json, with pages past the end staying empty while totals stay honest. The logic is pure core in src/lib/changelog-list.ts behind a thin printer command, registered in the CLI and documented in a SKILL.md router row and the cli-reference. Separately tasks list gained --since and --until (YYYY-MM-DD, inclusive, evaluated on updated_at, flags validated, and a task with no date never matches a bounded query), which together with the existing status, assignee, version, objective and feature filters covers the unfinished, sprint, completed and date-range reads. Live on a mature vault: 489 entries across 163 browsable pages, with a grep probe returning 41 hits. UNCOMMITTED.",
+    "description": "Recall answers \"what do we know about X\" by relevance; nothing answered \"what happened, in order\". dreamcontext changelog list is a paginated CHRONOLOGICAL browse of CHANGELOG.json with LIFO preserved: --page, --size (max 50), --type, --scope, --grep (case-insensitive over summary, description and scope, Turkish-safe) and --json, with pages past the end staying empty while totals stay honest. The logic is pure core in src/lib/changelog-list.ts behind a thin printer command, registered in the CLI and documented in a SKILL.md router row and the cli-reference. Separately tasks list gained --since and --until (YYYY-MM-DD, inclusive, evaluated on updated_at, flags validated, and a task with no date never matches a bounded query), which together with the existing status, assignee, version, objective and feature filters covers the unfinished, sprint, completed and date-range reads. Live on a mature vault: 489 entries across 163 browsable pages, with a grep probe returning 41 hits. LANDED on main 2026-08-01 as d25e618 (feat(snapshot): level-0 density, loud patterns, and the 0.23.0 soul-split migration).",
     "breaking": false,
-    "summary": "New dreamcontext changelog list — paginated chronological browse of CHANGELOG.json — and tasks list gains --since/--until date filters (UNCOMMITTED)",
+    "summary": "New dreamcontext changelog list — paginated chronological browse of CHANGELOG.json — and tasks list gains --since/--until date filters",
     "references": [
       "file:src/lib/changelog-list.ts",
       "file:src/cli/commands/changelog.ts",
@@ -59,9 +280,9 @@
     "date": "2026-07-30",
     "type": "feat",
     "scope": "snapshot",
-    "description": "An honest audit after the soul split found the moved rules were not pinned, and at a mature vault rung they rendered as one anonymous folder line — the project RULES demoted to trivia. Patterns now have their OWN block at EVERY rung carrying PATTERNS_BANNER in the same register as PINNED_BANNER (these patterns are the project rules, read them). Level 0 renders title, path and brief; rung 1 drops the briefs; rung 2 and the floor pack bare slugs into PATTERNS_FLOOR_CHARS=1000 with a named tail. They are never folded into folder grouping at any level. Deliberately NOT marked pinned=true per file: the pin block is unbounded at level 0, a dozen-plus pins with long descriptions would push a mature vault back over 20,000 chars, and pinning is the user curation channel — the banner block is the structural equivalent for rules. New floors test asserts the banner plus every slug at the floor, briefs only at level 0, and never inside folder grouping; two stale integration tests moved to the new level-0 contract and registry uniqueness was reshaped because 0.23.0 holds TWO migrations by design. Live: a peer vault at 19,920 chars, no banner, with all 19 pattern slugs visible at its floor. UNCOMMITTED.",
+    "description": "An honest audit after the soul split found the moved rules were not pinned, and at a mature vault rung they rendered as one anonymous folder line — the project RULES demoted to trivia. Patterns now have their OWN block at EVERY rung carrying PATTERNS_BANNER in the same register as PINNED_BANNER (these patterns are the project rules, read them). Level 0 renders title, path and brief; rung 1 drops the briefs; rung 2 and the floor pack bare slugs into PATTERNS_FLOOR_CHARS=1000 with a named tail. They are never folded into folder grouping at any level. Deliberately NOT marked pinned=true per file: the pin block is unbounded at level 0, a dozen-plus pins with long descriptions would push a mature vault back over 20,000 chars, and pinning is the user curation channel — the banner block is the structural equivalent for rules. New floors test asserts the banner plus every slug at the floor, briefs only at level 0, and never inside folder grouping; two stale integration tests moved to the new level-0 contract and registry uniqueness was reshaped because 0.23.0 holds TWO migrations by design. Live: a peer vault at 19,920 chars, no banner, with all 19 pattern slugs visible at its floor. LANDED on main 2026-08-01 as d25e618 (feat(snapshot): level-0 density, loud patterns, and the 0.23.0 soul-split migration).",
     "breaking": false,
-    "summary": "Patterns get their own block with a HARD warning banner at every rung — project rules can no longer demote into an anonymous folder line (UNCOMMITTED)",
+    "summary": "Patterns get their own block with a HARD warning banner at every rung — project rules can no longer demote into an anonymous folder line",
     "references": [
       "file:src/cli/commands/snapshot.ts",
       "file:src/lib/snapshot-caps.ts",
@@ -72,9 +293,9 @@
     "date": "2026-07-30",
     "type": "fix",
     "scope": "migrations",
-    "description": "Found live on the first real 0.23.0 run: update applied the code steps and advanced setupVersion to 0.23.0 while the distribute-user-md-residue agentTask was still unfinished, so migrations pending computed its range as the half-open interval from setupVersion to cliVersion — 0.23.0 to 0.23.0, empty — and printed \"No pending agent migration tasks\". The residue file itself instructs the user that pending prints the full instruction, so on a real vault the residue would have rotted forever unless a human happened to open the file. New unfinishedAgentTasks(contextRoot, cliVersion) in src/migrations/index.ts is LEDGER-judged and setupVersion-blind: a migration is unfinished if and only if its code and detected steps are in the ledger AND no executor:agent entry exists for its agentTask id, with a started guard keeping fresh vaults silent; the pending command dropped its setupVersion range code entirely. The honest filter surfaced one side effect — 0.7.2 diagrams-folder-convention is an OFFER whose agent entry is only ever written by apply-diagrams, so it would have nagged forever — handled by a new MigrationAgentTask.optIn flag that exempts offers, with 0.7.2 marked. Six regression cases (fresh vault silent, same-version pending, agent entry silences, wrong-step entry does not, newer-than-CLI hidden, opt-in exempt) plus a live replay against a pre-migration clone where pending now prints exactly the 0.23.0 residue task. UNCOMMITTED.",
+    "description": "Found live on the first real 0.23.0 run: update applied the code steps and advanced setupVersion to 0.23.0 while the distribute-user-md-residue agentTask was still unfinished, so migrations pending computed its range as the half-open interval from setupVersion to cliVersion — 0.23.0 to 0.23.0, empty — and printed \"No pending agent migration tasks\". The residue file itself instructs the user that pending prints the full instruction, so on a real vault the residue would have rotted forever unless a human happened to open the file. New unfinishedAgentTasks(contextRoot, cliVersion) in src/migrations/index.ts is LEDGER-judged and setupVersion-blind: a migration is unfinished if and only if its code and detected steps are in the ledger AND no executor:agent entry exists for its agentTask id, with a started guard keeping fresh vaults silent; the pending command dropped its setupVersion range code entirely. The honest filter surfaced one side effect — 0.7.2 diagrams-folder-convention is an OFFER whose agent entry is only ever written by apply-diagrams, so it would have nagged forever — handled by a new MigrationAgentTask.optIn flag that exempts offers, with 0.7.2 marked. Six regression cases (fresh vault silent, same-version pending, agent entry silences, wrong-step entry does not, newer-than-CLI hidden, opt-in exempt) plus a live replay against a pre-migration clone where pending now prints exactly the 0.23.0 residue task. LANDED on main 2026-08-01 as d25e618 (feat(snapshot): level-0 density, loud patterns, and the 0.23.0 soul-split migration).",
     "breaking": false,
-    "summary": "migrations pending no longer goes blind after update advances setupVersion past an unfinished agentTask (UNCOMMITTED)",
+    "summary": "migrations pending no longer goes blind after update advances setupVersion past an unfinished agentTask",
     "references": [
       "file:src/migrations/index.ts",
       "file:src/cli/commands/migrations.ts",
@@ -87,7 +308,7 @@
     "date": "2026-07-30",
     "type": "feat",
     "scope": "migrations",
-    "description": "The soul is constitution-only — always-unconditionally-valid rules plus the agent behavior and voice — and it renders FULL and VERBATIM with no compression rungs, so enforcement has to be systemic rather than render-time. src/migrations/0.23.0-soul-split.ts registers as a SECOND 0.23.0 entry: the runner now merges same-version changelogs and gates steps by id, and its agentTask check was tightened to match the STEP id, because a loose version-only match would have let the people-first residue task hide the soul split entirely. A code step detects an oversized soul (detection only); an agentTask carries the full split doctrine — constitution-only soul, verbatim moves, nothing discarded, a 4,000-char target, doctor verification. Executed live on a real peer vault, parser-driven so every move is verbatim by construction: soul 32,912 to 3,983 chars, keeping identity, brand and philosophy plus 16 tightened unconditional rules with the originals byte-exact in knowledge/archive/0.soul-2026-07-pre-split.md, and moving 37 conditional rules into 10 clustered pattern files. Combined with the same run people-first migration, that vault snapshot went 53,668 to 16,320 chars — under the harness limit, no banner, fully inline for the first time. Recall was verified to surface the moved rules. RELEASE-CRITICAL: the migration cannot fire anywhere until package.json bumps to 0.23.0, because the applied range is half-open. UNCOMMITTED in this repo.",
+    "description": "The soul is constitution-only — always-unconditionally-valid rules plus the agent behavior and voice — and it renders FULL and VERBATIM with no compression rungs, so enforcement has to be systemic rather than render-time. src/migrations/0.23.0-soul-split.ts registers as a SECOND 0.23.0 entry: the runner now merges same-version changelogs and gates steps by id, and its agentTask check was tightened to match the STEP id, because a loose version-only match would have let the people-first residue task hide the soul split entirely. A code step detects an oversized soul (detection only); an agentTask carries the full split doctrine — constitution-only soul, verbatim moves, nothing discarded, a 4,000-char target, doctor verification. Executed live on a real peer vault, parser-driven so every move is verbatim by construction: soul 32,912 to 3,983 chars, keeping identity, brand and philosophy plus 16 tightened unconditional rules with the originals byte-exact in knowledge/archive/0.soul-2026-07-pre-split.md, and moving 37 conditional rules into 10 clustered pattern files. Combined with the same run people-first migration, that vault snapshot went 53,668 to 16,320 chars — under the harness limit, no banner, fully inline for the first time. Recall was verified to surface the moved rules. RELEASE-CRITICAL: the migration cannot fire anywhere until package.json bumps to 0.23.0, because the applied range is half-open. LANDED on main 2026-08-01 as d25e618 (feat(snapshot): level-0 density, loud patterns, and the 0.23.0 soul-split migration).",
     "breaking": false,
     "summary": "New 0.23.0 soul-split migration detects a bloated legacy soul and splits it into a constitution plus pattern files; executed live (32,912 to 3,983 chars)",
     "references": [
@@ -101,9 +322,9 @@
     "date": "2026-07-30",
     "type": "refactor",
     "scope": "snapshot",
-    "description": "Owner voice directive 2026-07-30 plus two picks: the compression ladder had been fixing at the rungs what level 0 should never have emitted. FEATURES render name, status and path only, active-first, packed into a single rung with a named tail — the Why, Tasks and Latest detail blocks are gone, because the PRD is one Read away. KNOWLEDGE: only PINNED entries carry descriptions at ANY level; every pattern is titled with one short word-safe clause (PATTERN_BRIEF_CHARS=80) under a Patterns heading; the rest is grouped folder names; rung 1 drops the pattern briefs and rung 2 folds patterns into grouping with a bounded pin block. The WARM KNOWLEDGE section is deleted entirely under the same doctrine — non-pinned is named, never summarized. THESES render one summary line plus the top TWO open ones and a board pointer. LAB keeps name and value and now has NO rungs at all, because Rule 13 is the whole purpose of the section and no cheaper render exists, plus a detail and sync pointer line. AUTOMATIONS collapse routine ok runs into ONE aggregate line with a list pointer, while failures, blocked and orphan runs keep per-item detail and render first. Goldens regenerated with the diff reviewed down to exactly the four intended hunks, identical across both fixtures (diff-of-diffs empty). Docs updated in lockstep: the cli-reference ladder chain and the README pinned/warm copy and mermaid label. FEATURES_L1_CHARS is now unused in caps — a cleanup candidate. UNCOMMITTED.",
+    "description": "Owner voice directive 2026-07-30 plus two picks: the compression ladder had been fixing at the rungs what level 0 should never have emitted. FEATURES render name, status and path only, active-first, packed into a single rung with a named tail — the Why, Tasks and Latest detail blocks are gone, because the PRD is one Read away. KNOWLEDGE: only PINNED entries carry descriptions at ANY level; every pattern is titled with one short word-safe clause (PATTERN_BRIEF_CHARS=80) under a Patterns heading; the rest is grouped folder names; rung 1 drops the pattern briefs and rung 2 folds patterns into grouping with a bounded pin block. The WARM KNOWLEDGE section is deleted entirely under the same doctrine — non-pinned is named, never summarized. THESES render one summary line plus the top TWO open ones and a board pointer. LAB keeps name and value and now has NO rungs at all, because Rule 13 is the whole purpose of the section and no cheaper render exists, plus a detail and sync pointer line. AUTOMATIONS collapse routine ok runs into ONE aggregate line with a list pointer, while failures, blocked and orphan runs keep per-item detail and render first. Goldens regenerated with the diff reviewed down to exactly the four intended hunks, identical across both fixtures (diff-of-diffs empty). Docs updated in lockstep: the cli-reference ladder chain and the README pinned/warm copy and mermaid label. FEATURES_L1_CHARS is now unused in caps — a cleanup candidate. LANDED on main 2026-08-01 as d25e618 (feat(snapshot): level-0 density, loud patterns, and the 0.23.0 soul-split migration).",
     "breaking": false,
-    "summary": "Level-0 density doctrine: the DEFAULT render is itself compact — non-pinned inventory is named, never summarized; warm knowledge deleted (UNCOMMITTED)",
+    "summary": "Level-0 density doctrine: the DEFAULT render is itself compact — non-pinned inventory is named, never summarized; warm knowledge deleted",
     "references": [
       "file:src/cli/commands/snapshot.ts",
       "file:src/lib/snapshot-caps.ts",
@@ -115,9 +336,9 @@
     "date": "2026-07-30",
     "type": "fix",
     "scope": "cli",
-    "description": "slugify stripped non-ASCII characters outright, so a Turkish task or tag name lost its leading and internal accented letters — a name beginning with O-umlaut and containing a soft-g slugged down to retmen-fiyat, which then rendered as the task title everywhere the snapshot displayed a slug. New foldToAscii in src/lib/id.ts (NFD normalize, strip combining marks, explicit dotless-i map) runs ahead of the strip and applies to slugify AND slugifyTag, so both new task slugs and new taxonomy tags survive the fold. Existing slugs are deliberately untouched — those files are on disk and are never renamed — so this shapes new slugs only. Six new slugify cases; the old caf-ber expectation was pinning the bug and was replaced. UNCOMMITTED.",
+    "description": "slugify stripped non-ASCII characters outright, so a Turkish task or tag name lost its leading and internal accented letters — a name beginning with O-umlaut and containing a soft-g slugged down to retmen-fiyat, which then rendered as the task title everywhere the snapshot displayed a slug. New foldToAscii in src/lib/id.ts (NFD normalize, strip combining marks, explicit dotless-i map) runs ahead of the strip and applies to slugify AND slugifyTag, so both new task slugs and new taxonomy tags survive the fold. Existing slugs are deliberately untouched — those files are on disk and are never renamed — so this shapes new slugs only. Six new slugify cases; the old caf-ber expectation was pinning the bug and was replaced. LANDED on main 2026-08-01 as d25e618 (feat(snapshot): level-0 density, loud patterns, and the 0.23.0 soul-split migration).",
     "breaking": false,
-    "summary": "Turkish and accented titles fold to ASCII before slugifying, so a name like Ogretmen fiyati keeps its letters instead of losing them (UNCOMMITTED)",
+    "summary": "Turkish and accented titles fold to ASCII before slugifying, so a name like Ogretmen fiyati keeps its letters instead of losing them",
     "references": [
       "file:src/lib/id.ts",
       "file:src/lib/taxonomy.ts"
@@ -127,9 +348,9 @@
     "date": "2026-07-30",
     "type": "refactor",
     "scope": "snapshot",
-    "description": "The snapshot was full of raw slice(n) plus ellipsis truncations that cut mid-word: three in the Recent Changelog block (headline fallback 200, tier-1 body preview 300, Older line 140), six more across task Why, feature Why and Latest, extractFirstParagraph and the sub-agent briefing project summary, and two in federation-peer-summary (whatItIs 200, activity headline 120). All of them now go through capAtWordBoundary, exported from snapshot-compress with the module surface pin updated and its rationale recorded. A global no-ellipsis tripwire on the mature fixture fails the suite if any raw cut comes back, and a floors test proves every capped line is a clean word-boundary prefix of its source. Two adjacent hygiene fixes rode along: excalidraw boards are excluded from BOTH feature enumerators (the snapshot and the sub-agent briefing) after a peer vault had a board rendering as a feature PRD — boards are knowledge, not PRDs — and per-diagram board folders roll up under the folder above them instead of taking one grouped line each, which freed enough budget that the patterns folder became fully named at the grouped rung instead of falling into the unnamed overflow tail. UNCOMMITTED.",
+    "description": "The snapshot was full of raw slice(n) plus ellipsis truncations that cut mid-word: three in the Recent Changelog block (headline fallback 200, tier-1 body preview 300, Older line 140), six more across task Why, feature Why and Latest, extractFirstParagraph and the sub-agent briefing project summary, and two in federation-peer-summary (whatItIs 200, activity headline 120). All of them now go through capAtWordBoundary, exported from snapshot-compress with the module surface pin updated and its rationale recorded. A global no-ellipsis tripwire on the mature fixture fails the suite if any raw cut comes back, and a floors test proves every capped line is a clean word-boundary prefix of its source. Two adjacent hygiene fixes rode along: excalidraw boards are excluded from BOTH feature enumerators (the snapshot and the sub-agent briefing) after a peer vault had a board rendering as a feature PRD — boards are knowledge, not PRDs — and per-diagram board folders roll up under the folder above them instead of taking one grouped line each, which freed enough budget that the patterns folder became fully named at the grouped rung instead of falling into the unnamed overflow tail. LANDED on main 2026-08-01 as d25e618 (feat(snapshot): level-0 density, loud patterns, and the 0.23.0 soul-split migration).",
     "breaking": false,
-    "summary": "Every raw slice-plus-ellipsis cut in the snapshot became a word-boundary cap, with a tripwire test that fails if one is reintroduced (UNCOMMITTED)",
+    "summary": "Every raw slice-plus-ellipsis cut in the snapshot became a word-boundary cap, with a tripwire test that fails if one is reintroduced",
     "references": [
       "file:src/lib/snapshot-compress.ts",
       "file:src/cli/commands/snapshot.ts",
@@ -140,9 +361,9 @@
     "date": "2026-07-30",
     "type": "fix",
     "scope": "snapshot",
-    "description": "A section-by-section owner review of the rendered snapshot produced one round of floor fixes. RELEASES: Latest Release was selected by ARRAY POSITION, so a superseded and never-published 0.20.2 sat on top and got crowned while 0.21.0 sat below 0.20.1 — planning and superseded are now filtered out and the highest semver wins; absent date and summary fields no longer render as empty parens or a dangling colon; and the latest summary is capped at 300 word-safe chars at the demoted rung only, level 0 keeping full prose. BOOKMARKS: with zero three-star entries the floor collapsed to a bare count, and now keeps the two-star tier as first-sentence compact lines with one-star behind an accurate quieter tail. EXTENDED CORE: the demoted rung keeps a 90-char first-sentence summary per file, since bare name-and-path lines gave the agent no reason to open anything. CONNECTED PROJECTS: the floor was a bare name roster that reproduced the original complaint — the agent sees a peer name and learns nothing — and now renders each peer with a first-sentence identity, plus two builder prefix bugs fixed (a name prefix that could not see through leading markdown emphasis, and filename-shaped soul names). OBJECTIVES: the floor counter breaks down into N active plus M done, because a bare count over a six-line list read as a silent drop. LAB and LEARNING headers dropped a duplicated blank line. ACTIVE TASKS: the roster tail names first and counts after (the old copy read as if the colon introduced the omitted names), and only EXCEPTIONAL statuses outside in_progress/todo/planned carry a marker — marking every todo ate the naming budget and broke the accounting assertion outright. UNCOMMITTED.",
+    "description": "A section-by-section owner review of the rendered snapshot produced one round of floor fixes. RELEASES: Latest Release was selected by ARRAY POSITION, so a superseded and never-published 0.20.2 sat on top and got crowned while 0.21.0 sat below 0.20.1 — planning and superseded are now filtered out and the highest semver wins; absent date and summary fields no longer render as empty parens or a dangling colon; and the latest summary is capped at 300 word-safe chars at the demoted rung only, level 0 keeping full prose. BOOKMARKS: with zero three-star entries the floor collapsed to a bare count, and now keeps the two-star tier as first-sentence compact lines with one-star behind an accurate quieter tail. EXTENDED CORE: the demoted rung keeps a 90-char first-sentence summary per file, since bare name-and-path lines gave the agent no reason to open anything. CONNECTED PROJECTS: the floor was a bare name roster that reproduced the original complaint — the agent sees a peer name and learns nothing — and now renders each peer with a first-sentence identity, plus two builder prefix bugs fixed (a name prefix that could not see through leading markdown emphasis, and filename-shaped soul names). OBJECTIVES: the floor counter breaks down into N active plus M done, because a bare count over a six-line list read as a silent drop. LAB and LEARNING headers dropped a duplicated blank line. ACTIVE TASKS: the roster tail names first and counts after (the old copy read as if the colon introduced the omitted names), and only EXCEPTIONAL statuses outside in_progress/todo/planned carry a marker — marking every todo ate the naming budget and broke the accounting assertion outright. LANDED on main 2026-08-01 as d25e618 (feat(snapshot): level-0 density, loud patterns, and the 0.23.0 soul-split migration).",
     "breaking": false,
-    "summary": "Snapshot section review round: Releases picks by semver, Bookmarks keeps its two-star tier at the floor, extended core and peers keep their identity (UNCOMMITTED)",
+    "summary": "Snapshot section review round: Releases picks by semver, Bookmarks keeps its two-star tier at the floor, extended core and peers keep their identity",
     "references": [
       "file:src/cli/commands/snapshot.ts",
       "file:src/lib/snapshot-caps.ts",
@@ -153,9 +374,9 @@
     "date": "2026-07-30",
     "type": "feat",
     "scope": "snapshot",
-    "description": "Owner decision 2026-07-29: sleep is memory compressor, so render-time rungs were double taxation on a file the sleep cycle already distills to the ceiling and archives past. A core/2.memory.md at or under CORE_FILE_CHAR_CEILING (4,000 raw chars, the same measurement doctor uses) now renders VERBATIM at every budget level, with a single pointer line noting it is the working set only and that full history is reachable through memory recall. Over-ceiling files — vaults that have not slept — keep the existing three-rung ladder plus the doctor error. The same change fixed the exhausted-footer duplication in snapshot-budget.ts: the doubled section list was about 250 bytes and could push an otherwise-fitting snapshot past 20,000 chars into banner state, and its \"every section is never-evict\" claim became \"nothing the ladder can shrink\", since a compliant memory is demotable-typed with no rungs. Two new floors tests (AT the ceiling stays verbatim at maximum pressure, ceiling plus one character walks the rungs); both goldens regenerated with the diff gated at exactly the pointer line plus a blank. Measured live at 19,975 chars, fully inline, full memory, no banner. OPEN STRUCTURAL ISSUE recorded at the time: healthy-mature-vault fit is razor-thin, and a worst case with soul, person and memory all at their 4,000 ceilings mathematically busts 20,000 against current inventory floors. UNCOMMITTED in the working tree.",
+    "description": "Owner decision 2026-07-29: sleep is memory compressor, so render-time rungs were double taxation on a file the sleep cycle already distills to the ceiling and archives past. A core/2.memory.md at or under CORE_FILE_CHAR_CEILING (4,000 raw chars, the same measurement doctor uses) now renders VERBATIM at every budget level, with a single pointer line noting it is the working set only and that full history is reachable through memory recall. Over-ceiling files — vaults that have not slept — keep the existing three-rung ladder plus the doctor error. The same change fixed the exhausted-footer duplication in snapshot-budget.ts: the doubled section list was about 250 bytes and could push an otherwise-fitting snapshot past 20,000 chars into banner state, and its \"every section is never-evict\" claim became \"nothing the ladder can shrink\", since a compliant memory is demotable-typed with no rungs. Two new floors tests (AT the ceiling stays verbatim at maximum pressure, ceiling plus one character walks the rungs); both goldens regenerated with the diff gated at exactly the pointer line plus a blank. Measured live at 19,975 chars, fully inline, full memory, no banner. OPEN STRUCTURAL ISSUE recorded at the time: healthy-mature-vault fit is razor-thin, and a worst case with soul, person and memory all at their 4,000 ceilings mathematically busts 20,000 against current inventory floors. LANDED on main 2026-08-01 as d25e618 (feat(snapshot): level-0 density, loud patterns, and the 0.23.0 soul-split migration).",
     "breaking": false,
-    "summary": "core/2.memory.md at or under 4,000 chars now renders IN FULL in every snapshot — no rungs, one recall pointer (UNCOMMITTED)",
+    "summary": "core/2.memory.md at or under 4,000 chars now renders IN FULL in every snapshot — no rungs, one recall pointer",
     "references": [
       "file:src/cli/commands/snapshot.ts",
       "file:src/lib/snapshot-caps.ts",
@@ -225,9 +446,9 @@
     "date": "2026-07-28",
     "type": "refactor",
     "scope": "snapshot",
-    "description": "Task 'the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview' executed across parallel waves after 4 plan-review rounds. Landed uncommitted: src/lib/snapshot-budget.ts reworked with lazy BudgetRung thunks, rank-ordered demotion via demotionRank decoupled from render order, neverEvictChars + flooredSectionIds, a two-band footer, renderOverBudgetBanner + OVERSIZED_SNAPSHOT_DIRECTIVE; new src/lib/snapshot-caps.ts (21 pinned constants + section-id unions + DEMOTION_RANKS) and src/lib/snapshot-compress.ts (compressMarkdownBlock / packToCharBudget / compressedCoreFile); a byte-identity golden fixture harness; an additive core-file audit in src/lib/core-index.ts; and a 7-file docs-lockstep pass. T5 (src/cli/commands/snapshot.ts) was still running at epoch time, so the tree may not typecheck — expected, not a defect. The neverEvict tier alone is ~20.9KB on mature vaults and exceeds the 20,000-char harness limit, so applyBudget demotes every section AND still returns overBudget. Measured on both live vaults (74KB local / 100KB Tilki). No ladder can win against a floor that already busts the ceiling; the fix has to touch the never-evict tier itself.",
+    "description": "Task 'the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview' executed across parallel waves after 4 plan-review rounds. Landed uncommitted: src/lib/snapshot-budget.ts reworked with lazy BudgetRung thunks, rank-ordered demotion via demotionRank decoupled from render order, neverEvictChars + flooredSectionIds, a two-band footer, renderOverBudgetBanner + OVERSIZED_SNAPSHOT_DIRECTIVE; new src/lib/snapshot-caps.ts (21 pinned constants + section-id unions + DEMOTION_RANKS) and src/lib/snapshot-compress.ts (compressMarkdownBlock / packToCharBudget / compressedCoreFile); a byte-identity golden fixture harness; an additive core-file audit in src/lib/core-index.ts; and a 7-file docs-lockstep pass. T5 (src/cli/commands/snapshot.ts) was still running at epoch time, so the tree may not typecheck — expected, not a defect. The neverEvict tier alone is ~20.9KB on mature vaults and exceeds the 20,000-char harness limit, so applyBudget demotes every section AND still returns overBudget. Measured on both live vaults (74KB local / 100KB Tilki). No ladder can win against a floor that already busts the ceiling; the fix has to touch the never-evict tier itself. LANDED on main 2026-08-01 as d25e618 — the budget rework finished as the level-0 density doctrine.",
     "breaking": false,
-    "summary": "Snapshot budget rework: lazy rungs, decoupled demotion ranks, two-band footer, oversized directive (IN FLIGHT)",
+    "summary": "Snapshot budget rework: lazy rungs, decoupled demotion ranks, two-band footer, oversized directive",
     "references": [
       "task:the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview",
       "file:src/lib/snapshot-budget.ts",

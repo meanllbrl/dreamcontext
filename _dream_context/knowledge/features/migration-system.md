@@ -72,7 +72,9 @@ Entries, in registry order: `0.7.0.ts` (move + fence data-structures), `0.7.2.ts
 
 **Runner** — `src/lib/migration-runner.ts` `runMigrations(root, fromVersion, toVersion) → {applied, pendingAgentTasks}`: downgrade guard → pending → per-step ledger gate → run → `executor = detected ? 'detected' : 'code'` → append ledger → collect agentTasks lacking an `executor:'agent'` entry → CHANGELOG append (one entry per version with ≥1 code step, existsSync-guarded).
 
-**Execution points** — `update.ts`: captures `fromVersion = readSetupConfig(...).setupVersion ?? '0.0.0'` BEFORE the #22 setupVersion bump, then (when `!packsOnly`) runs `runMigrations(ctxRoot, fromVersion, dreamcontextVersion())` and adds a summary line. `sleep.ts`: same call replacing the old unconditional migration calls; prints applied summaries; writes `pendingMigrationNotices` into `.sleep.json`.
+**Execution points** — `src/lib/migrate-and-stamp.ts` (2026-08-01) is the SINGLE implementation of the ordering, and `update`, `install-skill` and `setup` all route through it: capture `fromVersion = readSetupConfig(...).setupVersion ?? '0.0.0'` BEFORE any write, run `runMigrations(ctxRoot, fromVersion, dreamcontextVersion())` over the half-open range, queue code-step notices, then persist `setupVersion` **only on a fully-clean run** — otherwise PIN it so the next run retries. Non-gated keys (`platforms`, `packs`, `multiProduct`) are written even on a partial failure: the install genuinely happened, and only the stamp is an interlock. A missing `_dream_context/` stamps and returns rather than running the registry against an absent root. `init` is the deliberate exception — a brand-new vault has nothing to migrate, and its stamp is precisely what makes the install step that follows compute an empty range. `sleep.ts`: calls `runMigrations` directly (it never stamps); prints applied summaries; writes `pendingMigrationNotices` into `.sleep.json`.
+
+- **`setupVersion` IS THE LOWER BOUND, so stamping before migrating strands the vault (fixed 2026-08-01, `24ac8b7`).** `install-skill` and `setup` stamped without migrating, so the next `update` computed `(cliVersion, cliVersion]` = EMPTY and applied nothing — permanently. `unfinishedAgentTasks` could not rescue it either: it requires a code/detected ledger entry before reporting an agent task, so a vault with an EMPTY ledger reads as FRESH, and the safety valve built for exactly this family of bug was blind to it. Recovery meant hand-editing `state/.config.json`. Not hypothetical: `update` REFUSES on a platform-less vault with *"run `dreamcontext install-skill` first"*, so following the CLI's own instruction was enough to permanently discard the 0.23.0 people-first and soul-split migrations. Reproduced on a copy of the real 0.18.0 ouromedia vault. A **source tripwire** now guards the defect CLASS rather than the three call sites — nothing outside `init` may stamp `setupVersion` directly, and all three must route through the helper (verified to fail by reintroducing the old line).
 
 **Snapshot note** — `generateSnapshot` reads `pendingMigrationNotices` read-only (after the #22 drift block, inside the never-evict flush); emits `## Migrations Applied` or nothing; try/catch → `''`.
 
@@ -91,12 +93,18 @@ Entries, in registry order: `0.7.0.ts` (move + fence data-structures), `0.7.2.ts
 - Adding a future migration is one new `src/migrations/<version>.ts` + one import/push in `src/migrations/index.ts`. Two entries may share a version when one release changes two structures; keep the one whose agentTask should print first earlier in the array.
 - The 0.23.0 work was driven by the task `soul-becomes-constitution-only-and-always-loads-verbatim-while-conditionals-move-to-keyword-prioritized-patterns-across-the-whole-system` (not listed in `related_tasks` — `related_feature` is single-valued and that task's primary home is `context-snapshot`).
 - `setup`/`init` "born migrated" stamping was deliberately dropped — the first `update`/`sleep` backfills `detected` entries naturally.
-- The 0.23.0 work is **uncommitted in the working tree** as of 2026-07-30 (`src/migrations/0.23.0-soul-split.ts` is untracked; `index.ts`, `types.ts`, `migration-runner.ts`, `0.7.2.ts` and `migration-agent-task.test.ts` are modified).
+- The 0.23.0 work **landed on main 2026-08-01 as `d25e618`** (it was uncommitted at the 2026-07-30 consolidation), and `package.json` now reads `0.23.0`, so the half-open range will actually fire.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
-### 2026-07-30 - 0.23.0 ships TWO same-version migrations, and pending goes ledger-judged (UNCOMMITTED)
+### 2026-08-01 - Migrations run BEFORE `setupVersion` is stamped, in one shared helper
+- `src/lib/migrate-and-stamp.ts` extracted from `update.ts`; `install-skill`, `setup` and `update` all route through it. Stamp persists only on a fully-clean run, otherwise pins for retry; non-gated keys (platforms/packs/multiProduct) still persist on partial failure; a missing `_dream_context/` stamps and returns; `init` stays the deliberate exception.
+- Closes the strand: stamping first made the next `update` compute an empty range and apply nothing, and an empty ledger made `unfinishedAgentTasks` read the vault as FRESH, so nothing could report it. Recovery was hand-editing `state/.config.json`.
+- A **source tripwire** guards the defect CLASS — nothing outside `init` may stamp `setupVersion` directly. Tests cover the bug case, idempotency, a config-less vault as `0.0.0`, the no-vault path, and a mocked partial failure proving the stamp pins while `platforms` still persists. Landed `24ac8b7`.
+- STILL OPEN: a vault ALREADY stranded by the old build has no supported recovery — detecting `setupVersion` ahead of the ledger, or a supported reset, is unbuilt. The fix is preventative only.
+
+### 2026-07-30 - 0.23.0 ships TWO same-version migrations, and pending goes ledger-judged
 - `0.23.0-soul-split.ts` registered as a second `0.23.0` entry; the runner merges same-version changelog entries and gates each step and agentTask by its own id.
 - `agentTask.optIn` added so offer-shaped tasks (diagram folders) never register as unfinished work.
 - `unfinishedAgentTasks()` replaces the setupVersion-ranged pending computation — the bug that made the residue instruction unreachable on the first live run.
