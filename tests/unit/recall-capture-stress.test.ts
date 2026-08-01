@@ -267,9 +267,15 @@ describe('continuous-capture precision stress (STEP 1 measurement)', () => {
     };
     // Informational: q031 (Turkish paraphrase vs English doc) misses @3 even on
     // the clean corpus, so it is excluded from TRUE displacement by construction.
-    for (const n of [50, 100, 200]) await trueDisplacementsAt(n);
+    //
+    // N=200 is measured ONCE and reused for the assertion. It used to run twice —
+    // an identical, deterministic sweep costing ~25% of the test — which pushed
+    // the total past FLOOD_MEASUREMENT_TIMEOUT_MS on a loaded machine and failed
+    // the file on a timeout, not on a displacement. Same flood, same assertion.
+    let worstCase: string[] = [];
+    for (const n of [50, 100, 200]) worstCase = await trueDisplacementsAt(n);
     // Load-bearing guarantee: at the worst-case flood, zero real top-3 knowledge
     // is crowded out by captures.
-    expect(await trueDisplacementsAt(200)).toEqual([]);
+    expect(worstCase).toEqual([]);
   }, FLOOD_MEASUREMENT_TIMEOUT_MS);
 });
