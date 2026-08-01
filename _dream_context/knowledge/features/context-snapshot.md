@@ -171,7 +171,7 @@ Doctor integration (`src/lib/core-index.ts`, `src/cli/commands/doctor.ts`, wave 
 ## Notes
 
 - The snapshot is append-only by design — each section independently guarded by existence checks. A missing file never crashes the snapshot.
-- The `hook session-start` command prepends a consolidation directive (`>>> CRITICAL: CONSOLIDATION REQUIRED <<<`) before the snapshot output when debt >= 20, and a softer note when debt >= 14 (thresholds: `DEBT_MUST_SLEEP`/`DEBT_SLEEPY` in sleep-consolidation.ts). This appears before snapshot content so the agent reads it first.
+- The `hook session-start` command prepends a consolidation directive before the snapshot output: `>>> CONSOLIDATION REQUIRED <<<` at debt >= `DEBT_MUST_SLEEP` (60), with softer notes at >= `DEBT_SLEEPY` (40) and >= `DEBT_DROWSY` (24). Cite the constants, not the numbers — this scale has rescaled twice. This appears before snapshot content so the agent reads it first.
 - The `snapshot` command is also registered as a standalone CLI command for testing/debugging purposes.
 - Snapshot size can grow large on projects with many pinned knowledge files. The recommendation is to pin sparingly — only files that are needed in nearly every session.
 

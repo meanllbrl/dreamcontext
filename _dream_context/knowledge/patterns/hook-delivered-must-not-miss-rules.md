@@ -72,7 +72,7 @@ The directive text is code, not a markdown snippet in a doc file. It cannot drif
 |---|---|---|
 | **Insights before external fetch** (2026-07-28) | UserPromptSubmit renders `lab show` directive on insight recall hits | SKILL.md Operational Rule 13 explains the full ladder + cache semantics |
 | **Update on drift** (manifest-based-install-update) | SessionStart snapshot never-evict tier carries the drift directive when `setupVersion < CLI` | SKILL.md § Setup & Maintenance explains `update` is content-safe |
-| **Consolidate on high debt** (sleep-consolidation) | SessionStart prepends multi-line consolidation directive when debt ≥ 20; UserPromptSubmit appends one-liner when debt ≥ 14 | SKILL.md § Sleep / Consolidation explains debt scoring + specialist roster |
+| **Consolidate on high debt** (sleep-consolidation) | Both fire from `DEBT_DROWSY` (24) up, escalating at `DEBT_SLEEPY` (40) and `DEBT_MUST_SLEEP` (60): SessionStart prepends the multi-line directive, UserPromptSubmit appends the one-liner | SKILL.md § Sleep / Consolidation explains debt scoring + specialist roster |
 
 ## When NOT to use this pattern
 
