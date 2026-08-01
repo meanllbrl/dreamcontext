@@ -1,0 +1,122 @@
+/* ── dreamcontext action row (owner report 08-01) ─────────────────────────────────────
+   A shell call that ran OUR CLI, marked as ours.
+
+   The requirement was "even in the middle of a group it should be unmistakable, and the
+   dreamcontext mark should be on it" — so identity is carried by three cheap, non-destructive
+   signals: the brand mark in the glyph slot (`.chat-a-glyph-brand`, shared with our own skill
+   rows), a tinted surface, and a left edge in the accent.
+
+   TINTED, not filled — this project's own `tinted-surface-not-filled-swatch` pattern. A solid
+   accent fill would force an on-accent foreground onto a row that also carries a mono tool
+   name, a chip, and muted meta text, and the row's job is to be READ, not to be a swatch. The
+   mix is against a THEME surface (`--color-bg-secondary`), so light and dark both land at body
+   contrast from one declaration.
+
+   The box, the geometry, and the 32px header all still come from `.chat-toolcard` — this file
+   only tints. A dreamcontext row that drifted taller than its neighbours would break the
+   density pass the transcript was just tuned to. */
+
+.chat-dreamcard {
+  position: relative;
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
+}
+.chat-dreamcard:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
+}
+
+/* The edge. Drawn as a pseudo-element rather than `border-left` so it cannot change the
+   header's box or shift a single pixel of the row's contents. */
+.chat-dreamcard::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--color-accent);
+  opacity: 0.9;
+}
+
+/* ── Tone: did this CHANGE the brain, or only look at it? ────────────────────────────
+   The one question a reader scanning a long turn is actually asking. A read is deliberately
+   quieter than a write — most rows in a turn are reads, and if they all shouted, none of the
+   writes would. */
+.chat-dreamcard[data-tone='read'] {
+  background: color-mix(in srgb, var(--color-accent) 3%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-accent) 16%, var(--color-border));
+}
+.chat-dreamcard[data-tone='read']::before { opacity: 0.4; }
+
+.chat-dreamcard[data-tone='destructive'] {
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-warning) 34%, var(--color-border));
+}
+.chat-dreamcard[data-tone='destructive']::before { background: var(--color-warning); }
+
+/* An error outranks the tone: the row's job is now to report a failure. Matches the plain
+   tool card's own error border so the two read as the same state. */
+.chat-dreamcard[data-status='error'] { border-color: var(--color-error); }
+.chat-dreamcard[data-status='error']::before { background: var(--color-error); }
+
+/* Inside a run card the frame is stripped from every `.chat-toolcard` — but a dreamcontext
+   row must stay recognisable there too (that is the whole point of the mark), so the tint and
+   the edge survive with the box gone. Reachable in the sub-agent drill-in transcript; the main
+   transcript gives these rows their own position instead (see `isPlainToolCard`). */
+.chat-toolrun .chat-dreamcard {
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+}
+.chat-toolrun .chat-dreamcard::before { opacity: 0.7; }
+
+/* The CLI's own sentence when it is a failure or a warning — the one case where the outcome
+   text outranks everything else the row could say. */
+.chat-dreamcard-note[data-tone='error'] { color: var(--color-error); }
+.chat-dreamcard-note[data-tone='warn'] { color: var(--color-warning); }
+
+/* ── The chain, when one command ran several actions ─────────────────────────────────
+   `dreamcontext tasks create … && dreamcontext tasks insert …` is ONE Bash call and one row;
+   opened, it owes the reader every action it actually performed, in order. */
+.chat-dreamcard-list {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+  counter-reset: dreamstep;
+}
+.chat-dreamcard-listrow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--font-size-sm);
+}
+.chat-dreamcard-listrow::before {
+  counter-increment: dreamstep;
+  content: counter(dreamstep) '.';
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.chat-dreamcard-listlabel {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  color: var(--color-text-secondary);
+}
+.chat-dreamcard-listrow[data-tone='write'] .chat-dreamcard-listlabel { color: var(--color-text); }
+.chat-dreamcard-listrow[data-tone='destructive'] .chat-dreamcard-listlabel { color: var(--color-warning); }
+/* The subject is the half that must survive a narrow pane — same rule as the path chip: the
+   label locates, the subject identifies. */
+.chat-dreamcard-listsubject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+.chat-dreamcard-listdetail {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}

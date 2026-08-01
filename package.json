@@ -38,7 +38,9 @@
     "verify:past-chats-ui": "node scripts/verify/past-chats-ui.mjs",
     "diagrams": "node scripts/diagrams/build-all.mjs",
     "prepublishOnly": "npm run build",
-    "verify:chat-toolrows": "node scripts/verify/chat-toolrows.mjs"
+    "verify:chat-toolrows": "node scripts/verify/chat-toolrows.mjs",
+    "gen:cli-manifest": "UPDATE_CLI_MANIFEST=1 vitest run tests/unit/cli-manifest.test.ts",
+    "verify:dream-actions": "node scripts/verify/dream-actions.mjs"
   },
   "keywords": [
     "ai",

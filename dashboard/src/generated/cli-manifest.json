@@ -1,0 +1,2433 @@
+{
+  "version": 1,
+  "endpoints": [
+    {
+      "path": "app",
+      "desc": "Manage the dreamcontext desktop app (install / update / status)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "app install",
+      "desc": "Install the desktop app to ~/Applications (no quarantine, no admin)",
+      "args": [],
+      "valueFlags": [
+        "--from",
+        "--dir"
+      ]
+    },
+    {
+      "path": "app status",
+      "desc": "Show the installed desktop app version and state",
+      "args": []
+    },
+    {
+      "path": "app update",
+      "desc": "Update the installed desktop app to the latest version",
+      "args": [],
+      "valueFlags": [
+        "--from",
+        "--dir"
+      ]
+    },
+    {
+      "path": "automations",
+      "desc": "Scheduled headless claude runs — user-authored, ships fully disabled until installed and approved",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "automations approve",
+      "desc": "Review and approve an automation to run on this machine",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "automations create",
+      "desc": "Scaffold a new automation manifest, auto-approved on this machine",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--title",
+        "--days",
+        "--at",
+        "--model",
+        "--effort",
+        "--timeout",
+        "--catchup",
+        "--prompt-file"
+      ]
+    },
+    {
+      "path": "automations disable",
+      "desc": "Disable an automation (tick skips it; approval untouched)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "automations enable",
+      "desc": "Enable an automation (tick will consider it again)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "automations install",
+      "desc": "Install the launchd dispatcher (ticks every 5 minutes)",
+      "args": []
+    },
+    {
+      "path": "automations kill",
+      "desc": "Kill a previous run's orphaned process group, read from its sidecar (never guesses with pgrep/pkill)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "automations learn",
+      "desc": "Record what a run learned into this automation's pattern (the run calls this itself)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--lesson",
+        "--playbook",
+        "--playbook-file"
+      ]
+    },
+    {
+      "path": "automations list",
+      "desc": "List automations with schedule, approval, and last-run status",
+      "args": []
+    },
+    {
+      "path": "automations logs",
+      "desc": "Tail the dispatcher log",
+      "args": [],
+      "valueFlags": [
+        "-n",
+        "--lines"
+      ]
+    },
+    {
+      "path": "automations pattern",
+      "desc": "Show what this automation has learned — its playbook and lesson ledger",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "automations remove",
+      "desc": "Delete an automation manifest and its machine-local cache/lock/sidecar (approval revoked too)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "automations run",
+      "desc": "Run one automation now — dueness and sleep-deference bypassed only with --force",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "automations session",
+      "desc": "Show the claude session a run actually had — its turns, tool calls, and errors",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--run",
+        "-n",
+        "--limit"
+      ]
+    },
+    {
+      "path": "automations share",
+      "desc": "Publish this automation (manifest, cache, output) to the synced brain — private by default",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "automations show",
+      "desc": "Show one automation's manifest, cache, approval, and orphan state",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--history"
+      ]
+    },
+    {
+      "path": "automations tick",
+      "desc": "Simulate a dispatcher tick: evaluate dueness and run whatever is due (never forces)",
+      "args": [
+        "[slug]"
+      ]
+    },
+    {
+      "path": "automations uninstall",
+      "desc": "Remove the launchd dispatcher (registry approvals are left untouched)",
+      "args": []
+    },
+    {
+      "path": "automations unshare",
+      "desc": "Stop publishing this automation from this machine — NOT retroactive, see the warning",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "bookmark",
+      "desc": "Tag important moments for consolidation (awake ripples)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "bookmark add",
+      "desc": "Create a bookmark",
+      "args": [
+        "<message...>"
+      ],
+      "valueFlags": [
+        "-s",
+        "--salience",
+        "-t",
+        "--task"
+      ]
+    },
+    {
+      "path": "bookmark clear",
+      "desc": "Remove all bookmarks",
+      "args": []
+    },
+    {
+      "path": "bookmark list",
+      "desc": "Show current bookmarks",
+      "args": []
+    },
+    {
+      "path": "brain",
+      "desc": "Cloud collaboration — sync the whole project (code + brain) to your GitHub origin",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "brain disable",
+      "desc": "Turn cloud sync OFF — the brain is still committed in-tree locally, never pushed",
+      "args": []
+    },
+    {
+      "path": "brain enable",
+      "desc": "Turn cloud sync ON — sync the whole project (code + brain) to your GitHub origin",
+      "args": []
+    },
+    {
+      "path": "brain scrub",
+      "desc": "Dry-run the scrub gate against the current staged tree",
+      "args": []
+    },
+    {
+      "path": "brain status",
+      "desc": "Show sync mode, remote, sync state, and the resolved cloud-sync switch",
+      "args": []
+    },
+    {
+      "path": "brain sync",
+      "desc": "Fetch/merge/commit/push the whole project (or in-tree commit-only when cloud sync is off)",
+      "args": []
+    },
+    {
+      "path": "changelog",
+      "desc": "Browse core/CHANGELOG.json chronologically (newest first)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "changelog list",
+      "desc": "Page through changelog entries; filter by type/scope or a text match",
+      "args": [],
+      "valueFlags": [
+        "--page",
+        "--size",
+        "--type",
+        "--scope",
+        "--grep"
+      ]
+    },
+    {
+      "path": "config",
+      "desc": "View or change dreamcontext project configuration",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "config clickup-list",
+      "desc": "Set the ClickUp team/space/list the tasks sync against",
+      "args": [
+        "<teamId>",
+        "<spaceId>",
+        "<listId>"
+      ]
+    },
+    {
+      "path": "config clickup-member",
+      "desc": "[Advanced] Map a person from the roster to a ClickUp member id (assignee round-trip)",
+      "args": [
+        "<person>",
+        "<memberId>"
+      ],
+      "valueFlags": [
+        "--token-env"
+      ]
+    },
+    {
+      "path": "config clickup-token",
+      "desc": "Store a ClickUp API key in the gitignored secrets file (never .config.json)",
+      "args": [
+        "[token]"
+      ],
+      "valueFlags": [
+        "--user"
+      ]
+    },
+    {
+      "path": "config github-login",
+      "desc": "[Advanced] Map a person from the roster to their GitHub login (brain-repo commit-author attribution — C3)",
+      "args": [
+        "<person>",
+        "<login>"
+      ]
+    },
+    {
+      "path": "config github-repo",
+      "desc": "Set the GitHub owner/repo the tasks sync against",
+      "args": [
+        "<owner>",
+        "<repo>"
+      ]
+    },
+    {
+      "path": "config github-token",
+      "desc": "Store a GitHub token in the gitignored secrets file (never .config.json)",
+      "args": [
+        "[token]"
+      ],
+      "valueFlags": [
+        "--user"
+      ]
+    },
+    {
+      "path": "config native-memory",
+      "desc": "Toggle Claude Code's native auto-memory: enable | disable (default state: disabled)",
+      "args": [
+        "<state>"
+      ]
+    },
+    {
+      "path": "config people",
+      "desc": "[Moved in 0.23.0] The roster now lives in people/people.json — use `dreamcontext people`",
+      "args": [
+        "[names...]"
+      ]
+    },
+    {
+      "path": "config show",
+      "desc": "Print the current project configuration",
+      "args": []
+    },
+    {
+      "path": "config task-backend",
+      "desc": "[Advanced] Switch the task backend: local | clickup | github (issue #11)",
+      "args": [
+        "<backend>"
+      ]
+    },
+    {
+      "path": "connect",
+      "desc": "Connect this vault to read a peer (live reference; out is a read edge)",
+      "args": [
+        "<vault>"
+      ],
+      "valueFlags": [
+        "-d",
+        "--direction",
+        "--topics"
+      ]
+    },
+    {
+      "path": "connections",
+      "desc": "Inspect cross-project federation connections",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "connections list",
+      "desc": "List this vault's federation connections",
+      "args": []
+    },
+    {
+      "path": "core",
+      "desc": "Add changelog and release entries",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "core changelog",
+      "desc": "Manage CHANGELOG.json",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "core changelog add",
+      "desc": "Add a changelog entry",
+      "args": [],
+      "valueFlags": [
+        "--type",
+        "--scope",
+        "--description",
+        "--summary",
+        "--references",
+        "--authors",
+        "--supersedes"
+      ]
+    },
+    {
+      "path": "core releases",
+      "desc": "Manage RELEASES.json",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "core releases active",
+      "desc": "Get or set the active planning version (used as default for new tasks)",
+      "args": [
+        "[version]"
+      ]
+    },
+    {
+      "path": "core releases add",
+      "desc": "Create a release with auto-discovered tasks, features, and changelog entries",
+      "args": [],
+      "valueFlags": [
+        "-V",
+        "--ver",
+        "-s",
+        "--summary",
+        "--status"
+      ]
+    },
+    {
+      "path": "core releases list",
+      "desc": "List recent releases",
+      "args": [],
+      "valueFlags": [
+        "-n",
+        "--count"
+      ]
+    },
+    {
+      "path": "core releases set-status",
+      "desc": "Update the status (and optionally date) of an existing release entry",
+      "args": [
+        "<version>",
+        "<status>"
+      ],
+      "valueFlags": [
+        "--date"
+      ]
+    },
+    {
+      "path": "core releases show",
+      "desc": "Show details of a specific release",
+      "args": [
+        "<version>"
+      ]
+    },
+    {
+      "path": "council",
+      "desc": "Run structured multi-agent debates on decisions",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "council agent",
+      "desc": "Manage personas within a debate",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "council agent create",
+      "desc": "Create a persona folder + context-and-persona.md (body from --body or stdin)",
+      "args": [
+        "<debate_id>",
+        "<persona_slug>"
+      ],
+      "valueFlags": [
+        "-m",
+        "--model",
+        "-a",
+        "--aspects",
+        "-b",
+        "--body"
+      ]
+    },
+    {
+      "path": "council board",
+      "desc": "Render the chamber board: convergence, per-persona stances, shifts, options tally.",
+      "args": [
+        "<debate_id>"
+      ],
+      "valueFlags": [
+        "--round"
+      ]
+    },
+    {
+      "path": "council complete",
+      "desc": "Mark status=complete after final-report.md is written.",
+      "args": [
+        "<debate_id>"
+      ]
+    },
+    {
+      "path": "council create",
+      "desc": "Create a new debate folder and debate.md",
+      "args": [
+        "<topic...>"
+      ],
+      "valueFlags": [
+        "-r",
+        "--rounds",
+        "--options"
+      ]
+    },
+    {
+      "path": "council demo-live",
+      "desc": "(dev) Write a plausible fake .council-live.json for testing the app panel.",
+      "args": [],
+      "valueFlags": [
+        "--phase"
+      ]
+    },
+    {
+      "path": "council inject",
+      "desc": "(interlude) Inject a new fact into the debate. Personas see it via round-context next round.",
+      "args": [
+        "<debate_id>",
+        "<fact...>"
+      ]
+    },
+    {
+      "path": "council list",
+      "desc": "List debates (inspection / sleep-agent triage).",
+      "args": []
+    },
+    {
+      "path": "council live",
+      "desc": "Live chamber state file operations",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "council live clear",
+      "desc": "Delete _dream_context/tmp/.council-live.json",
+      "args": []
+    },
+    {
+      "path": "council promote",
+      "desc": "Copy trimmed final-report into _dream_context/knowledge/decision-{slug}.md.",
+      "args": [
+        "<debate_id>"
+      ]
+    },
+    {
+      "path": "council question",
+      "desc": "(interlude) Queue a directive for a persona. Surfaced by round-context next round.",
+      "args": [
+        "<debate_id>",
+        "<persona_slug>",
+        "<question...>"
+      ]
+    },
+    {
+      "path": "council report",
+      "desc": "Sub-agent report operations",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "council report append",
+      "desc": "(sub-agent) Append a round entry to report.md. Validates required subsections.",
+      "args": [
+        "<debate_id>",
+        "<persona_slug>"
+      ],
+      "valueFlags": [
+        "-b",
+        "--body",
+        "--round"
+      ]
+    },
+    {
+      "path": "council research",
+      "desc": "Persist/list sub-agent research notes",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "council research add",
+      "desc": "(sub-agent) Write a research note to researches/ and update index.",
+      "args": [
+        "<debate_id>",
+        "<persona_slug>",
+        "<topic...>"
+      ],
+      "valueFlags": [
+        "-b",
+        "--body"
+      ]
+    },
+    {
+      "path": "council research list",
+      "desc": "List this persona's prior research notes.",
+      "args": [
+        "<debate_id>",
+        "<persona_slug>"
+      ]
+    },
+    {
+      "path": "council round",
+      "desc": "Round lifecycle",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "council round end",
+      "desc": "End round N after all personas have submitted their reports.",
+      "args": [
+        "<debate_id>",
+        "<n>"
+      ]
+    },
+    {
+      "path": "council round start",
+      "desc": "Start round N. For N≥2, injects prior-round peer summaries into each persona.",
+      "args": [
+        "<debate_id>",
+        "<n>"
+      ]
+    },
+    {
+      "path": "council round-context",
+      "desc": "(sub-agent) Print persona body + peer cross-summaries for the current round.",
+      "args": [
+        "<debate_id>",
+        "<persona_slug>"
+      ]
+    },
+    {
+      "path": "council show",
+      "desc": "Show debate metadata and round log.",
+      "args": [
+        "<debate_id>"
+      ]
+    },
+    {
+      "path": "council summaries",
+      "desc": "Print ONLY executive summaries from round N across all personas (main-agent view).",
+      "args": [
+        "<debate_id>",
+        "<n>"
+      ]
+    },
+    {
+      "path": "council synthesize",
+      "desc": "Mark status=synthesizing; print manifest of files synthesizer should read.",
+      "args": [
+        "<debate_id>"
+      ]
+    },
+    {
+      "path": "council timeline",
+      "desc": "Per-round stance + conviction table across all personas (markdown or --json).",
+      "args": [
+        "<debate_id>"
+      ]
+    },
+    {
+      "path": "council verdict",
+      "desc": "(sub-agent) Record a structured verdict for a round. Idempotent per (round, persona) — last write wins.",
+      "args": [
+        "<debate_id>",
+        "<persona_slug>",
+        "<round>"
+      ],
+      "valueFlags": [
+        "--stance",
+        "--conviction",
+        "--headline",
+        "--concession"
+      ]
+    },
+    {
+      "path": "dashboard",
+      "desc": "Open the web dashboard in your browser",
+      "args": [],
+      "valueFlags": [
+        "-p",
+        "--port",
+        "--host",
+        "--vault"
+      ]
+    },
+    {
+      "path": "disconnect",
+      "desc": "Remove a federation connection to a peer",
+      "args": [
+        "<vault>"
+      ]
+    },
+    {
+      "path": "doctor",
+      "desc": "Validate _dream_context/ structure and report issues",
+      "args": []
+    },
+    {
+      "path": "embed",
+      "desc": "EXPERIMENTAL: manage the local embedding index used by hybrid recall",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "embed dedup",
+      "desc": "Semantic near-duplicate check for a candidate knowledge/feature doc (sleep dedup: merge instead of duplicate)",
+      "args": [],
+      "valueFlags": [
+        "--title",
+        "-d",
+        "--description",
+        "-c",
+        "--content",
+        "--file",
+        "--types",
+        "--top",
+        "--merge-threshold",
+        "--merge-margin",
+        "--review-threshold",
+        "--exclude"
+      ]
+    },
+    {
+      "path": "embed refresh",
+      "desc": "Bring the embedding index up to date with the corpus (embeds only changed chunks)",
+      "args": []
+    },
+    {
+      "path": "embed status",
+      "desc": "Show embedding cache presence, size, and model",
+      "args": []
+    },
+    {
+      "path": "features",
+      "desc": "Create features and insert into sections",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "features create",
+      "desc": "Create a new feature document (typed knowledge under knowledge/features/)",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "-w",
+        "--why",
+        "-d",
+        "--description",
+        "-t",
+        "--tags",
+        "-s",
+        "--status",
+        "--related-tasks",
+        "--folder"
+      ]
+    },
+    {
+      "path": "features doctor",
+      "desc": "Check feature PRDs for staleness, orphans, and dangling task references (read-only)",
+      "args": []
+    },
+    {
+      "path": "features insert",
+      "desc": "Insert content into a feature section",
+      "args": [
+        "<name>",
+        "<section>",
+        "[content...]"
+      ]
+    },
+    {
+      "path": "features move",
+      "desc": "Move a feature into a topical subfolder, rewriting inbound [[wikilinks]] atomically",
+      "args": [
+        "<name>",
+        "<folder>"
+      ]
+    },
+    {
+      "path": "features set",
+      "desc": "Set a feature frontmatter field without hand-editing",
+      "args": [
+        "<name>",
+        "<field>",
+        "<value...>"
+      ]
+    },
+    {
+      "path": "federation",
+      "desc": "Cross-project federation: read peers live; manage leftover copies",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "federation drain",
+      "desc": "(disabled) copy-based ingest is parked on the roadmap — no-op",
+      "args": []
+    },
+    {
+      "path": "federation peers",
+      "desc": "Refresh + print compact summaries of readable peers (ambient awareness)",
+      "args": []
+    },
+    {
+      "path": "federation purge",
+      "desc": "Remove leftover federated copies (knowledge/*.md with federated:true)",
+      "args": [],
+      "valueFlags": [
+        "--vault"
+      ]
+    },
+    {
+      "path": "federation status",
+      "desc": "Show connections + any leftover federated copies",
+      "args": []
+    },
+    {
+      "path": "federation sync",
+      "desc": "(disabled) copy-based push is parked on the roadmap — no-op",
+      "args": []
+    },
+    {
+      "path": "feedback",
+      "desc": "File a structured feedback issue to meanllbrl/dreamcontext",
+      "args": [],
+      "valueFlags": [
+        "-c",
+        "--category",
+        "-t",
+        "--title",
+        "-s",
+        "--scenario",
+        "-e",
+        "--expected",
+        "-g",
+        "--gap",
+        "-r",
+        "--repro",
+        "-p",
+        "--proposal"
+      ]
+    },
+    {
+      "path": "hook",
+      "desc": "Hook handlers for Claude Code (stop, session-start, subagent-start, pre-tool-use, user-prompt-submit, post-tool-use, pre-compact)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "hook ensure-dashboard",
+      "desc": "Windows only: open the web dashboard if it is not already running (called by Claude Code SessionStart hook)",
+      "args": []
+    },
+    {
+      "path": "hook post-tool-use",
+      "desc": "Auto-format + type-check after Edit/Write on JS/TS files (called by Claude Code PostToolUse hook)",
+      "args": []
+    },
+    {
+      "path": "hook pre-compact",
+      "desc": "Save sleep state before context compaction (called by Claude Code PreCompact hook)",
+      "args": []
+    },
+    {
+      "path": "hook pre-tool-use",
+      "desc": "Gate default sub-agents when _dream_context/ exists (called by Claude Code PreToolUse hook)",
+      "args": []
+    },
+    {
+      "path": "hook refresh-asset-drift",
+      "desc": "Recompute whether `dreamcontext update` would change any asset this project uses (detached cache refresh)",
+      "args": []
+    },
+    {
+      "path": "hook session-start",
+      "desc": "Analyze previous session + output context snapshot (called by Claude Code SessionStart hook)",
+      "args": []
+    },
+    {
+      "path": "hook stop",
+      "desc": "Record session metadata (called by Claude Code Stop hook)",
+      "args": []
+    },
+    {
+      "path": "hook subagent-start",
+      "desc": "Inject context briefing into sub-agents (called by Claude Code SubagentStart hook)",
+      "args": []
+    },
+    {
+      "path": "hook user-prompt-submit",
+      "desc": "Inject sleep debt reminder on every user message (called by Claude Code UserPromptSubmit hook)",
+      "args": []
+    },
+    {
+      "path": "init",
+      "desc": "Initialize _dream_context/ in the current directory",
+      "args": [],
+      "valueFlags": [
+        "--name",
+        "--description",
+        "--user",
+        "--stack",
+        "--priority",
+        "--platforms",
+        "--multi-product"
+      ]
+    },
+    {
+      "path": "install-claude-md",
+      "desc": "Install a terse CLAUDE.md at the project root (legacy alias; use install-instructions)",
+      "args": [],
+      "valueFlags": [
+        "--mode"
+      ]
+    },
+    {
+      "path": "install-instructions",
+      "desc": "Install managed root instruction files (CLAUDE.md)",
+      "args": [],
+      "valueFlags": [
+        "--platforms",
+        "--mode"
+      ]
+    },
+    {
+      "path": "install-skill",
+      "desc": "Install dreamcontext skill, agents, and optional packs for selected platforms",
+      "args": [],
+      "valueFlags": [
+        "--platforms",
+        "--packs",
+        "--skill"
+      ]
+    },
+    {
+      "path": "knowledge",
+      "desc": "Create and index knowledge files",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "knowledge create",
+      "desc": "Create a new knowledge file",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "-d",
+        "--description",
+        "-t",
+        "--tags",
+        "-c",
+        "--content"
+      ]
+    },
+    {
+      "path": "knowledge index",
+      "desc": "Show knowledge file index (names, descriptions, tags)",
+      "args": [],
+      "valueFlags": [
+        "--tag"
+      ]
+    },
+    {
+      "path": "knowledge merge",
+      "desc": "Merge one knowledge file into another, repointing inbound [[wikilinks]] and deleting the source",
+      "args": [
+        "<src>",
+        "<dst>"
+      ]
+    },
+    {
+      "path": "knowledge move",
+      "desc": "Move a knowledge file — or a whole Excalidraw board directory (board + its tooling siblings) — into a topical subfolder, rewriting inbound [[wikilinks]] atomically",
+      "args": [
+        "<slug>",
+        "<folder>"
+      ]
+    },
+    {
+      "path": "knowledge tags",
+      "desc": "List standard knowledge tags",
+      "args": []
+    },
+    {
+      "path": "knowledge touch",
+      "desc": "Record access to a knowledge file (for decay tracking)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "lab",
+      "desc": "Analytics insights: curated metrics from HTTP APIs or scripts, synced into the brain",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "lab bind",
+      "desc": "Connect an insight to an objective Key Result (metric.current updates on every sync)",
+      "args": [
+        "<slug>",
+        "[objective]"
+      ],
+      "valueFlags": [
+        "--value"
+      ]
+    },
+    {
+      "path": "lab create",
+      "desc": "Scaffold a new insight manifest in lab/insights/<slug>.md",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--title",
+        "--category",
+        "--group",
+        "--render",
+        "--adapter",
+        "--unit",
+        "--ttl"
+      ]
+    },
+    {
+      "path": "lab credentials",
+      "desc": "Manage lab/credentials.json (gitignore-first — never printed back)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "lab credentials list",
+      "desc": "List credential KEY NAMES only — values are never printed",
+      "args": []
+    },
+    {
+      "path": "lab credentials set",
+      "desc": "Store a credential value (hidden prompt; --value is shell-history-risky)",
+      "args": [
+        "<key>"
+      ],
+      "valueFlags": [
+        "--value"
+      ]
+    },
+    {
+      "path": "lab list",
+      "desc": "List insights with their latest value and staleness",
+      "args": []
+    },
+    {
+      "path": "lab show",
+      "desc": "Show the cached snapshot for one insight (no fetch)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "lab sync",
+      "desc": "Sync one insight, or every insight with --all",
+      "args": [
+        "[slug]"
+      ]
+    },
+    {
+      "path": "lab tweak",
+      "desc": "Set one tweak value on an insight",
+      "args": [
+        "<slug>",
+        "<key>",
+        "<value>"
+      ]
+    },
+    {
+      "path": "link",
+      "desc": "Govern bare code repos: bind, clone, list, and unlink linked repos",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "link add",
+      "desc": "Bind a local checkout of a linked repo (records name+URL shared, path machine-local)",
+      "args": [
+        "<name>",
+        "<path>"
+      ],
+      "valueFlags": [
+        "--url"
+      ]
+    },
+    {
+      "path": "link clone",
+      "desc": "Clone a MISSING linked repo (trust-gated — the URL is team-writable)",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "--dir"
+      ]
+    },
+    {
+      "path": "link ls",
+      "desc": "List linked repos with present/missing status and the resolved local path",
+      "args": []
+    },
+    {
+      "path": "link rm",
+      "desc": "Unlink a repo (removes the shared config entry; keeps the machine-local path)",
+      "args": [
+        "<name>"
+      ]
+    },
+    {
+      "path": "links",
+      "desc": "List linked repos (alias for `link ls`)",
+      "args": []
+    },
+    {
+      "path": "marketing",
+      "desc": "Meta marketing skill: cohorts, campaigns, competitor ingest, learnings.",
+      "args": [],
+      "group": true,
+      "aliases": [
+        "mk"
+      ]
+    },
+    {
+      "path": "marketing account",
+      "desc": "Manage marketing profiles (single-profile UX, multi-account plumbing for v1).",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "marketing account list",
+      "desc": "List configured profiles.",
+      "args": []
+    },
+    {
+      "path": "marketing account use",
+      "desc": "Set the default profile.",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "marketing ad",
+      "desc": "Manage individual ads (the leaf entity).",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "marketing ad create",
+      "desc": "Create an ad (PAUSED) by linking an adset + creative.",
+      "args": [],
+      "valueFlags": [
+        "--name",
+        "--adset",
+        "--creative"
+      ]
+    },
+    {
+      "path": "marketing ad list",
+      "desc": "List ads (optionally filtered by adset).",
+      "args": [],
+      "valueFlags": [
+        "--adset"
+      ]
+    },
+    {
+      "path": "marketing adset",
+      "desc": "Manage adsets.",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "marketing adset create",
+      "desc": "Create an adset (PAUSED). --daily-budget required (no fallback).",
+      "args": [],
+      "valueFlags": [
+        "--campaign",
+        "--name",
+        "--daily-budget",
+        "--targeting",
+        "--currency",
+        "--optimization-goal",
+        "--billing-event",
+        "--custom-event-type"
+      ]
+    },
+    {
+      "path": "marketing adset list",
+      "desc": "List adsets (optionally filtered by campaign).",
+      "args": [],
+      "valueFlags": [
+        "--campaign"
+      ]
+    },
+    {
+      "path": "marketing asset",
+      "desc": "Upload creative assets to Meta.",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "marketing asset upload",
+      "desc": "Upload a video (>50MB → chunked) or image to Meta. Returns id/hash.",
+      "args": [
+        "<path>"
+      ],
+      "valueFlags": [
+        "--type",
+        "--name"
+      ]
+    },
+    {
+      "path": "marketing campaign",
+      "desc": "Manage campaigns within a cohort.",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "marketing campaign create",
+      "desc": "Create a campaign (PAUSED). --daily-budget required for CBO; omit for adset-level budgeting.",
+      "args": [],
+      "valueFlags": [
+        "--cohort",
+        "--name",
+        "--objective",
+        "--daily-budget",
+        "--currency",
+        "--special-ad-categories"
+      ]
+    },
+    {
+      "path": "marketing campaign list",
+      "desc": "List campaigns (optionally filtered by cohort).",
+      "args": [],
+      "valueFlags": [
+        "--cohort"
+      ]
+    },
+    {
+      "path": "marketing cohort",
+      "desc": "Cohort lifecycle (plan, list, close).",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "marketing cohort create",
+      "desc": "Create a cohort. Rejects if hypothesis shape is invalid.",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "--hypothesis-file",
+        "--note"
+      ]
+    },
+    {
+      "path": "marketing cohort list",
+      "desc": "List cohorts (newest first).",
+      "args": [],
+      "valueFlags": [
+        "--status"
+      ]
+    },
+    {
+      "path": "marketing cohort show",
+      "desc": "Show a single cohort.",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "marketing competitor",
+      "desc": "Ingest competitor IG / YouTube content (Reinfluence pipeline).",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "marketing competitor health",
+      "desc": "Run the Reinfluence health probe (cached 60s).",
+      "args": []
+    },
+    {
+      "path": "marketing competitor ingest",
+      "desc": "Ingest a single URL or an IG handle. Outputs land under _dream_context/marketing/competitors/<handle>/.",
+      "args": [
+        "<target>"
+      ],
+      "valueFlags": [
+        "--model",
+        "--max",
+        "--timeout"
+      ]
+    },
+    {
+      "path": "marketing competitor list",
+      "desc": "List ingested competitor handles.",
+      "args": []
+    },
+    {
+      "path": "marketing competitor relabel",
+      "desc": "Re-run vision pass on an already-ingested post. Updates pattern_tags + vision_summary in place. Requires OPENAI_VISION_API_KEY or GOOGLE_API_KEY.",
+      "args": [
+        "<shortcode>"
+      ],
+      "valueFlags": [
+        "--handle"
+      ]
+    },
+    {
+      "path": "marketing competitor relabel-all",
+      "desc": "Run vision pass on every ingested post that has hook frames + no pattern_tags yet. Skip with --dry-run to preview.",
+      "args": []
+    },
+    {
+      "path": "marketing config",
+      "desc": "Manage Meta credentials and verify access.",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "marketing config check",
+      "desc": "Hit Graph /me/adaccounts to confirm token + ad account access.",
+      "args": []
+    },
+    {
+      "path": "marketing council",
+      "desc": "Run a marketing council debate using the 4 bundled marketing personas.",
+      "args": [
+        "<topic...>"
+      ],
+      "valueFlags": [
+        "-r",
+        "--rounds",
+        "-p",
+        "--persona"
+      ]
+    },
+    {
+      "path": "marketing creative",
+      "desc": "Manage ad creatives.",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "marketing creative create-image",
+      "desc": "Create an image creative (one or more image hashes).",
+      "args": [],
+      "valueFlags": [
+        "--name",
+        "--image-hash",
+        "--message",
+        "--link",
+        "--cta",
+        "--cohort"
+      ]
+    },
+    {
+      "path": "marketing creative create-video",
+      "desc": "Create a video creative (one or more video_ids).",
+      "args": [],
+      "valueFlags": [
+        "--name",
+        "--video-id",
+        "--message",
+        "--link",
+        "--cta",
+        "--cohort"
+      ]
+    },
+    {
+      "path": "marketing creative list",
+      "desc": "List creatives.",
+      "args": []
+    },
+    {
+      "path": "marketing diff",
+      "desc": "Diff insights snapshots over a window (default 24h).",
+      "args": [],
+      "valueFlags": [
+        "--since",
+        "--campaign"
+      ]
+    },
+    {
+      "path": "marketing doctor",
+      "desc": "Run diagnostics: env, FK integrity, retroactive secret scan, Reinfluence health.",
+      "args": []
+    },
+    {
+      "path": "marketing hooks",
+      "desc": "Manage marketing-related git hooks (pre-commit binary guard).",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "marketing hooks check-staged",
+      "desc": "Pre-commit hook entrypoint: refuses staged paths under marketing _assets/ or _media/.",
+      "args": []
+    },
+    {
+      "path": "marketing hooks install",
+      "desc": "Install the pre-commit launcher into .git/hooks/pre-commit.",
+      "args": []
+    },
+    {
+      "path": "marketing init",
+      "desc": "Bootstrap _dream_context/marketing/ (folders, .env, venv, reinfluence tools, whisper cache)",
+      "args": [],
+      "valueFlags": [
+        "--whisper-model"
+      ]
+    },
+    {
+      "path": "marketing insights",
+      "desc": "Pull and inspect Meta /insights snapshots.",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "marketing insights pull",
+      "desc": "Pull insights for active cohorts (sync, v0 caps window at 7d).",
+      "args": [],
+      "valueFlags": [
+        "--since",
+        "--campaign"
+      ]
+    },
+    {
+      "path": "marketing insights show",
+      "desc": "Show the latest cached snapshot for a campaign / adset / ad.",
+      "args": [],
+      "valueFlags": [
+        "--id"
+      ]
+    },
+    {
+      "path": "marketing kill",
+      "desc": "Pause the worst N active campaigns by a metric. Default dry-run.",
+      "args": [],
+      "valueFlags": [
+        "--bottom",
+        "--by"
+      ]
+    },
+    {
+      "path": "marketing launch",
+      "desc": "Launch a cohort: flip every campaign/adset/ad from PAUSED to ACTIVE.",
+      "args": [
+        "[cohortId]"
+      ],
+      "group": true,
+      "valueFlags": [
+        "--confirm"
+      ]
+    },
+    {
+      "path": "marketing launch resume",
+      "desc": "Resume a partial launch from its WAL.",
+      "args": [
+        "<runId>"
+      ]
+    },
+    {
+      "path": "marketing learnings",
+      "desc": "Performance Monitor learnings ledger (per-day .md + index).",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "marketing learnings append",
+      "desc": "Append a learning entry (Performance Monitor agent only).",
+      "args": [],
+      "valueFlags": [
+        "--type",
+        "--cohort",
+        "--body",
+        "--body-file",
+        "--agent"
+      ]
+    },
+    {
+      "path": "marketing learnings list",
+      "desc": "List all entries (newest first).",
+      "args": [],
+      "valueFlags": [
+        "--type",
+        "--status"
+      ]
+    },
+    {
+      "path": "marketing learnings list-pending",
+      "desc": "List pending Performance Monitor recommendations.",
+      "args": [],
+      "valueFlags": [
+        "--older-than"
+      ]
+    },
+    {
+      "path": "marketing learnings show",
+      "desc": "Show today's (or specified day's) learnings file.",
+      "args": [],
+      "valueFlags": [
+        "--date",
+        "--id"
+      ]
+    },
+    {
+      "path": "marketing learnings status",
+      "desc": "Flip a recommendation pending → confirmed | rejected.",
+      "args": [
+        "<id>",
+        "<new-status>"
+      ]
+    },
+    {
+      "path": "marketing pause",
+      "desc": "Pause a campaign / adset / ad. Default dry-run; pass --no-dry-run for live.",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "marketing rem-sleep",
+      "desc": "Marketing consolidation pass (called during sleep consolidation flow).",
+      "args": [],
+      "valueFlags": [
+        "--keep-runs",
+        "--weekly-after-days",
+        "--retain-daily-learnings-days"
+      ]
+    },
+    {
+      "path": "marketing resume",
+      "desc": "Resume a paused campaign / adset / ad. Default dry-run; pass --no-dry-run for live.",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "marketing scale",
+      "desc": "Adjust a campaign's daily budget by percent. Default dry-run.",
+      "args": [],
+      "valueFlags": [
+        "--campaign",
+        "--pct"
+      ]
+    },
+    {
+      "path": "marketing today",
+      "desc": "Active cohorts + today's spend by campaign + freshness in <2s.",
+      "args": []
+    },
+    {
+      "path": "memory",
+      "desc": "Search and explore the project corpus (knowledge, features, tasks, memory)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "memory delete",
+      "desc": "Delete a knowledge file (irreversible; use git to recover)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "memory list",
+      "desc": "List all docs in the memory corpus (every channel, or a --types subset)",
+      "args": [],
+      "valueFlags": [
+        "--types",
+        "--level"
+      ]
+    },
+    {
+      "path": "memory recall",
+      "desc": "Search every corpus channel: knowledge, features, tasks, memory, changelog, objectives, insights, theses, automations",
+      "args": [
+        "<query...>"
+      ],
+      "valueFlags": [
+        "-t",
+        "--top",
+        "--types",
+        "--level",
+        "--vault"
+      ]
+    },
+    {
+      "path": "memory remember",
+      "desc": "Quick-append a CHANGELOG entry. Fast path; for full control use `dreamcontext core changelog add`.",
+      "args": [
+        "<text...>"
+      ],
+      "valueFlags": [
+        "--summary",
+        "--type",
+        "--scope",
+        "--references",
+        "--person"
+      ]
+    },
+    {
+      "path": "memory status",
+      "desc": "Show corpus size and breakdown by type and importance level",
+      "args": []
+    },
+    {
+      "path": "memory update",
+      "desc": "Update a knowledge file (frontmatter and/or body)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "-d",
+        "--description",
+        "-t",
+        "--tags",
+        "-c",
+        "--content",
+        "--append"
+      ]
+    },
+    {
+      "path": "migrations",
+      "desc": "Inspect and record brain structure migrations",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "migrations apply-diagrams",
+      "desc": "Organize flat knowledge/diagrams/*.excalidraw.md boards into per-title folders. Moves board + same-basename generator/spec files, rewrites inbound [[wikilinks]] atomically. Opt-in: only organize boards you confirm are canonical knowledge.",
+      "args": []
+    },
+    {
+      "path": "migrations pending",
+      "desc": "Print pending agent task instructions for any unfinished migrations",
+      "args": []
+    },
+    {
+      "path": "migrations record",
+      "desc": "Append a ledger entry (used by agent after completing an agentTask)",
+      "args": [],
+      "valueFlags": [
+        "--version",
+        "--step",
+        "--executor",
+        "--files",
+        "--summary"
+      ]
+    },
+    {
+      "path": "people",
+      "desc": "Who works in this vault — roster, per-person constitutions, and the active person",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "people add",
+      "desc": "Add a person to the roster and scaffold their constitution file",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "--email",
+        "--role"
+      ]
+    },
+    {
+      "path": "people list",
+      "desc": "List this vault's people roster",
+      "args": []
+    },
+    {
+      "path": "people rm",
+      "desc": "Remove a person from the roster (their constitution file is kept)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "people show",
+      "desc": "Print a person's constitution (defaults to the active person on this machine)",
+      "args": [
+        "[slug]"
+      ]
+    },
+    {
+      "path": "people whoami",
+      "desc": "Show — or pin — who dreamcontext thinks is at this keyboard",
+      "args": [],
+      "valueFlags": [
+        "--set"
+      ]
+    },
+    {
+      "path": "recall",
+      "desc": "Control memory recall mode (haiku / raw / hybrid / off)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "recall hybrid",
+      "desc": "EXPERIMENTAL: BM25 + local dense embeddings fused via RRF (no LLM call)",
+      "args": []
+    },
+    {
+      "path": "recall off",
+      "desc": "Disable memory recall entirely",
+      "args": []
+    },
+    {
+      "path": "recall on",
+      "desc": "Enable Haiku-powered recall (default)",
+      "args": []
+    },
+    {
+      "path": "recall raw",
+      "desc": "Use BM25 keyword search only (no LLM call)",
+      "args": []
+    },
+    {
+      "path": "recall status",
+      "desc": "Show current recall mode",
+      "args": []
+    },
+    {
+      "path": "reflect",
+      "desc": "Detect recurring cross-session patterns as reflection candidates",
+      "args": [],
+      "valueFlags": [
+        "--min-sessions",
+        "--max"
+      ]
+    },
+    {
+      "path": "roadmap",
+      "desc": "PO-authored objective board: rollups, dependency cascade, target vs forecast",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "roadmap objective",
+      "desc": "Manage objectives (create/list/show/edit/delete/depend)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "roadmap objective create",
+      "desc": "Create an objective in core/objectives/<slug>.md",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--title",
+        "--target",
+        "--depends-on",
+        "--feature",
+        "--metric",
+        "--metric-target",
+        "--metric-baseline",
+        "--metric-current",
+        "--metric-unit",
+        "--why"
+      ]
+    },
+    {
+      "path": "roadmap objective delete",
+      "desc": "Delete an objective (removes it from other objectives' depends_on too)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "roadmap objective depend",
+      "desc": "Add a dependency edge (rejected at write time if it would create a cycle)",
+      "args": [
+        "<slug>",
+        "<on>"
+      ]
+    },
+    {
+      "path": "roadmap objective edit",
+      "desc": "Update an objective (title / target / feature / manual status override)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--title",
+        "--target",
+        "--feature",
+        "--status"
+      ]
+    },
+    {
+      "path": "roadmap objective list",
+      "desc": "List objectives with rollup progress, status, and forecast",
+      "args": []
+    },
+    {
+      "path": "roadmap objective metric",
+      "desc": "Set/update the Key Result metric that drives progress (e.g. MRR). --current is the common nudge.",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--current",
+        "--target",
+        "--baseline",
+        "--label",
+        "--unit"
+      ]
+    },
+    {
+      "path": "roadmap objective show",
+      "desc": "Show one objective: members, dependencies, dependents, cascade impact",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "roadmap objective undepend",
+      "desc": "Remove a dependency edge",
+      "args": [
+        "<slug>",
+        "<on>"
+      ]
+    },
+    {
+      "path": "setup",
+      "desc": "One-shot setup: init + install-skill + install-instructions",
+      "args": [],
+      "valueFlags": [
+        "--platforms",
+        "--packs",
+        "--multi-product"
+      ]
+    },
+    {
+      "path": "sleep",
+      "desc": "Track sleep debt and consolidation state",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "sleep add",
+      "desc": "Record a debt-accumulating action",
+      "args": [
+        "<score>",
+        "<description...>"
+      ]
+    },
+    {
+      "path": "sleep debt",
+      "desc": "Output current debt number (for programmatic use)",
+      "args": []
+    },
+    {
+      "path": "sleep done",
+      "desc": "Mark consolidation complete, reset debt",
+      "args": [
+        "<summary...>"
+      ],
+      "valueFlags": [
+        "--flag"
+      ]
+    },
+    {
+      "path": "sleep history",
+      "desc": "Show consolidation history log",
+      "args": [],
+      "valueFlags": [
+        "-n",
+        "--limit"
+      ]
+    },
+    {
+      "path": "sleep start",
+      "desc": "Mark beginning of consolidation (sets epoch for safe clearing)",
+      "args": []
+    },
+    {
+      "path": "sleep status",
+      "desc": "Show current sleep debt level and history",
+      "args": []
+    },
+    {
+      "path": "snapshot",
+      "desc": "Output a context snapshot for SessionStart hook (plain text, no colors)",
+      "args": [],
+      "valueFlags": [
+        "--vault"
+      ]
+    },
+    {
+      "path": "tasks",
+      "desc": "Create tasks, log progress, insert into sections, and mark complete",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "tasks complete",
+      "desc": "Mark a task as completed",
+      "args": [
+        "<name>",
+        "[summary...]"
+      ]
+    },
+    {
+      "path": "tasks create",
+      "desc": "Create a new task",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "-d",
+        "--description",
+        "-p",
+        "--priority",
+        "-u",
+        "--urgency",
+        "-s",
+        "--status",
+        "-t",
+        "--tags",
+        "-w",
+        "--why",
+        "-v",
+        "--version",
+        "--person",
+        "--reach",
+        "--impact",
+        "--confidence",
+        "--effort",
+        "--start",
+        "--due",
+        "--objectives",
+        "--feature",
+        "--field"
+      ]
+    },
+    {
+      "path": "tasks dedup",
+      "desc": "Heal duplicate task-mirror files (-2/-3 suffixes) from a lost sync mapping — LOCAL ONLY, never writes to the remote backend",
+      "args": []
+    },
+    {
+      "path": "tasks delete",
+      "desc": "Delete a task (propagates to the remote backend on sync)",
+      "args": [
+        "<name>"
+      ]
+    },
+    {
+      "path": "tasks doctor",
+      "desc": "Validate Workflow flowchart is in sync with Acceptance Criteria",
+      "args": [
+        "[name]"
+      ]
+    },
+    {
+      "path": "tasks due",
+      "desc": "Set or clear a task due/end date (the range end)",
+      "args": [
+        "<name>",
+        "<date>"
+      ]
+    },
+    {
+      "path": "tasks feature",
+      "desc": "Print, set, or clear the feature this task belongs to (keeps the feature's related_tasks in sync)",
+      "args": [
+        "<name>",
+        "[feature]"
+      ]
+    },
+    {
+      "path": "tasks field",
+      "desc": "Set or clear a user-defined custom field (synced to the remote backend)",
+      "args": [
+        "<name>",
+        "<key>",
+        "[value]"
+      ]
+    },
+    {
+      "path": "tasks hard-refresh",
+      "desc": "Cloud tasks: back up local mirrors, wipe the sync ledger, and re-pull EVERYTHING from the remote (remote is the source of truth)",
+      "args": []
+    },
+    {
+      "path": "tasks insert",
+      "desc": "Insert content into a task section",
+      "args": [
+        "<name>",
+        "<section>",
+        "[content...]"
+      ]
+    },
+    {
+      "path": "tasks list",
+      "desc": "List tasks, with filters, grouping, tag discovery, and JSON output",
+      "args": [],
+      "valueFlags": [
+        "-s",
+        "--status",
+        "--tag",
+        "--any-tag",
+        "--version",
+        "--priority",
+        "--feature",
+        "--objective",
+        "--since",
+        "--until",
+        "-g",
+        "--group-by"
+      ]
+    },
+    {
+      "path": "tasks log",
+      "desc": "Add a changelog entry to a task (cross-session continuity)",
+      "args": [
+        "<name>",
+        "[content...]"
+      ]
+    },
+    {
+      "path": "tasks members",
+      "desc": "List people with access to the remote task container (assignee candidates)",
+      "args": []
+    },
+    {
+      "path": "tasks objectives",
+      "desc": "Print, set, or clear the roadmap objectives a task serves (local-only field)",
+      "args": [
+        "<name>",
+        "[slugs]"
+      ]
+    },
+    {
+      "path": "tasks provision",
+      "desc": "Create the recommended fields on the remote task container (urgency, summary, RICE, …)",
+      "args": []
+    },
+    {
+      "path": "tasks rename",
+      "desc": "Rename a task (file + slug + remote mapping) — never duplicates the remote task",
+      "args": [
+        "<name>",
+        "<new-name>"
+      ]
+    },
+    {
+      "path": "tasks rice",
+      "desc": "Print or update RICE values (reach × impact × confidence ÷ effort)",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "--reach",
+        "--impact",
+        "--confidence",
+        "--effort"
+      ]
+    },
+    {
+      "path": "tasks start",
+      "desc": "Set or clear a task planned start date (the range start)",
+      "args": [
+        "<name>",
+        "<date>"
+      ]
+    },
+    {
+      "path": "tasks status",
+      "desc": "Change a task's status (logs the change; stamps start_date on first in_progress if unset)",
+      "args": [
+        "<name>",
+        "<new-status>",
+        "[reason...]"
+      ]
+    },
+    {
+      "path": "tasks sync",
+      "desc": "Sync tasks with the configured remote backend (no-op for local)",
+      "args": [
+        "[direction]"
+      ]
+    },
+    {
+      "path": "tasks sync-hooks",
+      "desc": "Install/uninstall best-effort git sync triggers (post-commit, pre-push)",
+      "args": [
+        "<action>"
+      ]
+    },
+    {
+      "path": "tasks tag",
+      "desc": "Add or remove tags on a task",
+      "args": [
+        "<name>",
+        "<tags...>"
+      ]
+    },
+    {
+      "path": "tasks tags",
+      "desc": "List distinct task tags with counts",
+      "args": []
+    },
+    {
+      "path": "tasks version",
+      "desc": "Print, set, or clear the version (sprint/milestone) a task belongs to",
+      "args": [
+        "<name>",
+        "[version]"
+      ]
+    },
+    {
+      "path": "taxonomy",
+      "desc": "Inspect and maintain the project tag vocabulary",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "taxonomy add",
+      "desc": "Add a tag to the project vocabulary (creates core/taxonomy.json if missing)",
+      "args": [
+        "<tag>"
+      ]
+    },
+    {
+      "path": "taxonomy alias",
+      "desc": "Add an alias → canonical mapping to the project vocabulary",
+      "args": [
+        "<alias>",
+        "<canonical>"
+      ]
+    },
+    {
+      "path": "taxonomy audit",
+      "desc": "Audit corpus tags against the vocabulary (read-only). Use --fix to bulk-normalize.",
+      "args": []
+    },
+    {
+      "path": "taxonomy init",
+      "desc": "Scaffold core/taxonomy.json from the default vocabulary (idempotent)",
+      "args": []
+    },
+    {
+      "path": "taxonomy resolve",
+      "desc": "Show normalized form, classification, and canonical resolution of a tag",
+      "args": [
+        "<tag>"
+      ]
+    },
+    {
+      "path": "taxonomy vocab",
+      "desc": "Show the resolved project vocabulary (DEFAULT + core/taxonomy.json)",
+      "args": [],
+      "valueFlags": [
+        "--facet"
+      ]
+    },
+    {
+      "path": "theses",
+      "desc": "Proactive learning layer: falsifiable theses validated across sleep cycles (opt-in — see `dreamcontext theses enable`)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "theses block",
+      "desc": "Mark a thesis blocked on instrumentation (needs a metric nobody tracks yet)",
+      "args": [
+        "<slug>",
+        "<metric...>"
+      ]
+    },
+    {
+      "path": "theses candidates",
+      "desc": "Stage meeting-note candidate theses for the dashboard review flow (theses/.candidates.json)",
+      "args": [
+        "[file]"
+      ]
+    },
+    {
+      "path": "theses changelog",
+      "desc": "Append a per-cycle reasoning entry to the understanding changelog (LIFO, newest 10 kept, older condensed)",
+      "args": [
+        "<slug>",
+        "<text...>"
+      ],
+      "valueFlags": [
+        "--cycle"
+      ]
+    },
+    {
+      "path": "theses create",
+      "desc": "Scaffold a new thesis in theses/<slug>.md (default status: draft)",
+      "args": [
+        "<claim...>"
+      ],
+      "valueFlags": [
+        "--slug",
+        "--kind",
+        "--prediction",
+        "--insight",
+        "--objective",
+        "--task",
+        "--by"
+      ]
+    },
+    {
+      "path": "theses disable",
+      "desc": "Turn the proactive learning layer off (learning.enabled = false)",
+      "args": []
+    },
+    {
+      "path": "theses enable",
+      "desc": "Turn the proactive learning layer on (learning.enabled = true)",
+      "args": []
+    },
+    {
+      "path": "theses evidence",
+      "desc": "Append a discrete evidence event to the ledger (recomputes derived confidence)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--verdict",
+        "--source",
+        "--ref",
+        "--note",
+        "--cycle",
+        "--date"
+      ]
+    },
+    {
+      "path": "theses link",
+      "desc": "Link a thesis to an insight, objective, or task (exactly one target per call)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--insight",
+        "--objective",
+        "--task"
+      ]
+    },
+    {
+      "path": "theses list",
+      "desc": "List theses",
+      "args": [],
+      "valueFlags": [
+        "--status",
+        "--kind",
+        "--objective"
+      ]
+    },
+    {
+      "path": "theses predict",
+      "desc": "Add a pre-registered prediction to a thesis",
+      "args": [
+        "<slug>",
+        "<text...>"
+      ]
+    },
+    {
+      "path": "theses promote",
+      "desc": "Record that a validated/invalidated thesis was promoted into a knowledge doc",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--knowledge"
+      ]
+    },
+    {
+      "path": "theses restore",
+      "desc": "Restore a retired thesis back to draft",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "theses retire",
+      "desc": "Retire a thesis (e.g. kept as anti-knowledge, or superseded by a promotion)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "theses show",
+      "desc": "Show a thesis: claim, status, derived confidence, predictions, evidence, links, changelog",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "theses status",
+      "desc": "Flip a thesis status — draft→open needs ≥1 prediction; a manual flip to validated/invalidated needs ≥1 --cite unless --force",
+      "args": [
+        "<slug>",
+        "<status>"
+      ],
+      "valueFlags": [
+        "--cite",
+        "--prediction"
+      ]
+    },
+    {
+      "path": "theses unblock",
+      "desc": "Clear the instrumentation-blocked flag",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "theses unlink",
+      "desc": "Remove a thesis link to an insight, objective, or task (exactly one target per call)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--insight",
+        "--objective",
+        "--task"
+      ]
+    },
+    {
+      "path": "transcript",
+      "desc": "Process session transcripts",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "transcript distill",
+      "desc": "Extract high-signal content from a session transcript (pure structural filtering)",
+      "args": [
+        "<session_id>"
+      ],
+      "valueFlags": [
+        "--since"
+      ]
+    },
+    {
+      "path": "trigger",
+      "desc": "Manage contextual reminders (prospective memory)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "trigger add",
+      "desc": "Create a contextual trigger",
+      "args": [
+        "<when>",
+        "<remind...>"
+      ],
+      "valueFlags": [
+        "-m",
+        "--max-fires",
+        "-s",
+        "--source"
+      ]
+    },
+    {
+      "path": "trigger list",
+      "desc": "Show active triggers",
+      "args": []
+    },
+    {
+      "path": "trigger remove",
+      "desc": "Remove a trigger",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "unlink",
+      "desc": "Unlink a repo (alias for `link rm`)",
+      "args": [
+        "<name>"
+      ]
+    },
+    {
+      "path": "update",
+      "desc": "Refresh installed dreamcontext files (core skill, agents, hooks, packs, root instructions) to the latest shipped version",
+      "args": []
+    },
+    {
+      "path": "upgrade",
+      "desc": "Upgrade the dreamcontext CLI, then offer to refresh every registered project to match",
+      "args": []
+    },
+    {
+      "path": "vaults",
+      "desc": "Manage the global vault registry (multi-project)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "vaults add",
+      "desc": "Register a project directory as a vault",
+      "args": [
+        "<name>",
+        "<path>"
+      ]
+    },
+    {
+      "path": "vaults discover",
+      "desc": "Find every _dream_context/ project under a directory tree (node_modules ignored)",
+      "args": [
+        "[root]"
+      ]
+    },
+    {
+      "path": "vaults list",
+      "desc": "List all registered vaults",
+      "args": []
+    },
+    {
+      "path": "vaults remove",
+      "desc": "Unregister a vault",
+      "args": [
+        "<name>"
+      ]
+    }
+  ]
+}

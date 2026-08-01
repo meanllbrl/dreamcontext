@@ -86,7 +86,7 @@ export function ToolHeader({
         : (
           <>
             <ToolName>{name || 'Tool'}</ToolName>
-            {subject?.kind === 'path' && onOpenPath && <PathChip path={subject.path} onOpen={onOpenPath} />}
+            {subject?.kind === 'path' && onOpenPath && <PathChip path={subject.path} label={subject.label} onOpen={onOpenPath} />}
             {subject?.kind === 'text' && <SubjectChip text={subject.text} />}
           </>
         )}

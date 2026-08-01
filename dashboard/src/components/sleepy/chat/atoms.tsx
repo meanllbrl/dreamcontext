@@ -61,12 +61,20 @@ export function ToolName({ children }: { children: ReactNode }) {
  * (`flex-shrink` in atoms.css) and the name is pinned, so a narrow pane loses context
  * instead of losing identity. The exact path stays in `title`.
  */
-export function PathChip({ path, onOpen }: { path: string; onOpen: (path: string) => void }) {
+export function PathChip({ path, label, onOpen }: {
+  path: string;
+  /** Read this instead of `parent/filename`, while still opening `path`. For a row that knows a
+   *  better name for the file than the file does — a dreamcontext action names the task the way
+   *  the agent typed it, and opens the slug the CLI reported. The parent folder is dropped with
+   *  it: a custom label is already the identity, and `title` still carries the exact path. */
+  label?: string;
+  onOpen: (path: string) => void;
+}) {
   const { dir, name } = pathChipLabel(path);
   return (
     <button type="button" className="chat-a-pathchip" title={path} onClick={() => onOpen(path)}>
-      {dir && <span className="chat-a-pathchip-dir">{dir}/</span>}
-      <span className="chat-a-pathchip-name">{name}</span>
+      {!label && dir && <span className="chat-a-pathchip-dir">{dir}/</span>}
+      <span className="chat-a-pathchip-name">{label ?? name}</span>
     </button>
   );
 }

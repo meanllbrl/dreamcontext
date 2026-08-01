@@ -2,9 +2,12 @@ import { memo, useState } from 'react';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import {
   parseEditDiff, deriveDiffStartLine, GENERIC_RESULT_CHAR_CAP, toolSubject, isDreamcontextSkill,
+  stringifyToolValue, toolResultText, toolResultLineCount,
 } from './chatEntities';
 import { Duration, DiffStat, MetaText, CopyButton } from './atoms';
 import { ToolHeader, TerminalBlock, DiffView } from './molecules';
+import { DreamActionCard } from './DreamActionCard';
+import { parseDreamActions } from './dreamCommand';
 import type { ChatToolItem } from '../chatSession';
 
 /**
@@ -21,12 +24,6 @@ import type { ChatToolItem } from '../chatSession';
  * `TranscriptItem`.
  */
 
-function safeStringify(v: unknown): string {
-  if (v === undefined) return '';
-  if (typeof v === 'string') return v;
-  try { return JSON.stringify(v, null, 2); } catch { return String(v); }
-}
-
 function inputString(input: unknown, key: string): string | undefined {
   if (!input || typeof input !== 'object') return undefined;
   const v = (input as Record<string, unknown>)[key];
@@ -40,31 +37,6 @@ function formatByteCount(chars: number): string {
   return `${(chars / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** A short "N lines" meta label for a result. Goes through {@link resultText} so it counts
- *  the BLOCK-ARRAY shape (`[{type:'text',text}]`) too — a `tool_result` arrives either way,
- *  and a string-only check silently dropped the line count for every result that came as
- *  blocks, in the same rows this pass exists to make informative. */
-function resultLineCount(result: unknown): number | null {
-  if (result === undefined) return null;
-  const text = resultText(result);
-  return text.length ? text.split('\n').length : null;
-}
-
-/** Flatten a tool_result `content` value (string, or an array of `{type:'text',text}`
- *  blocks) into plain text for the terminal block / Copy button. */
-function resultText(result: unknown): string {
-  if (typeof result === 'string') return result;
-  if (Array.isArray(result)) {
-    return result
-      .map((b) => (b && typeof b === 'object' && typeof (b as Record<string, unknown>).text === 'string'
-        ? (b as Record<string, unknown>).text as string
-        : ''))
-      .filter(Boolean)
-      .join('\n');
-  }
-  return safeStringify(result);
-}
-
 /**
  * ExitPlanMode's body: the plan as markdown, not as a JSON dump. Its input is one long
  * markdown string, so the generic body rendered it with every newline escaped — a wall of
@@ -73,7 +45,7 @@ function resultText(result: unknown): string {
  * receipt you re-open afterwards.
  */
 function PlanBody({ plan, result }: { plan: string; result: unknown }) {
-  const text = result !== undefined ? resultText(result) : '';
+  const text = result !== undefined ? toolResultText(result) : '';
   return (
     <div className="chat-toolcard-plan">
       <MarkdownPreview content={plan} />
@@ -84,8 +56,8 @@ function PlanBody({ plan, result }: { plan: string; result: unknown }) {
 
 function GenericBody({ item }: { item: ChatToolItem }) {
   const [showAll, setShowAll] = useState(false);
-  const input = safeStringify(item.input);
-  const result = item.result !== undefined ? safeStringify(item.result) : '';
+  const input = stringifyToolValue(item.input);
+  const result = item.result !== undefined ? stringifyToolValue(item.result) : '';
   // A `Read` comes back WHOLE — a large generated file is megabytes of text, and dropping
   // all of it into a `<pre>` costs the string, the text node, and a layout pass over it
   // every time the card renders. Truncated to a budget with the rest one click away; Copy
@@ -126,12 +98,18 @@ function ToolCardInner({ item, onOpenFile }: { item: ChatToolItem; onOpenFile: (
   const [override, setOverride] = useState<boolean | null>(null);
 
   const isBash = item.name === 'Bash';
+  // A shell call that runs OUR CLI is not a shell call the reader cares about as shell — it is
+  // the app acting on itself, and it gets a row that says which action on which object (owner
+  // report 08-01). Decided here rather than in `ChatPane` so the drill-in transcript and the
+  // run-card rows inherit it for free — this component is the one place a tool row is drawn.
+  const dreamActions = isBash ? parseDreamActions(inputString(item.input, 'command')) : [];
+
   const plan = item.name === 'ExitPlanMode' ? inputString(item.input, 'plan') : undefined;
   const diff = isBash || plan ? null : parseEditDiff(item.input);
   const subject = toolSubject(item.name, item.input);
   const skill = item.name === 'Skill' ? inputString(item.input, 'skill') : undefined;
   const brand = !!skill && isDreamcontextSkill(skill);
-  const lineCount = resultLineCount(item.result);
+  const lineCount = toolResultLineCount(item.result);
   const duration = item.endedAt != null ? item.endedAt - item.startedAt : null;
 
   // A `prose` subject IS the subtitle (Bash: its description, or failing that its command —
@@ -148,6 +126,18 @@ function ToolCardInner({ item, onOpenFile }: { item: ChatToolItem; onOpenFile: (
     : (duration != null ? <Duration ms={duration} /> : (item.status === 'running' ? <MetaText>running</MetaText> : null));
 
   const open = override ?? !!diff;
+
+  if (dreamActions.length) {
+    return (
+      <DreamActionCard
+        item={item}
+        actions={dreamActions}
+        open={open}
+        onToggle={() => setOverride(!open)}
+        onOpenFile={onOpenFile}
+      />
+    );
+  }
 
   return (
     <div className="chat-toolcard" data-status={item.status} data-open={open || undefined}>
@@ -169,7 +159,7 @@ function ToolCardInner({ item, onOpenFile }: { item: ChatToolItem; onOpenFile: (
           {isBash ? (
             <TerminalBlock
               command={inputString(item.input, 'command')}
-              output={item.result !== undefined ? resultText(item.result) : undefined}
+              output={item.result !== undefined ? toolResultText(item.result) : undefined}
             />
           ) : plan ? (
             <PlanBody plan={plan} result={item.result} />

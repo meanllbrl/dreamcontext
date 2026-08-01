@@ -136,7 +136,10 @@ export function pathChipLabel(path: string): PathChipLabel {
  * with nothing behind it to open (a skill name, a search pattern, a host).
  */
 export type ToolSubject =
-  | { kind: 'path'; path: string }
+  /** `label` overrides what the chip READS without changing what it opens — for a row whose
+   *  subject has a better human name than its filename (a dreamcontext action names the task
+   *  the agent typed, and opens the slug the CLI reported for it). */
+  | { kind: 'path'; path: string; label?: string }
   | { kind: 'text'; text: string }
   /** Reads as a sentence, not a label — the header renders it as the muted subtitle rather
    *  than a chip. A shell command is prose of this kind; a filename is not. */
@@ -473,6 +476,46 @@ export function clampLines(lines: string[], head: number, tail: number): Clamped
     tail: t > 0 ? lines.slice(lines.length - t) : [],
     hidden: lines.length - h - t,
   };
+}
+
+// ─── Reading a tool RESULT as text ────────────────────────────────────────────────
+
+/** JSON for anything that isn't already a string, and `''` for `undefined` — so a result of an
+ *  unforeseen shape still renders as something a human can read instead of `[object Object]`. */
+export function stringifyToolValue(v: unknown): string {
+  if (v === undefined) return '';
+  if (typeof v === 'string') return v;
+  try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+}
+
+/**
+ * Flatten a `tool_result` content value into plain text.
+ *
+ * Two shapes arrive on the wire for the same thing — a bare string, or an array of
+ * `{type:'text',text}` blocks — and code that only handled the first silently lost the block
+ * form (which is how `· N lines` went missing from exactly the rows that were meant to become
+ * informative). Anything else is stringified rather than dropped.
+ */
+export function toolResultText(result: unknown): string {
+  if (typeof result === 'string') return result;
+  if (Array.isArray(result)) {
+    return result
+      .map((b) => (b && typeof b === 'object' && typeof (b as Record<string, unknown>).text === 'string'
+        ? (b as Record<string, unknown>).text as string
+        : ''))
+      .filter(Boolean)
+      .join('\n');
+  }
+  return stringifyToolValue(result);
+}
+
+/** `N` for a result with content, `null` for one that hasn't landed or is empty — the caller
+ *  decides whether a count is meaningful for its row (it is for a file read; it is not for a
+ *  skill invocation's one-line ack). */
+export function toolResultLineCount(result: unknown): number | null {
+  if (result === undefined) return null;
+  const text = toolResultText(result);
+  return text.length ? text.split('\n').length : null;
 }
 
 // ─── Sub-agent runs (state 9 — frame-driven, NOT parentToolUseId-driven) ──────────

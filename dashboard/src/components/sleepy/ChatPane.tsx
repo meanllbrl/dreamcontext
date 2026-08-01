@@ -10,6 +10,7 @@ import {
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem,
   type SubAgentRun, type ScrollIntent, type RunSegment,
 } from './chat/chatEntities';
+import { isDreamcontextCommand } from './chat/dreamCommand';
 import { ItemView } from './chat/TranscriptItem';
 import { ToolRunCard } from './chat/ToolRunCard';
 import { SurveyCard } from './chat/SurveyCard';
@@ -1000,6 +1001,12 @@ export function ChatPane({
       const command = bashCommand(item);
       if (command && isGuardedCommand(command)) return false;
     }
+    // A dreamcontext CLI call keeps its own position in the transcript (owner call 08-01:
+    // "break the grouping, let it be its own row"). These are the calls that CHANGE the brain
+    // — a task created, a status moved, knowledge written — and folding them into a collapsed
+    // "12 steps" header hides the one class of row whose object the reader most needs to see.
+    // Everything the run card was built for still holds for the reads and greps around them.
+    if (isDreamcontextCommand(bashCommand(item) ?? undefined)) return false;
     return true;
   };
   // `stillAccruing` (see `toolRunPhase`) is true only for a run that is the LAST thing in the

@@ -20,6 +20,22 @@ function expectedScore(transcriptPath: string): number {
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
 
+/**
+ * `user-prompt-submit` emits the sub-agent dispatch pre-authorization on every prompt it
+ * actually processes (b233bae — Opus 5 injects a standing "don't spawn sub-agents unless
+ * asked" rule that would otherwise kill the sleep fan-out). For those cases "silent" no longer
+ * means empty stdout: it means the hook said nothing BEYOND that standing preamble.
+ *
+ * Used only where the preamble genuinely fires — a hook that exits before reaching it (no
+ * context root, a different hook entirely) is still asserted to be strictly empty, so this
+ * cannot become a blanket relaxation that hides a stray line.
+ */
+const DISPATCH_PREAMBLE_MARKER = 'Sub-agent dispatch is pre-authorized';
+
+function beyondStandingPreamble(output: string): string {
+  return output.split('\n').filter((line) => !line.includes(DISPATCH_PREAMBLE_MARKER)).join('\n').trim();
+}
+
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `ac-hook-int-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(dir, { recursive: true });
@@ -1279,7 +1295,7 @@ describe('hook user-prompt-submit (integration)', () => {
     writeSleep(ctx, { debt: 2, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'hello' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
-    expect(output.trim()).toBe('');
+    expect(beyondStandingPreamble(output)).toBe('');
   });
 
   it('outputs reminder at DEBT_DROWSY', () => {
@@ -1342,7 +1358,7 @@ describe('hook user-prompt-submit (integration)', () => {
     writeSleep(ctx, { debt: 2, sleep_started_at: new Date().toISOString() /* live epoch: within the 30m stale TTL → genuinely suppresses */, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'hello' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
-    expect(output.trim()).toBe('');
+    expect(beyondStandingPreamble(output)).toBe('');
   });
 
   it('nudges when there is a stale (>24h) marketing recommendation', () => {
@@ -1939,7 +1955,7 @@ describe('hook initializer detection (integration)', () => {
     writeSleep(ctx, { debt: 0, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'fix the bug in src/lib/recall.ts and run the tests' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
-    expect(output.trim()).toBe('');
+    expect(beyondStandingPreamble(output)).toBe('');
   });
 
   it('no false positive: ingest intent but no existing source path stays silent', () => {
