@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useLabInsights, useSyncAll } from '../../hooks/useLab';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useLabInsights, useLabSyncJob, useStartLabSyncJob } from '../../hooks/useLab';
 import { useLabPrefs } from '../../hooks/useLabPrefs';
 import { InsightCard } from './InsightCard';
 import { InsightDetailPanel } from './InsightDetailPanel';
@@ -107,7 +108,9 @@ interface LabBoardProps {
 
 export function LabBoard({ focus }: LabBoardProps = {}) {
   const { data: insights, isLoading, isError, error } = useLabInsights();
-  const syncAll = useSyncAll();
+  const { data: syncJob } = useLabSyncJob();
+  const startSyncAll = useStartLabSyncJob();
+  const queryClient = useQueryClient();
   const { prefs, toggleCollapsed, setGroupOrder, setCategory, setCategoryOrder } = useLabPrefs();
   const [toast, setToast] = useState<string | null>(null);
   const [openSlug, setOpenSlug] = useState<string | null>(null);
@@ -187,19 +190,50 @@ export function LabBoard({ focus }: LabBoardProps = {}) {
     endDrag();
   }, [drag, setGroupOrder, endDrag]);
 
+  const syncRunning = syncJob?.status === 'running';
+
   const handleSyncAll = () => {
-    syncAll.mutate(true, {
-      onSuccess: (data) => {
-        if (data.failed.length > 0) {
-          const names = data.failed.map((f) => f.slug).join(', ');
-          setToast(`⚠ ${data.failed.length} of ${data.results.length} insight(s) failed: ${names}`);
-        } else {
-          setToast(`Synced ${data.results.length} insight(s).`);
-        }
-      },
-      onError: (err) => setToast(`Sync all failed: ${(err as Error).message}`),
+    if (syncRunning) return;
+    startSyncAll.mutate(true, {
+      onError: (err) => setToast(`Sync all failed to start: ${(err as Error).message}`),
     });
   };
+
+  // Tiles light up AS the run progresses, not all at once at the end: every time
+  // the job's settled count moves, refetch the summaries. The old all-or-nothing
+  // invalidate meant a five-minute sync showed nothing until it finished — and
+  // showed nothing at all when the request died on the way.
+  // Keyed on the COUNT, not the polled job object — the poll hands back a fresh
+  // object every 800ms and depending on it would refetch the whole board on
+  // every tick, sync or no sync.
+  const syncDone = syncJob?.done ?? 0;
+  const syncJobId = syncJob?.id ?? null;
+  useEffect(() => {
+    if (!syncJobId || syncDone === 0) return;
+    queryClient.invalidateQueries({ queryKey: ['lab'] });
+  }, [syncDone, syncJobId, queryClient]);
+
+  // Report the outcome once per job, and only for a job this page actually
+  // watched run — re-adopting an hour-old settled job must not re-toast it.
+  const watchedJob = useRef<string | null>(null);
+  const reportedJob = useRef<string | null>(null);
+  useEffect(() => {
+    if (!syncJob) return;
+    if (syncJob.status === 'running') {
+      watchedJob.current = syncJob.id;
+      return;
+    }
+    if (watchedJob.current !== syncJob.id || reportedJob.current === syncJob.id) return;
+    reportedJob.current = syncJob.id;
+    queryClient.invalidateQueries({ queryKey: ['lab'] });
+    if (syncJob.status === 'error') {
+      setToast(`Sync all failed: ${syncJob.error ?? 'unknown error'}`);
+    } else if (syncJob.failed.length > 0) {
+      setToast(`⚠ ${syncJob.failed.length} of ${syncJob.results.length} insight(s) failed: ${syncJob.failed.join(', ')}`);
+    } else {
+      setToast(`Synced ${syncJob.results.length} insight(s).`);
+    }
+  }, [syncJob, queryClient]);
 
   // Chrome-free until we know what we have: loading shows no toolbar (so the UI
   // can't flash a clickable Sync-all and then hard-switch layout to the explainer).
@@ -304,8 +338,29 @@ export function LabBoard({ focus }: LabBoardProps = {}) {
             ))}
           </nav>
         )}
-        <button className="lab-board-sync-all" onClick={handleSyncAll} disabled={syncAll.isPending}>
-          {syncAll.isPending ? 'Syncing…' : 'Sync all'}
+        {/* One button, three states. While the server-owned job runs it becomes a
+            determinate chip (n/total + a mini bar) — the run outlives this page,
+            so leaving and coming back re-adopts the same live progress. */}
+        <button
+          className={`lab-board-sync-all ${syncRunning ? 'lab-board-sync-all--running' : ''}`}
+          onClick={handleSyncAll}
+          disabled={syncRunning || startSyncAll.isPending}
+          title={syncRunning ? 'A bulk sync is already running — it keeps going if you navigate away.' : 'Refetch every insight'}
+        >
+          {syncRunning ? (
+            <>
+              <span className="lab-sync-progress-text">
+                Syncing {syncJob!.done}/{syncJob!.total || '…'}
+                {syncJob!.attempt > 1 ? ` · retry ${syncJob!.attempt}` : ''}
+              </span>
+              <span className="lab-sync-progress-track" aria-hidden="true">
+                <span
+                  className="lab-sync-progress-fill"
+                  style={{ width: `${syncJob!.total > 0 ? Math.round((syncJob!.done / syncJob!.total) * 100) : 0}%` }}
+                />
+              </span>
+            </>
+          ) : startSyncAll.isPending ? 'Starting…' : 'Sync all'}
         </button>
       </div>
 

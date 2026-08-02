@@ -164,6 +164,41 @@
   opacity: 0.65;
 }
 
+/* Running state: the button becomes a determinate progress chip. The bar is
+   pinned to the bottom edge so the label doesn't shift as the fill grows. */
+.lab-board-sync-all--running {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding-bottom: 11px;
+  min-width: 132px;
+  justify-content: center;
+  opacity: 1;
+}
+
+.lab-sync-progress-text {
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-sync-progress-track {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 6px;
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-on-brand) 28%, transparent);
+  overflow: hidden;
+}
+
+.lab-sync-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-text-on-brand);
+  transition: width 260ms ease;
+}
+
 .lab-board-loading {
   color: var(--color-text-tertiary);
   font-size: 13.5px;

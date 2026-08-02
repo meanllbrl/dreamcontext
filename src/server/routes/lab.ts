@@ -10,6 +10,7 @@ import {
 import { resolveTweaks } from '../../lib/lab/tweaks.js';
 import { computeFunnelPrev } from '../../lib/lab/funnel.js';
 import { bindInsight, syncInsight, syncAll } from '../../lib/lab/sync.js';
+import { currentLabSyncJob, startLabSyncJob } from '../lab-sync-job.js';
 import { readCredentials, redactSecrets, writeCredential } from '../../lib/lab/credentials.js';
 import { requiredCredentialKeys } from '../../lib/lab/required-credentials.js';
 import { LabError, type Binding, type InsightManifest } from '../../lib/lab/types.js';
@@ -133,7 +134,57 @@ export async function handleLabShow(
   }
 }
 
-/** POST /api/lab/sync { slug? | all?, force? } — runs the same engine as the CLI. */
+/**
+ * POST /api/lab/sync-jobs { force? } — START a bulk sync and return immediately.
+ *
+ * The dashboard's "Sync all" uses THIS, not `POST /api/lab/sync {all:true}`: the
+ * server caps a request at 30s of socket inactivity, and a real board's full
+ * sync runs far longer than that. Holding the socket meant the run was killed
+ * mid-flight with no outcome reported. Here the run belongs to the server and
+ * the UI polls `/api/lab/sync-jobs/current`.
+ *
+ * `started: false` means a job was already running and has been ADOPTED — a
+ * second engine writing the same cache files is never the right answer.
+ */
+export async function handleLabSyncJobStart(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  try {
+    // Default force:true — pressing Sync all IS the explicit "refetch now".
+    const { job, started } = startLabSyncJob(contextRoot, { force: body.force !== false });
+    sendJson(res, 200, { job, started });
+  } catch (err) {
+    console.error('[lab] sync job start failed:', err);
+    sendError(res, 500, 'sync_failed', 'Failed to start the insight sync.');
+  }
+}
+
+/** GET /api/lab/sync-jobs/current — the live (or last settled) bulk-sync job, or null. */
+export async function handleLabSyncJobCurrent(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    sendJson(res, 200, { job: currentLabSyncJob(contextRoot) });
+  } catch (err) {
+    console.error('[lab] sync job read failed:', err);
+    sendError(res, 500, 'sync_job_failed', 'Failed to read the sync job.');
+  }
+}
+
+/** POST /api/lab/sync { slug? | all?, force? } — runs the same engine as the CLI.
+ *  `all` stays for CLI/API parity and scripted callers; the dashboard's bulk
+ *  button uses the job routes above so it can outlive the request timeout. */
 export async function handleLabSync(
   req: IncomingMessage,
   res: ServerResponse,

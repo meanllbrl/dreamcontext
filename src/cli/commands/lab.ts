@@ -6,6 +6,7 @@ import { ensureContextRoot } from '../../lib/context-path.js';
 import { success, error, header, warn } from '../../lib/format.js';
 import { createInsight, getInsight, listInsights, readCache, writeInsightTweaks } from '../../lib/lab/store.js';
 import { bindInsight, syncInsight, syncAll } from '../../lib/lab/sync.js';
+import { ProgressBar } from '../../lib/progress.js';
 import { writeCredential, listCredentialNames } from '../../lib/lab/credentials.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
 import { computeFunnelPrev, computeStepRows, worstDropIndex } from '../../lib/lab/funnel.js';
@@ -90,7 +91,14 @@ export function registerLabCommand(program: Command): void {
       }
       try {
         if (opts.all) {
-          const { results, failed } = await syncAll(root, { force: opts.force });
+          // A full board runs for minutes across concurrent workers — without a
+          // live bar the terminal looks hung until the very last insight lands.
+          const bar = new ProgressBar();
+          const { results, failed } = await syncAll(root, {
+            force: opts.force,
+            onProgress: (ev) => bar.update('insights', ev.done, ev.total),
+          });
+          bar.done();
           for (const r of results) {
             if (r.status === 'ok') success(`${r.slug}: synced (latest=${r.latest ?? 'n/a'}, ${r.granularity})`);
             else if (r.status === 'fresh') console.log(chalk.dim(`  ${r.slug}: fresh (skipped)`));

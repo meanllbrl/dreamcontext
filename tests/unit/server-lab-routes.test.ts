@@ -8,11 +8,14 @@ import {
   handleLabList,
   handleLabShow,
   handleLabSync,
+  handleLabSyncJobStart,
+  handleLabSyncJobCurrent,
   handleLabTweaks,
   handleLabBinding,
   handleLabCredentialsGet,
   handleLabCredentialsSet,
 } from '../../src/server/routes/lab.js';
+import { _resetLabSyncJobs, currentLabSyncJob } from '../../src/server/lab-sync-job.js';
 import { createInsight, writeCache } from '../../src/lib/lab/store.js';
 import { createObjective, getObjective } from '../../src/lib/objectives-store.js';
 import { readFrontmatter, writeFrontmatter } from '../../src/lib/frontmatter.js';
@@ -123,6 +126,108 @@ describe('POST /api/lab/sync — runs the same engine as the CLI', () => {
   it('400s on a missing slug/all', async () => {
     const { res, status } = makeRes();
     await handleLabSync(makeReq('POST', {}), res, {}, root);
+    expect(status()).toBe(400);
+  });
+});
+
+describe('POST /api/lab/sync-jobs — bulk sync outlives the request', () => {
+  beforeEach(() => { _resetLabSyncJobs(); });
+
+  /** Poll the job registry until the run settles. */
+  async function settle(timeoutMs = 20_000) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const job = currentLabSyncJob(root);
+      if (job && job.status !== 'running') return job;
+      if (Date.now() > deadline) throw new Error('job never settled');
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+
+  it('answers IMMEDIATELY with a running job instead of holding the socket for the run', async () => {
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    useScriptSource('wau', 'scripts/wau.mjs');
+    mkdirSync(join(root, 'lab', 'scripts'), { recursive: true });
+    // 400ms of work: the response must land well before the run does.
+    writeFileSync(
+      join(root, 'lab', 'scripts', 'wau.mjs'),
+      'export default async () => { await new Promise((r) => setTimeout(r, 400)); return [{ name: "d", points: [{ t: "2026-01-01", v: 3 }] }]; };\n',
+      'utf-8',
+    );
+
+    const { res, status, body } = makeRes();
+    const started = Date.now();
+    await handleLabSyncJobStart(makeReq('POST', { force: true }), res, {}, root);
+    const elapsed = Date.now() - started;
+
+    expect(status()).toBe(200);
+    expect(body().started).toBe(true);
+    expect(body().job.status).toBe('running');
+    expect(elapsed).toBeLessThan(300);
+
+    const settled = await settle();
+    expect(settled.status).toBe('success');
+    expect(settled.results[0].latest).toBe(3);
+  }, 25_000);
+
+  it('a second press ADOPTS the running job (started:false), never a second engine', async () => {
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    useScriptSource('wau', 'scripts/wau.mjs');
+    mkdirSync(join(root, 'lab', 'scripts'), { recursive: true });
+    writeFileSync(
+      join(root, 'lab', 'scripts', 'wau.mjs'),
+      'export default async () => { await new Promise((r) => setTimeout(r, 300)); return [{ name: "d", points: [{ t: "2026-01-01", v: 1 }] }]; };\n',
+      'utf-8',
+    );
+
+    const first = makeRes();
+    await handleLabSyncJobStart(makeReq('POST', {}), first.res, {}, root);
+    const second = makeRes();
+    await handleLabSyncJobStart(makeReq('POST', {}), second.res, {}, root);
+
+    expect(first.body().started).toBe(true);
+    expect(second.body().started).toBe(false);
+    expect(second.body().job.id).toBe(first.body().job.id);
+    await settle();
+  }, 25_000);
+
+  it('GET /api/lab/sync-jobs/current returns null when nothing has run', async () => {
+    const { res, status, body } = makeRes();
+    await handleLabSyncJobCurrent(makeReq('GET'), res, {}, root);
+    expect(status()).toBe(200);
+    expect(body().job).toBeNull();
+  });
+
+  it('GET /api/lab/sync-jobs/current re-adopts the settled outcome for a returning page', async () => {
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    useScriptSource('wau', 'scripts/wau.mjs');
+    mkdirSync(join(root, 'lab', 'scripts'), { recursive: true });
+    writeFileSync(
+      join(root, 'lab', 'scripts', 'wau.mjs'),
+      'export default async () => [{ name: "d", points: [{ t: "2026-01-01", v: 9 }] }];\n',
+      'utf-8',
+    );
+
+    const start = makeRes();
+    await handleLabSyncJobStart(makeReq('POST', {}), start.res, {}, root);
+    await settle();
+
+    const { res, status, body } = makeRes();
+    await handleLabSyncJobCurrent(makeReq('GET'), res, {}, root);
+    expect(status()).toBe(200);
+    expect(body().job.id).toBe(start.body().job.id);
+    expect(body().job.status).toBe('success');
+    expect(body().job.done).toBe(1);
+    expect(body().job.total).toBe(1);
+  }, 25_000);
+
+  it('400s on a non-JSON body', async () => {
+    const bad = Object.assign(Readable.from([Buffer.from('not json')]), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    }) as unknown as IncomingMessage;
+    const { res, status } = makeRes();
+    await handleLabSyncJobStart(bad, res, {}, root);
     expect(status()).toBe(400);
   });
 });

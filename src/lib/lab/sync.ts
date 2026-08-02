@@ -56,6 +56,29 @@ export interface SyncOptions {
   now?: () => number;
 }
 
+/** One insight settled during a `syncAll` run — emitted as it happens, not at the end. */
+export interface LabSyncProgress {
+  /** Insights settled so far (ok + fresh + failed). */
+  done: number;
+  /** Insights in this run. Fixed at the start; never grows mid-run. */
+  total: number;
+  /** The insight that just settled. */
+  slug: string;
+  status: SyncStatus;
+  error?: string;
+}
+
+export interface SyncAllOptions extends SyncOptions {
+  /** How many insights may be in flight at once (default LAB_SYNC_CONCURRENCY). */
+  concurrency?: number;
+  /** Restrict the run to these slugs (used by the job layer's retry pass). */
+  only?: string[];
+  /** Called as each insight settles — the caller's live progress feed. */
+  onProgress?: (ev: LabSyncProgress) => void;
+  /** Per-insight watchdog in ms (default LAB_INSIGHT_TIMEOUT_MS). */
+  insightTimeoutMs?: number;
+}
+
 /** Sync history is bounded — the cache stays an insight snapshot, not a log file. */
 const HISTORY_MAX = 50;
 /** Per-event error cap: HISTORY_MAX bounds count, this bounds size — a custom
@@ -327,20 +350,115 @@ export interface SyncAllResult {
   failed: SyncResult[];
 }
 
-/** Sync a set of insights sequentially, aggregating failures. */
+/**
+ * How many insights run at once. Bounded on purpose: a script insight spawns a
+ * whole Node child process, so an unbounded fan-out over a large board forks
+ * dozens of them at once. Override with DREAMCONTEXT_LAB_SYNC_CONCURRENCY.
+ */
+export const LAB_SYNC_CONCURRENCY = 4;
+
+/**
+ * Per-insight watchdog. The adapters have their own ceilings (script child:
+ * SCRIPT_TIMEOUT_MS; HTTP: 15s per attempt), but a 429 `Retry-After` can park an
+ * HTTP insight for an unbounded stretch — and one parked insight must never hold
+ * the whole run open, because the caller (the dashboard job) can then never
+ * settle and the user is left watching a spinner that never resolves.
+ *
+ * The watchdog reports; it cannot cancel. An orphaned adapter that finishes
+ * later still writes its cache, and that late write is the truthful one — the
+ * timed-out RESULT is only this run's report, never a cache mutation.
+ * Override with DREAMCONTEXT_LAB_INSIGHT_TIMEOUT_MS.
+ */
+export const LAB_INSIGHT_TIMEOUT_MS = 180_000;
+
+/** Read a positive-integer env override, falling back to `fallback`. */
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  const parsed = raw ? Number(raw) : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+/** Sync one insight, converting a throw or a hang into a `failed` result.
+ *  Never rejects — the pool below relies on that to keep draining. */
+async function settleInsight(
+  contextRoot: string,
+  slug: string,
+  opts: SyncOptions,
+  timeoutMs: number,
+): Promise<SyncResult> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const watchdog = new Promise<SyncResult>((resolve) => {
+      timer = setTimeout(() => {
+        const message = `timed out after ${timeoutMs}ms — the adapter never settled `
+          + '(raise DREAMCONTEXT_LAB_INSIGHT_TIMEOUT_MS if this source is legitimately slow).';
+        console.error(`[lab] sync failed for ${slug}: ${message}`);
+        resolve({ slug, status: 'failed', error: message });
+      }, timeoutMs);
+      // The timer must not hold the process open once the run is done — the CLI
+      // would sit idle for the full window after printing its report.
+      timer.unref?.();
+    });
+    const work = syncInsight(contextRoot, slug, opts).catch((err: unknown) => {
+      // syncInsight only throws for engine-level faults (missing manifest,
+      // unreadable store) — adapter failures already come back as `failed`.
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[lab] sync failed for ${slug}: ${message}`);
+      return { slug, status: 'failed', error: message } satisfies SyncResult;
+    });
+    return await Promise.race([work, watchdog]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Sync a set of insights with bounded concurrency, aggregating failures.
+ *
+ * Results come back in MANIFEST order regardless of completion order, so the CLI
+ * report and the cached-order assumptions of callers are stable across runs.
+ * `onProgress` fires as each insight settles — that live feed is what lets a
+ * long run report partial progress instead of going dark until the end.
+ */
 export async function syncAll(
   contextRoot: string,
-  opts: SyncOptions = {},
+  opts: SyncAllOptions = {},
 ): Promise<SyncAllResult> {
-  const results: SyncResult[] = [];
-  for (const manifest of listInsights(contextRoot)) {
-    try {
-      results.push(await syncInsight(contextRoot, manifest.slug, opts));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[lab] sync failed for ${manifest.slug}: ${message}`);
-      results.push({ slug: manifest.slug, status: 'failed', error: message });
+  const only = opts.only ? new Set(opts.only) : null;
+  const slugs = listInsights(contextRoot)
+    .map((m) => m.slug)
+    .filter((slug) => !only || only.has(slug));
+
+  const total = slugs.length;
+  const timeoutMs = opts.insightTimeoutMs
+    ?? envInt('DREAMCONTEXT_LAB_INSIGHT_TIMEOUT_MS', LAB_INSIGHT_TIMEOUT_MS);
+  const concurrency = Math.max(
+    1,
+    Math.min(opts.concurrency ?? envInt('DREAMCONTEXT_LAB_SYNC_CONCURRENCY', LAB_SYNC_CONCURRENCY), total || 1),
+  );
+
+  const results = new Array<SyncResult>(total);
+  let next = 0;
+  let done = 0;
+
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = next++;
+      if (i >= total) return;
+      const result = await settleInsight(contextRoot, slugs[i], opts, timeoutMs);
+      results[i] = result;
+      done++;
+      // A throwing progress callback is the CALLER's bug and must not abort the
+      // run — half the board would silently go unsynced.
+      try {
+        opts.onProgress?.({ done, total, slug: result.slug, status: result.status, error: result.error });
+      } catch (err) {
+        console.warn(`[lab] sync progress callback threw: ${(err as Error).message}`);
+      }
     }
-  }
+  };
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
   return { results, failed: results.filter((r) => r.status === 'failed') };
 }

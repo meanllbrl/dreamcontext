@@ -139,14 +139,50 @@ export function useSyncInsight() {
   });
 }
 
-/** Sync every insight. Returns the aggregate result so the caller can surface `failed[]`. */
-export function useSyncAll() {
+/**
+ * A server-owned bulk sync of every insight.
+ *
+ * Bulk sync is NOT a request/response call. A full board runs for minutes and
+ * the server destroys any socket idle for 30s, so holding the request open used
+ * to kill the run mid-flight — the board never refetched and half the tiles kept
+ * their stale numbers. The job lives in the server process instead: it survives
+ * navigation, reports live progress, and this poll re-adopts it on return.
+ */
+export interface LabSyncJob {
+  id: string;
+  status: 'running' | 'success' | 'error';
+  done: number;
+  total: number;
+  attempt: number;
+  startedAt: number;
+  finishedAt: number | null;
+  results: SyncResult[];
+  failed: string[];
+  error: string | null;
+}
+
+export function useLabSyncJob() {
+  return useQuery({
+    queryKey: ['lab-sync-job'],
+    queryFn: () => api.get<{ job: LabSyncJob | null }>('/lab/sync-jobs/current'),
+    select: (d) => d.job,
+    // Poll fast while a job runs so the counter is live; idle otherwise.
+    refetchInterval: (query) => (query.state.data?.job?.status === 'running' ? 800 : false),
+    refetchOnWindowFocus: true,
+    retry: 0,
+  });
+}
+
+/** Start (or adopt) the bulk sync job. Returns immediately — watch `useLabSyncJob`. */
+export function useStartLabSyncJob() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (force: boolean = true) =>
-      api.post<{ results: SyncResult[]; failed: SyncResult[] }>('/lab/sync', { all: true, force }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['lab'] });
+      api.post<{ job: LabSyncJob; started: boolean }>('/lab/sync-jobs', { force }),
+    onSuccess: (d) => {
+      // Seed the poll cache so the progress chip appears immediately (no 800ms gap).
+      queryClient.setQueryData(['lab-sync-job'], { job: d.job });
+      queryClient.invalidateQueries({ queryKey: ['lab-sync-job'] });
     },
   });
 }

@@ -71,6 +71,8 @@ import {
   handleLabList,
   handleLabShow,
   handleLabSync,
+  handleLabSyncJobStart,
+  handleLabSyncJobCurrent,
   handleLabTweaks,
   handleLabBinding,
   handleLabCredentialsGet,
@@ -434,6 +436,10 @@ export function buildRouter(): Router {
   // returns a credential value — /api/lab/credentials carries key names only.
   router.get('/api/lab', handleLabList);
   router.post('/api/lab/sync', handleLabSync);
+  // Bulk sync runs as a SERVER-owned job — a full board takes minutes and the
+  // 30s socket timeout below would kill it mid-flight if the request waited.
+  router.post('/api/lab/sync-jobs', handleLabSyncJobStart);
+  router.get('/api/lab/sync-jobs/current', handleLabSyncJobCurrent);
   router.get('/api/lab/credentials', handleLabCredentialsGet);
   router.post('/api/lab/credentials', handleLabCredentialsSet);
   router.get('/api/lab/:slug', handleLabShow);

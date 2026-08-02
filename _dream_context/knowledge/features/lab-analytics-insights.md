@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-07-28'
+updated: '2026-08-02'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -19,6 +19,8 @@ related_tasks:
     lab-card-edit-tweaks-saves-but-does-not-re-sync-tile-silently-keeps-the-stale-window
   - >-
     lab-custom-scripts-run-in-a-fresh-child-process-so-an-edited-shared-lib-is-never-stale
+  - >-
+    insights-sync-all-make-bulk-insight-sync-a-background-job-with-bounded-concurrency
 type: feature
 name: lab-analytics-insights
 description: >-
@@ -102,6 +104,19 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] `memory recall "<meaning phrase>" --types insight` surfaces the insight; `insight` is in `buildCorpus` defaults.
 - [x] The SessionStart snapshot renders a budget-demotable Lab section (title / latest / staleness / group) with a `maxDemotionLevel: 1` floor (metric names + latest values stay in context under any budget pressure), and never crashes on malformed manifest.
 - [x] HTTP: `GET /api/lab` lists summaries; `GET /api/lab/:slug` returns full series; `POST /api/lab/sync {all:true}` runs same engine and returns `failed[]`; `PATCH /api/lab/:slug/tweaks` persists. No route ever returns a credential value.
+
+### Bulk sync is a server-owned job, not a request (v0.23.x)
+
+**The defect:** "Sync all" held ONE browser request open for a strictly sequential run over every insight. The server destroys any socket idle for 30s (`server.setTimeout(30000)`), so a real board blew the wall every time — measured at exactly 30s with `curl: (52) Empty reply from server` on a 24-insight board. The run continued server-side, but the mutation rejected, `invalidateQueries` never fired, and the board kept its stale tiles. Users read that as "Sync all only syncs some of them".
+
+- [x] `syncAll` runs a bounded worker pool (`LAB_SYNC_CONCURRENCY` = 4, override `DREAMCONTEXT_LAB_SYNC_CONCURRENCY`). Bounded on purpose — a script insight spawns a whole Node child process, so an unbounded fan-out forks dozens at once. Results come back in MANIFEST order regardless of completion order.
+- [x] Per-insight watchdog (`LAB_INSIGHT_TIMEOUT_MS` = 180s, override `DREAMCONTEXT_LAB_INSIGHT_TIMEOUT_MS`): a source parked on a long `Retry-After` is reported failed instead of holding the run open forever. The watchdog REPORTS, it cannot cancel — a late-finishing orphan still writes its cache, and that write is the truthful one.
+- [x] `onProgress` fires as each insight settles (the CLI's `--all` progress bar and the dashboard chip both read it); a throwing callback is logged, never fatal.
+- [x] `POST /api/lab/sync-jobs` STARTS a server-owned job and returns immediately (~50ms); `GET /api/lab/sync-jobs/current` reports live `done`/`total`/`attempt`/`failed`/`results`. The job survives navigation and a returning page re-adopts it.
+- [x] Single-flight per contextRoot: a second press ADOPTS the running job (`started: false`). Two engines writing the same cache files is how a double-click corrupts a snapshot.
+- [x] One bounded retry pass (`MAX_PASSES` = 2) over the failures only — enough for a transient 429/blip, short of tripling wall-clock on a permanently broken source. Individual insight failures are reported per tile and do NOT make the job an `error`; only an engine that could not run at all does.
+- [x] Dashboard: `Sync all` starts the job and becomes a determinate chip (`Syncing n/total · retry k`); tiles refresh live as the settled count advances (keyed on the COUNT, not the polled job object — depending on the object would refetch the whole board every 800ms tick). One toast per job, and only for a job that page watched run.
+- [x] `POST /api/lab/sync {all:true}` stays for CLI/API parity and scripted callers.
 - [x] Full existing test suite stays green; `npm run build` clean.
 
 ### Category organization (v0.21.0)
