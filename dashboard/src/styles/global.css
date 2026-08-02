@@ -19,6 +19,35 @@ body {
   /* Prevent body scroll, everything handled by Shell panels */
 }
 
+/* ─── Highlighter (`==text==` → <mark>, armed by lib/markdownMark.ts) ───
+   A bare element rule, once, for every markdown surface in the app: a chat answer, a task
+   body, a council transcript. Written as a marker STROKE rather than a filled box — the ink
+   stops short of the ascender line and of the baseline gap, which is what a pen does and what
+   keeps a highlighted phrase from reading as a UI badge. `color: inherit` is the load-bearing
+   line: the UA stylesheet repaints `<mark>` black-on-yellow, which is a contrast failure the
+   moment the page is dark. */
+mark {
+  background: linear-gradient(
+    to bottom,
+    transparent 8%,
+    var(--color-highlight) 8%,
+    var(--color-highlight) 88%,
+    var(--color-highlight-edge) 88%,
+    var(--color-highlight-edge) 94%,
+    transparent 94%
+  );
+  color: inherit;
+  padding: 0 0.22em;
+  /* Pulled back so the stroke overhangs the phrase the way a pen overshoots, without the
+     highlight adding width and re-wrapping the line under it. */
+  margin: 0 -0.1em;
+  border-radius: 0.15em;
+  /* A highlight that wraps is TWO strokes, one per line — not one box stretched around the
+     line break with a bite taken out of its middle. */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 /* ClickUp's bright-canvas hub — Canvas White (#ffffff) with subtle Hint-of-Sky
    tints for alternation. Subtle shadows allowed on cards. */
 

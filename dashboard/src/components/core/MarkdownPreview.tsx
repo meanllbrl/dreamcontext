@@ -1,5 +1,8 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { marked } from 'marked';
+// Arms `==highlight==` on the shared `marked` singleton (lib/markdownMark.ts) — registration is
+// global, but which modules a route loads is not, so every parse path imports it for itself.
+import '../../lib/markdownMark';
 import DOMPurify from 'dompurify';
 import { useTheme } from '../../context/ThemeContext';
 import { useMermaidRender } from '../../lib/mermaidRender';

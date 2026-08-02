@@ -9,6 +9,15 @@ import { defineConfig } from 'vitest/config';
 const isCI = !!process.env.CI;
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      // A few tests exercise dashboard modules directly (markdown rendering, the chat view
+      // spec). `marked` is a DASHBOARD dependency — the root package does not and should not
+      // depend on it — so point the bare specifier at the dashboard's own copy rather than
+      // hoisting the package up a level just to make a test resolve.
+      marked: new URL('./dashboard/node_modules/marked/', import.meta.url).pathname,
+    },
+  },
   test: {
     include: ['tests/**/*.test.ts'],
     exclude: ['node_modules', 'dist', 'e2e', 'dashboard'],

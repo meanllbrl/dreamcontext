@@ -1,4 +1,8 @@
 import { marked } from 'marked';
+// Side-effect import: arms `==highlight==` on the shared `marked` singleton. Every module that
+// imports `marked` imports this too — registration is global, but WHICH modules a route happens
+// to load is not, so each parse path arms it for itself. See lib/markdownMark.ts.
+import './markdownMark';
 
 /**
  * Incremental markdown rendering — the difference between "re-render the answer" and

@@ -1,6 +1,9 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { marked } from 'marked';
+// Arms `==highlight==` on the shared `marked` singleton (lib/markdownMark.ts) — registration is
+// global, but which modules a route loads is not, so every parse path imports it for itself.
+import '../../lib/markdownMark';
 import mermaid from 'mermaid';
 import panzoom from 'panzoom';
 import type { Task, RiceFields, RiceInput } from '../../hooks/useTasks';

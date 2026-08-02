@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { marked } from 'marked';
+// Arms `==highlight==` on the shared `marked` singleton (lib/markdownMark.ts) — registration is
+// global, but which modules a route loads is not, so every parse path imports it for itself.
+import '../lib/markdownMark';
 import DOMPurify from 'dompurify';
 import { api, setActiveVault } from '../api/client';
 import { closeSelf, onSleepyFocusChange, onSleepyShown, markSleepyCommitted } from '../lib/sleepy';

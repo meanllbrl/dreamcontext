@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
+// Arms `==highlight==` on the shared `marked` singleton (lib/markdownMark.ts) — registration is
+// global, but which modules a route loads is not, so every parse path imports it for itself.
+import '../../lib/markdownMark';
 import type { DebateDetail, PersonaDetail, ParsedRound } from '../../hooks/useCouncil';
 import { useI18n } from '../../context/I18nContext';
 import { PersonaAvatar } from './PersonaAvatar';

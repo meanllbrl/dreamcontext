@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-08-01'
+updated: '2026-08-02'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -48,6 +48,8 @@ related_tasks:
   - past-chats-reopen-any-conversation-from-the-new-menu
   - >-
     agent-tab-auto-title-arrives-late-warm-the-cli-probe-and-let-a-chat-tab-carry-its-own-first-message
+  - chat-prose-reads-at-a-body-column-rhythm-not-a-ui-label-s
+  - highlighter-the-agent-can-mark-the-load-bearing-phrase-not-just-bold-it
 type: feature
 name: in-app-agent-terminal
 description: ''

@@ -25,6 +25,8 @@
  *   • media + boards        — `chat/chatEntities.ts` (`useInlineMedia`) and `chat/BoardEmbed.tsx`
  *   • `dream-actions`       — `chat/chatActions.ts` (`parseChatActions`) + `chat/ActionRow.tsx`
  *   • backticked paths      — `chat/chatEntities.ts` (`useClickablePaths`)
+ *   • `==highlight==`       — `lib/markdownMark.ts` (the `marked` extension) + the bare `mark`
+ *                             rule in `styles/global.css`
  *   • `dream-view`          — `lib/chatViewSpec.ts` (`parseViewBlock`, the schema + caps) and
  *                             `chat/ChatViews.tsx` (the chart/page/checklist renderer)
  * A capability named here that the view doesn't render is worse than one left unnamed: the
@@ -48,6 +50,12 @@ click of consent, then works the same).
   a live pan/zoom canvas. Write that instead of telling the user where the board is.
 - **A path in backticks** is already a chip that opens a preview of that file. You get this
   for free by writing paths the way you always do.
+- **Highlighter** — \`==this phrase==\` paints a marker stroke behind it, like a pen on paper.
+  Bold is already carrying structure (terms, labels), so in a long answer everything ends up
+  bold and nothing stands out. Use the highlighter for the few load-bearing phrases — the
+  number that decides it, the file that broke, the one caveat that changes what the reader
+  does next — so the eye lands there before it reads the paragraph. A handful per answer at
+  most, never a whole sentence: highlight everything and you have highlighted nothing.
 - **Buttons** — a fenced \`dream-actions\` block (a JSON array) renders as a row of buttons
   under your message; the block itself is removed from the visible text.
 
