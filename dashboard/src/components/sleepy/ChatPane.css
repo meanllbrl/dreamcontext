@@ -30,6 +30,19 @@
      working. Every transcript surface that carries prose reads THIS, so the chat's reading
      size stays tunable from one place. */
   --chat-text: calc(15px * var(--zoom, 1));
+  /* …and the RHYTHM that size is set in. 1.6 is a UI line-height; a long answer set in it — a
+     review report with headings, a numbered findings list and inline code on every other line —
+     packs into a wall (owner report 08-02, "okuması güç oluyor"). 1.75 is the leading a body
+     column of this measure wants, and it is unitless so a nested 13px caption or a code chip
+     scales its own leading rather than inheriting a fixed px. Same contract as --chat-text: every
+     transcript surface that carries prose reads THIS, so the chat's reading comfort stays tunable
+     from one place. */
+  --chat-line-height: 1.75;
+  /* The gap BETWEEN blocks has to grow with the leading, not stay behind it: at 1.75 the old 12px
+     paragraph margin is barely wider than the space between two lines inside a paragraph, so the
+     paragraphs stop reading as paragraphs. Raising the leading alone would have traded one wall
+     for a smoother one. */
+  --chat-block-gap: var(--space-4);
 }
 
 /* ── Live rail — linked task chip + goal-skill / council live bars ──────────────────

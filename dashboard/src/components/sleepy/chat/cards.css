@@ -160,7 +160,9 @@
   border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
   color: var(--color-text);
   font-size: var(--chat-text, var(--font-size-base));
-  line-height: var(--line-height-normal);
+  /* The user's own words are prose in the same column as the answer — a pasted three-paragraph
+     brief set tighter than the reply below it gives the transcript two competing rhythms. */
+  line-height: var(--chat-line-height, 1.75);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -252,9 +254,30 @@ video.chat-msg-user-media-el { cursor: default; }
   background: none;
   overflow: visible;
 }
-.chat-msg-assistant-body .markdown-body {
+.chat-msg-assistant-body .md-preview .markdown-body {
   font-size: var(--chat-text, var(--font-size-base));
-  line-height: 1.6;
+  line-height: var(--chat-line-height, 1.75);
+}
+/* Blocks stand apart at the transcript's own block gap — see --chat-block-gap. (MarkdownPreview's
+   own rules are `.md-preview .markdown-body p`, i.e. exactly as specific as a two-class chat
+   selector, so every override here carries `.md-preview` too and wins on specificity instead of
+   on import order — same reason as the `pre` rules below.) */
+.chat-msg-assistant-body .md-preview .markdown-body p,
+.chat-msg-assistant-body .md-preview .markdown-body ul,
+.chat-msg-assistant-body .md-preview .markdown-body ol {
+  margin-bottom: var(--chat-block-gap, var(--space-4));
+}
+/* THE list fix. MarkdownPreview pins `li` to the body-sm leading (1.43) with a selector that
+   outranked the block above, so a findings list — the shape most long answers take — was the
+   TIGHTEST text in the transcript, tighter than the paragraphs around it, and it was the part
+   being read hardest. Items also sit further apart: 4px separates one-line bullets, not the
+   multi-line paragraphs a numbered finding actually is. Plan documents are read the same way,
+   so they share the rule. */
+.chat-msg-assistant-body .md-preview .markdown-body li,
+.chat-plancard-plan .md-preview .markdown-body li,
+.chat-toolcard-plan .md-preview .markdown-body li {
+  line-height: var(--chat-line-height, 1.75);
+  margin-bottom: var(--space-2);
 }
 /* A fenced block inside a chat answer is a self-contained card (language bar + Copy),
    so it gets a real surface instead of MarkdownPreview's inline-doc treatment. */
@@ -417,7 +440,7 @@ video.chat-msg-user-media-el { cursor: default; }
   background: none;
   overflow: visible;
 }
-.chat-toolcard-plan .markdown-body { font-size: var(--font-size-sm); line-height: 1.6; }
+.chat-toolcard-plan .md-preview .markdown-body { font-size: var(--font-size-sm); line-height: var(--chat-line-height, 1.75); }
 .chat-toolcard-plan .markdown-body h1,
 .chat-toolcard-plan .markdown-body h2 { font-size: var(--font-size-base); margin: var(--space-3) 0 var(--space-1); }
 .chat-toolcard-plan .markdown-body h3 { font-size: var(--font-size-sm); margin: var(--space-3) 0 var(--space-1); }
@@ -626,7 +649,7 @@ video.chat-msg-user-media-el { cursor: default; }
   margin: 0;
   color: var(--color-text);
   font-size: var(--chat-text, var(--font-size-base));
-  line-height: var(--line-height-normal);
+  line-height: var(--chat-line-height, 1.75);
 }
 /* The raw-input fallback (a tool whose input is neither a command nor an edit): plain
    data on a plain surface — the dark shell treatment belongs to `TerminalBlock` alone. */
@@ -719,9 +742,9 @@ video.chat-msg-user-media-el { cursor: default; }
   background: none;
   overflow: visible;
 }
-.chat-plancard-plan .markdown-body {
+.chat-plancard-plan .md-preview .markdown-body {
   font-size: var(--chat-text, var(--font-size-base));
-  line-height: 1.6;
+  line-height: var(--chat-line-height, 1.75);
 }
 /* A plan's first heading is its title, and it arrives as an h1/h2 sized for a document.
    Inside a card it only has to outrank the body. */
@@ -765,7 +788,7 @@ video.chat-msg-user-media-el { cursor: default; }
   margin: 0;
   color: var(--color-text);
   font-size: var(--chat-text, var(--font-size-base));
-  line-height: var(--line-height-normal);
+  line-height: var(--chat-line-height, 1.75);
 }
 /* Inline code on the caution surface reads in the card's own key, not the accent's. */
 .chat-bypasscard-desc .chat-a-inlinecode {
