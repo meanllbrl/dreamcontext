@@ -52,7 +52,7 @@ date: '2026-08-02'
   Unblocks: hello-world-pr, make-it-a-business
   - spike-codex-opencode-re-addition-scoping (todo) · BACKLOG
 
-### 🔵 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 13/16 done (81%) · target 2026-07-12 · forecast 2026-07-12 ✓ on track
+### 🟡 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 14/16 done (88%) · target 2026-07-12 · forecast 2026-07-12 ✓ on track
   Unblocks: make-it-a-business
   - brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings (completed) · v0.14.1
   - clickup-sync-integrity-provenance-version-round-trip-consolidates-177-178-179 (completed) · 0.20.0
@@ -68,10 +68,10 @@ date: '2026-08-02'
   - interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel (completed) · v0.10.5
   - multi-person-sync-my-own-push-advances-my-pull-watermark-silently-hiding-a-teammate-s-earlier-task-forever (completed) · 0.20.0
   - normalize-control-bearing-frontmatter-fields-on-the-agent-write-path (todo) · 0.23.0
-  - pre-publish-checklist-v0-23-0 (in_progress) · 0.23.1 · 2026-08-01 → …
+  - pre-publish-checklist-v0-23-0 (completed) · 0.23.1 · 2026-08-01 → …
   - repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror (completed) · 0.20.0
 
-### 🔵 **simplified-ux** — Simplified UX · 36/48 done (75%) · target 2026-07-31 · forecast 2026-07-31 ✓ on track
+### 🟡 **simplified-ux** — Simplified UX · 38/51 done (75%) · target 2026-07-31 · forecast 2026-07-31 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
   - add-a-content-hash-and-an-owner-to-the-install-manifest-and-make-pack-path-collisions-an-error (todo) · 0.23.0
   - agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief (in_review) · 0.21.0 · 2026-07-24 → …
@@ -85,7 +85,9 @@ date: '2026-08-02'
   - changelog-json-and-releases-json-initialized-as-key-object-but-cli-requires-a-bare-array (todo) · 0.21.0
   - chat-answers-become-interactive-inline-charts-fullscreen-boards-widget-pageviews-and-a-pinned-checklist-window (in_review) · 0.21.0 · 2026-07-26 → …
   - chat-becomes-the-standard-agent-screen-the-embedded-terminal-becomes-terminal-legacy (completed) · 0.21.0
+  - chat-prose-reads-at-a-body-column-rhythm-not-a-ui-label-s (in_review) · 0.23.1
   - chat-queued-messages-steer-into-the-running-turn-instead-of-waiting-for-it-to-end (in_review) · 0.23.0 · 2026-07-29 → …
+  - chat-tool-rows-name-their-object-not-their-type-plus-run-grouping-and-density (completed) · 0.23.0
   - chat-view-a-sub-agent-s-tool-calls-must-not-leak-into-the-main-transcript (completed) · 0.21.0
   - chat-view-polish-board-zoom-fullscreen-collapsed-background-agents-autogrow-composer (completed) · 0.21.0 · 2026-07-25 → …
   - chat-view-renders-what-the-agent-makes-inline-boards-media-clickable-paths-action-buttons (completed) · 0.21.0
@@ -106,6 +108,7 @@ date: '2026-08-02'
   - fix-sleepy-agent-auto-submit-timing-race-plus-composer-skill-browser-ux (completed) · v0.13.0
   - fix-tauri-acl-shell-allow-open-for-external-links (completed) · v0.13.0
   - full-suite-runs-intermittently-fail-on-a-vitest-reporter-rpc-timeout-under-load (todo)
+  - highlighter-the-agent-can-mark-the-load-bearing-phrase-not-just-bold-it (in_review) · 0.23.1
   - in-app-agent-terminal-output-pump-fixes-terminal-freeze-during-long-tool-calls (completed) · 0.21.0
   - in-app-task-detail-inline-agent-curate-the-task-via-anchored-comments-revise-summarize-split-status-with-real-time-refresh (completed) · 0.18.0
   - insights-sync-all-make-bulk-insight-sync-a-background-job-with-bounded-concurrency (completed) · 0.23.0
@@ -114,7 +117,7 @@ date: '2026-08-02'
   - launcher-cross-project-multi-vault-task-view-for-portfolio-planning (todo) · BACKLOG
   - launcher-federation-board-modeless-direct-manipulation-ux (completed) · 0.18.0
   - pack-badge-false-positive-declined-optional-packs-show-as-new-forever (completed) · 0.17.2
-  - pre-publish-checklist-v0-23-0 (in_progress) · 0.23.1 · 2026-08-01 → …
+  - pre-publish-checklist-v0-23-0 (completed) · 0.23.1 · 2026-08-01 → …
   - roadmap-forecast-accuracy-effort-aware-envelope-clamped-cascade (completed) · 2026-07-08 → …
   - roadmap-timeline-start-only-dated-tasks-collapse-the-committed-window-bar-to-a-point (completed) · 0.17.2
   - survey-questions-page-horizontally-one-question-per-view (completed) · 0.21.0

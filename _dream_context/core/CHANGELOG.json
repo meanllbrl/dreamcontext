@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-08-02",
+    "type": "docs",
+    "scope": "readme",
+    "description": "Nobody is on v0.23.0 — it was cut locally and superseded before it reached anyone — so a reader upgrading from v0.21.0 was being pointed at a version they cannot have. The people-first migration applies to everyone below v0.23.1, not 'below v0.23.0'. A one-character version edit in the README's migration warning block.",
+    "breaking": false,
+    "summary": "The migration note names the version that shipped",
+    "references": [
+      "commit:f7f46bb"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-02",
     "type": "feat",
     "scope": "skill",
     "description": "Read is the only PDF path an agent has, and it hands pages to the vision model — 20 per request, page ranges mandatory past 10 — so a long text PDF costs a fortune and never arrives whole. The skill now checks first: when the text layer is real, extraction returns markdown for ~no vision tokens; scanned, mixed, unsupported platform or any error falls back to Read, which is the right tool for a scan. Run via npx, so it adds no dependency and no install step.",
