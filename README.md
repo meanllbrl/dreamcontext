@@ -641,7 +641,7 @@ Every person gets a **constitution** at `people/<slug>.md` (identity, preference
 
 Who is at the keyboard is resolved per machine, never guessed: `DREAMCONTEXT_PERSON`, then a machine pin from `people whoami --set`, then this machine's git `user.email` matched against the roster, then a solo vault's only person. If none of those land, the session says so and loads **no** constitution rather than somebody else's. The pin lives in a gitignored file, so machine identity never enters the synced brain, while the roster itself syncs and merges as a union across machines.
 
-> Upgrading from before v0.23.0? `dreamcontext update` migrates `core/1.user.md` into `people/`, moves identity and preferences into your constitution, and parks every other section verbatim in `inbox/1.user-residue.md` for an agent to file. Nothing is discarded.
+> Upgrading from before v0.23.1? `dreamcontext update` migrates `core/1.user.md` into `people/`, moves identity and preferences into your constitution, and parks every other section verbatim in `inbox/1.user-residue.md` for an agent to file. Nothing is discarded.
 
 ### Core (changelog & releases)
 
