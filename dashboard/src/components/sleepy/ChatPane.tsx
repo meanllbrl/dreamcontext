@@ -8,7 +8,8 @@ import {
   nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent,
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
-  type SubAgentRun, type ScrollIntent, type RunSegment,
+  countCards, headForCards, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
+  type SubAgentRun, type ScrollIntent, type RunSegment, type CardWindow,
 } from './chat/chatEntities';
 import { isDreamcontextCommand } from './chat/dreamCommand';
 import { ItemView } from './chat/TranscriptItem';
@@ -467,6 +468,66 @@ export function ChatPane({
    *  must not close over one render's copy — the press outlives several renders. */
   const revealEarlierRef = useRef<() => void>(() => {});
 
+  // ── What a slice RENDERS AS: the two predicates the window and the transcript share ──
+  //
+  // Declared here, above the window, rather than beside the transcript pass they were written
+  // for. The window used to count entries and entries alone, so it needed to know nothing
+  // about what an entry looked like; now it has a card floor (chatEntities' card section) and
+  // "how many cards is this slice" is a question only these two can answer.
+
+  const suppressedToolUseIds = subAgentToolUseIds(conv.subAgents);
+  // The mode this conversation is ACTUALLY running in, as the CLI itself reported it
+  // (init frame, or a successful mid-session `set_permission_mode`) — NOT the remembered
+  // `permissionMode` prop, which is only the default for the NEXT session and would
+  // mislabel a session the user switched after it started.
+  const inBypass = conv.permissionMode ? conv.permissionMode === 'bypassPermissions' : session.bypass;
+
+  // Tool RUNS (owner report 08-01): a contiguous stretch of tool calls renders as ONE
+  // collapsing card instead of N. What may join a run is exactly "what renders as a plain tool
+  // card" — `itemNode`'s other branches produce something else (the sub-agent group card, a
+  // drawn board, a bypass receipt riding along in a Fragment), and those must BREAK a run
+  // rather than disappear into one. Hence this mirrors those branches rather than just testing
+  // `kind === 'tool'`.
+  const isPlainToolCard = (item: ChatItem): boolean => {
+    if (item.kind !== 'tool') return false;
+    if (suppressedToolUseIds.has(item.toolUseId)) return false;
+    const path = primaryToolPath(item.input);
+    if (path && classifyReference(path).kind === 'board' && item.status !== 'running') return false;
+    if (inBypass) {
+      const command = bashCommand(item);
+      if (command && isGuardedCommand(command)) return false;
+    }
+    // A dreamcontext CLI call keeps its own position in the transcript (owner call 08-01:
+    // "break the grouping, let it be its own row"). These are the calls that CHANGE the brain
+    // — a task created, a status moved, knowledge written — and folding them into a collapsed
+    // "12 steps" header hides the one class of row whose object the reader most needs to see.
+    // Everything the run card was built for still holds for the reads and greps around them.
+    if (isDreamcontextCommand(bashCommand(item) ?? undefined)) return false;
+    return true;
+  };
+
+  // What renders as NOTHING (owner report 08-02) — the other half of `isPlainToolCard`, and
+  // the reason grouping looked broken in the field. A thinking model opens a thinking block
+  // before nearly every tool call, and when that block is the encrypted kind the CLI streams it
+  // with NO text at all (`thinking: ""`, signature only) — an item that draws zero pixels.
+  // Between every pair of calls sat one of these, so a 19-call stretch segmented into runs of
+  // one and two, every one of them under MIN_TOOL_RUN, and the reader saw 19 ungrouped rows
+  // with visibly nothing between them. A run must break on what the reader can SEE; an item
+  // that renders nothing is an absence, not a boundary, so `segmentToolRuns` holds it instead
+  // of ending the run — and the card count skips it for the same reason.
+  //
+  // Each branch mirrors an actual `return null` in the transcript's own components — nothing
+  // is guessed invisible. The one null branch deliberately NOT mirrored is the second and
+  // later sub-agent tool item (`itemNode`: the combined SubAgentCard is already shown): the
+  // FIRST one is visible and breaks the stretch anyway, so the rest can only ever follow a
+  // break, never sit interior to a run — mirroring it would buy nothing and would duplicate
+  // `subAgentCardShown`'s render-order bookkeeping in a predicate that runs before rendering.
+  const rendersNothing = (item: ChatItem): boolean => {
+    if (item.kind === 'thinking') return !item.text;          // ThinkingBlock's own null branch
+    if (item.kind === 'text') return !item.text && item.done;  // AssistantMessage's null branch
+    return false;
+  };
+
   // ── Transcript window: how much of the conversation is actually mounted ─────────────
   //
   // See chatEntities' window section for the rules. Here is the WIRING, and its two
@@ -495,7 +556,24 @@ export function ChatPane({
   const [firstShownState, setFirstShownState] = useState(0);
   const windowTotal = conv.history.length + conv.items.length;
   const settledNow = remainingSettleMs(performance.now(), lastActivityAtRef.current) === 0;
-  const firstShown = nextFirstShown(firstShownState, { total: windowTotal, pinned: stickRef.current && settledNow });
+  // The conversation as ONE index space for the card walk — the concatenation the window has
+  // always been an index into, read without ever building it (a resumed history is thousands
+  // of entries and this runs per streamed token).
+  const cardWindow: CardWindow<ChatItem> = {
+    total: windowTotal,
+    entryAt: (i) => (i < conv.history.length ? conv.history[i] : conv.items[i - conv.history.length]),
+    isGroupable: isPlainToolCard,
+    rendersNothing,
+    minRun: MIN_TOOL_RUN,
+  };
+  // The CARD floor: how far back the following window has to reach for the transcript to hold
+  // WINDOW_TAIL_CARDS things the reader can see. In an ordinary conversation this stops after
+  // ~20 entries and the entry tail (40) is wider, so it changes nothing at all; it only bites
+  // when a window's worth of entries has folded into a card or two and left nothing to scroll.
+  const tailHead = headForCards(WINDOW_TAIL_CARDS, WINDOW_MAX_ENTRIES, cardWindow);
+  const firstShown = nextFirstShown(firstShownState, {
+    total: windowTotal, pinned: stickRef.current && settledNow, tailHead,
+  });
   if (firstShown !== firstShownState) setFirstShownState(firstShown);
   const { hiddenCount, historyFrom, itemsFrom, showsHistory } = splitWindow(
     conv.history.length, conv.items.length, firstShown,
@@ -644,8 +722,23 @@ export function ChatPane({
     }
   }, [captureAnchor]);
 
-  const revealEarlier = useCallback(() => {
-    const next = nextFirstShown(firstShown, { total: windowTotal, pinned: false, reveal: true });
+  /** Step the window back. Not a `useCallback`: it closes over this render's window and card
+   *  shape, exactly like the JSX handlers that call it, and its only long-lived reference is
+   *  `revealEarlierRef` — which is re-pointed every render for that reason. */
+  const revealEarlier = () => {
+    // A step measured in ENTRIES can land entirely inside the fold the reader is already
+    // looking at: 40 more calls merge into the same collapsed run and the transcript gains
+    // nothing visible, which is "Show earlier messages" appearing to do nothing (owner report
+    // 08-02). So the step is whichever reaches further — WINDOW_STEP entries, or far enough
+    // back to add WINDOW_STEP_CARDS things to look at. The reveal's own ceiling is generous
+    // and RELATIVE (this is an explicit ask, not the automatic floor): one press may mount a
+    // WINDOW_MAX_ENTRIES-sized reach beyond what is already up.
+    const revealHead = headForCards(
+      countCards(firstShown, cardWindow) + WINDOW_STEP_CARDS,
+      (windowTotal - firstShown) + WINDOW_MAX_ENTRIES,
+      cardWindow,
+    );
+    const next = nextFirstShown(firstShown, { total: windowTotal, pinned: false, reveal: true, tailHead, revealHead });
     // Nothing left to reveal → leave the hold as it is, rather than re-arming it as a prepend
     // that is not coming.
     if (next === firstShown) return;
@@ -655,7 +748,7 @@ export function ChatPane({
     setStick(false);
     captureAnchor(true);
     setFirstShownState(next);
-  }, [firstShown, windowTotal, setStick, captureAnchor]);
+  };
   revealEarlierRef.current = revealEarlier;
 
   /** The INPUT-side arm for the settled reveal — the path that works when there is nothing
@@ -934,12 +1027,10 @@ export function ChatPane({
   //    EARLIEST such tool item so it reads in-place rather than always trailing); swap a
   //    board-referencing tool item for the DRAWN board (BoardEmbed, state 4); render everything
   //    else through the shared ItemView dispatcher (state 2/11). ─────────────────────────
-  const suppressedToolUseIds = subAgentToolUseIds(conv.subAgents);
-  // The mode this conversation is ACTUALLY running in, as the CLI itself reported it
-  // (init frame, or a successful mid-session `set_permission_mode`) — NOT the remembered
-  // `permissionMode` prop, which is only the default for the NEXT session and would
-  // mislabel a session the user switched after it started.
-  const inBypass = conv.permissionMode ? conv.permissionMode === 'bypassPermissions' : session.bypass;
+  //
+  // `suppressedToolUseIds`, `inBypass` and the two run predicates this pass reads are declared
+  // ABOVE the window section — the window measures itself in cards now, and it cannot ask what
+  // a slice renders as without them.
   let subAgentCardShown = false;
   const itemNode = (item: ChatItem): React.ReactNode => {
     if (item.kind === 'tool') {
@@ -984,53 +1075,6 @@ export function ChatPane({
       }
     }
     return view;
-  };
-
-  // ── Tool RUNS (owner report 08-01): a contiguous stretch of tool calls renders as ONE
-  //    collapsing card instead of N. What may join a run is exactly "what renders as a plain
-  //    tool card" — every branch ABOVE this point produces something else (the sub-agent
-  //    group card, a drawn board, a bypass receipt riding along in a Fragment), and those
-  //    must BREAK a run rather than disappear into one. Hence the predicate mirrors
-  //    `itemNode`'s branches rather than just testing `kind === 'tool'`. ──────────────────
-  const isPlainToolCard = (item: ChatItem): boolean => {
-    if (item.kind !== 'tool') return false;
-    if (suppressedToolUseIds.has(item.toolUseId)) return false;
-    const path = primaryToolPath(item.input);
-    if (path && classifyReference(path).kind === 'board' && item.status !== 'running') return false;
-    if (inBypass) {
-      const command = bashCommand(item);
-      if (command && isGuardedCommand(command)) return false;
-    }
-    // A dreamcontext CLI call keeps its own position in the transcript (owner call 08-01:
-    // "break the grouping, let it be its own row"). These are the calls that CHANGE the brain
-    // — a task created, a status moved, knowledge written — and folding them into a collapsed
-    // "12 steps" header hides the one class of row whose object the reader most needs to see.
-    // Everything the run card was built for still holds for the reads and greps around them.
-    if (isDreamcontextCommand(bashCommand(item) ?? undefined)) return false;
-    return true;
-  };
-
-  // ── What renders as NOTHING (owner report 08-02) ──────────────────────────────────────
-  //
-  // The other half of `isPlainToolCard`, and the reason grouping looked broken in the field.
-  // A thinking model opens a thinking block before nearly every tool call, and when that
-  // block is the encrypted kind the CLI streams it with NO text at all (`thinking: ""`,
-  // signature only) — an item that draws zero pixels. Between every pair of calls sat one of
-  // these, so a 19-call stretch segmented into runs of one and two, every one of them under
-  // MIN_TOOL_RUN, and the reader saw 19 ungrouped rows with visibly nothing between them.
-  // A run must break on what the reader can SEE; an item that renders nothing is an absence,
-  // not a boundary, so `segmentToolRuns` holds it instead of ending the run.
-  //
-  // Each branch mirrors an actual `return null` in the transcript's own components — nothing
-  // is guessed invisible. The one null branch deliberately NOT mirrored is the second and
-  // later sub-agent tool item (`itemNode`: the combined SubAgentCard is already shown): the
-  // FIRST one is visible and breaks the stretch anyway, so the rest can only ever follow a
-  // break, never sit interior to a run — mirroring it would buy nothing and would duplicate
-  // `subAgentCardShown`'s render-order bookkeeping in a predicate that runs before rendering.
-  const rendersNothing = (item: ChatItem): boolean => {
-    if (item.kind === 'thinking') return !item.text;          // ThinkingBlock's own null branch
-    if (item.kind === 'text') return !item.text && item.done;  // AssistantMessage's null branch
-    return false;
   };
 
   // `stillAccruing` (see `toolRunPhase`) is true only for a run that is the LAST thing in the

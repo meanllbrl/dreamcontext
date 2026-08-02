@@ -17,6 +17,12 @@
  *      hysteresis), never one-per-frame, and stays pinned to the bottom throughout;
  *   D. wheel activity DURING a streaming turn freezes the pinned snap (no chunk of rows is
  *      unmounted mid-motion); the snap lands after quiet, and the view is still pinned.
+ *   E. a window folded into ONE collapsed run card still loads older entries from wheel-up
+ *      alone (no scroll event can fire), the card survives the reveal, and the row being read
+ *      INSIDE it is held — plus the automatic floor stops at WINDOW_MAX_ENTRIES.
+ *   F. the window measures itself in CARDS (owner report 08-02): a transcript whose entry
+ *      tail folds into two cards mounts further back until there is something to scroll, and
+ *      each reveal adds CARDS rather than entries that vanish into the same fold.
  *
  *   npm run build && node scripts/verify/chat-scroll.mjs
  *
@@ -52,11 +58,29 @@ const CONV_ID = randomUUID();
 /** Scenario E's conversation: one long contiguous tool run, so the whole window folds into
  *  a single collapsed ToolRunCard and the transcript is SHORTER than its scroller. */
 const RUN_CONV_ID = randomUUID();
+const RUN2_CONV_ID = randomUUID();
+const CARDS_CONV_ID = randomUUID();
 
 // Mirrors chatEntities — asserted against, so drift fails loudly rather than silently.
 const WINDOW_TAIL = 40;
 const WINDOW_STEP = 40;
 const TRIM_SLACK = 20;
+const WINDOW_TAIL_CARDS = 20;
+const WINDOW_STEP_CARDS = 20;
+const WINDOW_MAX_ENTRIES = 400;
+
+/** Mirrors transcript-history.ts — a resumed conversation replays at most this many items, so
+ *  it is the real `total` every replayed scenario's window is a slice of. */
+const HISTORY_MAX_ITEMS = 500;
+
+/** Scenario E's fixture: one unbroken run LONGER than the automatic floor may reach, so the
+ *  fold still hides history above it (a shorter one is now mounted whole, which is correct
+ *  and would leave E with nothing to reveal). */
+const RUN_CALLS = 900;
+/** Scenario F's fixture: turns of a message, an answer and a foldable stretch — 3 cards per
+ *  14 entries, so an entry tail is two cards and the card floor has to reach much further. */
+const CARD_TURNS = 40;
+const CARD_TURN_CALLS = 12;
 
 // ─── the scripted `claude` ────────────────────────────────────────────────────────────
 
@@ -147,28 +171,70 @@ function seedTranscript() {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${CONV_ID}.jsonl`), lines.join('\n') + '\n');
 
-  // Scenario E's fixture: 1 prompt, then 240 CONTIGUOUS tool calls (tool_result entries
-  // carry no text, so they only backfill — nothing breaks the run), then one closing text.
-  // The replayed window (last 40 entries) is 39 tool items + a text: one ToolRunCard,
-  // collapsed, plus one paragraph — deliberately SHORTER than the scroller.
-  const runLines = [];
-  const rentry = (i, type, message, extra) => transcriptEntry(RUN_CONV_ID, i, type, message, extra);
-  runLines.push(rentry(0, 'user', { role: 'user', content: [{ type: 'text', text: 'uzun tool kosusu senaryo E — tek karta katlanan 240 adim.' }] }));
-  for (let t = 1; t <= 240; t += 1) {
-    const toolId = `toolu_run_${t}`;
-    runLines.push(rentry(t, 'assistant', {
+  // Scenarios E1/E2 share a fixture SHAPE: 1 prompt, then RUN_CALLS CONTIGUOUS tool calls
+  // (tool_result entries carry no text, so they only backfill — nothing breaks the run), then
+  // one closing text. Whatever the window mounts is ONE collapsed ToolRunCard plus a
+  // paragraph — deliberately SHORTER than the scroller. The run is longer than both the
+  // replay cap and WINDOW_MAX_ENTRIES, so the card floor hits its ceiling with history still
+  // above it: walking further finds no other card, and that is where the automatic floor must
+  // stop and leave it to the reader.
+  //
+  // TWO conversations of it, because a replayed transcript is capped at HISTORY_MAX_ITEMS and
+  // one reveal out of a fold this long reaches the rest of it — so E1 spends its reveal
+  // COLLAPSED (proving the reveal is reachable with no scroll event in existence) and E2
+  // spends its own with the card OPEN (proving the in-card prepend holds the reader's row).
+  const runFixture = (convId, title, prefix) => {
+    const out = [];
+    const e = (i, type, message, extra) => transcriptEntry(convId, i, type, message, extra);
+    out.push(e(0, 'user', { role: 'user', content: [{ type: 'text', text: title }] }));
+    for (let t = 1; t <= RUN_CALLS; t += 1) {
+      const toolId = `toolu_${prefix}_${t}`;
+      out.push(e(t, 'assistant', {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: toolId, name: 'Bash', input: { command: `echo ${prefix}-step-${t}`, description: `Run step ${t}` } }],
+      }));
+      out.push(e(t, 'user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: [{ type: 'text', text: `${prefix}-step-${t}` }] }] }, { isMeta: false }));
+    }
+    out.push(e(RUN_CALLS + 1, 'assistant', { role: 'assistant', content: [{ type: 'text', text: `RUN SONU: ${RUN_CALLS} adım tamamlandı.` }] }));
+    const path = join(dir, `${convId}.jsonl`);
+    writeFileSync(path, out.join('\n') + '\n');
+    return path;
+  };
+  const runPath = runFixture(RUN_CONV_ID, `uzun tool kosusu senaryo E1 — tek karta katlanan ${RUN_CALLS} adim.`, 'run');
+  const run2Path = runFixture(RUN2_CONV_ID, `uzun tool maraton senaryo E2 — acik kart icinde okuma.`, 'mar');
+
+  // Scenario F's fixture (owner report 08-02): ordinary turns, each one a message, an answer
+  // and a foldable stretch of calls. Three cards per 14 entries — so the ENTRY tail (40) is
+  // about two cards and change, which is shorter than the scroller and therefore unscrollable,
+  // while the conversation is full of cards a little further back.
+  const cardLines = [];
+  const centry = (i, type, message, extra) => transcriptEntry(CARDS_CONV_ID, i, type, message, extra);
+  for (let t = 0; t < CARD_TURNS; t += 1) {
+    cardLines.push(centry(t, 'user', { role: 'user', content: [{ type: 'text', text: `kartlar turu ${t}: bu adımı da hallet.` }] }));
+    const calls = [];
+    for (let c = 0; c < CARD_TURN_CALLS; c += 1) {
+      calls.push({ type: 'tool_use', id: `toolu_card_${t}_${c}`, name: 'Read', input: { file_path: `src/mod-${t}-${c}.ts`, description: `Read ${t}/${c}` } });
+    }
+    cardLines.push(centry(t, 'assistant', {
       role: 'assistant',
-      content: [{ type: 'tool_use', id: toolId, name: 'Bash', input: { command: `echo run-step-${t}`, description: `Run step ${t}` } }],
+      content: [
+        { type: 'text', text: `Tur ${t}: önce dosyaları okuyorum, sonra özetliyorum.\n\nBu cevap iki satır sürüyor ki kartın yüksekliği gerçekçi olsun.` },
+        ...calls,
+      ],
     }));
-    runLines.push(rentry(t, 'user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: [{ type: 'text', text: `run-step-${t}` }] }] }, { isMeta: false }));
+    for (const call of calls) {
+      cardLines.push(centry(t, 'user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: [{ type: 'text', text: 'ok' }] }] }, { isMeta: false }));
+    }
   }
-  runLines.push(rentry(241, 'assistant', { role: 'assistant', content: [{ type: 'text', text: 'RUN SONU: 240 adım tamamlandı.' }] }));
-  const runPath = join(dir, `${RUN_CONV_ID}.jsonl`);
-  writeFileSync(runPath, runLines.join('\n') + '\n');
-  // An hour older than the main conversation, so the picker's newest-first list keeps the
-  // main conversation as row #1 (the open flow clicks `.first()`); E finds this one by search.
+  const cardPath = join(dir, `${CARDS_CONV_ID}.jsonl`);
+  writeFileSync(cardPath, cardLines.join('\n') + '\n');
+
+  // All older than the main conversation, so the picker's newest-first list keeps it as row
+  // #1 (the open flow clicks `.first()`); E and F find their own by search.
   const older = (Date.now() - 60 * 60 * 1000) / 1000;
   utimesSync(runPath, older, older);
+  utimesSync(run2Path, older - 300, older - 300);
+  utimesSync(cardPath, older - 600, older - 600);
 }
 
 // ─── setup ────────────────────────────────────────────────────────────────────────────
@@ -448,70 +514,129 @@ async function runScenarios(chromium, base, report) {
     afterD.rows <= WINDOW_TAIL + TRIM_SLACK + 6, JSON.stringify(afterD));
   ok('and the view is pinned to the bottom again', afterD.fromBottom <= 4, JSON.stringify(afterD));
 
-  // ── E: a window folded into ONE collapsed run card (owner report 08-01, second pass) ──
+  // ── E1/E2: a window folded into ONE collapsed run card (owner report 08-01, second pass) ─
   //
-  // 240 contiguous tool calls fold the whole window into a single collapsed ToolRunCard, so
-  // the transcript is SHORTER than its scroller: no overflow, no scroll events, ever. The
-  // three defects this scenario pins: (1) wheel-up loaded nothing (reveal armed only from
-  // the scroll handler); (2) "Show earlier" REMOUNTED the card (key = first item id, which
-  // the merge changes) — open state reset to the collapsed first frame; (3) the anchor hold
-  // measured the card's top edge, not the row being read inside it, so an in-card prepend
-  // shoved the reader by its full height.
-  console.log('── E: folded run card — reveal with no scroll, stable card, held in-card rows');
-  await vis('.chat-scroll').first().click();
-  await page.keyboard.press('Meta+Shift+O');
-  ok('⌘⇧O opens Past chats', await until(async () => (await vis('.chp-input').count()) > 0, 8000));
-  await vis('.chp-input').first().fill('kosusu');
-  await page.waitForTimeout(700);
-  const rowTitle = (await vis('.chp-row').first().innerText().catch(() => '')).replace(/\s+/g, ' ');
-  ok('search finds the run-heavy conversation', /kosusu/i.test(rowTitle), rowTitle);
-  await vis('.chp-row').first().click();
+  // RUN_CALLS contiguous tool calls fold whatever is mounted into a single collapsed
+  // ToolRunCard, so the transcript is SHORTER than its scroller: no overflow, no scroll
+  // events, ever. The three defects these pin: (1) wheel-up loaded nothing (the reveal was
+  // armed only from the scroll handler); (2) "Show earlier" REMOUNTED the card (key = first
+  // item id, which the merge changes) — open state reset to the collapsed first frame; (3) the
+  // anchor hold measured the card's top edge, not the row being read inside it, so an in-card
+  // prepend shoved the reader by its full height. Since 08-02 they also pin the ceiling: a run
+  // this long is the one shape where walking back finds no further card, so the automatic
+  // floor must stop at WINDOW_MAX_ENTRIES instead of mounting the conversation.
+  //
+  // TWO conversations because one reveal out of a fold this long reaches the rest of the
+  // replay (see the fixture note): E1 spends its reveal collapsed, E2 spends its own open.
+  const moreBtn = () => vis('.chat-window-more').first();
+  /** Entries above the window, as the button reports them — 0 once it is gone (the honest
+   *  reading: nothing left to reveal), not -1. */
+  const hiddenN = async () => {
+    if ((await moreBtn().count()) === 0) return 0;
+    const t = await moreBtn().innerText().catch(() => '');
+    const m = /\((\d+)\)/.exec(t);
+    return m ? Number(m[1]) : 0;
+  };
+  const openPastChat = async (needle, label) => {
+    await vis('.chat-scroll').first().click();
+    await page.keyboard.press('Meta+Shift+O');
+    ok(`⌘⇧O opens Past chats (${label})`, await until(async () => (await vis('.chp-input').count()) > 0, 8000));
+    await vis('.chp-input').first().fill(needle);
+    await page.waitForTimeout(700);
+    const title = (await vis('.chp-row').first().innerText().catch(() => '')).replace(/\s+/g, ' ');
+    ok(`search finds the ${label} conversation`, new RegExp(needle, 'i').test(title), title);
+    await vis('.chp-row').first().click();
+  };
+
+  console.log('── E1: folded run card — the reveal is reachable with nothing to scroll');
+  await openPastChat('kosusu', 'run-heavy');
   ok('it resumes as a chat tab with a run card', await until(async () => (await vis('.chat-toolrun').count()) > 0, 20000));
   await page.waitForTimeout(1200);
 
-  const moreBtn = () => vis('.chat-window-more').first();
-  const hiddenN = async () => {
-    const t = await moreBtn().innerText().catch(() => '');
-    const m = /\((\d+)\)/.exec(t);
-    return m ? Number(m[1]) : -1;
-  };
   const e0 = await probe();
   const n0 = await hiddenN();
   ok(`the window folds into one collapsed card (${e0.rows} top-level rows, ${n0} hidden above)`,
-    e0.rows <= 6 && n0 > 100, JSON.stringify({ rows: e0.rows, n0 }));
+    e0.rows <= 6 && n0 > 0, JSON.stringify({ rows: e0.rows, n0 }));
   ok('the folded transcript is SHORTER than its scroller — nothing to scroll',
     e0.scrollHeight <= e0.clientHeight + 4, JSON.stringify(e0));
+  ok(`the card floor stops at its ceiling instead of mounting everything (${HISTORY_MAX_ITEMS - n0} entries up, cap ${WINDOW_MAX_ENTRIES})`,
+    HISTORY_MAX_ITEMS - n0 <= WINDOW_MAX_ENTRIES + 4,
+    JSON.stringify({ replayed: HISTORY_MAX_ITEMS, n0, mounted: HISTORY_MAX_ITEMS - n0 }));
 
   await aimAtTranscript();
   for (let i = 0; i < 5; i += 1) { await page.mouse.wheel(0, -300); await page.waitForTimeout(30); }
   await page.waitForTimeout(700);
   const n1 = await hiddenN();
   ok(`wheel-up loads older messages even though no scroll event can fire (${n0} → ${n1})`,
-    n1 === n0 - WINDOW_STEP, JSON.stringify({ n0, n1 }));
-  ok('one settled step, not a cascade — and the card did not open by itself',
-    (await vis('.chat-toolrun[data-open]').count()) === 0 && n1 === n0 - WINDOW_STEP);
+    n1 <= n0 - Math.min(n0, WINDOW_STEP), JSON.stringify({ n0, n1 }));
+  ok(`the step is bounded — one ask reaches at most WINDOW_MAX_ENTRIES further (${n0 - n1})`,
+    n0 - n1 <= WINDOW_MAX_ENTRIES + 4, JSON.stringify({ n0, n1 }));
+  ok('and the card did not open by itself', (await vis('.chat-toolrun[data-open]').count()) === 0);
 
-  // The owner's read-back flow: open the card, then keep reading upward through it.
+  // E2: the owner's read-back flow — open the card, then keep reading upward through it, on a
+  // conversation whose reveal is still unspent.
+  console.log('── E2: reading back INSIDE an open run card — the prepend holds the row');
+  await openPastChat('maraton', 'in-card');
+  ok('it resumes as a chat tab with a run card too', await until(async () => (await vis('.chat-toolrun').count()) > 0, 20000));
+  await page.waitForTimeout(1200);
+  const e2Hidden = await hiddenN();
+  ok(`it too has history above the fold (${e2Hidden} hidden)`, e2Hidden > 0);
   await vis('.chat-toolrun .chat-m-cardhead-hit').first().click();
-  ok('opening the card mounts its rows', await until(async () => (await page.locator('.chat-toolrun-rows > *').count()) > 0, 5000));
+  ok('opening the card mounts its rows', await until(async () => (await page.locator('.chat-toolrun-rows > *').count()) > 0, 8000));
   const r1 = await page.locator('.chat-toolrun-rows > *').count();
-  for (let i = 0; i < 120; i += 1) {
+  await aimAtTranscript();
+  for (let i = 0; i < 200; i += 1) {
     await page.mouse.wheel(0, -400);
     await page.waitForTimeout(25);
     const p = await probe();
     if (p.scrollTop <= 200) break;
   }
   const foldE = await foldRow();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(900);
   const r2 = await page.locator('.chat-toolrun-rows > *').count();
   ok('the card SURVIVES the reveal open — no remount back to the collapsed first frame',
     (await vis('.chat-toolrun[data-open]').count()) === 1);
   ok(`the revealed entries land INSIDE the open card (${r1} → ${r2} rows)`,
-    r2 >= r1 + WINDOW_STEP - 2, JSON.stringify({ r1, r2 }));
+    r2 >= r1 + Math.min(e2Hidden, WINDOW_STEP) - 2, JSON.stringify({ r1, r2, e2Hidden }));
   const foldEAfter = foldE ? await markTop(foldE.mark) : null;
   ok('the row being read inside the card is held across the in-card prepend',
     foldE !== null && foldEAfter !== null && Math.abs(foldEAfter - foldE.top) <= 2,
     JSON.stringify({ before: foldE?.top, after: foldEAfter }));
+
+  // ── F: the window measured in CARDS (owner report 08-02) ─────────────────────────────
+  //
+  // "1 mesaj 50 mesajlı bir grup kayamıyor ama daha fazla yüklemek için kaydır diyor."
+  // An ordinary conversation, but grouped: 14 entries render as 3 cards, so the ENTRY tail
+  // (40) is two cards and change — shorter than the scroller, nothing to scroll, while the
+  // pane's whole way back through history is "scroll up and I'll load more". The floor makes
+  // the window reach for WINDOW_TAIL_CARDS things to look at instead, and each reveal step
+  // has to be worth WINDOW_STEP_CARDS of them rather than 40 entries that merge into the
+  // fold the reader is already staring at.
+  console.log('── F: card floor — the window reaches for cards, not entries');
+  const cardTotal = Math.min(CARD_TURNS * (CARD_TURN_CALLS + 2), HISTORY_MAX_ITEMS);
+  await openPastChat('kartlar', 'grouped');
+  ok('the grouped conversation resumes', await until(async () => (await vis('.chat-toolrun').count()) > 0, 20000));
+  await page.waitForTimeout(1500);
+
+  const f0 = await probe();
+  const fHidden = await hiddenN();
+  const fMounted = cardTotal - fHidden;
+  ok(`the floor reaches past the entry tail (${fMounted} entries up, an entry window is ${WINDOW_TAIL})`,
+    fHidden >= 0 && fMounted > WINDOW_TAIL + TRIM_SLACK,
+    JSON.stringify({ cardTotal, fHidden, fMounted }));
+  ok(`…and stops there, not at the ceiling (${fMounted} ≤ ${WINDOW_MAX_ENTRIES})`,
+    fMounted <= WINDOW_MAX_ENTRIES + 4, JSON.stringify({ fMounted }));
+  ok(`it mounted the cards it promised (${f0.rows} top-level rows ≥ ${WINDOW_TAIL_CARDS})`,
+    f0.rows >= WINDOW_TAIL_CARDS, JSON.stringify(f0));
+  ok('THE REPORT: the transcript now overflows its scroller — there is something to scroll',
+    f0.scrollHeight > f0.clientHeight + 40, JSON.stringify(f0));
+  ok('and it opens pinned to the bottom all the same', f0.fromBottom <= 4, JSON.stringify(f0));
+
+  await moreBtn().click();
+  await page.waitForTimeout(700);
+  const f1 = await probe();
+  ok(`a reveal is worth CARDS, not entries that vanish into the same fold (${f0.rows} → ${f1.rows} rows)`,
+    f1.rows - f0.rows >= WINDOW_STEP_CARDS - 4, JSON.stringify({ before: f0.rows, after: f1.rows }));
 
   await browser.close();
 }

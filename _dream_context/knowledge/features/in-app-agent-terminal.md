@@ -50,6 +50,7 @@ related_tasks:
     agent-tab-auto-title-arrives-late-warm-the-cli-probe-and-let-a-chat-tab-carry-its-own-first-message
   - chat-prose-reads-at-a-body-column-rhythm-not-a-ui-label-s
   - highlighter-the-agent-can-mark-the-load-bearing-phrase-not-just-bold-it
+  - transcript-window-measures-in-cards-not-just-entries
 type: feature
 name: in-app-agent-terminal
 description: ''
@@ -100,6 +101,7 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - [x] As a developer, scrolling back up through a long conversation keeps my place to the pixel — the window loading 40 more entries above me, an image in them decoding afterwards, or a card above me expanding or collapsing all leave the row I am reading exactly where it is on screen.
 - [x] As a developer, the transcript never mutates its window while my scroll is still in motion — older entries load (and old ones shed) only once the scroller has been quiet for a beat, so a trackpad flick can't collide with the pane's own scroll writes and read as a flicker or a teleport.
 - [x] As a developer, when a long stretch of tool calls folds into one run card, reading back still works end to end: wheel-up loads older messages even though the folded transcript is too short to scroll, loading them never snaps the card back to its collapsed first frame, and reading up through the OPEN card holds the row I'm on while older calls merge in above it.
+- [x] As a developer, a grouped conversation still has something to scroll: the transcript mounts enough CARDS to fill its scroller rather than a fixed number of entries that may all fold into one, and each "show earlier" step is worth a screenful of cards instead of entries that vanish into the fold I'm already looking at.
 - [x] As a developer, the Chat composer stays single-row at every pane width via a stage-driven context/usage readout (full → % only → bare bar → portaled card), so Send is always in the card and the toolbar never wraps.
 - [x] As a developer, the Chat slash menu and skill picker match the terminal's (shared SkillPickerPopover), so I discover commands the same way in both surfaces instead of having to remember syntax.
 - [x] As a developer, tool cards in Chat collapse by default (except Edit/Write, which open automatically), so I see what changed in my files without scrolling past hundreds of lines of shell output.
@@ -356,6 +358,12 @@ Key files summary (post-2026-07-01 readability polish; 2026-07-04 basic-terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-08-02 — The transcript window measures itself in CARDS, not just entries
+
+- **Owner report:** "1 mesaj 50 mesajlı bir grup kayamıyor ama daha fazla yüklemek için kaydır diyor" — grouping made the 40-entry window render as two rows, which is shorter than the scroller, so the pane offered scrolling up as the way back through history and then gave nothing to scroll with.
+- **Fix:** the window gained a second unit. `WINDOW_TAIL_CARDS`/`WINDOW_STEP_CARDS` (20 each) sit beside `WINDOW_TAIL`/`WINDOW_STEP`: the following window reaches back until the transcript holds 20 things the reader can SEE, and a reveal must be worth 20 more rather than 40 entries that merge into the same fold. `countCards`/`headForCards` (one backwards scan; a fold is one card, an item that draws nothing is none and breaks no run) feed both floors INTO `nextFirstShown`, so they inherit `TRIM_SLACK`'s hysteresis and the unpinned freeze instead of being applied beside them. `WINDOW_MAX_ENTRIES` (400) caps what the automatic floor may mount alone — the one shape where walking finds no further card is an unbroken run of thousands of calls, and there the reader's own (uncapped, per-step bounded) reveal takes over. It costs nothing where it bites: the extra entries are exactly the ones that fold into collapsed cards, which mount no rows.
+- **Proof:** `verify:chat-scroll` 33 → 48 checks with a new scenario F (grouped fixture: mounts 86 entries not 40, 22 cards, the transcript OVERFLOWS its scroller, and one reveal adds 20 cards) and E split into E1/E2 (collapsed reveal + in-card hold, now on fixtures longer than the 500-item replay cap so the ceiling itself is pinned). chat-entities 257 → 283. Full suite 6300 green, both tsc clean, build clean.
 
 ### 2026-08-01 — Folded run cards stopped fighting "load older messages" (second pass)
 

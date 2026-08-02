@@ -19,6 +19,7 @@ import {
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_TAIL, WINDOW_STEP, clampLines,
   rememberMediaBox, knownMediaBox, shouldAutoReveal, WINDOW_REVEAL_PX, TRIM_SLACK,
   remainingSettleMs, SCROLL_SETTLE_MS,
+  countCards, headForCards, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV,
   pathChipLabel, toolSubject, isDreamcontextSkill,
   segmentToolRuns, toolRunPhase, toolRunKeyItem, summarizeToolRun, toolRunHeadline, MIN_TOOL_RUN,
@@ -2080,5 +2081,181 @@ describe('condenseCommand', () => {
 
   it('leaves a command that already fits completely alone', () => {
     expect(condenseCommand('npm run build')).toBe('npm run build');
+  });
+});
+
+// ─── The window measured in CARDS (owner report 08-02) ──────────────────────────
+//
+// Grouping broke the entry count as a proxy for height: a 40-entry window that folds
+// into one collapsed run card is SHORTER than the scroller, so there is nothing to
+// scroll while the pane still offers "scroll up and I'll load more" as the way back.
+// `countCards`/`headForCards` are what let the window bound itself in what the reader
+// can actually see, and `nextFirstShown` carries both floors so they inherit the
+// hysteresis and the unpinned freeze instead of being applied beside them.
+
+const ghostItem = (id: string) => ({ kind: 'thinking' as const, id });
+const isGhostItem = (i: { kind: string }) => i.kind === 'thinking';
+type CardItem = { kind: string; id: string };
+
+const cardWin = (items: CardItem[]) => ({
+  total: items.length,
+  entryAt: (i: number) => items[i],
+  isGroupable: isTool,
+  rendersNothing: isGhostItem,
+});
+
+/** What the transcript actually renders for `items`: the segments that draw something. */
+const renderedCards = (items: CardItem[]) => segmentToolRuns(items, isTool, MIN_TOOL_RUN, isGhostItem)
+  .filter((s) => s.kind === 'run' || !isGhostItem(s.item)).length;
+
+describe('countCards', () => {
+  it('agrees with segmentToolRuns on what the slice renders as — for every head', () => {
+    const items: CardItem[] = [
+      text('t1'), tool('a'), tool('b'), tool('c'), tool('d'), ghostItem('g1'), tool('e'),
+      text('t2'), tool('f'), tool('g'), text('t3'), ghostItem('g2'), tool('h'), tool('i'), tool('j'),
+    ];
+    for (let from = 0; from <= items.length; from += 1) {
+      expect(countCards(from, cardWin(items))).toBe(renderedCards(items.slice(from)));
+    }
+  });
+
+  it('a fold counts ONCE however many calls are in it', () => {
+    const many = Array.from({ length: 60 }, (_, i) => tool(`t${i}`));
+    expect(countCards(0, cardWin([text('x'), ...many]))).toBe(2);
+  });
+
+  it('a stretch under MIN_TOOL_RUN counts as its own plain cards', () => {
+    expect(countCards(0, cardWin([tool('a'), tool('b')]))).toBe(2);
+    expect(countCards(0, cardWin([tool('a'), tool('b'), tool('c')]))).toBe(1);
+  });
+
+  it('an item that renders nothing counts as nothing, and breaks no fold', () => {
+    const items = [tool('a'), ghostItem('g1'), tool('b'), ghostItem('g2'), tool('c')];
+    expect(countCards(0, cardWin(items))).toBe(1);
+    expect(countCards(0, cardWin([ghostItem('g')]))).toBe(0);
+  });
+
+  it('an empty conversation renders nothing', () => {
+    expect(countCards(0, cardWin([]))).toBe(0);
+  });
+});
+
+describe('headForCards', () => {
+  it('an ordinary conversation pays a card per entry — the entry tail stays the wider bound', () => {
+    const items = Array.from({ length: 500 }, (_, i) => text(`t${i}`));
+    const head = headForCards(WINDOW_TAIL_CARDS, WINDOW_MAX_ENTRIES, cardWin(items));
+    expect(500 - head).toBe(WINDOW_TAIL_CARDS);
+    expect(head).toBeGreaterThan(500 - WINDOW_TAIL);   // …so nextFirstShown's entry tail wins
+  });
+
+  it('walks PAST a fold that renders as one card — the report: nothing to scroll', () => {
+    // 50 messages, then 200 contiguous calls: the last 40 entries are one collapsed card.
+    const items = [
+      ...Array.from({ length: 50 }, (_, i) => text(`t${i}`)),
+      ...Array.from({ length: 200 }, (_, i) => tool(`c${i}`)),
+    ];
+    const head = headForCards(WINDOW_TAIL_CARDS, WINDOW_MAX_ENTRIES, cardWin(items));
+    expect(countCards(head, cardWin(items))).toBe(WINDOW_TAIL_CARDS);
+    expect(items.length - head).toBeGreaterThan(WINDOW_TAIL);   // it had to reach much further
+  });
+
+  it('stops at maxEntries when no amount of walking finds another card', () => {
+    const items = Array.from({ length: 900 }, (_, i) => tool(`c${i}`));
+    const head = headForCards(WINDOW_TAIL_CARDS, WINDOW_MAX_ENTRIES, cardWin(items));
+    expect(items.length - head).toBe(WINDOW_MAX_ENTRIES);
+    expect(countCards(head, cardWin(items))).toBe(1);   // honestly one card; the reveal is the way on
+  });
+
+  it('stops at the beginning of a short conversation instead of inventing entries', () => {
+    const items = [text('a'), tool('b'), tool('c'), tool('d')];
+    expect(headForCards(WINDOW_TAIL_CARDS, WINDOW_MAX_ENTRIES, cardWin(items))).toBe(0);
+    expect(headForCards(5, WINDOW_MAX_ENTRIES, cardWin([]))).toBe(0);
+  });
+
+  it('asks for nothing → mounts nothing: the floor is a floor, not a target', () => {
+    const items = Array.from({ length: 30 }, (_, i) => text(`t${i}`));
+    expect(headForCards(0, WINDOW_MAX_ENTRIES, cardWin(items))).toBe(30);
+  });
+
+  it('always delivers the cards it promises when the conversation has them', () => {
+    const items: CardItem[] = [];
+    for (let turn = 0; turn < 40; turn += 1) {
+      items.push(text(`u${turn}`));
+      for (let c = 0; c < 7; c += 1) items.push(tool(`t${turn}-${c}`));
+      items.push(ghostItem(`g${turn}`));
+    }
+    const head = headForCards(WINDOW_TAIL_CARDS, WINDOW_MAX_ENTRIES, cardWin(items));
+    expect(renderedCards(items.slice(head))).toBeGreaterThanOrEqual(WINDOW_TAIL_CARDS);
+  });
+});
+
+describe('nextFirstShown — the card floor (tailHead)', () => {
+  it('widens the following window when the entry tail would leave nothing to scroll', () => {
+    // The card floor reaches 300 entries back; the entry tail would have stopped at 40.
+    const head = nextFirstShown(0, { total: 500, pinned: true, tailHead: 200 });
+    expect(head).toBe(200);
+  });
+
+  it('never NARROWS it — rule 4 holds whatever the floor says', () => {
+    expect(nextFirstShown(0, { total: 500, pinned: true, tailHead: 499 })).toBe(500 - WINDOW_TAIL);
+    expect(nextFirstShown(0, { total: 500, pinned: true, tailHead: 500 })).toBe(500 - WINDOW_TAIL);
+  });
+
+  it('inherits TRIM_SLACK — a floor that drifts forward does not shed a row per card', () => {
+    let head = nextFirstShown(0, { total: 500, pinned: true, tailHead: 200 });
+    expect(head).toBe(200);
+    for (let drift = 1; drift < TRIM_SLACK; drift += 1) {
+      head = nextFirstShown(head, { total: 500, pinned: true, tailHead: 200 + drift });
+      expect(head).toBe(200);                       // held: no unmount at all
+    }
+    head = nextFirstShown(head, { total: 500, pinned: true, tailHead: 200 + TRIM_SLACK });
+    expect(head).toBe(200 + TRIM_SLACK);            // then one whole-chunk snap
+  });
+
+  it('inherits the unpinned freeze — a reader never has content taken from above them', () => {
+    let head = nextFirstShown(0, { total: 500, pinned: true, tailHead: 200 });
+    for (const tailHead of [210, 240, 300, 460]) {
+      head = nextFirstShown(head, { total: 500, pinned: false, tailHead });
+      expect(head).toBe(200);
+    }
+  });
+
+  it('omitted, the entry tail decides exactly as it always did', () => {
+    expect(nextFirstShown(0, { total: 500, pinned: true }))
+      .toBe(nextFirstShown(0, { total: 500, pinned: true, tailHead: 500 - WINDOW_TAIL }));
+  });
+});
+
+describe('nextFirstShown — the card step (revealHead)', () => {
+  it('takes whichever step reaches further back', () => {
+    // Stepping 40 entries would land inside the same fold; the card step reaches past it.
+    expect(nextFirstShown(300, { total: 500, pinned: false, reveal: true, revealHead: 120 })).toBe(120);
+    // …and a card step that is already satisfied leaves the entry step alone.
+    expect(nextFirstShown(300, { total: 500, pinned: false, reveal: true, revealHead: 290 }))
+      .toBe(300 - WINDOW_STEP);
+  });
+
+  it('still stops at the beginning', () => {
+    expect(nextFirstShown(30, { total: 500, pinned: false, reveal: true, revealHead: -50 })).toBe(0);
+  });
+
+  it('always makes progress while anything is hidden — the button can never be inert', () => {
+    const items = [
+      ...Array.from({ length: 30 }, (_, i) => text(`t${i}`)),
+      ...Array.from({ length: 400 }, (_, i) => tool(`c${i}`)),
+    ];
+    const w = cardWin(items);
+    let head = nextFirstShown(0, { total: items.length, pinned: true, tailHead: headForCards(WINDOW_TAIL_CARDS, WINDOW_MAX_ENTRIES, w) });
+    let steps = 0;
+    while (head > 0 && steps < 100) {
+      const before = head;
+      const revealHead = headForCards(
+        countCards(head, w) + WINDOW_STEP_CARDS, (items.length - head) + WINDOW_MAX_ENTRIES, w,
+      );
+      head = nextFirstShown(head, { total: items.length, pinned: false, reveal: true, revealHead });
+      expect(head).toBeLessThan(before);
+      steps += 1;
+    }
+    expect(head).toBe(0);
   });
 });

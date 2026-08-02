@@ -1458,6 +1458,10 @@ export function nextRestoreTop(prev: number, m: ScrollMetrics): number {
 // The window is an index into the CONCATENATION of `history` then `items` — one number for
 // what is really two arrays, so that a resumed conversation's replayed history and its live
 // items share a single ceiling instead of each having their own.
+//
+// It is bounded in two units, and the second one is not optional reading: entries are the
+// ceiling, CARDS are the floor. See the card section below TRIM_SLACK for why an entry count
+// stopped being a proxy for height the day tool calls started folding into one card.
 
 /** How many entries stay mounted when the view is following the conversation. */
 export const WINDOW_TAIL = 40;
@@ -1522,6 +1526,123 @@ export function remainingSettleMs(nowMs: number, lastActivityMs: number, settleM
  */
 export const TRIM_SLACK = 20;
 
+// ─── …and the same window measured in CARDS (owner report 08-02) ─────────────────────
+//
+// Everything above counts ENTRIES, which was the same thing as rows right up until a
+// contiguous stretch of tool calls started rendering as ONE collapsing card (see
+// {@link segmentToolRuns}). Now a 40-entry window is 40 rows or it is TWO — a message and a
+// fold holding 39 calls — and two collapsed rows are SHORTER than the scroller. Short content
+// means no overflow, no overflow means nothing to scroll, and the transcript's main way to
+// read back is "scroll up and I'll load more": the owner's report is exactly that dead end
+// ("1 mesaj 50 mesajlı bir grup kayamıyor ama daha fazla yüklemek için kaydır diyor").
+//
+// The 08-01 pass made the reveal REACHABLE from that state — wheel-up arms it even when no
+// scroll event can ever fire (`armRevealFromInput`). This is the other half: make the state
+// rare in the first place, and make each step out of it worth something. An entry count is
+// simply not a proxy for height any more, so the window gained a second unit. Entries still
+// bound it from ABOVE (memory); cards now bound it from BELOW (there has to be something to
+// scroll, and a reveal has to add something the reader can see).
+//
+// Both bounds are cheap because they pull in opposite directions on the SAME pathological
+// input: the case that needs hundreds more entries is the case where those entries fold into
+// collapsed run cards, and a collapsed run card mounts no rows at all (`ToolRunCard`). What
+// the extra entries cost is a header each — which is precisely the content that was missing.
+
+/** How many rendered CARDS the following window must hold before {@link WINDOW_TAIL} is
+ *  allowed to decide alone. Reached by mounting further back, never by mounting less: the two
+ *  units bound the window from opposite sides and the wider one wins. */
+export const WINDOW_TAIL_CARDS = 20;
+
+/** How many cards a REVEAL must add. Without this, stepping {@link WINDOW_STEP} entries back
+ *  into a stretch that merges into the fold the reader is already looking at adds nothing
+ *  they can see — "Show earlier messages" appearing to do nothing, which is the same report
+ *  from the other direction. */
+export const WINDOW_STEP_CARDS = 20;
+
+/** The ceiling on how far the CARD floor may reach back on its own. A conversation can be one
+ *  unbroken run of thousands of calls, where no amount of walking finds another card; past
+ *  this the window stops growing by itself and the reader's own reveal (button or wheel-up,
+ *  which is not capped — it is an explicit ask) takes over. */
+export const WINDOW_MAX_ENTRIES = 400;
+
+/** The conversation as one index space, plus everything needed to know what it renders as.
+ *  `entryAt` indexes the CONCATENATION of history then items WITHOUT materializing it — a
+ *  resumed conversation's history runs to thousands of entries and this is read on every
+ *  render, so a `[...history, ...items]` per token is exactly the cost this window exists to
+ *  avoid. The predicates are the caller's, for the reason {@link segmentToolRuns} takes them:
+ *  only `ChatPane` knows what renders as a plain tool card and what draws nothing at all. */
+export interface CardWindow<T> {
+  /** `history.length + items.length`. */
+  total: number;
+  entryAt: (index: number) => T;
+  isGroupable: (item: T) => boolean;
+  rendersNothing?: (item: T) => boolean;
+  minRun?: number;
+}
+
+/** What a stretch of `streak` adjacent groupable items renders as: one folded card once it is
+ *  worth the chrome, otherwise a plain card each. Mirrors `segmentToolRuns`'s `flush`. */
+function cardsOfStreak(streak: number, minRun: number): number {
+  return streak >= minRun ? 1 : streak;
+}
+
+/**
+ * How many cards the slice `[from, total)` renders as — the same number as counting the
+ * VISIBLE segments {@link segmentToolRuns} produces for it (asserted in the unit tests),
+ * without building the segments.
+ *
+ * The one thing that makes this a single scan is that an invisible item can never be a
+ * boundary: `segmentToolRuns` HOLDS it inside an open stretch, and with no stretch open it is
+ * a single that draws nothing. Either way it contributes no card and breaks no run — so a
+ * stretch is just "adjacent groupable items, ignoring the invisible", which reads the same
+ * forwards and backwards. That symmetry is what lets {@link headForCards} walk from the end.
+ */
+export function countCards<T>(from: number, w: CardWindow<T>): number {
+  const minRun = w.minRun ?? MIN_TOOL_RUN;
+  const invisible = w.rendersNothing ?? (() => false);
+  let cards = 0;
+  let streak = 0;
+  for (let i = Math.max(0, from); i < w.total; i += 1) {
+    const item = w.entryAt(i);
+    if (invisible(item)) continue;
+    if (w.isGroupable(item)) { streak += 1; continue; }
+    cards += cardsOfStreak(streak, minRun) + 1;
+    streak = 0;
+  }
+  return cards + cardsOfStreak(streak, minRun);
+}
+
+/**
+ * The head that mounts the FEWEST entries whose slice still renders `minCards` cards, reaching
+ * back no further than `maxEntries`.
+ *
+ * Walks from the end and stops the instant the count is met, so the ordinary conversation —
+ * where a card IS an entry — pays for about `minCards` iterations and the answer is simply
+ * "20 entries back", which the entry tail then overrules by being wider. Only a folded
+ * transcript walks far, and only for as long as it keeps finding nothing to show.
+ *
+ * The count is allowed to DIP by one as the head moves back (mounting a third adjacent call
+ * turns two plain cards into one fold), which is why this re-checks per step instead of
+ * binary-searching a monotone function. It is not one.
+ */
+export function headForCards<T>(minCards: number, maxEntries: number, w: CardWindow<T>): number {
+  const minRun = w.minRun ?? MIN_TOOL_RUN;
+  const invisible = w.rendersNothing ?? (() => false);
+  const limit = Math.max(0, w.total - Math.max(0, maxEntries));
+  let cards = 0;
+  let streak = 0;
+  let head = Math.max(0, w.total);
+  while (head > limit && cards + cardsOfStreak(streak, minRun) < minCards) {
+    head -= 1;
+    const item = w.entryAt(head);
+    if (invisible(item)) continue;
+    if (w.isGroupable(item)) { streak += 1; continue; }
+    cards += cardsOfStreak(streak, minRun) + 1;
+    streak = 0;
+  }
+  return head;
+}
+
 export interface WindowInput {
   /** `history.length + items.length` — the whole conversation. */
   total: number;
@@ -1529,6 +1650,15 @@ export interface WindowInput {
   pinned: boolean;
   /** This call is an explicit "show me more" (a button press, or scrolling to the top). */
   reveal?: boolean;
+  /** The furthest FORWARD head the following window may take — the card floor, i.e.
+   *  {@link headForCards} for {@link WINDOW_TAIL_CARDS}. Omitted, the entry tail decides
+   *  alone (which is what every caller did before grouping existed). It can only ever widen
+   *  the window: rule 4 still holds regardless of what is passed. */
+  tailHead?: number;
+  /** The head a REVEAL must reach for its step to be worth a card — {@link headForCards} for
+   *  the window's current card count plus {@link WINDOW_STEP_CARDS}. Omitted, the step is the
+   *  entry step alone. */
+  revealHead?: number;
 }
 
 /**
@@ -1536,8 +1666,9 @@ export interface WindowInput {
  *
  * Four rules, in this order:
  *
- * 1. REVEAL steps the window {@link WINDOW_STEP} further back, clamped at the beginning.
- *    It wins over everything, because it is the only input that came from the user asking.
+ * 1. REVEAL steps the window {@link WINDOW_STEP} further back — or as far as `revealHead`
+ *    asks, whichever is further — clamped at the beginning. It wins over everything, because
+ *    it is the only input that came from the user asking.
  * 2. PINNED slides the window forward to the last {@link WINDOW_TAIL} entries — but only
  *    once it lags the tail by {@link TRIM_SLACK}, so the shed happens in rare chunks rather
  *    than as one unmount per streamed frame (see TRIM_SLACK for what the churn cost). This
@@ -1552,11 +1683,21 @@ export interface WindowInput {
  * 4. …but never so far forward that fewer than {@link WINDOW_TAIL} entries are mounted,
  *    which is what makes a REWIND (the one thing that shrinks `total`) land on a populated
  *    transcript instead of an empty one.
+ *
+ * The CARD floors ride inside rules 1 and 2 rather than beside them, which is the whole
+ * reason they are inputs here instead of a `Math.min` at the call site: `tailHead` is the
+ * furthest forward the pinned snap may land, so the floor inherits {@link TRIM_SLACK}'s
+ * hysteresis (a floor applied outside would shed a card's worth of rows every time a new card
+ * landed) and the unpinned freeze of rule 3 (a floor that moved forward on its own would take
+ * content out from above a reader). Both only ever widen the window.
  */
 export function nextFirstShown(prev: number, input: WindowInput): number {
   const total = Math.max(0, input.total);
-  const tail = Math.max(0, total - WINDOW_TAIL);
-  if (input.reveal) return Math.max(0, Math.min(prev, tail) - WINDOW_STEP);
+  const tail = Math.max(0, Math.min(total - WINDOW_TAIL, input.tailHead ?? total));
+  if (input.reveal) {
+    const stepped = Math.min(prev, tail) - WINDOW_STEP;
+    return Math.max(0, Math.min(stepped, input.revealHead ?? stepped));
+  }
   const held = Math.min(Math.max(0, prev), tail);
   if (input.pinned) return tail - held >= TRIM_SLACK ? tail : held;
   return held;
