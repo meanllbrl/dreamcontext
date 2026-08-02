@@ -21,9 +21,12 @@ cycles_checked: 0
 checked_at: null
 promoted_to: null
 created_at: '2026-07-23'
-updated_at: '2026-08-01'
+updated_at: '2026-08-02'
 ---
 ## Understanding changelog
+
+### CYCLE 10 · 2026-08-02
+Cycle 10 check (epoch 2026-08-02T14:01:26.375Z, STANDARD consolidation): No fresh evidence since the epoch. Thirteen commits this cycle (migration 0.23.0 split-user-file defect fixes, v0.23.1 release), zero completed tasks relevant to this claim, zero lab syncs, zero objective movements. It remains a literal test artifact — claim 'Test', prediction 'Olmaz', zero evidence events across 10 cycles — linked only to demo fixtures (the demo-broken-api insight and the hello-world-pr objective). Still open at 50% confidence with no path to validation or invalidation. CHRONIC-OPEN FLAG re-reported to the orchestrator (10 checks since 2026-07-23, far past the 3-cycle threshold). DECISION ASK, 8th consecutive raise: retire it (dreamcontext theses retire test) or replace its claim with a real falsifiable one. The two links are BOTH demo fixtures, so even if the claim were real it could not accumulate evidence — a thesis bound only to demo data is structurally unfalsifiable.
 
 ### CYCLE 9 · 2026-08-01
 Cycle 9 check (epoch 2026-08-01T15:40:27.931Z, STANDARD consolidation). Note first that this thesis was NOT checked for the last two consolidations (2026-07-30 and the first 2026-08-01 cycle) — sleep-learn was not dispatched — so the minimum wake cadence is what made it due now, exactly as designed. No fresh evidence since the epoch: two commits (3ec1b53 auto-title latency, fa06c2a chat bubble contrast), zero completed tasks, zero lab syncs, zero objective movements relevant to this claim. It remains a literal test artifact — claim 'Test', prediction 'Olmaz', zero evidence events across 9 checks — linked only to demo fixtures (the demo-broken-api insight, which has never synced and reports an error, and the hello-world-pr objective, which has 0 tasks). Still open at 50% confidence with no path to validation or invalidation. CHRONIC-OPEN FLAG re-reported to the orchestrator (9 checks since 2026-07-23, far past the 3-cycle threshold). DECISION ASK, 7th consecutive raise: retire it (`dreamcontext theses retire test`) or replace its claim with a real falsifiable one. Also worth noting as a separate observation: its two links are BOTH demo fixtures, so even if the claim were real it could not accumulate evidence — a thesis bound only to demo data is structurally unfalsifiable.
@@ -52,5 +55,5 @@ Cycle 2 re-check (2026-07-25, epoch 13:45:29): This remains a test artifact — 
 ### CYCLE 2 · 2026-07-25
 Cycle 2 check (2026-07-25): No fresh evidence since last check (cycle 1, 2026-07-23). Linked insight demo-broken-api is a deliberate-failure fixture with no changes. Linked objective hello-world-pr remains not_started with 0 tasks, slipping via dependency cascade but no movement since creation. No completed tasks relate to this claim. Prediction 'Olmaz' remains untested. This is a placeholder test artifact — no genuine signals to track. Watching but not manufacturing evidence. Not yet at chronic-open threshold (cycles_checked will be 1 after this; threshold is ≥3).
 
-### CYCLE 1 · 2026-07-23
-First check (cycle 1): No fresh evidence since creation. Thesis links to demo-broken-api (a fixture that deliberately fails, no changes) and hello-world-pr objective (not_started, 0 tasks, slipping but no movement since creation). No completed tasks relate to this claim. Prediction 'Olmaz' remains untested. Watching for genuine signals before adding evidence events.
+### CONDENSED · 2026-08-02
+Condensed summary of 1 earlier cycle.

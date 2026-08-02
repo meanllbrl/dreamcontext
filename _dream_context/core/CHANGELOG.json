@@ -1,5 +1,74 @@
 [
   {
+    "date": "2026-08-02",
+    "type": "chore",
+    "scope": "release",
+    "description": "All five version surfaces bumped 0.23.0 → 0.23.1: package.json, desktop/package.json, tauri.conf.json, Cargo.toml, and Cargo.lock's dreamcontext-desktop entry. 0.23.0 is marked SUPERSEDED in RELEASES.json — the same treatment 0.22.0 got, for the same reason: cut locally, never tagged, never published, npm still on 0.21.0. So 0.23.1 is the release that actually delivers Automations, the Chat work, the snapshot rework, AND the people-first + soul-split migrations to anyone upgrading from 0.21.0. Shipping .1 rather than .0 because 0.23.0's people-first migration was wrong in a way that only appears on a MULTI-PERSON vault, in the one step that deletes its own source file. Version coupling verified against the real registry: (0.21.0, 0.23.1] → both migrations fire (what a real npm user gets); (0.23.0, 0.23.1] → empty (already-migrated local vaults, correctly inert). RELEASES.json 0.23.1 stays planning: nothing is tagged or published yet. Landed in 73b3afb.",
+    "breaking": false,
+    "summary": "v0.23.1 bump — 0.23.0 never reached users, and its migration was wrong",
+    "references": [
+      "commit:73b3afb",
+      "file:_dream_context/core/RELEASES.json"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-02",
+    "type": "fix",
+    "scope": "launcher",
+    "description": "In light mode every var(--color-*) inside the Space canvas resolved to the app's dark-on-light palette and painted itself on a black sky. Project labels measured 1.3:1, the HUD hint 2.15:1 — invisible. The open card and the wire cockpit went the same way. Rejected a light 'day sky' (stars, gas clouds and the core halo are all designed for black — that is a redesign, not a fix) and the per-rule fixed colours the FederationBoard uses (24 sites here, and every future rule re-litigates the choice — which is how this bug arrived in the first place). Instead tokens.css gains .surface-night: a second selector on the dark-theme block that republishes the SAME palette on one element. .space wears it and the whole subtree keeps using ordinary tokens. A republished token cannot reach text that never asks for one, so .space also states color: var(--color-text) — the cockpit's head was inheriting light ink from .launcher. Worst on-canvas text: 1.3:1 → 7.66:1. Chip labels 16.61:1. e2e/verify-space.mjs grows a light-mode pass that composites each label over its real backdrop down to the sky and fails under AA. Negative control: strip the class, rebuild → 1.3:1, check fails. 28/28 with it, and the 25 dark-mode checks are unchanged. Landed in 94e60a8.",
+    "breaking": false,
+    "summary": "The Space is night in both themes — on-canvas text no longer paints dark-on-dark in light mode",
+    "references": [
+      "commit:94e60a8",
+      "file:dashboard/src/styles/tokens.css",
+      "file:dashboard/src/pages/space/SpaceLauncher.tsx",
+      "file:e2e/verify-space.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-02",
+    "type": "fix",
+    "scope": "lab",
+    "description": "Lab's Sync All button was firing parallel requests on the blocking POST /api/insights/sync-all route, which timed out at exactly 30s (the Tauri socket ceiling) when the vault held >=20 insights. The fix splits the route: the old blocking path stays for CLI/backward compat, a new POST /api/insights/sync-jobs creates a background job tracked in a timestamped manifest (lab/jobs/<id>.json) and returns immediately with job_id + poll_url. The sync engine gained bounded concurrency (4 parallel at a time), per-insight watchdogs (15s timeout per insight, not total), and progress events (SyncJobProgress with phase/total/completed). The dashboard hooks the job route, polls for updates, and shows determinate progress (N of total) in a live chip. The CLI wires the same feed to a ProgressBar on dreamcontext lab sync --all. Verified against the real server: the old route dies at 30s with 'Empty reply from server'; the new job route completes 24/24 insights in 34s with progress advancing in waves of 4 (the concurrency ceiling). Landed in a27a980.",
+    "breaking": false,
+    "summary": "Sync All becomes a background job with bounded concurrency, outliving the socket timeout wall",
+    "references": [
+      "commit:a27a980",
+      "file:src/routes/insights.ts",
+      "file:dashboard/src/pages/lab/LabPage.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-02",
+    "type": "fix",
+    "scope": "migrations",
+    "description": "The people-first migration's split-user-file step — the step that DELETES its own source (core/1.user.md) — wrote one teammate's Identity/Preferences/Communication Style into the OTHER person's constitution on a real two-person vault, leaving the real owner's file an empty scaffold. Six defects, all in places where a wrong answer is indistinguishable from a right one once the source is gone:\n\n(1) Owner chosen ALPHABETICALLY when resolveActivePerson could not name the active person — overriding a rule that function documents and the owner spec pinned: 'a session with no resolvable person loads none rather than defaulting to the owner'.\n\n(2) A People roster bullet judged by its slug LENGTH (PERSON_SLUG_RE caps at 64 chars, so the same prose passed or failed on verbosity), then by a punctuation blacklist that missed the plain hyphen.\n\n(3) A template scaffold counting as existing content, so a pre-scaffolded constitution swallowed the real prose.\n\n(4) BOTH idempotency gates (constitution and residue) dropping a declined section instead of routing it, three lines above the unlink.\n\n(5) A fenced format example parsed as a real person.\n\n(6) A run summary reporting a routed conflict as a 'resumed partial run' — in the ledger and CHANGELOG, the only record the user gets.\n\nTHE FIX: A code step may not choose WHO owns prose; judgment belongs to the agentTask. Now enforced by a source tripwire over src/migrations/ and a CONTRIBUTING section. Recognise the THING, not a shape it happens to have — three gates in one function failed this way at three sizes (slug length, parenthesised lines, punctuation blacklist). Use the strongest evidence available first (the rendered (person:<slug>) marker's exact slug identity) and fall back to heuristics only when it is absent. A gate that DECLINES must still route — 'already present' is not a licence to drop, especially above an unlink. Every defect this cycle was found by RUNNING the code on a realistic vault or by adversarial re-reading — never by the unit tests, which shared the code's assumptions. Two review agents returned FAIL twice before PASS.",
+    "breaking": false,
+    "summary": "Migration 0.23.0 split-user-file never chooses WHO owns prose — judgment belongs to the agentTask",
+    "references": [
+      "commit:f4e56d9",
+      "commit:994faad",
+      "commit:69707cd",
+      "commit:fe04d67",
+      "commit:ca28e13",
+      "commit:634cbcf",
+      "file:src/migrations/0.23.0.ts",
+      "file:CONTRIBUTING.md"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-01",
     "type": "fix",
     "scope": "sleep",

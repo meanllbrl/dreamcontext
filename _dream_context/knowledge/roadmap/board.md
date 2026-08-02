@@ -7,14 +7,14 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-08-01'
+date: '2026-08-02'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-08-01 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-08-02 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
-### 🔵 **improve-recall-mechanism** — Improve Recall Mechanism · 6/10 done (60%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
+### 🔵 **improve-recall-mechanism** — Improve Recall Mechanism · 6/11 done (55%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
   - curator-pass-orphan-tags (todo)
   - feat-embedding-ab-eval-harness-bm25-vs-hybrid-vs-dense-on-frozen-gold-set (completed) · v0.14.0
@@ -22,20 +22,24 @@ date: '2026-08-01'
   - feat-embedding-cache-engine-content-hash-chunk-cache-and-incremental-refresh (completed) · v0.14.0
   - feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids (completed) · v0.14.0
   - feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag (completed) · v0.14.0
+  - let-captures-graduate-date-based-scratch-aging-and-a-promotion-pass (todo) · 0.23.0
   - recall-indexes-and-returns-automations-insights-theses-and-objectives-on-every-surface-with-an-importance-level-filter (completed) · 2026-07-28 → …
   - soul-becomes-constitution-only-and-always-loads-verbatim-while-conditionals-move-to-keyword-prioritized-patterns-across-the-whole-system (in_progress) · 0.23.0 · 2026-07-28 → …
   - the-dreamcontext-chat-surface-persists-hook-output-around-10k-chars-so-the-freshly-fitted-17-9k-snapshot-still-arrives-as-a-preview-there (todo)
   - the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview (completed) · 0.22.0 · 2026-07-28 → …
 
-### 🔵 **improve-sleep-quality** — Improve sleep quality · 8/14 done (57%) · target 2026-08-02 · forecast 2026-08-02 ✓ on track
+### 🔵 **improve-sleep-quality** — Improve sleep quality · 8/17 done (47%) · target 2026-08-02 · forecast 2026-08-02 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
   - automations-learn-from-every-run-show-their-session-and-say-what-happened-in-the-notification (completed)
   - automations-scheduled-headless-claude-jobs (in_review) · BACKLOG
   - feat-sleep-semantic-dedup-nearest-neighbor-merge-instead-of-duplicate (completed) · 0.18.0
   - goal-skill-pack-headless-permission-flags-and-report-vs-work-gate (completed) · 0.20.0
   - improve-sleep-quality (completed) · 0.20.0 · 2026-07-18 → …
+  - install-skill-and-setup-advance-setupversion-without-running-migrations-silently-skipping-them-forever (in_review) · 0.23.0 · 2026-07-30 → …
   - knowledge-move-cannot-relocate-a-board-directory-with-its-companion-files-across-context-folders (completed) · 0.20.0
   - knowledge-workflows (completed) · 0.20.0
+  - let-captures-graduate-date-based-scratch-aging-and-a-promotion-pass (todo) · 0.23.0
+  - measure-the-quality-of-what-sleep-writes-signal-to-noise-staleness-and-inference-vs-observation (todo) · 0.23.0
   - migrations-pending-goes-blind-after-update-advances-setupversion-past-an-unfinished-agenttask (completed) · 0.22.0
   - proactive-learning-layer (completed) · 0.20.0
   - rescale-sleep-debt-scoring-weighted-sum-token-signal (in_review) · 0.23.0
@@ -48,7 +52,7 @@ date: '2026-08-01'
   Unblocks: hello-world-pr, make-it-a-business
   - spike-codex-opencode-re-addition-scoping (todo) · BACKLOG
 
-### 🟢 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 13/13 done (100%) · target 2026-07-12 · forecast 2026-07-12 ✓ on track
+### 🔵 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 13/16 done (81%) · target 2026-07-12 · forecast 2026-07-12 ✓ on track
   Unblocks: make-it-a-business
   - brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings (completed) · v0.14.1
   - clickup-sync-integrity-provenance-version-round-trip-consolidates-177-178-179 (completed) · 0.20.0
@@ -60,12 +64,16 @@ date: '2026-08-01'
   - feat-linked-repos-shared-brain-governs-bare-code-repos-machine-local-path-registry-link-cli-trust-gated-clone-dashboard (completed) · 0.21.0 · 2026-07-09 → …
   - feat-okr-key-result-metric-outcome-based-progress (completed) · 0.10.7
   - github-cloud-collaboration-brain-repo-sync (completed) · v0.13.0 · 2026-07-04 → …
+  - install-skill-and-setup-advance-setupversion-without-running-migrations-silently-skipping-them-forever (in_review) · 0.23.0 · 2026-07-30 → …
   - interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel (completed) · v0.10.5
   - multi-person-sync-my-own-push-advances-my-pull-watermark-silently-hiding-a-teammate-s-earlier-task-forever (completed) · 0.20.0
+  - normalize-control-bearing-frontmatter-fields-on-the-agent-write-path (todo) · 0.23.0
+  - pre-publish-checklist-v0-23-0 (in_progress) · 0.23.1 · 2026-08-01 → …
   - repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror (completed) · 0.20.0
 
-### 🟡 **simplified-ux** — Simplified UX · 35/45 done (78%) · target 2026-07-31 · forecast 2026-07-31 ✓ on track
+### 🔵 **simplified-ux** — Simplified UX · 36/48 done (75%) · target 2026-07-31 · forecast 2026-07-31 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
+  - add-a-content-hash-and-an-owner-to-the-install-manifest-and-make-pack-path-collisions-an-error (todo) · 0.23.0
   - agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief (in_review) · 0.21.0 · 2026-07-24 → …
   - agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions (completed) · 0.21.0 · 2026-07-23 → …
   - agent-composer-add-folder-picker-to-files-button (completed) · 0.18.0
@@ -100,11 +108,13 @@ date: '2026-08-01'
   - full-suite-runs-intermittently-fail-on-a-vitest-reporter-rpc-timeout-under-load (todo)
   - in-app-agent-terminal-output-pump-fixes-terminal-freeze-during-long-tool-calls (completed) · 0.21.0
   - in-app-task-detail-inline-agent-curate-the-task-via-anchored-comments-revise-summarize-split-status-with-real-time-refresh (completed) · 0.18.0
+  - insights-sync-all-make-bulk-insight-sync-a-background-job-with-bounded-concurrency (completed) · 0.23.0
   - lab-funnel-analytics (completed) · 0.19.0
   - launcher-clone-from-github-sign-in-search-repos-clone-locally-dreamcontext-ready (completed) · 0.17.2 · 2026-07-10 → …
   - launcher-cross-project-multi-vault-task-view-for-portfolio-planning (todo) · BACKLOG
   - launcher-federation-board-modeless-direct-manipulation-ux (completed) · 0.18.0
   - pack-badge-false-positive-declined-optional-packs-show-as-new-forever (completed) · 0.17.2
+  - pre-publish-checklist-v0-23-0 (in_progress) · 0.23.1 · 2026-08-01 → …
   - roadmap-forecast-accuracy-effort-aware-envelope-clamped-cascade (completed) · 2026-07-08 → …
   - roadmap-timeline-start-only-dated-tasks-collapse-the-committed-window-bar-to-a-point (completed) · 0.17.2
   - survey-questions-page-horizontally-one-question-per-view (completed) · 0.21.0

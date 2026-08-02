@@ -87,9 +87,12 @@ cycles_checked: 4
 checked_at: '2026-07-25'
 promoted_to: null
 created_at: '2026-07-25'
-updated_at: '2026-07-28'
+updated_at: '2026-08-02'
 ---
 ## Understanding changelog
+
+### CYCLE 10 · 2026-08-02
+Cycle 10 check (epoch 2026-08-02T14:01:26.375Z, STANDARD consolidation): No fresh evidence for this thesis since the epoch. Thirteen commits this cycle (migration 0.23.0 defect fixes, v0.23.1 release, brain consolidation), zero completed tasks related to recall algorithms, zero lab syncs. All work this cycle was migration safety, release hygiene, and brain consolidation — zero recall-engine or embedding work. The thesis was validated in cycle 2 at 88% confidence with all 3 predictions supported and remains validated. The linked objective improve-recall-mechanism shows 6/11 tasks done (55%), status active, not slipping. The related task feat-embedding-beta-rollout remains todo. No new evidence to add. Promotion to knowledge remains outstanding (promoted_to: null) — this is a standing decision ask for the PO (raised continuously since cycle 3). Per the workflow-rule gate check: below the auto-promote bar because related_workflows is unset, so this routes to plain knowledge promotion requiring PO confirmation.
 
 ### CYCLE 8 · 2026-07-28
 Cycle 8 check (epoch 2026-07-28T17:17:30.163Z, DEEP consolidation): No fresh evidence for this thesis since the epoch. Six commits this cycle (7effb38 chat scroll-hold, a562d1d lab snapshot demotion floor, e806ba8 announcements, 40a03da v0.22.0 release, 4f2353c automations learning/session/notification, 2390e4b prior sleep output) — all Chat UI, automations, and release work, zero recall algorithm changes. The in-flight snapshot-budget rework (uncommitted) is context-snapshot sizing/compression, not a recall-algorithm change, so not evidence for this thesis's claim. Zero completed tasks since the epoch. Lab insights all demo fixtures, all stale. The linked objective improve-recall-mechanism remains at 5/8 done (63%), status active, not slipping — task recall-indexes-and-returns-automations-insights-theses-and-objectives completed 2026-07-28, but as the brief explicitly notes, that expansion widened which entity TYPES recall indexes (nine channels), not the ranking algorithm, so it is NOT evidence for or against the hybrid-vs-BM25F claim. The thesis was validated in cycle 2 at 88% confidence with all 3 predictions supported and remains validated. No new evidence to add. Promotion to knowledge remains outstanding (promoted_to: null) — this is a standing decision ask for the PO (raised continuously since cycle 3). Per the workflow-rule gate check: below the auto-promote bar because related_workflows is unset, so this routes to plain knowledge promotion requiring PO confirmation.
