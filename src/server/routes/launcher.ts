@@ -34,7 +34,7 @@ import {
   ensurePlatformSelection,
   type PlatformId,
 } from '../../lib/platforms.js';
-import { loadCatalog } from '../../lib/catalog.js';
+import { loadCatalog, detectInstalledPlatforms } from '../../lib/catalog.js';
 import { insertToJsonArray } from '../../lib/json-file.js';
 import { resolveAuthors } from '../../lib/people-resolve.js';
 import { today } from '../../lib/id.js';
@@ -1536,12 +1536,23 @@ export async function handleLauncherUpdate(
     // success, the dot stays yellow, and "Update all" claims to have fixed
     // projects it never touched.
     if (status.needsUpdate) {
+      // Two very different causes, and guessing between them actively hurts.
+      // This message used to assert the platform one unconditionally, so a fully
+      // installed vault whose real blocker was a pinned migration got told to run
+      // `install-skill` — advice that does not touch the actual problem, on the
+      // command that historically stranded vaults by stamping past migrations.
+      // `setupVersion` only advances on a fully-clean migration run, so on an
+      // installed project a surviving drift IS a migration that did not finish.
+      const detail = detectInstalledPlatforms(target).length === 0
+        ? 'The project has no installed agent platform — run `dreamcontext install-skill` in it.'
+        : 'Its agent platform is installed, so a migration did not complete — `setupVersion` '
+          + 'stays pinned until one runs clean. Run `dreamcontext update` in the project to see '
+          + 'which step failed, and `dreamcontext migrations pending` for work an agent still owes.';
       sendError(
         res,
         500,
         'update_incomplete',
-        `Update ran but "${name}" is still on v${status.setupVersion} (expected v${latest}). ` +
-          'The project may have no installed agent platform — run `dreamcontext install-skill` in it.',
+        `Update ran but "${name}" is still on v${status.setupVersion} (expected v${latest}). ${detail}`,
       );
       return;
     }
