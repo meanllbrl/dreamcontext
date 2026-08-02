@@ -403,6 +403,448 @@ describe('migration 0.23.0 — people-first', () => {
       expect(read(v, 'inbox/1.user-residue.md')).toContain('Bektaş Çimen');
     });
 
+    /**
+     * Slug legality alone was never the right gate. `PERSON_SLUG_RE` caps at 64
+     * characters, so the SAME class of descriptive prose passed or failed on how
+     * verbose the sentence happened to be — a short description sailed through
+     * and became a person. Found by running the real migration on a two-person
+     * legacy vault, not by reading the regex.
+     */
+    it('a SHORT descriptive bullet is prose too — the gate is not sentence length', () => {
+      writeConfig(v, { platforms: [], packs: [], people: ['Bektaş Çimen'], setupVersion: '0.22.0' });
+      writeUserMd(
+        v,
+        '## People\n\n'
+        // 63 chars once slugified: one under the limit, and pure description.
+        + '- **bektas** — Bektaş Çimen, in-house developer. Owns the deploy pipeline.\n',
+      );
+
+      const [, split] = runPeopleFirst(v.root);
+
+      expect(split.failedCount ?? 0).toBe(0);
+      // No junk person, no duplicate of the real Bektaş, no junk constitution.
+      expect(Object.keys(readPeople(v.root))).toEqual(['bektas-cimen']);
+      expect(has(v, 'people/bektas-bektas-cimen-in-house-developer-owns-the-deploy-pipeline.md')).toBe(false);
+      expect(read(v, 'inbox/1.user-residue.md')).toContain('Owns the deploy pipeline.');
+    });
+
+    /**
+     * The marker is stronger evidence than any heuristic: the renderer wrote it,
+     * and a name that slugifies back to the slug it claims cannot be prose. The
+     * shape test must not get a vote on a row that still carries one, or a real
+     * punctuated name is failed by a rule with no business judging it.
+     */
+    it('a marked row survives a name the shape test would have rejected', () => {
+      writeConfig(v, { platforms: [], packs: [], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(v, '## People\n\n- Dr. Jane Smith (`person:dr-jane-smith`)\n');
+
+      runPeopleFirst(v.root);
+
+      expect(readPeople(v.root)['dr-jane-smith'].name).toBe('Dr. Jane Smith');
+      expect(has(v, 'inbox/1.user-residue.md')).toBe(false);
+    });
+
+    it('a marker does NOT launder prose — the name must slugify back to it', () => {
+      writeConfig(v, { platforms: [], packs: [], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(
+        v,
+        '## People\n\n- **mehmet** — Mehmet Nuraydın, TPM. Owns roadmap (`person:mehmet`)\n',
+      );
+
+      const [, split] = runPeopleFirst(v.root);
+
+      expect(split.failedCount ?? 0).toBe(0);
+      expect(Object.keys(readPeople(v.root))).toEqual(['ada-lovelace']);
+      expect(read(v, 'inbox/1.user-residue.md')).toContain('Owns roadmap');
+    });
+
+    /**
+     * The punctuation blacklist this replaced listed the em dash and en dash and
+     * missed the plain `-` — the separator on every keyboard. `- Mehmet -
+     * Product Manager` became a person named "Mehmet - Product Manager" with a
+     * constitution file, silently, with no residue entry and no failure signal.
+     */
+    it.each([
+      ['- Mehmet - Product Manager', 'plain hyphen, the most common drift separator'],
+      ['- Ada Lovelace -- Engineer', 'double hyphen'],
+      ['- mehmet – TPM', 'en dash'],
+      ['- Ada & Grace', 'an ampersand is not part of a name'],
+      ['- Owns the deploy pipeline end to end', 'a sentence with no punctuation at all'],
+    ])('%s is prose, not a roster row (%s)', (bullet) => {
+      writeConfig(v, { platforms: [], packs: [], people: ['Zed Zulu'], setupVersion: '0.22.0' });
+      git.name = null;
+      git.email = null;
+      writeUserMd(v, `## People\n\n${bullet}\n`);
+
+      const [, split] = runPeopleFirst(v.root);
+
+      expect(split.failedCount ?? 0).toBe(0);
+      expect(Object.keys(readPeople(v.root))).toEqual(['zed-zulu']);
+      expect(read(v, 'inbox/1.user-residue.md')).toContain(bullet.replace('- ', ''));
+    });
+
+    it('an intra-word hyphen is part of the name, not a separator', () => {
+      writeConfig(v, { platforms: [], packs: [], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(v, '## People\n\n- Jean-Luc Picard\n- Mary O’Brien\n- Bektaş Çimen\n');
+
+      runPeopleFirst(v.root);
+
+      // `slugify` renders the apostrophe as a separator — the point here is that
+      // all three are ACCEPTED as names, not routed to the residue as prose.
+      expect(Object.keys(readPeople(v.root)).sort()).toEqual([
+        'ada-lovelace', 'bektas-cimen', 'jean-luc-picard', 'mary-o-brien',
+      ]);
+      expect(readPeople(v.root)['mary-o-brien'].name).toBe('Mary O’Brien');
+      expect(has(v, 'inbox/1.user-residue.md')).toBe(false);
+    });
+
+    it('still reads the roster rows the renderer actually wrote', () => {
+      writeConfig(v, { platforms: [], packs: [], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(
+        v,
+        '## People\n\n'
+        + '- Grace Hopper (`person:grace-hopper`)\n' // rendered, with marker
+        + '- **Alan Turing**\n' // drifted: emphasis, marker lost
+        + '- Katherine Johnson\n', // drifted: bare name
+      );
+
+      runPeopleFirst(v.root);
+
+      const people = readPeople(v.root);
+      expect(Object.keys(people).sort()).toEqual([
+        'ada-lovelace', 'alan-turing', 'grace-hopper', 'katherine-johnson',
+      ]);
+      // The emphasis markers are not part of anyone's name.
+      expect(people['alan-turing'].name).toBe('Alan Turing');
+      // Nothing was homeless, so no residue was created for this block.
+      expect(has(v, 'inbox/1.user-residue.md')).toBe(false);
+    });
+
+    /**
+     * The defect that wrote one teammate's rules into the other's constitution.
+     *
+     * `resolveOwnerSlug` used to fall back to `Object.keys(readPeople()).sort()[0]`
+     * when nothing on the machine identified the active person. In a two-person
+     * vault that is a coin flip decided by the alphabet: `bektas` sorts before
+     * `mehmet`, so Mehmet's Identity / Preferences / Communication Style were
+     * appended to `people/bektas.md` while `people/mehmet.md` stayed an empty
+     * scaffold — and step 4 then deleted the only copy of the source.
+     *
+     * `resolveActivePerson` already refuses this exact guess ("an unresolvable
+     * machine gets slug: null, NOT somebody else's constitution"); the migration
+     * overrode it. WHOSE prose this is is judgment — it goes to the residue.
+     */
+    describe('an unresolvable owner is routed, never guessed', () => {
+      /** Two people, no env var, no pin, no git email on the roster. */
+      function twoPersonVaultNobodyResolves(): void {
+        writeConfig(v, {
+          platforms: [],
+          packs: [],
+          people: ['Bektaş Çimen', 'Mehmet Nuraydın'],
+          setupVersion: '0.22.0',
+        });
+        git.name = null;
+        git.email = null;
+        writeUserMd(v);
+      }
+
+      it('writes NOBODY a constitution when the machine cannot name the owner', () => {
+        twoPersonVaultNobodyResolves();
+
+        const [, split] = runPeopleFirst(v.root);
+
+        // Not a failure — a pinned vault helps nobody, and the prose is safe.
+        expect(split.failedCount ?? 0).toBe(0);
+        expect(has(v, 'core/1.user.md')).toBe(false);
+
+        // THE regression: the alphabetically-first person is not handed the prose.
+        const bektas = read(v, 'people/bektas-cimen.md');
+        expect(bektas).not.toContain('Ship small, reviewable diffs.');
+        expect(bektas).not.toContain('Terse. No preamble');
+        expect(bektas).not.toContain('Founder; writes most of the code herself.');
+        // Nor is anyone else — including the person who probably owns it.
+        expect(read(v, 'people/mehmet-nuraydin.md')).not.toContain('Ship small, reviewable diffs.');
+      });
+
+      it('routes the three constitution sections to the residue VERBATIM', () => {
+        twoPersonVaultNobodyResolves();
+
+        runPeopleFirst(v.root);
+
+        const residue = read(v, 'inbox/1.user-residue.md');
+        for (const title of ['User Preferences', 'Communication Style', 'Identity']) {
+          expect(countHeading(residue, title)).toBe(1);
+          for (const probe of BODY_PROBES[title]) expect(residue).toContain(probe);
+        }
+        // And the handoff is real: the agent is told to settle WHO before moving.
+        expect(residue).toContain('people whoami --set');
+      });
+
+      it('says out loud that no constitution was written, and how to fix it', () => {
+        twoPersonVaultNobodyResolves();
+
+        const [, split] = runPeopleFirst(v.root);
+
+        expect(split.summary).toContain('NO constitution written');
+        expect(split.summary).toContain('people whoami --set');
+      });
+
+      it('still resolves — and still writes the constitution — on a git-email match', () => {
+        writeConfig(v, {
+          platforms: [],
+          packs: [],
+          people: ['Bektaş Çimen', 'Mehmet Nuraydın'],
+          setupVersion: '0.22.0',
+        });
+        // The seed folds this machine's git identity onto the matching entry, so
+        // rung 3 resolves even though the roster holds two people.
+        git.name = 'Mehmet Nuraydın';
+        git.email = 'mehmet@example.com';
+        writeUserMd(v);
+
+        const [, split] = runPeopleFirst(v.root);
+
+        expect(split.failedCount ?? 0).toBe(0);
+        const mehmet = read(v, 'people/mehmet-nuraydin.md');
+        expect(mehmet).toContain('Ship small, reviewable diffs.');
+        expect(mehmet).toContain('Founder; writes most of the code herself.');
+        expect(read(v, 'people/bektas-cimen.md')).not.toContain('Ship small, reviewable diffs.');
+        // The constitution sections did NOT also land in the residue.
+        expect(countHeading(read(v, 'inbox/1.user-residue.md'), 'Identity')).toBe(0);
+      });
+
+      it('an explicit pin resolves what the alphabet cannot', () => {
+        writeConfig(v, {
+          platforms: [],
+          packs: [],
+          people: ['Bektaş Çimen', 'Mehmet Nuraydın'],
+          setupVersion: '0.22.0',
+        });
+        writeUserMd(v);
+        // Seed the roster first, then pin — the pin must name a real entry.
+        migration0230.steps[SEED](v.root);
+        mkdirSync(join(v.root, 'state'), { recursive: true });
+        writeFileSync(
+          join(v.root, 'state', '.brain-local.json'),
+          JSON.stringify({ activePersonSlug: 'mehmet-nuraydin' }) + '\n',
+          'utf-8',
+        );
+
+        const split = migration0230.steps[SPLIT](v.root);
+
+        expect(split.failedCount ?? 0).toBe(0);
+        expect(read(v, 'people/mehmet-nuraydin.md')).toContain('Ship small, reviewable diffs.');
+        expect(read(v, 'people/bektas-cimen.md')).not.toContain('Ship small, reviewable diffs.');
+      });
+
+      it('re-running after the owner is settled does not duplicate the prose', () => {
+        twoPersonVaultNobodyResolves();
+        runPeopleFirst(v.root);
+        const residueAfterFirst = read(v, 'inbox/1.user-residue.md');
+
+        // The user pins themselves and updates; `1.user.md` is already gone, so
+        // the step is a detected no-op — it must not re-emit anything anywhere.
+        writeFileSync(
+          join(v.root, 'state', '.brain-local.json'),
+          JSON.stringify({ activePersonSlug: 'mehmet-nuraydin' }) + '\n',
+          'utf-8',
+        );
+        const again = migration0230.steps[SPLIT](v.root);
+
+        expect(again.detected).toBe(true);
+        expect(again.filesTouched).toEqual([]);
+        expect(read(v, 'inbox/1.user-residue.md')).toBe(residueAfterFirst);
+        expect(read(v, 'people/mehmet-nuraydin.md')).not.toContain('Ship small, reviewable diffs.');
+      });
+    });
+
+    /**
+     * The heading-idempotency gate skips any H2 already present in the target,
+     * and `addPerson`'s scaffold carries all three constitution headings. The
+     * step ordering is supposed to prevent the collision, but it only holds
+     * while the seed and the split agree on who the owner is — they do not when
+     * the seed could not name one, or when a mid-split crash is re-run after the
+     * user pins themselves. Then the gate would skip every section and delete
+     * `core/1.user.md` in the same breath. A placeholder slot is not content.
+     */
+    it('a scaffolded constitution does not swallow the real prose', () => {
+      writeConfig(v, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(v);
+      // Pre-scaffold the owner's constitution, exactly as `addPerson` would.
+      mkdirSync(join(v.root, 'people'), { recursive: true });
+      writeFileSync(
+        join(v.root, 'people', 'ada-lovelace.md'),
+        '---\nname: ada-lovelace\ntype: person\nupdated: "2026-01-01"\n---\n\n'
+        + '## Identity\n\n- (Who this person is: role, focus, what they own in this project)\n\n'
+        + '## Preferences\n\n- (Decision-making patterns, priorities, review preferences)\n\n'
+        + '## Communication Style\n\n- (How the user prefers to interact: concise? detailed? technical?)\n',
+        'utf-8',
+      );
+
+      runPeopleFirst(v.root);
+
+      const constitution = read(v, 'people/ada-lovelace.md');
+      for (const title of ['Identity', 'Preferences', 'Communication Style']) {
+        // Replaced, not appended-after and not skipped.
+        expect(countHeading(constitution, title)).toBe(1);
+      }
+      expect(constitution).toContain('- Ship small, reviewable diffs.');
+      expect(constitution).toContain('- Founder; writes most of the code herself.');
+      expect(constitution).toContain('- Terse. No preamble, no summary of the summary.');
+      expect(constitution).not.toContain('(Who this person is:');
+      expect(constitution).not.toContain('(Decision-making patterns');
+    });
+
+    /**
+     * "Every line is parenthesised" was the first version of the slot check, and
+     * it would have deleted a real sentence that happens to wear parentheses.
+     * The check recognises the TEMPLATE's own text, not a shape placeholders
+     * happen to have — the same distinction the roster gate had to learn.
+     */
+    it('parenthesised prose a person actually wrote is not mistaken for a slot', () => {
+      writeConfig(v, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(v);
+      mkdirSync(join(v.root, 'people'), { recursive: true });
+      writeFileSync(
+        join(v.root, 'people', 'ada-lovelace.md'),
+        '---\nname: ada-lovelace\ntype: person\nupdated: "2026-01-01"\n---\n\n'
+        + '## Preferences\n\n- (see the team handbook, section 4)\n',
+        'utf-8',
+      );
+
+      runPeopleFirst(v.root);
+
+      const constitution = read(v, 'people/ada-lovelace.md');
+      expect(constitution).toContain('- (see the team handbook, section 4)');
+      expect(constitution).not.toContain('- Ship small, reviewable diffs.');
+    });
+
+    /**
+     * The idempotency gate declines any heading the target already has. That is
+     * correct ONLY for the case it was written for — a previous run of this step
+     * wrote that exact body and crashed before the unlink. For any OTHER
+     * pre-existing content the gate was silently DROPPING the `1.user.md`
+     * version and then deleting the only other copy, with nothing but a
+     * one-lower count in the summary to show for it. Reachable with no crash at
+     * all: `people add`, hand-write your Identity, then upgrade.
+     */
+    it('prose the idempotency gate declines goes to the residue, never to the floor', () => {
+      writeConfig(v, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(v);
+      mkdirSync(join(v.root, 'people'), { recursive: true });
+      writeFileSync(
+        join(v.root, 'people', 'ada-lovelace.md'),
+        '---\nname: ada-lovelace\ntype: person\nupdated: "2026-01-01"\n---\n\n'
+        + '## Preferences\n\n- Hand-written before the upgrade.\n',
+        'utf-8',
+      );
+
+      runPeopleFirst(v.root);
+
+      // The hand-written constitution is not clobbered...
+      const constitution = read(v, 'people/ada-lovelace.md');
+      expect(countHeading(constitution, 'Preferences')).toBe(1);
+      expect(constitution).toContain('- Hand-written before the upgrade.');
+      expect(constitution).not.toContain('- Ship small, reviewable diffs.');
+      // ...and the source prose it displaced is preserved for the agent, with
+      // the heading `1.user.md` actually used.
+      const residue = read(v, 'inbox/1.user-residue.md');
+      expect(residue).toContain('## User Preferences');
+      expect(residue).toContain('- Ship small, reviewable diffs.');
+      expect(has(v, 'core/1.user.md')).toBe(false);
+    });
+
+    it('a resumed run drops the identical section silently — no residue noise', () => {
+      writeConfig(v, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(v);
+      mkdirSync(join(v.root, 'people'), { recursive: true });
+      // Exactly what a previous run of this step wrote, before it crashed.
+      writeFileSync(
+        join(v.root, 'people', 'ada-lovelace.md'),
+        '---\nname: ada-lovelace\ntype: person\nupdated: "2026-01-01"\n---\n\n'
+        + '## Preferences\n\n- Ship small, reviewable diffs.\n- Prefer deletion over abstraction.\n',
+        'utf-8',
+      );
+
+      runPeopleFirst(v.root);
+
+      expect(countHeading(read(v, 'people/ada-lovelace.md'), 'Preferences')).toBe(1);
+      // Already migrated ⇒ nothing owed. The residue exists for the OTHER
+      // sections, but must not carry a duplicate of this one.
+      expect(read(v, 'inbox/1.user-residue.md')).not.toContain('## User Preferences');
+    });
+
+    /**
+     * The residue's own gate carried the identical defect one level down, and
+     * `unlinkSync` follows it by three lines. Crash before the unlink, edit
+     * `1.user.md`, re-run: the edited section was declined on the heading alone
+     * and the source deleted. A duplicate heading in the residue is harmless —
+     * the agent reads both. A dropped section is not.
+     */
+    it('an edited section is not declined by a stale residue heading', () => {
+      writeConfig(v, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(v, '## Project Rules\n\n- Never push to main.\n- Also: rebase, never merge.\n');
+      // A residue from an earlier run that crashed before the unlink, holding
+      // the PRE-EDIT version of the same heading.
+      mkdirSync(join(v.root, 'inbox'), { recursive: true });
+      writeFileSync(
+        join(v.root, 'inbox', '1.user-residue.md'),
+        '# Residue\n\n## Project Rules\n\n- Never push to main.\n',
+        'utf-8',
+      );
+
+      runPeopleFirst(v.root);
+
+      const residue = read(v, 'inbox/1.user-residue.md');
+      expect(residue).toContain('- Also: rebase, never merge.');
+      expect(has(v, 'core/1.user.md')).toBe(false);
+    });
+
+    /**
+     * `findH2Heads` has always skipped headings inside code fences;
+     * `parsePeopleBullets` did not skip bullets inside them. A documented format
+     * sample became a real person with a real constitution file.
+     */
+    it('a roster row inside a code fence is an EXAMPLE, not a person', () => {
+      writeConfig(v, { platforms: [], packs: [], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(
+        v,
+        '## People\n\n'
+        + 'Format example:\n\n'
+        + '```\n- Jane Doe (`person:jane-doe`)\n```\n\n'
+        + '- Grace Hopper (`person:grace-hopper`)\n',
+      );
+
+      const [, split] = runPeopleFirst(v.root);
+
+      expect(split.failedCount ?? 0).toBe(0);
+      expect(readPeople(v.root)['jane-doe']).toBeUndefined();
+      expect(has(v, 'people/jane-doe.md')).toBe(false);
+      expect(readPeople(v.root)['grace-hopper']).toBeDefined();
+      // The fence made the block un-mechanical, so it reaches the agent whole.
+      expect(read(v, 'inbox/1.user-residue.md')).toContain('Jane Doe');
+    });
+
     it('a 1.user.md with zero H2s sends everything to the residue', () => {
       writeConfig(v, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
       git.name = 'Ada Lovelace';
@@ -600,6 +1042,43 @@ describe('migration 0.23.0 — people-first', () => {
       expect(text).toContain(
         'dreamcontext migrations record --version 0.23.0 --step distribute-user-md-residue --executor agent',
       );
+    });
+
+    it('tells the agent to SETTLE the owner before moving a constitution section', () => {
+      const text = migration0230.agentTask!.instruction;
+      expect(text).toContain('## Communication Style');
+      expect(text).toContain('dreamcontext people whoami --set');
+      // The two traps a well-meaning agent falls into on its own.
+      expect(text).toContain('ASK the user rather than choosing');
+      expect(text).toContain('copying the same prose into two people');
+    });
+  });
+
+  /**
+   * Source-level tripwire. The defect class is "a migration step picks a PERSON
+   * by ranking the roster" — `Object.keys(readPeople(root)).sort()[0]` read as a
+   * harmless completeness fallback and was in fact a coin flip that wrote one
+   * teammate's constitution into another's file.
+   *
+   * Guard the SHAPE, not the one call site: any future migration that needs an
+   * owner must go through `resolveActivePerson` and route the ambiguity to its
+   * agentTask, exactly like every other judgment call in this system.
+   */
+  describe('person-selection discipline', () => {
+    it('no migration derives a person by ranking the roster', () => {
+      const dir = join(process.cwd(), 'src', 'migrations');
+      for (const entry of readdirSync(dir)) {
+        if (!entry.endsWith('.ts')) continue;
+        const code = readFileSync(join(dir, entry), 'utf-8')
+          .split('\n')
+          .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
+          .join('\n');
+        // `readPeople(...)` piped into any ordering/first-element selection.
+        expect(
+          /readPeople\([^)]*\)[\s\S]{0,80}?(?:\.sort\(|\.at\(0\)|\[0\])/.test(code),
+          `${entry} selects a person by roster order — see resolveOwner()`,
+        ).toBe(false);
+      }
     });
   });
 });
