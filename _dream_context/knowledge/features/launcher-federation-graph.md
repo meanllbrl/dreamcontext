@@ -2,8 +2,8 @@
 id: feat_uihUmOmu
 status: in_review
 created: '2026-06-14'
-updated: '2026-07-08'
-released_version: v0.8.7
+updated: '2026-08-01'
+released_version: v0.23.0
 tags:
   - 'topic:desktop'
   - frontend
@@ -33,6 +33,16 @@ federation edges without opening any settings page. Brain graph settings now als
 survive desktop relaunches (server-side persistence for the new-origin-per-launch
 localStorage gotcha).
 
+**The Space (v0.23.0, 2026-08-01).** The force-directed graph AND the flat card list
+were replaced by the Space — a unified orbital view where RADIUS is recency (last-opened
+projects on inner rings, never-opened at the edge) and ANGLE is kinship (federated
+projects share a contiguous arc inside a gas cloud). Chips are real buttons, the sky
+rotates/zooms/drifts (pausing on hover, silent under `prefers-reduced-motion`), search
+dims non-matches in place, and dragging one project onto another wires them.
+Connecting a project IS the read grant — the `shareable` toggle is retired (see
+Constraints & Decisions). The Space renders the card grid AND the graph in one surface;
+the old Network view is gone.
+
 **Read-only federation (updated 2026-06-15).** Following the federation read-only
 pivot, the graph now shows ONLY read wires (violet). The teal sync/listen wires
 (copy-based digest push) were removed from the graph and all related UI (wire-kind
@@ -55,14 +65,14 @@ branch). Copy-based sync is parked on the roadmap; federation is live-reference 
 - [x] As a user, I can drag from one project node to another in the graph to create a
   "reads" edge (A reads B), so I can set up cross-project live recall without opening
   any settings page.
-- [x] As a user, I can see which "reads" edges are active (target is shareable,
-  particles flow) vs. inactive (target hasn't enabled sharing), so I understand which
-  federation links are actually live.
+- [x] As a user, I can see which "reads" edges are active (all connections live as of
+  v0.23.0 — shareable retired) with particles flowing along wires, so federation
+  relationships are visible at a glance.
 - [x] As a user, the graph shows only read wires (violet) with no sync/teal wires,
   so the graph honestly represents read-only federation and is not misleading about
   copy-based sync that is not yet available.
-- [x] As a user, I can toggle a project's shareable flag directly from the graph node
-  panel, so I can enable/disable sharing without navigating to that project's Settings.
+- [x] As a user, drawing a connection to a project IS the consent (v0.23.0 — shareable
+  retired), so wiring directly grants read access without a second opt-in.
 - [x] As a user, my Brain graph display settings (node size, text-fade threshold,
   force parameters) survive desktop relaunches, so I don't re-configure the graph
   every time the app starts.

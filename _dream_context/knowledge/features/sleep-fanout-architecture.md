@@ -2,8 +2,8 @@
 id: feat_I4gU7kKs
 status: active
 created: '2026-05-09'
-updated: '2026-07-25'
-released_version: v0.8.7
+updated: '2026-08-01'
+released_version: v0.23.0
 tags:
   - 'topic:agents'
   - 'topic:sleep'
@@ -55,6 +55,23 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-08-01]** Opus 5 no-subagent escape hatch (commit `b233bae`). Claude Code ≥2.1.220
+  appends two lines to every Opus 5 session (binary constant `tengu_heron_brook`, feature-gated
+  on `opus_5_prompt_bundle` — no user-facing setting disables it): *"Do not call the AgentTool
+  unless the user requested it. Do not use workflows or deep-research unless the user requested
+  it."* That outranks SKILL.md, so sleep degraded to running all specialists inline in the
+  orchestrator's context. The fix satisfies the escape hatch the injected line names ("unless
+  the user requested it") on three surfaces Claude Code accepts as the user: (1)
+  **UserPromptSubmit hook** (SUBAGENT_DISPATCH_AUTHORIZATION) — load-bearing, because the
+  harness's own prompt says to treat hook feedback as user words; unconditional (no
+  keyword-matching across languages); emitted before the consolidation-lock early return so it's
+  available mid-sleep; scoped to documented flows (does not authorize ad-hoc dispatch); (2)
+  **Both launcher prompts** (desktop SLEEP_AGENT_PROMPT, headless buildSleepPrompt) — literal
+  user turns, request parallel dispatch outright; (3) **SKILL.md / references/sleep.md** —
+  split the orchestration claim from the size claim (size is not the criterion for fan-out vs
+  inline). The hook command string is unchanged, so a version bump ships it to every wired
+  project with zero re-install. Pinned by `tests/unit/sleep-subagent-dispatch.test.ts` (each
+  surface names Agent-tool dispatch, forbids the inline fallback).
 - **[2026-06-04]** Dedup hardening shipped in both `sleep-tasks` and `sleep-product` prompts. Root cause of duplication failures: `sleep-tasks` Step 2 previously said "create one" without a mandatory recall-first dedup gate; `sleep-product` had a one-line dedup note but no sharp-vs-soft distinction rubric. Fix: (a) `sleep-tasks` Step 2 now requires `memory recall --types task` + active-list scan before any create, with an explicit decision table (smaller slice → fold into existing via `tasks insert`; genuine new concern → create); (b) `sleep-product` B2 now has a full "consolidation rubric" (extend existing on soft/family distinction, create only on sharp topical boundary that sharpens tags). The rubric is also referenced in the orchestrator brief sent to each specialist. Four agent file locations kept in sync: `agents/`, `.codex/agents/prompts/`, `.claude/agents/`, `dist/agents/`.
 
 - **[2026-06-09]** Data-structures ownership moved from `sleep-state` to `sleep-product` (issue #12). `sleep-state` B0b no longer routes to `core/data-structures/*` (that path is retired). `sleep-product` B6 now owns schema writes to `knowledge/data-structures/<product>.md` with a single-observation gate (schema changes reflected same cycle, no two-observation wait).

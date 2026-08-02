@@ -27,7 +27,7 @@ date: '2026-08-01'
   - the-dreamcontext-chat-surface-persists-hook-output-around-10k-chars-so-the-freshly-fitted-17-9k-snapshot-still-arrives-as-a-preview-there (todo)
   - the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview (completed) · 0.22.0 · 2026-07-28 → …
 
-### 🔵 **improve-sleep-quality** — Improve sleep quality · 8/13 done (62%) · target 2026-08-02 · forecast 2026-08-02 ✓ on track
+### 🔵 **improve-sleep-quality** — Improve sleep quality · 8/14 done (57%) · target 2026-08-02 · forecast 2026-08-02 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
   - automations-learn-from-every-run-show-their-session-and-say-what-happened-in-the-notification (completed)
   - automations-scheduled-headless-claude-jobs (in_review) · BACKLOG
@@ -39,6 +39,7 @@ date: '2026-08-01'
   - migrations-pending-goes-blind-after-update-advances-setupversion-past-an-unfinished-agenttask (completed) · 0.22.0
   - proactive-learning-layer (completed) · 0.20.0
   - rescale-sleep-debt-scoring-weighted-sum-token-signal (in_review) · 0.23.0
+  - resolve-the-context-root-from-the-main-worktree-so-git-worktrees-share-one-brain (todo) · 0.23.0
   - shorten-the-automations-task-body-so-it-fits-github-s-issue-limit-and-resumes-syncing (todo) · 0.21.0
   - sleep-connectors (in_review) · 0.21.0
   - soul-becomes-constitution-only-and-always-loads-verbatim-while-conditionals-move-to-keyword-prioritized-patterns-across-the-whole-system (in_progress) · 0.23.0 · 2026-07-28 → …

@@ -56,15 +56,20 @@ merges BM25 hits, namespaced `<vault>::<type>/<slug>`. It writes nothing.
   are no read-connections (`resolveConnectedVaults` returns just the current vault and
   the block is skipped).
 - Explicit scoping flags still work: `--connected` (out/both peers), `--all-vaults`
-  (every shareable vault), `--vault <name>` (one named peer).
+  (all registered vaults), `--vault <name>` (one named peer).
 - **`dreamcontext federation peers`** (v0.8.5) — CLI command that refreshes peer
   summaries on demand and prints them compactly. Calls `refreshPeerSummaries()` from
   `src/lib/federation-peer-summary.ts`; also runs automatically during the sleep cycle.
 
-The read gate is unchanged: peer B is readable from A iff A→B direction is `out`/`both`
-AND not stale AND B has `shareable: true`. `federated:true` docs are still excluded from
-onward serving (transitive-leak guard) — though read-only federation no longer creates
-any.
+**The read gate (v0.23.0 — shareable retired).** Peer B is readable from A iff A→B
+direction is `out`/`both` AND not stale. **The old `shareable: true` gate was removed**
+(commit `6bf9871`, 2026-08-01): drawing the connection IS the consent, end to end. A
+vault could be wired and still return nothing, which read as "federation is broken" far
+more often than "privacy" — these are one person's own projects on one machine. The
+toggle is gone from the CLI, config route, Settings, and federation board. `.config.json`
+still round-trips the old key for compatibility, but nothing branches on it.
+`federated:true` docs are still excluded from onward serving (transitive-leak guard) —
+though read-only federation no longer creates any.
 
 The SessionStart **snapshot** stays off the peer-resolution hot path: it shows a cheap
 **ambient "Connected projects" glance** from the local `state/.peer-summaries.json`
@@ -119,13 +124,13 @@ There is no "when" condition anywhere. The flow is governed solely by:
 
 | Gate | Effect | Where |
 |---|---|---|
-| `direction` (out/both) | which way digests flow | `state/.connections.json` |
-| `status` (active/stale) | dead peer skipped, warned once | `connections.ts` / sync |
-| **consent** | sync writes to a peer only if that peer declares `in`/`both` back AND is `shareable` | `federation-recall.ts`, `federation-digest` sync |
-| **watermark** (`last_synced_at`) | only docs changed since the last sync (undated docs included — safer to over-send) | `computeDigest` |
-| **interest profile** | digest BM25-ranked to the peer's tags + active-task terms; empty profile ⇒ nothing sent (no blind dump) | `buildInterestProfile` |
-| `topics` | filters **WHAT** subjects flow — not **WHEN** | connection `topics` field |
-| **transitive-leak guard** | `federated:true` docs are never re-exported in a digest and never served across another boundary in `crossVaultRecall` | both libs |
+| `direction` (out/both) | which way digests flow (read-only mode: which vault reads which) | `state/.connections.json` |
+| `status` (active/stale) | dead peer skipped, warned once | `connections.ts` / recall |
+| **consent (v0.23.0 — simplified)** | Drawing the connection IS the consent; no second opt-in. Old `shareable` gate removed (6bf9871) | `federation-recall.ts` |
+| **watermark** (`last_synced_at`) | (PARKED — copy-based push disabled) only docs changed since the last sync | `computeDigest` (unreferenced) |
+| **interest profile** | (PARKED — copy-based push disabled) digest BM25-ranked to the peer's tags + active-task terms | `buildInterestProfile` (unreferenced) |
+| `topics` | (PARKED — copy-based push disabled) filters **WHAT** subjects flow | connection `topics` field (round-tripped, not enforced) |
+| **transitive-leak guard** | `federated:true` docs are never re-exported in a digest and never served across another boundary in `crossVaultRecall` | both libs (copy-path disabled, guard still enforced for old docs) |
 
 ## Why recall is not knowledge-only either
 
@@ -146,4 +151,4 @@ The browser-reachable `POST /api/federation/sync` is dry-run by construction: it
 
 ## Last Verified
 
-2026-06-15 (v0.8.5/v0.8.6).
+2026-08-01 (v0.23.0 — shareable gate retired, Space launcher).

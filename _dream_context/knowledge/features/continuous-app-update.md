@@ -7,7 +7,7 @@ released_version: v0.8.1
 tags:
   - devops
   - architecture
-  - desktop
+  - 'topic:desktop'
 related_tasks: []
 type: feature
 name: continuous-app-update
