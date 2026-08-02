@@ -212,6 +212,8 @@ For files beyond the auto-loaded index, `ls _dream_context/core/` to discover th
 - Inserting into LIFO structures (changelog, task/feature sections)
 - Scaffolding, bookmarking, triggers, recall, sleep, taxonomy, sync
 
+**PDFs — classify before you Read.** `Read` renders PDF pages as *images* to the vision model (20 pages per request, page ranges mandatory past 10), so a long text PDF costs a fortune and never arrives whole. Check it first: `npx -y @firecrawl/pdf-inspector detect <file> --json` → `{"pdfType":"TextBased","pagesNeedingOcr":[]}` means the text layer is real, so extract it with `npx -y @firecrawl/pdf-inspector <file>` and get markdown for ~no vision tokens. Anything else — scanned, mixed, a non-empty `pagesNeedingOcr`, an unsupported platform, any error — falls back to `Read`, which handles scans correctly and is the right tool for them. No install, no dependency: `npx` fetches it on demand, and if it can't, you are exactly where you started.
+
 When in doubt about a command or flag, open [cli-reference.md](references/cli-reference.md) — it lists every command. Do **not** guess flags or hand-edit JSON state files.
 
 ---
