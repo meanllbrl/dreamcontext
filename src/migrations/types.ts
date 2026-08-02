@@ -48,6 +48,22 @@ export interface MigrationStepResult {
 
 /**
  * A single migration step: receives the _dream_context root and returns its result.
+ *
+ * A step may only do what is DETERMINISTIC. The two questions that look
+ * mechanical and are not, both learned the hard way on 0.23.0:
+ *
+ *   - "which fragment of this line is a person's NAME?" — a `## People` bullet
+ *     written as description has no parseable answer.
+ *   - "WHOSE prose is this?" — when `resolveActivePerson` cannot name the person
+ *     at the keyboard, neither can a step. Ranking the roster and taking the
+ *     first entry is not a fallback, it is a coin flip: it wrote one teammate's
+ *     Identity / Preferences / Communication Style into another's constitution
+ *     while the real owner's file stayed an empty scaffold.
+ *
+ * Route both to the `agentTask` and return CLEAN. Judgment reaching a person's
+ * constitution is worse than judgment left undone, because the step deletes its
+ * own source: after `split-user-file` unlinks `core/1.user.md`, a wrong
+ * destination is indistinguishable from a right one.
  */
 export type MigrationStep = (root: string) => MigrationStepResult;
 

@@ -80,7 +80,27 @@ automatically when they run `dreamcontext update` or `dreamcontext sleep start`.
    - Agent writes the ledger via `dreamcontext migrations record` on
      completion (never at the start).
 
-6. **Gotchas for agent tasks**:
+6. **Never guess, and know what counts as guessing.** A step may only do what is
+   DETERMINISTIC. Two questions look mechanical and are not:
+   - *"which fragment of this line is a person's NAME?"* — a `## People` bullet
+     written as description has no parseable answer.
+   - *"WHOSE prose is this?"* — when `resolveActivePerson` cannot name the person
+     at the keyboard, neither can your step. Ranking the roster and taking the
+     first entry is not a fallback: it wrote one teammate's constitution into
+     another's file, decided by the alphabet.
+
+   Route both to the `agentTask` and return CLEAN — `failedCount` is for
+   RETRYABLE failures only (a step that reports it on deterministic input pins
+   `setupVersion` forever). Beware gates whose verdict depends on incidental
+   size: a slug-length check let a *short* description through and a long one
+   fail. Test the SHAPE of what the renderer wrote, not its length.
+
+   And judgment reaching the wrong file is worse than judgment left undone —
+   a step that unlinks its source makes a wrong destination indistinguishable
+   from a right one. `src/migrations/0.23.0.ts` `resolveOwner()` is the worked
+   example; a source tripwire in the 0.23.0 test enforces the class.
+
+7. **Gotchas for agent tasks**:
    - **Gotcha 2**: wikilink hygiene — always update `[[old-slug]]` → `[[new-slug]]`
      after a file move, or list broken links.
    - **Gotcha 3**: no prose edits — structure only.

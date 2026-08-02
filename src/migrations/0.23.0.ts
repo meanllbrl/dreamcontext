@@ -95,8 +95,8 @@ function stripFrontmatter(lines: string[]): string[] {
  *     no target owns. `preamble + every section body` reproduces the whole file.
  *   - headings inside fenced code blocks are not headings.
  */
-function parseUserSections(text: string): { preamble: string; sections: UserSection[] } {
-  const lines = stripFrontmatter(text.replace(/\r\n/g, '\n').split('\n'));
+/** H2 heading positions, ignoring headings inside fenced code blocks. */
+function findH2Heads(lines: string[]): Array<{ at: number; title: string }> {
   const heads: Array<{ at: number; title: string }> = [];
   let fenced = false;
   for (let i = 0; i < lines.length; i++) {
@@ -108,6 +108,12 @@ function parseUserSections(text: string): { preamble: string; sections: UserSect
     const match = /^##\s+(.+?)\s*$/.exec(lines[i]);
     if (match) heads.push({ at: i, title: match[1] });
   }
+  return heads;
+}
+
+function parseUserSections(text: string): { preamble: string; sections: UserSection[] } {
+  const lines = stripFrontmatter(text.replace(/\r\n/g, '\n').split('\n'));
+  const heads = findH2Heads(lines);
   const firstHead = heads.length > 0 ? heads[0].at : lines.length;
   const preamble = lines.slice(0, firstHead).join('\n').trim();
   const sections = heads.map((head, k) => ({
@@ -128,6 +134,45 @@ function hasHeading(text: string, title: string): boolean {
     const match = /^##\s+(.+?)\s*$/.exec(line);
     return match !== null && match[1].trim().toLowerCase() === want;
   });
+}
+
+/**
+ * The person template's guidance prose — `- (Who this person is: role, focus…)`.
+ * A body made only of these lines (or of nothing) is a slot, not content.
+ */
+const PLACEHOLDER_LINE = /^\s*[-*]?\s*\(.*\)\s*$/;
+
+/**
+ * Remove `## <title>` sections whose body is nothing but template placeholders,
+ * for the titles we are about to write. Every other byte — frontmatter, other
+ * sections, spacing — is preserved.
+ *
+ * This is what keeps the heading-idempotency gate from turning into silent data
+ * loss. The gate skips any heading already present in the target, and
+ * `addPerson`'s scaffold carries all three constitution headings; so a
+ * constitution scaffolded BEFORE the split (which happens whenever the seed step
+ * could not name the owner, and on any re-run after a mid-split crash) would
+ * make the split skip every section and drop the user's real prose on the floor
+ * — with `core/1.user.md` deleted at the end of the same step.
+ *
+ * The ordering comment on the constitution write states the invariant; this
+ * makes it hold even when the two steps disagree about who the owner is.
+ * A section that already holds REAL prose is still never touched, so the
+ * crash-resume contract (a re-run appends nothing) is unchanged.
+ */
+function stripPlaceholderSections(text: string, titles: Set<string>): string {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const heads = findH2Heads(lines);
+  const drop = new Set<number>();
+  heads.forEach((head, k) => {
+    if (!titles.has(head.title.trim().toLowerCase())) return;
+    const end = k + 1 < heads.length ? heads[k + 1].at : lines.length;
+    const body = lines.slice(head.at + 1, end);
+    if (!body.every((l) => l.trim() === '' || PLACEHOLDER_LINE.test(l))) return;
+    for (let i = head.at; i < end; i++) drop.add(i);
+  });
+  if (drop.size === 0) return text;
+  return lines.filter((_, i) => !drop.has(i)).join('\n');
 }
 
 /** Append sections to a document, one blank line between blocks, exactly one trailing newline. */
@@ -151,18 +196,28 @@ function writeDoc(path: string, content: string): void {
  * segment. Anything that is not a bullet is reported so the caller can route the
  * whole section to the residue instead of dropping prose.
  *
- * A bullet only counts as a roster row when its text slugifies to a LEGAL person
- * slug. A hand-maintained `## People` block drifts into description —
+ * A bullet only counts as a roster row when it has the SHAPE of one: a short
+ * phrase with no sentence punctuation, that then slugifies legally. A
+ * hand-maintained `## People` block drifts into description —
  *
  *   - **mehmet** — Mehmet Nuraydın, Technical Product Manager / App Owner. Owns …
  *
- * — and that line slugifies to a 250-char string `PERSON_SLUG_RE` rejects. Which
- * fragment of it is the person's NAME ("mehmet"? "Mehmet Nuraydın"?) is a
- * judgment call, and D5 is explicit that a code step must not fake one: cutting
- * at the em dash happens to be right here and silently mangles the next vault.
- * So the bullet is reported as unparsed, its section goes to the residue whole,
- * and `distribute-user-md-residue` places the people with `dreamcontext people
- * add`. Guessing here is what the residue exists to avoid.
+ * — and which fragment of that is the person's NAME ("mehmet"? "Mehmet
+ * Nuraydın"?) is a judgment call. D5 is explicit that a code step must not fake
+ * one: cutting at the em dash happens to be right here and silently mangles the
+ * next vault. So the bullet is reported as unparsed, its section goes to the
+ * residue whole, and `distribute-user-md-residue` places the people with
+ * `dreamcontext people add`.
+ *
+ * SLUG LEGALITY ALONE IS NOT THE TEST, and treating it as one is a bug this
+ * migration already shipped: `PERSON_SLUG_RE` caps at 64 chars, so the SAME
+ * class of prose passes or fails on how verbose the sentence happens to be.
+ * `- **bektas** — Bektaş Çimen, in-house developer. Owns the deploy pipeline.`
+ * slugifies to 63 characters, sailed through, and put a person named
+ * "**bektas** — Bektaş Çimen, in-house developer…" on the roster — with their
+ * own constitution file and a duplicate of the real Bektaş sitting next to it.
+ * A gate whose verdict depends on sentence length is a coin flip wearing a
+ * regex, so the shape test comes first and the slug check only confirms it.
  *
  * This is also the interlock that keeps the step from FAILING on prose: an
  * illegal slug reaching `addPerson` throws, and a thrown step reports
@@ -170,6 +225,22 @@ function writeDoc(path: string, content: string): void {
  * re-runs every step on every `update` and this input is deterministic. Two real
  * vaults sat on 0.21.0 that way while their assets were already 0.23.0.
  */
+
+/**
+ * Punctuation a RENDERED roster row never contains — it all signals a sentence.
+ * (The `(\`person:<slug>\`)` marker is stripped before this test runs.)
+ */
+const PROSE_PUNCTUATION = /[.;:,—–()[\]{}<>/|]/;
+
+/** A human name the roster renderer would have written: short and unpunctuated. */
+const MAX_NAME_WORDS = 5;
+
+function namesAPerson(name: string): boolean {
+  if (!name || PROSE_PUNCTUATION.test(name)) return false;
+  if (name.split(/\s+/).length > MAX_NAME_WORDS) return false;
+  return isSafePersonSlug(slugify(name));
+}
+
 function parsePeopleBullets(body: string): { names: string[]; unparsed: string[] } {
   const names: string[] = [];
   const unparsed: string[] = [];
@@ -181,27 +252,62 @@ function parsePeopleBullets(body: string): { names: string[]; unparsed: string[]
       unparsed.push(raw);
       continue;
     }
-    const name = bullet[1].replace(/\(\s*`?person:[^)]*`?\s*\)\s*$/, '').trim();
-    if (name && isSafePersonSlug(slugify(name))) names.push(name);
+    const name = bullet[1]
+      .replace(/\(\s*`?person:[^)]*`?\s*\)\s*$/, '') // the rendered slug marker
+      .replace(/^[*_`]+|[*_`]+$/g, '') // `- **Ada Lovelace**` is still a roster row
+      .trim();
+    if (namesAPerson(name)) names.push(name);
     else unparsed.push(raw);
   }
   return { names, unparsed };
 }
 
 /**
- * WHO owns the prose in a legacy `1.user.md`. The active person (env → pin →
- * git-email → solo) is the honest answer, since step 1 has just folded this
- * machine's git identity into the roster. An unresolvable multi-person vault
- * falls back to the first roster slug so the split still completes — and says so.
+ * WHO owns the prose in a legacy `1.user.md` — and, when nobody can be named,
+ * the honest admission that nobody can.
+ *
+ * The active person (env → pin → git-email → solo) is the ONLY answer this step
+ * is allowed to give. Step 2 has just folded this machine's git identity into
+ * the roster, so a solo vault and any machine whose git email is on the roster
+ * both resolve here; those are the overwhelming majority of real vaults.
+ *
+ * There is deliberately NO fallback, and its absence is the whole point. This
+ * function used to end with `Object.keys(readPeople(root)).sort()[0]` — the
+ * alphabetically first person — which is exactly how a two-person vault wrote
+ * one person's Identity, Preferences and Communication Style into the OTHER
+ * person's constitution: `bektas` sorts before `mehmet`, and nothing on that
+ * machine said otherwise. The victim's own file stayed an empty scaffold.
+ *
+ * `resolveActivePerson` refuses that guess by design — "an unresolvable machine
+ * gets `slug: null`, NOT somebody else's constitution" (people-resolve.ts) — and
+ * the owner spec pinned the same rule: a session with no resolvable person loads
+ * none rather than defaulting to the owner. Sorting the roster overrode both.
+ * WHOSE prose this is is judgment, precisely like which fragment of a bullet is
+ * a name (D5), and judgment belongs to the agentTask, never to a code step.
+ *
+ * `ambiguous` is therefore NOT a failure: the split still completes, the prose
+ * goes to the residue verbatim, and `distribute-user-md-residue` places it.
+ * `no-roster` IS a (retryable) failure — `doctor` repairs the roster and the
+ * next `update` splits cleanly.
  */
-function resolveOwnerSlug(contextRoot: string): string | null {
-  const active = resolveActivePerson(contextRoot);
-  if (active.slug) return active.slug;
+type OwnerResolution =
+  | { kind: 'resolved'; slug: string }
+  | { kind: 'ambiguous'; reason: string }
+  | { kind: 'no-roster'; reason: string };
+
+function resolveOwner(contextRoot: string): OwnerResolution {
+  let people: PeopleMap;
   try {
-    return Object.keys(readPeople(contextRoot)).sort()[0] ?? null;
-  } catch {
-    return null; // corrupt roster — split-user-file refuses rather than guesses
+    people = readPeople(contextRoot);
+  } catch (err) {
+    return { kind: 'no-roster', reason: `people/people.json is unreadable — ${errorText(err)}` };
   }
+  if (Object.keys(people).length === 0) {
+    return { kind: 'no-roster', reason: 'people/people.json is missing or lists no people' };
+  }
+  const active = resolveActivePerson(contextRoot);
+  if (active.slug) return { kind: 'resolved', slug: active.slug };
+  return { kind: 'ambiguous', reason: active.reason };
 }
 
 function residueHeader(): string {
@@ -214,9 +320,9 @@ updated: "${isoDate()}"
 # Residue from ${USER_FILE_REL} (migration 0.23.0)
 
 0.23.0 replaced \`${USER_FILE_REL}\` with one constitution per person
-(\`people/<slug>.md\`). Identity / Preferences / Communication Style moved there.
-Every OTHER section is reproduced verbatim below, because a migration must not
-guess where prose belongs.
+(\`people/<slug>.md\`). Identity / Preferences / Communication Style moved there
+WHEN this machine could name their owner. Every OTHER section is reproduced
+verbatim below, because a migration must not guess where prose belongs.
 
 An agent finishes the job (\`dreamcontext migrations pending\` prints the full
 instruction, id \`distribute-user-md-residue\`). The routing:
@@ -231,6 +337,13 @@ instruction, id \`distribute-user-md-residue\`). The routing:
   bullets describe people rather than name them, so no code could tell the NAME
   apart from the description without guessing. You can: read each bullet, decide
   the person's name, and register them.
+- **Identity / Preferences / Communication Style** → \`people/<slug>.md\`. These
+  are here ONLY when the roster holds more than one person and nothing on this
+  machine said which of them is at the keyboard — no env var, no pin, no git
+  user.email on the roster. They are somebody's constitution, and writing them
+  into the alphabetically-first person is how one teammate's rules end up
+  governing another. Settle WHO first (\`dreamcontext people whoami --set
+  <slug>\`), then move them.
 
 NOTHING IS DISCARDED. A section with no home stays in this file and is reported.
 Delete this file only once every section below has been placed.
@@ -415,7 +528,12 @@ function seedPeopleFromConfig(root: string): MigrationStepResult {
     writePeople(root, people);
     const filesTouched = [peopleJsonPath(root)];
 
-    const legacyOwner = existsSync(join(root, 'core', '1.user.md')) ? resolveOwnerSlug(root) : null;
+    // Which constitution `split-user-file` is about to author from real prose —
+    // that one must NOT be pre-scaffolded, or its heading-idempotent append
+    // would skip every section. An unresolvable owner means it authors nobody's,
+    // so everybody gets the scaffold and the prose reaches the residue instead.
+    const owner = existsSync(join(root, 'core', '1.user.md')) ? resolveOwner(root) : null;
+    const legacyOwner = owner?.kind === 'resolved' ? owner.slug : null;
     for (const [slug, person] of Object.entries(people)) {
       if (slug === legacyOwner) continue;
       const path = personFilePath(root, slug);
@@ -484,18 +602,23 @@ function splitUserFile(root: string): MigrationStepResult {
     };
   }
 
-  const ownerSlug = resolveOwnerSlug(root);
-  if (!ownerSlug) {
+  const owner = resolveOwner(root);
+  if (owner.kind === 'no-roster') {
+    // Retryable by construction: `doctor` repairs the roster and the next run
+    // splits. This is the ONE failure shape `failedCount` is for (see types.ts).
     return {
       step,
       filesTouched: [],
       summary:
-        `Refusing to split ${USER_FILE_REL}: no person to own it (people/people.json is missing, `
-        + 'empty or unreadable). The file was left exactly as it is — run `dreamcontext doctor`',
+        `Refusing to split ${USER_FILE_REL}: no person to own it (${owner.reason}). `
+        + 'The file was left exactly as it is — run `dreamcontext doctor`',
       detected: false,
       failedCount: 1,
     };
   }
+  // null ⇒ nobody on this machine can be named as the owner. Not a failure:
+  // the constitution-bound sections go to the residue instead of into a guess.
+  const ownerSlug = owner.kind === 'resolved' ? owner.slug : null;
 
   const filesTouched: string[] = [];
   try {
@@ -508,7 +631,14 @@ function splitUserFile(root: string): MigrationStepResult {
       const key = section.title.trim().toLowerCase();
       const constitutionTitle = CONSTITUTION_HEADINGS.get(key);
       if (constitutionTitle) {
-        toConstitution.push({ title: constitutionTitle, body: section.body });
+        // With no resolvable owner there is no constitution to move this into,
+        // and the alphabetically-first roster entry is NOT an answer — it is the
+        // defect this step exists to avoid. Route it VERBATIM (original heading,
+        // original body) so the agentTask can ask whose it is. Writing a
+        // person's Preferences into someone else's file is the one outcome this
+        // migration cannot walk back: the source is deleted at step 4.
+        if (ownerSlug) toConstitution.push({ title: constitutionTitle, body: section.body });
+        else toResidue.push(section);
         continue;
       }
       if (key === PEOPLE_HEADING_KEY) {
@@ -529,27 +659,36 @@ function splitUserFile(root: string): MigrationStepResult {
     //    constitution, and a scaffold already carries all three headings — so
     //    upserting the roster first would make this append skip every section
     //    and silently drop the user's real prose.
-    const constitutionPath = personFilePath(root, ownerSlug);
-    const existingConstitution = existsSync(constitutionPath)
-      ? readFileSync(constitutionPath, 'utf-8')
-      : null;
-    const constitutionAdds = toConstitution.filter(
-      (s) => existingConstitution === null || !hasHeading(existingConstitution, s.title),
-    );
-    if (existingConstitution === null || constitutionAdds.length > 0) {
-      const base = existingConstitution
-        ?? `---\nname: ${ownerSlug}\ntype: person\nupdated: "${isoDate()}"\n---\n`;
-      // A source file with nothing constitution-shaped still owes this person a
-      // usable document — fall back to the standard scaffold.
-      const content = existingConstitution === null && constitutionAdds.length === 0
-        ? renderPersonConstitution({
-          name: readPeople(root)[ownerSlug]?.name ?? ownerSlug,
-          slug: ownerSlug,
-          date: isoDate(),
-        })
-        : appendSections(base, constitutionAdds);
-      writeDoc(constitutionPath, content);
-      filesTouched.push(constitutionPath);
+    //    Skipped entirely when nobody resolves: `toConstitution` is empty then,
+    //    and there is no path to write to that would not be a guess.
+    let constitutionAdds: UserSection[] = [];
+    if (ownerSlug) {
+      const constitutionPath = personFilePath(root, ownerSlug);
+      // A placeholder slot is not "already present" — see stripPlaceholderSections.
+      const existingConstitution = existsSync(constitutionPath)
+        ? stripPlaceholderSections(
+          readFileSync(constitutionPath, 'utf-8'),
+          new Set(toConstitution.map((s) => s.title.trim().toLowerCase())),
+        )
+        : null;
+      constitutionAdds = toConstitution.filter(
+        (s) => existingConstitution === null || !hasHeading(existingConstitution, s.title),
+      );
+      if (existingConstitution === null || constitutionAdds.length > 0) {
+        const base = existingConstitution
+          ?? `---\nname: ${ownerSlug}\ntype: person\nupdated: "${isoDate()}"\n---\n`;
+        // A source file with nothing constitution-shaped still owes this person a
+        // usable document — fall back to the standard scaffold.
+        const content = existingConstitution === null && constitutionAdds.length === 0
+          ? renderPersonConstitution({
+            name: readPeople(root)[ownerSlug]?.name ?? ownerSlug,
+            slug: ownerSlug,
+            date: isoDate(),
+          })
+          : appendSections(base, constitutionAdds);
+        writeDoc(constitutionPath, content);
+        filesTouched.push(constitutionPath);
+      }
     }
 
     // 2. Roster upserts. `addPerson` is the locked path and also scaffolds an
@@ -583,7 +722,13 @@ function splitUserFile(root: string): MigrationStepResult {
 
     const parts = [
       `Split ${USER_FILE_REL} (${sections.length} section(s))`,
-      `${constitutionAdds.length} → people/${ownerSlug}.md`,
+      ownerSlug
+        ? `${constitutionAdds.length} → people/${ownerSlug}.md`
+        : 'NO constitution written — nobody on this machine could be named as the owner '
+          + `of this prose (${owner.kind === 'ambiguous' ? owner.reason : 'unresolved'}), so `
+          + 'Identity / Preferences / Communication Style went to the residue verbatim rather '
+          + 'than into a guessed person. Run `dreamcontext people whoami --set <slug>` (or add '
+          + 'your git user.email to the roster), then let the agent place them',
       `${residueAdded} → ${RESIDUE_REL}`,
     ];
     if (rosterNames.length > 0) parts.push(`${rosterNames.length} '## People' bullet(s) upserted into the roster`);
@@ -693,10 +838,11 @@ exist, there is nothing to distribute — record this step and stop.
 
 0.23.0 replaced _dream_context/${USER_FILE_REL} with one constitution per person
 (_dream_context/people/<slug>.md). The deterministic steps already moved
-Identity / Preferences / Communication Style into the owner's constitution, and
-every '## People' bullet that unambiguously NAMED a person into people/people.json.
-Everything else was copied VERBATIM into _dream_context/${RESIDUE_REL}, because
-deciding where prose belongs is judgment, not a string transform.
+Identity / Preferences / Communication Style into the owner's constitution WHEN
+that machine could name the owner, and every '## People' bullet that
+unambiguously NAMED a person into people/people.json. Everything else was copied
+VERBATIM into _dream_context/${RESIDUE_REL}, because deciding where prose belongs
+is judgment, not a string transform.
 
 Read the residue file and place each '## <Heading>' section:
 
@@ -719,6 +865,25 @@ Read the residue file and place each '## <Heading>' section:
   people/people.json for a duplicate the seed step already created under a
   different slug before you add a second one.
 
+- '## Identity', '## Preferences' / '## User Preferences' and
+  '## Communication Style' are here ONLY when the roster holds more than one
+  person and NOTHING on that machine could say which of them was at the
+  keyboard. This is a person's constitution, so do not place it by vibe:
+  1. Read the prose and work out whose it is — the '## People' block, the git
+     history, and the surrounding sections usually name them outright. If it is
+     still genuinely unclear, ASK the user rather than choosing.
+  2. Make the identity real so no later run has to guess again:
+     \`dreamcontext people whoami --set <slug>\`, and put that person's git
+     user.email on the roster (\`dreamcontext people add "<Name>" --email <...>\`)
+     so their other clones resolve too.
+  3. Move the sections into people/<slug>.md, REPLACING the template
+     placeholders that the seed step wrote there — appending after them leaves a
+     constitution that reads half-scaffold, half-real.
+  4. A rule that is not about that person but about the PROJECT (secrets, stack
+     conventions, house style) does not belong in a constitution at all: soul
+     one-liner if unconditional, knowledge/patterns/ if conditional. It must load
+     whether or not that person is the active one.
+  Never split the difference by copying the same prose into two people.
 - '## Preamble' holds prose that sat before the first heading. Place it by
   meaning, exactly like any other section.
 
