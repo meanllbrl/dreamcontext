@@ -752,6 +752,13 @@ function splitUserFile(root: string): MigrationStepResult {
     //    Skipped entirely when nobody resolves: `toConstitution` is empty then,
     //    and there is no path to write to that would not be a guess.
     let constitutionAdds: UserSection[] = [];
+    // Two different events the old summary reported with one sentence: prose
+    // already filed verbatim (a genuine resume, nothing owed) and prose the
+    // target holds a DIFFERENT version of (routed to the residue, and the user
+    // has to reconcile two versions by hand). Calling the second one "skipped
+    // (resumed a partial run)" told them the opposite of what happened.
+    let resumedSkips = 0;
+    const conflictsRouted: string[] = [];
     if (ownerSlug) {
       const constitutionPath = personFilePath(root, ownerSlug);
       // A placeholder slot is not "already present" — see stripPlaceholderSections.
@@ -779,8 +786,13 @@ function splitUserFile(root: string): MigrationStepResult {
         if (existingConstitution !== null
           && sectionBodies(existingConstitution, declined.title)
             .some((body) => normalizeBody(body) === normalizeBody(declined.body))) {
-          continue; // byte-for-byte already there: a resumed run, nothing owed
+          resumedSkips++; // byte-for-byte already there: a resumed run, nothing owed
+          continue;
         }
+        // The target holds that heading with DIFFERENT prose. Counted apart from
+        // a resumed skip because they are not the same event and the summary is
+        // the only place the user learns which one happened.
+        conflictsRouted.push(declined.title);
         toResidue.push(declined.source);
       }
       if (existingConstitution === null || constitutionAdds.length > 0) {
@@ -849,8 +861,15 @@ function splitUserFile(root: string): MigrationStepResult {
       `${residueAdded} → ${RESIDUE_REL}`,
     ];
     if (rosterNames.length > 0) parts.push(`${rosterNames.length} '## People' bullet(s) upserted into the roster`);
-    if (toConstitution.length > constitutionAdds.length || (toResidue.length > residueAdded)) {
-      parts.push('headings already present in a target were skipped (resumed a partial run)');
+    if (resumedSkips > 0 || toResidue.length > residueAdded) {
+      parts.push('section(s) already filed verbatim in a target were skipped (resumed a partial run)');
+    }
+    if (conflictsRouted.length > 0) {
+      parts.push(
+        `people/${ownerSlug}.md already held ${conflictsRouted.join(', ')} with DIFFERENT content, so `
+        + `the ${USER_FILE_REL} version went to ${RESIDUE_REL} rather than being dropped — an agent `
+        + 'must reconcile the two',
+      );
     }
     if (toResidue.length > 0) {
       parts.push(`run \`dreamcontext migrations pending\` — an agent must distribute ${RESIDUE_REL}`);

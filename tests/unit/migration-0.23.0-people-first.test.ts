@@ -768,6 +768,42 @@ describe('migration 0.23.0 — people-first', () => {
       expect(has(v, 'core/1.user.md')).toBe(false);
     });
 
+    /**
+     * The summary is the only place the user learns which of the two happened,
+     * and it used to call both "skipped (resumed a partial run)" — telling
+     * someone with two divergent versions to reconcile that nothing was owed.
+     */
+    it('the summary distinguishes a resumed skip from a routed conflict', () => {
+      const conflicted = (existingBody: string) => {
+        const w = makeVault();
+        writeConfig(w, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
+        writeUserMd(w);
+        mkdirSync(join(w.root, 'people'), { recursive: true });
+        writeFileSync(
+          join(w.root, 'people', 'ada-lovelace.md'),
+          '---\nname: ada-lovelace\ntype: person\nupdated: "2026-01-01"\n---\n\n'
+          + `## Preferences\n\n${existingBody}\n`,
+          'utf-8',
+        );
+        const [, split] = runPeopleFirst(w.root);
+        rmSync(w.project, { recursive: true, force: true });
+        return split.summary;
+      };
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+
+      // Byte-identical to the source ⇒ a genuine resume.
+      const resumed = conflicted('- Ship small, reviewable diffs.\n- Prefer deletion over abstraction.');
+      expect(resumed).toContain('resumed a partial run');
+      expect(resumed).not.toContain('DIFFERENT content');
+
+      // Divergent ⇒ the user has two versions and must be told so.
+      const routed = conflicted('- Hand-written before the upgrade.');
+      expect(routed).toContain('DIFFERENT content');
+      expect(routed).toContain('must reconcile');
+      expect(routed).not.toContain('resumed a partial run');
+    });
+
     it('a resumed run drops the identical section silently — no residue noise', () => {
       writeConfig(v, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
       git.name = 'Ada Lovelace';
