@@ -38,6 +38,28 @@ describe('==highlight== → <mark>', () => {
     expect(marked.parse('## a ==verdict==') as string).toContain('<mark>verdict</mark>');
   });
 
+  // ── the pens ─────────────────────────────────────────────────────────────────────────
+
+  it('a leading ! is the red pen, and the character itself never reaches the reader', () => {
+    expect(inline('==!FAIL== on both kernels'))
+      .toBe('<mark class="mark-alarm">FAIL</mark> on both kernels');
+  });
+
+  it('a leading + is the green pen', () => {
+    expect(inline('the wiring is ==+logically sound=='))
+      .toBe('the wiring is <mark class="mark-good">logically sound</mark>');
+  });
+
+  it('a pen must be followed by a WORD — otherwise the character is just text the reader wanted, '
+    + 'and the highlight falls back to the default pen rather than disappearing', () => {
+    expect(inline('==+1 to that==')).toBe('<mark>+1 to that</mark>');
+    expect(inline('==!!! read this==')).toBe('<mark>!!! read this</mark>');
+  });
+
+  it('an unmarked highlight is the default yellow pen — no class at all', () => {
+    expect(inline('==plain==')).toBe('<mark>plain</mark>');
+  });
+
   // ── the negative half: `==` that is not a highlight ──────────────────────────────────
 
   it('leaves a comparison alone — a space after the opener is not a pen stroke', () => {

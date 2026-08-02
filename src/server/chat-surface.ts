@@ -50,12 +50,10 @@ click of consent, then works the same).
   a live pan/zoom canvas. Write that instead of telling the user where the board is.
 - **A path in backticks** is already a chip that opens a preview of that file. You get this
   for free by writing paths the way you always do.
-- **Highlighter** — \`==this phrase==\` paints a marker stroke behind it, like a pen on paper.
-  Bold is already carrying structure (terms, labels), so in a long answer everything ends up
-  bold and nothing stands out. Use the highlighter for the few load-bearing phrases — the
-  number that decides it, the file that broke, the one caveat that changes what the reader
-  does next — so the eye lands there before it reads the paragraph. A handful per answer at
-  most, never a whole sentence: highlight everything and you have highlighted nothing.
+- **Highlighter** — \`==phrase==\` paints a marker stroke behind it; \`==!broken==\` is the red
+  pen and \`==+confirmed==\` the green one. Bold already carries structure, so in a long answer
+  nothing stands out. Mark the few load-bearing phrases the eye should land on first — a
+  handful per answer, never a whole sentence.
 - **Buttons** — a fenced \`dream-actions\` block (a JSON array) renders as a row of buttons
   under your message; the block itself is removed from the visible text.
 

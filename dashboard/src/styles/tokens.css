@@ -166,6 +166,13 @@
      thing to avoid — it recolors the type, which breaks the moment the theme is dark. */
   --color-highlight: rgba(255, 226, 84, 0.72);
   --color-highlight-edge: rgba(240, 190, 20, 0.5);
+  /* Two more pens, because yellow can only say ATTENTION. `==!FAIL==` has to say BAD, and a
+     confirmation has to be able to say so without the reader parsing the sentence first.
+     Coral rather than a signal red: the ink sits under body text that must stay legible. */
+  --color-highlight-alarm: rgba(255, 128, 120, 0.5);
+  --color-highlight-alarm-edge: rgba(226, 60, 55, 0.5);
+  --color-highlight-good: rgba(120, 226, 150, 0.55);
+  --color-highlight-good-edge: rgba(30, 170, 90, 0.45);
 
   /* ─── Agent mascot mood palette (collapsed in-app agent states) ───
      Theme-independent state hues for the docked Sleepy agent. `thinking` and
@@ -287,6 +294,10 @@
      it is. Measured, not guessed: white over the resulting mix stays above 7:1. */
   --color-highlight: rgba(255, 216, 74, 0.36);
   --color-highlight-edge: rgba(255, 216, 74, 0.62);
+  --color-highlight-alarm: rgba(255, 110, 105, 0.34);
+  --color-highlight-alarm-edge: rgba(255, 110, 105, 0.6);
+  --color-highlight-good: rgba(74, 222, 128, 0.28);
+  --color-highlight-good-edge: rgba(74, 222, 128, 0.55);
 
   --color-status-todo: #ffae3b;
   --color-status-in-progress: #9d8cff;

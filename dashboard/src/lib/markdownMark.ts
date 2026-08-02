@@ -40,6 +40,19 @@ import { marked, type Tokens, type TokenizerAndRendererExtension } from 'marked'
  */
 const MARK_RE = /^==(?=[^\s=])([\s\S]*?[^\s=])==/;
 
+/**
+ * The pens. Yellow is the default and says ATTENTION; the other two say what KIND of
+ * attention, which is the thing a single-colour marker cannot do — `==FAIL==` in yellow marks
+ * the word without saying it is bad (owner report 08-02).
+ *
+ * The colour rides on one character right after the opener, so an unrendered `==!FAIL==` still
+ * reads as "!FAIL" rather than as markup. The trailing `(?=[a-zA-Z])` is what keeps ordinary
+ * prose out: `==+1 to that==` and `==!== ` are not pens, they are text — a highlight has to
+ * start with a WORD to be coloured.
+ */
+const PENS: Record<string, string> = { '!': 'mark-alarm', '+': 'mark-good' };
+const PEN_RE = /^([!+])(?=[a-zA-Z])/;
+
 const markExtension: TokenizerAndRendererExtension = {
   name: 'mark',
   level: 'inline',
@@ -52,16 +65,20 @@ const markExtension: TokenizerAndRendererExtension = {
   tokenizer(src: string) {
     const m = MARK_RE.exec(src);
     if (!m) return undefined;
+    const pen = PEN_RE.exec(m[1]);
+    const text = pen ? m[1].slice(1) : m[1];
     return {
       type: 'mark',
       raw: m[0],
-      text: m[1],
+      text,
+      pen: pen ? PENS[pen[1]] : '',
       // Inline-tokenized, so a highlight can carry a link, code or bold inside it.
-      tokens: this.lexer.inlineTokens(m[1]),
+      tokens: this.lexer.inlineTokens(text),
     };
   },
   renderer(token: Tokens.Generic) {
-    return `<mark>${this.parser.parseInline(token.tokens ?? [])}</mark>`;
+    const cls = typeof token.pen === 'string' && token.pen ? ` class="${token.pen}"` : '';
+    return `<mark${cls}>${this.parser.parseInline(token.tokens ?? [])}</mark>`;
   },
 };
 

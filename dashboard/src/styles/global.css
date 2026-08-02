@@ -27,13 +27,17 @@ body {
    line: the UA stylesheet repaints `<mark>` black-on-yellow, which is a contrast failure the
    moment the page is dark. */
 mark {
+  /* The pen is one pair of variables, so a coloured pen (`==!broken==`, `==+confirmed==`)
+     re-inks the same stroke instead of re-describing it. */
+  --mark-ink: var(--color-highlight);
+  --mark-edge: var(--color-highlight-edge);
   background: linear-gradient(
     to bottom,
     transparent 8%,
-    var(--color-highlight) 8%,
-    var(--color-highlight) 88%,
-    var(--color-highlight-edge) 88%,
-    var(--color-highlight-edge) 94%,
+    var(--mark-ink) 8%,
+    var(--mark-ink) 88%,
+    var(--mark-edge) 88%,
+    var(--mark-edge) 94%,
     transparent 94%
   );
   color: inherit;
@@ -46,6 +50,15 @@ mark {
      line break with a bite taken out of its middle. */
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
+}
+
+mark.mark-alarm {
+  --mark-ink: var(--color-highlight-alarm);
+  --mark-edge: var(--color-highlight-alarm-edge);
+}
+mark.mark-good {
+  --mark-ink: var(--color-highlight-good);
+  --mark-edge: var(--color-highlight-good-edge);
 }
 
 /* ClickUp's bright-canvas hub — Canvas White (#ffffff) with subtle Hint-of-Sky

@@ -49,7 +49,7 @@ const ANSWER_FILE = join(SCRATCH, 'answer.md');
 // diverged, and a shorter sample would have wrapped to one line and measured nothing.
 const ANSWER = `## Verdict
 
-==FAIL== — the language lock still contradicts itself.
+==!FAIL== — the language lock still contradicts itself.
 
 The fix landed in the prose section but was left untouched in both kernels, which still label
 "hello/hi/hey/ok/yes/punctuation-only" as ambiguous and lock to English, directly contradicting
@@ -74,8 +74,8 @@ first-ever language-neutral message that silently drops behavior the old text co
    punctuation-only. The new ladder should resolve to the configured widget language; the
    block below unconditionally directs the model to English instead.
 
-The wiring itself is logically sound but has zero test coverage, so nothing above would have
-been caught by the suite as it stands today.
+The wiring itself is ==+logically sound== but has zero test coverage, so nothing above would
+have been caught by the suite as it stands today.
 `;
 
 // ─── the scripted `claude` ────────────────────────────────────────────────────────────
@@ -299,6 +299,9 @@ async function runTheme(chromium, base, theme, report) {
       const parentColor = getComputedStyle(el.parentElement ?? el).color;
       return {
         text: (el.textContent ?? '').slice(0, 40),
+        pen: el.className || 'default',
+        // The resolved ink, so two pens can be compared as PAINT rather than as class names.
+        ink: cs.getPropertyValue('--mark-ink').trim(),
         hasInk: cs.backgroundImage !== 'none',
         // The UA stylesheet repaints <mark> black-on-yellow. Inheriting instead is what keeps
         // a highlighted phrase readable when the page is dark — and readable is the point.
@@ -317,6 +320,16 @@ async function runTheme(chromium, base, theme, report) {
   ok('a highlight long enough to wrap paints one stroke PER LINE (box-decoration-break: clone)',
     marks.some((m) => m.strokes >= 2) && marks.every((m) => m.clone),
     JSON.stringify(marks.map((m) => ({ strokes: m.strokes, clone: m.clone }))));
+
+  // The pens: `==!FAIL==` must not merely be classed red, it must PAINT red — and the marker
+  // characters themselves must be gone from what the reader sees.
+  const pens = Object.fromEntries(marks.map((m) => [m.pen, m.ink]));
+  ok('the red pen (==!phrase==) and the green pen (==+phrase==) both reached the transcript',
+    'mark-alarm' in pens && 'mark-good' in pens, JSON.stringify(pens));
+  ok('…and the three pens paint three DIFFERENT inks, not one class name apart',
+    new Set(Object.values(pens)).size === Object.keys(pens).length, JSON.stringify(pens));
+  ok('the pen character is consumed, never shown — the reader sees "FAIL", not "!FAIL"',
+    marks.every((m) => !/^[!+]/.test(m.text)), JSON.stringify(marks.map((m) => m.text)));
 
   // Clean numbers are necessary, not sufficient — this is the artifact a person looks at.
   const shot = process.env.VERIFY_SHOTS;

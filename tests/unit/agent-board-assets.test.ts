@@ -206,7 +206,15 @@ describe('CHAT_SURFACE_BRIEFING', () => {
     }
   });
 
+  /**
+   * A BUDGET, not a technical limit — the briefing is appended to the system prompt of every
+   * chat turn, so every character is paid for on every turn. Raised 3000 → 3400 on 2026-08-02
+   * when the highlighter (`==phrase==`, plus the `!`/`+` pens) was added: the ceiling had been
+   * sitting at 2992/3000, so the next capability was always going to move it. Moving it is
+   * allowed; moving it SILENTLY is what this test exists to prevent. Spend the headroom on a
+   * capability, not on prose — and compress the prose before raising the number again.
+   */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(3000);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(3400);
   });
 });
