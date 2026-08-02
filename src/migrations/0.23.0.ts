@@ -127,6 +127,17 @@ function parseUserSections(text: string): { preamble: string; sections: UserSect
   return { preamble, sections };
 }
 
+/** Every body filed under `## <title>` in `text` (a document may repeat a heading). */
+function sectionBodies(text: string, title: string): string[] {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const heads = findH2Heads(lines);
+  const want = title.trim().toLowerCase();
+  return heads
+    .map((head, k) => ({ head, end: k + 1 < heads.length ? heads[k + 1].at : lines.length }))
+    .filter(({ head }) => head.title.trim().toLowerCase() === want)
+    .map(({ head, end }) => lines.slice(head.at + 1, end).join('\n'));
+}
+
 /** True when `text` already carries `## <title>` (case-insensitive) — the heading-idempotency gate. */
 function hasHeading(text: string, title: string): boolean {
   const want = title.trim().toLowerCase();
@@ -267,27 +278,54 @@ function writeDoc(path: string, content: string): void {
 const PERSON_MARKER = /\(\s*`?person:([^)`]*)`?\s*\)\s*$/;
 
 /**
- * Punctuation a rendered roster row never contains — it all signals a sentence.
- * Only consulted for a DRIFTED row (marker gone); a row that still carries its
- * marker is judged by the exact slug identity instead, so a punctuated real
- * name is never failed by a heuristic.
+ * One token of a human name: opens with a letter, then letters, combining marks,
+ * apostrophes and INNER hyphens. `Jean-Luc`, `O'Brien`, `Nuraydın`, `Çimen` pass.
+ *
+ * A whitelist, not a punctuation blacklist. The blacklist this replaces listed
+ * the em dash and en dash and missed the plain `-`, so the single most common
+ * drift separator sailed through: `- Ada Lovelace - Engineer` became a person
+ * named "Ada Lovelace - Engineer". Enumerating what prose might contain is the
+ * same losing game as judging a bullet by its slug length — describe what a NAME
+ * is instead, and everything else falls out.
+ *
+ * Known limit, deliberately not chased: `- Ada Lovelace and Grace` is
+ * indistinguishable from a four-word name without judgment, so it is accepted.
+ * Chasing it means a conjunction list per language, which is judgment wearing a
+ * lookup table. The agentTask is told to check the roster for duplicates.
  */
-const PROSE_PUNCTUATION = /[.;:,—–()[\]{}<>/|]/;
+const NAME_TOKEN = /^\p{L}[\p{L}\p{M}'’-]*$/u;
 
-/** A human name the roster renderer would have written: short and unpunctuated. */
+/** A rendered roster row holds ONE person's name, not a sentence about them. */
 const MAX_NAME_WORDS = 5;
 
 function looksLikeAName(name: string): boolean {
-  if (!name || PROSE_PUNCTUATION.test(name)) return false;
-  if (name.split(/\s+/).length > MAX_NAME_WORDS) return false;
+  if (!name) return false;
+  const words = name.split(/\s+/);
+  if (words.length > MAX_NAME_WORDS) return false;
+  if (!words.every((word) => NAME_TOKEN.test(word))) return false;
   return isSafePersonSlug(slugify(name));
 }
 
 function parsePeopleBullets(body: string): { names: string[]; unparsed: string[] } {
   const names: string[] = [];
   const unparsed: string[] = [];
+  let fenced = false;
   for (const raw of body.split('\n')) {
     const line = raw.trim();
+    // A bullet inside a code fence is an EXAMPLE of a roster row, not one.
+    // `findH2Heads` has always known this; this loop did not, so a documented
+    // format sample — `- Jane Doe (`person:jane-doe`)` inside ``` — became a
+    // real person with a real constitution file. Fenced lines are prose: they
+    // are not names, and the section carrying them belongs to the agent.
+    if (/^(?:```|~~~)/.test(line)) {
+      fenced = !fenced;
+      unparsed.push(raw);
+      continue;
+    }
+    if (fenced) {
+      if (line) unparsed.push(raw);
+      continue;
+    }
     if (!line) continue;
     const bullet = /^[-*]\s+(.+?)\s*$/.exec(line);
     if (!bullet) {
@@ -673,7 +711,10 @@ function splitUserFile(root: string): MigrationStepResult {
   try {
     const { preamble, sections } = parseUserSections(readFileSync(userPath, 'utf-8'));
 
-    const toConstitution: UserSection[] = [];
+    // `source` is the section exactly as `1.user.md` held it. Kept because a
+    // constitution-bound section that the idempotency gate declines still has to
+    // land SOMEWHERE, and what lands must be the original, not the renamed copy.
+    const toConstitution: Array<UserSection & { source: UserSection }> = [];
     const toResidue: UserSection[] = [];
     const rosterNames: string[] = [];
     for (const section of sections) {
@@ -686,7 +727,7 @@ function splitUserFile(root: string): MigrationStepResult {
         // original body) so the agentTask can ask whose it is. Writing a
         // person's Preferences into someone else's file is the one outcome this
         // migration cannot walk back: the source is deleted at step 4.
-        if (ownerSlug) toConstitution.push({ title: constitutionTitle, body: section.body });
+        if (ownerSlug) toConstitution.push({ title: constitutionTitle, body: section.body, source: section });
         else toResidue.push(section);
         continue;
       }
@@ -723,6 +764,25 @@ function splitUserFile(root: string): MigrationStepResult {
       constitutionAdds = toConstitution.filter(
         (s) => existingConstitution === null || !hasHeading(existingConstitution, s.title),
       );
+      // A declined section is only safe to DROP when the target already holds
+      // that exact body — i.e. a previous run of this step wrote it and crashed
+      // before the unlink, which is the entire reason the gate exists. Anything
+      // else the gate declines is DIFFERENT prose that this step is about to
+      // delete the only other copy of, so it goes to the residue instead.
+      //
+      // Reachable without a crash: someone runs `people add`, hand-writes their
+      // `## Identity`, and only then upgrades. The gate saw the heading, dropped
+      // the richer `1.user.md` version, and unlinked the source. Silently — the
+      // count in the summary just read one lower.
+      for (const declined of toConstitution) {
+        if (constitutionAdds.includes(declined)) continue;
+        if (existingConstitution !== null
+          && sectionBodies(existingConstitution, declined.title)
+            .some((body) => normalizeBody(body) === normalizeBody(declined.body))) {
+          continue; // byte-for-byte already there: a resumed run, nothing owed
+        }
+        toResidue.push(declined.source);
+      }
       if (existingConstitution === null || constitutionAdds.length > 0) {
         const base = existingConstitution
           ?? `---\nname: ${ownerSlug}\ntype: person\nupdated: "${isoDate()}"\n---\n`;
