@@ -23,6 +23,25 @@ export interface MigrationStepResult {
    * Count of files that could NOT be migrated this run (write/verify/unlink
    * failure, or a torn/divergent pre-existing dest). 0 or absent = clean.
    * Presence signals a partial run: the caller MUST NOT advance setupVersion.
+   *
+   * ONLY FOR RETRYABLE FAILURES — a read-only mount, a torn file, a lost race.
+   * Never for content the step cannot deterministically interpret.
+   *
+   * The distinction is load-bearing, not stylistic. `runMigrations` re-runs every
+   * step on every `update` and sums `failedCount` BEFORE the ledger gate, and
+   * `migrateThenStampSetupVersion` pins `setupVersion` whenever that sum is > 0.
+   * So a step that reports `failedCount` for input it will never be able to parse
+   * pins the vault PERMANENTLY: the same content re-fails on every future run,
+   * `setupVersion` never advances, the drift check reports stale assets forever,
+   * and there is no supported recovery short of hand-editing
+   * `state/.config.json`. Two real vaults sat on 0.21.0 this way (0.23.0's
+   * `split-user-file`, on a `## People` block written as prose).
+   *
+   * Content the step cannot interpret is `agentTask` work by definition (D5:
+   * deterministic detection in the code step, judgment in the agentTask). Route
+   * it — to the residue, to a `detected` entry, to whatever the migration's
+   * agent path is — and return CLEAN. The agent finishing the job later is a
+   * completed migration; a pinned vault is not.
    */
   failedCount?: number;
 }

@@ -103,6 +103,21 @@ export function platformSkillRoot(projectRoot: string, _platform: PlatformId): s
 }
 
 /**
+ * Which agent platforms actually have the core skill installed on disk. This is
+ * the ONLY honest answer to "does this project have an agent platform?" —
+ * `.config.json.platforms` records what was *requested*, not what is present.
+ *
+ * Shared because two callers must agree: `update` refuses to run without one,
+ * and the launcher explains a failed update to the user. They disagreed once,
+ * and the launcher told people to run `install-skill` on fully-installed vaults.
+ */
+export function detectInstalledPlatforms(projectRoot: string): PlatformId[] {
+  return SUPPORTED_PLATFORMS.filter((p) =>
+    existsSync(join(platformSkillRoot(projectRoot, p), 'dreamcontext', 'SKILL.md')),
+  );
+}
+
+/**
  * Root directory where pack runtime assets (helper scripts, statusline
  * renderers, …) are installed for a given platform.
  * claude → <projectRoot>/.claude

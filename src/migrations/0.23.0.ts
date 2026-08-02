@@ -150,6 +150,25 @@ function writeDoc(path: string, content: string): void {
  * first place and the only way to guarantee a roster key that is a legal path
  * segment. Anything that is not a bullet is reported so the caller can route the
  * whole section to the residue instead of dropping prose.
+ *
+ * A bullet only counts as a roster row when its text slugifies to a LEGAL person
+ * slug. A hand-maintained `## People` block drifts into description —
+ *
+ *   - **mehmet** — Mehmet Nuraydın, Technical Product Manager / App Owner. Owns …
+ *
+ * — and that line slugifies to a 250-char string `PERSON_SLUG_RE` rejects. Which
+ * fragment of it is the person's NAME ("mehmet"? "Mehmet Nuraydın"?) is a
+ * judgment call, and D5 is explicit that a code step must not fake one: cutting
+ * at the em dash happens to be right here and silently mangles the next vault.
+ * So the bullet is reported as unparsed, its section goes to the residue whole,
+ * and `distribute-user-md-residue` places the people with `dreamcontext people
+ * add`. Guessing here is what the residue exists to avoid.
+ *
+ * This is also the interlock that keeps the step from FAILING on prose: an
+ * illegal slug reaching `addPerson` throws, and a thrown step reports
+ * `failedCount` — which pins `setupVersion` permanently, because the runner
+ * re-runs every step on every `update` and this input is deterministic. Two real
+ * vaults sat on 0.21.0 that way while their assets were already 0.23.0.
  */
 function parsePeopleBullets(body: string): { names: string[]; unparsed: string[] } {
   const names: string[] = [];
@@ -163,7 +182,7 @@ function parsePeopleBullets(body: string): { names: string[]; unparsed: string[]
       continue;
     }
     const name = bullet[1].replace(/\(\s*`?person:[^)]*`?\s*\)\s*$/, '').trim();
-    if (name) names.push(name);
+    if (name && isSafePersonSlug(slugify(name))) names.push(name);
     else unparsed.push(raw);
   }
   return { names, unparsed };
@@ -208,6 +227,10 @@ instruction, id \`distribute-user-md-residue\`). The routing:
 - **Workflow Notes** → \`knowledge/patterns/<slug>.md\`, moved as-is with honest
   frontmatter and an explicit "un-distilled" note
 - brand / palette / voice → \`core/3.style_guide_and_branding.md\`
+- **People** → \`dreamcontext people add\`. This section is here because its
+  bullets describe people rather than name them, so no code could tell the NAME
+  apart from the description without guessing. You can: read each bullet, decide
+  the person's name, and register them.
 
 NOTHING IS DISCARDED. A section with no home stays in this file and is reported.
 Delete this file only once every section below has been placed.
@@ -670,10 +693,10 @@ exist, there is nothing to distribute — record this step and stop.
 
 0.23.0 replaced _dream_context/${USER_FILE_REL} with one constitution per person
 (_dream_context/people/<slug>.md). The deterministic steps already moved
-Identity / Preferences / Communication Style into the owner's constitution and
-the '## People' roster into people/people.json. Everything else was copied
-VERBATIM into _dream_context/${RESIDUE_REL}, because deciding where prose belongs
-is judgment, not a string transform.
+Identity / Preferences / Communication Style into the owner's constitution, and
+every '## People' bullet that unambiguously NAMED a person into people/people.json.
+Everything else was copied VERBATIM into _dream_context/${RESIDUE_REL}, because
+deciding where prose belongs is judgment, not a string transform.
 
 Read the residue file and place each '## <Heading>' section:
 
@@ -687,6 +710,15 @@ Read the residue file and place each '## <Heading>' section:
   content is un-distilled and migrated from ${USER_FILE_REL}. Do not paraphrase
   it into something you did not verify.
 - brand / palette / tone / voice sections → core/3.style_guide_and_branding.md.
+- '## People' is here ONLY when its bullets describe people instead of naming
+  them ("- **mehmet** — Mehmet Nuraydin, Technical Product Manager. Owns ..."),
+  so no code could separate the NAME from the description without guessing.
+  Decide each person's name yourself and register them:
+  \`dreamcontext people add "<Name>" [--email <email>] [--role <role>]\`.
+  Then move any per-person prose into that person's people/<slug>.md, and check
+  people/people.json for a duplicate the seed step already created under a
+  different slug before you add a second one.
+
 - '## Preamble' holds prose that sat before the first heading. Place it by
   meaning, exactly like any other section.
 

@@ -12,7 +12,7 @@ import {
   platformSkillRoot,
   getOrCreateManifest,
 } from './install-skill.js';
-import { knownArtifactNames } from '../../lib/catalog.js';
+import { knownArtifactNames, detectInstalledPlatforms } from '../../lib/catalog.js';
 import {
   readManifest,
   writeManifest,
@@ -59,12 +59,6 @@ export function buildUpdateSummary(input: UpdateSummaryInput): string {
     lines.push(`Setup version: ${setupVersion}`);
   }
   return lines.join('\n');
-}
-
-function detectInstalledPlatforms(projectRoot: string): PlatformId[] {
-  return SUPPORTED_PLATFORMS.filter((p) =>
-    existsSync(join(platformSkillRoot(projectRoot, p), 'dreamcontext', 'SKILL.md')),
-  );
 }
 
 function detectInstalledPacks(projectRoot: string, platforms: PlatformId[]): string[] {

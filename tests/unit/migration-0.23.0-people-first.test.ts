@@ -346,6 +346,63 @@ describe('migration 0.23.0 — people-first', () => {
       expect(read(v, 'inbox/1.user-residue.md')).toContain('Grace only works Tuesdays.');
     });
 
+    it('a descriptive `## People` bullet goes to the residue — the step never fails', () => {
+      // The real h-f_dreamcontext / memoryos block: bullets that DESCRIBE people
+      // instead of naming them. Slugifying the whole line yields a 250-char
+      // string PERSON_SLUG_RE rejects, which used to throw out of addPerson and
+      // report failedCount — pinning setupVersion on every future `update`,
+      // permanently, because the runner re-runs each step and this input is
+      // deterministic. Both vaults sat on 0.21.0 with 0.23.0 assets installed.
+      //
+      // Which fragment is the NAME ("mehmet"? "Mehmet Nuraydın"?) is judgment,
+      // so per D5 the step must route, not guess: section → residue → agentTask.
+      writeConfig(v, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(
+        v,
+        '## People\n\n'
+        + '- **mehmet** — Mehmet Nuraydın, Technical Product Manager / App Owner. '
+        + 'Primary brain operator; owns product, funnel, roadmap, ad-spend. '
+        + 'Operates 360°; codes from wireframes, prefers building in-house.\n',
+      );
+
+      const [, split] = runPeopleFirst(v.root);
+
+      // THE regression: a clean run is what lets setupVersion advance.
+      expect(split.failedCount ?? 0).toBe(0);
+      // Not guessed into the roster under some mangled slug.
+      expect(Object.keys(readPeople(v.root))).toEqual(['ada-lovelace']);
+      // Verbatim in the residue, with the agent told to place it.
+      const residue = read(v, 'inbox/1.user-residue.md');
+      expect(residue).toContain('## People');
+      expect(residue).toContain('**mehmet** — Mehmet Nuraydın');
+      expect(residue).toContain('dreamcontext people add');
+      // And the source is retired: the split completed.
+      expect(has(v, 'core/1.user.md')).toBe(false);
+    });
+
+    it('a descriptive bullet does not suppress a canonical one in the same block', () => {
+      writeConfig(v, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(
+        v,
+        '## People\n\n'
+        + '- Grace Hopper (`person:grace-hopper`)\n'
+        + '- **bektas** — Bektaş Çimen, in-house developer. Drives engineering '
+        + 'implementation sessions and owns the deploy pipeline end to end.\n',
+      );
+
+      const [, split] = runPeopleFirst(v.root);
+
+      expect(split.failedCount ?? 0).toBe(0);
+      // The unambiguous row still becomes structure...
+      expect(readPeople(v.root)['grace-hopper']).toBeDefined();
+      // ...and the block still reaches the agent, because one bullet needs judgment.
+      expect(read(v, 'inbox/1.user-residue.md')).toContain('Bektaş Çimen');
+    });
+
     it('a 1.user.md with zero H2s sends everything to the residue', () => {
       writeConfig(v, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
       git.name = 'Ada Lovelace';
