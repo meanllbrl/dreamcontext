@@ -428,6 +428,40 @@ describe('migration 0.23.0 — people-first', () => {
       expect(read(v, 'inbox/1.user-residue.md')).toContain('Owns the deploy pipeline.');
     });
 
+    /**
+     * The marker is stronger evidence than any heuristic: the renderer wrote it,
+     * and a name that slugifies back to the slug it claims cannot be prose. The
+     * shape test must not get a vote on a row that still carries one, or a real
+     * punctuated name is failed by a rule with no business judging it.
+     */
+    it('a marked row survives a name the shape test would have rejected', () => {
+      writeConfig(v, { platforms: [], packs: [], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(v, '## People\n\n- Dr. Jane Smith (`person:dr-jane-smith`)\n');
+
+      runPeopleFirst(v.root);
+
+      expect(readPeople(v.root)['dr-jane-smith'].name).toBe('Dr. Jane Smith');
+      expect(has(v, 'inbox/1.user-residue.md')).toBe(false);
+    });
+
+    it('a marker does NOT launder prose — the name must slugify back to it', () => {
+      writeConfig(v, { platforms: [], packs: [], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(
+        v,
+        '## People\n\n- **mehmet** — Mehmet Nuraydın, TPM. Owns roadmap (`person:mehmet`)\n',
+      );
+
+      const [, split] = runPeopleFirst(v.root);
+
+      expect(split.failedCount ?? 0).toBe(0);
+      expect(Object.keys(readPeople(v.root))).toEqual(['ada-lovelace']);
+      expect(read(v, 'inbox/1.user-residue.md')).toContain('Owns roadmap');
+    });
+
     it('still reads the roster rows the renderer actually wrote', () => {
       writeConfig(v, { platforms: [], packs: [], setupVersion: '0.22.0' });
       git.name = 'Ada Lovelace';
@@ -627,6 +661,32 @@ describe('migration 0.23.0 — people-first', () => {
       expect(constitution).toContain('- Terse. No preamble, no summary of the summary.');
       expect(constitution).not.toContain('(Who this person is:');
       expect(constitution).not.toContain('(Decision-making patterns');
+    });
+
+    /**
+     * "Every line is parenthesised" was the first version of the slot check, and
+     * it would have deleted a real sentence that happens to wear parentheses.
+     * The check recognises the TEMPLATE's own text, not a shape placeholders
+     * happen to have — the same distinction the roster gate had to learn.
+     */
+    it('parenthesised prose a person actually wrote is not mistaken for a slot', () => {
+      writeConfig(v, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(v);
+      mkdirSync(join(v.root, 'people'), { recursive: true });
+      writeFileSync(
+        join(v.root, 'people', 'ada-lovelace.md'),
+        '---\nname: ada-lovelace\ntype: person\nupdated: "2026-01-01"\n---\n\n'
+        + '## Preferences\n\n- (see the team handbook, section 4)\n',
+        'utf-8',
+      );
+
+      runPeopleFirst(v.root);
+
+      const constitution = read(v, 'people/ada-lovelace.md');
+      expect(constitution).toContain('- (see the team handbook, section 4)');
+      expect(constitution).not.toContain('- Ship small, reviewable diffs.');
     });
 
     it('a constitution that already holds REAL prose is still never re-appended', () => {

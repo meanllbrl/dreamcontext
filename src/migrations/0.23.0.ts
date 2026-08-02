@@ -136,16 +136,45 @@ function hasHeading(text: string, title: string): boolean {
   });
 }
 
-/**
- * The person template's guidance prose — `- (Who this person is: role, focus…)`.
- * A body made only of these lines (or of nothing) is a slot, not content.
- */
-const PLACEHOLDER_LINE = /^\s*[-*]?\s*\(.*\)\s*$/;
+function normalizeBody(body: string): string {
+  return body.split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+}
 
 /**
- * Remove `## <title>` sections whose body is nothing but template placeholders,
- * for the titles we are about to write. Every other byte — frontmatter, other
- * sections, spacing — is preserved.
+ * The person template's own section bodies, DERIVED from
+ * `renderPersonConstitution` rather than restated — a copy here would drift the
+ * moment the template is reworded, and a stale copy silently stops recognising
+ * scaffolds (which is data loss, not a cosmetic miss).
+ *
+ * Exact matching is also complete, not just safe: `people/` was introduced by
+ * 0.23.0 and the template has existed in exactly one form, so every scaffold in
+ * the wild carries this text verbatim.
+ */
+const TEMPLATE_SECTION_BODIES = new Map(
+  parseUserSections(renderPersonConstitution({ name: 'Placeholder', slug: 'placeholder', date: '1970-01-01' }))
+    .sections.map((s) => [s.title.trim().toLowerCase(), normalizeBody(s.body)] as const),
+);
+
+/**
+ * A slot, not content: this section's body is EXACTLY the template's guidance
+ * for that heading, or empty.
+ *
+ * Deliberately not "every line is parenthesised" — that was the first version of
+ * this check and it would have eaten `## Preferences\n\n- (see the team
+ * handbook)`, a real sentence a real person wrote. Recognising a shape that
+ * placeholders happen to have is the same mistake as judging a roster row by
+ * its slug length; recognise the placeholder itself.
+ */
+function isTemplateSlot(title: string, body: string[]): boolean {
+  const normalized = normalizeBody(body.join('\n'));
+  if (normalized === '') return true;
+  return normalized === TEMPLATE_SECTION_BODIES.get(title.trim().toLowerCase());
+}
+
+/**
+ * Remove `## <title>` sections that are still template slots, for the titles we
+ * are about to write. Every other byte — frontmatter, other sections, spacing —
+ * is preserved.
  *
  * This is what keeps the heading-idempotency gate from turning into silent data
  * loss. The gate skips any heading already present in the target, and
@@ -167,8 +196,7 @@ function stripPlaceholderSections(text: string, titles: Set<string>): string {
   heads.forEach((head, k) => {
     if (!titles.has(head.title.trim().toLowerCase())) return;
     const end = k + 1 < heads.length ? heads[k + 1].at : lines.length;
-    const body = lines.slice(head.at + 1, end);
-    if (!body.every((l) => l.trim() === '' || PLACEHOLDER_LINE.test(l))) return;
+    if (!isTemplateSlot(head.title, lines.slice(head.at + 1, end))) return;
     for (let i = head.at; i < end; i++) drop.add(i);
   });
   if (drop.size === 0) return text;
@@ -217,7 +245,16 @@ function writeDoc(path: string, content: string): void {
  * "**bektas** — Bektaş Çimen, in-house developer…" on the roster — with their
  * own constitution file and a duplicate of the real Bektaş sitting next to it.
  * A gate whose verdict depends on sentence length is a coin flip wearing a
- * regex, so the shape test comes first and the slug check only confirms it.
+ * regex.
+ *
+ * So there are two verdicts, and the STRONGER evidence is used when present:
+ *   - The row still carries the rendered `(\`person:<slug>\`)` marker. Then the
+ *     row is a roster row iff the name slugifies back to exactly that slug —
+ *     an identity the renderer always satisfies and prose never does. This is
+ *     exact, so a punctuated real name ("Dr. Jane Smith") is kept rather than
+ *     failed by a heuristic that has no business judging it.
+ *   - The marker is gone (a drifted roster). Only then does shape decide: a
+ *     short phrase with no sentence punctuation, that slugifies legally.
  *
  * This is also the interlock that keeps the step from FAILING on prose: an
  * illegal slug reaching `addPerson` throws, and a thrown step reports
@@ -226,16 +263,21 @@ function writeDoc(path: string, content: string): void {
  * vaults sat on 0.21.0 that way while their assets were already 0.23.0.
  */
 
+/** The rendered marker, capturing the slug it asserts. */
+const PERSON_MARKER = /\(\s*`?person:([^)`]*)`?\s*\)\s*$/;
+
 /**
- * Punctuation a RENDERED roster row never contains — it all signals a sentence.
- * (The `(\`person:<slug>\`)` marker is stripped before this test runs.)
+ * Punctuation a rendered roster row never contains — it all signals a sentence.
+ * Only consulted for a DRIFTED row (marker gone); a row that still carries its
+ * marker is judged by the exact slug identity instead, so a punctuated real
+ * name is never failed by a heuristic.
  */
 const PROSE_PUNCTUATION = /[.;:,—–()[\]{}<>/|]/;
 
 /** A human name the roster renderer would have written: short and unpunctuated. */
 const MAX_NAME_WORDS = 5;
 
-function namesAPerson(name: string): boolean {
+function looksLikeAName(name: string): boolean {
   if (!name || PROSE_PUNCTUATION.test(name)) return false;
   if (name.split(/\s+/).length > MAX_NAME_WORDS) return false;
   return isSafePersonSlug(slugify(name));
@@ -252,11 +294,18 @@ function parsePeopleBullets(body: string): { names: string[]; unparsed: string[]
       unparsed.push(raw);
       continue;
     }
+    const marker = PERSON_MARKER.exec(bullet[1]);
     const name = bullet[1]
-      .replace(/\(\s*`?person:[^)]*`?\s*\)\s*$/, '') // the rendered slug marker
+      .replace(PERSON_MARKER, '')
       .replace(/^[*_`]+|[*_`]+$/g, '') // `- **Ada Lovelace**` is still a roster row
       .trim();
-    if (namesAPerson(name)) names.push(name);
+    // With the marker: the row is a roster row iff the name slugifies back to
+    // the slug it claims — exact, and the only test that needs no judgment.
+    // Without it: shape is all that is left.
+    const accepted = marker
+      ? name !== '' && isSafePersonSlug(slugify(name)) && slugify(name) === marker[1].trim()
+      : looksLikeAName(name);
+    if (accepted) names.push(name);
     else unparsed.push(raw);
   }
   return { names, unparsed };
