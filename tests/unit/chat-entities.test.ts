@@ -1872,6 +1872,67 @@ describe('segmentToolRuns', () => {
   });
 });
 
+// ─── Invisible items are not boundaries (owner report 08-02) ───────────────────────
+//
+// What shipped broken: a thinking model opens a thinking block before nearly every tool
+// call, and the encrypted kind arrives with NO text — an item drawing zero pixels. It
+// counted as a run breaker, so a 19-call stretch became runs of one and two, all under
+// MIN_TOOL_RUN, and the reader saw 19 ungrouped rows with visibly nothing between them.
+
+describe('segmentToolRuns · an item that renders NOTHING', () => {
+  const ghost = (id: string) => ({ kind: 'thinking' as const, id });
+  const isGhost = (i: { kind: string }) => i.kind === 'thinking';
+
+  it('does not break the run — the field case, one empty thinking block per call', () => {
+    const items = [tool('a'), ghost('g1'), tool('b'), ghost('g2'), tool('c')];
+    const segs = segmentToolRuns(items, isTool, MIN_TOOL_RUN, isGhost);
+    const run = segs.find((s) => s.kind === 'run');
+    expect(run && run.kind === 'run' && run.items).toEqual([tool('a'), tool('b'), tool('c')]);
+  });
+
+  it('is still emitted — held, never dropped or duplicated', () => {
+    const items = [tool('a'), ghost('g1'), tool('b'), ghost('g2'), tool('c')];
+    const flat = segmentToolRuns(items, isTool, MIN_TOOL_RUN, isGhost)
+      .flatMap((s) => (s.kind === 'run' ? s.items : [s.item]));
+    expect([...flat].sort((x, y) => x.id.localeCompare(y.id)))
+      .toEqual([...items].sort((x, y) => x.id.localeCompare(y.id)));
+  });
+
+  it('keeps VISIBLE order exact — the ghosts come back out after the run they sat in', () => {
+    const segs = segmentToolRuns(
+      [tool('a'), ghost('g'), tool('b'), tool('c'), text('t'), tool('d')],
+      isTool, MIN_TOOL_RUN, isGhost,
+    );
+    expect(segs.map((s) => (s.kind === 'run' ? `run:${s.items.map((i) => i.id).join('')}` : s.item.id)))
+      .toEqual(['run:abc', 'g', 't', 'd']);
+  });
+
+  it('outside a run it is a plain single — output identical to before the fix', () => {
+    const items = [ghost('g'), tool('a'), tool('b')];
+    expect(segmentToolRuns(items, isTool, MIN_TOOL_RUN, isGhost))
+      .toEqual(segmentToolRuns(items, isTool));
+  });
+
+  it('a stretch still under MIN_TOOL_RUN stays singles, in exact original order', () => {
+    const items = [tool('a'), ghost('g'), tool('b')];
+    expect(segmentToolRuns(items, isTool, MIN_TOOL_RUN, isGhost).map((s) => s.kind === 'single' && s.item.id))
+      .toEqual(['a', 'g', 'b']);
+  });
+
+  it('a VISIBLE non-groupable item still breaks the run — the fix widened nothing else', () => {
+    const segs = segmentToolRuns(
+      [tool('a'), tool('b'), tool('c'), text('t'), tool('d'), tool('e'), tool('f')],
+      isTool, MIN_TOOL_RUN, isGhost,
+    );
+    expect(segs.map((s) => s.kind)).toEqual(['run', 'single', 'run']);
+  });
+
+  it('defaults to opaque — a caller that passes no predicate behaves exactly as before', () => {
+    const items = [tool('a'), ghost('g'), tool('b'), ghost('g2'), tool('c')];
+    expect(segmentToolRuns(items, isTool).every((s) => s.kind === 'single')).toBe(true);
+  });
+});
+
 // ─── toolRunKeyItem (owner report 08-01, second pass) ───────────────────────────
 //
 // The run card's React key must come from the run edge the window cannot move. Keyed on the

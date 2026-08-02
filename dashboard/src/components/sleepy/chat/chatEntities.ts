@@ -948,22 +948,39 @@ export const MIN_TOOL_RUN = 3;
  * a bypass receipt). Those must break a run rather than disappear into one — so the predicate
  * asks "does this render as a plain tool card?", which only the caller can answer.
  *
- * Order is preserved exactly; no item is dropped, duplicated, or reordered.
+ * `rendersNothing` is the other half of that question, and the reason this shipped broken
+ * (owner report 08-02). A run breaks on what the reader can SEE between two calls — an item
+ * that draws zero pixels is not a boundary, it is an absence. So such an item neither joins a
+ * run nor ends one: it is held and re-emitted as a single once the run around it resolves.
+ *
+ * Nothing is dropped or duplicated. Visible order is exact; an invisible item that sat
+ * INTERIOR to a run comes back out just after it, which is unobservable by construction —
+ * a run renders as ONE card, so there is no interior position for it to hold.
  */
 export function segmentToolRuns<T>(
   items: readonly T[],
   isGroupable: (item: T) => boolean,
   minRun: number = MIN_TOOL_RUN,
+  rendersNothing: (item: T) => boolean = () => false,
 ): RunSegment<T>[] {
   const out: RunSegment<T>[] = [];
-  let run: T[] = [];
+  /** The open stretch: groupable items plus any invisible ones caught between them. */
+  let pending: { item: T; groupable: boolean }[] = [];
   const flush = () => {
-    if (run.length >= minRun) out.push({ kind: 'run', items: run });
-    else for (const item of run) out.push({ kind: 'single', item });
-    run = [];
+    const run = pending.filter((p) => p.groupable).map((p) => p.item);
+    if (run.length >= minRun) {
+      out.push({ kind: 'run', items: run });
+      for (const p of pending) if (!p.groupable) out.push({ kind: 'single', item: p.item });
+    } else {
+      for (const p of pending) out.push({ kind: 'single', item: p.item });
+    }
+    pending = [];
   };
   for (const item of items) {
-    if (isGroupable(item)) run.push(item);
+    if (isGroupable(item)) pending.push({ item, groupable: true });
+    // Only worth holding INSIDE an open stretch. With nothing open it is just a single,
+    // and emitting it straight keeps the common case's output identical to before.
+    else if (pending.length && rendersNothing(item)) pending.push({ item, groupable: false });
     else { flush(); out.push({ kind: 'single', item }); }
   }
   flush();

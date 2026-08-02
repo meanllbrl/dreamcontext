@@ -7,7 +7,7 @@ import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
   nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent,
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
-  remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem,
+  remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
   type SubAgentRun, type ScrollIntent, type RunSegment,
 } from './chat/chatEntities';
 import { isDreamcontextCommand } from './chat/dreamCommand';
@@ -1009,6 +1009,30 @@ export function ChatPane({
     if (isDreamcontextCommand(bashCommand(item) ?? undefined)) return false;
     return true;
   };
+
+  // ── What renders as NOTHING (owner report 08-02) ──────────────────────────────────────
+  //
+  // The other half of `isPlainToolCard`, and the reason grouping looked broken in the field.
+  // A thinking model opens a thinking block before nearly every tool call, and when that
+  // block is the encrypted kind the CLI streams it with NO text at all (`thinking: ""`,
+  // signature only) — an item that draws zero pixels. Between every pair of calls sat one of
+  // these, so a 19-call stretch segmented into runs of one and two, every one of them under
+  // MIN_TOOL_RUN, and the reader saw 19 ungrouped rows with visibly nothing between them.
+  // A run must break on what the reader can SEE; an item that renders nothing is an absence,
+  // not a boundary, so `segmentToolRuns` holds it instead of ending the run.
+  //
+  // Each branch mirrors an actual `return null` in the transcript's own components — nothing
+  // is guessed invisible. The one null branch deliberately NOT mirrored is the second and
+  // later sub-agent tool item (`itemNode`: the combined SubAgentCard is already shown): the
+  // FIRST one is visible and breaks the stretch anyway, so the rest can only ever follow a
+  // break, never sit interior to a run — mirroring it would buy nothing and would duplicate
+  // `subAgentCardShown`'s render-order bookkeeping in a predicate that runs before rendering.
+  const rendersNothing = (item: ChatItem): boolean => {
+    if (item.kind === 'thinking') return !item.text;          // ThinkingBlock's own null branch
+    if (item.kind === 'text') return !item.text && item.done;  // AssistantMessage's null branch
+    return false;
+  };
+
   // `stillAccruing` (see `toolRunPhase`) is true only for a run that is the LAST thing in the
   // live transcript while the turn is still going — i.e. the next tool call would join it.
   // The moment the agent emits its answer, that run stops being the tail and collapses.
@@ -1038,10 +1062,21 @@ export function ChatPane({
   // Segmentation happens INSIDE each windowed slice, so a run can never straddle the window
   // edge (revealing older entries would otherwise re-shape a group the reader is looking at)
   // nor the history/live boundary.
-  const historySegments = segmentToolRuns(conv.history.slice(historyFrom), isPlainToolCard);
-  const liveSegments = segmentToolRuns(conv.items.slice(itemsFrom), isPlainToolCard);
+  const historySegments = segmentToolRuns(conv.history.slice(historyFrom), isPlainToolCard, MIN_TOOL_RUN, rendersNothing);
+  const liveSegments = segmentToolRuns(conv.items.slice(itemsFrom), isPlainToolCard, MIN_TOOL_RUN, rendersNothing);
   const historyNodes = historySegments.map((seg) => renderSegment(seg, false));
-  const liveNodes = liveSegments.map((seg, i) => renderSegment(seg, i === liveSegments.length - 1));
+  // The accruing tail is the last segment that SHOWS something, not the last segment. An
+  // empty thinking block is re-emitted after the run it sat inside (see `segmentToolRuns`),
+  // and by array position alone that invisible single would demote the live run from tail to
+  // not-tail — collapsing the group to "N steps" mid-turn, which is exactly the flicker
+  // `stillAccruing` exists to prevent.
+  let liveTail = liveSegments.length - 1;
+  while (liveTail >= 0) {
+    const seg = liveSegments[liveTail];
+    if (seg.kind === 'run' || !rendersNothing(seg.item)) break;
+    liveTail -= 1;
+  }
+  const liveNodes = liveSegments.map((seg, i) => renderSegment(seg, i === liveTail));
   // A sub-agent run whose spawning tool call never appeared as its own ChatToolItem (an
   // edge case in raw frame ordering) still needs its card SOMEWHERE — append it once, after
   // the live transcript, rather than silently dropping the whole group. This ALSO covers the

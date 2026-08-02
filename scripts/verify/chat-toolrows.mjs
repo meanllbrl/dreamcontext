@@ -12,6 +12,8 @@
  *   3. a collapsed row is 32px and adjacent rows sit 8px apart (58px → 40px per call)
  *   4. a contiguous run of ≥3 calls is ONE card: open while live, collapsed once the agent
  *      speaks again, re-openable and then sticky
+ *   5. (08-02) a run survives the EMPTY thinking block a thinking model opens before nearly
+ *      every tool call — an item that draws zero pixels cannot be a run boundary
  *
  * WHAT IT DRIVES — the real dashboard server, the real `/ws/agent-chat` route, and the real
  * React surface in Chromium. Nothing is imported and called directly; every number below is
@@ -67,7 +69,24 @@ const SHORT = [
   { name: 'WebFetch', input: { url: 'https://docs.anthropic.com/en/api/x' }, result: 'fetched' },
 ];
 
+// The frames a THINKING model really sends before nearly every tool call, copied from a live
+// transcript (owner report 08-02). The ENCRYPTED kind carries no text at all — a signature and
+// nothing else — so the transcript draws zero pixels for it, and the earlier version of this
+// stand-in, which went straight from one tool_use to the next, was politer than any real CLI:
+// it never produced the item that was shattering every run in the field.
+let blockIndex = 0;
+async function ghostThink() {
+  const index = ++blockIndex;
+  const sig = 'CAIS9AMKhwEIEBgCKkCRt9xBwAmZPQ' + index;
+  out({ type: 'stream_event', event: { type: 'content_block_start', index, content_block: { type: 'thinking', thinking: '', signature: '' } } });
+  out({ type: 'stream_event', event: { type: 'content_block_delta', index, delta: { type: 'signature_delta', signature: sig } } });
+  out({ type: 'stream_event', event: { type: 'content_block_stop', index } });
+  out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: sig }] } });
+  await sleep(40);
+}
+
 async function call(step, pauseMs) {
+  await ghostThink();
   const id = 'toolu_' + (++seq);
   out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: step.name, input: step.input }] } });
   await sleep(pauseMs);
@@ -206,8 +225,13 @@ async function runTheme(chromium, base, theme, report) {
 
   // ── 4a — the run groups, and is OPEN while it is live ─────────────────────────────
   console.log('── group: open while live');
-  ok('a run of ≥3 adjacent tool calls became ONE group card',
+  ok('a run of ≥3 adjacent tool calls became ONE group card — ACROSS the empty thinking block '
+    + 'the model opens before every one of them (owner report 08-02)',
     await until(async () => (await vis('.chat-toolrun').count()) === 1, 20000));
+  ok('…and that block really is invisible — nothing was drawn between the calls, which is '
+    + 'why it may not break the run',
+    (await page.locator('.chat-m-thinking').count()) === 0,
+    `${await page.locator('.chat-m-thinking').count()} thinking pills on screen`);
   ok('while it is live the group is OPEN — the reader can watch it work',
     await until(async () => (await vis('.chat-toolrun[data-open]').count()) === 1, 10000));
   ok('the live header reads "Working", not a summary that rewrites itself every second',
