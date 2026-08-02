@@ -549,7 +549,11 @@ export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherPro
 
   return (
     <div
-      className={`space${focus?.kind === 'vault' ? ' space--focus' : ''}`}
+      // `surface-night`: the sky has no light theme, so the canvas pins the dark
+      // palette for everything inside it (see tokens.css). In light mode the app's
+      // own tokens are dark-on-light, and every one of them landed on a black sky —
+      // chip labels, the HUD hint, the open card and the cockpit all went dark-on-dark.
+      className={`space surface-night${focus?.kind === 'vault' ? ' space--focus' : ''}`}
       ref={rootRef}
       data-no-drag
       onWheel={onWheel}

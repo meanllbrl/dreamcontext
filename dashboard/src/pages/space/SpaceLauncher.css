@@ -18,6 +18,13 @@
     radial-gradient(120% 90% at 50% 45%, rgba(103, 65, 217, 0.16) 0%, rgba(10, 10, 18, 0) 62%),
     radial-gradient(80% 60% at 12% 88%, rgba(56, 189, 248, 0.08) 0%, rgba(10, 10, 18, 0) 70%),
     #08080f;
+  /* The canvas carries `surface-night` (see tokens.css), which makes every
+     `var(--color-*)` inside it resolve to the dark palette — but a republished
+     token cannot reach text that never asks for one. Anything relying on plain
+     inheritance (the wire cockpit's head, for one) would keep the LIGHT ink handed
+     down by .launcher and paint it on the sky. So the root states its own colour
+     and the whole subtree inherits night. */
+  color: var(--color-text);
   cursor: grab;
   touch-action: none;
   user-select: none;

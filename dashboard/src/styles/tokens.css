@@ -233,8 +233,17 @@
 
 /* ─── Dark Mode — ClickUp doesn't ship a canonical dark, so we derive:
    deep navy canvas → slightly lifted cards → tinted chips with high-contrast text.
-   Keep Deep Violet accent (it pops against dark). All chip/tag text must be AA on chip bg. */
-[data-theme='dark'] {
+   Keep Deep Violet accent (it pops against dark). All chip/tag text must be AA on chip bg.
+
+   `.surface-night` republishes this exact palette on ONE element, for a surface
+   that is dark in BOTH themes — a starfield, a canvas, anything whose backdrop is
+   its own subject rather than the page's. Without it, such a surface has to pick a
+   fixed light colour per rule and re-litigate that choice on every new rule; miss
+   one and light mode paints dark-on-dark (which is precisely how the Space
+   launcher's project labels went invisible). Put the class on the surface root and
+   everything inside keeps using the ordinary tokens. */
+[data-theme='dark'],
+.surface-night {
   --color-bg: #14171f;                         /* deep navy canvas */
   --color-bg-secondary: #1c1f2a;               /* card surface */
   --color-bg-tertiary: #2a2f3d;                /* chip / tag / input on card */

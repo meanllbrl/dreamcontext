@@ -117,6 +117,45 @@ branch). Copy-based sync is parked on the roadmap; federation is live-reference 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-08-02]** The Space is night in BOTH themes, and says so with one class. In
+  light mode every `var(--color-*)` inside the canvas resolved to the app's dark-on-light
+  palette and painted itself on a black sky — project labels measured **1.3:1**, the HUD
+  hint 2.15:1, i.e. invisible. Rejected: a light "day sky" (stars, gas clouds and the core
+  halo are all designed for black — that is a redesign, not a fix) and the per-rule fixed
+  colours the FederationBoard uses (24 sites here, and every future rule re-litigates it —
+  which is how this bug arrived in the first place). Instead `tokens.css` gained
+  `.surface-night`, a second selector on the dark-theme block that republishes the SAME
+  palette on one element; `.space` wears it, and the whole subtree keeps using ordinary
+  tokens. A republished token cannot reach text that never asks for one, so `.space` also
+  states `color: var(--color-text)` explicitly — without it the wire cockpit's head kept
+  inheriting light ink from `.launcher`. After: worst on-canvas text 7.66:1, chip labels
+  16.61:1. `e2e/verify-space.mjs` grew a light-mode pass that composites each label over
+  its real backdrop down to the sky and fails under AA (negative control: strip the class →
+  1.3:1, check fails). 28/28.
+- **[2026-08-01]** The `shareable` read gate is retired (commit `6bf9871`). Drawing a
+  connection IS the consent, end to end. A vault could be wired and still return nothing
+  (when `shareable: false`), which read as "federation is broken" far more often than
+  "privacy" — these are one person's own projects on one machine. The toggle is gone from
+  the CLI, the config route, Settings, and the launcher. `.config.json` still round-trips
+  the old key for compatibility, but nothing branches on it. All wires are now active by
+  construction. The `/api/launcher/shareable` route still exists (no-op gate — round-trips
+  the value without enforcing it); the `shareable` field in `VaultStatus` is kept for
+  backward compatibility but is not rendered or consulted. User stories + ACs still
+  mentioning "shareable" reflect the historical surface, not current behavior.
+- **[2026-08-01]** The Space replaces the force-directed graph AND the card grid
+  (commit `6bf9871`). Geometry carries meaning: RADIUS = recency (last-opened on inner
+  ring, never-opened at edge, from `lastOpenedAt` registry field stamped on every open
+  via `POST /api/launcher/touch`), ANGLE = kinship (federated projects in a contiguous
+  arc + gas cloud). The sky is unit-tested (`spaceLayout.ts`) — pure, never a simulation.
+  Interaction: chips are real buttons (tab/arrow), search dims non-matches in place, rings
+  absorb new projects without crowding, the sky rotates/zooms/drifts (pausing on hover,
+  silent under `prefers-reduced-motion`), clicking a chip expands its card ON THE SPOT
+  (nudged on-canvas as far as edges demand). Drag one project onto another to wire. Wires
+  get a 40px invisible hit band; the sky ripples when a wire is drawn/cut so changes never
+  land silently. Two placement bugs fixed: SVG collapsed to zero width by `reset.css`
+  `max-width: 100%` (sky painted off-canvas), and `translate(-50%, -50%)` shoved instead
+  of centering (default `transform-origin` is element center — chips sat off-ring by half
+  their width). `e2e/verify-space.mjs` — 26/26 checks, geometry through wiring.
 - **[2026-07-05]** Modeless direct-manipulation redesign. The old Connect/View toggle is removed. All interactions are now direct: drag-to-wire (animated preview), click-card-to-inspect (detail panel with Connect arming), click-wire-to-edit (in-place popover with per-direction Remove + Make-Readable action). Card press is claimed at capture phase so d3-zoom pan only triggers on empty-canvas press. Auto-fit viewport runs only on first layout, not after mutations, to keep the viewport stable. Success/warn feedback banners with inline fix actions replace silent operations. ~50 i18n keys added (`federation.map.*`). Two bugs fixed: (1) launcher window missing I18nProvider; (2) d3-zoom pans on mousedown not pointerdown — custom drag must cancel compat mouse event. Layout tuned for sparse graphs: softened charge repulsion, added center pull + collision radius, auto-fit zoom floor 0.9. FederationBoard.tsx rewritten (1211 lines), made reusable (`variant="full"|"embedded"`).
 - **[2026-06-15]** Sync/teal wires removed from the graph (read-only federation pivot). The prior `WireKind = 'reads' | 'sync'` branch, `SYNC`/`SYNC_SOFT` colors, `wireKind` state, and `useCreateSync`/`useRemoveSync` hooks are deleted. The graph now renders only violet read wires. Copy-based sync is parked on the roadmap; if it returns, `WireKind` gains a new member and the graph rendering is restored then. Dead sync CSS (harmless) deferred to a separate cleanup.
 - **[2026-06-14]** Brain settings persist at `_dream_context/state/.brain-settings.json`

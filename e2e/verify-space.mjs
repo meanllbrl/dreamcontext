@@ -272,6 +272,64 @@ if (pair) {
   console.log('  · every project pair is already wired — skipping the drag-to-wire check');
 }
 
+// ─── The sky is dark in BOTH themes, so its text must be too ────────────────
+// The canvas keeps its own night palette (`.surface-night`) while the app around
+// it follows the OS. Without that, every `var(--color-text)` inside the sky
+// resolved to light mode's dark ink and painted itself on black — project labels
+// at 1.3:1, invisible. Measure what the eye actually meets: composite each
+// label's colour over whatever is behind it, down to the sky.
+{
+  const light = await browser.newPage({
+    viewport: { width: 1280, height: 840 },
+    colorScheme: 'light',
+    reducedMotion: 'reduce',
+  });
+  await light.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await light.waitForTimeout(900);
+  const themed = (await light.getAttribute('html', 'data-theme')) === 'light';
+  // A fresh context has no stored view choice, so this one lands on List too.
+  await light.locator('.launcher-btn', { hasText: 'Space' }).click();
+  await light.waitForSelector('.space-chip', { timeout: 20000 });
+  await light.waitForTimeout(600);
+
+  const worst = await light.evaluate(() => {
+    const parse = (s) => (s.match(/[\d.]+/g) ?? []).map(Number);
+    const over = (fg, bg) => [0, 1, 2].map((i) => fg[i] * (fg[3] ?? 1) + bg[i] * (1 - (fg[3] ?? 1)));
+    const lum = ([r, g, b]) => {
+      const f = (c) => (c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    const SKY = [8, 8, 15]; // .space's base background
+    const backdrop = (el) => {
+      const layers = [];
+      for (let n = el; n && n !== document.documentElement; n = n.parentElement) {
+        const c = parse(getComputedStyle(n).backgroundColor);
+        if (c.length && (c[3] ?? 1) > 0) layers.push(c);
+        if (n.classList.contains('space')) break;
+      }
+      return layers.reverse().reduce((acc, c) => over(c, acc), SKY);
+    };
+    const ratio = (a, b) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    return ['.space-chip-name', '.space-hud-hint', '.space-core-label', '.space-hud-zoom button']
+      .map((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return { sel, ratio: 0 };
+        const bg = backdrop(el);
+        return { sel, ratio: +ratio(over(parse(getComputedStyle(el).color), bg), bg).toFixed(2) };
+      })
+      .sort((a, b) => a.ratio - b.ratio)[0];
+  });
+
+  await light.screenshot({ path: `${OUT}/space-light.png` });
+  check('the launcher honours a light OS theme', themed);
+  check('on-canvas text clears AA in light mode',
+        worst.ratio >= 4.5, `worst ${worst.sel} at ${worst.ratio}:1`);
+  await light.close();
+}
+
 await browser.close();
 
 const failed = results.filter((r) => !r.pass);
