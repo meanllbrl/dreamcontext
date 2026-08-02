@@ -1,6 +1,66 @@
 [
   {
     "date": "2026-08-02",
+    "type": "feat",
+    "scope": "skill",
+    "description": "Read is the only PDF path an agent has, and it hands pages to the vision model — 20 per request, page ranges mandatory past 10 — so a long text PDF costs a fortune and never arrives whole. The skill now checks first: when the text layer is real, extraction returns markdown for ~no vision tokens; scanned, mixed, unsupported platform or any error falls back to Read, which is the right tool for a scan. Run via npx, so it adds no dependency and no install step.",
+    "breaking": false,
+    "summary": "Classify a PDF before Read renders it as images",
+    "references": [
+      "commit:433c16e"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-02",
+    "type": "fix",
+    "scope": "chat",
+    "description": "A run of adjacent tool calls was never grouping in the field: a thinking model opens an ENCRYPTED thinking block before nearly every tool call, which carries no text, draws zero pixels, and was still counted as a run boundary — so every stretch fell under the 3-call minimum and 19 consecutive calls rendered as 19 separate rows. A run may only be broken by something the reader can SEE.",
+    "breaking": false,
+    "summary": "An item that renders NOTHING may not break a tool run",
+    "references": [
+      "commit:139e6ff",
+      "task:chat-tool-rows-name-their-object-not-their-type-plus-run-grouping-and-density"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-02",
+    "type": "feat",
+    "scope": "chat",
+    "description": "The important parts of a long answer were hard to FIND, not hard to read. Bold is the only emphasis markdown gives an agent and it is already doing structural work — a term, a label, a file name — so in a review report everything ends up bold and nothing stands out. ==phrase== now paints a marker stroke (the syntax people know from Obsidian and Notion, degrading to literal text anywhere else), with three pens: yellow says attention, ==!broken== says bad, ==+confirmed== says good. Rendered by a marked inline extension rather than a string rewrite, so ==-looking text inside a code span is never touched; the stroke stops short of the ascender line, keeps the text colour (the UA default repaints <mark> black-on-yellow, which inverts on a dark page), and a wrapped highlight paints one stroke per line. The Chat surface briefing teaches both the syntax and the ration — a handful per answer, never a whole sentence.",
+    "breaking": false,
+    "summary": "A highlighter, because bold is already carrying structure",
+    "references": [
+      "commit:b2b1628",
+      "commit:801af05",
+      "task:highlighter-the-agent-can-mark-the-load-bearing-phrase-not-just-bold-it"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-02",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Owner report 08-02 with a screenshot of a review report in Chat. Measured in the real app: paragraphs painted 24px per line, but the numbered findings list — the shape most long answers take — painted 21px, tighter than the prose around it, because MarkdownPreview pins li to the body-sm leading (1.43) with a selector as specific as the chat's own. The part being read hardest was set tightest. The transcript's leading is now a token beside --chat-text (1.75, unitless), every surface carrying prose reads it, lists read at the same pitch as the paragraphs around them, and the gap between blocks grew with the leading (12px → 16px) so a block boundary still out-reads a line boundary.",
+    "breaking": false,
+    "summary": "A long answer read as a wall, and the findings list was the tightest part of it",
+    "references": [
+      "commit:bddf43f",
+      "task:chat-prose-reads-at-a-body-column-rhythm-not-a-ui-label-s"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-02",
     "type": "chore",
     "scope": "release",
     "description": "All five version surfaces bumped 0.23.0 → 0.23.1: package.json, desktop/package.json, tauri.conf.json, Cargo.toml, and Cargo.lock's dreamcontext-desktop entry. 0.23.0 is marked SUPERSEDED in RELEASES.json — the same treatment 0.22.0 got, for the same reason: cut locally, never tagged, never published, npm still on 0.21.0. So 0.23.1 is the release that actually delivers Automations, the Chat work, the snapshot rework, AND the people-first + soul-split migrations to anyone upgrading from 0.21.0. Shipping .1 rather than .0 because 0.23.0's people-first migration was wrong in a way that only appears on a MULTI-PERSON vault, in the one step that deletes its own source file. Version coupling verified against the real registry: (0.21.0, 0.23.1] → both migrations fire (what a real npm user gets); (0.23.0, 0.23.1] → empty (already-migrated local vaults, correctly inert). RELEASES.json 0.23.1 stays planning: nothing is tagged or published yet. Landed in 73b3afb.",

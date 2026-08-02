@@ -350,7 +350,20 @@ function fakeRunnerFor(opts: {
   return { runner, calls };
 }
 
-describe('inspectDispatcher', () => {
+/**
+ * macOS-ONLY from here down, and the reason CI has been red on `main` since 2026-07-27: these
+ * three describes drive the launchd dispatcher, whose implementation branches on
+ * `process.platform === 'darwin'` (launchd.ts:335/385/463) and returns a different, correct
+ * answer everywhere else. On `ubuntu-latest` they were asserting macOS behaviour against the
+ * non-macOS branch — 9 failures that said nothing about the code.
+ *
+ * Skipped, not deleted: they run on every local `npm test` on the machine where automations
+ * actually exist. The same idiom already guards `buildNotifierApp` in the notifier suite. If
+ * CI should cover them too, that is a second job on a `macos-latest` runner, not a change here.
+ */
+const onDarwin = process.platform === 'darwin';
+
+describe.skipIf(!onDarwin)('inspectDispatcher', () => {
   it('reports missing plist/wrapper on a fresh home, and never calls real launchctl', async () => {
     const home = tmpHome();
     const { runner, calls } = fakeRunnerFor({});
@@ -386,7 +399,7 @@ describe('inspectDispatcher', () => {
   });
 });
 
-describe('installDispatcher', () => {
+describe.skipIf(!onDarwin)('installDispatcher', () => {
   it('refuses (throws) when nothing resolves on PATH', async () => {
     const home = tmpHome();
     const { runner } = fakeRunnerFor({ bin: null });
@@ -487,7 +500,7 @@ describe('installDispatcher', () => {
   });
 });
 
-describe('uninstallDispatcher', () => {
+describe.skipIf(!onDarwin)('uninstallDispatcher', () => {
   it('boots out and removes the plist + wrapper', async () => {
     const home = tmpHome();
     const { runner } = fakeRunnerFor({});

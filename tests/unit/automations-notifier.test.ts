@@ -180,7 +180,11 @@ describe('renderNotifierScript', () => {
   });
 });
 
-describe('notifyViaBundle', () => {
+/* macOS-only: `notifyViaBundle` short-circuits off `process.platform !== 'darwin'`
+   (notifier.ts:238/319), so on the ubuntu runner these asserted the queueing contract against
+   the branch that deliberately does nothing — 5 of the 14 failures that have kept CI red on
+   main since 2026-07-27. Same skipIf idiom as `buildNotifierApp` below. */
+describe.skipIf(process.platform !== 'darwin')('notifyViaBundle', () => {
   it('returns false and writes NOTHING when the bundle is absent', () => {
     // The fallback contract. A caller that gets `false` must be free to use
     // osascript; queueing a payload no applet will ever drain would strand it.

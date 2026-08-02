@@ -1,10 +1,10 @@
 {
   "hero": {
-    "eyebrow": "v0.23.0  ·  1 August 2026  ·  including v0.22.0",
+    "eyebrow": "v0.23.1  ·  2 August 2026  ·  including v0.22.0",
     "headline": "It keeps its own hours, and travels a third as heavy",
     "sub": "Two releases in one upgrade. v0.22.0 was built but never reached anyone, so everything it carried arrives here. Your brain can now be given work on a schedule and left alone with it — and when you do sit down together, everything it knows loads in 16,320 characters instead of 48,964. Nothing was dropped. What got cut was repetition.",
     "shot": {
-      "src": "shots/v0-23-0/automations-loop.png",
+      "src": "shots/v0-23-1/automations-loop.png",
       "alt": "The Automations page before you own one: the headline \"Put the brain on a schedule\" over a diagram of three scheduled jobs — a daily digest, a Friday report, a Tuesday research prompt — feeding one dispatcher, which spawns a headless claude session that writes a dated file, sends a notification, and reads and updates a pattern",
       "caption": "The whole loop, before you write your first one."
     }
@@ -15,7 +15,7 @@
       "title": "A job is a prompt and a clock",
       "body": "There is no built-in digest command and no hardcoded job type. What the job IS lives entirely in the prompt you write; the CLI carries only the schedule, the model, the effort and the timeout.\n\nIf you can say it, it can run at six every evening.",
       "shot": {
-        "src": "shots/v0-23-0/automations-board.png",
+        "src": "shots/v0-23-1/automations-board.png",
         "alt": "Three automation cards: End of day digest every day at 18:00 with a last run this afternoon, Dependency drift check on Tuesdays at 09:00, and Friday weekly report at 17:00, each with a Run now button",
         "frame": "plain"
       },
@@ -26,7 +26,7 @@
       "title": "It gets better at the job",
       "body": "Something that starts from zero every time repeats its mistakes forever, and nobody is there to watch it happen. So every automation keeps a pattern of its own: a standing playbook, and a short ledger of what it learned.\n\nIt reads that before it starts, and adds to it when it finishes. A run that hit a broken endpoint on Sunday knows that next Sunday.",
       "shot": {
-        "src": "shots/v0-23-0/automations-pattern.png",
+        "src": "shots/v0-23-1/automations-pattern.png",
         "alt": "The pattern of a real automation: a playbook the run wrote itself describing the order to gather in, above four dated lessons about which commands work on this vault",
         "caption": "Every line here was written by the run itself. None of it by hand.",
         "frame": "plain"
@@ -38,7 +38,7 @@
       "title": "You can watch the work, not just the result",
       "body": "The document a run leaves behind is the conclusion with the working thrown away — which is the wrong half the moment it surprises you.\n\nSo every run keeps its session. Open it and the whole thing replays: each tool call and what it was given, which ones failed, how long it took and what it cost.",
       "shot": {
-        "src": "shots/v0-23-0/automations-session.png",
+        "src": "shots/v0-23-1/automations-session.png",
         "alt": "A run's session: 32 tool calls, 2 failed, 33 turns, $1.8097, above the list of Bash calls it made, with two of them marked in red",
         "frame": "plain"
       },
@@ -47,10 +47,24 @@
     {
       "kind": "stats",
       "items": [
-        { "value": "32", "label": "tool calls", "note": "one real end-of-day digest" },
-        { "value": "2", "label": "of them failed", "note": "shown, not buried" },
-        { "value": "4m 54s", "label": "start to finish" },
-        { "value": "$1.81", "label": "what it cost" }
+        {
+          "value": "32",
+          "label": "tool calls",
+          "note": "one real end-of-day digest"
+        },
+        {
+          "value": "2",
+          "label": "of them failed",
+          "note": "shown, not buried"
+        },
+        {
+          "value": "4m 54s",
+          "label": "start to finish"
+        },
+        {
+          "value": "$1.81",
+          "label": "what it cost"
+        }
       ]
     },
     {
@@ -82,9 +96,21 @@
     {
       "kind": "stats",
       "items": [
-        { "value": "48,964 → 16,320", "label": "Characters at session start", "note": "measured on a real mature vault" },
-        { "value": "32,912 → 3,983", "label": "The soul, after the split", "note": "37 conditional rules moved out" },
-        { "value": "10", "label": "Pattern files written", "note": "clustered by rule, not by bullet" }
+        {
+          "value": "48,964 → 16,320",
+          "label": "Characters at session start",
+          "note": "measured on a real mature vault"
+        },
+        {
+          "value": "32,912 → 3,983",
+          "label": "The soul, after the split",
+          "note": "37 conditional rules moved out"
+        },
+        {
+          "value": "10",
+          "label": "Pattern files written",
+          "note": "clustered by rule, not by bullet"
+        }
       ]
     },
     {
@@ -92,7 +118,7 @@
       "title": "The same brain. A third of the weight.",
       "body": "The session-start preload had been growing faster than the vault it describes, until it needed a compression ladder to fit — which is a way of hiding content that should never have been sent. So the default got denser instead. Features are a name, a status and a path. Knowledge that isn't pinned is an honest count and the command to reach the rest. The warm-knowledge section is simply gone.\n\nIt now arrives whole, with no truncation banner, on a vault where it used to be cut in half.",
       "shot": {
-        "src": "shots/v0-23-0/core.png",
+        "src": "shots/v0-23-1/core.png",
         "alt": "The Core page of a real vault: a PEOPLE section listing Mehmet Nuraydın as active, above the core files — soul, memory, style guide, tech stack, changelog, releases and taxonomy — with the soul document open in the reader beside them",
         "caption": "The shape of a brain after 0.23.0: a person, and a constitution-only soul."
       }
@@ -102,7 +128,7 @@
       "title": "It knows who is at the keyboard",
       "body": "The old user file was one document trying to be a person, a roster and a junk drawer at once. It's gone. Everyone gets their own constitution now, loaded word for word when they're the one working, resolved from your git identity — with nothing about your machine written into the shared brain.\n\nYour existing vault is moved for you. The mechanical half happens on upgrade; the prose that needed judgement is handed to your agent rather than guessed at.",
       "shot": {
-        "src": "shots/v0-23-0/people.png",
+        "src": "shots/v0-23-1/people.png",
         "alt": "The Core file list: a PEOPLE heading with Mehmet Nuraydın marked active, then CORE FILES listing soul, active-decisions, style-guide, tech-stack, System Flow, CHANGELOG, RELEASES and taxonomy — with no 1.user.md among them",
         "caption": "No user file. A person, then the core files.",
         "frame": "plain"
@@ -114,7 +140,7 @@
       "title": "A rule can be shortened. It can no longer be silenced.",
       "body": "A soul holding every conditional rule is a soul nobody reads — and when space got tight, those rules used to collapse into an anonymous folder count. The conditional half now lives in patterns, clustered by the rule it carries.\n\nPatterns get their own block in every snapshot, at every size, under a warning you can't miss.",
       "shot": {
-        "src": "shots/v0-23-0/patterns.png",
+        "src": "shots/v0-23-1/patterns.png",
         "alt": "The Knowledge page with the Patterns folder expanded to 17 entries, showing pattern cards whose descriptions are the rule itself — budget demotion floor prevents blinding, build and propagate order, byte-surgical section editing — each tagged by domain",
         "caption": "17 patterns, each described by the rule it carries.",
         "frame": "plain"
@@ -184,6 +210,24 @@
     },
     {
       "kind": "points",
+      "title": "And the answers themselves read better",
+      "items": [
+        {
+          "title": "A long answer is not a wall",
+          "text": "The transcript's leading opened up, and a findings list — the shape most long answers take — no longer sits tighter than the paragraphs around it. It was the part being read hardest and the part set tightest."
+        },
+        {
+          "title": "The agent can reach for a highlighter",
+          "text": "Bold was the only emphasis it had, and bold was already naming terms, so nothing stood out. Now it can mark the few phrases your eye should land on first — in yellow, or in red when something is broken and green when something is confirmed."
+        },
+        {
+          "title": "A run of tool calls collapses again",
+          "text": "Thinking models open an empty block before nearly every tool call. It draws nothing, and it was quietly breaking every group, so nineteen consecutive calls filled the pane one row at a time."
+        }
+      ]
+    },
+    {
+      "kind": "points",
       "title": "And underneath",
       "items": [
         {
@@ -212,5 +256,8 @@
   "closer": {
     "title": "Upgrade, and let it move itself",
     "body": "dreamcontext upgrade, then dreamcontext update in each project. The structural migrations run on that command, and anything that needs judgement is handed to your agent with instructions."
-  }
+  },
+  "id": "v0-23-1",
+  "version": "0.23.1",
+  "date": "2026-08-02"
 }

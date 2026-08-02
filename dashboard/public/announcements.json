@@ -1,8 +1,8 @@
 [
   {
-    "id": "v0-23-0",
-    "date": "2026-08-01",
-    "version": "0.23.0",
+    "id": "v0-23-1",
+    "date": "2026-08-02",
+    "version": "0.23.1",
     "title": "It keeps its own hours, and travels a third as heavy",
     "summary": "Two releases in one upgrade — v0.22.0 was built but never reached anyone, so Automations arrives here alongside the snapshot rework. Give the brain a job on a schedule and leave it alone: a headless Claude run that learns from every run, replays the session it had, and tells you what it actually found. And when you do sit down together, everything it knows loads in 16,320 characters instead of 48,964 — each person with their own constitution, the soul keeping only what is unconditionally true, and the conditional rules moved into patterns that can never be demoted into silence.",
     "tags": [
@@ -12,7 +12,7 @@
       "chat",
       "migrations"
     ],
-    "story": "v0-23-0.json"
+    "story": "v0-23-1.json"
   },
   {
     "id": "v0-21-0",
