@@ -815,8 +815,16 @@ function splitUserFile(root: string): MigrationStepResult {
     let residueAdded = 0;
     if (toResidue.length > 0) {
       const existingResidue = existsSync(residuePath) ? readFileSync(residuePath, 'utf-8') : null;
+      // Same rule as the constitution, and for the same reason: a heading that
+      // is already here suppresses a re-add ONLY when the body is identical.
+      // Matching on the heading alone made the residue lose prose exactly the
+      // way the constitution did — crash before the unlink, user edits
+      // `1.user.md`, re-run, and the edited section is silently declined while
+      // step 4 deletes the source. A duplicate heading here is harmless (the
+      // agent reads both); a dropped section is not.
       const residueAdds = toResidue.filter(
-        (s) => existingResidue === null || !hasHeading(existingResidue, s.title),
+        (s) => existingResidue === null
+          || !sectionBodies(existingResidue, s.title).some((b) => normalizeBody(b) === normalizeBody(s.body)),
       );
       residueAdded = residueAdds.length;
       if (existingResidue === null || residueAdds.length > 0) {

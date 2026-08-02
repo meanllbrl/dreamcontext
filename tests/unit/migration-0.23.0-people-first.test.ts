@@ -791,6 +791,34 @@ describe('migration 0.23.0 — people-first', () => {
     });
 
     /**
+     * The residue's own gate carried the identical defect one level down, and
+     * `unlinkSync` follows it by three lines. Crash before the unlink, edit
+     * `1.user.md`, re-run: the edited section was declined on the heading alone
+     * and the source deleted. A duplicate heading in the residue is harmless —
+     * the agent reads both. A dropped section is not.
+     */
+    it('an edited section is not declined by a stale residue heading', () => {
+      writeConfig(v, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
+      git.name = 'Ada Lovelace';
+      git.email = 'ada@example.com';
+      writeUserMd(v, '## Project Rules\n\n- Never push to main.\n- Also: rebase, never merge.\n');
+      // A residue from an earlier run that crashed before the unlink, holding
+      // the PRE-EDIT version of the same heading.
+      mkdirSync(join(v.root, 'inbox'), { recursive: true });
+      writeFileSync(
+        join(v.root, 'inbox', '1.user-residue.md'),
+        '# Residue\n\n## Project Rules\n\n- Never push to main.\n',
+        'utf-8',
+      );
+
+      runPeopleFirst(v.root);
+
+      const residue = read(v, 'inbox/1.user-residue.md');
+      expect(residue).toContain('- Also: rebase, never merge.');
+      expect(has(v, 'core/1.user.md')).toBe(false);
+    });
+
+    /**
      * `findH2Heads` has always skipped headings inside code fences;
      * `parsePeopleBullets` did not skip bullets inside them. A documented format
      * sample became a real person with a real constitution file.
