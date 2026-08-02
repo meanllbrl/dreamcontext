@@ -73,5 +73,17 @@ jobs:
       # `npm test` is bare `vitest` (watch mode), so pass `run` for a single
       # non-interactive pass. vitest is scoped to tests/**/*.test.ts; the
       # Playwright e2e specs under e2e/ are NOT run here.
+      #
+      # `--silent --reporter=dot` is not cosmetic, it is the fix for the run that
+      # reported "6246 passed, 0 failed" and still exited 1. Every line a test
+      # prints and every per-test update crosses the worker→main reporter RPC, and
+      # this suite prints a LOT on purpose — the lab/sync/migration paths assert
+      # their loud failures. Under a 2-fork runner that traffic starves the RPC
+      # until vitest raises `Timeout calling "onTaskUpdate"` as an unhandled error,
+      # which fails the job with nothing failing in it (see the config's note on
+      # why the pool is `forks`, and the task tracking this flake). Dropping the
+      # per-test chatter removes the load rather than raising a timeout to outrun
+      # it. A failing test still prints its full diff: `--silent` suppresses test
+      # CONSOLE output, not vitest's own failure report.
       - name: Run unit + integration tests
-        run: npm test -- run
+        run: npm test -- run --silent --reporter=dot
