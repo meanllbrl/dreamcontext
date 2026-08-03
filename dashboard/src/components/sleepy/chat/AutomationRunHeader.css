@@ -1,0 +1,115 @@
+/* ── Automation run header (AutomationRunHeader.tsx) ────────────────────────────────────
+   Tokens only, so both themes are automatic — same convention as cards.css / ChartView.css.
+
+   Shape brief: this is a PROVENANCE card, not a message. It sits above the first bubble of
+   a conversation the user never had, so it must read as chrome that frames the transcript
+   rather than as another turn inside it. Hence: full transcript width (a bubble is
+   inset), a tinted surface rather than a filled swatch, and no avatar/alignment cues of any
+   kind. */
+
+.automation-run-header {
+  align-self: stretch;
+  width: 100%;
+  max-width: var(--chat-line-width, 100%);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  /* Tinted surface + ordinary body ink. A filled accent block fails at paragraph length
+     (see the chat redesign's 08-01 note) and this card carries a two-line note. */
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
+}
+
+/* A failed or timed-out run is the one case where the card's own edge should carry the
+   news — the reader is about to read a transcript that did not finish. */
+.automation-run-header[data-tone='bad'] {
+  background: color-mix(in srgb, var(--color-error) 7%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-error) 32%, var(--color-border));
+}
+
+.arh-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.arh-kicker {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.arh-status {
+  flex: 0 0 auto;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  /* A chip IS short enough for a filled pairing — the rule the surface above declines. */
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
+  color: var(--color-success);
+}
+
+.arh-status[data-tone='bad'] {
+  background: color-mix(in srgb, var(--color-error) 18%, transparent);
+  color: var(--color-error);
+}
+
+.arh-title {
+  margin-top: var(--space-1);
+  color: var(--color-text);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+}
+
+.arh-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.arh-dot { color: var(--color-text-tertiary); }
+
+.arh-output {
+  display: inline-block;
+  max-width: 100%;
+  margin-top: var(--space-2);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.arh-output:hover {
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+}
+
+.arh-note {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.arh-note code {
+  font-family: var(--font-mono);
+  color: var(--color-text);
+}

@@ -25,6 +25,8 @@ import { SlideOver } from './chat/SlideOver';
 import { Lightbox } from './chat/Lightbox';
 import { PdfViewer } from './chat/PdfViewer';
 import { BoardEmbed, BoardFullscreen } from './chat/BoardEmbed';
+import { AutomationRunHeader } from './chat/AutomationRunHeader';
+import type { AutomationRunRef } from '../../lib/automationRunChat';
 import type { ChatAction } from './chat/chatActions';
 import { openExternalUrl } from '../../lib/desktop';
 import {
@@ -248,8 +250,8 @@ interface PdfState { path: string; label?: string }
 
 export function ChatPane({
   session, modelConfig, model, effort, onModelChange, onEffortChange, taskSlug, onContinueInTerminal,
-  permissionMode, onPermissionModeChange, onResume, onOpenAppPage, onSignIn, canSignInInApp,
-  signInCommand,
+  permissionMode, onPermissionModeChange, onResume, automation, onOpenAppPage, onSignIn,
+  canSignInInApp, signInCommand,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -271,6 +273,11 @@ export function ChatPane({
   /** Respawn this exact conversation UUID as a fresh chat session (state 12's "Session
    *  ended" banner, which REPLACES the composer). */
   onResume: () => void;
+  /** Set only when this conversation is an automation RUN, reopened from that automation's
+   *  run history — the one kind of chat here that nobody typed into. Renders the run header
+   *  above the transcript; see `AutomationRunHeader` for why a transcript with a machine's
+   *  brief as its first "user" message needs one. */
+  automation?: AutomationRunRef;
   /** Ask the wider app to open a dreamcontext entity (task/knowledge/core) referenced from
    *  chat (SlideOver's "Open in app ↗", state 3). AgentSurface is mounted above the router
    *  with no direct page-navigation channel of its own — see its wiring note for what this
@@ -1316,6 +1323,18 @@ export function ChatPane({
           {/* One wrapper the ResizeObserver can watch: the scroller's own box never changes
               when its content grows, so content height needs an element of its own. */}
           <div className="chat-scroll-inner" ref={contentRef}>
+            {/* First thing in the scroller, above even the window's ceiling button: it frames
+                every item below it, including the replayed history, and a reader who meets
+                the automation's brief before meeting this card has already misread it as
+                their own message. Inside the scroller (not pinned) because it is read once,
+                on arrival — pinning it would spend permanent transcript height on it. */}
+            {automation && (
+              <AutomationRunHeader
+                run={automation}
+                permissionMode={permissionMode}
+                onOpenFile={handleOpenFile}
+              />
+            )}
             {isEmpty && <EmptyState />}
             {/* The window's ceiling, made visible and operable. Scrolling to the top does
                 this for you (see the scroll handler); the button is what makes the omission

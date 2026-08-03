@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AutomationPattern, AutomationRunEvent, AutomationSummary } from '../../hooks/useAutomations';
 import {
   useApproveAutomation,
@@ -6,6 +6,7 @@ import {
   useAutomationSession,
   useRunAutomation,
 } from '../../hooks/useAutomations';
+import { requestAutomationRunChat, runChatUnavailableReason } from '../../lib/automationRunChat';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
 import './AutomationDetailPanel.css';
 
@@ -61,16 +62,18 @@ function HistoryRow({
           ⚠ {event.permissionDenials}
         </span>
       )}
-      {/* Only offered when a session was actually recorded — a blocked or
-          deferred run never reached one, and a button that opens an empty
-          drawer teaches the user to stop pressing it. */}
+      {/* Only offered when a session was actually recorded — a blocked, deferred or
+          orphaned run never reached one, and a button that opens an empty drawer teaches
+          the user to stop pressing it. A recorded session id is necessary but not
+          sufficient: whether a transcript actually landed is checked in `RunHandoff`,
+          which is the only place that knows. */}
       {event.sessionId && (
         <button
           className="adp-history-session"
           onClick={() => onOpenSession(runNumber)}
-          title="What this run's claude session actually did"
+          title="Reopen this run's conversation as a chat"
         >
-          session
+          open chat
         </button>
       )}
       {event.error && (
@@ -110,74 +113,90 @@ function PatternBlock({ pattern }: { pattern: AutomationPattern }) {
   );
 }
 
-/** The run drill-in: the turns, tool calls and failures of one headless
- *  session. Renders as a flat list rather than a chat replay on purpose — the
- *  question this answers is "what did it do", and a scannable sequence answers
- *  it faster than styled bubbles. */
-function SessionView({ slug, runNumber, onClose }: { slug: string; runNumber: number; onClose: () => void }) {
+/**
+ * The run hand-off: pressing `session` on a run opens that run's conversation as a real
+ * chat tab, and this is the two-second window in between.
+ *
+ * It used to be a flat, read-only list of turns and tool calls rendered right here, on the
+ * reasoning that the question was "what did it do" and a scannable sequence answers that
+ * faster than styled bubbles. That reasoning was answering too small a question. The run
+ * IS a claude conversation, on disk, resumable — so the useful thing is not to describe it
+ * but to REOPEN it, with a composer, where the agent that wrote the report can be asked
+ * why. The drill-in could only ever be read; a chat can be continued.
+ *
+ * What this component still owns is the one check that must happen BEFORE any of that:
+ * whether there is a transcript to resume at all. `--resume` against a missing one does not
+ * fail loudly — the chat route falls back to `--session-id` and fresh-pins a new, empty
+ * conversation under the same uuid — so a run whose transcript never landed (or was pruned)
+ * must be refused here, with the reason, rather than opened into a blank chat.
+ */
+function RunHandoff({
+  slug, automationTitle, runNumber, durationMs, onBack, onOpened,
+}: {
+  slug: string;
+  automationTitle: string;
+  runNumber: number;
+  /** From the history row. The session response has no duration of its own — it reports
+   *  what the CONVERSATION was, and how long the run took is the runner's measurement. */
+  durationMs: number | null;
+  onBack: () => void;
+  onOpened: () => void;
+}) {
   const { data: session, isLoading, isError } = useAutomationSession(slug, runNumber);
+  /** One dispatch per hand-off. The query re-delivers its (cached) data on every render of
+   *  this panel, and a second dispatch would ask the surface to reopen a tab it just
+   *  opened — harmless there (it focuses), but it would also re-close this panel. */
+  const sentRef = useRef(false);
+  const [refused, setRefused] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!session || sentRef.current) return;
+    const reason = runChatUnavailableReason(session);
+    if (reason) { setRefused(reason); return; }
+    sentRef.current = true;
+    const accepted = requestAutomationRunChat({
+      slug,
+      automationTitle,
+      runNumber,
+      sessionId: session.sessionId!,
+      firedAt: session.firedAt,
+      status: session.status,
+      costUsd: session.costUsd,
+      numTurns: session.numTurns,
+      durationMs,
+      outputPath: session.outputPath,
+    });
+    if (!accepted) {
+      // No surface took it: not the desktop app, the CLI is missing, or Agents is switched
+      // off in Settings. Say so — the alternative is a button that visibly does nothing.
+      sentRef.current = false;
+      setRefused('The Agents surface could not take this — it needs the desktop app with the claude CLI, and Agents enabled in Settings.');
+      return;
+    }
+    // The chat overlay is now the screen the user asked for; leaving this modal stacked
+    // underneath it would mean closing two things to get back to the board.
+    onOpened();
+  }, [session, slug, automationTitle, runNumber, onOpened]);
 
   return (
     <div className="adp-session">
       <div className="adp-session-head">
-        <span className="adp-section-label">Run #{runNumber} session</span>
+        <span className="adp-section-label">Run #{runNumber}</span>
         <span className="adp-spacer" />
-        <span className="adp-close adp-close--sm" onClick={onClose} title="Back to history">✕</span>
+        <span className="adp-close adp-close--sm" onClick={onBack} title="Back to history">✕</span>
       </div>
-      {isLoading && <div className="adp-loading">Loading…</div>}
-      {isError && <div className="adp-session-empty">Could not read this run's session.</div>}
-      {session && (
-        <>
-          <div className="adp-session-meta">
-            {session.toolCalls} tool calls
-            {session.toolErrors > 0 && <span className="adp-session-failed"> · {session.toolErrors} failed</span>}
-            {session.numTurns !== null && <> · {session.numTurns} turns</>}
-            {session.costUsd !== null && <> · ${session.costUsd.toFixed(4)}</>}
-          </div>
-          {!session.transcriptPath && (
-            <div className="adp-session-empty">
-              No transcript on disk. Claude writes one only once a session has produced a turn, and
-              nothing here owns that file's lifetime.
-            </div>
-          )}
-          {session.items.length > 0 && (
-            <div className="adp-session-items">
-              {session.items.map((item, i) => (
-                <div key={i} className={`adp-session-item adp-session-item--${item.kind}`}>
-                  {item.kind === 'tool' ? (
-                    <>
-                      <span className={`adp-session-tool${item.status === 'error' ? ' adp-session-tool--error' : ''}`}>
-                        {item.name}
-                      </span>
-                      <span className="adp-session-tool-arg">{describeToolInput(item.input)}</span>
-                    </>
-                  ) : (
-                    <span className="adp-session-text">{item.text}</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </>
+      {isLoading && <div className="adp-loading">Opening this run’s conversation…</div>}
+      {isError && <div className="adp-session-empty">Could not read this run’s session.</div>}
+      {refused && <div className="adp-session-empty">{refused}</div>}
+      {session && !refused && !isLoading && (
+        <div className="adp-session-meta">
+          {session.toolCalls} tool calls
+          {session.numTurns !== null && <> · {session.numTurns} turns</>}
+          {session.costUsd !== null && <> · ${session.costUsd.toFixed(4)}</>}
+        </div>
       )}
     </div>
   );
-}
-
-/** The one argument worth showing next to a tool name. Mirrors the CLI's
- *  `toolCallLabel` — same handful of argument names, same degrade to nothing
- *  rather than dumping raw JSON at the reader. */
-function describeToolInput(input: unknown): string {
-  if (!input || typeof input !== 'object') return '';
-  const rec = input as Record<string, unknown>;
-  for (const key of ['command', 'file_path', 'path', 'pattern', 'query', 'url', 'description']) {
-    const v = rec[key];
-    if (typeof v === 'string' && v.trim()) {
-      const flat = v.replace(/\s+/g, ' ').trim();
-      return flat.length > 120 ? `${flat.slice(0, 119)}…` : flat;
-    }
-  }
-  return '';
 }
 
 export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }: Props) {
@@ -232,6 +251,14 @@ export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }
       onError: (err) => onToast(`Could not start — ${(err as Error).message}`),
     });
   };
+
+  /** The run's chat tab is open — dismiss this modal so the conversation is the screen.
+   *  Stable identity: `RunHandoff` dispatches from an effect that depends on it, and a new
+   *  closure per render would re-run that effect on every parent re-render. */
+  const handleRunOpened = useCallback(() => {
+    setOpenSession(null);
+    onClose();
+  }, [onClose]);
 
   const handleApprove = () => {
     approve.mutate(summary.slug, {
@@ -427,7 +454,17 @@ export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }
                 </div>
 
                 {openSession !== null ? (
-                  <SessionView slug={summary.slug} runNumber={openSession} onClose={() => setOpenSession(null)} />
+                  <RunHandoff
+                    slug={summary.slug}
+                    automationTitle={automation?.title || summary.title}
+                    runNumber={openSession}
+                    // `openSession` IS the 1-based newest-first index into `history` — the
+                    // same numbering `resolveRunSession` takes, so the row and the run
+                    // cannot drift apart.
+                    durationMs={history[openSession - 1]?.durationMs ?? null}
+                    onBack={() => setOpenSession(null)}
+                    onOpened={handleRunOpened}
+                  />
                 ) : (
                   <>
                     <div className="adp-section-label">

@@ -29,6 +29,10 @@ import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '..
 import { RUN_BRAIN_RESOLVE_EVENT, BRAIN_RESOLVE_TITLE, BRAIN_RESOLVE_PROMPT } from '../../lib/brainResolveAgent';
 import { DELEGATE_AGENT_EVENT, type DelegateAgentDetail } from '../../lib/delegateAgent';
 import {
+  AUTOMATION_RUN_CHAT_EVENT, automationRunTabTitle,
+  type AutomationRunChatDetail, type AutomationRunRef,
+} from '../../lib/automationRunChat';
+import {
   TASK_MANAGER_EVENT, TASK_MANAGER_DETACH_EVENT, TASK_MANAGER_SEND_EVENT, TASK_MANAGER_STATUS_EVENT,
   taskManagerConversationId,
   type TaskManagerDetail, type TaskManagerSendDetail, type TaskManagerStatusDetail,
@@ -902,6 +906,90 @@ export function AgentSurface() {
     window.addEventListener(DELEGATE_AGENT_EVENT, onDelegate);
     return () => window.removeEventListener(DELEGATE_AGENT_EVENT, onDelegate);
   }, [delegateAgent]);
+
+  // ── Open an automation run's conversation (from the Automations run history) ──────
+  //
+  // The one bridge here that STARTS nothing. A scheduled automation already had this
+  // conversation, headless, while nobody was watching; the transcript is on disk exactly
+  // like any past chat. So this walks `resumePastSession`'s path — `--resume <sessionId>`
+  // in the currently chosen Agent screen — and the only thing that makes it special is the
+  // provenance it records, which the pane renders as a header (see `automationRuns`).
+  //
+  // REVEALED, never backgrounded: unlike a delegate (hand off work, carry on triaging), the
+  // user clicked a specific run to LOOK at it. A corner chip would answer the wrong request.
+  //
+  // Provenance is keyed by the CONVERSATION uuid, not by the tab id, because every resume
+  // path in this surface swaps the tab id while preserving `claudeId` (see `resumeSession`
+  // and `resumeChatSession`) — keyed by tab, a "Session ended · Resume" would silently drop
+  // the header off a conversation that is still exactly the same run.
+  const [automationRuns, setAutomationRuns] = useState<Record<string, AutomationRunRef>>({});
+
+  const openAutomationRunChat = useCallback((detail: AutomationRunChatDetail): boolean => {
+    if (!(caps?.desktop && caps.claudeCli && claudeReady) || !agentSettings.enabled) return false;
+    if (!detail.sessionId) return false;
+    const run: AutomationRunRef = {
+      slug: detail.slug,
+      automationTitle: detail.automationTitle,
+      runNumber: detail.runNumber,
+      sessionId: detail.sessionId,
+      firedAt: detail.firedAt,
+      status: detail.status,
+      costUsd: detail.costUsd,
+      numTurns: detail.numTurns,
+      durationMs: detail.durationMs,
+      outputPath: detail.outputPath,
+    };
+    // Recorded BEFORE the spawn so the pane's first render already has its header — and
+    // recorded even on the bring-forward path below, so reopening a run whose tab was
+    // opened by some other route (a past-chats pick) still gets its provenance.
+    setAutomationRuns((prev) => ({ ...prev, [detail.sessionId]: run }));
+    setExpanded(true);
+
+    // Already open → bring it forward. Two live CLIs `--resume`d onto one transcript
+    // interleave their appends and neither sees the other's turns; the same rule
+    // `resumePastSession` enforces, for the same reason.
+    const existing = sessionList.find((m) => m.claudeId === detail.sessionId);
+    if (existing) {
+      if (existing.dormant) resumeSession(existing.id);
+      else if (minimizedIds.includes(existing.id)) restoreMinimized(existing.id);
+      else focusSession(existing.id);
+      return true;
+    }
+
+    const s = spawn(bypass, detail.sessionId, true, claudeKind);
+    // Titled from the automation, NOT from the conversation's first prompt: that prompt is
+    // the approved brief, which is identical across every run of the same job — the past-chat
+    // titling rule would produce a row of tabs nobody can tell apart.
+    setSessionList((prev) => [...prev, {
+      id: s.id,
+      title: automationRunTabTitle(detail.automationTitle, detail.runNumber),
+      kind: s.kind,
+      bypass: s.bypass,
+      claudeId: s.claudeId,
+    }]);
+    if (panes.length === 0) {
+      const pid = nextPaneId();
+      setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
+      setActivePaneId(pid);
+    } else {
+      const apid = panes.some((p) => p.id === activePaneId) ? activePaneId : panes[0].id;
+      setPanes((prev) => prev.map((p) => (p.id === apid ? { ...p, tabs: [...p.tabs, s.id], active: s.id } : p)));
+      setActivePaneId(apid);
+    }
+    return true;
+  }, [
+    caps, claudeReady, agentSettings.enabled, sessionList, minimizedIds, resumeSession,
+    restoreMinimized, focusSession, spawn, bypass, claudeKind, panes, activePaneId,
+  ]);
+
+  useEffect(() => {
+    const onOpenRun = (e: Event) => {
+      const detail = (e as CustomEvent<AutomationRunChatDetail>).detail;
+      if (detail?.sessionId && openAutomationRunChat(detail)) detail.accepted = true;
+    };
+    window.addEventListener(AUTOMATION_RUN_CHAT_EVENT, onOpenRun);
+    return () => window.removeEventListener(AUTOMATION_RUN_CHAT_EVENT, onOpenRun);
+  }, [openAutomationRunChat]);
 
   // ── Task Manager: a task's own agent, hosted by its detail view ──────────────────
   // The task page owns no session: it renders `.agent-task-manager-slot[data-task="<slug>"]` and
@@ -2262,6 +2350,11 @@ export function AgentSurface() {
           // `??` lets '' through — which is what left the composer's pill reading "—".
           model={sessionModel[cs.id] || cs.model || modelConfig.defaultModel}
           effort={sessionEffort[cs.id] || cs.effort || modelConfig.defaultEffort}
+          // Provenance for a conversation this app did not have: set only for a tab opened
+          // from an automation's run history. Keyed by conversation uuid so it survives the
+          // tab-id swap every resume path performs. Undefined for every ordinary chat, which
+          // is what keeps the header absent from all of them.
+          automation={automationRuns[cs.claudeId]}
           permissionMode={agentSettings.chatPermissionMode}
           canSignInInApp={canSignInInApp}
           signInCommand={signInCommand}

@@ -1,6 +1,7 @@
 import { memo, useCallback } from 'react';
 import { ChatPane } from './ChatPane';
 import type { ModelConfig } from '../../lib/agentComposer';
+import type { AutomationRunRef } from '../../lib/automationRunChat';
 import type { ChatSession } from './chatSession';
 
 /**
@@ -43,13 +44,18 @@ export interface ChatSurfaceActions {
 }
 
 function ChatPaneHostInner({
-  session, actions, modelConfig, model, effort, permissionMode, canSignInInApp, signInCommand,
+  session, actions, modelConfig, model, effort, automation, permissionMode, canSignInInApp,
+  signInCommand,
 }: {
   session: ChatSession;
   actions: ChatSurfaceActions;
   modelConfig: ModelConfig;
   model: string;
   effort: string;
+  /** Set only when this conversation is an automation run reopened from its run history.
+   *  Safe across the memo boundary because AgentSurface keeps ONE object per conversation
+   *  uuid and never rewrites it (rule 1 above: stable references only). */
+  automation?: AutomationRunRef;
   permissionMode: 'auto' | 'bypass';
   canSignInInApp: boolean;
   signInCommand: string;
@@ -78,6 +84,7 @@ function ChatPaneHostInner({
       permissionMode={permissionMode}
       onPermissionModeChange={onPermissionModeChange}
       onResume={onResume}
+      automation={automation}
       onOpenAppPage={onOpenAppPage}
       onSignIn={onSignIn}
       canSignInInApp={canSignInInApp}

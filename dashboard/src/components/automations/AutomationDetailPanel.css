@@ -173,32 +173,14 @@
   font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary);
   margin-bottom: 10px;
 }
-.adp-session-failed { color: var(--color-error); }
+/* Carries the refusal too ("no transcript on disk", "the Agents surface could not take
+   this"): a dashed, quiet box is the right weight for a state that is normal rather than
+   broken. The in-panel transcript list these rules used to dress is gone — a run's turns
+   are read in the chat tab it now opens into, not here. */
 .adp-session-empty {
   font-size: 12.5px; line-height: 1.5; color: var(--color-text-tertiary);
   border: 1px dashed var(--color-border); border-radius: 11px; padding: 12px;
 }
-.adp-session-items {
-  display: flex; flex-direction: column;
-  border: 1px solid var(--color-border); border-radius: 11px; overflow: hidden;
-  /* The transcript is the long tail of this panel; capping it keeps the rail
-     scrollable rather than letting one chatty run own the whole column. */
-  max-height: 420px; overflow-y: auto;
-}
-.adp-session-item { display: flex; gap: 8px; padding: 6px 12px; font-size: 12px; line-height: 1.5; }
-.adp-session-item + .adp-session-item { border-top: 1px solid var(--color-border); }
-.adp-session-item--user { background: var(--color-bg-tertiary); }
-.adp-session-item--thinking { opacity: 0.62; font-style: italic; }
-.adp-session-tool {
-  flex: 0 0 auto; font-family: var(--font-mono); font-size: 11px; font-weight: 600;
-  color: var(--color-accent);
-}
-.adp-session-tool--error { color: var(--color-error); }
-.adp-session-tool-arg {
-  font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.adp-session-text { color: var(--color-text); word-break: break-word; }
 
 /* Pattern shown INSIDE the pre-approval review — see the panel's comment: the
    review is the moment a self-written notes file is admitted to the run, so it

@@ -12,7 +12,7 @@ pinned: false
 date: '2026-07-26'
 status: in_review
 created: '2026-07-26'
-updated: '2026-07-28'
+updated: '2026-08-03'
 released_version: v0.22.0
 tags:
   - 'topic:agents'
@@ -25,6 +25,7 @@ related_tasks:
   - automations-branded-audible-completion-notifications
   - >-
     automations-learn-from-every-run-show-their-session-and-say-what-happened-in-the-notification
+  - an-automation-run-opens-as-a-chat-session-not-an-inline-drill-in
 ---
 
 ## Why
@@ -61,6 +62,7 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 - [x] Completion notification body carries the run's own opening sentence (a `## Notification`/`## Bildirim` section wins if present), titled by the automation, with click-to-open the output document.
 - [x] Automations nav icon (alarm clock) in dashboard. `dreamcontext upgrade` refreshes a stale notifier bundle; `automations install --check` reports notifier currency.
 - [x] **The SCHEDULER is installable and toggleable from the UI** (2026-08-01, `3bed3d0`) — `automations install` was the only way to turn the dispatcher on, so the board could list a full set of automations that silently never fire. `AutomationsDispatcherBar` sits above the board and inside the zero-state and turns it on in place, separating the states that **fail differently**: off, on, **stale** (installed against a `dreamcontext` that has since moved — it wakes on time and fails), and **not-registered** (healthy dispatcher, but this project is absent from the machine-local registry, which is the shape brain-synced manifests arrive in). Each automation card also gets its own on/off toggle. New routes: `GET /api/automations/dispatcher`, `POST /dispatcher/install|/uninstall`, `POST /:slug/enable|/disable` (`dispatcher` declared before `/:slug`, same reason `runs` is).
+- [x] **A run's session opens as a CHAT, not a drill-in** (2026-08-03) — the run history's button resumes that run's conversation as a chat tab with a composer, headed by a provenance card (automation · run #N · status · turns · cost · output chip) and an explicit note that the run executed under `bypassPermissions` while the continuation runs under the app's current mode. A recorded session id with no transcript on disk is refused in place rather than opened, because `--resume` would silently fresh-pin an empty conversation under that uuid.
 - [x] **Installing from the browser installs the CLOCK, not permission** — the stance is unchanged. Every automation still needs its own machine-local SHA256 approval, and the tripwire, sleep deference and orphan guard all still live inside the runner. The install route reads exactly ONE body field (`force`, mirroring `--force`): no prompt, path or schedule travels over HTTP, and a resolution mismatch still refuses softly, writing nothing. It calls `registerProject` where the CLI's `install` does not — deliberately, because the CLI registers at `create` but a dashboard user can be looking at manifests that arrived over brain sync where nothing local ever did. Enabling one automation is not approval either, and because `enabled` is NOT a hashed field, toggling can never re-block an approved manifest — pinned by a regression lock, since that is exactly the class of bug the `upsertSection` prompt-rewrite was.
 
 ## Constraints & Decisions
@@ -218,6 +220,13 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-08-03 - A run is a conversation you can continue, not a list you can read
+- The run-history button REOPENS that run's claude conversation as a chat tab (`--resume <sessionId>`) instead of rendering the flat turn list inside the panel. `SessionView` is gone; `RunHandoff` replaces it. Everything needed already existed — the transcript is on disk exactly like any past chat, `/api/agent/chat-history` replays it without spawning, and `resumePastSession` already turned a uuid into a tab — so this is a bridge (`dashboard/src/lib/automationRunChat.ts`, the `delegateAgent` window-event + `accepted` ACK idiom) plus a header, not a new subsystem.
+- **The header is the load-bearing part.** Every other chat in the app opens with something the user typed; this one opens with the approved automation brief, addressed to a machine, by a scheduler, while nobody was here. Rendered bare, that brief reads as the user's own message. `AutomationRunHeader` names the automation, run #N, fired-at, status, turns, cost and duration, chips the output document, and states the one fact the transcript cannot: the RUN executed under `bypassPermissions`, while the resumed session runs under the app's CURRENT mode. The report itself is deliberately NOT duplicated up there — `result` IS the final assistant message, so on a healthy run the file and the last bubble are the same text.
+- **The refusal that keeps it honest:** `--resume` against a missing transcript does not fail — the chat route falls back to `--session-id` and fresh-pins a NEW empty conversation under the same uuid. A run whose transcript never landed would therefore have opened a blank chat claiming to be that run. `runChatUnavailableReason` separates that from the never-started case (`blocked`/`deferred`/`orphaned`, which already offers no button) and refuses in place, with the reason.
+- Provenance is keyed by conversation uuid, not tab id: every resume path swaps the tab id while preserving `claudeId`, so a tab-keyed map would drop the header on a "Session ended · Resume".
+- 11 unit tests + `npm run verify:automation-run-chat` (42 assertions × light+dark, real server / real routes / real chat WS / Chromium, isolated fake HOME, stand-in `claude`, no tokens spent).
 
 ### 2026-08-01 - The scheduler moves into the UI (`3bed3d0`)
 - `AutomationsDispatcherBar` above the board and inside the zero-state installs/uninstalls the launchd dispatcher in place, distinguishing off / on / **stale** (dispatcher points at a `dreamcontext` that has moved — it wakes on time and fails) / **not-registered** (healthy dispatcher, project absent from the machine-local registry, the shape brain-synced manifests arrive in). Per-automation on/off toggle on each card.
