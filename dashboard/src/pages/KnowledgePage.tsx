@@ -7,6 +7,9 @@ import { MarkdownPreview } from '../components/core/MarkdownPreview';
 import { SqlPreview } from '../components/core/SqlPreview';
 import { ExcalidrawPreview } from '../components/core/ExcalidrawPreview';
 import { isExcalidrawSlug } from '../lib/excalidraw';
+import { knowledgeLinkTarget, isPdfHref } from '../lib/knowledgeLinks';
+import { PdfViewer } from '../components/sleepy/chat/PdfViewer';
+import { graphContentUrl } from '../api/client';
 import { tagHue } from '../lib/tagColor';
 import { BrainSearch } from '../components/search/BrainSearch';
 import './KnowledgePage.css';
@@ -196,6 +199,8 @@ export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
   const [viewTab, setViewTab] = useState<'file' | 'preview'>('preview');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [fullscreen, setFullscreen] = useState(false);
+  /** A PDF the open note links to, opened at full window (see {@link PdfViewer}). */
+  const [pdf, setPdf] = useState<{ path: string; src: string; label: string } | null>(null);
 
   // Open the doc the ⌘K palette / Brain map navigated to, and expand its folders
   // so the matching card is revealed in the tree.
@@ -326,6 +331,40 @@ export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
     </div>
   );
 
+  /**
+   * A click anywhere in the rendered note, caught for the links the app can give a meaning to.
+   *
+   * A knowledge note's link to a local file is a filesystem path: `installExternalLinkHandler`
+   * already stops it from navigating the SPA away (that click used to reboot the app at the
+   * Launcher), and deliberately lets the event keep propagating so a surface can act on it.
+   * This is the Knowledge page acting on it — today for the one the owner asked for, a PDF the
+   * note cites, which opens in the same full-window viewer Chat opens one in.
+   *
+   * Delegated rather than a per-anchor decoration pass, because `MarkdownPreview` writes its
+   * blocks into the DOM itself and re-patches them as the doc changes; one listener on the
+   * container survives every one of those rewrites with nothing to re-mark.
+   */
+  const handleContentClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Deliberately NOT gated on `e.defaultPrevented`: the app-wide guard runs in the CAPTURE
+    // phase and has already called `preventDefault()` on exactly the links this handler cares
+    // about, so treating that as "someone else handled it" would swallow every one of them
+    // (it did — the link stopped navigating the app away, and then did nothing at all).
+    if (e.button !== 0) return;
+    const anchor = (e.target as HTMLElement | null)?.closest?.('a[href]');
+    const href = anchor?.getAttribute('href');
+    if (!href || !isPdfHref(href) || !selected) return;
+    const target = knowledgeLinkTarget(selected, href);
+    if (!target) return;
+    // The path shown and handed to the OS is PROJECT-relative (`_dream_context/…`), because
+    // that is what `/agent/reveal` resolves against; the bytes come from the vault route.
+    e.preventDefault();
+    setPdf({
+      path: `_dream_context/${target}`,
+      src: graphContentUrl(target, { raw: true }),
+      label: anchor?.textContent?.trim() || target.split('/').pop() || target,
+    });
+  };
+
   const renderContent = (detailDoc: NonNullable<typeof detail>) => {
     if (viewTab === 'preview' && detailDoc.content) {
       if (isExcalidrawSlug(detailDoc.slug)) {
@@ -396,10 +435,17 @@ export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
               actions={renderTabs()}
               onClose={() => setFullscreen(false)}
             >
-              {renderContent(detail)}
+              {/* `display: contents` — the wrapper exists only to catch clicks (see
+                  `handleContentClick`); it must not become a box in either layout, or the
+                  fullscreen overlay and the pane would each gain a stray flex/grid child. */}
+              <div style={{ display: 'contents' }} onClick={handleContentClick}>
+                {renderContent(detail)}
+              </div>
             </FullscreenOverlay>
           ) : (
-            renderContent(detail)
+            <div style={{ display: 'contents' }} onClick={handleContentClick}>
+              {renderContent(detail)}
+            </div>
           )}
         </div>
       )}
@@ -416,6 +462,11 @@ export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
         browse={browse}
         detail={detailPane}
       />
+      {/* Portalled to `<body>` by the viewer itself, so it covers the window rather than the
+          pane — and so it sits ABOVE the fullscreen overlay a note may already be open in. */}
+      {pdf && (
+        <PdfViewer path={pdf.path} src={pdf.src} label={pdf.label} onClose={() => setPdf(null)} />
+      )}
     </div>
   );
 }

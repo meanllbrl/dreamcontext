@@ -122,6 +122,8 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 
 - [x] As a developer, every surface that shows me a file — the slide-over panel, the PDF viewer, the image lightbox — offers "Open on computer" and "Reveal in Finder", so the moment the in-app preview isn't enough I'm one click from the real file instead of looking at its path in a header.
 
+- [x] As a developer, a PDF a KNOWLEDGE note links to opens the same way — clicking `[the contract](assets/msa.pdf)` in a note shows the document in the app instead of doing nothing, and it works in the browser dashboard too, not just the desktop app.
+
 ## Acceptance Criteria
 
 - [x] WS bridge (`/api/agent/terminal`) spawns `$SHELL -ilc 'exec claude [--dangerously-skip-permissions]'` via node-pty; desktop-only (`DREAMCONTEXT_DESKTOP=1` gate) and loopback-only (strict `remoteAddress` check).

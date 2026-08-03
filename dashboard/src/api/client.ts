@@ -57,6 +57,23 @@ export function agentFileUrl(path: string, opts: { raw?: boolean } = {}): string
   return `${BASE_URL}/agent/file?path=${encodeURIComponent(path)}${raw}${vault}`;
 }
 
+/**
+ * The URL for one file INSIDE the vault (`path` relative to `_dream_context/`), for the same
+ * hand-it-to-the-browser reason as {@link agentFileUrl} — an `<iframe src>` is fetched by the
+ * browser, which sends none of `api.get`'s headers, so the vault has to ride in the URL.
+ *
+ * Distinct from {@link agentFileUrl} because the two routes have different reach and different
+ * gates: `/agent/file` covers the whole PROJECT and is desktop-only, while this one covers the
+ * vault and works in a browser dashboard too. A knowledge note's link to the document it was
+ * distilled from is a vault file being read by a vault page, so it belongs here — routing it
+ * through the chat surface's endpoint would answer "desktop only" outside the app.
+ */
+export function graphContentUrl(path: string, opts: { raw?: boolean } = {}): string {
+  const raw = opts.raw ? '&raw=1' : '';
+  const vault = activeVault ? `&vault=${encodeURIComponent(activeVault)}` : '';
+  return `${BASE_URL}/graph/content?path=${encodeURIComponent(path)}${raw}${vault}`;
+}
+
 class ApiClient {
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
     const headers: Record<string, string> = {

@@ -17,7 +17,10 @@
  *   4. a PDF outside the project still needs consent (403 `needs_grant`) — the new type does
  *      not widen what the route will serve;
  *   5. `POST /agent/reveal` honours `mode`: `reveal` SHOWS a file it would otherwise open,
- *      the default still opens a PDF, and no mode can make it launch a `.sh`.
+ *      the default still opens a PDF, and no mode can make it launch a `.sh`;
+ *   6. a PDF a KNOWLEDGE note links to opens through the vault route instead
+ *      (`GET /graph/content?path=…&raw=1`) — same content type, inline, ranged — and that
+ *      route stays contained to the vault and unchanged for every existing caller.
  *
  * Same harness contract as the other verify scripts: real server, isolated fake HOME,
  * COLLECT-DON'T-FAIL-FAST reporting.
@@ -63,6 +66,16 @@ function setup() {
   writeFileSync(join(PROJ, 'docs', 'tiny.pdf'), pdfBytes());
   writeFileSync(join(PROJ, 'docs', 'install.sh'), '#!/bin/sh\necho hi\n', 'utf-8');
   writeFileSync(join(OUTSIDE, 'contract.pdf'), pdfBytes());
+
+  // The knowledge half: a note, and beside it the document it was distilled from — the shape
+  // the owner named ("a PDF can land in Knowledge too"). Written straight into the vault
+  // rather than through the CLI because `knowledge create` writes markdown, and the file
+  // under test is deliberately not markdown.
+  const KDIR = join(PROJ, '_dream_context', 'knowledge', 'legal');
+  mkdirSync(join(KDIR, 'assets'), { recursive: true });
+  writeFileSync(join(KDIR, 'assets', 'msa.pdf'), pdfBytes(300 * 1024));
+  writeFileSync(join(KDIR, 'contracts.md'),
+    '---\ntype: knowledge\nname: contracts\n---\n\n# Contracts\n\nSee [the MSA](assets/msa.pdf).\n', 'utf-8');
 
   const add = spawnSync(process.execPath, [join(REPO, 'dist', 'index.js'), 'vaults', 'add', 'proj', PROJ],
     { env: { ...process.env, HOME }, encoding: 'utf-8' });
@@ -186,6 +199,48 @@ async function run(base) {
     const gone = await reveal(join(PROJ, 'docs', 'nope.pdf'));
     check('a file that is not there answers 404 rather than opening nothing in silence',
       gone.status === 404, String(gone.status));
+  }
+
+  // 6 — the knowledge half. A note's link resolves to a VAULT path, and the bytes come from
+  //     the vault route: the Knowledge page is not desktop-only, so routing it through
+  //     /agent/file would answer "desktop only" to a browser dashboard reading its own vault.
+  const vaultUrl = (p, raw = true) =>
+    `${base}/api/graph/content?path=${encodeURIComponent(p)}${raw ? '&raw=1' : ''}`;
+  {
+    const MSA = 'knowledge/legal/assets/msa.pdf';
+    const r = await fetch(vaultUrl(MSA));
+    const body = Buffer.from(await r.arrayBuffer());
+    check('a knowledge PDF is 200 application/pdf from the vault route',
+      r.status === 200 && r.headers.get('content-type') === 'application/pdf',
+      `${r.status} ${r.headers.get('content-type')}`);
+    check('served inline, nosniff, range-capable',
+      r.headers.get('content-disposition') === 'inline'
+      && r.headers.get('x-content-type-options') === 'nosniff'
+      && r.headers.get('accept-ranges') === 'bytes');
+    check('the whole 300KB document comes back', body.length === 300 * 1024, `${body.length} bytes`);
+
+    const ranged = await fetch(vaultUrl(MSA), { headers: { Range: 'bytes=0-15' } });
+    check('and it is ranged, so the engine can page it in',
+      ranged.status === 206 && (await ranged.arrayBuffer()).byteLength === 16, String(ranged.status));
+
+    // The note that links it still reads as markdown — the arm is an opt-in on one type, not
+    // a mode switch that changes what every other caller of this route gets.
+    const note = await fetch(vaultUrl('knowledge/legal/contracts.md', false));
+    const noteBody = await note.json().catch(() => null);
+    check('the note itself still answers the JSON preview, unchanged',
+      note.status === 200 && noteBody?.type === 'markdown', `${note.status} ${noteBody?.type}`);
+
+    const txt = await fetch(vaultUrl('knowledge/legal/contracts.md'));
+    const txtBody = await txt.json().catch(() => null);
+    check('raw=1 on a type not on the allowlist falls through to the old answer',
+      txt.status === 200 && txtBody?.type === 'markdown', `${txt.status} ${txtBody?.type}`);
+
+    const escape = await fetch(vaultUrl('../../docs/handbook.pdf'));
+    check('the vault route cannot be walked out of, even for an allowlisted type',
+      escape.status === 400, String(escape.status));
+
+    const missing = await fetch(vaultUrl('knowledge/legal/assets/nope.pdf'));
+    check('a knowledge PDF that is not there answers 404', missing.status === 404, String(missing.status));
   }
 }
 

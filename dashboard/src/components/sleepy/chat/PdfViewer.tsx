@@ -39,11 +39,23 @@ type Probe =
   | { state: 'blocked'; path: string }
   | { state: 'missing'; message: string };
 
-export function PdfViewer({ path, label, onClose }: { path: string; label?: string; onClose: () => void }) {
+export function PdfViewer({
+  path, label, src: srcOverride, onClose,
+}: {
+  /** The file as the surface names it — shown in the header, and the path handed to the OS. */
+  path: string;
+  label?: string;
+  /** Where the BYTES come from, when they don't come from the chat surface's file route.
+   *  The Knowledge page reads a PDF its note links to through `/api/graph/content?raw=1`
+   *  instead: that route is vault-scoped and, unlike `/agent/file`, not gated on the desktop
+   *  app — a browser dashboard must not be told "desktop only" about a file in its own vault. */
+  src?: string;
+  onClose: () => void;
+}) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [probe, setProbe] = useState<Probe>({ state: 'checking' });
   const [granting, setGranting] = useState(false);
-  const src = agentFileUrl(path, { raw: true });
+  const src = srcOverride ?? agentFileUrl(path, { raw: true });
 
   // Ask the endpoint BEFORE embedding. An `<iframe>`/`<object>` reports nothing useful when it
   // fails — no status, no reason — so a file that merely needs consent would render as a blank
@@ -89,9 +101,12 @@ export function PdfViewer({ path, label, onClose }: { path: string; label?: stri
   // Esc too, and without swallowing the key one press would take the whole surface down with
   // the document. Capture phase, same as ImageViewer, for the same reason.
   //
-  // Note this only fires while focus is outside the embedded document — once the user clicks
-  // into the engine's PDF view the key belongs to that frame. The ✕ is therefore not a
-  // convenience, it is the guaranteed way out.
+  // This only fires while focus is outside the embedded document — a key pressed inside the
+  // engine's PDF frame belongs to that frame, and no listener of ours can see it. Chrome's
+  // built-in viewer takes focus as it initialises and will not give it back (see the frame's
+  // own note), so on that engine Esc closes the viewer only once the user has clicked back
+  // into our chrome. The ✕ is therefore not a convenience — it is the guaranteed way out, and
+  // it is present in every state this component can be in.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
@@ -155,7 +170,19 @@ export function PdfViewer({ path, label, onClose }: { path: string; label?: stri
           // most reliable in, and the one that keeps the document's own scroll, search and
           // print chrome. Same-origin (the local dashboard server serves both), so nothing
           // here is a cross-site frame.
-          <iframe className="pdf-viewer-frame" src={src} title={label || path} />
+          <iframe
+            className="pdf-viewer-frame"
+            src={src}
+            title={label || path}
+            // No attempt is made to hold focus against the plugin. Chrome's built-in viewer
+            // takes it as it initialises and takes it BACK after a refocus — measured here:
+            // a synchronous reclaim on `load`, a `requestAnimationFrame` one, and a 150ms
+            // backstop all lost, leaving `document.activeElement` as this frame every time.
+            // Winning that race would also be the wrong prize: focus is what makes the
+            // document's own scroll, search and print keys work. So the ✕ (and a click on the
+            // viewer's own chrome, which hands focus back and re-arms Esc) is the way out,
+            // and it is always present — see the Esc effect above.
+          />
         )}
       </div>
     </div>,
