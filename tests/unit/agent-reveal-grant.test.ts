@@ -138,7 +138,9 @@ describe('handleAgentReveal — open directly vs. reveal in the file manager', (
     const { res, status, body } = makeRes();
     await handleAgentReveal(makePost({ path: target }), res);
     expect(status()).toBe(200);
-    expect(body()).toEqual({ opened: true });
+    // The answer names which of the two actually happened, so a caller whose button said
+    // "Open on computer" can tell an open from the executable downgrade to a reveal.
+    expect(body()).toEqual({ opened: true, mode: 'open' });
     expect(lastSpawn().args).toContain(target);
     expect(lastSpawn().args).not.toContain('-R');
   });
@@ -179,12 +181,70 @@ describe('handleAgentReveal — open directly vs. reveal in the file manager', (
     expect(lastSpawn().args).not.toEqual([target]);
   });
 
+  it('opens a PDF with the default app — it is on the inert-document allowlist', async () => {
+    const target = join(projectRoot, 'handbook.pdf');
+    writeFileSync(target, '%PDF-1.4\n', 'utf-8');
+    const { res, status, body } = makeRes();
+    await handleAgentReveal(makePost({ path: target }), res);
+    expect(status()).toBe(200);
+    expect(body()).toEqual({ opened: true, mode: 'open' });
+    expect(lastSpawn().args).toEqual([target]);
+  });
+
   it('reaches a file OUTSIDE the project root — that is the whole point of the route', async () => {
     const target = join(outsideRoot, 'recording.png');
     const { res, status } = makeRes();
     await handleAgentReveal(makePost({ path: target }), res);
     expect(status()).toBe(200);
     expect(lastSpawn().args).toContain(target);
+  });
+});
+
+// ─── `mode` — "show me where this is" as its own request ────────────────────────
+//
+// The surfaces that show a file now offer BOTH doors as separate buttons, because "open it"
+// and "where is it?" are different things to want and the route used to answer only the first
+// (deciding for itself, from the extension). `mode` may only ever NARROW: it can turn an open
+// into a reveal, never a reveal into an open, so the never-launch-an-executable rule cannot be
+// unlocked by a client asking nicely.
+
+describe('handleAgentReveal — an explicit reveal', () => {
+  it('reveals a file it would otherwise have opened', async () => {
+    const target = join(projectRoot, 'shot.png');
+    const { res, status, body } = makeRes();
+    await handleAgentReveal(makePost({ path: target, mode: 'reveal' }), res);
+    expect(status()).toBe(200);
+    expect(body()).toEqual({ opened: true, mode: 'reveal' });
+    expect(lastSpawn().args).not.toEqual([target]);
+    if (process.platform === 'darwin') expect(lastSpawn().args).toEqual(['-R', target]);
+  });
+
+  it('reveals a FOLDER rather than opening it, when asked to', async () => {
+    const target = join(projectRoot, 'folder');
+    const { res, status, body } = makeRes();
+    await handleAgentReveal(makePost({ path: target, mode: 'reveal' }), res);
+    expect(status()).toBe(200);
+    expect(body()).toEqual({ opened: true, mode: 'reveal' });
+    if (process.platform === 'darwin') expect(lastSpawn().args).toEqual(['-R', target]);
+  });
+
+  it('an unknown mode means "decide for me" — it can never widen the route', async () => {
+    const script = join(projectRoot, 'install.sh');
+    const { res: r1 } = makeRes();
+    await handleAgentReveal(makePost({ path: script, mode: 'open' }), r1);
+    if (process.platform === 'darwin') expect(lastSpawn().args).toEqual(['-R', script]);
+
+    const { res: r2 } = makeRes();
+    await handleAgentReveal(makePost({ path: script, mode: 'launch-it-anyway' }), r2);
+    expect(lastSpawn().args).not.toEqual([script]);
+
+    // …and it must not turn an ordinary open into a reveal either — an absent/odd mode is
+    // exactly the behaviour every pre-existing caller already had.
+    const image = join(projectRoot, 'shot.png');
+    const { res: r3, body } = makeRes();
+    await handleAgentReveal(makePost({ path: image, mode: 42 }), r3);
+    expect(body()).toEqual({ opened: true, mode: 'open' });
+    expect(lastSpawn().args).toEqual([image]);
   });
 });
 

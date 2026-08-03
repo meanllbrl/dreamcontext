@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-08-02'
+updated: '2026-08-03'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -51,6 +51,8 @@ related_tasks:
   - chat-prose-reads-at-a-body-column-rhythm-not-a-ui-label-s
   - highlighter-the-agent-can-mark-the-load-bearing-phrase-not-just-bold-it
   - transcript-window-measures-in-cards-not-just-entries
+  - >-
+    chat-opens-a-pdf-in-the-app-and-every-file-panel-offers-open-on-computer-reveal-in-finder
 type: feature
 name: in-app-agent-terminal
 description: ''
@@ -115,6 +117,10 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - [x] As a developer, an image I attached is visible AS an image in my own sent message, not as the absolute path the message quoted for Claude's benefit.
 - [x] As a developer, I can reopen ANY conversation this project has ever had — not just the ones still holding a tab — from a searchable "Past chats" picker, so closing a chat stops meaning losing it.
 - [x] As a developer, that picker shows only MY conversations — the sessions the app and the orchestration skills spawned for themselves (Sleep, goal-skill builders, scheduled automations, council personas) are held back, with a footer line saying how many and one click to see them.
+
+- [x] As a developer, a PDF the agent produced or found opens IN the app — full window, the engine's own viewer with scroll/search/print — the same gesture that opens an image, instead of a slide-over preview that refuses it as "exceeds the preview size cap".
+
+- [x] As a developer, every surface that shows me a file — the slide-over panel, the PDF viewer, the image lightbox — offers "Open on computer" and "Reveal in Finder", so the moment the in-app preview isn't enough I'm one click from the real file instead of looking at its path in a header.
 
 ## Acceptance Criteria
 
@@ -214,6 +220,12 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - [ ] Chat highlighter: ==text== → <mark> via marked inline extension; pen variants (==!fail== red, ==+good== green, nothing = yellow) chosen by character after opener, only when letter follows; stroke ink not filled box, color: inherit for theme safety, dark ink 1/3 of light (measured contrast ≥7:1). briefing + parser pinned in lockstep via chat-surface-lockstep.test.ts (19 tests).
 
 - [ ] Chat tool runs: segmentToolRuns takes rendersNothing predicate; an item that draws zero pixels (empty thinking, empty+done text) held not run-breaking; live tail is last VISIBLE segment not last segment. Verified by verify:chat-toolrows (68 assertions × light+dark) and 7 unit tests built from frames captured off real CLI 2.1.220.
+
+- [x] A PDF opens at FULL WINDOW (`chat/PdfViewer.tsx`, portalled to body at the ImageViewer's z-index 1200), not in the slide-over: `classifyReference` gives `.pdf` its own `kind` and `ChatPane.handleOpenFile` routes it there. `/agent/file?raw=1` serves `application/pdf` streamed with ranges + `Content-Disposition: inline` (`AGENT_FILE_DOC_CONTENT_TYPE` — separate from the media map, which stays "playable/drawable"). The document is drawn by the ENGINE's viewer in an `<iframe>` (WKWebView/Chromium both ship one; pdf.js would cost ~1MB to reimplement less). Probed with a one-byte ranged GET before embedding, so an outside-root PDF offers "Allow access" instead of a blank rectangle; `navigator.pdfViewerEnabled === false` degrades to a stated "this window can't display PDFs" plus the OS hand-off, which is present in every state.
+
+- [x] Every file surface carries the two ways out to the OS (`chat/FileActions.tsx`, shared by the slide-over panel, the PDF viewer and the image lightbox via `ImageViewer`'s new `actions` slot): "Open on computer" (`mode:'auto'`), "Reveal in Finder" (`mode:'reveal'`) and Copy path, with a refusal SHOWN rather than swallowed. The panel previously offered the OS for a FOLDER only. `POST /agent/reveal`'s `mode` can only NARROW — an open becomes a reveal, never the reverse, and an unrecognised mode means "decide for me" — so the never-launch-an-executable rule survives any client; the answer reports which happened (`{opened, mode}`). Verified end-to-end against a real server: `npm run verify:pdf-viewer` (17 checks).
+
+- [x] The surface briefing (`src/server/chat-surface.ts`) names the PDF shape, so the agent writes `[the handbook](docs/handbook.pdf)` rather than telling the user where the file is. Trimmed to fit the existing 3,400-char budget rather than raising it — the briefing rides in every chat turn.
 
 ## Acceptance Criteria
 

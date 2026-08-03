@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  toolGlyph, classifyReference, parseEditDiff, summarizeSubAgents, subAgentToolUseIds,
+  toolGlyph, classifyReference, isPdfPath, parseEditDiff, summarizeSubAgents, subAgentToolUseIds,
   deriveDiffStartLine, estimateTokens, formatTokenCount, formatDuration, classifyOutputLine,
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
   turnHasVisibleProgress, nextStickToBottom, nextRestoreTop, isAtBottom, BOTTOM_SLACK,
@@ -103,6 +103,47 @@ describe('classifyReference', () => {
   it('label is always the basename, regardless of kind', () => {
     expect(classifyReference('a/b/c/readme.md').label).toBe('readme.md');
     expect(classifyReference('lonefile.txt').label).toBe('lonefile.txt');
+  });
+
+  // A PDF is its own kind because it routes to its own surface: the in-app viewer, at full
+  // window, the way an image routes to the lightbox. As `file` it landed in the slide-over's
+  // TEXT preview, which asks the JSON endpoint for a binary and answers "exceeds the preview
+  // size cap" — a file the user can see named in the transcript and cannot open.
+  it('classifies a PDF as its own kind, case-insensitively, and never as an image', () => {
+    for (const p of ['docs/handbook.pdf', 'docs/HANDBOOK.PDF', '/tmp/invoice.Pdf']) {
+      const ref = classifyReference(p);
+      expect(ref.kind).toBe('pdf');
+      expect(ref.isImage).toBe(false);
+      expect(ref.appNav).toBeUndefined();
+    }
+  });
+
+  it('a PDF inside the vault is still a PDF — no knowledge page can render one', () => {
+    expect(classifyReference('_dream_context/knowledge/legal/terms.pdf').kind).toBe('pdf');
+    expect(classifyReference('_dream_context/core/brief.pdf').kind).toBe('pdf');
+  });
+
+  it('only the extension counts — a name that merely contains "pdf" is an ordinary file', () => {
+    expect(classifyReference('src/pdf-export.ts').kind).toBe('file');
+    expect(classifyReference('_dream_context/knowledge/pdf/readme.md').kind).toBe('knowledge');
+    expect(classifyReference('_dream_context/state/pdf-viewer.md').kind).toBe('task');
+  });
+});
+
+// ─── isPdfPath ──────────────────────────────────────────────────────────────────
+
+describe('isPdfPath', () => {
+  it('is true for a .pdf, whatever the case, and ignores a query or fragment', () => {
+    expect(isPdfPath('handbook.pdf')).toBe(true);
+    expect(isPdfPath('/tmp/a/HANDBOOK.PDF')).toBe(true);
+    expect(isPdfPath('handbook.pdf?v=2')).toBe(true);
+    expect(isPdfPath('handbook.pdf#page=3')).toBe(true);
+  });
+
+  it('is false for everything else, including a folder named like one', () => {
+    for (const p of ['notes.md', 'shot.png', 'report.pdfx', 'pdf', 'archive/pdf/']) {
+      expect(isPdfPath(p)).toBe(false);
+    }
   });
 });
 

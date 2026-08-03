@@ -37,13 +37,30 @@ describe('revealPath', () => {
     await expect(revealPath('_dream_context/tmp/shot.png')).resolves.toBeNull();
   });
 
-  it('POSTs the path verbatim to the reveal route', async () => {
+  it('POSTs the path verbatim to the reveal route, letting the route decide by default', async () => {
     const { calls } = stubFetch(200, { opened: true });
     await revealPath('_dream_context/tmp/shot.png');
     const [url, init] = calls[0];
     expect(url).toContain('/api/agent/reveal');
     expect(init.method).toBe('POST');
-    expect(JSON.parse(String(init.body))).toEqual({ path: '_dream_context/tmp/shot.png' });
+    expect(JSON.parse(String(init.body))).toEqual({ path: '_dream_context/tmp/shot.png', mode: 'auto' });
+  });
+
+  // "Open on computer" and "Reveal in Finder" are two buttons because they are two things a
+  // person wants; without the mode both would hit the same heuristic and a picture could
+  // never be SHOWN in the file manager, only opened.
+  it('asks for the file manager outright when told to', async () => {
+    const { calls } = stubFetch(200, { opened: true, mode: 'reveal' });
+    await expect(revealPath('_dream_context/tmp/shot.png', 'reveal')).resolves.toBeNull();
+    expect(JSON.parse(String(calls[0][1].body))).toEqual({ path: '_dream_context/tmp/shot.png', mode: 'reveal' });
+  });
+
+  // The route downgrades an executable to a reveal whatever the caller asked for. That IS the
+  // click working — the file manager comes forward with the file selected — so it must not be
+  // reported as a failure, or `handleAction`'s reveal case would open a panel on top of it.
+  it('treats the executable downgrade as success, not something to report', async () => {
+    stubFetch(200, { opened: true, mode: 'reveal' });
+    await expect(revealPath('/tmp/install.sh')).resolves.toBeNull();
   });
 
   // The words are the UI's, not the route's. "Path escapes the project root" is a correct

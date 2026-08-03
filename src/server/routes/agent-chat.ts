@@ -807,6 +807,26 @@ const AGENT_FILE_MEDIA_CONTENT_TYPE: Record<string, string> = {
   '.flac': 'audio/flac',
 };
 
+/** Documents the browser engine can DISPLAY itself, served raw through the same streamed,
+ *  range-aware path as media rather than as a text preview.
+ *
+ *  A PDF is the whole reason this map is separate from the media one. It is neither playable
+ *  nor drawable, so it never belonged with `<video>`/`<img>`, but it is also the opposite of a
+ *  text preview: asking the JSON branch for one reads a binary as UTF-8 and — for anything of
+ *  a normal size — answers "File exceeds the preview size cap", which is exactly the dead end
+ *  a 44-second video hit before it was streamed (owner report 07-25). Ranges are load-bearing
+ *  here too: WebKit's built-in viewer pages a large PDF in by issuing range requests, so a
+ *  200-with-everything either stalls the first page or refuses outright. */
+const AGENT_FILE_DOC_CONTENT_TYPE: Record<string, string> = {
+  '.pdf': 'application/pdf',
+};
+
+/** Everything `?raw=1` will hand over as bytes: media to play or draw, documents to display. */
+const AGENT_FILE_RAW_CONTENT_TYPE: Record<string, string> = {
+  ...AGENT_FILE_MEDIA_CONTENT_TYPE,
+  ...AGENT_FILE_DOC_CONTENT_TYPE,
+};
+
 /** Media is STREAMED, so the 512KB preview cap (which exists to stop a huge generated file
  *  being pulled whole into the UI as text) doesn't apply — but a ceiling still does, so a
  *  mistyped path at a 40GB disk image can't tie up a socket indefinitely. */
@@ -939,12 +959,17 @@ export async function handleAgentFile(
   if (!st.isFile()) { sendError(res, 404, 'not_found', `Not a file: ${rawPath}`); return; }
 
   const ext = extname(abs).toLowerCase();
-  const mediaType = AGENT_FILE_MEDIA_CONTENT_TYPE[ext];
+  const rawType = AGENT_FILE_RAW_CONTENT_TYPE[ext];
   const wantsRaw = url.searchParams.get('raw') === '1';
 
-  if (wantsRaw && mediaType) {
+  if (wantsRaw && rawType) {
     if (st.size > AGENT_MEDIA_MAX_BYTES) { sendError(res, 413, 'too_large', 'File is too large to stream.'); return; }
-    serveMedia(req, res, abs, st.size, mediaType);
+    // A document is DISPLAYED, never downloaded: without this an engine that has no built-in
+    // viewer for the type falls back to saving it, which from the user's side reads as "the
+    // viewer opened and nothing happened, and now there's a file in Downloads". `nosniff` is
+    // already set above, and the type is ours (from the extension), not the client's.
+    if (AGENT_FILE_DOC_CONTENT_TYPE[ext]) res.setHeader('Content-Disposition', 'inline');
+    serveMedia(req, res, abs, st.size, rawType);
     return;
   }
 
@@ -1088,6 +1113,15 @@ export async function handleAgentGrant(
  *   • the file must already exist;
  *   • argv form (no shell), so nothing in the path can be interpreted as a command.
  * It is also only ever reached from an explicit user click on a named file.
+ *
+ * `mode` lets the caller ask for the file manager EXPLICITLY (`'reveal'`) rather than take
+ * the decision above, because "show me where this is" and "open this" are two different
+ * things a person wants and the UI now offers both as separate buttons. It only ever
+ * NARROWS what happens: `'reveal'` can turn an open into a reveal, never a reveal into an
+ * open, so the executable rule holds whatever the client asks for. The answer reports which
+ * of the two actually happened (`mode: 'open' | 'reveal'`), so a click on "Open on computer"
+ * for a `.sh` can say it was shown in the file manager instead of silently doing something
+ * else than the button said.
  */
 export async function handleAgentReveal(
   req: IncomingMessage,
@@ -1098,11 +1132,16 @@ export async function handleAgentReveal(
   if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Available only in the desktop app.'); return; }
 
   let target = '';
+  let forceReveal = false;
   try {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
-    const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { path?: unknown };
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { path?: unknown; mode?: unknown };
     if (typeof body.path === 'string') target = body.path;
+    // Anything other than the one recognised narrowing word means "decide for me" — an
+    // unknown mode must not be able to widen this route, and defaulting to `open` is the
+    // behaviour every existing caller already has.
+    forceReveal = body.mode === 'reveal';
   } catch { /* invalid body → the empty-path guard below */ }
 
   if (!target) { sendError(res, 400, 'missing_path', 'A "path" is required.'); return; }
@@ -1132,7 +1171,7 @@ export async function handleAgentReveal(
   //     of the risk.
   const ext = extname(target).toLowerCase();
   const inertToView = !!AGENT_FILE_MEDIA_CONTENT_TYPE[ext] || REVEAL_SAFE_DOC_EXT.has(ext);
-  const openDirectly = st.isDirectory() || inertToView;
+  const openDirectly = !forceReveal && (st.isDirectory() || inertToView);
 
   const opener = process.platform === 'darwin'
     ? { cmd: 'open', args: openDirectly ? [target] : ['-R', target] }
@@ -1145,5 +1184,5 @@ export async function handleAgentReveal(
     sendError(res, 500, 'open_failed', 'The system opener could not be started.');
     return;
   }
-  sendJson(res, 200, { opened: true });
+  sendJson(res, 200, { opened: true, mode: openDirectly ? 'open' : 'reveal' });
 }

@@ -9,6 +9,10 @@ interface Props {
   alt?: string;
   /** Optional line under the image (filename, figure caption). */
   caption?: ReactNode;
+  /** Optional controls for the file BEHIND the picture — handing it to the OS, copying its
+   *  path. A slot rather than built in, because this viewer also shows images that are only
+   *  ever URLs (an announcement's screenshots), and those have no file to act on. */
+  actions?: ReactNode;
   onClose: () => void;
 }
 
@@ -49,7 +53,7 @@ const FOCUSABLE = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"]
  * between here and the root — which is how a lightbox ends up trapped inside the
  * pane that opened it.
  */
-export function ImageViewer({ src, alt = '', caption, onClose }: Props) {
+export function ImageViewer({ src, alt = '', caption, actions, onClose }: Props) {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -302,6 +306,8 @@ export function ImageViewer({ src, alt = '', caption, onClose }: Props) {
 
       <div className="image-viewer-foot">
         {caption && <div className="image-viewer-caption">{caption}</div>}
+        {/* Above the zoom bar, not in it: these act on the FILE, the bar acts on the view. */}
+        {actions && <div className="image-viewer-actions">{actions}</div>}
         <div className="image-viewer-bar">
           <button
             type="button"

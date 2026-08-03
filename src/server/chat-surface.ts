@@ -50,6 +50,8 @@ click of consent, then works the same).
   a live pan/zoom canvas. Write that instead of telling the user where the board is.
 - **A path in backticks** is already a chip that opens a preview of that file. You get this
   for free by writing paths the way you always do.
+- **PDF** — \`[the handbook](docs/handbook.pdf)\` opens it IN the app, full window, with
+  scroll and search. Link it rather than saying where it is.
 - **Highlighter** — \`==phrase==\` paints a marker stroke behind it; \`==!broken==\` is the red
   pen and \`==+confirmed==\` the green one. Bold already carries structure, so in a long answer
   nothing stands out. Mark the few load-bearing phrases the eye should land on first — a

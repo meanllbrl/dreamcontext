@@ -189,6 +189,46 @@ describe('handleAgentFile — image bytes', () => {
   });
 });
 
+// A PDF is neither media nor a text preview, and it used to be treated as the latter: the
+// JSON branch read a binary as UTF-8 and, for any real document, answered "File exceeds the
+// preview size cap" — the exact dead end a video hit before it was streamed. The in-app
+// viewer embeds THIS response, so the content type and the ranges are its contract (the
+// engine's PDF viewer pages a large document in by issuing range requests).
+describe('handleAgentFile — PDF bytes', () => {
+  it('returns raw PDF bytes as application/pdf when raw=1, seekable and inline', async () => {
+    writeFileSync(join(projectRoot, 'handbook.pdf'), '%PDF-1.7\n%%EOF\n', 'utf-8');
+    const { res, status, header, raw, done } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=handbook.pdf&raw=1'), res, {}, contextRoot);
+    await done();
+    expect(status()).toBe(200);
+    expect(header('Content-Type')).toBe('application/pdf');
+    expect(header('Accept-Ranges')).toBe('bytes');
+    // Inline, never a download: an engine with no viewer would otherwise silently save the
+    // file, which reads as "the viewer opened and nothing happened".
+    expect(header('Content-Disposition')).toBe('inline');
+    expect(header('X-Content-Type-Options')).toBe('nosniff');
+    expect((raw() as Buffer).toString('utf-8')).toContain('%PDF-1.7');
+  });
+
+  it('answers a range on a PDF with 206 — how a viewer pages a large document in', async () => {
+    writeFileSync(join(projectRoot, 'handbook.pdf'), '%PDF-1.7\n%%EOF\n', 'utf-8');
+    const { res, status, header, done } = makeRes();
+    const req = { url: '/api/agent/file?path=handbook.pdf&raw=1', headers: { range: 'bytes=0-3' } } as unknown as IncomingMessage;
+    await handleAgentFile(req, res, {}, contextRoot);
+    await done();
+    expect(status()).toBe(206);
+    expect(header('Content-Range')).toBe('bytes 0-3/15');
+  });
+
+  it('still falls through to the text preview without raw=1 — the raw path is opt-in', async () => {
+    writeFileSync(join(projectRoot, 'handbook.pdf'), '%PDF-1.7\n%%EOF\n', 'utf-8');
+    const { res, status, header } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=handbook.pdf'), res, {}, contextRoot);
+    expect(status()).toBe(200);
+    expect(header('Content-Type')).toBe('application/json');
+  });
+});
+
 describe('handleAgentFile — SVG is served as text only, never as an executable image type', () => {
   it('SVG with raw=1 still returns type:text JSON, never image/svg+xml', async () => {
     const { res, status, header, body } = makeRes();

@@ -77,6 +77,16 @@
   white-space: nowrap;
 }
 
+/* The foot is click-through so the backdrop still closes on a click beside the controls;
+   anything real inside it has to opt back in. */
+.image-viewer-actions {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: min(90vw, 720px);
+}
+
 .image-viewer-bar {
   display: flex;
   align-items: center;

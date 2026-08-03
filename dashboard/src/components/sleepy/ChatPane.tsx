@@ -23,6 +23,7 @@ import { BackgroundShellsTray } from './chat/BackgroundShellsTray';
 import { QueuedMessages } from './chat/QueuedMessages';
 import { SlideOver } from './chat/SlideOver';
 import { Lightbox } from './chat/Lightbox';
+import { PdfViewer } from './chat/PdfViewer';
 import { BoardEmbed, BoardFullscreen } from './chat/BoardEmbed';
 import type { ChatAction } from './chat/chatActions';
 import { openExternalUrl } from '../../lib/desktop';
@@ -237,7 +238,11 @@ type SlideOverState =
   | { mode: 'shell'; run: SubAgentRun }
   | null;
 
-interface LightboxState { src: string; caption?: string }
+interface LightboxState { src: string; caption?: string; path?: string }
+
+/** A PDF opened at full window (see `PdfViewer`) — the document equivalent of the lightbox,
+ *  and the reason a `.pdf` chip no longer lands in the panel's text preview. */
+interface PdfState { path: string; label?: string }
 
 // ─── Top level ──────────────────────────────────────────────────────────────────────
 
@@ -295,6 +300,7 @@ export function ChatPane({
 
   const [slideOver, setSlideOver] = useState<SlideOverState>(null);
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
+  const [pdf, setPdf] = useState<PdfState | null>(null);
   /** A board opened genuinely fullscreen (§1.7) — the ONLY overlay a board ever renders in
    *  now. Owned here, not by `SlideOver`, because a board has four entry points spread
    *  across this file, `BoardEmbed` and `TranscriptItem`, and a single owner is what makes
@@ -970,9 +976,14 @@ export function ChatPane({
     // routing decision in one place rather than relying on that being true forever.
     if (ref.kind === 'board') { setBoardFull(path); return; }
     if (ref.isImage) {
-      setLightbox({ src: agentFileUrl(path, { raw: true }), caption: ref.label });
+      setLightbox({ src: agentFileUrl(path, { raw: true }), caption: ref.label, path });
       return;
     }
+    // A PDF is a document the window can DISPLAY, so it gets the image's treatment rather
+    // than the panel's: full window, the engine's own viewer. The panel was actively wrong
+    // for it — its text branch asks the JSON endpoint for a binary, which for any real PDF
+    // answers "exceeds the preview size cap" and for a small one answers mojibake.
+    if (ref.kind === 'pdf') { setPdf({ path, label: ref.label }); return; }
     setSlideOver({ mode: 'file', path });
   }, []);
   const handleOpenBoard = useCallback((path: string) => setBoardFull(path), []);
@@ -1439,7 +1450,18 @@ export function ChatPane({
           onNavApp={handleNavApp}
         />
       )}
-      {lightbox && <Lightbox src={lightbox.src} caption={lightbox.caption} onClose={() => setLightbox(null)} />}
+      {lightbox && (
+        <Lightbox
+          src={lightbox.src}
+          caption={lightbox.caption}
+          // Only a picture opened from a REFERENCE carries a path, and only that one can be
+          // handed to the OS. An inline `<img>` the transcript built from a URL has no file
+          // behind it, and a Finder button for it would open nothing.
+          path={lightbox.path}
+          onClose={() => setLightbox(null)}
+        />
+      )}
+      {pdf && <PdfViewer path={pdf.path} label={pdf.label} onClose={() => setPdf(null)} />}
       {boardFull && <BoardFullscreen path={boardFull} onClose={() => setBoardFull(null)} />}
     </div>
   );

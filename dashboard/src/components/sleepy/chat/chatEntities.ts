@@ -71,7 +71,7 @@ export function isDreamcontextSkill(skill: string): boolean {
 
 // ─── Reference classification (state 3/4 — file/entity chips) ─────────────────────
 
-export type RefKind = 'file' | 'task' | 'knowledge' | 'core' | 'inbox' | 'board' | 'image';
+export type RefKind = 'file' | 'task' | 'knowledge' | 'core' | 'inbox' | 'board' | 'image' | 'pdf';
 
 export interface Reference {
   /** The raw path/reference string as it appeared in the tool card / mention. */
@@ -87,6 +87,13 @@ export interface Reference {
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg)$/i;
 const BOARD_RE = /\.excalidraw(\.md)?$/i;
+const PDF_RE = /\.pdf$/i;
+
+/** A PDF, from its name alone — the one document type the app displays itself rather than
+ *  previewing as text (which for a binary means the size cap, or mojibake). */
+export function isPdfPath(path: string): boolean {
+  return PDF_RE.test(path.split(/[?#]/)[0]);
+}
 
 function basename(path: string): string {
   const clean = path.replace(/\/+$/, '');
@@ -251,6 +258,12 @@ export function classifyReference(path: string): Reference {
   }
   if (isImage) {
     return { raw, kind: 'image', label, isImage: true };
+  }
+  // Before the entity matchers, for the same reason images are: a PDF sitting under
+  // `_dream_context/knowledge/` is still a PDF, and there is no knowledge page that could
+  // render one.
+  if (PDF_RE.test(normalized)) {
+    return { raw, kind: 'pdf', label, isImage: false };
   }
 
   const taskMatch = normalized.match(/^_dream_context\/state\/([^/]+)\.md$/i);
@@ -2195,9 +2208,15 @@ function basenameOf(path: string): string {
  * file the reference actually meant is `resolveChatReference`'s job on the server, and it
  * now handles the case that produced this line at all — so this copy is the rare tail, not
  * the everyday outcome.
+ *
+ * `mode: 'reveal'` asks for the file manager outright — "show me where this is", which is a
+ * different thing to want than "open this" and now has its own button. `'auto'` (the default,
+ * and what every inline card uses) lets the route decide, which for anything executable is a
+ * reveal regardless: that downgrade is a SUCCESS, not something to report. The file manager
+ * comes to the front with the file selected, which is the honest answer to the click.
  */
-export function revealPath(path: string): Promise<string | null> {
-  return api.post('/agent/reveal', { path }).then(
+export function revealPath(path: string, mode: 'auto' | 'reveal' = 'auto'): Promise<string | null> {
+  return api.post('/agent/reveal', { path, mode }).then(
     () => null,
     (err: unknown) => {
       const code = err instanceof RequestError ? err.code : '';
@@ -2410,11 +2429,36 @@ export function useInlineMedia(
       return el;
     };
 
+    /**
+     * A local reference that is NOT media, drawn as the chip the backticked paths beside it
+     * already are: it opens in the app rather than loading in place.
+     *
+     * The case this exists for is `![doc](handbook.pdf)`. Markdown has one embed syntax and
+     * writers reach for it whatever they are embedding, so a PDF (or anything else with no
+     * element that can render it) arrived as an `<img>` that was guaranteed to fail — an
+     * error, a probe request, and a fallback card, all to say what the extension said up
+     * front. A chip says it once and opens the file in the viewer that suits it.
+     */
+    const buildPathChip = (path: string, label?: string): HTMLElement => {
+      const chip = document.createElement('a');
+      chip.setAttribute('data-chat-media', '1');
+      chip.className = 'chat-md-path';
+      chip.href = path;
+      chip.textContent = label?.trim() || basenameOf(path);
+      chip.title = `Open ${path}`;
+      chip.addEventListener('click', (e) => {
+        e.preventDefault();
+        live.current.onOpen?.(path);
+      });
+      return chip;
+    };
+
     // `![x](media)` — an <img> that can never load for video/audio, and needs the endpoint
     // rewrite even for images.
     root.querySelectorAll<HTMLImageElement>('img:not([data-chat-media])').forEach((img) => {
       const path = img.getAttribute('src') ?? '';
       if (!isLocalRef(path)) return;
+      if (!inlineMediaKind(path)) { img.replaceWith(buildPathChip(path, img.getAttribute('alt') ?? '')); return; }
       img.replaceWith(buildMedia(path));
     });
 
@@ -2434,6 +2478,8 @@ export function useInlineMedia(
       const href = a.getAttribute('href') ?? '';
       if (!isLocalRef(href)) return;
       if (inlineMediaKind(href)) { a.replaceWith(buildMedia(href)); return; }
+      // Kept in place (rather than swapped for `buildPathChip`) so the author's own link text
+      // survives — `[the handbook](handbook.pdf)` should still read "the handbook".
       a.setAttribute('data-chat-media', '1');
       a.classList.add('chat-md-path');
       a.title = `Open ${href}`;

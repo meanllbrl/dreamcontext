@@ -3,10 +3,11 @@ import { api, agentFileUrl } from '../../../api/client';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { ItemView } from './TranscriptItem';
 import {
-  inlineMediaKind, joinChildPath, formatEntrySize, dirTruncationNote, revealPath,
+  inlineMediaKind, joinChildPath, formatEntrySize, dirTruncationNote,
   isHeadlessAgentShell,
   type Reference, type SubAgentRun,
 } from './chatEntities';
+import { FileActions } from './FileActions';
 import type { ChatItem } from '../chatSession';
 
 /**
@@ -168,12 +169,6 @@ function FileSlideOver({ path, reference, onClose, onNavApp, onOpenPath }: Slide
     return () => { cancelled = true; };
   }, [path, mediaKind]);
 
-  const copyPath = () => { void navigator.clipboard?.writeText(path).catch(() => {}); };
-  // "Reveal in Finder" that refuses (gone, or a path that escapes the project root) says so
-  // in the panel's own status line rather than swallowing it — owner report 07-28.
-  const [revealError, setRevealError] = useState<string | null>(null);
-  const handleReveal = () => { setRevealError(null); void revealPath(path).then(setRevealError); };
-
   return (
     <>
       <div className="chat-slideover-head">
@@ -183,27 +178,22 @@ function FileSlideOver({ path, reference, onClose, onNavApp, onOpenPath }: Slide
         </div>
         <button type="button" className="chat-slideover-close" onClick={onClose} aria-label="Close">✕</button>
       </div>
-      <div className="chat-slideover-actions">
-        {reference.appNav && (
+      {/* Every file, not just a folder. The panel used to offer the OS only for a DIRECTORY,
+          which left the common case — a file whose preview isn't enough, or that this window
+          can't render at all — with the path in the header and no way to reach it. `FileActions`
+          carries both doors (open in the default app / show me where it is) plus Copy path, and
+          says so when the OS refuses instead of swallowing it (owner report 07-28). */}
+      <FileActions
+        path={path}
+        className="chat-slideover-actions"
+        extra={reference.appNav && (
           <button
             type="button"
             className="chat-btn"
             onClick={() => { onNavApp(reference.appNav!.page, reference.appNav!.id); onClose(); }}
           >Open in app <span aria-hidden>↗</span></button>
         )}
-        {state.data?.type === 'dir' && (
-          // The issue's own expected behaviour: a folder should OPEN. In-app listing below,
-          // and this hands the same folder to Finder (`/agent/reveal` opens folders; it only
-          // ever reveals executables rather than launching them).
-          <button type="button" className="chat-btn" onClick={handleReveal}>
-            <span aria-hidden>↗</span> Reveal in Finder
-          </button>
-        )}
-        <button type="button" className="chat-btn" onClick={copyPath}>
-          <span aria-hidden>⧉</span> Copy path
-        </button>
-      </div>
-      {revealError && <p className="chat-slideover-status error">Couldn't open this — {revealError}</p>}
+      />
       <div className="chat-slideover-body" data-media={mediaKind ?? undefined}>
         {mediaKind ? (
           <MediaPreview path={path} kind={mediaKind} />
