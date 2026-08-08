@@ -1,21 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { ThesisKind, ThesisStatus } from '../../hooks/useTheses';
 import {
-  type ThesisMenuKey, type ThesisSortKey, SORT_LABEL, STATUS_META, KIND_META,
+  type ThesisMenuKey, type ThesisSortKey, type ThesisViewMode, SORT_LABEL, STATUS_META, KIND_META,
   chipTrigger, popBase, optRow, sectionLabel, checkBox, radioBox,
 } from './thesis-chrome';
-import type { ThesisDisplayProps } from './ThesisCard';
 
 const STATUS_ORDER: ThesisStatus[] = ['draft', 'open', 'validated', 'invalidated'];
 const KIND_OPTS: { value: 'all' | ThesisKind; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'observational', label: 'Observational' },
   { value: 'experimental', label: 'Experimental' },
-];
-const DISPLAY_DEFS: [keyof ThesisDisplayProps, string][] = [
-  ['kind', 'Kind'], ['confidence', 'Confidence'], ['evidence', 'Evidence breakdown'],
-  ['cycles', 'Cycles checked'], ['staleness', 'Staleness'], ['links', 'Linked counts'],
-  ['blocked', 'Blocked flag'], ['createdBy', 'Created by'],
 ];
 
 // Triggers/rows are real <button>s so the toolbar is keyboard-operable;
@@ -41,8 +35,8 @@ interface ThesisBoardToolbarProps {
   toggleBlocked: () => void;
   sort: ThesisSortKey;
   setSort: (s: ThesisSortKey) => void;
-  display: ThesisDisplayProps;
-  toggleDisplay: (k: keyof ThesisDisplayProps) => void;
+  view: ThesisViewMode;
+  setView: (v: ThesisViewMode) => void;
   archive: boolean;
   toggleArchive: () => void;
   hasActiveFilters: boolean;
@@ -55,7 +49,7 @@ interface ThesisBoardToolbarProps {
 export function ThesisBoardToolbar({
   count, search, setSearch, statusInc, toggleStatus, statusCounts, kind, setKind,
   objectiveOptions, objective, setObjective, blockedOnly, toggleBlocked,
-  sort, setSort, display, toggleDisplay, archive, toggleArchive,
+  sort, setSort, view, setView, archive, toggleArchive,
   hasActiveFilters, clearAllFilters, openMenu, setOpenMenu, onCreate,
 }: ThesisBoardToolbarProps) {
   const toggle = (m: ThesisMenuKey) => setOpenMenu(openMenu === m ? null : m);
@@ -222,28 +216,36 @@ export function ThesisBoardToolbar({
         )}
       </div>
 
-      {/* Display */}
-      <div style={{ position: 'relative', flex: '0 0 auto' }}>
-        <button type="button" className="bd-chip" onClick={() => toggle('display')} aria-haspopup="menu" aria-expanded={openMenu === 'display'} title="Choose which parts show on cards" style={{ ...chipTrigger(false), gap: 5, padding: '0 10px' }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><circle cx="8" cy="7" r="2.4" /><path d="M13 7h7" /><circle cx="16" cy="17" r="2.4" /><path d="M4 17h7" /></svg>
-          <span style={{ fontSize: 12.5 }}>Display</span>
-          <span style={{ fontSize: 9, opacity: 0.7 }}>⌄</span>
-        </button>
-        {openMenu === 'display' && (
-          <div className="bd-pop" role="menu" style={{ ...popBase, right: 0, width: 204 }}>
-            <div style={{ ...sectionLabel, padding: '6px 8px 8px' }}>Shown on cards</div>
-            {DISPLAY_DEFS.map(([k, l]) => (
-              <button type="button" key={k} className="bd-row" role="menuitemcheckbox" aria-checked={display[k]} onClick={() => toggleDisplay(k)} style={rowBtn}>
-                <span style={checkBox(display[k])}>{display[k] ? '✓' : ''}</span>
-                <span style={{ flex: 1 }}>{l}</span>
-              </button>
-            ))}
-          </div>
-        )}
+      {/* View mode — List (activity inbox) vs Board (status kanban). Persisted. */}
+      <div role="group" aria-label="View" style={{ display: 'flex', alignItems: 'center', height: 34, padding: 2, gap: 2, borderRadius: 9, background: 'var(--color-bg-tertiary)', border: '1px solid var(--color-border)', flex: '0 0 auto' }}>
+        {(['list', 'board'] as ThesisViewMode[]).map((v) => (
+          <button
+            key={v}
+            type="button"
+            aria-pressed={view === v}
+            onClick={() => setView(v)}
+            title={v === 'list' ? 'Activity list — what changed, newest first' : 'Board — grouped by status'}
+            style={{
+              ...btnReset,
+              display: 'flex', alignItems: 'center', gap: 5, height: 28, padding: '0 10px', borderRadius: 7, cursor: 'pointer',
+              fontSize: 12, fontWeight: 600,
+              background: view === v ? 'var(--color-bg-elevated)' : 'transparent',
+              color: view === v ? 'var(--color-text)' : 'var(--color-text-tertiary)',
+              boxShadow: view === v ? 'var(--shadow-sm)' : 'none',
+            }}
+          >
+            {v === 'list' ? (
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+            ) : (
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="4" width="5" height="16" rx="1" /><rect x="10" y="4" width="5" height="11" rx="1" /><rect x="17" y="4" width="5" height="7" rx="1" /></svg>
+            )}
+            {v === 'list' ? 'List' : 'Board'}
+          </button>
+        ))}
       </div>
 
       {/* Archive toggle */}
-      <button type="button" className="bd-chip" onClick={toggleArchive} aria-pressed={archive} style={chipTrigger(archive)} title="Show retired hypotheses as a 5th column">
+      <button type="button" className="bd-chip" onClick={toggleArchive} aria-pressed={archive} style={chipTrigger(archive)} title="Include retired hypotheses">
         Archive
       </button>
 

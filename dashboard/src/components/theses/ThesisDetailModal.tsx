@@ -9,6 +9,7 @@ import {
   type EvidenceVerdict,
   type PredictionStanding,
   type ThesisLinkKind,
+  type ThesisView,
 } from '../../hooks/useTheses';
 import { useLabInsights } from '../../hooks/useLab';
 import { useObjectives } from '../../hooks/useObjectives';
@@ -18,9 +19,13 @@ import './theses.css';
 import './ThesisDetailModal.css';
 
 /**
- * Centered detail modal for one thesis (Hypotheses board). Confidence is always
- * DERIVED upstream (src/lib/theses/confidence.ts) — this component only renders
- * the breakdown the server already computed, never recomputes it.
+ * Centered detail modal for one thesis (Hypotheses board), rebuilt 08-08 around
+ * a single hero: status + claim + verdict + the lifecycle ACTIONS all live in
+ * the header, so "where does this stand" and "what do I do now" are one glance.
+ * Sections below are plain typography (no boxes-in-boxes); evidence notes are
+ * clamped to two lines and expand on click. Confidence is always DERIVED
+ * upstream (src/lib/theses/confidence.ts) — this component only renders the
+ * breakdown the server already computed, never recomputes it.
  */
 export interface ThesisDetailModalProps {
   slug: string;
@@ -31,6 +36,9 @@ export interface ThesisDetailModalProps {
    * implementation report for the exact contract expected here.
    */
   onNavigate?: (page: string, focusId?: string) => void;
+  /** Inbox contract: report every look at (and while on) this thesis so the
+   *  board's seen map stays current. */
+  onSeen?: (t: ThesisView) => void;
 }
 
 type EvidenceFilter = 'all' | EvidenceVerdict;
@@ -46,9 +54,9 @@ const STATUS_LABEL: Record<string, string> = {
   draft: 'Draft', open: 'Open', validated: 'Validated', invalidated: 'Invalidated', retired: 'Retired',
 };
 
-const KIND_META: Record<string, { glyph: string; label: string; ink: string }> = {
-  observational: { glyph: '👁', label: 'Observational', ink: 'var(--thesis-violet)' },
-  experimental: { glyph: '⚗', label: 'Experimental', ink: 'var(--thesis-amber)' },
+const KIND_META: Record<string, { label: string; ink: string }> = {
+  observational: { label: 'Observational', ink: 'var(--thesis-violet)' },
+  experimental: { label: 'Experimental', ink: 'var(--thesis-amber)' },
 };
 
 const VERDICT_META: Record<EvidenceVerdict, { label: string; ink: string }> = {
@@ -57,15 +65,14 @@ const VERDICT_META: Record<EvidenceVerdict, { label: string; ink: string }> = {
   'no-signal': { label: 'No signal', ink: 'var(--thesis-draft)' },
 };
 
-// 'changelog' is a valid EvidenceSource (a cited session/changelog entry) but the
-// PO's captured design only pinned glyphs for insight/task/objective/external —
-// this entry is a sane default so the ledger never renders an undefined glyph.
-const SOURCE_META: Record<EvidenceSource, { glyph: string; label: string; ink: string }> = {
-  insight: { glyph: '◈', label: 'Insight', ink: 'var(--thesis-open)' },
-  task: { glyph: '▦', label: 'Task', ink: 'var(--thesis-violet)' },
-  objective: { glyph: '◇', label: 'Objective', ink: 'var(--thesis-amber)' },
-  external: { glyph: '⇲', label: 'External', ink: 'var(--thesis-draft)' },
-  changelog: { glyph: '≡', label: 'Changelog', ink: 'var(--thesis-draft)' },
+// Source labels are WORDS (redesign 08-08) — the old ◈▦◇⇲≡ glyph set carried
+// no meaning without a legend and read as generated noise.
+const SOURCE_META: Record<EvidenceSource, { label: string; ink: string }> = {
+  insight: { label: 'Insight', ink: 'var(--thesis-open)' },
+  task: { label: 'Task', ink: 'var(--thesis-violet)' },
+  objective: { label: 'Objective', ink: 'var(--thesis-amber)' },
+  external: { label: 'External', ink: 'var(--thesis-draft)' },
+  changelog: { label: 'Changelog', ink: 'var(--thesis-draft)' },
 };
 
 const STANDING_META: Record<PredictionStanding, { glyph: string; ink: string; label: string }> = {
@@ -217,9 +224,17 @@ function ConfidencePopover({
   );
 }
 
-export function ThesisDetailModal({ slug, onClose, onNavigate }: ThesisDetailModalProps) {
+export function ThesisDetailModal({ slug, onClose, onNavigate, onSeen }: ThesisDetailModalProps) {
   const { data, isLoading, isError, error } = useThesis(slug);
   const thesis = data?.thesis ?? null;
+
+  // Mark seen on open AND on every refresh while open (a mutation made from
+  // this modal bumps updated_at; without re-marking, closing would leave the
+  // thesis "unread" from the user's own edit).
+  useEffect(() => {
+    if (thesis) onSeen?.(thesis);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thesis?.slug, thesis?.updated_at]);
   const cb = data?.confidence ?? thesis?.confidenceBreakdown ?? { confidence: 0.5, ws: 0, wc: 0, supports: 0, contradicts: 0, noSignal: 0 };
   const pct = Math.round(Math.max(0, Math.min(1, cb.confidence)) * 100);
 
@@ -237,6 +252,12 @@ export function ThesisDetailModal({ slug, onClose, onNavigate }: ThesisDetailMod
   const tasksBySlug = useMemo(() => new Map(allTasks.map((t) => [t.slug, t.name])), [allTasks]);
 
   const [evidenceFilter, setEvidenceFilter] = useState<EvidenceFilter>('all');
+  const [expandedEvidence, setExpandedEvidence] = useState<Set<number>>(() => new Set());
+  const toggleEvidence = (idx: number) => setExpandedEvidence((prev) => {
+    const next = new Set(prev);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    return next;
+  });
   const [confidenceInfoOpen, setConfidenceInfoOpen] = useState(false);
   const [pendingFlip, setPendingFlip] = useState<'validated' | 'invalidated' | null>(null);
   const [citedIndices, setCitedIndices] = useState<number[]>([]);
@@ -421,7 +442,7 @@ export function ThesisDetailModal({ slug, onClose, onNavigate }: ThesisDetailMod
             <div className="td-head">
               <div className="td-head-row">
                 <span className={`td-chip td-chip--status-${thesis.status}`}>{STATUS_LABEL[thesis.status]}</span>
-                <span className="td-chip td-chip--kind" style={{ color: kindMeta.ink }}>{kindMeta.glyph} {kindMeta.label}</span>
+                <span className="td-chip td-chip--kind" style={{ color: kindMeta.ink }}>{kindMeta.label}</span>
                 {flippedThisCycle && (
                   <span className="td-chip td-chip--flip">⟳ FLIPPED {thesis.status.toUpperCase()}</span>
                 )}
@@ -444,6 +465,65 @@ export function ThesisDetailModal({ slug, onClose, onNavigate }: ThesisDetailMod
                   onRequestClose={() => setConfidenceInfoOpen(false)}
                 />
               </div>
+
+              {/* Lifecycle actions live IN the hero, attached to the verdict —
+                  the flip/promote confirm panels expand here in place. */}
+              {pendingFlip ? (
+                <div className="td-inline-panel">
+                  <div className="td-flip-panel-title">Cite the evidence behind marking this {pendingFlip}</div>
+                  {newestFirst.length === 0 ? (
+                    <p className="td-empty">No evidence to cite yet — add evidence before flipping manually.</p>
+                  ) : (
+                    <ul className="td-flip-list bd-scroll">
+                      {newestFirst.map((e) => (
+                        <li key={e.idx} className="td-flip-item">
+                          <label>
+                            <input type="checkbox" checked={citedIndices.includes(e.idx)} onChange={() => toggleCite(e.idx)} />
+                            <span className="td-flip-item-verdict" style={{ color: VERDICT_META[e.verdict].ink }}>{VERDICT_META[e.verdict].label}</span>
+                            <span className="td-flip-item-note">{e.note || e.date}</span>
+                          </label>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="td-flip-actions">
+                    <button className="td-btn td-btn--ghost" onClick={cancelFlip}>Cancel</button>
+                    <button
+                      className={`td-btn ${pendingFlip === 'validated' ? 'td-btn--validate' : 'td-btn--invalidate'}`}
+                      disabled={citedIndices.length === 0 || setStatus.isPending}
+                      onClick={confirmFlip}
+                    >
+                      {pendingFlip === 'validated' ? 'Validate' : 'Invalidate'} with {citedIndices.length} cited
+                    </button>
+                  </div>
+                </div>
+              ) : promoteOpen ? (
+                <div className="td-inline-panel">
+                  <div className="td-flip-panel-title">Promote to knowledge</div>
+                  <input
+                    className="td-promote-input"
+                    value={promotePath}
+                    onChange={(e) => setPromotePath(e.target.value)}
+                    placeholder="knowledge/decisions/…md"
+                    autoFocus
+                  />
+                  <label className="td-promote-retire">
+                    <input type="checkbox" checked={promoteRetire} onChange={(e) => setPromoteRetire(e.target.checked)} />
+                    Retire this thesis
+                  </label>
+                  <div className="td-flip-actions">
+                    <button className="td-btn td-btn--ghost" onClick={() => setPromoteOpen(false)}>Cancel</button>
+                    <button className="td-btn td-btn--cta" disabled={!promotePath.trim() || promoteThesis.isPending} onClick={confirmPromote}>
+                      Promote
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="td-actions-row">
+                  <span className="td-foot-note">{footNote}</span>
+                  <div className="td-foot-actions">{footActions}</div>
+                </div>
+              )}
             </div>
 
             <div className="td-body bd-scroll">
@@ -507,16 +587,25 @@ export function ThesisDetailModal({ slug, onClose, onNavigate }: ThesisDetailMod
                         {filteredEvidence.map((e) => {
                           const vm = VERDICT_META[e.verdict];
                           const sm = SOURCE_META[e.source];
+                          const expanded = expandedEvidence.has(e.idx);
                           return (
                             <li key={e.idx} className="td-evidence" style={{ borderLeftColor: vm.ink }}>
                               <div className="td-evidence-head">
                                 <span className="td-evidence-verdict" style={{ color: vm.ink }}>{vm.label}</span>
                                 <span className="td-evidence-date">{e.date}</span>
                                 <span className="td-evidence-source" style={{ color: sm.ink }} title={e.ref ?? sm.label}>
-                                  {sm.glyph} {sm.label}
+                                  {sm.label}
                                 </span>
                               </div>
-                              {e.note && <p className="td-evidence-note">{e.note}</p>}
+                              {e.note && (
+                                <p
+                                  className={`td-evidence-note${expanded ? '' : ' td-evidence-note--clamped'}`}
+                                  onClick={() => toggleEvidence(e.idx)}
+                                  title={expanded ? 'Click to collapse' : 'Click to read in full'}
+                                >
+                                  {e.note}
+                                </p>
+                              )}
                             </li>
                           );
                         })}
@@ -590,12 +679,7 @@ export function ThesisDetailModal({ slug, onClose, onNavigate }: ThesisDetailMod
                   />
 
                   <div className="td-meta">
-                    <div className="td-meta-row">
-                      <span className="td-meta-avatar" title={thesis.created_by === 'sleep-learn' ? 'sleep-learn agent' : 'You'}>
-                        {thesis.created_by === 'sleep-learn' ? '◑' : '●'}
-                      </span>
-                      <span>{thesis.created_by === 'sleep-learn' ? 'sleep-learn agent' : 'You'}</span>
-                    </div>
+                    <div className="td-meta-row"><span className="td-meta-label">Created by</span><span>{thesis.created_by === 'sleep-learn' ? 'sleep-learn agent' : 'You'}</span></div>
                     <div className="td-meta-row"><span className="td-meta-label">Created</span><span>{thesis.created_at}</span></div>
                     <div className="td-meta-row"><span className="td-meta-label">Cycles checked</span><span>{thesis.cycles_checked}</span></div>
                     <div className="td-meta-row"><span className="td-meta-label">Kind</span><span>{kindMeta.label}</span></div>
@@ -611,64 +695,6 @@ export function ThesisDetailModal({ slug, onClose, onNavigate }: ThesisDetailMod
               </div>
             </div>
 
-            <div className="td-foot">
-              {pendingFlip ? (
-                <div className="td-flip-panel">
-                  <div className="td-flip-panel-title">Cite the evidence behind marking this {pendingFlip}</div>
-                  {newestFirst.length === 0 ? (
-                    <p className="td-empty">No evidence to cite yet — add evidence before flipping manually.</p>
-                  ) : (
-                    <ul className="td-flip-list bd-scroll">
-                      {newestFirst.map((e) => (
-                        <li key={e.idx} className="td-flip-item">
-                          <label>
-                            <input type="checkbox" checked={citedIndices.includes(e.idx)} onChange={() => toggleCite(e.idx)} />
-                            <span className="td-flip-item-verdict" style={{ color: VERDICT_META[e.verdict].ink }}>{VERDICT_META[e.verdict].label}</span>
-                            <span className="td-flip-item-note">{e.note || e.date}</span>
-                          </label>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <div className="td-flip-actions">
-                    <button className="td-btn td-btn--ghost" onClick={cancelFlip}>Cancel</button>
-                    <button
-                      className={`td-btn ${pendingFlip === 'validated' ? 'td-btn--validate' : 'td-btn--invalidate'}`}
-                      disabled={citedIndices.length === 0 || setStatus.isPending}
-                      onClick={confirmFlip}
-                    >
-                      {pendingFlip === 'validated' ? 'Validate' : 'Invalidate'} with {citedIndices.length} cited
-                    </button>
-                  </div>
-                </div>
-              ) : promoteOpen ? (
-                <div className="td-flip-panel">
-                  <div className="td-flip-panel-title">Promote to knowledge</div>
-                  <input
-                    className="td-promote-input"
-                    value={promotePath}
-                    onChange={(e) => setPromotePath(e.target.value)}
-                    placeholder="knowledge/decisions/…md"
-                    autoFocus
-                  />
-                  <label className="td-promote-retire">
-                    <input type="checkbox" checked={promoteRetire} onChange={(e) => setPromoteRetire(e.target.checked)} />
-                    Retire this thesis
-                  </label>
-                  <div className="td-flip-actions">
-                    <button className="td-btn td-btn--ghost" onClick={() => setPromoteOpen(false)}>Cancel</button>
-                    <button className="td-btn td-btn--cta" disabled={!promotePath.trim() || promoteThesis.isPending} onClick={confirmPromote}>
-                      Promote
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <span className="td-foot-note">{footNote}</span>
-                  <div className="td-foot-actions">{footActions}</div>
-                </>
-              )}
-            </div>
           </>
         )}
 

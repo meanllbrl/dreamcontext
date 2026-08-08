@@ -43,7 +43,8 @@
     "verify:chat-prose": "node scripts/verify/chat-prose.mjs",
     "gen:cli-manifest": "UPDATE_CLI_MANIFEST=1 vitest run tests/unit/cli-manifest.test.ts",
     "verify:dream-actions": "node scripts/verify/dream-actions.mjs",
-    "verify:automation-run-chat": "node scripts/verify/automation-run-chat.mjs"
+    "verify:automation-run-chat": "node scripts/verify/automation-run-chat.mjs",
+    "verify:hypotheses": "node scripts/verify/hypotheses-ui.mjs"
   },
   "keywords": [
     "ai",

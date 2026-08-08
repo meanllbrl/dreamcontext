@@ -1,16 +1,17 @@
 import type { ThesisView } from '../../hooks/useTheses';
 import { STATUS_META } from './thesis-chrome';
-import { ThesisCard, type ThesisDisplayProps } from './ThesisCard';
+import { ThesisCard } from './ThesisCard';
+import type { ThesisDelta } from './thesis-seen';
 import './ThesisBoard.css';
 
 interface ThesisColumnProps {
   status: string;
   theses: ThesisView[];
-  display: ThesisDisplayProps;
+  deltas: Map<string, ThesisDelta>;
   onOpen: (slug: string) => void;
 }
 
-export function ThesisColumn({ status, theses, display, onOpen }: ThesisColumnProps) {
+export function ThesisColumn({ status, theses, deltas, onOpen }: ThesisColumnProps) {
   const meta = STATUS_META[status] ?? STATUS_META.draft;
   return (
     <div className="thc-col">
@@ -23,7 +24,7 @@ export function ThesisColumn({ status, theses, display, onOpen }: ThesisColumnPr
       <div className="thc-col-cards">
         {theses.length === 0 && <div className="thc-empty">None</div>}
         {theses.map((t) => (
-          <ThesisCard key={t.slug} thesis={t} display={display} onOpen={onOpen} />
+          <ThesisCard key={t.slug} thesis={t} delta={deltas.get(t.slug) ?? { unread: false, summary: null }} onOpen={onOpen} />
         ))}
       </div>
     </div>

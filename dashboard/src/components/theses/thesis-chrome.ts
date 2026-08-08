@@ -10,7 +10,7 @@ import type { CSSProperties } from 'react';
  * ramp, since the design fixes these exact hexes for both themes.
  */
 
-export type ThesisMenuKey = 'status' | 'kind' | 'objective' | 'sort' | 'display' | null;
+export type ThesisMenuKey = 'status' | 'kind' | 'objective' | 'sort' | null;
 export type ThesisSortKey = 'updated' | 'confidence' | 'staleness';
 
 export const SORT_LABEL: Record<ThesisSortKey, string> = {
@@ -30,10 +30,24 @@ export const STATUS_META: Record<string, { label: string; colorVar: string }> = 
 /** Base board columns, always rendered; Retired is appended only when Archive is on. */
 export const BASE_COLUMNS = ['draft', 'open', 'validated', 'invalidated'] as const;
 
-export const KIND_META: Record<string, { glyph: string; label: string; colorVar: string }> = {
-  observational: { glyph: '👁', label: 'Observational', colorVar: 'var(--thesis-violet)' },
-  experimental: { glyph: '⚗', label: 'Experimental', colorVar: 'var(--thesis-amber)' },
+export const KIND_META: Record<string, { label: string; colorVar: string }> = {
+  observational: { label: 'Observational', colorVar: 'var(--thesis-violet)' },
+  experimental: { label: 'Experimental', colorVar: 'var(--thesis-amber)' },
 };
+
+/** Board rendering mode — the A/C decision from the 08-08 design session: both
+ *  layouts ship, the user's pick is persisted in the board prefs. */
+export type ThesisViewMode = 'list' | 'board';
+
+/** List-view scope tabs (All / Unread / Needs attention). */
+export type ThesisListFilter = 'all' | 'unread' | 'attention';
+
+/** Confidence % ink thresholds pinned by the design: ≥66 green, 40–65 amber, <40 red. */
+export function confidenceInkVar(pct: number): string {
+  if (pct >= 66) return 'var(--thesis-validated)';
+  if (pct >= 40) return 'var(--thesis-amber)';
+  return 'var(--thesis-invalidated)';
+}
 
 /**
  * "Checked N day(s) ago" + a stale flag. The captured design specs "N cycle(s)

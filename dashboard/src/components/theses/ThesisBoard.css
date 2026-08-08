@@ -1,7 +1,7 @@
-/* Hypotheses board — column layout + card visuals. Mirrors
-   components/roadmap/RoadmapBoardView.css structurally (same grid/scroll
-   shape); card internals are thesis-specific (flip banner, confidence bar,
-   evidence dots, link chips, origin avatar). */
+/* Hypotheses board — layout + card/list visuals (redesign 08-08).
+   Two view modes share one card anatomy: verdict-first (% + split bar), status
+   as a word chip, claim clamped to 2 lines, one activity line (the unread
+   "what changed" summary, else recency meta). No glyphs, no link-count chips. */
 
 .thb-scroll { flex: 1; min-height: 0; overflow: auto; padding: 18px 24px 24px; background: var(--color-bg); }
 .thb-cols { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
@@ -13,12 +13,21 @@
 .thb-spacer { flex: 1; }
 .thb-cycle { font-size: 12px; color: var(--color-text-tertiary); font-family: var(--font-mono); }
 
+.thb-markread {
+  padding: 5px 10px; border-radius: 7px; border: 1px solid var(--color-border);
+  background: transparent; color: var(--color-text-secondary); font-size: 11.5px; font-weight: 600; cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.thb-markread:hover { border-color: var(--color-border-hover); background: var(--color-bg-elevated); color: var(--color-text); }
+
 .thb-banner { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 9px 20px; border-bottom: 1px solid var(--color-border); font-size: 12.5px; }
 .thb-banner--review { background: rgba(227, 179, 65, 0.1); color: var(--thesis-amber); }
 .thb-banner-icon { flex: 0 0 auto; }
 .thb-banner-text { flex: 1; color: var(--color-text); }
 .thb-banner-btn { flex: 0 0 auto; padding: 5px 11px; border-radius: 7px; border: 1px solid var(--thesis-amber); background: transparent; color: var(--thesis-amber); font-size: 12px; font-weight: 600; cursor: pointer; }
 .thb-banner-x { flex: 0 0 auto; cursor: pointer; color: var(--color-text-tertiary); padding: 2px; }
+
+/* ─── Kanban columns ─────────────────────────────────────────────────────── */
 
 .thc-col { flex: 1 1 250px; min-width: 250px; display: flex; flex-direction: column; gap: 10px; }
 .thc-col-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px; }
@@ -29,45 +38,100 @@
 .thc-col-cards { display: flex; flex-direction: column; gap: 10px; }
 .thc-empty { padding: 16px 12px; border-radius: 10px; border: 1px dashed var(--color-border); text-align: center; font-size: 12px; color: var(--color-text-tertiary); }
 
+/* ─── Card (shared anatomy) ──────────────────────────────────────────────── */
+
 .thc-card {
   position: relative;
-  padding: 12px; border-radius: 14px; background: var(--color-bg-secondary); border: 1px solid var(--color-border);
+  padding: 12px 14px; border-radius: 12px; background: var(--color-bg-secondary); border: 1px solid var(--color-border);
   cursor: pointer; transition: background var(--transition-fast), border-color var(--transition-fast);
-  display: flex; flex-direction: column; gap: 9px;
-  animation: thc-in 0.2s ease;
+  display: flex; flex-direction: column; gap: 8px;
 }
 .thc-card:hover { border-color: var(--color-border-hover); background: var(--color-bg-elevated); }
 .thc-card:focus-visible { outline: 2px solid var(--thesis-violet); outline-offset: 1px; }
-@keyframes thc-in { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
 
-.thc-flip {
-  position: relative;
-  display: inline-flex; align-items: center; gap: 4px; align-self: flex-start;
-  padding: 2px 8px; border-radius: 6px;
-  font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em;
-  color: var(--thesis-violet); background: rgba(157, 140, 255, 0.14);
-}
-.thc-flip-glow {
-  position: absolute; inset: -3px; border-radius: 16px;
-  box-shadow: 0 0 0 2px rgba(157, 140, 255, 0.35);
-  animation: thc-pulse 1.6s ease-in-out infinite;
-  pointer-events: none;
-}
-@keyframes thc-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.9; } }
-
-.thc-top { display: flex; align-items: flex-start; gap: 8px; }
-.thc-kind { flex: 0 0 auto; font-size: 13px; line-height: 1.4; }
-.thc-claim { flex: 1; font-family: var(--font-family-display); font-weight: 600; font-size: 14px; line-height: 1.35; color: var(--color-text); letter-spacing: -0.01em; }
-
-.thc-conf { display: flex; }
-
-.thc-evidence { display: flex; align-items: center; gap: 12px; font-family: var(--font-mono); font-size: 10.5px; color: var(--color-text-secondary); }
-.thc-evidence-dot { font-size: 8px; margin-right: 2px; }
-
-.thc-meta { font-family: var(--font-mono); font-size: 10px; }
-
-.thc-foot { display: flex; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--color-border); }
-.thc-chip { display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-mono); font-size: 10px; font-weight: 600; }
-.thc-chip--blocked { color: var(--thesis-amber); }
+.thc-row1 { display: flex; align-items: center; gap: 8px; min-height: 20px; }
 .thc-spacer { flex: 1; }
-.thc-avatar { font-size: 12px; }
+
+.thc-unread {
+  flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--thesis-open);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--thesis-open) 18%, transparent);
+}
+
+/* Status is a WORD on the card — colored tint chip, no memorizing hues. */
+.thc-status {
+  display: inline-flex; align-items: center; padding: 2px 8px; border-radius: var(--radius-full);
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em;
+}
+.thc-status--draft { color: var(--thesis-draft); background: color-mix(in srgb, var(--thesis-draft) 14%, transparent); }
+.thc-status--open { color: var(--thesis-open); background: color-mix(in srgb, var(--thesis-open) 14%, transparent); }
+.thc-status--validated { color: var(--thesis-validated); background: color-mix(in srgb, var(--thesis-validated) 14%, transparent); }
+.thc-status--invalidated { color: var(--thesis-invalidated); background: color-mix(in srgb, var(--thesis-invalidated) 14%, transparent); }
+.thc-status--retired { color: var(--thesis-retired); background: color-mix(in srgb, var(--thesis-retired) 14%, transparent); }
+
+.thc-pct {
+  font-family: var(--font-mono); font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.thc-bar { width: 100%; }
+.thc-bar .thesis-confidence-track { min-width: 0; }
+.thc-bar-empty { height: 4px; border-radius: 2px; background: var(--color-bg-tertiary); }
+
+.thc-claim {
+  margin: 0;
+  font-family: var(--font-family-display); font-weight: 600; font-size: 13.5px; line-height: 1.4;
+  color: var(--color-text); letter-spacing: -0.01em;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+.thc-change { font-size: 11px; font-weight: 500; color: var(--thesis-amber); line-height: 1.4; }
+.thc-meta { font-size: 11px; color: var(--color-text-tertiary); line-height: 1.4; }
+
+/* ─── Activity list view ─────────────────────────────────────────────────── */
+
+.thl { display: flex; flex-direction: column; gap: 12px; max-width: 1040px; }
+
+.thl-tabs { display: flex; gap: 2px; align-self: flex-start; padding: 2px; border-radius: 9px; background: var(--color-bg-tertiary); border: 1px solid var(--color-border); }
+.thl-tab {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 7px;
+  border: none; background: transparent; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: var(--color-text-tertiary); font-family: var(--font-family-text);
+}
+.thl-tab--on { background: var(--color-bg-elevated); color: var(--color-text); box-shadow: var(--shadow-sm); }
+.thl-tab-count { font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; opacity: 0.75; }
+
+.thl-empty { padding: 28px 16px; border-radius: 10px; border: 1px dashed var(--color-border); text-align: center; font-size: 13px; color: var(--color-text-tertiary); }
+
+.thl-rows { display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-bg-secondary); overflow: hidden; }
+
+.thl-row {
+  display: flex; align-items: center; gap: 12px; padding: 10px 16px 10px 10px;
+  cursor: pointer; transition: background var(--transition-fast);
+  border-bottom: 1px solid var(--color-border);
+}
+.thl-row:last-child { border-bottom: none; }
+.thl-row:hover { background: var(--color-bg-elevated); }
+.thl-row:focus-visible { outline: 2px solid var(--thesis-violet); outline-offset: -2px; }
+
+.thl-dot { flex: 0 0 14px; display: flex; align-items: center; justify-content: center; }
+.thl-status { flex: 0 0 auto; width: 82px; justify-content: center; }
+.thl-pct { flex: 0 0 44px; text-align: right; font-family: var(--font-mono); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.thl-bar { flex: 0 0 64px; display: flex; }
+.thl-bar .thesis-confidence { width: 100%; }
+.thl-bar .thc-bar-empty { width: 100%; }
+
+.thl-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.thl-claim {
+  font-family: var(--font-family-display); font-weight: 600; font-size: 13.5px; color: var(--color-text);
+  letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.thl-sub { font-size: 11px; color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.thl-sub--change { color: var(--thesis-amber); font-weight: 500; }
+
+.thl-when { flex: 0 0 auto; font-size: 11px; color: var(--color-text-tertiary); font-family: var(--font-mono); }
+
+@media (max-width: 720px) {
+  .thl-bar { display: none; }
+  .thl-status { width: auto; }
+}

@@ -4,21 +4,22 @@ import { useObjectives } from '../../hooks/useObjectives';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { ThesisBoardToolbar, type ObjectiveFilterOption } from './ThesisBoardToolbar';
 import { ThesisColumn } from './ThesisColumn';
+import { ThesisListView } from './ThesisListView';
 import { ThesisDetailModal } from './ThesisDetailModal';
 import { ThesisCreateModal } from './ThesisCreateModal';
-import { DEFAULT_THESIS_DISPLAY, type ThesisDisplayProps } from './ThesisCard';
-import { BASE_COLUMNS, type ThesisMenuKey, type ThesisSortKey, daysSince } from './thesis-chrome';
+import { BASE_COLUMNS, type ThesisMenuKey, type ThesisSortKey, type ThesisViewMode, type ThesisListFilter, daysSince } from './thesis-chrome';
+import { diffThesis, snapshotOf, type SeenMap, type ThesisDelta } from './thesis-seen';
 import './theses.css';
 import './ThesisBoard.css';
 
 /**
- * The Hypotheses board (design §Board). Owns filter/sort/display/archive
- * prefs (persisted per-project, mirroring `useRoadmapPrefs`'s shape but
- * client-only — no server round trip needed for a v1 board), the summary
- * strip, the meeting-note review banner, columns, and the detail/create
- * modals. `initialObjective`/`initialDetailSlug` let a caller (the objective
- * detail Learning section, via HypothesesPage) open the board pre-filtered or
- * jump straight to a thesis's detail modal.
+ * The Hypotheses board (redesign 08-08). Owns filter/sort/view/archive prefs
+ * (persisted per-project, client-only), the per-thesis SEEN map (inbox
+ * semantics — opening a thesis's detail marks it read), the summary strip, the
+ * meeting-note review banner, the two view modes (activity list / status
+ * kanban), and the detail/create modals. `initialObjective`/`initialDetailSlug`
+ * let a caller (the objective detail Learning section, via HypothesesPage) open
+ * the board pre-filtered or jump straight to a thesis's detail modal.
  */
 
 interface ThesisBoardPrefs {
@@ -26,12 +27,13 @@ interface ThesisBoardPrefs {
   kind: 'all' | ThesisKind;
   blockedOnly: boolean;
   sort: ThesisSortKey;
-  display: ThesisDisplayProps;
+  view: ThesisViewMode;
+  listFilter: ThesisListFilter;
   archive: boolean;
 }
 
 const DEFAULT_PREFS: ThesisBoardPrefs = {
-  statusInc: [], kind: 'all', blockedOnly: false, sort: 'updated', display: DEFAULT_THESIS_DISPLAY, archive: false,
+  statusInc: [], kind: 'all', blockedOnly: false, sort: 'updated', view: 'list', listFilter: 'all', archive: false,
 };
 
 function mergePrefs(stored: Partial<ThesisBoardPrefs>): ThesisBoardPrefs {
@@ -40,7 +42,8 @@ function mergePrefs(stored: Partial<ThesisBoardPrefs>): ThesisBoardPrefs {
     kind: stored.kind ?? DEFAULT_PREFS.kind,
     blockedOnly: stored.blockedOnly ?? DEFAULT_PREFS.blockedOnly,
     sort: stored.sort ?? DEFAULT_PREFS.sort,
-    display: { ...DEFAULT_PREFS.display, ...(stored.display ?? {}) },
+    view: stored.view === 'board' ? 'board' : DEFAULT_PREFS.view,
+    listFilter: stored.listFilter === 'unread' || stored.listFilter === 'attention' ? stored.listFilter : 'all',
     archive: stored.archive ?? DEFAULT_PREFS.archive,
   };
 }
@@ -56,6 +59,13 @@ export function ThesisBoard({ initialObjective = null, initialDetailSlug = null 
   const [stored, setStored] = usePersistedState<Partial<ThesisBoardPrefs>>('theses:board:prefs:v1', DEFAULT_PREFS);
   const prefs = useMemo(() => mergePrefs(stored), [stored]);
   const update = useCallback((fn: (p: ThesisBoardPrefs) => ThesisBoardPrefs) => setStored((prev) => fn(mergePrefs(prev))), [setStored]);
+
+  // Seen map — ONE instance for board + modal (the modal reports looks via
+  // onSeen; a second usePersistedState on the same key would not sync back).
+  const [seen, setSeen] = usePersistedState<SeenMap>('theses:seen:v1', {});
+  const markSeen = useCallback((t: ThesisView) => {
+    setSeen((prev) => ({ ...prev, [t.slug]: snapshotOf(t) }));
+  }, [setSeen]);
 
   const [search, setSearch] = useState('');
   // Not persisted (transient): driven by navigation from the roadmap Learning
@@ -142,7 +152,25 @@ export function ThesisBoard({ initialObjective = null, initialDetailSlug = null 
   const toggleStatus = (s: ThesisStatus) => update((p) => ({
     ...p, statusInc: p.statusInc.includes(s) ? p.statusInc.filter((x) => x !== s) : [...p.statusInc, s],
   }));
-  const toggleDisplay = (k: keyof ThesisDisplayProps) => update((p) => ({ ...p, display: { ...p.display, [k]: !p.display[k] } }));
+
+  // Per-thesis deltas vs the seen map — drives unread dots + "what changed" lines.
+  const deltas = useMemo(() => {
+    const m = new Map<string, ThesisDelta>();
+    for (const t of allTheses) m.set(t.slug, diffThesis(t, seen[t.slug]));
+    return m;
+  }, [allTheses, seen]);
+  const unreadCount = useMemo(() => {
+    let n = 0;
+    for (const t of allTheses) if (deltas.get(t.slug)?.unread) n++;
+    return n;
+  }, [allTheses, deltas]);
+  const markAllSeen = useCallback(() => {
+    setSeen((prev) => {
+      const next = { ...prev };
+      for (const t of allTheses) next[t.slug] = snapshotOf(t);
+      return next;
+    });
+  }, [allTheses, setSeen]);
 
   // Summary strip counts run over the FULL dataset (not the filtered view) —
   // they answer "how is the layer doing overall", same as the roadmap's tiles.
@@ -180,7 +208,7 @@ export function ThesisBoard({ initialObjective = null, initialDetailSlug = null 
         objectiveOptions={objectiveOptions} objective={objective} setObjective={setObjective}
         blockedOnly={prefs.blockedOnly} toggleBlocked={() => update((p) => ({ ...p, blockedOnly: !p.blockedOnly }))}
         sort={prefs.sort} setSort={(sort) => update((p) => ({ ...p, sort }))}
-        display={prefs.display} toggleDisplay={toggleDisplay}
+        view={prefs.view} setView={(view) => update((p) => ({ ...p, view }))}
         archive={prefs.archive} toggleArchive={() => update((p) => ({ ...p, archive: !p.archive }))}
         hasActiveFilters={hasActiveFilters} clearAllFilters={clearAllFilters}
         openMenu={openMenu} setOpenMenu={setOpenMenu}
@@ -204,6 +232,15 @@ export function ThesisBoard({ initialObjective = null, initialDetailSlug = null 
           <span className="thb-tile-value" style={{ color: 'var(--thesis-amber)' }}>{awaitingInstrumentation}</span>
           <span className="thb-tile-label">Awaiting instrumentation</span>
         </div>
+        <div className="thb-tile">
+          <span className="thb-tile-value" style={{ color: unreadCount > 0 ? 'var(--thesis-open)' : 'var(--color-text-tertiary)' }}>{unreadCount}</span>
+          <span className="thb-tile-label">Unread</span>
+        </div>
+        {unreadCount > 0 && (
+          <button type="button" className="thb-markread" onClick={() => { markAllSeen(); flash('All hypotheses marked read.'); }}>
+            Mark all read
+          </button>
+        )}
         <div className="thb-spacer" />
         <div className="thb-cycle">
           {lastCheckedAt
@@ -228,17 +265,25 @@ export function ThesisBoard({ initialObjective = null, initialDetailSlug = null 
           <EmptyState onCreate={() => setShowCreate(true)} />
         ) : sorted.length === 0 ? (
           <NoMatch onClear={clearAllFilters} />
+        ) : prefs.view === 'list' ? (
+          <ThesisListView
+            theses={sorted}
+            deltas={deltas}
+            filter={prefs.listFilter}
+            setFilter={(listFilter) => update((p) => ({ ...p, listFilter }))}
+            onOpen={setDetailSlug}
+          />
         ) : (
           <div className="thb-cols">
             {columns.map((col) => (
-              <ThesisColumn key={col} status={col} theses={byColumn.get(col) ?? []} display={prefs.display} onOpen={setDetailSlug} />
+              <ThesisColumn key={col} status={col} theses={byColumn.get(col) ?? []} deltas={deltas} onOpen={setDetailSlug} />
             ))}
           </div>
         )}
       </div>
 
       {detailSlug && (
-        <ThesisDetailModal slug={detailSlug} onClose={() => setDetailSlug(null)} />
+        <ThesisDetailModal slug={detailSlug} onClose={() => setDetailSlug(null)} onSeen={markSeen} />
       )}
       {showCreate && (
         <ThesisCreateModal mode="create" initialObjective={objective} onClose={() => setShowCreate(false)} />

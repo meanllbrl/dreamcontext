@@ -1,8 +1,10 @@
 /*
- * ThesisDetailModal — centered modal (min(1080px, 100%-48px)) per the PO's
- * captured Hypothesis.dc.html design: confidence header w/ popover, predictions,
- * evidence ledger timeline, understanding changelog, right rail link groups,
- * gated lifecycle footer w/ citation-gated manual-flip confirm panel.
+ * ThesisDetailModal — centered modal (min(1080px, 100%-48px)), rebuilt 08-08:
+ * ONE hero block (status + claim + verdict + lifecycle actions together, with
+ * the citation-gated flip / promote panels expanding in place), then plain
+ * typography sections — predictions checklist, evidence timeline with 2-line
+ * clamped notes (click to expand), understanding changelog — and an unboxed
+ * right rail. Hierarchy comes from whitespace, not nested borders.
  */
 
 .td-overlay {
@@ -140,6 +142,26 @@
 
 .td-conf-info { position: relative; margin-left: auto; }
 
+/* Lifecycle actions row — attached to the verdict inside the hero. */
+.td-actions-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+/* Flip-citation / promote confirm panel, expanding in place of the actions row. */
+.td-inline-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+
 .td-conf-info-trigger {
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
@@ -264,9 +286,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  padding: 2px 0;
 }
 
 .td-prediction-badge { font-size: 13px; line-height: 1.4; }
@@ -306,22 +326,27 @@
 
 .td-evidence-source { margin-left: auto; }
 
-.td-evidence-note { margin: 4px 0 0; font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.td-evidence-note { margin: 4px 0 0; font-size: var(--font-size-sm); color: var(--color-text-secondary); cursor: pointer; }
+
+/* Agent-written evidence prose is unbounded — clamp to two lines by default;
+   a click expands the single entry the user actually wants to read. */
+.td-evidence-note--clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 /* Understanding changelog */
 
 .td-changelog { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
 
 .td-changelog-entry {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  padding: 2px 0 2px var(--space-3);
+  border-left: 3px solid var(--color-border);
 }
 
-.td-changelog-entry--condensed {
-  border-style: dashed;
-  opacity: 0.72;
-}
+.td-changelog-entry--condensed { opacity: 0.6; }
 
 .td-changelog-head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: 4px; }
 
@@ -342,9 +367,9 @@
 
 /* ─── Right rail ─────────────────────────────────────────────────────────── */
 
-.td-rail { display: flex; flex-direction: column; gap: var(--space-4); }
+.td-rail { display: flex; flex-direction: column; gap: var(--space-5); }
 
-.td-rail-group { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3); }
+.td-rail-group { padding: 0; }
 
 .td-rail-head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
 
@@ -470,15 +495,7 @@
   font-weight: var(--font-weight-medium);
 }
 
-/* ─── Footer ─────────────────────────────────────────────────────────────── */
-
-.td-foot {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
-  border-top: 1px solid var(--color-border);
-}
+/* ─── Actions (hero) ─────────────────────────────────────────────────────── */
 
 .td-foot-note { font-size: var(--font-size-xs); color: var(--color-text-tertiary); flex: 1 1 auto; }
 
