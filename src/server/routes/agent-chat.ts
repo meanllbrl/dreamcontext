@@ -262,7 +262,7 @@ function startChatSession(
     if (heldConversation) liveConversations.delete(heldConversation);
   };
 
-  // Deferred initial prompt (Task Manager contract — "the user speaks first"): mirrors
+  // Deferred initial prompt ("the user speaks first"): mirrors
   // agent-terminal.ts's parking pattern exactly. A non-deferred prompt is instead sent as
   // the first USER stdin frame IMMEDIATELY after spawn — empirically (CLI 2.1.218), in
   // stream-json input mode the CLI emits `system:init` only AFTER the first stdin frame

@@ -134,9 +134,8 @@ function primaryToolPath(input: unknown): string | null {
 
 interface TaskLinkInfo { name: string; objectiveLabels: string[] }
 
-/** Linked-task chip + objectives data, fetched only when `taskSlug` is supplied. Beta ships
- *  no caller that ever sets `taskSlug` (Task Manager sessions stay `kind:'agent'`), so this
- *  hook is a built-but-dormant mechanism in this release. */
+/** Linked-task chip + objectives data, fetched only when `taskSlug` is supplied. No caller
+ *  sets `taskSlug` yet, so this hook is a built-but-dormant mechanism in this release. */
 function useTaskLink(taskSlug?: string): TaskLinkInfo | null {
   const [info, setInfo] = useState<TaskLinkInfo | null>(null);
   useEffect(() => {
@@ -259,8 +258,7 @@ export function ChatPane({
   effort: string;
   onModelChange: (id: string) => void;
   onEffortChange: (level: string) => void;
-  /** Task Manager sessions are `kind:'agent'` in beta (no caller ever sets this yet — the
-   *  ChatLiveRail's task chip is built and dormant). */
+  /** No caller sets this yet — the ChatLiveRail's task chip is built and dormant. */
   taskSlug?: string;
   onContinueInTerminal: () => void;
   /** The REMEMBERED permission-mode default (`agentSettings.chatPermissionMode`) — the

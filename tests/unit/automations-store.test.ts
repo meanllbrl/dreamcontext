@@ -35,6 +35,8 @@ import {
 } from '../../src/lib/automations/store.js';
 import {
   AutomationError,
+  AUTOMATIONS_GITIGNORE_ENTRIES,
+  AUTOMATIONS_GITIGNORE_ENTRIES_ROOT,
   EFFORT_LEVELS,
   HISTORY_LIMIT,
   sharedSlugNegations,
@@ -418,6 +420,33 @@ describe('readAutomationFile — lenient (never throws on a malformed sub-block)
     expect(m.notify).toBe(true); // anything but the literal boolean false ⇒ notify
     expect(m.prompt).toBe('');
     expect(m.outputInstructions).toBe('');
+  });
+
+  it("a malformed review mode degrades to 'off', not to a gate nobody is watching", () => {
+    // Third direction in the fail-safe family, and the reasoning is its own:
+    // `shared` fails closed because an over-share is a leak, `notify` fails open
+    // because a silent run is a loss — and `review` fails OPEN (off) because a
+    // scheduler that silently stops to await a card nobody was told about is a
+    // job that quietly never completes. The typo is visible in `list`; a wedged
+    // automation is not.
+    const path = automationPath(contextRoot, 'typo-review');
+    mkdirSync(automationsDir(contextRoot), { recursive: true });
+    writeFileSync(path, '---\ntitle: T\nreview: agnet\n---\n\n## Prompt\n\ndo it\n', 'utf-8');
+    expect(readAutomationFile(path).review).toBe('off');
+  });
+
+  it.each(['agent', 'output', 'off'] as const)('reads review: %s verbatim', (mode) => {
+    const path = automationPath(contextRoot, `review-${mode}`);
+    mkdirSync(automationsDir(contextRoot), { recursive: true });
+    writeFileSync(path, `---\ntitle: T\nreview: ${mode}\n---\n\n## Prompt\n\ndo it\n`, 'utf-8');
+    expect(readAutomationFile(path).review).toBe(mode);
+  });
+
+  it("a manifest written before the field existed reads 'off'", () => {
+    const path = automationPath(contextRoot, 'legacy');
+    mkdirSync(automationsDir(contextRoot), { recursive: true });
+    writeFileSync(path, '---\ntitle: Legacy\n---\n\n## Prompt\n\ndo it\n', 'utf-8');
+    expect(readAutomationFile(path).review).toBe('off');
   });
 
   it('getAutomation returns null (never throws) for a file with unparseable frontmatter', () => {
@@ -810,5 +839,65 @@ describe('shareStateFor', () => {
     // that very comment).
     expect(source).not.toMatch(/\bgitignoreCovers\s*\(/);
     expect(source).not.toMatch(/import\s*\{[^}]*\bgitignoreCovers\b[^}]*\}/);
+  });
+});
+
+describe('review on the WRITE path', () => {
+  it("defaults a new automation to review: 'off' — review is opted into, never inherited", () => {
+    // Defaulting review ON would make every scheduled job a chore and train the
+    // reflexive approval the gate exists to prevent. Written explicitly all the
+    // same, so the field is discoverable in the manifest.
+    const m = createAutomation(contextRoot, { slug: 'plain', title: 'Plain', days: 'daily', at: '18:00' });
+    expect(m.review).toBe('off');
+    // js-yaml QUOTES it on the way out (`review: 'off'`) — `off` is a YAML 1.1
+    // boolean, and quoting is what keeps this a mode rather than a `false`. The
+    // read side is safe either way (js-yaml 4 parses bare `off` as the string,
+    // and anything non-mode degrades to 'off'), so the assertion admits both
+    // forms rather than pinning a serializer detail.
+    expect(readFileSync(m.path, 'utf-8')).toMatch(/^review: '?off'?$/m);
+    expect(readAutomationFile(m.path).review).toBe('off');
+  });
+
+  it.each(['agent', 'output'] as const)('round-trips review: %s through create → read', (mode) => {
+    const m = createAutomation(contextRoot, {
+      slug: `gated-${mode}`, title: 'Gated', days: 'daily', at: '18:00', review: mode,
+    });
+    expect(readAutomationFile(m.path).review).toBe(mode);
+  });
+
+  it('REFUSES an invalid review mode on write, even though the read path degrades it', () => {
+    // The asymmetry is the point: a typo already on disk must not wedge the
+    // automation, but one being created must not silently become a gate the
+    // owner believes they installed and did not.
+    expect(() =>
+      createAutomation(contextRoot, {
+        slug: 'typo', title: 'Typo', days: 'daily', at: '18:00',
+        review: 'agnet' as unknown as 'agent',
+      }),
+    ).toThrow(/Invalid review mode/);
+  });
+
+  it('ignores the review card directory from the moment an automation can exist', () => {
+    // A card holds a resumable session id — it must be uncommittable before the
+    // directory can be created, the same ordering guarantee the lock and the
+    // sidecar get.
+    createAutomation(contextRoot, { slug: 'ignored', title: 'Ignored', days: 'daily', at: '18:00' });
+    expect(readFileSync(join(contextRoot, '.gitignore'), 'utf-8')).toContain('automations/review/');
+    expect(readFileSync(join(projectRoot, '.gitignore'), 'utf-8')).toContain('_dream_context/automations/review/');
+  });
+
+  it('does not add review to the share-negation base set (it would false-alarm every negation)', () => {
+    // See AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES: negationIsEffective treats ANY
+    // base entry appearing after a negation as having killed it, so a new base
+    // wildcard appended to an existing .gitignore would report every share
+    // negation as broken. Review has no shareable direction, so it stays out.
+    expect(AUTOMATIONS_GITIGNORE_ENTRIES.some((e) => e.includes('review'))).toBe(false);
+    expect(AUTOMATIONS_GITIGNORE_ENTRIES_ROOT.some((e) => e.includes('review'))).toBe(false);
+  });
+
+  it("reserves 'review' as a slug, like cache and output", () => {
+    expect(() =>
+      createAutomation(contextRoot, { slug: 'review', title: 'Review', days: 'daily', at: '18:00' }),
+    ).toThrow(/reserved/i);
   });
 });

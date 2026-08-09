@@ -16,9 +16,42 @@
 /** Every terminal (and non-terminal-but-recorded) disposition a run can reach.
  *  'orphaned' = a previous run's detached child group is still alive after its
  *  runner died — the automation refuses to spawn again until an operator runs
- *  `automations kill`. */
-export const RUN_STATUSES = ['ok', 'failed', 'timeout', 'blocked', 'deferred', 'orphaned'] as const;
+ *  `automations kill`.
+ *  'awaiting-review' = a previous run left a review card nobody has answered —
+ *  the automation refuses to spawn again until a human resolves it. Unlike
+ *  every other refusal here it is not a fault: it is the scheduler running at
+ *  the human's speed instead of the clock's, so a week away comes back as one
+ *  owed fire rather than seven identical unreviewed proposals. */
+export const RUN_STATUSES = [
+  'ok',
+  'failed',
+  'timeout',
+  'blocked',
+  'deferred',
+  'orphaned',
+  'awaiting-review',
+] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
+
+/**
+ * When does a run have to stop and ask a human before its work takes effect?
+ *
+ * - `off`     — today's behavior, byte for byte. The run publishes its output,
+ *               notifies, and is consumed by sleep with no verdict in between.
+ * - `agent`   — the RUN decides, at runtime, whether what it is about to do
+ *               warrants a human. It calls `automations propose` and ends; a
+ *               run that never proposes publishes exactly as under `off`. This
+ *               is the flexible mode, and it matches the feature's stance that
+ *               job semantics live in manifest prose, not in hardcoded types.
+ * - `output`  — blanket. The runner itself proposes the run's output document
+ *               before that document is allowed to become an output document.
+ *
+ * The distinction that matters: this gates the ARTIFACT, where the sha256
+ * approval tripwire gates the CAPABILITY. Approval is answered once and holds
+ * forever; a review card is answered every time and holds nothing.
+ */
+export const REVIEW_MODES = ['off', 'agent', 'output'] as const;
+export type ReviewMode = (typeof REVIEW_MODES)[number];
 
 /** Lowercase 3-letter weekday keys, `Date.getDay()`-ordered (0=Sun..6=Sat). */
 export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
@@ -96,6 +129,25 @@ export interface AutomationManifest {
    * one in is a manifest edit, which re-triggers approval on its own.
    */
   learning: boolean;
+  /**
+   * Does this automation stop and ask before its work takes effect, and who
+   * decides — see {@link ReviewMode}.
+   *
+   * Reads leniently toward `off`: anything that is not one of REVIEW_MODES
+   * (missing, a typo, a boolean) reads as `off`, which is the pre-feature
+   * behavior. That is the opposite of how `shared` fails, and deliberately so:
+   * `shared`'s unsafe state is "publishes", so it fails closed, whereas a
+   * malformed `review` failing CLOSED would mean an automation silently
+   * stopping to ask a human who does not know a card exists — for a scheduler,
+   * a job that quietly never completes is worse than one that completes
+   * unreviewed, and the manifest is right there in `list` to show what it says.
+   *
+   * IS approval-hashed, in the non-`off` direction (see
+   * canonicalApprovalPayload): omitted from the payload when `off` so every
+   * manifest written before this field existed keeps its exact hash, included
+   * otherwise so a teammate's synced edit can never silently REMOVE the gate.
+   */
+  review: ReviewMode;
   prompt: string;
   outputInstructions: string;
   /** The `## Pattern` section VERBATIM — what previous runs learned. Written
@@ -160,6 +212,136 @@ export interface AutomationCache {
   history: RunEvent[];
 }
 
+// ─── Review cards (human-in-the-loop) ───────────────────────────────────────
+//
+// A card is what a run hands a human when it needs a verdict before its work
+// takes effect. The design is ported from Tilki's WhatsApp Concierge, whose
+// load-bearing property is NOT the approve button — it is that the verdict
+// resumes the very claude session that produced the proposal. That is why a
+// card stores a `sessionId` and nothing resembling a command: approving does
+// not execute a payload the card carries, it unblocks a conversation the
+// approved prompt already bought. A card that carried an executable action
+// would be a genuinely new capability on top of `bypassPermissions`; a card
+// that says "keep going" is not.
+//
+// Cards are MACHINE-LOCAL and never brain-synced, for the same reason the
+// approval registry is not: a card holds a resumable session id, so a synced
+// card is an invitation for someone else's machine to resolve your capability.
+
+/** What a human can do to a card. `drop` is the one people forget, and it is
+ *  the one that makes review compound: it does not judge THIS proposal, it
+ *  teaches the automation never to make this kind of proposal again. */
+export const REVIEW_VERDICTS = ['approve', 'discard', 'drop'] as const;
+export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
+
+/** `pending` until a human answers; the other three mirror the verdicts. */
+export const REVIEW_CARD_STATES = ['pending', 'approved', 'discarded', 'dropped'] as const;
+export type ReviewCardState = (typeof REVIEW_CARD_STATES)[number];
+
+/** Where a verdict or steer came from. Recorded so a card can say who answered
+ *  it and from where — and so the OTHER channels can re-render a card that was
+ *  resolved somewhere else. */
+export const REVIEW_CHANNELS = ['dashboard', 'cli', 'telegram', 'notification'] as const;
+export type ReviewChannel = (typeof REVIEW_CHANNELS)[number];
+
+/** One correction a human gave a pending card. Kept on the card (not only in
+ *  the resumed transcript) so every channel can show the trail without reading
+ *  a session file, and so the distilled lesson stays traceable to its steer. */
+export interface ReviewSteer {
+  at: string;
+  via: ReviewChannel;
+  /** The human's words, VERBATIM. Never rendered into the proposal body and
+   *  never executed — it reaches the run only as an instruction ordered after
+   *  the verdict preamble, fenced as a correction. */
+  text: string;
+  /** The imperative lesson this steer distilled into, once `automations learn`
+   *  has recorded it. null ⇒ distillation has not run (or failed) — the steer
+   *  still stands, it just taught nothing durable. */
+  lesson: string | null;
+}
+
+/** A proposal awaiting (or having received) a human verdict. */
+export interface ReviewCard {
+  /** Filename-safe, unique per slug. */
+  id: string;
+  slug: string;
+  /** The scheduled fire the proposing run answered for — ties the card back to
+   *  its RunEvent without duplicating the event. */
+  runFiredAt: string;
+  /**
+   * The claude conversation that produced this proposal, and the whole point
+   * of the card. Every verdict and every steer `--resume`s exactly this.
+   * null ⇒ the run produced no session id (a failed or degraded run); such a
+   * card can still be discarded, but it can never be approved or steered,
+   * because there is nothing to resume — the surfaces must say so rather than
+   * offering a button that cannot work.
+   */
+  sessionId: string | null;
+  kind: 'output' | 'agent';
+  title: string;
+  /** One line: what this is, for a notification banner and a list row. */
+  summary: string;
+  /** What the human actually judges — the proposed document, or the run's own
+   *  description of what it wants to do next. */
+  body: string;
+  /** For `kind: 'output'`: the staged document that reaches the real output
+   *  directory only on approve. contextRoot-relative. */
+  stagedPath: string | null;
+  state: ReviewCardState;
+  /** Newest LAST — a steer trail reads as a conversation, unlike the LIFO
+   *  ledgers elsewhere in the brain, which are scanned newest-first. */
+  steers: ReviewSteer[];
+  createdAt: string;
+  resolvedAt: string | null;
+  resolvedVia: ReviewChannel | null;
+  /** What the agent said after the verdict resumed it — the answer to "so what
+   *  actually happened when I approved that?", which a resolved card is
+   *  otherwise unable to give. null until a verdict has been acted on. */
+  resolutionNote: string | null;
+  /**
+   * Set when the verdict's resume did NOT complete cleanly.
+   *
+   * Load-bearing, and the reason it is a card field rather than a log line: the
+   * verdict is persisted BEFORE the resume spawns (a crash in that window must
+   * not replay the act), so a card whose resume then failed is `approved` on
+   * disk while nothing may have been carried out. Without this field that card
+   * is indistinguishable from a clean success — the one state a human must
+   * never be shown as done.
+   */
+  resolutionError: string | null;
+  /** Per-channel handles for a card already rendered somewhere (a Telegram
+   *  message id, say), so a steer edits that card in place instead of posting
+   *  a second copy of a proposal that is still the same proposal. */
+  channelRefs: Record<string, string>;
+}
+
+/** Directory holding review cards, under `automations/`. Machine-local. */
+export const REVIEW_DIR = 'review';
+/** Cap on a card's steer trail — past this, the oldest steers drop off. A
+ *  human who has corrected the same proposal this many times is not steering
+ *  any more, and the trail is prepended to a resumed session, so it is subject
+ *  to the same "never crowd out the actual job" rule as the pattern. */
+export const REVIEW_STEER_LIMIT = 12;
+/** Ceiling on a card's rendered body. A proposal a human cannot read on a
+ *  phone is a proposal that gets rubber-stamped. */
+export const REVIEW_BODY_MAX_CHARS = 8_000;
+/**
+ * Machine-local artifacts under `automations/review/` — cards and their staged
+ * documents, neither of which may ever be committed.
+ *
+ * DELIBERATELY NOT part of {@link AUTOMATIONS_GITIGNORE_ENTRIES}. That array is
+ * the base-wildcard set that `automations share` writes negations against, and
+ * `negationIsEffective` treats ANY base entry appearing after a negation as
+ * having silently killed it. Appending a new base wildcard to an existing
+ * `.gitignore` that already carries share negations would therefore report
+ * every one of them as broken — a false alarm, since nothing under
+ * `automations/review/` can match a shared manifest, cache record or output
+ * file. Review has no shareable direction at all, so it gets its own block and
+ * stays out of the ordering dance entirely.
+ */
+export const AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES = ['automations/review/'];
+export const AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES_ROOT = ['_dream_context/automations/review/'];
+
 /** Machine-local record of an in-flight (or just-finished) child, written only
  *  on a successful spawn, so an orphaned process group stays findable after its
  *  runner is SIGKILLed out from under it. NEVER brain-synced — lives beside the
@@ -191,6 +373,13 @@ export interface ApprovalPayloadFields {
    *  every run by design — which is precisely why the switch that admits them
    *  has to be. */
   learning: boolean;
+  /** Hashed because it is a GATE, and the direction that matters is removal:
+   *  an approved automation whose `review` a teammate edits back to `off` must
+   *  block until a human here re-approves. (The other direction costs a
+   *  re-approval too — a pure manifest hash has no memory of the previous
+   *  mode — but a local write verb re-approves on the spot, so turning review
+   *  ON from this machine is free in practice.) */
+  review: ReviewMode;
 }
 
 /** Domain error for the automations subsystem — thrown only by strict
@@ -225,7 +414,7 @@ export const TICK_INTERVAL_SECONDS = 300;
 export const LOG_ROTATE_BYTES = 1_048_576;
 /** Manifests are flat at `automations/<slug>.md`, so these sibling directory
  *  names are reserved and cannot be used as a slug. */
-export const RESERVED_SLUGS = ['cache', 'output'] as const;
+export const RESERVED_SLUGS = ['cache', 'output', 'review'] as const;
 export const APPROVAL_PAYLOAD_VERSION = 'automation-approval/v1';
 /** The exact field set `approve` must diff — kept in lockstep with
  *  ApprovalPayloadFields so the CLI's review surface can never diverge from
@@ -240,6 +429,7 @@ export const APPROVAL_DIFF_FIELDS = [
   'timeoutMinutes',
   'outputDir',
   'learning',
+  'review',
 ] as const;
 
 // ─── Pattern caps ────────────────────────────────────────────────────────────

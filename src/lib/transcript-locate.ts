@@ -150,16 +150,29 @@ export function resolveTranscript(
  * endpoints) would otherwise pay per candidate. Returns the first that exists,
  * else null. Never throws.
  */
+/**
+ * Is this string safe to interpolate into a transcript path?
+ *
+ * The whitelist runs BEFORE the filesystem, the same ordering as
+ * `sanitizeSubagentId` and the sanitizeUuid family. It matters most for the
+ * automations callers: a run's `sessionId` is read from
+ * `automations/cache/<slug>.json`, which is brain-synced and hand-editable, so
+ * a teammate's edit (or a corrupted record) could otherwise put `../../..` into
+ * a path we join and read. The charset is deliberately broader than a UUID —
+ * claude's id format is its business, not ours — but contains no separator, no
+ * dot, and no NUL, so traversal is structurally impossible rather than merely
+ * unlikely.
+ *
+ * Exported so every consumer of a recorded session id shares ONE definition of
+ * safe: a second copy of this regex somewhere else is a second thing to keep in
+ * sync, and the copy that drifts is the one that lets a path through.
+ */
+export function isSafeSessionId(id: string | null | undefined): id is string {
+  return typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id);
+}
+
 export function findTranscriptBySessionId(ids: string[], home: string = homedir()): string | null {
-  // Whitelist BEFORE the filesystem, the same ordering as `sanitizeSubagentId`
-  // and the sanitizeUuid family. This matters most for the automations caller:
-  // a run's `sessionId` is read from `automations/cache/<slug>.json`, which is
-  // brain-synced and hand-editable, so a teammate's edit (or a corrupted
-  // record) could otherwise put `../../..` into a path we join and read. The
-  // charset is deliberately broader than a UUID — claude's id format is its
-  // business, not ours — but contains no separator, no dot, and no NUL, so
-  // traversal is structurally impossible rather than merely unlikely.
-  const wanted = ids.filter((id) => id && /^[A-Za-z0-9_-]{1,128}$/.test(id));
+  const wanted = ids.filter((id) => isSafeSessionId(id));
   if (wanted.length === 0) return null;
   try {
     const base = join(home, '.claude', 'projects');

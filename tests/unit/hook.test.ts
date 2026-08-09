@@ -488,7 +488,7 @@ describe('resolveDashboardPort', () => {
 });
 
 describe('consumeDeferredPrompt', () => {
-  // The deferPrompt contract with agent-terminal.ts: the server parks the Task Manager pin
+  // The deferPrompt contract with agent-terminal.ts: the server parks a session's pin
   // context under this exact basename prefix, and the hook injects it on the FIRST user
   // prompt only.
   function parkFile(dir: string, name: string, content: string): string {

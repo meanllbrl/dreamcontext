@@ -32,11 +32,6 @@ import {
   AUTOMATION_RUN_CHAT_EVENT, automationRunTabTitle,
   type AutomationRunChatDetail, type AutomationRunRef,
 } from '../../lib/automationRunChat';
-import {
-  TASK_MANAGER_EVENT, TASK_MANAGER_DETACH_EVENT, TASK_MANAGER_SEND_EVENT, TASK_MANAGER_STATUS_EVENT,
-  taskManagerConversationId,
-  type TaskManagerDetail, type TaskManagerSendDetail, type TaskManagerStatusDetail,
-} from '../../lib/taskManagerAgent';
 import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
@@ -410,15 +405,24 @@ export function AgentSurface() {
   // dropdown) rather than trusted verbatim. Centralizing the resolution HERE (instead of
   // at each call site) means every current and future chat-spawn path — addSession,
   // addSplitSession, openAgentInChat, dormant resume, resumeChatSession, runSleepAgent,
-  // runBrainResolveAgent, delegateAgent, the skill-insert fallback spawn — inherits the
-  // remembered mode automatically, with nothing to individually audit or forget.
-  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '') => {
+  // runBrainResolveAgent, the skill-insert fallback spawn — inherits the remembered mode
+  // automatically, with nothing to individually audit or forget.
+  //
+  // `explicitBypass` is the one documented exemption, and only the Delegate composer sets it.
+  // The remembered default exists for spawns that carry NO permission decision of their own —
+  // ⌘T, a resume, a Sleep chip. A delegate carries one: the user looked at a checkbox about
+  // THIS hand-off ("let it act without approval prompts, so it can finish while you're away")
+  // and answered it seconds ago. Overriding that answer with a global default made the
+  // checkbox decorative on the Chat surface — an autonomous overnight delegate would sit
+  // waiting on a permission prompt, and a "Discuss" hand-off that must not touch files could
+  // run under bypassPermissions.
+  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '', explicitBypass = false) => {
     if (kind === 'chat') {
       // Read through the REF, not the settings object: `changeChatPermissionMode` below can
       // respawn a conversation in the very same tick it changes the mode, and this closure's
       // `agentSettings` would still be the pre-change render's — spawning the fallback under
       // exactly the mode the user just left.
-      const effectiveBypass = chatPermissionModeRef.current === 'bypass';
+      const effectiveBypass = explicitBypass ? bp : chatPermissionModeRef.current === 'bypass';
       // Chat (BETA) is a headless stream-json engine, not a PTY — createChatSession has its
       // own factory (chatSession.ts), takes `effort` at spawn (the terminal only ever
       // switches it live via `/effort`, so its own createSession has no such param), and has
@@ -561,7 +565,7 @@ export function AgentSurface() {
   // Settings → here. The System doctor now reports the sign-in state (the server probes it
   // via `claude auth status` — see src/lib/claude-auth.ts) and its "Sign in" button lands on
   // this same flow, because a page below this surface in the tree has no handle on it. Same
-  // page-dispatches/surface-listens bridge as the sleep tracker and Task Manager.
+  // page-dispatches/surface-listens bridge as the sleep tracker and Delegate.
   useEffect(() => {
     const onRequest = () => { if (canSignInInApp) signInToClaude(); };
     window.addEventListener(CLAUDE_SIGNIN_EVENT, onRequest);
@@ -866,8 +870,16 @@ export function AgentSurface() {
     const title = detail.title.trim() || 'Delegated task';
     // The caller already routed the prompt to a transport (inline for a short one, a POSTed
     // token for a large one) — see `delegateTaskToAgent`. Exactly one of the two is set.
-    const s = spawn(detail.bypass, undefined, false, claudeKind, detail.prompt, '', serverCurrent, detail.promptToken);
+    // `model` is '' unless the composer's picker was deliberately changed, in which case the
+    // agent launches on it; `explicitBypass` honours the composer's own checkbox over the
+    // remembered chat default (see `spawn`).
+    const model = detail.model ?? '';
+    const s = spawn(detail.bypass, undefined, false, claudeKind, detail.prompt, model, serverCurrent, detail.promptToken, false, '', true);
     setSessionList((prev) => [...prev, { id: s.id, title, kind: s.kind, bypass: s.bypass, claudeId: s.claudeId }]);
+    // Seed the picker's readout so a delegated pane names the model it was actually launched
+    // on from the first frame, instead of showing the global default until the transcript poll
+    // catches up.
+    if (model) setSessionModel((prev) => ({ ...prev, [s.id]: model }));
 
     if (detail.reveal) {
       // Show it: give the session a pane and open the overlay. Mirrors `addSession` — a tab of
@@ -991,80 +1003,6 @@ export function AgentSurface() {
     return () => window.removeEventListener(AUTOMATION_RUN_CHAT_EVENT, onOpenRun);
   }, [openAutomationRunChat]);
 
-  // ── Task Manager: a task's own agent, hosted by its detail view ──────────────────
-  // The task page owns no session: it renders `.agent-task-manager-slot[data-task="<slug>"]` and
-  // this surface moves the session's DOM into it (see the layout effect). Curate sessions are
-  // deliberately NOT in `sessionList` — that list is the roster + the corner dock, and a
-  // task-scoped session should neither restore on launch nor sit as a chip once you've closed
-  // the task. They live only here, keyed by slug.
-  const tmRef = useRef<Map<string, string>>(new Map()); // slug -> session id
-  // Bumped whenever a Task Manager slot appears or leaves. The layout effect reads the DOM for
-  // slots, and React can't tell it that a slot in ANOTHER tree just mounted — so the page's
-  // attach/detach events poke it.
-  const [tmEpoch, bumpTm] = useReducer((n: number) => n + 1, 0);
-
-  const taskManagerAgent = useCallback((detail: TaskManagerDetail): boolean => {
-    if (!(caps?.desktop && caps.embeddedTerminal && caps.claudeCli) || !agentSettings.enabled) return false;
-    const existing = tmRef.current.get(detail.slug);
-    // Reopening a task you already have a live session for: keep the conversation, just let the
-    // layout effect re-home it into the freshly-mounted slot. Spawning again would abandon a
-    // running agent and (worse) race its own conversation id.
-    if (existing && sessions.current.has(existing)) { bumpTm(); return true; }
-    // Always ask to resume: the id is stable per task, and the server falls back to
-    // `--session-id <same id>` when no transcript exists yet — so a never-curated task and a
-    // half-curated one take the same path, and neither errors.
-    //
-    // deferPrompt=true: the pin prompt must NOT open the conversation — the session boots
-    // idle and the prompt rides the USER's first message as hook-injected context (see
-    // taskManagerAgent.ts). The server drops it entirely on a real resume, where the
-    // context is already in the transcript.
-    const s = spawn(detail.bypass, taskManagerConversationId(detail.slug), true, 'agent', detail.prompt, '', serverCurrent, detail.promptToken, true);
-    tmRef.current.set(detail.slug, s.id);
-    bumpTm();
-    return true;
-  }, [caps, agentSettings.enabled, spawn, serverCurrent]);
-
-  // Publish each Task Manager session's status to its pane. The pane can't read `sessions.current`
-  // (it lives in another tree and must not own session state), and polling would miss the
-  // moment that matters most — `asking`, when Claude is blocked on an answer and the user is
-  // looking at a task doc rather than the terminal. `bumpStatus` already re-renders this
-  // component on every status change, so riding `statusTick` reports at exactly the right rate.
-  useEffect(() => {
-    tmRef.current.forEach((sid, slug) => {
-      const s = sessions.current.get(sid);
-      if (!s) return;
-      const info = deriveSessionStatus({ status: s.status, busy: s.busy, asking: s.asking });
-      window.dispatchEvent(new CustomEvent<TaskManagerStatusDetail>(TASK_MANAGER_STATUS_EVENT, {
-        detail: { slug, kind: info.kind, label: info.label },
-      }));
-    });
-  }, [statusTick, tmEpoch]);
-
-  useEffect(() => {
-    const onCurate = (e: Event) => {
-      const detail = (e as CustomEvent<TaskManagerDetail>).detail;
-      if (detail?.slug && taskManagerAgent(detail)) detail.accepted = true;
-    };
-    // Detach ≠ dispose. The task detail is closing, so the slot is about to vanish — but the
-    // agent may be mid-edit, and closing a task must not kill work the user asked for. The
-    // session is disposed only when its conversation is explicitly reset, or on unmount below.
-    const onDetach = () => bumpTm();
-    const onSend = (e: Event) => {
-      const { slug, text, submit = true } = (e as CustomEvent<TaskManagerSendDetail>).detail ?? {};
-      const sid = slug ? tmRef.current.get(slug) : undefined;
-      const s = sid ? sessions.current.get(sid) : undefined;
-      if (s && text) s.sendText(submit ? `${text}\r` : text);
-    };
-    window.addEventListener(TASK_MANAGER_EVENT, onCurate);
-    window.addEventListener(TASK_MANAGER_DETACH_EVENT, onDetach);
-    window.addEventListener(TASK_MANAGER_SEND_EVENT, onSend);
-    return () => {
-      window.removeEventListener(TASK_MANAGER_EVENT, onCurate);
-      window.removeEventListener(TASK_MANAGER_DETACH_EVENT, onDetach);
-      window.removeEventListener(TASK_MANAGER_SEND_EVENT, onSend);
-    };
-  }, [taskManagerAgent]);
-
   // ── Checklist submit bridge (T8, plan §1.11/§1.12) ────────────────────────────────
   // The pinned checklist window is a SEPARATE OS window with no WebSocket of its own; its
   // Submit reaches this surface via a targeted Tauri event (`checklistBridge.ts`) rather
@@ -1105,87 +1043,6 @@ export function AgentSurface() {
     if (!vault) return;
     return listenForChecklistSubmits(vault, handleChecklistSubmit);
   }, [handleChecklistSubmit]);
-
-  // ── Task Manager composer: the SAME per-pane bar, portaled into the task page ────
-  // The TM pane gets the exact `PaneComposer` strip an overlay pane has (files, skills,
-  // live model/effort, context/cost readout) — one atomic component, not a re-implementation.
-  // The pane can't render it itself: every composer action needs surface-owned session
-  // state, so the surface PORTALS the bar into the pane's anchor
-  // (`.agent-task-manager-composer[data-task]`), exactly like the terminal DOM hoist —
-  // except the composer is React-rendered, so a portal replaces appendChild.
-  const [tmComposerHosts, setTmComposerHosts] = useState<{ slug: string; sid: string; el: HTMLElement }[]>([]);
-  useEffect(() => {
-    const hosts: { slug: string; sid: string; el: HTMLElement }[] = [];
-    document.querySelectorAll<HTMLElement>('.agent-task-manager-composer[data-task]').forEach((el) => {
-      const slug = el.dataset.task ?? '';
-      const sid = slug ? tmRef.current.get(slug) : undefined;
-      if (sid && sessions.current.has(sid)) hosts.push({ slug, sid, el });
-    });
-    // Identity-compare so the quiet case (no TM open, epoch bumps from detach) never loops.
-    setTmComposerHosts((prev) => (
-      prev.length === hosts.length
-      && prev.every((p, i) => p.slug === hosts[i].slug && p.sid === hosts[i].sid && p.el === hosts[i].el)
-        ? prev : hosts
-    ));
-  }, [tmEpoch]);
-
-  // A TM slot lives in the PAGE, so the overlay's ResizeObserver (hostRef, expanded-only)
-  // never sees it resize — yet its size changes without any tmEpoch bump: the drawer↔full-page
-  // toggle moves the panel between 100vh and below-the-header, the drawer widens on open
-  // (max-width transition), the window resizes. Without a refit the xterm keeps its stale
-  // row/column grid and the TUI's bottom rows clip under the composer ("sığmıyor"). Same
-  // settle-debounce as the overlay observer: one fit after the final frame, no mid-animation
-  // judder. Re-armed per epoch so it always observes the CURRENT slot elements.
-  useEffect(() => {
-    if (typeof ResizeObserver === 'undefined') return;
-    const slots = Array.from(document.querySelectorAll<HTMLElement>('.agent-task-manager-slot[data-task]'));
-    if (slots.length === 0) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const fitTm = () => {
-      tmRef.current.forEach((sid, slug) => {
-        const s = sessions.current.get(sid);
-        const slot = slots.find((el) => el.dataset.task === slug);
-        if (s && slot?.isConnected) { s.ensureOpen(); s.fitAndResize(); }
-      });
-    };
-    const ro = new ResizeObserver(() => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { timer = undefined; fitTm(); }, 150);
-    });
-    slots.forEach((el) => ro.observe(el));
-    return () => { ro.disconnect(); if (timer) clearTimeout(timer); };
-  }, [tmEpoch]);
-
-  // TM sessions are deliberately NOT in `sessionList` (no roster, no dock chip), so the
-  // pane-composer helpers below — which all resolve through the roster — can't see them.
-  // This resolves straight from the live session map instead. It also must NOT
-  // `setExpanded(true)`: the TM terminal lives in the PAGE, not the overlay.
-  const tmLiveAgent = useCallback((sid: string): Session | undefined => {
-    const s = sessions.current.get(sid);
-    return s && s.kind === 'agent' && s.status !== 'closed' ? s : undefined;
-  }, []);
-  const tmInsert = useCallback((sid: string, text: string) => {
-    const s = tmLiveAgent(sid);
-    if (s && text) { s.sendText(text); s.focus(); }
-  }, [tmLiveAgent]);
-  const tmPickPaths = useCallback(async (sid: string, kind: 'files' | 'folders') => {
-    const paths = kind === 'folders' ? await pickFolders() : await pickFiles();
-    if (paths.length) tmInsert(sid, `${paths.map(quotePath).join(' ')} `);
-  }, [tmInsert]);
-  const tmChangeModel = useCallback((sid: string, id: string) => {
-    const s = tmLiveAgent(sid);
-    if (!s || !id) return;
-    s.runCommand(`/model ${id}`); // draft-preserving — see changeModelFor's note
-    s.term.focus();
-    setSessionModel((prev) => ({ ...prev, [sid]: id }));
-  }, [tmLiveAgent]);
-  const tmChangeEffort = useCallback((sid: string, level: string) => {
-    const s = tmLiveAgent(sid);
-    if (!s || !level) return;
-    s.runCommand(`/effort ${level}`);
-    s.term.focus();
-    setSessionEffort((prev) => ({ ...prev, [sid]: level }));
-  }, [tmLiveAgent]);
 
   // ── Bottom strip ─────────────────────────────────────────────────────────────────
   // There is NO separate text field: a skill/file goes straight into the terminal's OWN
@@ -1314,15 +1171,8 @@ export function AgentSurface() {
       if (!meta || meta.dormant || !meta.claudeId) return;
       readModel(meta.id, meta.claudeId);
     });
-    // Task Manager sessions live outside the roster but their composer bar (portaled into
-    // the task page) shows a model picker too — read theirs on the same trigger, keyed by
-    // the slot epoch since panes never change when a task opens.
-    tmRef.current.forEach((sid) => {
-      const s = sessions.current.get(sid);
-      if (s?.claudeId && s.status !== 'closed') readModel(sid, s.claudeId);
-    });
     return () => { cancelled = true; };
-  }, [panes, sessionList, caps, tmEpoch]);
+  }, [panes, sessionList, caps]);
 
   // Native multi-select picker (files OR folders — the Tauri dialog can't mix the two in
   // one dialog) → drop the chosen absolute paths (quoted) into a pane's terminal.
@@ -1483,32 +1333,16 @@ export function AgentSurface() {
   // garage. Raw-DOM moves, never a remount — a session moved between panes just lands in a
   // different slot. Runs on any layout (panes) or visibility (expanded) change.
   useLayoutEffect(() => {
-    // Two families of session with a home, homed for INDEPENDENT reasons:
-    //  • a pane's active tab — homed in the overlay's `.agent-pane-slot[data-pane]`;
-    //  • a task's Task Manager session — homed in the detail's `.agent-task-manager-slot[data-task]`,
-    //    which lives in the PAGE tree, so it is found by searching the document rather than
-    //    `hostRef` (that only contains the overlay's own panes).
-    const paneHomed = new Set(panes.map((p) => p.active));
-
-    const tmSlots = new Map<string, HTMLElement>();
-    document.querySelectorAll<HTMLElement>('.agent-task-manager-slot[data-task]')
-      .forEach((el) => { if (el.dataset.task) tmSlots.set(el.dataset.task, el); });
-    // Only a session whose slot is actually mounted has a home; one whose task was
-    // closed goes to the garage and keeps running there.
-    const tmHomed = new Map<string, HTMLElement>();
-    tmRef.current.forEach((sid, slug) => {
-      const slot = tmSlots.get(slug);
-      if (slot) tmHomed.set(sid, slot);
-    });
+    // A session has a home when it is some pane's active tab — homed in the overlay's
+    // `.agent-pane-slot[data-pane]`. Everything else lives in the garage.
+    const homed = new Set(panes.map((p) => p.active));
 
     // HOMED and FOREGROUND are different questions, and conflating them regresses the
     // persistence invariant. A collapsed overlay's panes are still homed (their slots merely go
     // `display:none`) — garaging them on collapse would thrash the DOM on every expand. But
     // they are NOT foreground, so a session finishing while collapsed still earns its dock
-    // attention badge. A curate session inverts the pane case: it is foreground whenever its
-    // task is open, regardless of the overlay.
-    const homed = new Set([...paneHomed, ...tmHomed.keys()]);
-    const foreground = new Set([...(expanded ? paneHomed : []), ...tmHomed.keys()]);
+    // attention badge.
+    const foreground = new Set(expanded ? homed : []);
     sessions.current.forEach((s) => { s.minimized = !foreground.has(s.id); });
 
     const slots = new Map<string, HTMLElement>();
@@ -1520,25 +1354,18 @@ export function AgentSurface() {
       const slot = slots.get(pane.id);
       if (s && slot && s.container.parentElement !== slot) { slot.appendChild(s.container); s.ensureOpen(); }
     });
-    tmHomed.forEach((slot, sid) => {
-      const s = sessions.current.get(sid);
-      if (s && s.container.parentElement !== slot) { slot.appendChild(s.container); s.ensureOpen(); }
-    });
     sessions.current.forEach((s) => {
       if (!homed.has(s.id) && garageRef.current && s.container.parentElement !== garageRef.current) {
         garageRef.current.appendChild(s.container);
       }
     });
     // A freshly-shown container only has offsetParent after display, so open/fit next
-    // frame. Refits everything ON SCREEN (a split/combine changes every pane's width, and a
-    // Task Manager pane's width depends on the task view's layout mode).
+    // frame. Refits everything ON SCREEN (a split/combine changes every pane's width).
     const raf = requestAnimationFrame(() => {
       foreground.forEach((id) => { const s = sessions.current.get(id); if (s) { s.ensureOpen(); s.fitAndResize(); } });
     });
     return () => cancelAnimationFrame(raf);
-    // tmEpoch is the poke from the task page: its slot mounting/unmounting is a DOM event
-    // in another tree that React would otherwise never tell us about.
-  }, [panes, expanded, tmEpoch]);
+  }, [panes, expanded]);
 
   // Keep activePaneId pointing at a real pane (panes shrink as tabs close/move).
   useEffect(() => {
@@ -1964,8 +1791,8 @@ export function AgentSurface() {
     .map((id) => dockRows.find((r) => r.id === id))
     .filter((r): r is SessionRow => !!r);
 
-  // Every LIVE chat session — portaled into its own detached container below (mirrors the
-  // Task Manager composer's tmComposerHosts portal loop), unconditionally (not gated on
+  // Every LIVE chat session — portaled into its own detached container below,
+  // unconditionally (not gated on
   // minimized/expanded): the container itself is homed/garaged by the layout effect exactly
   // like a terminal's xterm container, so ChatPane never unmounts while its session lives
   // (see ChatPane.tsx's composer-draft note for why that matters).
@@ -2308,30 +2135,6 @@ export function AgentSurface() {
           />
         )
       )}
-      {/* Task Manager composer strips — the same PaneComposer an overlay pane gets, portaled
-          into each open task's anchor (see the tmComposerHosts block). Rendered here (not in
-          the pane) because every action needs surface-owned session state. `statusTick`
-          re-renders keep liveness/disabled state current. */}
-      {tmComposerHosts.map(({ slug, sid, el }) => {
-        const s = sessions.current.get(sid);
-        return createPortal(
-          <PaneComposer
-            claudeId={s?.claudeId}
-            isAgent
-            isLiveAgent={!!tmLiveAgent(sid)}
-            modelConfig={modelConfig}
-            model={sessionModel[sid] ?? modelConfig.defaultModel}
-            effort={sessionEffort[sid] ?? modelConfig.defaultEffort}
-            onInsert={(snippet) => tmInsert(sid, snippet)}
-            onPickFiles={() => void tmPickPaths(sid, 'files')}
-            onPickFolders={() => void tmPickPaths(sid, 'folders')}
-            onModelChange={(id) => tmChangeModel(sid, id)}
-            onEffortChange={(level) => tmChangeEffort(sid, level)}
-          />,
-          el,
-          `tm-composer-${slug}`,
-        );
-      })}
       {/* Chat (BETA) panes — portaled into each live chat session's own detached container
           (see chatPanes above). Model/effort here don't live-switch (chat has no
           `/model`/`/effort` slash path — chatChangeModelFor/EffortFor just update the picker

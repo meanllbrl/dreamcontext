@@ -246,8 +246,6 @@ your-project/
 │   │   └── SKILL.md            # Interactive brain refactor (drives the curator-* agents)
 │   ├── skills/dreamcontext-deep-research/
 │   │   └── SKILL.md            # Iterative corpus synthesis (fans out dreamcontext-explore searchers)
-│   ├── skills/task-manager/
-│   │   └── SKILL.md            # Task-scoped curate session (drives the dashboard Task Manager pane)
 │   ├── agents/
 │   │   ├── initializer-scout.md     # bootstrap: intake → ingestion manifest
 │   │   ├── initializer-ingestor.md  # bootstrap: fan-out write into the hierarchy
@@ -319,7 +317,7 @@ A local web UI over the same files the CLI writes — React 19 on a zero-depende
 
 **Memory surfaces.** A split-pane **Core editor** with live preview; a **Knowledge manager** with search and pin/unpin; a **Feature PRD viewer**; SQL ER-diagram previews for data structures; a **Brain graph** that renders the whole corpus as an interactive network (explicit and inferred links, node drawer, layout filters); **Council Hall** for browsing debates (overview, per-persona transcripts, persona × round matrix); a **Roadmap page** with a draggable forecast timeline where dependents slide and redden live when an objective slips; and a **Version manager** for planning, releasing, renaming, and deleting versions safely.
 
-**Agent surfaces.** Every task can open its own **Task Manager** Claude session, pinned inside the task view, which *maintains* the document (revise, split, reconcile criteria) rather than building it — with **anchored doc comments**: select any span of the rendered task, drop a 💬, and send the batch to the session as one message; anchors are quotes, not offsets, so they survive live rewrites, and a git-style session diff shows what moved. **Delegate to Claude** hands a task card to a real coding session straight from the board. A **living agent dock** tracks every session with screen-true status — a session that stops to ask you something shakes, chimes, and jumps the queue as "Needs you."
+**Agent surfaces.** **Delegate to Claude** hands a task to a real coding session — from the board's right-click menu or from the task view itself — and the agent goes and builds it. A **living agent dock** tracks every session with screen-true status — a session that stops to ask you something shakes, chimes, and jumps the queue as "Needs you."
 
 **Ops.** A **Sleep tracker** (debt gauge, session history, every manual dashboard change); **change tracking** that records your edits to `.sleep.json` so agents consolidate them at the next sleep; and **Settings** for cloud-task tokens (gitignored, masked, never echoed), preview-then-provision custom fields, task-format overrides, and linked repos.
 
@@ -575,7 +573,6 @@ Five more skills install with the core (no pack needed) and run only when the mo
 - **`initializer`** — interactive brain **bootstrap**. It recognizes a missing or sparse `_dream_context/` (or that you're migrating notes from another folder, or loading a large docs export into an existing brain) and ingests whatever you have — a docs folder, an Obsidian/Notion export, ADRs, an old wiki, or just the codebase — into the proper knowledge / feature / task hierarchy (scout → confirm → ingest → verify).
 - **`curator`** — interactive brain **refactor**: the periodic re-organization the conservative sleep cycle won't do. It can MOVE, MERGE, SPLIT, RENAME, RE-TYPE, and RETIRE content to conform the whole brain to current conventions — deduping near-duplicate knowledge, enforcing single-source-of-truth, and normalizing tags (audit → confirm plan → execute → verify).
 - **`dreamcontext-deep-research`** — the heavy, iterative counterpart to the fast `dreamcontext-explore` searcher, for **large / multi-project / federated** brains: fans out parallel searchers across the whole curated corpus **and connected peer vaults**, loops to close gaps, **adversarially verifies** load-bearing claims, and synthesizes a **cited** report — not raw hits. Read-only.
-- **`task-manager`** — a **task-scoped** session that *maintains* one task document rather than implementing it: revise, summarize, split, reconcile status and criteria with what is actually true. Loaded automatically by the dashboard's Task Manager pane.
 - **`patterns`** — the drift-free bridge to your project's documented patterns (`_dream_context/knowledge/patterns/`): `/patterns` lists them, `/patterns <slug>` loads one — so the agent reaches for a documented pattern before rebuilding something the project already solved.
 
 ```bash

@@ -229,8 +229,8 @@ describe('automations CLI (integration)', () => {
     expect(yesOut.exitCode).toBe(0);
     // The count is a deliberate canary on top of the iteration: adding a hashed
     // field must make a human look at this file rather than sail through green.
-    // 6 → 7 when `learning` joined.
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(7);
+    // 6 → 7 when `learning` joined; 7 → 8 when `review` (HITL mode) joined.
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(8);
     for (const field of APPROVAL_DIFF_FIELDS) {
       expect(yesOut.stdout).toContain(field);
     }

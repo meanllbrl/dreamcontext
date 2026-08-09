@@ -9,6 +9,8 @@ import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
 import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { checkApproval } from './registry.js';
+import { backfillCardSession, createReviewCard, pendingReviewCard } from './review.js';
+import { recordCardSession } from './card-registry.js';
 import {
   clearRunSidecar,
   extractSection,
@@ -23,6 +25,8 @@ import {
 import {
   AUTOMATIONS_GITIGNORE_ENTRIES,
   AUTOMATIONS_GITIGNORE_ENTRIES_ROOT,
+  AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES,
+  AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES_ROOT,
   AutomationError,
   KILL_GRACE_MS,
   MAX_PROMPT_BYTES,
@@ -403,9 +407,107 @@ function waitForExit(
   });
 }
 
-// ─── RunOptions (host discriminated union — see runAutomation) ─────────────
+// ─── The shared spawn core ──────────────────────────────────────────────────
 
 export type SpawnImpl = typeof import('node:child_process').spawn;
+
+export interface ClaudeExecOptions {
+  cwd: string;
+  timeoutMs: number;
+  spawnImpl?: SpawnImpl;
+  killImpl?: KillImpl;
+  log?: (line: string) => void;
+  now?: () => Date;
+  /**
+   * Called SYNCHRONOUSLY the instant a pid exists and before any await — the
+   * caller writes its sidecar and wires its host here. The timing is the whole
+   * contract: a sidecar written after an await can be missed by a runner that
+   * dies in between, leaving an orphaned process group with no record, which is
+   * the one failure this subsystem has no way to recover from.
+   */
+  onSpawned?: (child: ChildProcess, startedAt: Date) => void;
+}
+
+export interface ClaudeExecution {
+  /** false ⇒ the exec itself failed (`child.pid` was null) and nothing ran. */
+  spawned: boolean;
+  timedOut: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderrTail: string;
+  startedAt: Date;
+  finishedAt: Date;
+  /** Parsed only when the child both spawned and exited on its own — a
+   *  force-killed child has no coherent document to parse. */
+  result: ClaudeResult | null;
+}
+
+/**
+ * Spawn `claude`, wait for it, parse it — the ONE place this subsystem does so.
+ *
+ * Extracted from `runAutomation` when the review-verdict path needed to resume
+ * a session, and deliberately NOT duplicated: the detached-spawn/process-group/
+ * SIGTERM-then-SIGKILL matrix took four review rounds to get right, and a second
+ * copy would be a second thing to keep correct. Everything policy-shaped
+ * (approval, the locks, the orphan guard, what to do with the output) stays with
+ * the caller — this function knows only how to run a claude process safely.
+ */
+export async function executeClaudeDetached(args: string[], opts: ClaudeExecOptions): Promise<ClaudeExecution> {
+  const spawnFn: SpawnImpl = opts.spawnImpl ?? nodeSpawn;
+  const killFn: KillImpl = opts.killImpl ?? ((pid, signal) => { process.kill(pid, signal); });
+  const logFn = opts.log ?? (() => {});
+  const nowFn = opts.now ?? (() => new Date());
+
+  const spawnOptions: Parameters<SpawnImpl>[2] = {
+    cwd: opts.cwd,
+    env: { ...process.env, PATH: claudeAwarePath() },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
+  };
+  const claudeBin = findClaudeBin();
+  const child: ChildProcess = claudeBin
+    ? spawnFn(claudeBin, args, spawnOptions)
+    : spawnFn(process.env.SHELL || '/bin/zsh', ['-ilc', 'exec claude "$@"', 'claude', ...args], spawnOptions);
+  // Async 'error' events (agent-terminal.ts:803) must always have a listener
+  // even though spawn-failure detection below is synchronous — an unhandled
+  // 'error' event crashes the whole Node process.
+  child.on('error', () => { /* handled via the pid check + waitForExit below */ });
+
+  const startedAt = nowFn();
+
+  if (child.pid == null) {
+    return {
+      spawned: false,
+      timedOut: false,
+      exitCode: null,
+      stdout: '',
+      stderrTail: '',
+      startedAt,
+      finishedAt: nowFn(),
+      result: null,
+    };
+  }
+
+  opts.onSpawned?.(child, startedAt);
+
+  const collectors = attachOutputCollectors(child);
+  const { timedOut, code } = await waitForExit(child, opts.timeoutMs, killFn, logFn);
+  const finishedAt = nowFn();
+  const stdout = collectors.getStdout();
+
+  return {
+    spawned: true,
+    timedOut,
+    exitCode: code,
+    stdout,
+    stderrTail: collectors.getStderrTail(),
+    startedAt,
+    finishedAt,
+    result: timedOut ? null : parseClaudeJson(stdout),
+  };
+}
+
+// ─── RunOptions (host discriminated union — see runAutomation) ─────────────
 
 interface RunOptionsBase {
   now?: () => Date;
@@ -436,6 +538,10 @@ export interface RunOutcome {
   cache: AutomationCache | null;
   denials: number;
   costUsd: number | null;
+  /** The card this fire left open, when it ended owing a human a verdict.
+   *  null on every other path, including the pre-spawn `awaiting-review`
+   *  refusal — that one is BLOCKED BY a card it did not create. */
+  reviewCardId: string | null;
 }
 
 /**
@@ -493,6 +599,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       cache: null,
       denials: 0,
       costUsd: null,
+      reviewCardId: null,
     };
   }
 
@@ -516,6 +623,12 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     /** The run's own headline, for the notification body. Null on every path
      *  that produced no document to draw one from. */
     summary?: string | null;
+    /** Set when this fire left a card open — changes what the banner says and
+     *  where clicking it goes, since nothing published. */
+    reviewCardId?: string | null;
+    /** The staged proposal, for the banner's click target. A macOS banner
+     *  cannot carry buttons, so reading is the only thing it can offer. */
+    reviewStagedPath?: string | null;
   }): RunOutcome => {
     const event: RunEvent = {
       firedAt: fireAt.toISOString(),
@@ -555,7 +668,26 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       // answer one click away for no reason.
       if (params.status === 'ok') {
         const summary = params.summary ?? (params.outputPath ? `→ ${basename(params.outputPath)}` : 'done');
-        notifyFn(manifest.title, summary, NOTIFY_SOUND_OK, params.outputPath);
+        // A run that ended owing a verdict must NOT read as "your digest is
+        // ready" — nothing was published, and the banner is realistically the
+        // only thing the user sees. It has to ask, not report.
+        //
+        // The click opens the STAGED proposal when there is one, because a
+        // macOS `display notification` cannot carry buttons: reading is the
+        // only thing a banner can offer, and the proposal is the thing to read.
+        // For an `agent` card there is no staged file, so there is nothing to
+        // open — the queue and Telegram are where that one gets answered.
+        //
+        // KNOWN GAP: clicking cannot open the CARD itself. That needs a URL
+        // scheme on the Tauri side, which does not exist yet; noted rather than
+        // faked with a localhost URL that fails whenever the app is closed —
+        // which is exactly when automations fire.
+        notifyFn(
+          params.reviewCardId ? `${manifest.title} — needs your verdict` : manifest.title,
+          summary,
+          NOTIFY_SOUND_OK,
+          params.reviewCardId ? params.reviewStagedPath ?? null : params.outputPath,
+        );
       } else {
         // Capped like the success body. `error` can carry a STDERR_TAIL_BYTES
         // (4 KB) stderr tail, and an unbounded banner is macOS's problem to
@@ -581,6 +713,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       cache,
       denials: params.permissionDenials,
       costUsd: params.costUsd,
+      reviewCardId: params.reviewCardId ?? null,
     };
   };
 
@@ -650,6 +783,28 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     }
   }
 
+  // Step 4.5 — THE REVIEW GATE. An automation with a proposal nobody has
+  // answered does not produce another one.
+  //
+  // This is the only refusal in this sequence that is not a fault. The other
+  // three mean something is wrong (unapproved, mid-sleep, orphaned process);
+  // this one means the HUMAN is the bottleneck, which is the entire point of
+  // review — the scheduler runs at their speed instead of the clock's. Ported
+  // from Concierge's `cstate.in_flight`, which will not generate the next
+  // outreach card until the current one is resolved, and for the same reason:
+  // without it, a week away comes back as seven identical unreviewed proposals,
+  // each one less informed than the verdict still outstanding on the first.
+  //
+  // Watermark NOT advanced, so the fire is OWED rather than lost — answer the
+  // card and the run happens, bounded by `catchupHours` like any other catch-up.
+  const openCard = pendingReviewCard(contextRoot, slug);
+  if (openCard) {
+    return shortCircuit(
+      'awaiting-review',
+      `a proposal is waiting for your verdict ("${openCard.title}") — run \`dreamcontext automations review ${slug}\``,
+    );
+  }
+
   // Step 5 — the per-slug run lock (self-overlap guard).
   const staleMs = manifest.timeoutMinutes * 60_000 + 300_000;
   const gotLock = acquireFileLock(lockPath, nowFn().getTime(), staleMs, { verifyPidLiveness: true });
@@ -657,7 +812,11 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     return shortCircuit('deferred', 'a run for this automation is already in progress');
   }
 
-  let untrackFn: (() => void) | null = null;
+  // A no-op rather than null: the assignment now happens inside `onSpawned`, so
+  // control-flow analysis cannot see it and would narrow a nullable binding to
+  // `null` at the `finally`. Calling a no-op when nothing was ever registered is
+  // exactly what `untrackFn?.()` did before.
+  let untrackFn: () => void = () => {};
   let sigintHandler: (() => void) | null = null;
   let sigtermHandler: (() => void) | null = null;
 
@@ -672,6 +831,20 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       ensureGitignoreEntries(projectRoot, AUTOMATIONS_GITIGNORE_ENTRIES_ROOT, {
         comment: 'dreamcontext automations — machine-local run state (never commit)',
       });
+      // The review block MUST be re-ensured here too, for exactly the reason
+      // stated above: `createAutomation` is the only other writer, so an
+      // automation that predates review — or any project whose `.gitignore` was
+      // committed before this feature existed — would create
+      // `automations/review/<slug>/<id>.json` with NO ignore coverage the first
+      // time its owner turns review on. That file holds a live, resumable
+      // session id, and `sleep done` auto-commits and pushes, so the miss
+      // publishes a bypassPermissions capability to every teammate who pulls.
+      ensureGitignoreEntries(contextRoot, AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES, {
+        comment: 'dreamcontext automations — review cards (machine-local, never commit)',
+      });
+      ensureGitignoreEntries(projectRoot, AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES_ROOT, {
+        comment: 'dreamcontext automations — review cards (machine-local, never commit)',
+      });
     } catch (err) {
       logFn(`warning: could not ensure automations gitignore entries: ${(err as Error).message}`);
     }
@@ -681,33 +854,73 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     const outputPath = outputPathFor(contextRoot, manifest, fireAt);
     const prompt = composePrompt(manifest, projectRoot, fireAt, outputPath);
 
-    // Step 7 — spawn. Reuses the agent-terminal.ts template exactly: direct
-    // bin when found, else a login shell with the prompt as a positional
-    // (never string-interpolated) — plus claudeAwarePath() so a claude that
-    // only ~/.local/bin knows about still resolves.
-    const claudeBin = findClaudeBin();
+    // Steps 7–12 — spawn (detached, own process group), wire the host, collect,
+    // wait under the timeout half of the kill matrix, parse. All of it lives in
+    // `executeClaudeDetached`; the sidecar and host wiring happen in `onSpawned`,
+    // which it calls synchronously before any await for exactly that reason.
+    const timeoutMs = manifest.timeoutMinutes * 60_000;
     const claudeArgs = buildClaudeArgs(manifest, prompt);
-    const spawnOptions: Parameters<SpawnImpl>[2] = {
+    const execution = await executeClaudeDetached(claudeArgs, {
       cwd: projectRoot,
-      env: { ...process.env, PATH: claudeAwarePath() },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: true,
-    };
-    const child: ChildProcess = claudeBin
-      ? spawnFn(claudeBin, claudeArgs, spawnOptions)
-      : spawnFn(process.env.SHELL || '/bin/zsh', ['-ilc', 'exec claude "$@"', 'claude', ...claudeArgs], spawnOptions);
-    // Async 'error' events (agent-terminal.ts:803) must always have a
-    // listener even though spawn-failure detection below is synchronous —
-    // an unhandled 'error' event crashes the whole Node process.
-    child.on('error', () => { /* handled via the pid check + waitForExit below */ });
+      timeoutMs,
+      spawnImpl: spawnFn,
+      killImpl: killFn,
+      log: logFn,
+      now: nowFn,
+      onSpawned: (child, spawnedAt) => {
+        // Step 9 — the sidecar, before anything can await, so an orphan stays
+        // findable no matter how soon afterward the runner itself might die.
+        writeRunSidecar(contextRoot, slug, {
+          slug,
+          runnerPid: process.pid,
+          childPid: child.pid as number,
+          childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
+          fireAt: fireAt.toISOString(),
+          startedAt: spawnedAt.toISOString(),
+          timeoutAt: new Date(spawnedAt.getTime() + timeoutMs).toISOString(),
+        });
 
-    const startedAt = nowFn();
+        // Step 10 — host wiring.
+        if (opts.host === 'server') {
+          const killGroup = (): void => {
+            try {
+              killFn(-(child.pid as number), 'SIGKILL');
+            } catch {
+              /* ESRCH — already gone */
+            }
+          };
+          untrackFn = opts.registerChild(killGroup);
+        } else {
+          sigintHandler = () => {
+            try {
+              killFn(-(child.pid as number), 'SIGKILL');
+            } catch {
+              /* ESRCH */
+            }
+            releaseFileLock(lockPath);
+            process.exit(130);
+          };
+          sigtermHandler = () => {
+            try {
+              killFn(-(child.pid as number), 'SIGKILL');
+            } catch {
+              /* ESRCH */
+            }
+            releaseFileLock(lockPath);
+            process.exit(143);
+          };
+          process.on('SIGINT', sigintHandler);
+          process.on('SIGTERM', sigtermHandler);
+        }
+      },
+    });
 
-    // Step 8 — spawn-failure gate. Synchronous, immediately after spawnFn
-    // returns: `child.pid` is `undefined` when the exec itself failed. Given
-    // §1.1's whole premise, a stale/broken binary is the LIKELY case here,
-    // not an edge case.
-    if (child.pid == null) {
+    const { startedAt, finishedAt } = execution;
+
+    // Step 8 — spawn-failure gate. `child.pid` is null when the exec itself
+    // failed. Given §1.1's whole premise, a stale/broken binary is the LIKELY
+    // case here, not an edge case.
+    if (!execution.spawned) {
       return finalize({
         status: 'failed',
         error: 'spawn failed — the claude binary could not be launched',
@@ -718,86 +931,37 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         numTurns: null,
         permissionDenials: 0,
         startedAt,
-        finishedAt: nowFn(),
+        finishedAt,
         durationMs: 0,
         advanceWatermark: false,
         notify: true,
       });
     }
 
-    // Step 9 — success: write the sidecar SYNCHRONOUSLY, before any await, so
-    // an orphan is findable no matter how soon afterward the runner itself
-    // might die.
-    const timeoutMs = manifest.timeoutMinutes * 60_000;
-    const timeoutAt = new Date(startedAt.getTime() + timeoutMs);
-    writeRunSidecar(contextRoot, slug, {
-      slug,
-      runnerPid: process.pid,
-      childPid: child.pid,
-      childPgid: child.pid, // detached ⇒ setsid() ⇒ pgid === pid
-      fireAt: fireAt.toISOString(),
-      startedAt: startedAt.toISOString(),
-      timeoutAt: timeoutAt.toISOString(),
-    });
-
-    // Step 10 — host wiring.
-    if (opts.host === 'server') {
-      const killGroup = (): void => {
-        try {
-          killFn(-(child.pid as number), 'SIGKILL');
-        } catch {
-          /* ESRCH — already gone */
-        }
-      };
-      untrackFn = opts.registerChild(killGroup);
-    } else {
-      sigintHandler = () => {
-        try {
-          killFn(-(child.pid as number), 'SIGKILL');
-        } catch {
-          /* ESRCH */
-        }
-        releaseFileLock(lockPath);
-        process.exit(130);
-      };
-      sigtermHandler = () => {
-        try {
-          killFn(-(child.pid as number), 'SIGKILL');
-        } catch {
-          /* ESRCH */
-        }
-        releaseFileLock(lockPath);
-        process.exit(143);
-      };
-      process.on('SIGINT', sigintHandler);
-      process.on('SIGTERM', sigtermHandler);
-    }
-
-    // Steps 11–12 — collect output, wait (with the timeout half of the kill
-    // matrix), then parse.
-    const collectors = attachOutputCollectors(child);
-    const { timedOut, code } = await waitForExit(child, timeoutMs, killFn, logFn);
-    const finishedAt = nowFn();
     const measuredMs = finishedAt.getTime() - startedAt.getTime();
 
     let status: RunStatus;
     let error: string | null = null;
-    let claudeResult: ClaudeResult | null = null;
+    const claudeResult: ClaudeResult | null = execution.result;
     let finalOutputPath: string | null = null;
     let durationMs = measuredMs;
+    /** Set when this fire ended owing a human a verdict — either the run asked
+     *  for one, or the manifest asks on every document. */
+    let reviewCardId: string | null = null;
+    /** The staged document behind that card, when there is one. */
+    let reviewStagedPath: string | null = null;
 
-    if (timedOut) {
+    if (execution.timedOut) {
       status = 'timeout';
       error = `automation exceeded its ${manifest.timeoutMinutes}-minute timeout`;
       // No coherent document exists (the child was force-killed mid-flight,
       // same reasoning as the operator-kill path) — outputPath stays null.
     } else {
-      claudeResult = parseClaudeJson(collectors.getStdout());
-      if (!claudeResult.parsed) {
+      if (!claudeResult || !claudeResult.parsed) {
         status = 'failed';
         error = 'unparseable CLI output';
         try {
-          writeFileSync(outputPath, collectors.getStdout(), 'utf-8');
+          writeFileSync(outputPath, execution.stdout, 'utf-8');
           finalOutputPath = outputPath;
         } catch (err) {
           logFn(`warning: could not write raw output for "${slug}": ${(err as Error).message}`);
@@ -805,15 +969,73 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       } else {
         status = claudeResult.isError ? 'failed' : 'ok';
         if (status === 'failed') {
-          error = collectors.getStderrTail() || 'claude reported is_error: true';
+          error = execution.stderrTail || 'claude reported is_error: true';
         }
-        try {
-          writeFileSync(outputPath, claudeResult.result ?? '', 'utf-8');
-          finalOutputPath = outputPath;
-        } catch (err) {
-          status = 'failed';
-          error = OUTPUT_WRITE_FAILURE_REASON;
-          logFn(`automation "${slug}": output write failed: ${(err as Error).message}`);
+
+        // The run's conversation id only exists HERE, in the JSON envelope —
+        // a run cannot know it while running, so any card it proposed was
+        // written with `sessionId: null` and is unresumable until now. Do this
+        // BEFORE deciding what to publish: a staged card that never learns its
+        // session is a proposal nobody can approve.
+        for (const filled of backfillCardSession(contextRoot, slug, fireAt.toISOString(), claudeResult.sessionId)) {
+          // The card FILE records the session so a human can read it; the
+          // machine-local binding is what a verdict actually trusts. Only the
+          // runner can write it, because only the runner knows first-hand which
+          // session produced the card — it is the process that spawned it.
+          recordCardSession(filled.id, slug, claudeResult.sessionId, home);
+        }
+
+        // Did this fire end with a human owing a verdict? Either the run asked
+        // for one itself (`review: agent` → `automations propose`), or the
+        // manifest asks for one on every document (`review: output`).
+        const proposed = pendingReviewCard(contextRoot, slug);
+        const proposedThisRun = proposed?.runFiredAt === fireAt.toISOString() ? proposed : null;
+
+        if (status === 'ok' && manifest.review === 'output' && !proposedThisRun) {
+          // Blanket review: the document is STAGED beside its card and reaches
+          // the output directory only on approve. That single move is what
+          // gates the notification, sleep's consumption of it, and autoSync
+          // pushing it to the team remote — all three sit behind one verdict
+          // rather than each needing its own gate.
+          const document = claudeResult.result ?? '';
+          try {
+            const card = createReviewCard(contextRoot, {
+              slug,
+              runFiredAt: fireAt.toISOString(),
+              sessionId: claudeResult.sessionId,
+              kind: 'output',
+              title: `${manifest.title} — ${localDateString(fireAt)}`,
+              summary: extractNotificationSummary(document) ?? undefined,
+              body: document,
+              stagedBody: document,
+            });
+            reviewCardId = card.id;
+            reviewStagedPath = card.stagedPath;
+            recordCardSession(card.id, slug, claudeResult.sessionId, home);
+          } catch (err) {
+            // A staging failure must NOT publish the document as a
+            // consolation — that would be the gate silently opening on an
+            // error path, which is the one behaviour review cannot have.
+            status = 'failed';
+            error = 'could not stage the output for review — see the dispatcher log for details';
+            logFn(`automation "${slug}": review staging failed: ${(err as Error).message}`);
+          }
+        } else if (proposedThisRun) {
+          // `review: agent`: the run stopped and asked. Its final message is
+          // "I proposed X", not a document — publishing that would put a note
+          // to the operator into the output archive and hand it to sleep as
+          // though it were the job's result. The proposal lives on the card;
+          // the run's own words stay in its session, replayable.
+          reviewCardId = proposedThisRun.id;
+        } else {
+          try {
+            writeFileSync(outputPath, claudeResult.result ?? '', 'utf-8');
+            finalOutputPath = outputPath;
+          } catch (err) {
+            status = 'failed';
+            error = OUTPUT_WRITE_FAILURE_REASON;
+            logFn(`automation "${slug}": output write failed: ${(err as Error).message}`);
+          }
         }
         if (typeof claudeResult.durationMs === 'number') durationMs = claudeResult.durationMs;
       }
@@ -832,11 +1054,13 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       status,
       error,
       outputPath: finalOutputPath,
-      exitCode: code,
+      exitCode: execution.exitCode,
       // Drawn from the in-memory result, not by re-reading the file we just
       // wrote — the document is already here, and a re-read would also report
       // nothing on the path where the write itself failed.
       summary: claudeResult?.result ? extractNotificationSummary(claudeResult.result) : null,
+      reviewCardId,
+      reviewStagedPath,
       sessionId: claudeResult?.sessionId ?? null,
       costUsd: claudeResult?.costUsd ?? null,
       numTurns: claudeResult?.numTurns ?? null,
@@ -849,7 +1073,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     });
   } finally {
     if (opts.host === 'server') {
-      untrackFn?.();
+      untrackFn();
     } else {
       if (sigintHandler) process.off('SIGINT', sigintHandler);
       if (sigtermHandler) process.off('SIGTERM', sigtermHandler);

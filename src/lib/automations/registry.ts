@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
@@ -147,11 +147,54 @@ export function writeAutomationsRegistry(registry: AutomationsRegistry, home?: s
 
 // ─── Project registration ───────────────────────────────────────────────────
 
+/**
+ * Resolve a project path to the key its approvals are ACTUALLY stored under.
+ *
+ * WHY THIS EXISTS. Approvals are keyed by project path, and two code paths
+ * arrive at that path differently: the CLI derives it from `process.cwd()`,
+ * which Node reports PHYSICALLY (symlinks already resolved), while a registered
+ * vault stores whatever `resolve()` produced, which is lexical and leaves
+ * symlinks intact. On macOS `/tmp` is a symlink to `/private/tmp`, and a project
+ * behind ANY symlinked parent — a Dropbox or iCloud alias, a linked home, an
+ * external volume — hits the same split. The symptom is silent and bad: the
+ * dashboard reports every automation as "blocked — needs approval" while the
+ * CLI, run from inside the project, says approved.
+ *
+ * LOOKUP-ONLY, and deliberately so. Canonicalising on WRITE would be tidier but
+ * is a migration hazard pointing the other way: every approval already on disk
+ * was keyed by whatever its writer passed, so rewriting the lookup to a
+ * canonical form would orphan them all at once — the same silent
+ * mass-unapproval, just triggered by an upgrade instead of a symlink. So writes
+ * keep their existing key, and reads try, in order: the exact path, its
+ * realpath, then any stored key that resolves to the same physical directory.
+ * Strictly additive — nothing that resolved before stops resolving.
+ */
+function tryRealpath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    // Not resolvable (does not exist yet, or unreadable): fall back to the
+    // input. A lookup that throws would be worse than one that misses.
+    return p;
+  }
+}
+
+/** The stored key for this project, or null when it has none yet. */
+function findProjectKey(registry: AutomationsRegistry, projectRoot: string): string | null {
+  if (registry.projects[projectRoot]) return projectRoot;
+  const canonical = tryRealpath(projectRoot);
+  if (canonical !== projectRoot && registry.projects[canonical]) return canonical;
+  for (const stored of Object.keys(registry.projects)) {
+    if (stored !== projectRoot && tryRealpath(stored) === canonical) return stored;
+  }
+  return null;
+}
+
 /** Idempotently register a project (create an empty approvals bucket if one
  *  doesn't already exist). Never clobbers an existing project's approvals. */
 export function registerProject(projectRoot: string, home?: string): void {
   const registry = readAutomationsRegistry(home);
-  if (registry.projects[projectRoot]) return;
+  if (findProjectKey(registry, projectRoot)) return;
   registry.projects[projectRoot] = { approvals: {} };
   writeAutomationsRegistry(registry, home);
 }
@@ -160,8 +203,9 @@ export function registerProject(projectRoot: string, home?: string): void {
  *  Returns true iff a project entry was actually removed. */
 export function unregisterProject(projectRoot: string, home?: string): boolean {
   const registry = readAutomationsRegistry(home);
-  if (!(projectRoot in registry.projects)) return false;
-  delete registry.projects[projectRoot];
+  const key = findProjectKey(registry, projectRoot);
+  if (key === null) return false;
+  delete registry.projects[key];
   writeAutomationsRegistry(registry, home);
   return true;
 }
@@ -218,6 +262,19 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // point: turning it on lets the run read a file that rewrites itself, and
     // the run's own recorded lessons are never re-reviewed afterwards.
     ...(m.learning ? { learning: true } : {}),
+    // OMITTED when 'off', same byte-identity reason as `effort` and `learning`:
+    // every manifest written before review existed reads 'off', so its already
+    // approved hash stays exactly what it was and an upgrade blocks nobody.
+    //
+    // Included otherwise, and the direction that earns the hash is REMOVAL. A
+    // synced manifest whose `review` a teammate edits back to 'off' has had a
+    // human gate deleted from it — the most consequential edit possible short
+    // of rewriting the prompt — and it must block until someone here approves
+    // that. Turning review ON costs a re-approval too (a hash is a pure
+    // function of the manifest and cannot know the previous mode), which is
+    // harmless: a local write verb re-approves on the spot, and a teammate
+    // ADDING a gate that then blocks is failing in the safe direction.
+    ...(m.review !== 'off' ? { review: m.review } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -247,6 +304,11 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     // learning is on — that a run will read notes it wrote itself is the most
     // consequential thing on this list to approve knowingly.
     learning: m.learning,
+    // Always present here too, for the mirror-image reason: the reviewer must
+    // be able to see that a gate they were relying on is GONE. A removed
+    // review mode renders as `agent → off` in the diff, which is exactly the
+    // line this whole surface exists to make impossible to miss.
+    review: m.review,
   };
 }
 
@@ -291,9 +353,12 @@ export function approveAutomation(projectRoot: string, m: AutomationManifest, no
     payloadVersion: APPROVAL_PAYLOAD_VERSION,
   };
   const registry = readAutomationsRegistry(home);
-  const project = registry.projects[projectRoot] ?? { approvals: {} };
+  // Write under the key this project ALREADY has, so approving through an alias
+  // lands beside its siblings instead of forking a second bucket.
+  const key = findProjectKey(registry, projectRoot) ?? projectRoot;
+  const project = registry.projects[key] ?? { approvals: {} };
   project.approvals[m.slug] = entry;
-  registry.projects[projectRoot] = project;
+  registry.projects[key] = project;
   writeAutomationsRegistry(registry, home);
   return entry;
 }
@@ -302,7 +367,8 @@ export function approveAutomation(projectRoot: string, m: AutomationManifest, no
  *  registration intact). Returns true iff an entry was actually removed. */
 export function revokeApproval(projectRoot: string, slug: string, home?: string): boolean {
   const registry = readAutomationsRegistry(home);
-  const project = registry.projects[projectRoot];
+  const key = findProjectKey(registry, projectRoot);
+  const project = key === null ? undefined : registry.projects[key];
   if (!project || !(slug in project.approvals)) return false;
   delete project.approvals[slug];
   writeAutomationsRegistry(registry, home);
@@ -312,7 +378,8 @@ export function revokeApproval(projectRoot: string, slug: string, home?: string)
 /** The raw stored approval entry for `slug`, or null if never approved. */
 export function getApproval(projectRoot: string, slug: string, home?: string): ApprovalEntry | null {
   const registry = readAutomationsRegistry(home);
-  return registry.projects[projectRoot]?.approvals[slug] ?? null;
+  const key = findProjectKey(registry, projectRoot);
+  return (key === null ? undefined : registry.projects[key]?.approvals[slug]) ?? null;
 }
 
 // ─── Dispatcher heartbeat (own file — see module doc) ───────────────────────

@@ -59,7 +59,7 @@ export function claudeAuthRow(auth: ClaudeAuthInfo | undefined): ClaudeAuthRow |
  * Settings → the agent surface. The sign-in flow needs an interactive terminal, which only
  * `AgentSurface` can open (it owns every session), and Settings is a page BELOW it in the
  * tree with no handle on it — so the request travels as a window event, the same
- * page-dispatches/surface-listens bridge the sleep tracker and Task Manager already use.
+ * page-dispatches/surface-listens bridge the sleep tracker and Delegate already use.
  */
 export const CLAUDE_SIGNIN_EVENT = 'dreamcontext-claude-signin';
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, readFileSync, existsSync, realpathSync } from 'node:fs';
+import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
@@ -85,18 +85,19 @@ describe('platform-aware install flow (integration)', () => {
     expect(existsSync(join(tmpDir, '.claude', 'agents', 'dreamcontext-explore.md'))).toBe(true);
   });
 
-  it('install-skill installs the task-manager core skill (claude)', () => {
+  it('install-skill removes a retired task-manager skill left by an older install (claude)', () => {
     run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
     run('install-skill --platforms claude', tmpDir);
 
-    // The task-scoped CURATE agent ships as a core skill: the dashboard's task-detail Curate
-    // pane opens a session that names it by name, so it has to be on disk in every project.
-    const skillPath = join(tmpDir, '.claude', 'skills', 'task-manager', 'SKILL.md');
-    expect(existsSync(skillPath)).toBe(true);
-    const skill = readFileSync(skillPath, 'utf-8');
-    expect(skill).toContain('name: task-manager');
-    // It curates the task DOCUMENT via the CLI; implementation stays the delegate flow's job.
-    expect(skill).toContain('dreamcontext tasks doctor');
+    // Simulate a project upgraded from ≤0.23.x: the old installer wrote this skill, and
+    // installers never prune, so without an explicit retirement it would sit on disk forever
+    // and keep offering `/task-manager` in every session.
+    const retired = join(tmpDir, '.claude', 'skills', 'task-manager');
+    mkdirSync(retired, { recursive: true });
+    writeFileSync(join(retired, 'SKILL.md'), 'name: task-manager\n', 'utf-8');
+
+    run('install-skill --platforms claude', tmpDir);
+    expect(existsSync(retired)).toBe(false);
   });
 
   it('install-instructions installs CLAUDE.md for the claude platform', () => {

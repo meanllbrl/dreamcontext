@@ -340,7 +340,7 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   // `deferPrompt` flips the prompt's DELIVERY, not its transport: the server parks it for the
   // UserPromptSubmit hook instead of auto-submitting, so it joins the USER's first message as
-  // context rather than opening the conversation itself (the Task Manager pane's contract).
+  // context rather than opening the conversation itself.
   // Meaningful only when a server-submitted prompt exists at all.
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypassParam}&theme=${theme}${idParam}${kindParam}${modelParam}${promptParam}${deferParam}`;

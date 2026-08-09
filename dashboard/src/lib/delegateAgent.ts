@@ -30,6 +30,14 @@ export interface DelegateAgentDetail {
   promptToken: string;
   bypass: boolean;
   /**
+   * The model alias to run (`opus` / `sonnet` / `haiku` / `fable`), or '' to inherit whatever
+   * the user's CLI default is. Empty is the honest default: the composer's picker shows
+   * `modelConfig.defaultModel`, which is only a snapshot of `~/.claude/settings.json` — forcing
+   * it back down would pin a delegated agent to a stale guess (and to the FALLBACK guess when
+   * the config never loaded). Only a DELIBERATE pick travels.
+   */
+  model?: string;
+  /**
    * Show the agent instead of backgrounding it: open the Agents overlay with the new session
    * as a live pane, rather than starting it minimized as a corner chip.
    *
@@ -78,21 +86,32 @@ export function taskSourcePath(slug: string): string {
  * delegated tab's title come from ONE `taskName(task)` call in the composer and can't drift.
  */
 export function buildDelegatePrompt(task: Task, title: string): string {
-  const parts: string[] = [
+  return [
     'Work on this dreamcontext task and drive it to completion, fully autonomously — do NOT ask me questions (I am away). Think hard.',
-    `\nTask: ${title}`,
-  ];
-  if (task.description?.trim()) parts.push(`\nDescription:\n${task.description.trim()}`);
-  if (task.why?.trim()) parts.push(`\nWhy:\n${task.why.trim()}`);
-  if (task.user_stories?.trim()) parts.push(`\nUser stories:\n${task.user_stories.trim()}`);
-  if (task.acceptance_criteria?.trim()) parts.push(`\nAcceptance criteria:\n${task.acceptance_criteria.trim()}`);
-  parts.push(
-    `\nThe full task lives at \`${taskSourcePath(task.slug)}\` — read that file `
+    taskContextBlock(task, title),
+    `The full task lives at \`${taskSourcePath(task.slug)}\` — read that file `
     + 'for the complete spec (technical details, constraints, notes). Log progress with '
     + `\`dreamcontext tasks log ${task.slug} "<note>"\` and tick acceptance criteria as you satisfy them. `
     + 'When everything is done and verified, reply with a SHORT Markdown summary of what you changed.',
-  );
-  return parts.join('\n');
+  ].join('\n\n');
+}
+
+/**
+ * The task itself, as the composer hands it over: the title line plus whichever of
+ * description / why / user stories / acceptance criteria the task actually fills in. Empty
+ * sections are omitted rather than sent as headings with nothing under them.
+ *
+ * Shared by every delegate mode (see lib/delegateModes.ts) so switching from "Autonomous" to
+ * "Discuss" changes the INSTRUCTION and nothing else — the task the agent is looking at is
+ * byte-identical across all four. Each mode wraps it with its own lead-in and closing ask.
+ */
+export function taskContextBlock(task: Task, title: string): string {
+  const parts: string[] = [`Task: ${title}`];
+  if (task.description?.trim()) parts.push(`Description:\n${task.description.trim()}`);
+  if (task.why?.trim()) parts.push(`Why:\n${task.why.trim()}`);
+  if (task.user_stories?.trim()) parts.push(`User stories:\n${task.user_stories.trim()}`);
+  if (task.acceptance_criteria?.trim()) parts.push(`Acceptance criteria:\n${task.acceptance_criteria.trim()}`);
+  return parts.join('\n\n');
 }
 
 /**
@@ -122,10 +141,11 @@ export function requestDelegateAgent(detail: DelegateAgentDetail): boolean {
  * resolves to the surface's ACK otherwise.
  */
 export async function delegateTaskToAgent(
-  args: { title: string; prompt: string; bypass: boolean; reveal?: boolean },
+  args: { title: string; prompt: string; bypass: boolean; model?: string; reveal?: boolean },
 ): Promise<boolean> {
   const { inline, token } = await preparePrompt(args.prompt.trim());
   return requestDelegateAgent({
-    title: args.title, prompt: inline, promptToken: token, bypass: args.bypass, reveal: args.reveal,
+    title: args.title, prompt: inline, promptToken: token, bypass: args.bypass,
+    model: args.model, reveal: args.reveal,
   });
 }

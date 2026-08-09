@@ -17,7 +17,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["devtools", "macos-private-api"] }
 tauri-plugin-shell = "2"
-tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
 # OS-native clipboard writes. The WKWebView's JS clipboard (`navigator.clipboard.writeText`)
 # re-decodes UTF-8 as Mac Roman (Ş→"≈û", ü→"√º") — see issue #171 / the copyPreservingUnicode
@@ -36,6 +35,27 @@ serde_json = "1"
 # transitively via tauri; pinned here so the direct use is explicit.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Talk to NSOpenPanel directly instead of routing the file/folder picker through
+# tauri-plugin-dialog → rfd. rfd calls `+[NSOpenPanel openPanel]` (and `-URLs`)
+# through objc2 bindings typed as NON-NULL, so when AppKit hands back nil the
+# generated null-check panics — and with `panic = "abort"` below that panic takes
+# the ENTIRE app down mid-file-pick. Owning the call lets us treat nil as an
+# error the user can retry. See `pick_paths` in lib.rs.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "block2",
+    "NSApplication",
+    "NSOpenPanel",
+    "NSPanel",
+    "NSResponder",
+    "NSSavePanel",
+    "NSWindow",
+] }
 
 [profile.release]
 codegen-units = 1

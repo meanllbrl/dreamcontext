@@ -846,8 +846,8 @@ export function getConsolidationDirective(state: SleepState): string | null {
 }
 
 /**
- * Consume a parked deferred prompt (Task Manager sessions) — the hook half of the
- * `deferPrompt` contract with `agent-terminal.ts`. The embedded terminal parks a session's
+ * Consume a parked deferred prompt — the hook half of the `deferPrompt` contract with
+ * `agent-terminal.ts`. A session spawned with `deferPrompt=1` parks its
  * pin context in a tmp file instead of auto-submitting it, and exports the path as
  * `DREAMCONTEXT_DEFERRED_PROMPT`; this reads the text and DELETES the file, so the context
  * joins exactly one user message — the first — and every later prompt finds nothing.
@@ -1668,7 +1668,7 @@ export function registerHookCommand(program: Command): void {
       const input = readStdin();
       if (!input) process.exit(0);
 
-      // ── Deferred first-message context (Task Manager sessions) ──────────────
+      // ── Deferred first-message context ─────────────────────────────────────
       // The embedded terminal can park an initial prompt in a tmp file instead of
       // auto-submitting it (agent-terminal.ts `deferPrompt`): the session boots
       // idle, and the parked text joins the USER's first message as injected

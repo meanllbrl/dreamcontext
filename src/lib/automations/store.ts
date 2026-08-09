@@ -10,6 +10,8 @@ import {
   AutomationError,
   AUTOMATIONS_GITIGNORE_ENTRIES,
   AUTOMATIONS_GITIGNORE_ENTRIES_ROOT,
+  AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES,
+  AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES_ROOT,
   DEFAULT_CATCHUP_HOURS,
   DEFAULT_TIMEOUT_MINUTES,
   EFFORT_LEVELS,
@@ -24,12 +26,14 @@ import {
   PATTERN_PLAYBOOK_MAX_CHARS,
   PATTERN_SECTION_MAX_CHARS,
   RESERVED_SLUGS,
+  REVIEW_MODES,
   sharedSlugNegations,
   type AutomationCache,
   type AutomationManifest,
   type AutomationPattern,
   type EffortLevel,
   type PatternLesson,
+  type ReviewMode,
   type RunEvent,
   type RunSidecar,
   type Weekday,
@@ -224,6 +228,14 @@ export function readAutomationFile(filePath: string): AutomationManifest {
     // AutomationManifest for why a missing value must read false rather than
     // inheriting the new default.
     learning: data.learning === true,
+    // Lenient toward `off` — anything not in REVIEW_MODES (missing, a typo, a
+    // boolean) is the pre-feature behavior. Note this fails the OPPOSITE way
+    // from `shared`: see the field's doc comment on AutomationManifest for why
+    // a scheduler must prefer "completes unreviewed" over "silently stops and
+    // waits for a card nobody knows exists".
+    review: (REVIEW_MODES as readonly unknown[]).includes(data.review)
+      ? (data.review as ReviewMode)
+      : 'off',
     prompt: extractSection(content, 'Prompt'),
     outputInstructions: extractSection(content, 'Output instructions'),
     pattern: extractSection(content, PATTERN_HEADING),
@@ -557,6 +569,13 @@ export interface CreateAutomationInput {
    *  written today should get the pattern loop, so `create` states it
    *  explicitly rather than relying on the read default. */
   learning?: boolean;
+  /** Omitted ⇒ `off`. Unlike `learning`, a new automation does NOT opt into
+   *  review by default: review is the owner deciding this particular job is one
+   *  they want to see before it lands, and defaulting it on would turn every
+   *  scheduled job into a chore and train exactly the reflexive approval the
+   *  whole gate exists to prevent. Written explicitly all the same, so the
+   *  field is visible in the manifest that the capture protocol reads back. */
+  review?: ReviewMode;
 }
 
 /**
@@ -601,6 +620,13 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
   ) {
     throw new AutomationError(`catchup_hours must be between 1 and ${MAX_CATCHUP_HOURS}.`);
   }
+  // Strict on the WRITE path even though the read path degrades to 'off': a
+  // typo'd review mode that reads as 'off' is a gate the owner believes they
+  // installed and did not. The read stays lenient for manifests already on
+  // disk; this stops one from being created that way.
+  if (i.review !== undefined && !(REVIEW_MODES as readonly string[]).includes(i.review)) {
+    throw new AutomationError(`Invalid review mode "${i.review}" — must be one of: ${REVIEW_MODES.join(', ')}.`);
+  }
 }
 
 /** Idempotently ensure both governing `.gitignore` files (contextRoot- and
@@ -616,6 +642,16 @@ function ensureAutomationsGitignore(contextRoot: string, slug: string): void {
     });
     ensureGitignoreEntries(projectRoot, AUTOMATIONS_GITIGNORE_ENTRIES_ROOT, {
       comment: 'dreamcontext automations — machine-local run state (never commit)',
+    });
+    // Separate block, deliberately — see AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES
+    // for why review must stay out of the share-negation ordering set. A card
+    // holds a resumable session id, so it must be uncommittable from the
+    // instant the directory can exist, exactly like the lock and the sidecar.
+    ensureGitignoreEntries(contextRoot, AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES, {
+      comment: 'dreamcontext automations — review cards (machine-local, never commit)',
+    });
+    ensureGitignoreEntries(projectRoot, AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES_ROOT, {
+      comment: 'dreamcontext automations — review cards (machine-local, never commit)',
     });
   } catch (err) {
     throw new AutomationError(
@@ -664,6 +700,7 @@ export function createAutomation(contextRoot: string, i: CreateAutomationInput):
     shared: i.shared ?? false,
     notify: i.notify ?? true,
     learning: i.learning ?? true,
+    review: i.review ?? 'off',
   };
 
   const body = [

@@ -17,7 +17,7 @@ import {
 } from '../hooks/useLauncher';
 import { useAuthStatus } from '../hooks/useBrainStatus';
 import { GitHubLogin, GitHubMark } from '../components/brain/GitHubLogin';
-import { openFolderPicker } from '../lib/desktop';
+import { openFolderPicker, pickerError } from '../lib/desktop';
 import './OnboardingWizard.css';
 
 type Mode = 'new' | 'existing' | 'github';
@@ -168,7 +168,13 @@ export function OnboardingWizard({ onClose, onReady }: Props) {
   async function browseFolder(target: 'parent' | 'project' | 'cloneParent') {
     setError(null);
     const picked = await openFolderPicker();
-    if (!picked) return;
+    if (!picked) {
+      // Distinguish "user cancelled" (nothing to say) from "macOS refused to
+      // show the panel" — the latter is a real failure the user can retry.
+      const failure = pickerError();
+      if (failure) setError(failure);
+      return;
+    }
     if (target === 'parent') {
       setParentDir(picked);
       return;

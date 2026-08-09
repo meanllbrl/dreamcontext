@@ -363,7 +363,7 @@ export interface ChatSession {
   /** Register (or clear, with `null`) the transcript's "re-measure yourself" hook, which
    *  `fitAndResize` calls — the chat analogue of a terminal refitting its grid. AgentSurface
    *  fires `fitAndResize` on every foreground session after ANY layout move (split, combine,
-   *  tab switch, overlay expand, Task Manager slot mount), one frame after the container has
+   *  tab switch, overlay expand), one frame after the container has
    *  been re-appended into its slot.
    *
    *  Load-bearing for a re-home specifically: `appendChild`-ing the container into a new slot

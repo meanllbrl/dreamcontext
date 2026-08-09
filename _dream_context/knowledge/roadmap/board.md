@@ -7,12 +7,12 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-08-02'
+date: '2026-08-08'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-08-02 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-08-08 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### 🔵 **improve-recall-mechanism** — Improve Recall Mechanism · 6/11 done (55%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
@@ -28,8 +28,9 @@ date: '2026-08-02'
   - the-dreamcontext-chat-surface-persists-hook-output-around-10k-chars-so-the-freshly-fitted-17-9k-snapshot-still-arrives-as-a-preview-there (todo)
   - the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview (completed) · 0.22.0 · 2026-07-28 → …
 
-### 🔵 **improve-sleep-quality** — Improve sleep quality · 8/17 done (47%) · target 2026-08-02 · forecast 2026-08-02 ✓ on track
+### 🔵 **improve-sleep-quality** — Improve sleep quality · 8/18 done (44%) · target 2026-08-02 · forecast 2026-08-02 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
+  - automations-hitl-a-run-can-stop-and-ask-and-the-verdict-comes-back-from-wherever-you-are (in_progress) · 0.24.0 · 2026-08-03 → …
   - automations-learn-from-every-run-show-their-session-and-say-what-happened-in-the-notification (completed)
   - automations-scheduled-headless-claude-jobs (in_review) · BACKLOG
   - feat-sleep-semantic-dedup-nearest-neighbor-merge-instead-of-duplicate (completed) · 0.18.0
@@ -52,7 +53,7 @@ date: '2026-08-02'
   Unblocks: hello-world-pr, make-it-a-business
   - spike-codex-opencode-re-addition-scoping (todo) · BACKLOG
 
-### 🟡 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 14/16 done (88%) · target 2026-07-12 · forecast 2026-07-12 ✓ on track
+### 🟡 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 15/17 done (88%) · target 2026-07-12 · forecast 2026-07-12 ✓ on track
   Unblocks: make-it-a-business
   - brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings (completed) · v0.14.1
   - clickup-sync-integrity-provenance-version-round-trip-consolidates-177-178-179 (completed) · 0.20.0
@@ -60,6 +61,7 @@ date: '2026-08-02'
   - cloud-sync-origin-setup-create-attach-github-repo-ui (completed) · 2026-07-08 → …
   - cloud-sync-reports-false-sync-failed-github-sign-in-expired-while-git-is-fully-in-sync-and-settings-shows-a-valid-session (completed) · 0.17.1
   - cloud-sync-stale-config-enabled-true-in-tree-mode-renders-dishonestly (completed) · 0.18.0
+  - dashboard-build-pipeline-now-syncs-vite-output-to-the-served-directory (completed) · v0.24.0
   - feat-dashboard-live-sleep-debt-tracker-header-widget (completed) · 0.10.7 · 2026-07-04 → …
   - feat-linked-repos-shared-brain-governs-bare-code-repos-machine-local-path-registry-link-cli-trust-gated-clone-dashboard (completed) · 0.21.0 · 2026-07-09 → …
   - feat-okr-key-result-metric-outcome-based-progress (completed) · 0.10.7
@@ -71,7 +73,7 @@ date: '2026-08-02'
   - pre-publish-checklist-v0-23-0 (completed) · 0.23.1 · 2026-08-01 → …
   - repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror (completed) · 0.20.0
 
-### 🟡 **simplified-ux** — Simplified UX · 38/51 done (75%) · target 2026-07-31 · forecast 2026-07-31 ✓ on track
+### 🟡 **simplified-ux** — Simplified UX · 42/55 done (76%) · target 2026-07-31 · forecast 2026-07-31 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
   - add-a-content-hash-and-an-owner-to-the-install-manifest-and-make-pack-path-collisions-an-error (todo) · 0.23.0
   - agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief (in_review) · 0.21.0 · 2026-07-24 → …
@@ -79,14 +81,17 @@ date: '2026-08-02'
   - agent-composer-add-folder-picker-to-files-button (completed) · 0.18.0
   - agent-surface-polish-unified-chrome-composer-redesign-slash-menu-inline-images-reveal-endpoint (in_review) · 0.21.0
   - agent-tab-auto-title-arrives-late-warm-the-cli-probe-and-let-a-chat-tab-carry-its-own-first-message (in_review) · 0.23.0
+  - an-automation-run-opens-as-a-chat-session-not-an-inline-drill-in (completed) · 0.24.0
   - announcements-become-screenshot-driven-landing-pages-instead-of-excalidraw-boards (completed) · 0.21.0
   - announcements-whats-new (completed) · 0.20.0 · 2026-07-18 → …
   - author-a-task-via-a-claude-agent-from-the-new-task-button (completed) · 0.20.0
   - changelog-json-and-releases-json-initialized-as-key-object-but-cli-requires-a-bare-array (todo) · 0.21.0
   - chat-answers-become-interactive-inline-charts-fullscreen-boards-widget-pageviews-and-a-pinned-checklist-window (in_review) · 0.21.0 · 2026-07-26 → …
   - chat-becomes-the-standard-agent-screen-the-embedded-terminal-becomes-terminal-legacy (completed) · 0.21.0
+  - chat-opens-a-pdf-in-the-app-and-every-file-panel-offers-open-on-computer-reveal-in-finder (completed) · 0.24.0
   - chat-prose-reads-at-a-body-column-rhythm-not-a-ui-label-s (in_review) · 0.23.1
   - chat-queued-messages-steer-into-the-running-turn-instead-of-waiting-for-it-to-end (in_review) · 0.23.0 · 2026-07-29 → …
+  - chat-scroll-settles-before-the-window-mutates-momentum-safe-reveal-chunked-trim (completed) · 0.23.1
   - chat-tool-rows-name-their-object-not-their-type-plus-run-grouping-and-density (completed) · 0.23.0
   - chat-view-a-sub-agent-s-tool-calls-must-not-leak-into-the-main-transcript (completed) · 0.21.0
   - chat-view-polish-board-zoom-fullscreen-collapsed-background-agents-autogrow-composer (completed) · 0.21.0 · 2026-07-25 → …
@@ -96,6 +101,7 @@ date: '2026-08-02'
   - collapse-features-into-typed-knowledge (completed) · 0.10.7 · 2026-07-05 → …
   - council-v2-the-chamber (completed) · 0.21.0 · 2026-07-23 → …
   - delegate-a-task-to-a-claude-agent-from-the-board (completed) · 0.18.0
+  - desktop-file-picker-crash-fixed-by-moving-to-native-nsopenpanel-handling (completed) · v0.24.0
   - desktop-launcher-ux-drag-fix-cmd-p-project-switcher (completed) · 0.10.7 · 2026-07-04 → …
   - desktop-settings-agents-panel-hotkey-reopen-tabs-auto-title (completed) · 0.10.7 · 2026-07-04 → …
   - dreamcontext-update-exits-0-when-no-platform-is-installed (todo)

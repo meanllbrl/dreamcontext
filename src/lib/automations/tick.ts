@@ -36,6 +36,13 @@ import { listAutomations, readAutomationCache } from './store.js';
 import { listRegisteredProjects, recordTickCompleted, recordTickStarted } from './registry.js';
 import { rotateLogIfLarge } from './launchd.js';
 import { runAutomation, type RunOutcome } from './runner.js';
+import { pollTelegram, type PollResult } from './telegram.js';
+
+/** The real poller. Cheap when Telegram is off: `readTelegramConfig` returns
+ *  null and it returns without a single network call, which is the state every
+ *  machine is in until someone runs `automations telegram setup`. */
+const defaultPollTelegram = (contextRoot: string, home?: string): Promise<PollResult> =>
+  pollTelegram(contextRoot, home);
 
 /** `_dream_context/` sits directly under a registered project root — the same
  *  literal join used throughout the CLI (`config.ts`, `update.ts`) for this
@@ -56,6 +63,10 @@ export interface TickOptions {
   /** Injectable so tests never spawn a real `claude`. Defaults to the real
    *  `runAutomation`. */
   runImpl?: typeof runAutomation;
+  /** Injectable so NO test in this repo can reach api.telegram.org. Defaults
+   *  to the real poller, which is itself a no-op when Telegram is unconfigured
+   *  (the overwhelmingly common case). */
+  pollTelegram?: (contextRoot: string, home?: string) => Promise<PollResult>;
 }
 
 /** Per-manifest disposition for one `tickProject` pass — lets a caller log or
@@ -72,7 +83,7 @@ export interface TickOptions {
  *  mapping. */
 export interface SlugVerdict {
   slug: string;
-  verdict: DueVerdict['reason'] | 'blocked' | 'disabled' | 'orphaned';
+  verdict: DueVerdict['reason'] | 'blocked' | 'disabled' | 'orphaned' | 'awaiting-review';
 }
 
 export interface TickProjectResult {
@@ -104,7 +115,11 @@ export interface TickAllResult {
  *  run-time-only gates `isDue` cannot foresee); every other status collapses
  *  to `'due'`, with the full status still available in `ran[]`. */
 function verdictFor(status: RunOutcome['status']): SlugVerdict['verdict'] {
-  if (status === 'blocked' || status === 'orphaned') return status;
+  // `awaiting-review` joins the two run-time-only gates for the same reason
+  // they are here: `isDue` cannot foresee it either (it depends on whether a
+  // human has answered a card since the last pass), and a tick that reported it
+  // as a plain `due` would say an automation ran when it deliberately did not.
+  if (status === 'blocked' || status === 'orphaned' || status === 'awaiting-review') return status;
   return 'due';
 }
 
@@ -148,6 +163,32 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
     ran.push(outcome);
     verdicts.push({ slug: manifest.slug, verdict: verdictFor(outcome.status) });
     logFn(`[automations] ${manifest.slug} finished: ${outcome.status}`);
+  }
+
+  // AFTER the runs, so a card a run just proposed is posted and answerable in
+  // this same pass rather than waiting five minutes for the next one.
+  //
+  // This lives in the tick — not in the server, not in a daemon — because that
+  // is the only process guaranteed to be alive when an automation fires. The
+  // whole reason a person needs Telegram is that they are not at the Mac; a
+  // channel that only drains while the app is open would work exactly when it
+  // is least needed. A verdict therefore lands within one tick, which is the
+  // right latency for a scheduler and the wrong one for a chat — the server
+  // polls faster while it happens to be up.
+  const poll = opts.pollTelegram ?? defaultPollTelegram;
+  try {
+    const result = await poll(contextRoot, opts.home);
+    if (result.processed > 0) logFn(`[automations] telegram: ${result.processed} update(s) handled`);
+    if (result.unauthorized > 0) {
+      // Never acted on, always said: a bot being messaged by someone who is not
+      // you is worth knowing about, even though the gate already dropped it.
+      logFn(`[automations] telegram: ${result.unauthorized} update(s) dropped from an unauthorized chat`);
+    }
+  } catch (err) {
+    // Telegram is a CHANNEL, not the gate. A broken token, a network blip or a
+    // rate limit must never stop automations from running or cards from being
+    // answerable everywhere else.
+    logFn(`[automations] telegram polling failed (automations are unaffected): ${(err as Error).message}`);
   }
 
   return { projectRoot, contextRoot, considered: manifests.length, ran, verdicts };

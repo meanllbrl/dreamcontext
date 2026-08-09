@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { listAutomations, readAutomationCache, readRunSidecar } from './store.js';
 import { checkApproval } from './registry.js';
+import { pendingReviewCard } from './review.js';
 import { pendingOutputsSince } from './consumption.js';
 
 /**
@@ -46,6 +47,11 @@ export interface AutomationsSnapshot {
   hasFailure: boolean;
   hasOrphan: boolean;
   hasPendingOutputs: boolean;
+  /** A proposal is waiting for a human verdict. Distinct from every other
+   *  signal here: the others report something that HAPPENED, this one reports
+   *  something the human OWES — and until they pay it, that automation is not
+   *  running again. */
+  hasPendingReview: boolean;
 }
 
 export interface AutomationsSnapshotOptions {
@@ -123,6 +129,7 @@ export function buildAutomationsSnapshot(
 
   const recentLines: string[] = [];
   const blockedLines: string[] = [];
+  const reviewLines: string[] = [];
   const orphanLines: string[] = [];
   const okRuns = new Map<string, number>();
   let hasFailure = false;
@@ -162,6 +169,20 @@ export function buildAutomationsSnapshot(
       );
     }
 
+    // ─── A proposal awaiting a verdict — the automation is HELD, not broken ─
+    // Read from the card store rather than from the last cache event, for the
+    // same reason `blocked` is read from the registry: the run that created the
+    // card may have been days ago and long since fallen out of the 24h window,
+    // but the card is still open and the automation is still not firing. A
+    // signal about something OWED cannot expire on a clock.
+    const card = pendingReviewCard(contextRoot, manifest.slug);
+    if (card) {
+      reviewLines.push(
+        `- ${manifest.slug}: waiting for your verdict — "${card.title}" (${relativeAge(card.createdAt, now)}); ` +
+        `it will not run again until you answer — \`dreamcontext automations review ${manifest.slug}\``,
+      );
+    }
+
     // ─── Live orphan — independent of the last recorded cache event ────────
     const sidecar = readRunSidecar(contextRoot, manifest.slug);
     if (sidecar && !isAlive(sidecar.runnerPid) && isAlive(sidecar.childPgid)) {
@@ -197,11 +218,15 @@ export function buildAutomationsSnapshot(
   }
 
   return {
-    lines: [...recentLines, ...blockedLines, ...orphanLines, ...pendingLines, ...okLines],
+    // Review sits directly after failures and before everything else that is
+    // merely informational: it is the only line here that names something the
+    // reader has to DO before that automation works again.
+    lines: [...recentLines, ...reviewLines, ...blockedLines, ...orphanLines, ...pendingLines, ...okLines],
     hasBlocked: blockedLines.length > 0,
     hasFailure,
     hasOrphan: orphanLines.length > 0,
     hasPendingOutputs: pendingLines.length > 0,
+    hasPendingReview: reviewLines.length > 0,
   };
 }
 

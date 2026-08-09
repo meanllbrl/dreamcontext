@@ -1,7 +1,7 @@
 /**
  * Pure data layer for the Announcements / What's New feature. Dependency-free
  * (no React, no CSS, no api/client) so root Vitest (tests/unit/*.test.ts) can
- * import it directly, mirroring lineDiff.ts / recallNav.ts.
+ * import it directly, mirroring recallNav.ts.
  *
  * Unread state is a SET of seen announcement ids in localStorage, not a
  * lastSeenId watermark — ids are stable but dates can be backdated, and a

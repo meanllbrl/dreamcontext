@@ -1,5 +1,4 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import { marked } from 'marked';
 // Arms `==highlight==` on the shared `marked` singleton (lib/markdownMark.ts) — registration is
 // global, but which modules a route loads is not, so every parse path imports it for itself.
@@ -17,36 +16,11 @@ import { useI18n } from '../../context/I18nContext';
 import { useTheme } from '../../context/ThemeContext';
 import { tagHue } from '../../lib/tagColor';
 import { initMermaid, normalizeMermaidSvg } from '../../lib/mermaidRender';
-import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
-import { SparkIcon } from '../sleepy/TypeIcons';
-import { TaskManagerPane } from './detail/TaskManagerPane';
-import { DocComments } from './detail/DocComments';
-import { SessionDiff } from './detail/SessionDiff';
 import { TaskSection, TaskField, EmptyField, RequiredField } from './detail/TaskSection';
 import { useSectionCollapse } from './detail/useSectionCollapse';
-import { DelegateComposer } from './DelegateComposer';
-import { taskName } from './boardModel';
 import './TaskDetailPanel.css';
 
 marked.setOptions({ gfm: true, breaks: true });
-
-/**
- * The task document as ONE diffable text: a frontmatter-style preamble (the fields the
- * Task Manager's quick actions edit — Summarize touches description, Status moves status)
- * over the raw markdown body. Approximates the real file closely enough that the session
- * diff reads like `git diff` on `state/<slug>.md`.
- */
-function composeDocText(task: Task): string {
-  return [
-    `name: ${task.name}`,
-    `description: ${task.description}`,
-    `status: ${task.status} · priority: ${task.priority} · urgency: ${task.urgency}`,
-    `version: ${task.version ?? '—'}`,
-    '---',
-    task.body,
-  ].join('\n');
-}
-
 
 const CLOSE_FOR: Record<string, string> = { '[': ']', '(': ')', '{': '}' };
 
@@ -467,49 +441,6 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [riceExpanded, setRiceExpanded] = useState(initialRiceExpanded ?? !!task.rice);
   const [fullScreen, setFullScreen] = useState(false);
-  // Task Manager is desktop-only (it runs a real Claude Code session). On the web build the
-  // button never appears. On desktop it shows even when the prerequisites (claude CLI /
-  // node-pty) are missing — the pane then offers the one-click install steps instead of a
-  // terminal, so "I don't have Claude Code yet" is a path in, not a wall.
-  const { data: agentCaps } = useAgentCapabilities();
-  const tmVisible = !!agentCaps?.desktop;
-  const tmAvailable = !!(agentCaps?.desktop && agentCaps.embeddedTerminal && agentCaps.claudeCli);
-  // ALWAYS opt-in — the drawer and full-page alike. It used to auto-open with full-page, but
-  // an agent session is a spend (a real Claude process, pinned to the task) and "read this
-  // task properly" must not imply "and start an agent on it". The user asks; nothing spawns
-  // on its own.
-  const [tmOpen, setTmOpen] = useState(false);
-
-  // ── Task Manager session: live doc + "changes this session" diff ────────────────
-  // The panel's `task` prop comes from the ['tasks'] LIST query, which has no interval —
-  // without a poll the agent's edits would sit invisible until some unrelated mutation
-  // invalidated the list. While the Task Manager is open, refetch the list so the doc
-  // (and the diff below) tracks the file the agent is editing, near-live.
-  const queryClient = useQueryClient();
-  useEffect(() => {
-    if (!tmOpen) return;
-    const timer = setInterval(() => {
-      void queryClient.refetchQueries({ queryKey: ['tasks'], type: 'active' });
-    }, 2500);
-    return () => clearInterval(timer);
-  }, [tmOpen, queryClient]);
-
-  // The diff baseline: the document as it stood the moment the Task Manager opened.
-  // Session-scoped by definition — closing the pane discards it, reopening re-snapshots.
-  // Kept as TEXT (not a task object) so the diff is exactly two strings, and composed with
-  // a small frontmatter-style preamble so Summarize/Status edits (description, status —
-  // fields outside the body) show up in the diff too.
-  const [docBaseline, setDocBaseline] = useState<string | null>(null);
-  const [showDiff, setShowDiff] = useState(false);
-  useEffect(() => {
-    if (!tmOpen) { setDocBaseline(null); setShowDiff(false); return; }
-    // Capture ONCE per open (the poll must not move the baseline under the diff).
-    setDocBaseline((prev) => prev ?? composeDocText(task));
-    // `task` is deliberately read at open time only — see the guard above.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tmOpen, task.slug]);
-  const docCurrent = useMemo(() => composeDocText(task), [task]);
-  const [delegating, setDelegating] = useState(false);
   const sections = useSectionCollapse();
 
   // A `backlog` tag means "undated by rule". That rule is real, but it used to be enforced by
@@ -996,61 +927,12 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
       onClick={onClose}
     >
       <div
-        className={`detail-panel ${fullScreen ? 'detail-panel--fullscreen' : ''} ${tmOpen ? 'detail-panel--tm' : ''}`}
+        className={`detail-panel ${fullScreen ? 'detail-panel--fullscreen' : ''}`}
         onClick={e => e.stopPropagation()}
       >
         <div className="detail-header">
           <h2 className="detail-title">{task.name}</h2>
           <div className="detail-header-actions">
-            {/*
-              Task Manager is a toggle, not a permanent fixture, and that is the answer to "does the
-              680px slide-over survive an inline agent?" — it doesn't, so it doesn't have to.
-              Opt-in EVERYWHERE (drawer and full-page): asking for it widens the drawer to fit a
-              real terminal (see .detail-panel--tm); full-page has the room already, but an agent
-              session still only starts when asked for. The button shows on any desktop — with the
-              prerequisites missing, the pane opens to the install steps instead of a terminal.
-            */}
-            {/* Session diff toggle — appears only while the Task Manager is open AND its
-                agent has actually changed the document. Flips the doc column between the
-                rendered markdown and a git-style diff since the pane opened. */}
-            {tmOpen && docBaseline !== null && docBaseline !== docCurrent && (
-              <button
-                type="button"
-                className={`detail-tm-btn detail-diff-btn ${showDiff ? 'is-on' : ''}`}
-                onClick={() => setShowDiff((v) => !v)}
-                aria-pressed={showDiff}
-                title="Show what the Task Manager changed this session, as a git-style diff"
-              >
-                ± Changes
-              </button>
-            )}
-            {tmVisible && (
-              <button
-                type="button"
-                className={`detail-tm-btn ${tmOpen ? 'is-on' : ''}`}
-                onClick={() => setTmOpen((v) => !v)}
-                aria-pressed={tmOpen}
-                title="Open Task Manager — a Claude session that maintains this task (it doesn’t build it)"
-              >
-                <SparkIcon size={14} />
-                Task Manager
-              </button>
-            )}
-            {/* Delegate sits beside Task Manager so the boundary is legible at the point of
-                choosing: Task Manager maintains this document, Delegate goes and builds it.
-                Unlike the TM button it needs the prerequisites NOW — it hands off immediately,
-                with no pane of its own to host an install flow. */}
-            {tmAvailable && (
-              <button
-                type="button"
-                className="detail-delegate-btn"
-                onClick={() => setDelegating(true)}
-                title="Hand this task to a Claude agent to implement"
-              >
-                <span aria-hidden>▶</span>
-                Delegate
-              </button>
-            )}
             <button
               type="button"
               className="detail-icon-btn"
@@ -1417,11 +1299,8 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
           {/* Divider */}
           <hr className="detail-divider" />
 
-          {/* Rendered Markdown Body — or, when the ± Changes toggle is on, the live
-              git-style diff of everything the Task Manager changed this session. */}
-          {showDiff && docBaseline !== null ? (
-            <SessionDiff baseline={docBaseline} current={docCurrent} />
-          ) : bodyHtml ? (
+          {/* Rendered Markdown Body */}
+          {bodyHtml ? (
             <div
               ref={bodyRef}
               className="markdown-body"
@@ -1429,19 +1308,6 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
             />
           ) : (
             <p className="detail-empty">No content.</p>
-          )}
-
-          {/* Select any doc text → 💬 Comment → batch → send to the Task Manager. The
-              anchored-comments leg of the curate design; delivery rides the TM session,
-              so it is desktop-gated exactly like the Task Manager button. Hidden in diff
-              view — a selection there is diff text, not doc text an anchor can quote. */}
-          {tmVisible && !showDiff && (
-            <DocComments
-              slug={task.slug}
-              docRef={bodyRef}
-              tmOpen={tmOpen}
-              onOpenTaskManager={() => setTmOpen(true)}
-            />
           )}
 
           {/* Divider */}
@@ -1481,42 +1347,9 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
             <span className="detail-danger-hint">Removes the task locally and on the remote backend (next sync).</span>
           </div>
           </div>
-
-          {/*
-            Mounted only while open, so a task you never curate never spawns a session. Keyed by
-            slug: switching tasks in the same panel must give the new task its OWN pane (and its
-            own conversation), not silently re-point the previous task's agent at a new slug.
-            Not gated on tmAvailable: with prerequisites missing the pane renders the install
-            steps, and flips to the live terminal by itself once they're in.
-          */}
-          {tmOpen && (
-            <TaskManagerPane key={task.slug} task={task} title={taskName(task)} />
-          )}
         </div>
       </div>
 
-      {delegating && (
-        <DelegateComposer
-          task={task}
-          /*
-           * REVEAL from full-page, background from the drawer — and the difference is the point.
-           * The drawer is a side-trip off the board: you glance at a task, hand it off, and go
-           * back to what you were doing, so a corner chip is the right feedback. Full-page IS
-           * the thing you were doing, so once you've delegated it there is nothing left to look
-           * at — the task view has served its purpose. Revealing swaps that spent screen for
-           * the agent you just asked for, instead of dumping you back on a board you'd left.
-           */
-          reveal={fullScreen}
-          onClose={() => setDelegating(false)}
-          onDelegated={() => {
-            setDelegating(false);
-            // The agent surface is now the screen. Leaving the task open behind a fullscreen
-            // overlay would strand it: closing the overlay later would reveal a stale task view
-            // the user had mentally finished with.
-            if (fullScreen) { setFullScreen(false); onClose(); }
-          }}
-        />
-      )}
     </div>
   );
 }

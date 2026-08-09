@@ -1837,9 +1837,13 @@ describe('toolSubject', () => {
 describe('isDreamcontextSkill', () => {
   it('recognises our own skills — the ones install-skill writes', () => {
     for (const s of ['dreamcontext', 'initializer', 'curator', 'dreamcontext-deep-research',
-      'dream-sync', 'announcements', 'patterns', 'task-manager']) {
+      'dream-sync', 'announcements', 'patterns']) {
       expect(isDreamcontextSkill(s)).toBe(true);
     }
+  });
+
+  it('does NOT brand the retired task-manager skill — tasks no longer run an agent', () => {
+    expect(isDreamcontextSkill('task-manager')).toBe(false);
   });
 
   it('does NOT brand the skill-packs library — distributing a skill is not being it', () => {
@@ -1855,7 +1859,7 @@ describe('isDreamcontextSkill', () => {
 
   it('is tolerant of casing and stray whitespace from the wire', () => {
     expect(isDreamcontextSkill('  Dreamcontext  ')).toBe(true);
-    expect(isDreamcontextSkill('Task-Manager')).toBe(true);
+    expect(isDreamcontextSkill('Dream-Sync')).toBe(true);
   });
 });
 

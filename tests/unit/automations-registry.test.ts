@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -317,11 +317,11 @@ describe('approvalFields', () => {
 });
 
 describe('APPROVAL_DIFF_FIELDS', () => {
-  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir/learning, in that exact order', () => {
+  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir/learning/review, in that exact order', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
-      'prompt', 'outputInstructions', 'model', 'effort', 'timeoutMinutes', 'outputDir', 'learning',
+      'prompt', 'outputInstructions', 'model', 'effort', 'timeoutMinutes', 'outputDir', 'learning', 'review',
     ]);
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(7);
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(8);
   });
 });
 
@@ -348,6 +348,94 @@ describe('learning is hashed, but only when ON', () => {
   it('approvalFields always reports learning, even when off — a reviewer must see it', () => {
     expect(approvalFields(makeManifest({ learning: false })).learning).toBe(false);
     expect(approvalFields(makeManifest({ learning: true })).learning).toBe(true);
+  });
+});
+
+describe('the project key survives a symlinked path', () => {
+  it('an approval made through the REAL path is found through a symlinked one', () => {
+    // FOUND BY RUNNING THE APP, not by a test. The CLI derives the project root
+    // from `process.cwd()`, which Node reports physically; a registered vault
+    // stores whatever `resolve()` produced, which is lexical and keeps symlinks.
+    // On macOS `/tmp` → `/private/tmp` splits them, and so does any Dropbox /
+    // iCloud / linked-home path. The symptom was silent and bad: the dashboard
+    // said every automation was "blocked — needs approval" while the CLI, run
+    // from inside the project, said approved.
+    const real = mkdtempSync(join(tmpdir(), 'dc-realpath-'));
+    const projectDir = join(real, 'proj');
+    mkdirSync(join(projectDir, '_dream_context'), { recursive: true });
+    const link = join(real, 'linked');
+    symlinkSync(projectDir, link, 'dir');
+
+    const m = makeManifest();
+    approveAutomation(projectDir, m, NOW, home);
+
+    // Same automation, reached through the symlink — must still be approved.
+    expect(checkApproval(link, m, home).approved).toBe(true);
+    // …and in the other direction, for a vault registered through the alias.
+    const m2 = makeManifest({ prompt: 'other' });
+    approveAutomation(link, m2, NOW, home);
+    expect(checkApproval(projectDir, m2, home).approved).toBe(true);
+
+    // One bucket, not two — the alias must not fork the registry.
+    const registry = readAutomationsRegistry(home);
+    const keys = Object.keys(registry.projects).filter((k) => k.includes('dc-realpath-'));
+    expect(keys).toHaveLength(1);
+
+    rmSync(real, { recursive: true, force: true });
+  });
+
+  it('a path that cannot be resolved falls back to itself rather than throwing', () => {
+    // A lookup that throws would be worse than one that misses.
+    const m = makeManifest();
+    expect(() => checkApproval('/definitely/not/a/real/path', m, home)).not.toThrow();
+    expect(checkApproval('/definitely/not/a/real/path', m, home).approved).toBe(false);
+  });
+});
+
+describe('review is hashed, but only when it is not off', () => {
+  it("a manifest with review 'off' hashes exactly as it did before the field existed", () => {
+    // Same load-bearing property `learning` has, and the same consequence if it
+    // breaks: an upgrade would block every working automation at once, silently,
+    // because a blocked run notifies nobody by design.
+    const payload = canonicalApprovalPayload(makeManifest({ review: 'off' }));
+    expect(payload).not.toContain('review');
+    expect(manifestHash(makeManifest({ review: 'off' }))).toBe(manifestHash(makeManifest()));
+  });
+
+  it('turning review ON changes the hash', () => {
+    const off = manifestHash(makeManifest({ review: 'off' }));
+    expect(manifestHash(makeManifest({ review: 'agent' }))).not.toBe(off);
+    expect(manifestHash(makeManifest({ review: 'output' }))).not.toBe(off);
+    expect(canonicalApprovalPayload(makeManifest({ review: 'agent' }))).toContain('"review":"agent"');
+  });
+
+  it('the two review modes are not interchangeable in the hash', () => {
+    // `agent` and `output` gate different things — one leaves the decision to
+    // the run, the other gates every document unconditionally. A teammate
+    // swapping one for the other has changed what the automation does.
+    expect(manifestHash(makeManifest({ review: 'agent' }))).not.toBe(
+      manifestHash(makeManifest({ review: 'output' })),
+    );
+  });
+
+  it('REMOVING the gate blocks an approved automation — the direction that matters', () => {
+    // The whole reason `review` is hashed at all. A synced manifest whose review
+    // mode is edited back to 'off' has had a human gate deleted from it; if that
+    // sailed through on the existing approval, the automation would resume
+    // acting unreviewed and nothing would say so.
+    const gated = makeManifest({ review: 'agent' });
+    approveAutomation(PROJECT_A, gated, NOW, home);
+    expect(checkApproval(PROJECT_A, gated, home).approved).toBe(true);
+
+    const ungated = makeManifest({ review: 'off' });
+    const verdict = checkApproval(PROJECT_A, ungated, home);
+    expect(verdict.approved).toBe(false);
+    if (!verdict.approved) expect(verdict.reason).toBe('manifest-changed');
+  });
+
+  it('approvalFields always reports review, even when off — a reviewer must see a gate is absent', () => {
+    expect(approvalFields(makeManifest({ review: 'off' })).review).toBe('off');
+    expect(approvalFields(makeManifest({ review: 'output' })).review).toBe('output');
   });
 });
 

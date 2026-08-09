@@ -13,7 +13,7 @@ import type { Manifest } from '../../src/lib/manifest.js';
  * loads). Task: patterns-first-class.
  *
  * These assertions pin the contract the skill must keep: it ships at the repo
- * root (like skill-curator / skill-task-manager), it carries NO pattern content
+ * root (like skill-curator / skill-sync), it carries NO pattern content
  * of its own (always reads the live files), it degrades gracefully when the
  * patterns folder is missing/empty, it surfaces feature-integration-pattern on
  * feature work, and setup/update installs it as a manifest-tracked core asset.
@@ -27,7 +27,7 @@ function loadSkill() {
 }
 
 describe('patterns skill — packaging', () => {
-  it('ships SKILL.md at the repo root (mirrors skill-curator / skill-task-manager)', () => {
+  it('ships SKILL.md at the repo root (mirrors skill-curator / skill-sync)', () => {
     expect(existsSync(SKILL_PATH)).toBe(true);
   });
 

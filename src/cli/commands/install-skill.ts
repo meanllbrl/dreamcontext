@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import chalk from 'chalk';
 import { checkbox, confirm } from '@inquirer/prompts';
@@ -786,23 +786,18 @@ export async function installCoreForPlatform(
     installed.push(platformPrefixed(platform, deepResearchSkillRel));
   }
 
-  // Copy the `task-manager` core skill (the task-scoped CURATE agent: revise / summarize /
-  // split / status-reconcile ONE task document via the CLI). Foundational, not an optional
-  // pack: the dashboard's task-detail Task Manager pane opens a Claude session that names this skill
-  // in its first message, so a project whose skills lag would open a curate session with no
-  // curate instructions — it would improvise markdown rewrites and desync the Workflow mermaid
-  // from the acceptance criteria, which is exactly what the skill exists to prevent. Shipped at
-  // repo root in `skill-task-manager/` (package.json `files`), mirroring the curator/dream-sync
-  // pattern. Recorded 'core' so `update` refreshes it. Non-fatal if absent (older/partial
-  // packages still install the rest).
-  const taskManagerSkillSource = findPackageFile('skill-task-manager', 'SKILL.md');
-  if (taskManagerSkillSource) {
-    const taskManagerDestDir = join(skillRoot, 'task-manager');
-    mkdirSync(taskManagerDestDir, { recursive: true });
-    writeFileSync(join(taskManagerDestDir, 'SKILL.md'), readFileSync(taskManagerSkillSource, 'utf-8'), 'utf-8');
-    const taskManagerSkillRel = `${skillRootRel}/task-manager/SKILL.md`;
-    recordIfManifest(manifest, taskManagerSkillRel, 'core');
-    installed.push(platformPrefixed(platform, taskManagerSkillRel));
+  // RETIRED: the `task-manager` core skill. Tasks are documents you write and hand to a
+  // delegate agent — there is no AI inside the task view any more, so a task-scoped curate
+  // skill has no surface that opens it. Installers never prune, so a project upgraded from
+  // ≤0.23.x would keep `<skills>/task-manager/` on disk forever and keep offering
+  // `/task-manager` in every session. Delete it here (and drop its manifest entry) so the
+  // upgrade actually removes the feature instead of stranding it. Safe: the directory only
+  // ever held a file dreamcontext itself wrote.
+  const retiredTaskManagerDir = join(skillRoot, 'task-manager');
+  if (existsSync(retiredTaskManagerDir)) {
+    rmSync(retiredTaskManagerDir, { recursive: true, force: true });
+    if (manifest) delete manifest.files[`${skillRootRel}/task-manager/SKILL.md`];
+    notes.push(`Removed the retired ${skillRootRel}/task-manager skill (tasks no longer run an agent).`);
   }
 
   // Copy the `patterns` core skill (the drift-free browse/load bridge to
@@ -814,7 +809,7 @@ export async function installCoreForPlatform(
   // skill carries NO pattern content (it reads the live files), so a project
   // without `knowledge/patterns/` degrades gracefully to "no patterns yet".
   // Shipped at repo root in `skill-patterns/` (package.json `files`),
-  // mirroring the curator/task-manager pattern. Recorded 'core' so `update`
+  // mirroring the curator/dream-sync pattern. Recorded 'core' so `update`
   // refreshes it. Non-fatal if absent (older/partial packages still install
   // the rest).
   const patternsSkillSource = findPackageFile('skill-patterns', 'SKILL.md');

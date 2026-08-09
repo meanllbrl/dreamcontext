@@ -15,7 +15,17 @@ import { api } from '../api/client';
  * so the shapes are duplicated the same way `useLab.ts` duplicates lab's.
  */
 
-export type RunStatus = 'ok' | 'failed' | 'timeout' | 'blocked' | 'deferred' | 'orphaned';
+export type RunStatus =
+  | 'ok'
+  | 'failed'
+  | 'timeout'
+  | 'blocked'
+  | 'deferred'
+  | 'orphaned'
+  /** The run did not happen because a proposal is unanswered. Unlike every
+   *  other non-`ok` status here it is NOT a fault — it is the scheduler waiting
+   *  on the human — so it must never be badged as an error. */
+  | 'awaiting-review';
 export type Weekday = 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat';
 
 export interface AutomationSchedule {
@@ -48,6 +58,12 @@ export interface AutomationSummary {
   approved: boolean;
   approvalReason: ApprovalReason | null;
   cache: AutomationCacheSummary | null;
+  review: 'off' | 'agent' | 'output';
+  /** The card currently holding this automation. Live-computed server-side from
+   *  the card store, never from `cache.status` — that reflects the last RUN, so
+   *  it reads `ok` on the very run that created the card and stays
+   *  `awaiting-review` after a human answers. */
+  pendingReviewCardId: string | null;
 }
 
 /** One recorded run attempt (or non-attempt) — mirrors `RunEvent`. */
@@ -109,9 +125,14 @@ export interface AutomationManifestDetail {
   timeoutMinutes: number;
   catchupHours: number;
   outputDir: string | null;
-  /** Hashed, and the heaviest of the seven to approve knowingly: it admits the
+  /** Hashed, and the heaviest of the eight to approve knowingly: it admits the
    *  automation's own self-written pattern into the run's input. */
   learning: boolean;
+  /** Hashed. Does this automation stop and ask a human before its work takes
+   *  effect — `off` (never), `agent` (the run decides), `output` (always, on
+   *  the output document). The direction to read carefully is a mode being
+   *  REMOVED: that is a gate someone deleted. */
+  review: 'off' | 'agent' | 'output';
   prompt: string;
   outputInstructions: string;
   pattern: AutomationPattern;
@@ -361,6 +382,90 @@ export function useApproveAutomation() {
     onSuccess: (_data, slug) => {
       queryClient.invalidateQueries({ queryKey: ['automations'] });
       queryClient.invalidateQueries({ queryKey: ['automations', slug] });
+    },
+  });
+}
+
+// ─── Review cards ───────────────────────────────────────────────────────────
+
+/** One correction a human gave a pending card, with what it taught. */
+export interface ReviewSteer {
+  at: string;
+  via: string;
+  /** The human's words, verbatim. Never emitted — it is an instruction to the
+   *  agent, which is why the card body next to it is the agent's rewrite. */
+  text: string;
+  lesson: string | null;
+}
+
+/** Mirrors `ReviewCard` in `src/lib/automations/types.ts`. */
+export interface ReviewCard {
+  id: string;
+  slug: string;
+  runFiredAt: string;
+  /** null ⇒ the proposing run left no session to reply to. Such a card can be
+   *  discarded but never approved or corrected, and the UI must say so rather
+   *  than offering buttons that cannot work. */
+  sessionId: string | null;
+  kind: 'output' | 'agent';
+  title: string;
+  summary: string;
+  body: string;
+  stagedPath: string | null;
+  state: 'pending' | 'approved' | 'discarded' | 'dropped';
+  steers: ReviewSteer[];
+  createdAt: string;
+  resolvedAt: string | null;
+  resolvedVia: string | null;
+  resolutionNote: string | null;
+  resolutionError: string | null;
+  channelRefs: Record<string, string>;
+}
+
+/**
+ * Everything awaiting a verdict, across every automation.
+ *
+ * Polled, unlike most reads here, and for a specific reason: a card can be
+ * answered from Telegram or the CLI while this page is open, and a queue that
+ * still offers buttons for a card someone already approved invites a second
+ * verdict on a decision already made. The engine's claim lock makes that safe,
+ * but showing it is better than catching it.
+ */
+export function useReviewQueue() {
+  return useQuery({
+    queryKey: ['automations-review'],
+    queryFn: () => api.get<{ cards: ReviewCard[] }>('/automations/review').then((r) => r.cards),
+    refetchInterval: 5000,
+    refetchOnWindowFocus: true,
+    retry: 0,
+  });
+}
+
+export interface ReviewAnswerResult {
+  card: ReviewCard;
+  status: 'ok' | 'failed' | 'timeout' | 'not-spawned' | 'refused';
+  error: string | null;
+  result: string | null;
+  lesson: string | null;
+}
+
+/**
+ * Answer a card: a verdict, or a correction in words.
+ *
+ * A correction leaves the card PENDING — it is rewritten and comes back for the
+ * same three buttons. Nothing here carries a session id or a prompt; the card
+ * already names the conversation the server resumes.
+ */
+export function useAnswerReviewCard() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, verdict, steer }: { id: string; verdict?: 'approve' | 'discard' | 'drop'; steer?: string }) =>
+      api.post<ReviewAnswerResult>(`/automations/review/${id}`, verdict ? { verdict } : { steer }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['automations-review'] });
+      // The gate lifts the moment a card resolves, so the board's per-automation
+      // state is stale too.
+      queryClient.invalidateQueries({ queryKey: ['automations'] });
     },
   });
 }

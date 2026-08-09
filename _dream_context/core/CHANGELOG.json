@@ -1,5 +1,101 @@
 [
   {
+    "date": "2026-08-08",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Root cause: vite build writes dashboard/dist/, the server serves dist/dashboard/ (getDashboardDir(), src/server/index.ts:591), and only tsup's onSuccess ever copied one to the other. So npm run build:dashboard alone changed nothing a browser could see — you kept being served whichever bundle was current the last time build:cli ran. This manifested as a phantom ReferenceError (CHART_COLORS undefined) that persisted through five consecutive dashboard rebuilds while the source graph was correct; proof was served entry index-D1vySrI7.js vs built entry index-C2iKb0Bm.js. Fix: new scripts/sync-dashboard-dist.mjs, and root build:dashboard now ends with it. The script removes then copies (not merge) — asset filenames are content-hashed, so cpSync over a populated directory leaves every previous build's chunks behind forever; tsup's clean: true masked this for the CLI build, a dashboard-only rebuild had no such guard. Verification: both index.html now point to the same entry, 46/46 browser tests both themes.",
+    "breaking": false,
+    "summary": "Dashboard build pipeline: vite output now syncs to the directory the server serves",
+    "references": [
+      "file:scripts/sync-dashboard-dist.mjs",
+      "file:src/server/index.ts",
+      "file:package.json"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-08",
+    "type": "refactor",
+    "scope": "tasks",
+    "description": "The task detail view no longer holds an in-task agent pane. Removed: the anchored-comment layer (select → comment → batch-send), the git-style session diff (± Changes), the in-pane Claude terminal, the task-detail Delegate button (board's right-click → Delegate survives), the task-manager core skill, and the entire slot/composer/session-homing layer from AgentSurface. Files deleted: TaskManagerPane, DocComments, SessionDiff (tsx + css), taskManagerAgent.ts, lineDiff.ts, skill-task-manager/SKILL.md, line-diff.test.ts. The deferPrompt transport (client createSession param → server tmp file → UserPromptSubmit hook) is kept — it is generic plumbing with tests and a documented contract, caller-less for now. install-skill.ts now DELETES a leftover task-manager/ directory from older installs (installers never prune on their own, so without this an upgraded vault keeps offering /task-manager). package.json files no longer ships skill-task-manager, and chatEntities no longer brands it. Owner's explicit directive: tasks use no AI inside the detail view. Verification: tsc clean, 6045 unit tests passed, browser verify 46/46.",
+    "breaking": false,
+    "summary": "Task Manager retired: tasks are working documents, not agent sessions",
+    "references": [
+      "file:dashboard/src/components/tasks/TaskDetailPanel.tsx",
+      "file:src/cli/commands/install-skill.ts",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-04",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Owner report 08-02: \"1 mesaj 50 mesajlı bir grup kayamıyor ama daha fazla yüklemek için kaydır diyor\". Grouping made an entry count a bad proxy for height — a 40-entry window that folds into one collapsed run card renders as two rows, which is shorter than the scroller, so there is nothing to scroll while the pane offers scrolling up as its main way back through history. The window gains a second unit: entries bound it from above (memory), cards from below (there has to be something to scroll). WINDOW_TAIL_CARDS / WINDOW_STEP_CARDS (20): the following window reaches back until the transcript holds 20 things the reader can see, and a reveal must be worth 20 more rather than 40 entries that merge into the fold the reader is already looking at. countCards / headForCards: one backwards scan. A stretch of >= MIN_TOOL_RUN groupable items is one card; an item that renders nothing is none and breaks no run — that symmetry is what lets the scan start from the end and stop the instant the count is met (an ordinary conversation pays ~20 iterations). Both floors ride inside nextFirstShown (tailHead / revealHead) rather than as a Math.min at the call site, so they inherit TRIM_SLACK's hysteresis and the unpinned freeze. WINDOW_MAX_ENTRIES (400) caps what the automatic floor may mount alone; past it the reader's own reveal carries on. It costs nothing where it bites — the extra entries are exactly the ones that fold into collapsed cards, which mount no rows at all. ChatPane hoists isPlainToolCard / rendersNothing above the window section: the window cannot ask what a slice renders as without them. Proof: verify:chat-scroll 33 -> 48 checks, with a new scenario F on a grouped fixture (mounts 86 entries not 40, 22 cards, the transcript overflows its scroller, one reveal adds 20 cards) and E split into E1/E2. chat-entities 257 -> 283. Full suite 6300 green.",
+    "breaking": false,
+    "summary": "The transcript window measures itself in cards, not just entries",
+    "references": [
+      "commit:0c7cc67",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-04",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Two halves of the same complaint: the app could name a file it could not let you reach. A .pdf chip fell through to the slide-over's text preview, which asks the JSON endpoint for a binary and, for any document of a normal size, answers \"File exceeds the preview size cap\" — the exact dead end a 44-second clip hit before it was range-streamed. ?raw=1 now has a document arm (application/pdf, streamed, ranges intact, Content-Disposition: inline), kept separate from the media map because that map means \"playable/drawable\" and is also what /agent/reveal reads for its inert-to-view test. classifyReference gives .pdf its own kind, so handleOpenFile routes it to a new full-window PdfViewer — the image's treatment, since the window can display it — where the engine's own viewer draws it in an iframe: scroll, search, select, print and thumbnails for free, where bundling pdf.js would cost ~1MB to reimplement less. A one-byte ranged GET probes before embedding, because an iframe reports nothing useful when it fails: an outside-root PDF offers \"Allow access\" instead of a blank rectangle, and an engine with no viewer at all (navigator.pdfViewerEnabled === false) says so rather than showing nothing. Adjacent fix: ![doc](x.pdf) used to become an <img> guaranteed to fail; it is now the same chip a backticked path is. The panel offered the OS for a folder only, so the moment an in-app preview was not enough it was a dead end with the path sitting in its own header. FileActions puts \"Open on computer\" and \"Reveal in Finder\" (plus Copy path) on the panel, the PDF viewer and the image lightbox alike. They are two buttons because they are two things to want, so /agent/reveal took a mode — and it can only narrow: an open becomes a reveal, never the reverse, and an unrecognised value means \"decide for me\", so no client can unlock the never-launch-an-executable rule. Tests: +16 across agent-file-read, agent-reveal-grant, chat-reveal-path and chat-entities. Runtime: npm run verify:pdf-viewer 17/17, including that a 700KB PDF now comes back whole where the same file still answers 413 without raw=1.",
+    "breaking": false,
+    "summary": "A PDF opens in the app, and every file surface offers the OS",
+    "references": [
+      "commit:d9d0059",
+      "file:dashboard/src/components/sleepy/chat/PdfViewer.tsx",
+      "file:dashboard/src/components/sleepy/chat/FileActions.tsx",
+      "file:src/server/routes/agent-chat.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-04",
+    "type": "feat",
+    "scope": "automations",
+    "description": "Pressing a run in the Automations panel loaded a flat, read-only list of its turns and tool calls — answering \"what did it do\" and nothing else. But the run is a claude conversation, on disk, resumable: the useful thing is not to describe it but to reopen it, with a composer, where the agent that wrote the report can be asked why. Everything needed already existed and was simply never wired together — the transcript is filed exactly like any past chat, /api/agent/chat-history replays it without spawning anything, and resumePastSession already knew how to turn a uuid into a tab. What was missing was a bridge and a header. AutomationRunHeader is the load-bearing part: it names the automation, run number, fired-at, status, turns, cost and duration, chips the output document, and states the one fact the transcript cannot show — the run executed under bypassPermissions, while the continuation runs under the app's current mode. The dangerous edge, found by reading agent-chat.ts: --resume against a missing transcript does not fail, it falls back to --session-id and opens a brand-new empty conversation under the same uuid, so a run whose transcript never landed would have opened a blank chat claiming to be that run. runChatUnavailableReason separates that from the never-started case (blocked/deferred/orphaned) and RunHandoff refuses in place. Provenance is keyed by conversation uuid, not tab id, so a tab-keyed map would silently drop the header on a Resume. Tests: 11 unit + npm run verify:automation-run-chat — 42 assertions x light+dark green against the real server, no tokens spent.",
+    "breaking": false,
+    "summary": "A run opens as a chat you can continue, not a list you can read",
+    "references": [
+      "commit:852ca98",
+      "file:dashboard/src/lib/automationRunChat.ts",
+      "file:dashboard/src/components/sleepy/chat/AutomationRunHeader.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-04",
+    "type": "feat",
+    "scope": "knowledge",
+    "description": "A knowledge note is prose about material that often isn't — a contract, a spec, a paper — and the link to it was the one link that led nowhere. The href is a filesystem path, so the app-wide guard neutralised the click (without it, following one rebooted the SPA at the Launcher) and then nothing happened. This is the Knowledge page giving it one — the same full-window PdfViewer Chat opens. Bytes come from /api/graph/content?raw=1, NOT the chat surface's /agent/file (the Knowledge page is not desktop-only, and routing a vault file through a desktop-gated route would answer \"desktop only\" to a browser dashboard). The arm is an opt-in on a one-type allowlist (PDF), streamed with ranges + inline + nosniff. lib/knowledgeLinks.ts resolves the href against the note's own folder, takes a _dream_context/-prefixed link as written, and cannot climb out of the vault. Adjacent fix: the click handler must NOT bail on defaultPrevented (the global guard already prevented default in capture phase, so that check swallowed every link), and the viewer cannot hold focus against an embedded PDF plugin (Chrome's takes it back), so the ✕ is the guaranteed way out and the code says so. Tests: +15 unit (resolver's folder anchoring, vault-prefix, .. containment, raw arm's allowlist fall-through, traversal, 404), plus npm run verify:pdf-viewer 25/25 and a new e2e/knowledge-pdf-verify.mjs driving the real Knowledge page in real Chrome — 11/11.",
+    "breaking": false,
+    "summary": "A PDF a note links to opens in the app, not nowhere",
+    "references": [
+      "commit:226fdbd",
+      "file:dashboard/src/lib/knowledgeLinks.ts",
+      "file:src/server/routes/graph.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-02",
     "type": "docs",
     "scope": "readme",

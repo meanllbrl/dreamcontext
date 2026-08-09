@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_4BMj2tR7",
+    "version": "v0.24.0",
+    "date": "",
+    "summary": "Automations grow a human in the loop: a run can stop and ask, the verdict comes back from anywhere, and a run opens as a chat you can continue",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_sVMk2XLg",
     "version": "0.23.1",
     "date": "2026-08-02",

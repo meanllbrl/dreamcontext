@@ -30,6 +30,9 @@ import {
   NOTIFY_SOUND_OK,
 } from '../../lib/automations/notifier.js';
 import { formatSchedule } from '../../lib/automations/schedule.js';
+import { allPendingReviewCards, pendingReviewCard } from '../../lib/automations/review.js';
+import { applySteer, resumeWithVerdict } from '../../lib/automations/verdict.js';
+import { REVIEW_VERDICTS, type ReviewVerdict } from '../../lib/automations/types.js';
 import { startAutomationJob, currentAutomationJob } from '../automation-job.js';
 import { AutomationError, type AutomationCache, type AutomationManifest } from '../../lib/automations/types.js';
 
@@ -62,6 +65,9 @@ interface AutomationSummary {
   approved: boolean;
   approvalReason: string | null;
   cache: AutomationCacheSummary | null;
+  review: AutomationManifest['review'];
+  /** The card holding this automation, if any — the board badges off this. */
+  pendingReviewCardId: string | null;
 }
 
 interface AutomationCacheSummary {
@@ -99,6 +105,14 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     approved: approval.approved,
     approvalReason: approval.approved ? null : approval.reason,
     cache: cacheSummary(readAutomationCache(contextRoot, m.slug)),
+    review: m.review,
+    // Live-computed from the card store, NOT from `cache.status`, for the same
+    // reason `approved` is live-computed rather than read off the last attempt:
+    // `cache.status` reflects the last RUN, so it still reads `awaiting-review`
+    // after a human answers and goes stale until the next tick — and it reads
+    // `ok` on the run that CREATED the card, which is the state most in need of
+    // a badge.
+    pendingReviewCardId: pendingReviewCard(contextRoot, m.slug)?.id ?? null,
   };
 }
 
@@ -175,6 +189,10 @@ export async function handleAutomationsShow(
         // covers. This one carries the most weight of any of them — it is the
         // switch that lets the run read notes it wrote itself.
         learning: manifest.learning,
+        // Hashed too, and the one field on this list a reviewer is most likely
+        // to be losing rather than gaining: `agent → off` on a synced manifest
+        // means a human gate someone was relying on has been deleted.
+        review: manifest.review,
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:
@@ -347,6 +365,93 @@ async function setEnabled(
     }
     console.error(`[automations] ${verb} failed:`, err);
     sendError(res, 500, `${verb}_failed`, `Failed to ${verb} the automation.`);
+  }
+}
+
+// ─── Review cards ───────────────────────────────────────────────────────────
+
+/**
+ * GET /api/automations/review — every proposal awaiting a verdict, across all
+ * automations, oldest first.
+ *
+ * A flat list rather than one call per slug, because the board's question is
+ * "what am I holding up?", not "does this particular automation have a card".
+ * The staged document's PATH is exposed but its contents are not re-read here:
+ * the card already carries the body a human judges, and the file only matters
+ * once it publishes.
+ */
+export async function handleAutomationsReviewList(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    sendJson(res, 200, { cards: allPendingReviewCards(contextRoot) });
+  } catch {
+    sendError(res, 500, 'review_list_failed', 'Failed to read the review queue.');
+  }
+}
+
+/**
+ * POST /api/automations/review/:id — answer one card.
+ *
+ * Body is `{ verdict: 'approve'|'discard'|'drop' }` or `{ steer: '<text>' }`.
+ * NOTHING ELSE travels over HTTP: no session id, no prompt, no path. The card
+ * already names the conversation a verdict resumes, and accepting that from a
+ * request would make the most sensitive field on the card the one field nothing
+ * verified — the same reasoning that keeps `propose` from taking `--session-id`.
+ *
+ * This is not a trust elevation over the CLI. It is loopback-gated and
+ * CSRF-blocked like every other write here, and the verdict engine applies the
+ * identical claim lock, so a tap here and a tap in Telegram cannot both resume
+ * the same session.
+ */
+export async function handleAutomationsReviewAnswer(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const card = allPendingReviewCards(contextRoot).find((c) => c.id === params.id);
+    if (!card) {
+      sendError(res, 404, 'not_found', 'That card is not open — it may have been answered elsewhere.');
+      return;
+    }
+    const body = await parseJsonBody(req);
+    const steer = typeof body?.steer === 'string' ? body.steer : null;
+    const verdict = typeof body?.verdict === 'string' ? body.verdict : null;
+
+    if (steer !== null && verdict !== null) {
+      sendError(res, 400, 'ambiguous', 'Send a verdict or a correction, not both.');
+      return;
+    }
+    if (steer === null && !REVIEW_VERDICTS.includes(verdict as ReviewVerdict)) {
+      sendError(res, 400, 'bad_request', `verdict must be one of: ${REVIEW_VERDICTS.join(', ')}`);
+      return;
+    }
+
+    const outcome = steer !== null
+      ? await applySteer(contextRoot, card, steer, 'dashboard')
+      : await resumeWithVerdict(contextRoot, card, verdict as ReviewVerdict, 'dashboard');
+
+    if (outcome.status === 'refused') {
+      // 409, not 500: the card was answered elsewhere, or cannot be answered
+      // this way. That is a legitimate state the UI must render, not a fault.
+      sendError(res, 409, 'refused', outcome.error ?? 'that card could not be answered');
+      return;
+    }
+    sendJson(res, 200, {
+      card: outcome.card,
+      status: outcome.status,
+      error: outcome.error,
+      result: outcome.result,
+      lesson: outcome.lesson,
+    });
+  } catch (err) {
+    console.error('[automations] review answer failed:', err);
+    sendError(res, 500, 'review_failed', 'Failed to answer the card.');
   }
 }
 

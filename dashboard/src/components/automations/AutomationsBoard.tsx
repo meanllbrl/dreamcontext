@@ -4,6 +4,7 @@ import { usePersistedState } from '../../hooks/usePersistedState';
 import { AutomationCard } from './AutomationCard';
 import { AutomationDetailPanel } from './AutomationDetailPanel';
 import { AutomationsDispatcherBar } from './AutomationsDispatcherBar';
+import { AutomationsReviewQueue } from './AutomationsReviewQueue';
 import { AutomationsEmptyState } from './AutomationsEmptyState';
 import './AutomationsBoard.css';
 
@@ -91,6 +92,10 @@ export function AutomationsBoard() {
   return (
     <div className="auto-board">
       <AutomationsDispatcherBar onToast={setToast} />
+      {/* Above the grid, under the scheduler switch: the switch says whether
+          automations CAN run, this says which ones are waiting on you before
+          they will. Renders nothing when the queue is empty. */}
+      <AutomationsReviewQueue onToast={setToast} />
 
       <div
         className="auto-board-grid"

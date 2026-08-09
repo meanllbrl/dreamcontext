@@ -624,7 +624,7 @@ export function attachAgentTerminal(server: Server): void {
     const initialPrompt = redeemed || sanitizePrompt(url.searchParams.get('prompt'));
     // `deferPrompt=1` changes the prompt's DELIVERY: instead of auto-submitting it as the
     // conversation opener, park it for the UserPromptSubmit hook to inject alongside the
-    // USER's first message (the Task Manager contract — the user speaks first).
+    // USER's first message (the deferred-prompt contract — the user speaks first).
     const deferPrompt = url.searchParams.get('deferPrompt') === '1';
 
     void (async () => {
@@ -1245,7 +1245,7 @@ function startPtySession(
     if (heldConversation) liveConversations.delete(heldConversation);
     if (kind === 'agent' && pinId) liveSpawnModels.delete(pinId);
   };
-  // ── Deferred first-message context (Task Manager) ────────────────────────────
+  // ── Deferred first-message context ───────────────────────────────────────────
   // A `deferPrompt` session must NOT boot with the prompt already submitted — the USER
   // speaks first, and the prompt joins that first message as context. Transport: park the
   // text in a tmp file and export its path to the PTY env; the UserPromptSubmit hook

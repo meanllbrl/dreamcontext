@@ -12,7 +12,9 @@
 // 4. Poll GET /api/health until ready, then open the LAUNCHER window at the port.
 // 5. Each project opens in its OWN window via the built-in WebviewWindow JS API
 //    (core:webview:allow-create-webview-window), pinned to ?vault=<name>. Custom
-//    Rust commands are blocked by the ACL on the remote-served (loopback) pages.
+//    Rust commands reach the remote-served (loopback) pages only when a
+//    permission in permissions/ names them AND a capability grants it — see
+//    `pick_paths` / permissions/pick-paths.toml. Anything ungranted is blocked.
 // 6. Kill the Node child on APP EXIT (not per-window) so no orphan survives.
 //
 // CRASH-SAFETY: any startup failure shows an explanatory error window instead
@@ -33,6 +35,12 @@ use tauri_nspanel::{
     cocoa::appkit::{NSMainMenuWindowLevel, NSWindowCollectionBehavior},
     ManagerExt, WebviewWindowExt,
 };
+
+use block2::RcBlock;
+use objc2::rc::Retained;
+use objc2::{msg_send, ClassType};
+use objc2_app_kit::{NSModalResponse, NSModalResponseOK, NSOpenPanel, NSWindow};
+use objc2_foundation::{NSArray, NSURL};
 
 // ─── CoreGraphics FFI (cursor position for notch hover-to-open) ───────────────
 
@@ -122,7 +130,10 @@ struct PanelEnabled(AtomicBool);
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_dialog::init())
+        // The native file/folder picker is OUR command (`pick_paths`), not
+        // tauri-plugin-dialog. The plugin's rfd backend aborts the whole app when
+        // AppKit returns a nil open panel — see the `pick_paths` doc comment.
+        .invoke_handler(tauri::generate_handler![pick_paths])
         // Native OS clipboard so the dashboard can write UTF-8 without the WKWebView JS
         // clipboard mangling non-ASCII as Mac Roman (issue #171). Used by the in-app agent
         // terminal's copy path via @tauri-apps/plugin-clipboard-manager on the loopback origin.
@@ -130,7 +141,7 @@ pub fn run() {
         // Global shortcut for the Sleepy notch quick-capture bar. The hotkey is
         // registered/unregistered from the dashboard JS via the plugin's permitted
         // API (the capability grants global-shortcut on the loopback origin), so
-        // no custom Rust command is needed (those are ACL-blocked on remote pages).
+        // no custom Rust command is needed here.
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // NSPanel conversion for the Sleepy notch window (see ServerPort/SLEEPY_*).
         .plugin(tauri_nspanel::init())
@@ -219,6 +230,102 @@ fn reap_server(handle: &ChildHandle) {
     {
         let _ = child.kill();
     }
+}
+
+// ─── Native file / folder picker ──────────────────────────────────────────────
+
+/// Shown when AppKit refuses to hand us an open panel. Deliberately actionable:
+/// the picker is retryable, so the user's next click usually works.
+const PANEL_UNAVAILABLE: &str =
+    "macOS did not return a file picker. Try again — if it keeps failing, restart dreamcontext.";
+
+/// `+[NSOpenPanel openPanel]`, WITHOUT objc2's non-null assertion.
+///
+/// objc2-app-kit types this as `-> Retained<NSOpenPanel>` (non-null), so its
+/// generated binding panics on nil. AppKit *does* return nil in the wild — the
+/// open/save panel is backed by a helper service, and a long-lived process
+/// (ours survives days of sleep/wake) can find it unavailable. Because the
+/// release profile builds with `panic = "abort"`, and the panic fires deep
+/// inside a CFRunLoop observer callback where nothing could catch it anyway,
+/// that nil used to abort the whole app the moment the user picked a file.
+/// Typing the return as `Option` turns it back into an ordinary failure.
+fn open_panel() -> Option<Retained<NSOpenPanel>> {
+    unsafe { msg_send![NSOpenPanel::class(), openPanel] }
+}
+
+/// The panel's selected URLs as absolute paths. `-URLs` carries the same non-null
+/// typing as `openPanel`, so it gets the same guard rather than a second abort.
+fn panel_paths(panel: &NSOpenPanel) -> Vec<String> {
+    let urls: Option<Retained<NSArray<NSURL>>> = unsafe { msg_send![panel, URLs] };
+    let Some(urls) = urls else {
+        return Vec::new();
+    };
+    urls.iter()
+        .filter_map(|url| url.path().map(|p| p.to_string()))
+        .collect()
+}
+
+/// Open the native macOS picker and resolve to the chosen absolute paths.
+///
+/// `directory` picks folders instead of files; `multiple` allows a multi-select.
+/// Cancelling resolves to an empty list — only a genuine failure to present the
+/// panel is an `Err`, so callers can tell "user said no" from "picker broke".
+///
+/// Presented as a SHEET on the window that asked for it, which is both what the
+/// dialog plugin did (rfd attaches to `mainWindow`) and more precise: with
+/// several vault windows plus the Sleepy panels open, "the main window" is a
+/// guess, whereas the invoking window is not. Sheets keep the rest of the app
+/// live, so this never blocks the main thread the way `runModal` would.
+#[tauri::command]
+async fn pick_paths(
+    window: tauri::WebviewWindow,
+    directory: bool,
+    multiple: bool,
+) -> Result<Vec<String>, String> {
+    let (tx, mut rx) = tauri::async_runtime::channel::<Result<Vec<String>, String>>(1);
+
+    // All AppKit work — building the panel AND the completion block that reads it
+    // back — happens on the main thread; nothing here crosses a thread boundary.
+    let app = window.app_handle().clone();
+    app.run_on_main_thread(move || {
+        let Some(panel) = open_panel() else {
+            let _ = tx.try_send(Err(PANEL_UNAVAILABLE.to_string()));
+            return;
+        };
+        panel.setCanChooseFiles(!directory);
+        panel.setCanChooseDirectories(directory);
+        panel.setAllowsMultipleSelection(multiple);
+        panel.setResolvesAliases(true);
+
+        let finished = panel.clone();
+        let handler = RcBlock::new(move |response: NSModalResponse| {
+            let paths = if response == NSModalResponseOK {
+                panel_paths(&finished)
+            } else {
+                Vec::new() // cancelled, or the panel failed to display
+            };
+            // Capacity-1 channel with exactly one send — `try_send` so a wedged
+            // receiver can never block the main thread.
+            let _ = tx.try_send(Ok(paths));
+        });
+
+        // SAFETY: `ns_window` hands back this window's live NSWindow, and we
+        // are on the main thread, so borrowing it for the call is sound.
+        match window.ns_window() {
+            Ok(ptr) if !ptr.is_null() => {
+                let parent: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+                panel.beginSheetModalForWindow_completionHandler(parent, &handler);
+            }
+            // No host window to hang a sheet on (shouldn't happen, but a
+            // free-floating panel beats swallowing the user's click).
+            _ => panel.beginWithCompletionHandler(&handler),
+        }
+    })
+    .map_err(|e| format!("Could not reach the main thread to open the picker: {e}"))?;
+
+    rx.recv()
+        .await
+        .unwrap_or_else(|| Err("The file picker closed without an answer.".to_string()))
 }
 
 // ─── Resolution helpers ────────────────────────────────────────────────────

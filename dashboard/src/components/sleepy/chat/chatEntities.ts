@@ -62,7 +62,6 @@ export const DREAMCONTEXT_SKILLS: ReadonlySet<string> = new Set([
   'dream-sync',
   'announcements',
   'patterns',
-  'task-manager',
 ]);
 
 export function isDreamcontextSkill(skill: string): boolean {

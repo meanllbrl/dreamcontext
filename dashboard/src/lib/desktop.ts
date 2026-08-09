@@ -153,18 +153,55 @@ export async function toggleMaximizeWindow(target: EventTarget | null): Promise<
 }
 
 /**
- * Pick a folder. In the desktop app this is the native macOS folder picker via
- * the Tauri dialog plugin; in a browser (dev) it falls back to a prompt so the
- * flow is still exercisable. Returns the chosen absolute path, or null if the
- * user cancelled.
+ * Open the native macOS picker via the shell's own `pick_paths` command.
+ *
+ * NOT `@tauri-apps/plugin-dialog`: that plugin's rfd backend reads
+ * `+[NSOpenPanel openPanel]` through a non-null-typed binding, so on the days
+ * AppKit hands back nil it panicked — and the desktop shell builds with
+ * `panic = "abort"`, so the whole app died mid-pick. `pick_paths` guards the nil
+ * and rejects instead. Resolves to [] when the user cancels; rejects only when
+ * the picker genuinely could not be shown — see {@link pickSafely}.
+ */
+async function pickNative(directory: boolean, multiple: boolean): Promise<string[]> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<string[]>('pick_paths', { directory, multiple });
+}
+
+/**
+ * The last reason the native picker refused to open, for call sites that have an
+ * error channel to show it in (the rest degrade to "nothing got picked"). Set on
+ * every failure and cleared on every successful open, so it always describes the
+ * most recent attempt.
+ */
+let lastPickerError: string | null = null;
+
+/** Message from the most recent failed picker attempt, or null if it worked. */
+export function pickerError(): string | null {
+  return lastPickerError;
+}
+
+/** Run a picker, recording — never throwing — a failure to present the panel. */
+async function pickSafely(directory: boolean, multiple: boolean): Promise<string[]> {
+  try {
+    const picked = await pickNative(directory, multiple);
+    lastPickerError = null;
+    return picked;
+  } catch (err) {
+    lastPickerError = err instanceof Error ? err.message : String(err);
+    console.error('[picker] native file picker failed:', lastPickerError);
+    return [];
+  }
+}
+
+/**
+ * Pick a folder. In the desktop app this is the native macOS folder picker; in a
+ * browser (dev) it falls back to a prompt so the flow is still exercisable.
+ * Returns the chosen absolute path, or null if the user cancelled.
  */
 export async function openFolderPicker(): Promise<string | null> {
   if (isDesktop()) {
-    const { open } = await import('@tauri-apps/plugin-dialog');
-    const selected = await open({ directory: true, multiple: false });
-    // The plugin returns string | string[] | null; we requested a single dir.
-    if (typeof selected === 'string') return selected;
-    return null;
+    const [selected] = await pickSafely(true, false);
+    return selected ?? null;
   }
   const entered = window.prompt('Enter an absolute path to a dreamcontext project:');
   return entered && entered.trim() ? entered.trim() : null;
@@ -178,39 +215,19 @@ export async function openFolderPicker(): Promise<string | null> {
  * the flow stays exercisable. Returns [] if the user cancelled or picked nothing.
  */
 export async function pickFiles(): Promise<string[]> {
-  if (isDesktop()) {
-    try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const selected = await open({ directory: false, multiple: true });
-      if (Array.isArray(selected)) return selected.filter((p): p is string => typeof p === 'string');
-      if (typeof selected === 'string') return [selected];
-      return [];
-    } catch {
-      return [];
-    }
-  }
+  if (isDesktop()) return pickSafely(false, true);
   const entered = window.prompt('Enter absolute file path(s), comma-separated:');
   return entered ? entered.split(',').map((s) => s.trim()).filter(Boolean) : [];
 }
 
 /**
  * Pick one or more FOLDERS via the native macOS picker (multi-select), returning their
- * absolute paths. A separate call from {@link pickFiles} because the Tauri dialog plugin
- * exposes `directory` as a boolean — one native dialog cannot offer files AND folders
+ * absolute paths. A separate call from {@link pickFiles} because NSOpenPanel exposes
+ * "choose directories" as a flag — one native panel cannot offer files AND folders
  * mixed. Returns [] if the user cancelled or picked nothing.
  */
 export async function pickFolders(): Promise<string[]> {
-  if (isDesktop()) {
-    try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const selected = await open({ directory: true, multiple: true });
-      if (Array.isArray(selected)) return selected.filter((p): p is string => typeof p === 'string');
-      if (typeof selected === 'string') return [selected];
-      return [];
-    } catch {
-      return [];
-    }
-  }
+  if (isDesktop()) return pickSafely(true, true);
   const entered = window.prompt('Enter absolute folder path(s), comma-separated:');
   return entered ? entered.split(',').map((s) => s.trim()).filter(Boolean) : [];
 }

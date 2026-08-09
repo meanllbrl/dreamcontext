@@ -93,6 +93,11 @@ const OWN_AGENT_BRIEFS: ReadonlyArray<{ prefix: string; source: string }> = [
   { prefix: 'think hard. run a full dreamcontext memory consolidation', source: 'dashboard/src/lib/sleepAgent.ts' },
   { prefix: 'think hard. run the /dream-sync flow', source: 'dashboard/src/lib/brainResolveAgent.ts' },
   { prefix: 'work on this dreamcontext task and drive it to completion', source: 'dashboard/src/lib/delegateAgent.ts' },
+  // Delegate has four modes, and three of them open on their own brief — a mode the picker
+  // did not know about would list its runs as conversations the user had typed.
+  { prefix: "let's think this dreamcontext task through together", source: 'dashboard/src/lib/delegateModes.ts' },
+  { prefix: 'check whether this dreamcontext task is actually done', source: 'dashboard/src/lib/delegateModes.ts' },
+  { prefix: 'summarize this dreamcontext task for me', source: 'dashboard/src/lib/delegateModes.ts' },
   { prefix: 'you are scheduled dreamcontext automation', source: 'src/lib/automations/runner.ts' },
 ];
 

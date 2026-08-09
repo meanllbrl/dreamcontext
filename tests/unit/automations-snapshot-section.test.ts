@@ -128,6 +128,7 @@ describe('clean brain', () => {
       hasFailure: false,
       hasOrphan: false,
       hasPendingOutputs: false,
+      hasPendingReview: false,
     });
   });
 

@@ -216,3 +216,11 @@
   cursor: default;
   opacity: 0.5;
 }
+
+/* Waiting on the reader, not broken — accent, never error. A red badge here
+   would teach the user to clear the queue rather than read it, which is the
+   reflexive approval the review gate exists to prevent. */
+.auto-badge--review {
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  color: var(--color-accent);
+}

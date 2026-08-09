@@ -100,16 +100,8 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] As a user, task context-menu submenus ("Move to status", "Set priority") use flyout panels beside the parent row, reducing menu vertical footprint from ~360px to ~190px, flipping left when near the viewport edge.
 - [x] As a user, the version filter shows smart semantic buckets — **Current** (active sprint), **Backlog** (tasks without a version), and **Completed** (any released sprint) — above the literal version list with is/not toggles and live task counts, so I can filter by sprint state without knowing the active sprint name; saved views referencing `@current` always track the live active sprint automatically.
 
-- [x] As a user (desktop app), I can open a task's own Claude session (Task Manager) inside the task detail view so I can ask questions and give instructions scoped to that specific task document without switching away from the task page.
-- [x] As a user, the Task Manager is opt-in everywhere — an explicit button on desktop when Claude Code and node-pty are present, with prerequisite install steps shown when either is missing — never auto-spawning an agent.
-- [x] As a user, the Task Manager session's bypass mode is ON by default (I can toggle it to ask-every-time), because the session is scoped to a single task document and the agent's edits are what I asked for.
-- [x] As a user, the full-page task view is a PAGE below the real app header (not a modal overlay) — task parameters in a sticky left rail, the document beside it, and the Task Manager pane on the right — so I can work in the task without feeling trapped inside a modal.
-- [x] As a user, the drawer task view becomes a modal scrim that widens when the Task Manager opens, so the agent pane has breathing room even in the compact view.
-- [x] As a user, I can select any span of the rendered task document text, add a comment via a floating 💬 button, accumulate multiple comments as pending chips, and send the whole batch as ONE message to the Task Manager, so I can annotate the doc with questions/instructions before submitting.
-- [x] As a user, the anchored doc comments use QUOTES (not byte offsets), ephemeral chips (not persisted), and batch as a single bracketed-paste message, because the agent rewrites the doc live (positions would break) and the agent's edits + changelog are the record (not ephemeral UI comments).
-- [x] As a user, sending comments with the Task Manager pane closed auto-opens it and waits for the session's first ready/asking status before flushing the batch, so a booting readline doesn't silently drop the message bytes.
-- [x] As a user, while the Task Manager pane is open the task document auto-refreshes every 2.5 seconds so I can see the agent's edits live, and a "± Changes" toggle appears to show me a git-style unified diff of everything that changed this session (dual line numbers, +/- tinting, hunk headers).
-- [x] As a user, the session diff is ephemeral by design — closing the pane discards the baseline snapshot — because the agent's committed edits and the task's changelog are the durable record, not a transient diff UI.
+- [x] As a user, the task view holds NO agent — no in-pane session, no doc comments, no session diff, no Delegate button. A task is a document I read and write; the one place I hand it to an agent is the board's right-click **Delegate to Claude**. (Owner call 2026-08-08: "task'larda ai kullanılmıyor" — the surface existed and went unused, so it is retired rather than maintained.)
+- [x] As a user, the full-page task view is a PAGE below the real app header (not a modal overlay) — task parameters in a sticky left rail, the document beside it — so I can work in the task without feeling trapped inside a modal.
 
 - [x] As a user, I can discover newly shipped features through an "Announcements / What's New" page in the dashboard, so I never miss flagship releases like goal-skill v2.
 - [x] As a user, I see an unread-count badge on the Announcements sidebar entry when hand-authored product news exists that I haven't read yet, so new features surface without me hunting through the changelog.
@@ -189,20 +181,24 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] 9 route tests covering rename (registered / ghost / collision / active-move / back-compat) and delete (registered+tasks / ghost / active-clear / 404) — all pass; existing release suite still green.
 - [x] `useRenameVersion` and `useDeleteVersion` TanStack Query mutation hooks wired to `VersionsPopover.tsx` and `useVersions.ts`.
 
-### Task Manager — In-Task Agent Sessions (v0.17.x, desktop-only)
-- [x] Task detail panel (desktop app) shows a "Task Manager" button when Claude Code + node-pty are present (gated on `DREAMCONTEXT_DESKTOP=1`); clicking it opens an embedded agent terminal scoped to that task.
-- [x] Task Manager button replaced with prereq install steps when Claude Code or node-pty is missing — never auto-spawns a session, always opt-in.
-- [x] Task Manager sessions open with bypass mode ON by default (togglable to ask-every-time) — edits are scoped to one task doc and auto-approved.
-- [x] Full-page task view is a PAGE (not a modal): app header visible, task parameters in a sticky left rail, document column beside it, Task Manager pane on the right. The detail-overlay mounts via `?task=<slug>&view=page` URL routing. Drawer-mode widens the modal scrim when TM opens.
-- [x] Task Manager pane hosts the embedded terminal via the SAME terminal slot contract as the Agent surface: `position:relative` container, `agent-pane-slot` class, `ResizeObserver` with 150ms debounce, `container: agentpane / inline-size` for composer breakpoints.
-- [x] The per-pane composer bar is React-portaled from `AgentSurface` into `.agent-task-manager-composer[data-task]` (the portal pattern — composer actions need surface-owned session state; TM sessions are roster-less and resolve from the live sessions map).
-- [x] Task Manager sessions boot idle with `deferPrompt=1` — the pin prompt is parked server-side and rides the USER's first message (typed or via doc comments) instead of auto-submitting on spawn. Old servers ignore the flag and keep the previous auto-submit behavior. (Pattern from in-app-agent-terminal.md.)
-- [x] **Anchored doc comments** (`DocComments.tsx`): select any span of the rendered task document → floating 💬 Comment button → comment popover → accumulate multiple comments as ephemeral pending chips → Send button batches the whole set as ONE bracketed-paste message to the Task Manager. Anchors are QUOTES (not byte offsets — positions would break as the agent rewrites the doc live); comments are ephemeral until sent (the agent's edits and the task changelog are the record). Sending with the pane closed auto-opens it and holds until the session's first ready/asking status so a booting readline doesn't drop bytes. On a fresh session the batch is the FIRST message → deferred pin context rides along. Desktop-gated.
-- [x] **Session diff** (`SessionDiff.tsx`): while the TM pane is open, the task document polls every 2.5s (via `['tasks']` query refetch), and a "± Changes" header toggle appears once the doc differs from the baseline snapshot (captured at pane open). Toggling it flips the document column to a git-style unified diff — hunk headers, dual line numbers (`oldLine | newLine`), +/- line tinting. The baseline is a frontmatter-style preamble + raw body so edits to out-of-body fields (Summarize / Status) diff too. Ephemeral by design: closing the pane discards the baseline (the agent's committed edits + changelog are the durable record).
-- [x] Session diff engine: dependency-free prefix/suffix-trimmed LCS hunker (`lib/lineDiff.ts`) with a MAX_DP_LINES cap (degrades to block-replace instead of freezing on huge diffs). 7 unit tests in `tests/unit/line-diff.test.ts`.
-- [x] Full-page parameters rail: left-fixed sticky rail (220px, scrollable), holds status/priority/urgency/version/assignee/dates/RICE/custom fields, shows below the TM toggle/bypass controls. Goes responsive (220→180px) when the TM pane is open.
-- [x] Composer goes responsive when TM pane is open: 220px min-width breakpoint (@container query) — stacks the input above the buttons at narrow widths.
-- [x] `TaskDetailPanel` tracks `taskManagerOpen` state and gates the doc-refresh poll (`refetchInterval: open ? 2500 : false`) and the session diff baseline; `SessionDiff` derives the unified diff via `diffLines()` and renders hunks with `+`/`-` tinting, dual-gutter line numbers, and omitted-line breaks (`...`).
+### Task Manager — In-Task Agent Sessions (v0.17.x–v0.23.x) — RETIRED 2026-08-08
+Shipped as an in-task Claude session (pane, quick actions, anchored 💬 doc comments, ± Changes
+session diff) plus a `task-manager` core skill. **Removed entirely**: the owner's call was
+"task'larda ai kullanılmıyor" — the surface existed and nobody reached for it, and a task is a
+document you write, not a thing you converse with. Deleted: `TaskManagerPane`, `DocComments`,
+`SessionDiff`, `lib/taskManagerAgent.ts`, `lib/lineDiff.ts`, `skill-task-manager/`, the whole
+TM slot/composer/homing layer in `AgentSurface`, and the task-detail Delegate button. `install-skill`
+now DELETES a `<skills>/task-manager/` left by an older install (installers never prune, so
+without that an upgraded project would keep offering `/task-manager` forever).
+
+The one surviving hand-off is the board's right-click **Delegate to Claude** (`DelegateComposer`,
+`lib/delegateAgent.ts`) — unchanged.
+
+KEPT as generic plumbing, now caller-less: the `deferPrompt` transport (client `createSession`
+param → `&deferPrompt=1` → server parks the prompt in a 0600 tmp file → `consumeDeferredPrompt`
+in the UserPromptSubmit hook). It is a reusable "boot idle, let the prompt ride the user's first
+message" primitive with its own tests and a documented contract; ripping it out would touch the
+hook path every session runs through. Comments were reworded to stop naming Task Manager.
 
 ### Author Task with Agent (v0.19.0)
 - [x] Dashboard board's New-task button is a split button: primary action creates a blank task form (existing behavior), secondary "Author with agent" action opens an AuthorTaskComposer modal.

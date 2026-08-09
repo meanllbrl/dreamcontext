@@ -90,6 +90,8 @@ import {
   handleAutomationsDispatcherStatus,
   handleAutomationsDispatcherInstall,
   handleAutomationsDispatcherUninstall,
+  handleAutomationsReviewList,
+  handleAutomationsReviewAnswer,
 } from './routes/automations.js';
 import {
   handleThesesList,
@@ -463,6 +465,11 @@ export function buildRouter(): Router {
   router.get('/api/automations/dispatcher', handleAutomationsDispatcherStatus);
   router.post('/api/automations/dispatcher/install', handleAutomationsDispatcherInstall);
   router.post('/api/automations/dispatcher/uninstall', handleAutomationsDispatcherUninstall);
+  // `review` joins `runs` and `dispatcher` above the `/:slug` param route for
+  // the same reason, and the answer route is keyed by CARD id rather than slug:
+  // the board's question is "what am I holding up", which spans automations.
+  router.get('/api/automations/review', handleAutomationsReviewList);
+  router.post('/api/automations/review/:id', handleAutomationsReviewAnswer);
   // Before `/:slug` — a literal sub-path registered after a param route is
   // swallowed by it, the same ordering constraint `runs` above documents.
   router.get('/api/automations/:slug/session', handleAutomationsSession);

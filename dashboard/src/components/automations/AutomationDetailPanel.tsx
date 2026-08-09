@@ -131,11 +131,15 @@ function PatternBlock({ pattern }: { pattern: AutomationPattern }) {
  * must be refused here, with the reason, rather than opened into a blank chat.
  */
 function RunHandoff({
-  slug, automationTitle, runNumber, durationMs, onBack, onOpened,
+  slug, automationTitle, runNumber, durationMs, pendingReviewCardId, onBack, onOpened,
 }: {
   slug: string;
   automationTitle: string;
   runNumber: number;
+  /** Open card on this automation, if any — the hand-off refuses while one is
+   *  pending, because the chat tab talks to the session directly and would let
+   *  it act without the card ever being resolved. */
+  pendingReviewCardId: string | null;
   /** From the history row. The session response has no duration of its own — it reports
    *  what the CONVERSATION was, and how long the run took is the runner's measurement. */
   durationMs: number | null;
@@ -151,7 +155,7 @@ function RunHandoff({
 
   useEffect(() => {
     if (!session || sentRef.current) return;
-    const reason = runChatUnavailableReason(session);
+    const reason = runChatUnavailableReason(session, pendingReviewCardId);
     if (reason) { setRefused(reason); return; }
     sentRef.current = true;
     const accepted = requestAutomationRunChat({
@@ -176,7 +180,7 @@ function RunHandoff({
     // The chat overlay is now the screen the user asked for; leaving this modal stacked
     // underneath it would mean closing two things to get back to the board.
     onOpened();
-  }, [session, slug, automationTitle, runNumber, onOpened]);
+  }, [session, slug, automationTitle, runNumber, durationMs, pendingReviewCardId, onOpened]);
 
   return (
     <div className="adp-session">
@@ -352,6 +356,24 @@ export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }
                           )}
                         </span>
                       </div>
+                      {/* Hashed, and spelled out for the same reason as
+                          `learning`: "review: off" is a phrase whose weight is
+                          invisible unless it is written out. The `off` case is
+                          the one that must read loudest — on a manifest that
+                          arrived over brain sync, it is a human gate someone
+                          else removed. */}
+                      <div className="adp-review-row">
+                        <span className="adp-review-label">review</span>
+                        <span className="adp-review-value">
+                          {automation.review === 'off' ? (
+                            <em>off — this automation's work takes effect with no human verdict</em>
+                          ) : automation.review === 'output' ? (
+                            <>output — every run's document waits for your verdict before it lands</>
+                          ) : (
+                            <>agent — the run decides when to stop and ask you</>
+                          )}
+                        </span>
+                      </div>
                       {/* The pattern belongs IN the review, not after it. This
                           is the moment a human decides whether to admit a
                           self-written notes file into a bypassPermissions run;
@@ -462,6 +484,7 @@ export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }
                     // same numbering `resolveRunSession` takes, so the row and the run
                     // cannot drift apart.
                     durationMs={history[openSession - 1]?.durationMs ?? null}
+                    pendingReviewCardId={summary.pendingReviewCardId}
                     onBack={() => setOpenSession(null)}
                     onOpened={handleRunOpened}
                   />

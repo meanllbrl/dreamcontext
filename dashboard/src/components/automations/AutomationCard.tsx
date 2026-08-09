@@ -24,6 +24,18 @@ function Badges({ summary }: { summary: AutomationSummary }) {
       </span>,
     );
   }
+  // Deliberately NOT styled as a failure. This automation is not broken — it is
+  // waiting on the reader, and badging it red would teach them to clear it
+  // rather than read it, which is the reflexive approval the gate exists to
+  // prevent. Same reason it sits above `orphaned`: it is the one badge here
+  // that names something the reader can act on right now.
+  if (summary.pendingReviewCardId) {
+    badges.push(
+      <span key="review" className="auto-badge auto-badge--review" title="It will not run again until you answer">
+        waiting for your verdict
+      </span>,
+    );
+  }
   if (summary.cache?.status === 'orphaned') {
     badges.push(
       <span key="orphaned" className="auto-badge auto-badge--orphaned" title={`dreamcontext automations kill ${summary.slug}`}>

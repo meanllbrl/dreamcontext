@@ -1,0 +1,10 @@
+"$schema" = "schemas/schema.json"
+
+# The app's own native file/folder picker, replacing `dialog:allow-open`. The
+# dialog plugin's rfd backend aborts the whole process when AppKit returns a nil
+# NSOpenPanel; `pick_paths` guards that nil and returns an error instead. See
+# `pick_paths` in src/lib.rs.
+[[permission]]
+identifier = "allow-pick-paths"
+description = "Open the native macOS file/folder picker and return the chosen absolute paths."
+commands.allow = ["pick_paths"]
