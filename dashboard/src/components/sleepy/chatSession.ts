@@ -1,6 +1,6 @@
 import { api, getActiveVault } from '../../api/client';
 import { contextLimitFor } from '../../lib/agentComposer';
-import { playAskChime } from '../../lib/chime';
+import { raiseAskAttention } from '../../lib/attention';
 import {
   parseChatLine, buildQuestionAnswer, isUrgentChatEvent,
   type ChatEvent, type QuestionSpec, type ClientControl,
@@ -375,6 +375,20 @@ export interface ChatSession {
   setTranscriptRepin: (fn: (() => void) | null) => void;
 }
 
+/**
+ * One line describing what an ask actually WANTS, for the OS notification banner that
+ * fires when the user is in another app (see lib/attention.ts).
+ *
+ * A question gives its first `question` (the `header` is a 12-char chip like "Auth method"
+ * — too terse to act on from a banner); a plan review has no question text at all, so it
+ * says what the card says. Multi-question asks name only the first: the banner exists to
+ * get you back to the app, not to reproduce the card.
+ */
+function askSummary(entry: PendingQuestion | PendingPlan): string {
+  if (entry.kind === 'plan') return 'A plan is waiting for your approval.';
+  return entry.questions[0]?.question ?? '';
+}
+
 // ─── Session factory ────────────────────────────────────────────────────────────────
 
 let chatSessionSeq = 0;
@@ -557,7 +571,7 @@ export function createChatSession(
 
   /**
    * Push a card that ASKS the user something directly — a question or a plan to approve —
-   * onto `pending`, chiming only on the edge where none was pending before.
+   * onto `pending`, raising the user only on the edge where none was pending before.
    *
    * `others` is `pending` already stripped of this `requestId` (a re-sent request replaces
    * its own card rather than stacking a twin). Shared by both arms so the two can never
@@ -570,7 +584,9 @@ export function createChatSession(
     session.asking = conv.pending.length > 0;
     if (!hadAskBefore) {
       session.attention = true;
-      playAskChime();
+      // Chat is the one surface that can put the actual words in the banner: the ask
+      // arrives as structured JSON, so what the notification shows is what the card shows.
+      raiseAskAttention({ source: getActiveVault(), detail: askSummary(entry) });
     }
   }
 

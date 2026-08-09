@@ -23,6 +23,12 @@ tauri-plugin-global-shortcut = "2"
 # comment. Routing copies through this Rust-side plugin bypasses the WKWebView entirely and
 # round-trips UTF-8 correctly.
 tauri-plugin-clipboard-manager = "2"
+# Native OS notification banners. WKWebView ships no Web Notification API at all
+# (`window.Notification` is simply undefined), so a webview-only implementation is
+# impossible — this plugin both injects the `window.Notification` polyfill the JS
+# side calls and delivers the banner through NSUserNotification. Used by the
+# "Claude is asking" alarm (dashboard/src/lib/attention.ts).
+tauri-plugin-notification = "2"
 # Converts the Sleepy notch window into a non-activating NSPanel so the hotkey
 # summons it OVER whatever app is focused — the user types into it without their
 # current app deactivating, and dismissing it never surfaces the dreamcontext

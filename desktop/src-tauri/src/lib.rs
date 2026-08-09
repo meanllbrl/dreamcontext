@@ -138,6 +138,11 @@ pub fn run() {
         // clipboard mangling non-ASCII as Mac Roman (issue #171). Used by the in-app agent
         // terminal's copy path via @tauri-apps/plugin-clipboard-manager on the loopback origin.
         .plugin(tauri_plugin_clipboard_manager::init())
+        // Native notification banners. Registering the plugin is what injects the
+        // `window.Notification` polyfill into the webview — WKWebView ships none — so
+        // the dashboard's "Claude is asking" alarm has something to call. Sent from JS
+        // via the permitted API (see the capability), so no custom command is needed.
+        .plugin(tauri_plugin_notification::init())
         // Global shortcut for the Sleepy notch quick-capture bar. The hotkey is
         // registered/unregistered from the dashboard JS via the plugin's permitted
         // API (the capability grants global-shortcut on the loopback origin), so

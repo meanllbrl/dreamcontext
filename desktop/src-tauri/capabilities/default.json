@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the dreamcontext desktop shell. Grants the tightest permission set needed: core defaults, multi-window creation, native folder dialog, opening external URLs (shell:allow-open — target=_blank links / Open GitHub), and shell spawn/kill scoped to the Node child.",
+  "description": "Default capability for the dreamcontext desktop shell. Grants the tightest permission set needed: core defaults, multi-window creation, native folder dialog, opening external URLs (shell:allow-open — target=_blank links / Open GitHub), Dock-bounce + native notification banners for the \"Claude is asking\" alarm, and shell spawn/kill scoped to the Node child.",
   "windows": ["main", "vault-*", "sleepy", "sleepy-perch"],
   "remote": {
     "urls": ["http://localhost:*", "http://127.0.0.1:*"]
@@ -16,6 +16,7 @@
     "core:window:allow-set-position",
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
+    "core:window:allow-request-user-attention",
     "core:event:allow-emit",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
@@ -25,6 +26,9 @@
     "global-shortcut:allow-is-registered",
     "allow-pick-paths",
     "clipboard-manager:allow-write-text",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-notify",
     "shell:allow-open",
     {
       "identifier": "shell:allow-spawn",

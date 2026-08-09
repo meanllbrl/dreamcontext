@@ -6,7 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 import { getActiveVault } from '../../api/client';
 import { copyPreservingUnicode } from '../../lib/clipboard';
 import { nextLineShadow } from '../../lib/lineShadow';
-import { playAskChime } from '../../lib/chime';
+import { raiseAskAttention } from '../../lib/attention';
 import {
   readAgentSettings, AGENT_SETTINGS_EVENT, type AgentSettings, type AgentRenderer,
 } from '../../lib/agentSettings';
@@ -443,10 +443,12 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
       session.busy = false;
       session.asking = true;
       if (fresh) {
-        // A question is the strongest "needs you" there is: badge it and chime ONCE
-        // per question — redraws can't re-trigger, asking only rises on a fresh edge.
+        // A question is the strongest "needs you" there is: badge it and raise the user
+        // ONCE per question — redraws can't re-trigger, asking only rises on a fresh edge.
+        // No `detail`: all this surface has is a screenful of pixels the regex matched, and
+        // scraping a prompt off the terminal tail would put garbled ANSI in a banner.
         session.attention = true;
-        playAskChime();
+        raiseAskAttention({ source: getActiveVault() });
       }
       notify();
       return;

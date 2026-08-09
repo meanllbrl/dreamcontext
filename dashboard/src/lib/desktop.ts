@@ -153,6 +153,55 @@ export async function toggleMaximizeWindow(target: EventTarget | null): Promise<
 }
 
 /**
+ * Bounce the app's Dock icon to say "something here is blocked on you".
+ *
+ * `Critical` (not `Informational`) because the thing that raises this is a question
+ * Claude cannot proceed past: macOS bounces the icon until you activate the app,
+ * whereas Informational bounces exactly once and is easy to miss while you're in
+ * another window. AppKit itself no-ops the request when dreamcontext is ALREADY the
+ * active app and cancels it the moment you switch back, so there is nothing to
+ * clear afterwards — the bounce only ever exists while you're away.
+ *
+ * macOS-shaped but not macOS-gated: on Windows the same call flashes the taskbar
+ * button, which is the same message in that platform's language. No-op off-desktop.
+ */
+export async function bounceDockIcon(): Promise<void> {
+  if (!isDesktop()) return;
+  try {
+    const { getCurrentWindow, UserAttentionType } = await windowApi();
+    await getCurrentWindow().requestUserAttention(UserAttentionType.Critical);
+  } catch { /* ACL / non-desktop — ignore */ }
+}
+
+/**
+ * Post a native OS notification banner. Resolves `true` only when one was actually
+ * handed to the OS, so callers can fall back to the browser's own Notification API.
+ *
+ * The permission dance is kept even though the plugin's DESKTOP backend answers both
+ * `isPermissionGranted` and `requestPermission` with a flat "granted": macOS has no
+ * per-app opt-in to ask for up front — whether a banner is drawn is decided at delivery
+ * time by System Settings → Notifications for the bundled app. The calls are what the
+ * browser and mobile backends genuinely need, and they cost one IPC round-trip.
+ *
+ * Delivery requires the BUNDLED `.app` (mac-notification-sys resolves the bundle
+ * identifier through LaunchServices), so an unbundled `tauri dev` run may post nothing.
+ * That's why this returns a boolean instead of throwing: the chime and the Dock bounce
+ * still carry the signal on their own.
+ */
+export async function sendDesktopNotification(title: string, body: string): Promise<boolean> {
+  if (!isDesktop()) return false;
+  try {
+    const { isPermissionGranted, requestPermission, sendNotification } =
+      await import('@tauri-apps/plugin-notification');
+    if (!(await isPermissionGranted()) && (await requestPermission()) !== 'granted') return false;
+    sendNotification({ title, body });
+    return true;
+  } catch {
+    return false; // plugin absent (older shell) / ACL — the chime and bounce still fired
+  }
+}
+
+/**
  * Open the native macOS picker via the shell's own `pick_paths` command.
  *
  * NOT `@tauri-apps/plugin-dialog`: that plugin's rfd backend reads

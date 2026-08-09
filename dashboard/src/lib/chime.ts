@@ -4,13 +4,13 @@
  * (no asset, no network) and soft: short envelope, low gain. A shared AudioContext is
  * created lazily on first play; if the webview's autoplay policy blocks audio before any
  * user gesture, the play is silently skipped (the visual signals still fire).
+ *
+ * Deliberately un-throttled: this is one voice of the three-part alarm in `attention.ts`
+ * (chime + notification + Dock bounce), and the rate limit lives THERE so all three stay
+ * one interruption. Don't call this directly from a session — call `raiseAskAttention`.
  */
 
 let ctx: AudioContext | null = null;
-let lastPlay = 0;
-
-/** Several agents asking in the same breath must not stack into a klaxon. */
-const MIN_INTERVAL_MS = 1500;
 
 function note(at: number, freq: number, dur: number) {
   if (!ctx) return;
@@ -27,9 +27,6 @@ function note(at: number, freq: number, dur: number) {
 }
 
 export function playAskChime(): void {
-  const now = Date.now();
-  if (now - lastPlay < MIN_INTERVAL_MS) return;
-  lastPlay = now;
   try {
     ctx ??= new AudioContext();
     if (ctx.state === 'suspended') void ctx.resume();
