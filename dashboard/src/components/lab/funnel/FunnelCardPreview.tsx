@@ -1,4 +1,5 @@
 import type { InsightCache } from '../../../hooks/useLab';
+import type { ChartBodyProps } from '../chartBody';
 import { formatMetricValue, funnelPreviewRows, metricColumns } from './funnelModel';
 import { FunnelBars } from './FunnelBars';
 import './FunnelCardPreview.css';
@@ -58,4 +59,10 @@ export function FunnelCardPreview({ cache }: { cache: InsightCache | null | unde
       </tbody>
     </table>
   );
+}
+
+/** Registry body (`funnel`). The card is page 1's entry — the rest of the story
+ *  lives on the routed funnel pages, so the registry gives it no DetailBody. */
+export function FunnelBody({ cache }: ChartBodyProps) {
+  return <FunnelCardPreview cache={cache} />;
 }

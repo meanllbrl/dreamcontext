@@ -351,6 +351,21 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: var(--space-4);
+  /* Dense: a 1-column card backfills the hole a wide card leaves in a row. */
+  grid-auto-flow: dense;
+  /* The grid measures ITSELF for the wide-card rule below — `auto-fill` never
+     reports how many columns it produced, and a viewport media query can't see
+     the sidebar's collapse state. */
+  container: lab-grid / inline-size;
+}
+
+/* Funnel cards render a table and need ~2 columns — but only where 2 columns
+   actually exist (2 × 280px track + one gap). Below that the span would force
+   an implicit second column and overflow the board, so it degrades to 1. */
+@container lab-grid (min-width: 600px) {
+  .lab-board-grid > .lab-card--wide {
+    grid-column: span 2;
+  }
 }
 
 /* ────────────────────────────────────────

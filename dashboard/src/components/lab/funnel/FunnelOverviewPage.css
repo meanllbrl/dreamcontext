@@ -49,58 +49,8 @@
   flex: 1;
 }
 
-.funnel-ovw-ranges {
-  display: inline-flex;
-  gap: 2px;
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-full);
-  padding: 2px;
-}
-
-.funnel-ovw-range {
-  border: none;
-  background: transparent;
-  font-size: 12px;
-  padding: 3px 10px;
-  border-radius: var(--radius-full);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.funnel-ovw-range--on {
-  background: var(--color-bg-secondary);
-  color: var(--color-text);
-  box-shadow: var(--shadow-sm);
-  font-weight: 600;
-}
-
-.funnel-ovw-custom {
-  position: relative;
-}
-
-.funnel-ovw-custom-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 30;
-  display: flex;
-  gap: var(--space-2);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-  padding: var(--space-2);
-}
-
-.funnel-ovw-custom-pop input,
-.funnel-ovw-custom-pop button {
-  font-size: 12px;
-  padding: 3px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg);
-  color: var(--color-text);
-}
+/* The date-range pills/popover moved to the shared RangeControl (lab/RangeControl.css)
+   so the card, the detail panel and both funnel pages offer one identical window. */
 
 .funnel-ovw-window {
   font-size: 12px;
@@ -132,6 +82,101 @@
 .funnel-ovw-action:hover {
   border-color: var(--color-border-hover);
   color: var(--color-text);
+}
+
+/* ── Column picker (FilterPopover idiom — see RangeControl). ── */
+.funnel-ovw-colbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.funnel-ovw-colbtn--open {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.funnel-ovw-colcount {
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+}
+
+.funnel-ovw-colpick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.funnel-ovw-colpick-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.funnel-ovw-colpick-reset {
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+  padding: 0;
+}
+
+.funnel-ovw-colpick-reset:disabled {
+  color: var(--color-text-tertiary);
+  cursor: default;
+}
+
+/* Up to 64 steps means the derived list can run long — it scrolls, it never
+   grows the popover past the viewport. */
+.funnel-ovw-colpick-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.funnel-ovw-colpick-grouphead {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  padding: 2px 0;
+}
+
+.funnel-ovw-colpick-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12px;
+  color: var(--color-text);
+  padding: 3px 4px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.funnel-ovw-colpick-row:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.funnel-ovw-colpick-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .funnel-ovw-filterrow {

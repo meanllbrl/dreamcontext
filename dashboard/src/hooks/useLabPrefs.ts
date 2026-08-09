@@ -26,6 +26,10 @@ export interface LabPrefs {
   /** Manual tab order: category names first (in saved order), unlisted ones
    *  (new categories) after, alphabetical. */
   catOrder: string[];
+  /** Funnel overview visible columns: insight slug → column keys. Absent slug =
+   *  no opinion (the payload's metric columns); an empty array is a real choice
+   *  (the user unchecked everything). A URL `cols` param still out-ranks this. */
+  columns: Record<string, string[]>;
 }
 
 export const DEFAULT_LAB_PREFS: LabPrefs = {
@@ -33,16 +37,23 @@ export const DEFAULT_LAB_PREFS: LabPrefs = {
   collapsed: [],
   category: null,
   catOrder: [],
+  columns: {},
 };
+
+/** A `key → string[]` blob with every malformed entry dropped. */
+function stringListMap(blob: unknown): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (!blob || typeof blob !== 'object' || Array.isArray(blob)) return out;
+  for (const [key, values] of Object.entries(blob as Record<string, unknown>)) {
+    if (Array.isArray(values)) out[key] = values.filter((v): v is string => typeof v === 'string');
+  }
+  return out;
+}
 
 /** Merge a (possibly partial) blob over the defaults, dropping malformed keys. */
 function mergePrefs(blob: Partial<LabPrefs>): LabPrefs {
-  const order: Record<string, string[]> = {};
-  if (blob.order && typeof blob.order === 'object' && !Array.isArray(blob.order)) {
-    for (const [group, slugs] of Object.entries(blob.order)) {
-      if (Array.isArray(slugs)) order[group] = slugs.filter((s) => typeof s === 'string');
-    }
-  }
+  const order = stringListMap(blob.order);
+  const columns = stringListMap(blob.columns);
   const collapsed = Array.isArray(blob.collapsed)
     ? blob.collapsed.filter((g) => typeof g === 'string')
     : [];
@@ -50,7 +61,7 @@ function mergePrefs(blob: Partial<LabPrefs>): LabPrefs {
   const catOrder = Array.isArray(blob.catOrder)
     ? blob.catOrder.filter((c) => typeof c === 'string')
     : [];
-  return { order, collapsed, category, catOrder };
+  return { order, collapsed, category, catOrder, columns };
 }
 
 interface LabPrefsResponse {
@@ -125,5 +136,9 @@ export function useLabPrefs() {
     update((p) => ({ ...p, catOrder }));
   }, [update]);
 
-  return { prefs, toggleCollapsed, setGroupOrder, setCategory, setCategoryOrder };
+  const setColumnKeys = useCallback((slug: string, keys: string[]) => {
+    update((p) => ({ ...p, columns: { ...p.columns, [slug]: keys } }));
+  }, [update]);
+
+  return { prefs, toggleCollapsed, setGroupOrder, setCategory, setCategoryOrder, setColumnKeys };
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Series } from '../../hooks/useLab';
+import type { ChartBodyProps } from './chartBody';
 
 /** `raw` render: toggle between a flat table and the raw JSON, both from the cached series. */
 export function RawDataView({ series }: { series: Series[] }) {
@@ -56,6 +57,16 @@ export function RawDataView({ series }: { series: Series[] }) {
           fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--color-text)',
         }}>{JSON.stringify(series, null, 2)}</pre>
       )}
+    </div>
+  );
+}
+
+/** Registry body (`raw`). The Table/JSON toggle is the body's own affordance, so
+ *  it swallows the click that would otherwise open the card's detail panel. */
+export function RawBody({ series }: ChartBodyProps) {
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      <RawDataView series={series} />
     </div>
   );
 }

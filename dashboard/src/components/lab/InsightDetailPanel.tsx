@@ -2,11 +2,11 @@ import { useEffect } from 'react';
 import type { InsightSummary, SyncEvent } from '../../hooks/useLab';
 import { useLabInsight, useSyncInsight, useUpdateTweaks } from '../../hooks/useLab';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
-import { NumberCard } from './NumberCard';
-import { LineChart } from './LineChart';
-import { PieChart } from './PieChart';
-import { RawDataView } from './RawDataView';
 import { TweakEditor } from './TweakEditor';
+import { RangeControl, nonWindowTweaks } from './RangeControl';
+import { chartEntry, detailBodyFor } from './chartRegistry';
+import { humanizeTweakKey, humanizeTweakValue } from './tweakLabels';
+import { useI18n } from '../../context/I18nContext';
 import './InsightDetailPanel.css';
 
 /**
@@ -71,6 +71,7 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
   const detail = useLabInsight(summary.slug);
   const sync = useSyncInsight();
   const updateTweaks = useUpdateTweaks();
+  const { locale } = useI18n();
 
   // Esc closes — but only when this panel is the topmost overlay (overlayStack,
   // same contract as CommandModal) and never while the user is typing in a form
@@ -130,6 +131,23 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
     });
   };
 
+  /** Range changes re-fetch too — same chain, and the panel's chart is the surface
+   *  most likely to be read as "the current window" (#235). */
+  const handleApplyRange = (values: Record<string, string>, label: string) => {
+    updateTweaks.mutate({ slug: summary.slug, tweaks: values }, {
+      onSuccess: () => runSync(`${label} applied.`, `${label} saved, but the refresh failed`),
+      onError: (err) => onToast(`${summary.title}: ${label} failed — ${(err as Error).message}`),
+    });
+  };
+
+  // The window keys belong to the RangeControl; the editor keeps the rest.
+  const editableTweaks = nonWindowTweaks(summary.tweaks);
+
+  // The panel is the same shell for every render: the body comes from the
+  // registry (its own detail variant when it has one, else the card's).
+  const entry = chartEntry(summary.render);
+  const DetailBody = detailBodyFor(summary.render);
+
   const detailRows: [string, string][] = [];
   if (summary.group) detailRows.push(['Group', summary.group]);
   if (manifest?.adapter) detailRows.push(['Source', manifest.adapter === 'http' ? `HTTP ${manifest.method ?? 'GET'}` : 'custom script']);
@@ -162,6 +180,15 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
           <div className="idp-title">{summary.title}</div>
           <div className="idp-slug">{summary.slug}</div>
           {manifest?.description && <div className="idp-desc">{manifest.description}</div>}
+          {entry.supportsWindow && (
+            <div className="idp-rangerow">
+              <RangeControl
+                tweaks={summary.tweaks}
+                disabled={updateTweaks.isPending || sync.isPending}
+                onApply={handleApplyRange}
+              />
+            </div>
+          )}
         </div>
 
         <div className="idp-body">
@@ -180,20 +207,16 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
           ) : (
             <div className="idp-columns">
               <div className="idp-col-main">
+                {/* `full`: the panel is the whole story — the registry body
+                    draws its large variant (no capped legends, taller canvas). */}
                 <div className="idp-chart">
-                  {summary.render === 'number' && (
-                    <>
-                      <NumberCard latest={summary.latest} unit={summary.unit} series={series} />
-                      {series.some((s) => s.points.length > 1) && (
-                        <div className="idp-chart-trend">
-                          <LineChart series={series} unit={summary.unit} height={280} />
-                        </div>
-                      )}
-                    </>
-                  )}
-                  {summary.render === 'line' && <LineChart series={series} unit={summary.unit} height={340} />}
-                  {summary.render === 'pie' && <PieChart series={series} size={240} unit={summary.unit} />}
-                  {summary.render === 'raw' && <RawDataView series={series} />}
+                  <DetailBody
+                    summary={summary}
+                    cache={cache}
+                    series={series}
+                    full
+                    emptyHint={entry.emptyHint}
+                  />
                 </div>
 
                 {meaning && (
@@ -217,16 +240,16 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
                     <div className="idp-detail-row">
                       <span className="idp-detail-label">Tweaks</span>
                       <span className="idp-detail-value">
-                        {tweakEntries.map(([k, v]) => `${k}=${v}`).join(' · ')}
+                        {tweakEntries.map(([k, v]) => `${humanizeTweakKey(k, locale)}: ${humanizeTweakValue(v, locale)}`).join(' · ')}
                       </span>
                     </div>
                   )}
                 </div>
 
-                {summary.tweaks.length > 0 && (
+                {editableTweaks.length > 0 && (
                   <div className="idp-tweaks">
                     <div className="idp-section-label">Edit tweaks</div>
-                    <TweakEditor tweaks={summary.tweaks} saving={updateTweaks.isPending} onSave={handleSaveTweaks} />
+                    <TweakEditor tweaks={editableTweaks} saving={updateTweaks.isPending} onSave={handleSaveTweaks} />
                   </div>
                 )}
 

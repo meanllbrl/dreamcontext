@@ -1,5 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { Series } from '../../hooks/useLab';
+import { CHART_COLORS } from './chartColors';
+import { ChartEmpty, type ChartBodyProps } from './chartBody';
 
 /** Hand-rolled SVG line chart — no chart library exists in the dashboard, and
  *  none is added for this MVP (locked plan assumption A1).
@@ -8,7 +10,7 @@ import type { Series } from '../../hooks/useLab';
  *  tooltip reads out EVERY series at that x — the pointer aims at a date, never
  *  at a 2px line. */
 
-const COLORS = ['#7b68ee', '#0091ff', '#ff5b36', '#4ade80', '#ffae3b'];
+const COLORS = CHART_COLORS;
 const WIDTH = 560;
 const PAD = { top: 12, right: 12, bottom: 24, left: 12 };
 
@@ -16,9 +18,10 @@ interface Props {
   series: Series[];
   unit?: string | null;
   height?: number;
+  emptyHint?: string;
 }
 
-export function LineChart({ series, unit = null, height = 200 }: Props) {
+export function LineChart({ series, unit = null, height = 200, emptyHint }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
@@ -50,7 +53,7 @@ export function LineChart({ series, unit = null, height = 200 }: Props) {
   }, [series, innerW, innerH]);
 
   if (!hasData) {
-    return <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13, padding: '24px 0' }}>No data yet.</div>;
+    return <ChartEmpty hint={emptyHint} />;
   }
 
   const handleMove = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -157,4 +160,9 @@ export function LineChart({ series, unit = null, height = 200 }: Props) {
       )}
     </div>
   );
+}
+
+/** Registry body (`line`). The panel's canvas is taller — the card is a thumbnail. */
+export function LineBody({ summary, series, full = false, emptyHint }: ChartBodyProps) {
+  return <LineChart series={series} unit={summary.unit} height={full ? 340 : 200} emptyHint={emptyHint} />;
 }

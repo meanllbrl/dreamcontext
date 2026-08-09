@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { FunnelCacheEntry, FunnelPrev, FunnelSnapshot } from '../components/lab/funnel/funnelModel';
+import type { InsightSize, Render } from '../components/lab/chartRegistry';
 
 /** Tweak kinds. No `range` type — a relative range is an `enum` tweak keyed `range`. */
 export type TweakType = 'enum' | 'date' | 'string';
@@ -14,7 +15,10 @@ export interface PublicTweak {
   value: string | null;
 }
 
-export type Render = 'number' | 'line' | 'pie' | 'raw' | 'funnel';
+/** The render list has ONE owner in the dashboard: the chart registry (which
+ *  mirrors the engine's `RENDERS`, drift-tested). Re-exported here so every
+ *  existing `import type { Render } from '../hooks/useLab'` keeps working. */
+export type { InsightSize, Render };
 
 export interface Binding {
   objective: string;
@@ -29,6 +33,8 @@ export interface InsightSummary {
   category: string | null;
   group: string | null;
   render: Render;
+  /** Manifest board-footprint override, or null (the render's default span wins). */
+  size: InsightSize | null;
   unit: string | null;
   binding: Binding | null;
   latest: number | null;
@@ -80,6 +86,7 @@ export interface PublicManifest {
   category: string | null;
   group: string | null;
   render: Render;
+  size: InsightSize | null;
   unit: string | null;
   binding: Binding | null;
   credentials_used: string[];

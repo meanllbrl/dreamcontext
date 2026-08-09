@@ -5,6 +5,7 @@ import { useLabPrefs } from '../../hooks/useLabPrefs';
 import { InsightCard } from './InsightCard';
 import { InsightDetailPanel } from './InsightDetailPanel';
 import { pushLabPath } from './funnel/labRoute';
+import { isRoutedRender } from './chartRegistry';
 import { LabCredentialsBanner } from './LabCredentialsBanner';
 import { LabEmptyState } from './LabEmptyState';
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
@@ -149,11 +150,12 @@ export function LabBoard({ focus }: LabBoardProps = {}) {
     : null;
   const visibleBlocks = activeCategory ? blocks.filter((b) => b.category === activeCategory) : blocks;
 
-  // Multi-page insights (funnel) route to their overview page — the card is
-  // page 1's entry. Everything else opens the detail slide-over as before.
+  // Multi-page insights (the registry's `routed` renders — funnel today) open
+  // their overview page; the card is page 1's entry. Everything else opens the
+  // detail slide-over as before.
   const openInsight = useCallback((slug: string) => {
     const summary = (insights ?? []).find((s) => s.slug === slug);
-    if (summary?.render === 'funnel') pushLabPath(slug, null);
+    if (summary && isRoutedRender(summary.render)) pushLabPath(slug, null);
     else setOpenSlug(slug);
   }, [insights]);
   // Re-derive the open summary from the live list so the panel header (staleness,

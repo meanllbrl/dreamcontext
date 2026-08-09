@@ -1,12 +1,9 @@
 import { useState } from 'react';
 import type { InsightSummary } from '../../hooks/useLab';
 import { useLabInsight, useSyncInsight, useUpdateTweaks } from '../../hooks/useLab';
-import { NumberCard } from './NumberCard';
-import { LineChart } from './LineChart';
-import { PieChart } from './PieChart';
-import { RawDataView } from './RawDataView';
 import { TweakEditor } from './TweakEditor';
-import { FunnelCardPreview } from './funnel/FunnelCardPreview';
+import { RangeControl, nonWindowTweaks } from './RangeControl';
+import { cardSpan, chartEntry } from './chartRegistry';
 import './InsightCard.css';
 
 /** Staleness badge: fresh / stale(Nh) / never synced / error. */
@@ -82,9 +79,33 @@ export function InsightCard({
     });
   };
 
+  /** The RangeControl changes the WINDOW the number is computed over — the same
+   *  PATCH → sync chain the tweak editor uses (#235). */
+  const handleApplyRange = (values: Record<string, string>, label: string) => {
+    updateTweaks.mutate({ slug: summary.slug, tweaks: values }, {
+      onSuccess: () => runSync(`${label} applied.`, `${label} saved, but the refresh failed`),
+      onError: (err) => onToast(`${summary.title}: ${label} failed — ${(err as Error).message}`),
+    });
+  };
+
+  const editableTweaks = nonWindowTweaks(summary.tweaks);
+
+  // Shell/body split: everything below is chrome (title, badges, staleness,
+  // refresh, range, tweaks). What the card DRAWS comes from the registry.
+  const entry = chartEntry(summary.render);
+  const CardBody = entry.CardBody;
+
   return (
     <div
-      className={`lab-card lab-card--clickable${dragging ? ' lab-card--dragging' : ''}${dropTarget ? ' lab-card--drop-target' : ''}`}
+      // Some renders need ~2 board columns (a funnel or metric table is a table);
+      // a manifest `size` can override that. The grid grants the span only where
+      // it is actually wide enough (LabBoard.css).
+      className={[
+        'lab-card lab-card--clickable',
+        cardSpan(summary.render, summary.size) === 2 ? 'lab-card--wide' : '',
+        dragging ? 'lab-card--dragging' : '',
+        dropTarget ? 'lab-card--drop-target' : '',
+      ].filter(Boolean).join(' ')}
       onClick={() => onOpen(summary.slug)}
       role="button"
       tabIndex={0}
@@ -94,7 +115,7 @@ export function InsightCard({
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
-      title={summary.render === 'funnel' ? 'Open the funnel table' : 'Open details, history & interactive chart'}
+      title={entry.openHint}
     >
       <div className="lab-card-header">
         <div className="lab-card-title-row">
@@ -116,28 +137,44 @@ export function InsightCard({
         </div>
       </div>
 
+      {/* Every insight the registry marks windowed gets the range chip — and
+          resolveTweaks derives a window for all of today's renders, so it is in
+          practice unconditional. Clicks and Enter are trapped here; the card
+          itself opens the detail panel on both. */}
+      {entry.supportsWindow && (
+        <div
+          className="lab-card-toolbar"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <RangeControl
+            tweaks={summary.tweaks}
+            compact
+            disabled={updateTweaks.isPending || sync.isPending}
+            onApply={handleApplyRange}
+          />
+        </div>
+      )}
+
       {/* The card body keeps its own hover layer (chart tooltips) — clicks
           still bubble to the card and open the panel. */}
       <div className="lab-card-body">
-        {summary.render === 'number' && <NumberCard latest={summary.latest} unit={summary.unit} series={series} />}
-        {summary.render === 'line' && <LineChart series={series} unit={summary.unit} />}
-        {summary.render === 'pie' && <PieChart series={series} unit={summary.unit} />}
-        {summary.render === 'raw' && (
-          <div onClick={(e) => e.stopPropagation()}>
-            <RawDataView series={series} />
-          </div>
-        )}
-        {summary.render === 'funnel' && <FunnelCardPreview cache={cache} />}
+        <CardBody
+          summary={summary}
+          cache={cache ?? null}
+          series={series}
+          emptyHint={entry.emptyHint}
+        />
       </div>
 
-      {summary.tweaks.length > 0 && (
+      {editableTweaks.length > 0 && (
         <div className="lab-card-tweaks" onClick={(e) => e.stopPropagation()}>
           <button className="lab-card-tweaks-toggle" onClick={() => setShowTweaks((v) => !v)}>
             {showTweaks ? 'Hide tweaks' : 'Edit tweaks'}
           </button>
           {showTweaks && (
             <TweakEditor
-              tweaks={summary.tweaks}
+              tweaks={editableTweaks}
               saving={updateTweaks.isPending}
               onSave={handleSaveTweaks}
             />

@@ -1,7 +1,15 @@
+/* Fixed layout: the name column is the only elastic one, and only a fixed table
+   honours a max-width/ellipsis on a cell — with `auto` a long funnel name grows
+   the table past the card instead of truncating. */
 .funnel-preview {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 12px;
+}
+
+.funnel-preview th:first-child {
+  width: 46%;
 }
 
 .funnel-preview th {
@@ -14,6 +22,8 @@
   padding: 2px var(--space-2) 4px 0;
   border-bottom: 1px solid var(--color-border);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .funnel-preview th:not(:first-child),
@@ -32,7 +42,6 @@
 }
 
 .funnel-preview-name {
-  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -42,6 +51,8 @@
 .funnel-preview-num {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .funnel-preview-more {

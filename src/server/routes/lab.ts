@@ -45,6 +45,7 @@ function toPublicManifest(m: InsightManifest) {
     category: m.category,
     group: m.group,
     render: m.render,
+    size: m.size,
     unit: m.unit,
     binding: m.binding,
     credentials_used: m.credentials_used,
@@ -73,6 +74,8 @@ function toSummary(contextRoot: string, m: InsightManifest) {
     category: m.category,
     group: m.group,
     render: m.render,
+    // The board's card sizing: `s`/`m` → 1 column, `l` → 2, null → the render's default.
+    size: m.size,
     unit: m.unit,
     binding: m.binding,
     latest: cache?.latest ?? null,

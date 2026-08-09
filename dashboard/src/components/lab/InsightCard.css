@@ -115,8 +115,22 @@
   color: var(--color-accent);
 }
 
+/* The window control sits between the header and the body: it belongs to the
+   card's chrome, not to the chart, and it must never squeeze the title row. */
+.lab-card-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: -2px;
+}
+
+/* A card is a thumbnail, never the whole dataset: the body is bounded so no
+   render (a long legend, a raw table) can stretch its grid row. Anything that
+   needs more room is what the detail panel is for. */
 .lab-card-body {
   min-height: 40px;
+  max-height: 280px;
+  overflow: auto;
 }
 
 .lab-card-tweaks-toggle {

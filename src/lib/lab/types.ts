@@ -35,10 +35,31 @@ export type Agg = 'last' | 'sum' | 'mean' | 'max';
 /** Time resolution of a rolled-up series. */
 export type Granularity = 'daily' | 'weekly' | 'monthly';
 
-/** The dashboard render modes. `funnel` is the first multi-page render: its
- *  card routes to `/lab/<slug>` (overview) + `/lab/<slug>/f/<funnelId>` (detail). */
-export const RENDERS = ['number', 'line', 'pie', 'raw', 'funnel'] as const;
+/** The dashboard render modes — the SINGLE source of truth for the render list:
+ *  the CLI `--render` enum, doctor's validation, the lenient manifest read and
+ *  the dashboard's chart registry (mirrored + drift-tested) all derive from it.
+ *  Adding a render = one entry here + one component + one registry entry.
+ *
+ *  All of them read the same cached `Series[]`; `funnel` is the one multi-page
+ *  render (its card routes to `/lab/<slug>` overview + `/lab/<slug>/f/<id>`). */
+export const RENDERS = [
+  'number',
+  'line',
+  'pie',
+  'raw',
+  'funnel',
+  'bar',
+  'bar_compare',
+  'stacked',
+  'table',
+  'heatmap',
+] as const;
 export type Render = (typeof RENDERS)[number];
+
+/** Optional manifest override for how much board a card takes: `s`/`m` = one
+ *  column, `l` = two. Absent = the render's own default span decides. */
+export const INSIGHT_SIZES = ['s', 'm', 'l'] as const;
+export type InsightSize = (typeof INSIGHT_SIZES)[number];
 
 /** Tweak kinds. There is NO `range` type: a relative range is an `enum` tweak
  *  whose key is `range`; an explicit range is two `date` tweaks (`from`/`to`). */
@@ -108,6 +129,8 @@ export interface InsightManifest {
   /** Dashboard section grouping, or null (renders under "Ungrouped"). */
   group: string | null;
   render: Render;
+  /** Board footprint override, or null (the render's default span wins). */
+  size: InsightSize | null;
   /** null when the `source:` block is malformed (read stays lenient). */
   source: InsightSource | null;
   refresh: { ttl_minutes: number };

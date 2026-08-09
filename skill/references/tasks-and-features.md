@@ -181,19 +181,38 @@ An **insight** is a named, curated **metric backed by an external source** — "
 
 **An MCP tool, a raw API call, or a hand-written script is the LAST resort.** If `lab/insights/` already holds the metric, fetching it another way bypasses the manifest, cache, tweaks and KR binding — and produces a number the next session cannot reproduce. A real past failure: an agent asked for revenue reached for a billing MCP while the synced Paddle series was already cached, and the project had to hand-write a memory note to stop it. When you genuinely must go outside (the insight doesn't exist, or the question needs a dimension the manifest doesn't carry), say so explicitly — and offer to `lab create` it if the user will want it again. Full rule: SKILL.md Operational Rule 13.
 
-The dashboard has a Lab page (number/line/pie/raw cards + funnel mini-table cards, per-insight refresh, sync-all, tweak editing).
+The dashboard has a Lab page: one card per insight (the render draws the body — see the table below), a date-range control on every card, per-insight refresh, sync-all, and tweak editing.
 
 ```bash
-dreamcontext lab create <slug> --title "Weekly Active Users" [--render number|line|pie|raw|funnel] [--adapter http|script] [--category <tab>] [--group <section>] [--unit users] [--ttl 1440]
+dreamcontext lab create <slug> --title "Weekly Active Users" [--render <render>] [--size s|m|l] [--adapter http|script] [--category <tab>] [--group <section>] [--unit users] [--ttl 1440]
 dreamcontext lab sync <slug> [--force]      # one insight (TTL-fresh is skipped unless --force)
 dreamcontext lab sync --all [--force]       # every insight; exits non-zero if any fail
 dreamcontext lab list [--json]              # all insights with latest value + staleness
 dreamcontext lab show <slug> [--json]       # manifest + cached series (never fetches)
-dreamcontext lab tweak <slug> <key> <value> # set a declared tweak (e.g. range last_1_year)
+dreamcontext lab tweak <slug> <key> <value> # a declared tweak, or well-known range/from/to (e.g. range last_1_year)
 dreamcontext lab bind <slug> <objective>    # connect to an objective's KR (--value latest|series:<name>; --clear)
 dreamcontext lab credentials set <key>      # hidden prompt; the ONLY way to store a secret
 dreamcontext lab credentials list           # key NAMES only — values are never printed
 ```
+
+**Renders — pick how the metric is DRAWN.** Every render below reads the same cached `Series[]` (only `funnel` takes its own payload), so switching one is a manifest edit, not a re-model. The engine's `RENDERS` list is the single source of truth: the `--render` enum, doctor's validation and the dashboard's chart registry all derive from it, and an unrecognised value degrades to `number` instead of blanking the board.
+
+| `render` | Draws | Reach for it when |
+|---|---|---|
+| `number` | Latest value + Δ + inline sparkline | One figure IS the answer (MRR, WAU) |
+| `line` | Multi-series trend over time | The shape of the movement matters |
+| `pie` | Share of total by series | Composition — "who makes up the whole" |
+| `bar` | Horizontal bar per series (latest) | "Who is biggest right now" |
+| `bar_compare` | Grouped bars, series × last N buckets | Period-over-period comparison per series |
+| `stacked` | Stacked bars over time | Composition *and* total, together |
+| `table` | Series × latest + Δ + trend, sortable | Many series, exact numbers, scanned not eyeballed |
+| `heatmap` | Week × weekday grid (daily buckets) | Rhythm — which days carry the metric |
+| `raw` | The numbers, unstyled | Debugging an adapter |
+| `funnel` | Routed multi-page funnel view (below) | Step-by-step conversion analysis |
+
+**`size: s\|m\|l`** (optional manifest field, `--size` on create) overrides the card's board footprint: `s`/`m` = one column, `l` = two. Absent, the render decides — `table` and `funnel` ask for two columns because they draw tables; everything else takes one. The board grants a 2-column span only where two columns actually exist, so a narrow window degrades instead of overflowing.
+
+**Well-known tweaks — `range`, `from`, `to`.** The engine derives a time window for EVERY insight (a relative `range` like `last_30_days`, or an explicit `from`/`to` pair that out-ranks it), so those three keys are writable on any insight whether or not its manifest declares them — via `lab tweak` or the dashboard's date-range control, which is why every card and the funnel pages offer a window even when the author never declared one. A manifest that DOES declare `range` keeps its curated options (and still rejects outsiders); an undeclared one accepts the relative-range grammar and gains an implicit declaration on first write. Setting `range` clears any stored `from`/`to` — otherwise the explicit window would silently pin every later preset to the old dates. Any other knob (`country`, `cohort`, …) still has to be declared in the manifest to be settable.
 
 **Adapters:** `http` — declarative JSON API (endpoint/headers/body templates with `{{tweak:key}}` and `{{cred:key}}` placeholders, JSON-path `extract`, multi-series split via `seriesKey`); `script` — escape hatch, `lab/scripts/<slug>.mjs` exporting a default async function. `lab create` scaffolds the manifest; edit it to set the real endpoint/extract config, then run the first sync.
 
@@ -204,6 +223,8 @@ dreamcontext lab credentials list           # key NAMES only — values are neve
 ### Funnel insights (`render: funnel` — the first multi-page insight)
 
 For funnel analysis (comparative across funnels + sequential across steps), an insight can render as a **routed multi-page view** instead of a card+slide-over: the Lab card shows a top-N mini-table and opens `/lab/<slug>` (all-funnels comparison table: metric columns from the payload, sort/search, date-range presets via the `range` tweak, Δ-vs-previous-period chips, low-sample de-emphasis, multi-select→compare) and `/lab/<slug>/f/<funnelId>` (the step lane: rounded nodes left→right, drop badges, a two-click A→B conversion-arrow gesture, dimension filters, one-dimension breakdown as stacked bands or small-multiple lanes, an accessible step-table twin). Long funnels (real quiz funnels run 40-60 steps) get horizontal scroll + zoom-to-fit plus a **significant-change collapse mode** (toolbar `Collapse` + user-set threshold %, URL `clt`): runs of steps whose adjacent change is below the threshold fold into one node showing start → end users + a step-count chip — cumulative drops stay visible, never hidden. Filters, breakdown, compare set, pinned arcs, collapse threshold, and sort all live in the URL — a copied link reproduces the exact view.
+
+**Columns are the reader's choice.** The overview table's **Columns** popover lists every available column as a checkbox, grouped and scrolled: the payload's *Metrics*, plus **derived step columns computed client-side** from `steps` — *Step conversion* (one per adjacent pair of the union step order, "A → B %") and *% of top* (one per step). Derived columns align by step KEY across funnels, so a funnel missing that step renders "—" rather than a fabricated 0, a zero denominator is "—" rather than ∞, the low-sample rule de-emphasizes derived rates exactly as it does payload ones, and a Δ chip appears only where the previous period has BOTH of the rate's steps. They cost nothing to add — the `funnel-set/v1` contract is unchanged. Defaults are exactly the payload's metric columns (every derived column starts off); sort and copy-as-Markdown follow whatever is visible; **Reset** returns to the default set. The selection rides the URL `cols` param **and** writes through to per-machine lab prefs keyed by insight slug — a shared link shows the sender's columns (URL wins), your own machine remembers yours otherwise, and keys naming columns the payload no longer has are dropped silently.
 
 **Payload contract (`funnel-set/v1`):** instead of `Series[]`, the adapter (script or HTTP) returns ONE object:
 
@@ -234,9 +255,9 @@ Mirrors proactive objective capture. When the user states or implies a recurring
 
 1. **Dedup first.** `dreamcontext memory recall "<metric>" --types insight` and `dreamcontext lab list`. If one covers it, offer to update/re-sync it instead.
 2. **Offer it.** *"Want me to track this as a Lab insight so every session sees the current value?"* Never create without a yes.
-3. **Agree the shape.** Slug, title, render (number/line/pie/raw), category (top-level dashboard tab, e.g. "Marketing"), group (section within it), unit — and write a real `## Meaning` section (it powers recall).
+3. **Agree the shape.** Slug, title, render (the table above), category (top-level dashboard tab, e.g. "Marketing"), group (section within it), unit, optional `size` — and write a real `## Meaning` section (it powers recall).
 4. **Pick the source.** HTTP endpoint (+ extract path) or a custom script. Secrets go in via `dreamcontext lab credentials set <key>` — never inline in the manifest.
-5. **Declare tweaks** the user will want to adjust (typed `enum`/`date`/`string`; a relative range is an enum tweak keyed `range`).
+5. **Declare tweaks** the user will want to adjust (typed `enum`/`date`/`string`). Declare `range` only to CURATE its presets — the window keys work without a declaration (see well-known tweaks above).
 6. **Scaffold + first sync.** `lab create`, edit the manifest, `lab sync <slug>`, confirm the value looks right.
 7. **Offer KR binding** if an existing roadmap objective tracks the same outcome: `dreamcontext lab bind <insight> <objective>` — connecting seeds the objective's `metric.current` from the cached latest immediately, and every future sync keeps it measured. One feeder per objective (binding a new insight unbinds the previous one loudly); disconnect with `lab bind <insight> --clear`.
 

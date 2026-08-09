@@ -7,6 +7,8 @@
  * No React, no fetch — keep this importable from any component.
  */
 
+import { CHART_COLORS } from '../chartColors';
+
 // ─── Types (mirror src/lib/lab/types.ts — the API returns these shapes) ─────
 
 export type FunnelMetricFormat = 'count' | 'pct' | 'usd' | 'x' | 'seconds' | 'number';
@@ -88,7 +90,7 @@ export interface FunnelPrev {
 export const DEFAULT_LOW_SAMPLE_THRESHOLD = 30;
 
 /** Shared multi-series palette (same as LineChart/PieChart — the lab chart set). */
-export const FUNNEL_COLORS = ['#7b68ee', '#0091ff', '#ff5b36', '#4ade80', '#ffae3b', '#f472b6', '#22d3ee', '#a3e635'];
+export const FUNNEL_COLORS = CHART_COLORS;
 
 // ─── Step math ──────────────────────────────────────────────────────────────
 
@@ -194,6 +196,13 @@ export interface MetricColumn {
   key: string;
   label: string;
   format: FunnelMetricFormat;
+}
+
+/** Header text for a step: the payload author's own label when it declared one,
+ *  else the raw key prettified. Data-derived step names are never translated. */
+export function stepColumnLabel(step: { key: string; label?: string }): string {
+  const label = (step.label ?? '').trim();
+  return label || prettifyKey(step.key);
 }
 
 /** Ordered union of metric keys across all funnels (first-seen order). */
@@ -452,6 +461,144 @@ export function alignStepKeys(funnels: FunnelDef[]): { key: string; label: strin
   return out;
 }
 
+// ─── Overview columns (payload metrics + derived step columns) ──────────────
+
+export type OverviewColumnKind = 'metric' | 'conversion' | 'of_top';
+
+export interface OverviewColumn extends MetricColumn {
+  kind: OverviewColumnKind;
+  /** Step keys this column reads: none for a metric, [from, to] for a step
+   *  conversion, [step] for % of top. */
+  steps: string[];
+}
+
+/** Derived keys are namespaced so they can never collide with a payload metric
+ *  key — and metric columns keep their BARE key, so older `?sort=<metric>` deep
+ *  links still resolve. */
+const CONVERSION_PREFIX = 'cv:';
+const OF_TOP_PREFIX = 'ot:';
+
+export function conversionColumnKey(fromStep: string, toStep: string): string {
+  return `${CONVERSION_PREFIX}${fromStep}>${toStep}`;
+}
+
+export function ofTopColumnKey(stepKey: string): string {
+  return `${OF_TOP_PREFIX}${stepKey}`;
+}
+
+/**
+ * Every column the overview table CAN show: the payload's metric columns first,
+ * then the derived ones computed client-side from `steps` — one per adjacent
+ * pair of the union step order (conversion A→B), then one per step (% of top).
+ * The payload contract is frozen; these are view math, not new data.
+ */
+export function overviewColumns(set: FunnelSet): OverviewColumn[] {
+  const cols: OverviewColumn[] = metricColumns(set).map((c) => ({ ...c, kind: 'metric', steps: [] }));
+  const taken = new Set(cols.map((c) => c.key));
+  const push = (col: OverviewColumn): void => {
+    if (taken.has(col.key)) return; // a metric key already owns it — payload wins
+    taken.add(col.key);
+    cols.push(col);
+  };
+
+  const union = alignStepKeys(set.funnels);
+  for (let i = 1; i < union.length; i++) {
+    const from = union[i - 1];
+    const to = union[i];
+    push({
+      key: conversionColumnKey(from.key, to.key),
+      label: `${stepColumnLabel(from)} → ${stepColumnLabel(to)} %`,
+      format: 'pct',
+      kind: 'conversion',
+      steps: [from.key, to.key],
+    });
+  }
+  for (const step of union) {
+    push({
+      key: ofTopColumnKey(step.key),
+      label: `% of top: ${stepColumnLabel(step)}`,
+      format: 'pct',
+      kind: 'of_top',
+      steps: [step.key],
+    });
+  }
+  return cols;
+}
+
+/** The default visible set: exactly the payload's metric columns (today's view —
+ *  every derived column starts OFF). */
+export function defaultColumnKeys(set: FunnelSet): string[] {
+  return metricColumns(set).map((c) => c.key);
+}
+
+/** A rate in %, or null when it cannot be computed honestly (missing step, or a
+ *  zero/negative denominator — never ∞, never a silent 0). */
+function rate(numerator: number | null, denominator: number | null): number | null {
+  if (numerator === null || denominator === null) return null;
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return null;
+  return (numerator / denominator) * 100;
+}
+
+function stepUsers(funnel: FunnelDef, key: string): number | null {
+  const step = funnel.steps.find((s) => s.key === key);
+  return step ? step.users : null;
+}
+
+/** One cell's numeric value. Derived columns align by step KEY across funnels
+ *  (never by index) — a funnel that lacks the step renders "—", not 0. */
+export function overviewCellValue(funnel: FunnelDef, col: OverviewColumn): number | null {
+  if (col.kind === 'metric') return funnel.metrics[col.key]?.v ?? null;
+  if (col.kind === 'conversion') {
+    return rate(stepUsers(funnel, col.steps[1]), stepUsers(funnel, col.steps[0]));
+  }
+  return rate(stepUsers(funnel, col.steps[0]), funnel.steps[0]?.users ?? null);
+}
+
+/**
+ * The previous-period value for a cell, from the SAME prev mechanism the metric
+ * columns use (adapter `prev` on the metric/step, else the history snapshot —
+ * `computeFunnelPrev`). A derived rate needs BOTH of its steps' previous users;
+ * when either is missing there is no honest comparison, so there is no chip.
+ */
+export function overviewCellPrev(funnel: FunnelDef, col: OverviewColumn, prev: FunnelPrev | null): number | null {
+  if (!prev) return null;
+  if (col.kind === 'metric') return prev.metrics[funnel.id]?.[col.key] ?? null;
+  const steps = prev.steps[funnel.id];
+  if (!steps) return null;
+  const at = (key: string | undefined): number | null => (key === undefined ? null : steps[key] ?? null);
+  if (col.kind === 'conversion') return rate(at(col.steps[1]), at(col.steps[0]));
+  return rate(at(col.steps[0]), at(funnel.steps[0]?.key));
+}
+
+/**
+ * Which columns the table shows. Precedence: URL param (a shared link shows the
+ * SENDER's view) > saved prefs > the default set. Keys referencing columns that
+ * are no longer in the payload are dropped silently; a source whose keys ALL
+ * went stale carries no usable opinion, so the next source decides. An
+ * explicitly EMPTY source (the user unchecked everything) is honored as-is.
+ * Returns the keys in canonical column order, so toggle order never leaks in.
+ */
+export function resolveColumnKeys(
+  available: OverviewColumn[],
+  urlKeys: string[] | null,
+  prefKeys: string[] | null | undefined,
+  defaults: string[],
+): string[] {
+  const order = available.map((c) => c.key);
+  const known = new Set(order);
+  const inOrder = (keys: string[]): string[] => {
+    const wanted = new Set(keys);
+    return order.filter((k) => wanted.has(k));
+  };
+  for (const source of [urlKeys, prefKeys]) {
+    if (!source) continue;
+    if (source.length === 0) return [];
+    const kept = source.filter((k) => known.has(k));
+    if (kept.length > 0) return inOrder(kept);
+  }
+  return inOrder(defaults);
+}
+
 // ─── URL view-state codecs (A13 — the whole view round-trips) ───────────────
 
 export interface FunnelViewState {
@@ -553,6 +700,32 @@ export function readViewState(params: URLSearchParams): FunnelViewState {
   };
 }
 
+/**
+ * Serialize the visible column selection into the `cols` param (F13). The param
+ * is DELETED when the selection IS the default set, so an untouched link stays
+ * plain and "no param" keeps meaning "no opinion"; an empty selection round-trips
+ * as an empty value, which is a choice, not an absence.
+ */
+export function writeColumnKeys(params: URLSearchParams, keys: string[], defaults: string[]): URLSearchParams {
+  const wanted = new Set(keys);
+  const base = new Set(defaults);
+  const same = wanted.size === base.size && [...wanted].every((k) => base.has(k));
+  if (same) params.delete('cols');
+  else params.set('cols', keys.map(enc).join(','));
+  return params;
+}
+
+/** The `cols` param, or null when the URL carries no opinion. Tolerates junk. */
+export function readColumnKeys(params: URLSearchParams): string[] | null {
+  const raw = params.get('cols');
+  if (raw === null) return null;
+  if (raw.trim() === '') return [];
+  return raw
+    .split(',')
+    .map((s) => { try { return dec(s); } catch { return ''; } })
+    .filter(Boolean);
+}
+
 // ─── Copy-as-Markdown (A14) ─────────────────────────────────────────────────
 
 export function stepTableMarkdown(name: string, rows: StepRow[]): string {
@@ -571,20 +744,25 @@ export function stepTableMarkdown(name: string, rows: StepRow[]): string {
   return lines.join('\n');
 }
 
-export function overviewRowMarkdown(funnel: FunnelDef, cols: MetricColumn[]): string {
-  const header = `| Funnel | ${cols.map((c) => c.label).join(' | ')} |`;
-  const sep = `| --- | ${cols.map(() => '---:').join(' | ')} |`;
-  const row = `| ${funnel.name} | ${cols.map((c) => formatMetricValue(funnel.metrics[c.key]?.v ?? null, c.format)).join(' | ')} |`;
-  return [header, sep, row].join('\n');
+/** Both exports render the VISIBLE column set the caller hands them — derived
+ *  columns included — so a copied table is what the reader was looking at. */
+function markdownRow(funnel: FunnelDef, cols: OverviewColumn[]): string {
+  return `| ${funnel.name} | ${cols.map((c) => formatMetricValue(overviewCellValue(funnel, c), c.format)).join(' | ')} |`;
 }
 
-export function overviewTableMarkdown(funnels: FunnelDef[], cols: MetricColumn[]): string {
+export function overviewRowMarkdown(funnel: FunnelDef, cols: OverviewColumn[]): string {
+  return [
+    `| Funnel | ${cols.map((c) => c.label).join(' | ')} |`,
+    `| --- | ${cols.map(() => '---:').join(' | ')} |`,
+    markdownRow(funnel, cols),
+  ].join('\n');
+}
+
+export function overviewTableMarkdown(funnels: FunnelDef[], cols: OverviewColumn[]): string {
   const lines = [
     `| Funnel | ${cols.map((c) => c.label).join(' | ')} |`,
     `| --- | ${cols.map(() => '---:').join(' | ')} |`,
   ];
-  for (const funnel of funnels) {
-    lines.push(`| ${funnel.name} | ${cols.map((c) => formatMetricValue(funnel.metrics[c.key]?.v ?? null, c.format)).join(' | ')} |`);
-  }
+  for (const funnel of funnels) lines.push(markdownRow(funnel, cols));
   return lines.join('\n');
 }

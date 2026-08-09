@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import type { PublicTweak } from '../../hooks/useLab';
+import { useI18n } from '../../context/I18nContext';
+import { humanizeTweakKey, humanizeTweakValue } from './tweakLabels';
 
 /** Generic form built from `TweakDecl[]`: enum → select, date → date input, string → text.
  *  NO range branch — a relative range is just an enum tweak keyed "range" (LOCKED). */
@@ -12,6 +14,7 @@ export function TweakEditor({
   onSave: (values: Record<string, string>) => void;
   saving?: boolean;
 }) {
+  const { locale } = useI18n();
   const [draft, setDraft] = useState<Record<string, string>>(() => {
     const seed: Record<string, string> = {};
     for (const t of tweaks) seed[t.key] = t.value ?? t.default ?? '';
@@ -26,14 +29,14 @@ export function TweakEditor({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
       {tweaks.map((t) => (
         <label key={t.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
-          <span style={{ minWidth: 90, color: 'var(--color-text-secondary)' }}>{t.label ?? t.key}</span>
+          <span style={{ minWidth: 90, color: 'var(--color-text-secondary)' }}>{t.label ?? humanizeTweakKey(t.key, locale)}</span>
           {t.type === 'enum' ? (
             <select
               value={draft[t.key] ?? ''}
               onChange={(e) => set(t.key, e.target.value)}
               style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'var(--color-text)', fontSize: 12.5 }}
             >
-              {(t.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+              {(t.options ?? []).map((o) => <option key={o} value={o}>{humanizeTweakValue(o, locale)}</option>)}
             </select>
           ) : t.type === 'date' ? (
             <input

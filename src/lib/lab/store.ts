@@ -4,7 +4,9 @@ import fg from 'fast-glob';
 import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../frontmatter.js';
 import { today } from '../id.js';
 import { writeCredentialsExample } from './required-credentials.js';
+import { parseRelativeRange } from './tweaks.js';
 import {
+  INSIGHT_SIZES,
   LabError,
   RENDERS,
   TWEAK_TYPES,
@@ -13,6 +15,7 @@ import {
   type ExtractConfig,
   type InsightCache,
   type InsightManifest,
+  type InsightSize,
   type InsightSource,
   type Render,
   type TweakDecl,
@@ -61,6 +64,13 @@ function asRecord(v: unknown): Record<string, unknown> | null {
 function toRender(v: unknown): Render {
   const s = typeof v === 'string' ? v.trim() : '';
   return (RENDERS as readonly string[]).includes(s) ? (s as Render) : 'number';
+}
+
+/** LENIENT size parse: absent or unrecognised → null (the render's own default
+ *  span decides), never a throw — same contract `category` has. */
+function toSize(v: unknown): InsightSize | null {
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return (INSIGHT_SIZES as readonly string[]).includes(s) ? (s as InsightSize) : null;
 }
 
 function toAgg(v: unknown): Agg {
@@ -161,6 +171,7 @@ export function readInsightFile(filePath: string): InsightManifest {
     category: strOrNull(data.category),
     group: strOrNull(data.group),
     render: toRender(data.render),
+    size: toSize(data.size),
     source: parseSource(data.source),
     refresh: { ttl_minutes: Number.isFinite(ttlRaw) && ttlRaw > 0 ? ttlRaw : DEFAULT_TTL_MINUTES },
     tweaks: parseTweaks(data.tweaks),
@@ -303,6 +314,8 @@ export interface CreateInsightInput {
   slug: string;
   title: string;
   render?: Render;
+  /** Board footprint override (`s`/`m` = 1 column, `l` = 2). Omit for the default. */
+  size?: InsightSize;
   adapter?: 'http' | 'script';
   category?: string | null;
   group?: string | null;
@@ -321,6 +334,9 @@ export function validateManifestForWrite(input: CreateInsightInput): void {
   }
   if (input.render && !(RENDERS as readonly string[]).includes(input.render)) {
     throw new LabError(`render must be one of: ${RENDERS.join(', ')}.`);
+  }
+  if (input.size && !(INSIGHT_SIZES as readonly string[]).includes(input.size)) {
+    throw new LabError(`size must be one of: ${INSIGHT_SIZES.join(', ')}.`);
   }
   if (input.adapter && input.adapter !== 'http' && input.adapter !== 'script') {
     throw new LabError('adapter must be "http" or "script".');
@@ -373,6 +389,7 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
     category: input.category ?? null,
     group: input.group ?? null,
     render,
+    size: input.size ?? null,
     unit: input.unit ?? null,
     source,
     refresh: { ttl_minutes: input.ttl_minutes ?? DEFAULT_TTL_MINUTES },
@@ -438,9 +455,80 @@ export function writeInsightBinding(
 }
 
 /**
- * Persist new tweak VALUES onto an insight's declared tweaks. Each key must be a
- * declared tweak; the value is validated against its type (enum → one of options;
- * date → calendar date; string → any). Unknown keys and type violations throw.
+ * Tweak keys the ENGINE understands on every insight, declared or not.
+ *
+ * `resolveTweaks` computes a time window for every insight (relative `range`
+ * enum, overridden by explicit `from`/`to` dates), so the window exists whether
+ * or not the manifest author remembered to declare knobs for it. Requiring a
+ * declaration meant the dashboard could only offer the ranges an author had
+ * hand-listed — the "this funnel only has last 7 days" report. These three keys
+ * are therefore always writable; a first write appends an implicit declaration.
+ */
+export const WELL_KNOWN_TWEAK_KEYS = ['range', 'from', 'to'] as const;
+export type WellKnownTweakKey = (typeof WELL_KNOWN_TWEAK_KEYS)[number];
+
+/** Presets offered when a manifest declares no `range` options of its own.
+ *  Mirrored by the dashboard's RangeControl (guarded by a unit test). */
+export const DEFAULT_RANGE_OPTIONS = [
+  'last_7_days',
+  'last_28_days',
+  'last_30_days',
+  'last_90_days',
+  'last_1_year',
+] as const;
+
+export function isWellKnownTweakKey(key: string): key is WellKnownTweakKey {
+  return (WELL_KNOWN_TWEAK_KEYS as readonly string[]).includes(key);
+}
+
+function isCalendarDate(v: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
+}
+
+/** The declaration written when a well-known key is set on a manifest that never
+ *  declared it. `range` deliberately carries NO `options`: an absent list means
+ *  "the default presets", so an author who later curates one wins. */
+function implicitTweakDecl(key: WellKnownTweakKey, value: string): TweakDecl {
+  return key === 'range'
+    ? { key, type: 'enum', value }
+    : { key, type: 'date', value };
+}
+
+/** Validate one incoming tweak value against its declaration (or, for an
+ *  undeclared well-known key, against the shape the engine will read back). */
+function validateTweakValue(key: string, value: string, decl: TweakDecl | undefined): void {
+  const type = decl?.type ?? (key === 'range' ? 'enum' : 'date');
+  // Clearing an explicit window is how you go back to the preset — an empty
+  // from/to is ignored by resolveTweaks, which is exactly "unset".
+  if ((key === 'from' || key === 'to') && value === '') return;
+
+  if (type === 'enum') {
+    if (decl?.options && decl.options.length > 0) {
+      if (!decl.options.includes(value)) {
+        throw new LabError(`Tweak "${key}" must be one of: ${decl.options.join(', ')} (got "${value}").`);
+      }
+      return;
+    }
+    // An options-less `range` still has a grammar — the one resolveTweaks parses.
+    if (key === 'range' && parseRelativeRange(value) === null) {
+      throw new LabError(`Tweak "range" must be a relative range like last_30_days (got "${value}").`);
+    }
+    return;
+  }
+  if (type === 'date' && !isCalendarDate(value)) {
+    throw new LabError(`Tweak "${key}" must be a valid YYYY-MM-DD date (got "${value}").`);
+  }
+}
+
+/**
+ * Persist new tweak VALUES onto an insight. Each key must be a declared tweak or
+ * one of the WELL-KNOWN range keys; the value is validated against its type
+ * (enum → one of options; date → calendar date; string → any). Unknown keys and
+ * type violations throw.
+ *
+ * Setting `range` CLEARS any stored `from`/`to`: `resolveTweaks` lets an explicit
+ * window override the enum, so a leftover custom window would silently pin every
+ * later preset to the old dates ("the preset buttons do nothing").
  */
 export function writeInsightTweaks(
   contextRoot: string,
@@ -451,21 +539,31 @@ export function writeInsightTweaks(
   if (!manifest) throw new LabError(`Insight not found: ${slug}`);
   const byKey = new Map(manifest.tweaks.map((t) => [t.key, t]));
 
+  const next = new Map<string, string>();
   for (const [key, value] of Object.entries(values)) {
     const decl = byKey.get(key);
-    if (!decl) throw new LabError(`Unknown tweak "${key}" for insight ${slug}.`);
+    if (!decl && !isWellKnownTweakKey(key)) throw new LabError(`Unknown tweak "${key}" for insight ${slug}.`);
     const v = String(value);
-    if (decl.type === 'enum' && decl.options && decl.options.length > 0 && !decl.options.includes(v)) {
-      throw new LabError(`Tweak "${key}" must be one of: ${decl.options.join(', ')} (got "${v}").`);
-    }
-    if (decl.type === 'date' && !(/^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`)))) {
-      throw new LabError(`Tweak "${key}" must be a valid YYYY-MM-DD date (got "${v}").`);
+    validateTweakValue(key, v, decl);
+    next.set(key, v);
+  }
+
+  const rangeSet = (next.get('range') ?? '').trim() !== '';
+  if (rangeSet && !next.has('from') && !next.has('to')) {
+    for (const key of ['from', 'to'] as const) {
+      if (byKey.has(key)) next.set(key, '');
     }
   }
 
   const nextTweaks: TweakDecl[] = manifest.tweaks.map((t) =>
-    t.key in values ? { ...t, value: String(values[t.key]) } : t,
+    next.has(t.key) ? { ...t, value: next.get(t.key)! } : t,
   );
+  for (const [key, value] of next) {
+    // A cleared, never-declared key has nothing to persist — don't grow the
+    // manifest with empty knobs.
+    if (byKey.has(key) || value.trim() === '') continue;
+    nextTweaks.push(implicitTweakDecl(key as WellKnownTweakKey, value));
+  }
   updateFrontmatterFields(manifest.path, { tweaks: nextTweaks, updated_at: today() });
   return readInsightFile(manifest.path);
 }

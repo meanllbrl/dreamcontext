@@ -10,7 +10,15 @@ import { ProgressBar } from '../../lib/progress.js';
 import { writeCredential, listCredentialNames } from '../../lib/lab/credentials.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
 import { computeFunnelPrev, computeStepRows, worstDropIndex } from '../../lib/lab/funnel.js';
-import { LabError, type FunnelCacheEntry, type InsightCache, type Render } from '../../lib/lab/types.js';
+import {
+  INSIGHT_SIZES,
+  LabError,
+  RENDERS,
+  type FunnelCacheEntry,
+  type InsightCache,
+  type InsightSize,
+  type Render,
+} from '../../lib/lab/types.js';
 
 /**
  * `dreamcontext lab` — the analytics-insights subsystem CLI. Mirrors `roadmap`:
@@ -172,7 +180,7 @@ export function registerLabCommand(program: Command): void {
       }
       console.log(header(`Insight: ${slug}`));
       console.log(`  title: ${manifest.title}`);
-      console.log(`  render: ${manifest.render}`);
+      console.log(`  render: ${manifest.render}${manifest.size ? ` (size ${manifest.size})` : ''}`);
       console.log(`  category: ${manifest.category ?? '(none)'}`);
       console.log(`  group: ${manifest.group ?? '(none)'}`);
       if (cache) {
@@ -193,11 +201,13 @@ export function registerLabCommand(program: Command): void {
     .requiredOption('--title <title>', 'Insight title')
     .option('--category <category>', 'Top-level dashboard category (side-menu tab, e.g. "Marketing")')
     .option('--group <group>', 'Dashboard section this insight groups under')
-    .option('--render <render>', 'number|line|pie|raw|funnel (default number)')
+    // Enum text derives from RENDERS so a new render never needs a CLI edit.
+    .option('--render <render>', `${RENDERS.join('|')} (default number)`)
+    .option('--size <size>', `${INSIGHT_SIZES.join('|')} — board footprint (default: the render's own)`)
     .option('--adapter <adapter>', 'http|script (default http)')
     .option('--unit <unit>', 'Display unit (e.g. "users")')
     .option('--ttl <minutes>', 'Cache TTL in minutes (default 1440)')
-    .action((slug: string, opts: { title: string; category?: string; group?: string; render?: string; adapter?: string; unit?: string; ttl?: string }) => {
+    .action((slug: string, opts: { title: string; category?: string; group?: string; render?: string; size?: string; adapter?: string; unit?: string; ttl?: string }) => {
       const root = ensureContextRoot();
       try {
         const m = createInsight(root, {
@@ -206,6 +216,7 @@ export function registerLabCommand(program: Command): void {
           category: opts.category ?? null,
           group: opts.group ?? null,
           render: (opts.render as Render) ?? 'number',
+          size: opts.size as InsightSize | undefined,
           adapter: (opts.adapter as 'http' | 'script') ?? 'http',
           unit: opts.unit ?? null,
           ttl_minutes: opts.ttl ? Number(opts.ttl) : undefined,
@@ -220,7 +231,7 @@ export function registerLabCommand(program: Command): void {
   lab
     .command('tweak')
     .argument('<slug>', 'Insight slug')
-    .argument('<key>', 'Declared tweak key')
+    .argument('<key>', 'Tweak key (a declared one, or the well-known range/from/to)')
     .argument('<value>', 'New value')
     .description('Set one tweak value on an insight')
     .action((slug: string, key: string, value: string) => {

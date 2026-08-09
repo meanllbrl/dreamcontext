@@ -152,6 +152,19 @@
   --color-accent-text: var(--color-snow);
   --color-accent-soft: rgba(123, 104, 238, 0.12);
 
+  /* ─── Categorical chart scale (lab charts read these directly from SVG) ───
+     Series colours, in order. Hues are the ones the charts already used; the
+     light-theme entries are darkened where the original was tuned for a dark
+     canvas (green, amber, grey, pink, teal all fail contrast on white). */
+  --chart-1: #7b68ee;
+  --chart-2: #0091ff;
+  --chart-3: #ff5b36;
+  --chart-4: #22a95b;
+  --chart-5: #e08c0c;
+  --chart-6: #8b93a7;
+  --chart-7: #d63f95;
+  --chart-8: #0ea5a5;
+
   /* ─── Semantic Colors (data viz) ─── */
   --color-success: hsl(142 71% 40%);
   --color-success-subtle: hsl(142 71% 95%);
@@ -279,6 +292,16 @@
 
   --gradient-brand: linear-gradient(135deg, #6647f0, #9d8cff);
   --gradient-brand-subtle: linear-gradient(135deg, rgba(157, 140, 255, 0.16), rgba(0, 145, 255, 0.16));
+
+  /* Chart scale on dark — the original chart hexes, which were picked here. */
+  --chart-1: #9d8cff;
+  --chart-2: #38a9ff;
+  --chart-3: #ff7a5c;
+  --chart-4: #4ade80;
+  --chart-5: #ffae3b;
+  --chart-6: #c8ccd9;
+  --chart-7: #f472b6;
+  --chart-8: #22d3ee;
 
   /* Semantic colors lifted for dark contrast */
   --color-success: hsl(142 71% 55%);

@@ -20,6 +20,7 @@ import {
   type FunnelViewState,
 } from './funnelModel';
 import { useLabSearchParams } from './labRoute';
+import { RangeControl, writeRangeParams } from '../RangeControl';
 import { FunnelFilterBar } from './FunnelFilterBar';
 import { FunnelLane, type LaneArc } from './FunnelLane';
 import { FunnelStepTable } from './FunnelStepTable';
@@ -185,6 +186,19 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
     });
   };
 
+  /** The step lane answers for a window too, so this page owns the same control
+   *  as the overview: URL (the crumb back re-reads it) → PATCH → sync (#235). */
+  const applyRange = (values: Record<string, string>, label: string) => {
+    updateParams((p) => writeRangeParams(p, values));
+    updateTweaks.mutate({ slug, tweaks: values }, {
+      onSuccess: () => sync.mutate(slug, {
+        onSuccess: () => onToast(`${label} applied.`),
+        onError: (e) => onToast(`Re-fetch failed — ${(e as Error).message}`),
+      }),
+      onError: (e) => onToast(`${label} failed — ${(e as Error).message}`),
+    });
+  };
+
   const refetchValues = useMemo(() => {
     const out: Record<string, string> = {};
     for (const dim of set?.dimensions ?? []) {
@@ -246,6 +260,12 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
       <Crumbs onBackToBoard={onBackToBoard} onBack={onBack} title={title} name={funnel.name} />
 
       <div className="funnel-det-toolbar">
+        <RangeControl
+          tweaks={tweaks}
+          compact
+          disabled={updateTweaks.isPending || sync.isPending}
+          onApply={applyRange}
+        />
         <FunnelFilterBar
           set={set}
           filters={view.filters}

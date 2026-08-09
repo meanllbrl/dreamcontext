@@ -57,7 +57,8 @@
         "--effort",
         "--timeout",
         "--catchup",
-        "--prompt-file"
+        "--prompt-file",
+        "--review"
       ]
     },
     {
@@ -120,10 +121,33 @@
       ]
     },
     {
+      "path": "automations propose",
+      "desc": "Stop and ask a human before acting (a run calls this about itself; it cannot be called by hand)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--title",
+        "--summary",
+        "--body",
+        "--body-file"
+      ]
+    },
+    {
       "path": "automations remove",
       "desc": "Delete an automation manifest and its machine-local cache/lock/sidecar (approval revoked too)",
       "args": [
         "<slug>"
+      ]
+    },
+    {
+      "path": "automations review",
+      "desc": "Answer a proposal a run stopped to ask about: approve, reject, reject-forever, or correct it in words",
+      "args": [
+        "[slug]"
+      ],
+      "valueFlags": [
+        "--steer"
       ]
     },
     {
@@ -161,6 +185,31 @@
       "valueFlags": [
         "--history"
       ]
+    },
+    {
+      "path": "automations telegram",
+      "desc": "Answer review cards from your phone (machine-local bot token; never synced)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "automations telegram off",
+      "desc": "Forget the bot token and stop the channel (cards stay answerable everywhere else)",
+      "args": []
+    },
+    {
+      "path": "automations telegram setup",
+      "desc": "Point a Telegram bot at this machine so cards reach you where you already are",
+      "args": [],
+      "valueFlags": [
+        "--token",
+        "--chat"
+      ]
+    },
+    {
+      "path": "automations telegram test",
+      "desc": "Post any waiting cards now and report what the channel can see",
+      "args": []
     },
     {
       "path": "automations tick",
@@ -1019,6 +1068,7 @@
         "--category",
         "--group",
         "--render",
+        "--size",
         "--adapter",
         "--unit",
         "--ttl"

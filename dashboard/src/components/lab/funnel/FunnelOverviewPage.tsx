@@ -1,23 +1,37 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useLabInsight, useSyncInsight, useUpdateTweaks } from '../../../hooks/useLab';
+import { useLabPrefs } from '../../../hooks/useLabPrefs';
 import { copyPreservingUnicode } from '../../../lib/clipboard';
+import { pushOverlay, popOverlay } from '../../../lib/overlayStack';
 import {
   benchmarkClass,
   clientFilters,
+  defaultColumnKeys,
   formatDelta,
   formatMetricValue,
   hasActiveFilters,
   isLowSample,
-  metricColumns,
+  overviewCellPrev,
+  overviewCellValue,
+  overviewColumns,
   overviewRowMarkdown,
   overviewTableMarkdown,
+  readColumnKeys,
   readViewState,
+  resolveColumnKeys,
+  writeColumnKeys,
   writeViewState,
   type FunnelDef,
   type FunnelDimension,
   type FunnelViewState,
+  type OverviewColumn,
+  type OverviewColumnKind,
 } from './funnelModel';
 import { labPath, pushLabPath, useLabSearchParams } from './labRoute';
+import { useI18n } from '../../../context/I18nContext';
+import { humanizeTweakValue } from '../tweakLabels';
+import { RangeControl, isRelativeRange, writeRangeParams } from '../RangeControl';
+import { FilterPopover } from '../../tasks/FilterPopover';
 import { FunnelFilterBar } from './FunnelFilterBar';
 import { FunnelCompareView } from './FunnelCompareView';
 import './FunnelOverviewPage.css';
@@ -27,6 +41,11 @@ import './FunnelOverviewPage.css';
  * columns from the payload, stable keyboard-accessible sort, id/name search,
  * date-range presets via the range tweak, Δ-vs-previous-period chips, low-sample
  * de-emphasis, row→detail, multi-select→compare, per-row kebab (deep link / MD).
+ *
+ * Columns are user-chosen (the Columns popover): the payload's metrics plus the
+ * derived step columns funnelModel computes client-side. The selection rides the
+ * URL `cols` param and writes through to lab prefs, so a link shows the sender's
+ * view and this machine remembers its own.
  */
 
 const MAX_COMPARE = 4;
@@ -39,6 +58,8 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
   const detail = useLabInsight(slug);
   const sync = useSyncInsight();
   const updateTweaks = useUpdateTweaks();
+  const { prefs, setColumnKeys } = useLabPrefs();
+  const { locale } = useI18n();
   const [params, updateParams] = useLabSearchParams();
   const view = useMemo(() => readViewState(params), [params]);
   const [search, setSearch] = useState('');
@@ -52,8 +73,8 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
   const tweaks = detail.data?.insight.tweaks ?? [];
   const rangeTweak = tweaks.find((t) => t.key === 'range' && t.type === 'enum');
   const currentRange = rangeTweak ? (rangeTweak.value ?? rangeTweak.default ?? '') : '';
-  const hasCustomRange = tweaks.some((t) => t.key === 'from' && t.type === 'date')
-    && tweaks.some((t) => t.key === 'to' && t.type === 'date');
+  const currentFrom = tweaks.find((t) => t.key === 'from')?.value ?? '';
+  const currentTo = tweaks.find((t) => t.key === 'to')?.value ?? '';
 
   const setView = (next: FunnelViewState) => updateParams((p) => writeViewState(p, next));
 
@@ -69,21 +90,35 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
     });
   };
 
-  // Deep-linked range (A13): a `range` URL param that differs from the stored
-  // tweak is what the link author was looking at — apply it once.
+  // Deep-linked window (A13): a `from`+`to` or `range` URL param that differs
+  // from the stored tweak is what the link author was looking at — apply it
+  // once. from/to win, the same precedence resolveTweaks uses.
   useEffect(() => {
-    if (appliedUrlRange.current || !detail.data || !rangeTweak) return;
+    if (appliedUrlRange.current || !detail.data) return;
     appliedUrlRange.current = true;
+    const urlFrom = params.get('from');
+    const urlTo = params.get('to');
+    if (urlFrom && urlTo) {
+      if (urlFrom !== currentFrom || urlTo !== currentTo) {
+        applyTweaksAndSync({ from: urlFrom, to: urlTo }, 'Custom range');
+      }
+      return;
+    }
     const urlRange = params.get('range');
-    if (urlRange && urlRange !== currentRange && (rangeTweak.options ?? []).includes(urlRange)) {
-      applyTweaksAndSync({ range: urlRange }, `Date range ${urlRange}`);
+    // A curated enum still governs what a link may select; an insight that
+    // declares none accepts any value the engine's range grammar parses.
+    const options = rangeTweak?.options ?? [];
+    const selectable = !!urlRange && (options.length > 0 ? options.includes(urlRange) : isRelativeRange(urlRange));
+    if (urlRange && selectable && urlRange !== currentRange) {
+      applyTweaksAndSync({ range: urlRange }, `Date range ${humanizeTweakValue(urlRange, locale)}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.data]);
 
-  const applyRange = (value: string) => {
-    updateParams((p) => { p.set('range', value); });
-    applyTweaksAndSync({ range: value }, `Date range ${value}`);
+  /** RangeControl → URL (so the window travels in a deep link) → PATCH → sync. */
+  const applyRange = (values: Record<string, string>, label: string) => {
+    updateParams((p) => writeRangeParams(p, values));
+    applyTweaksAndSync(values, label);
   };
 
   const applyRefetchDim = (dim: FunnelDimension, value: string | null) => {
@@ -135,7 +170,21 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
   }
 
   const set = entry.set;
-  const cols = metricColumns(set);
+
+  // ── Visible columns (F13): URL param > saved prefs > payload metric columns.
+  //    Derived step columns are opt-in, so a fresh view is exactly today's.
+  const available = overviewColumns(set);
+  const defaultKeys = defaultColumnKeys(set);
+  const visibleKeys = resolveColumnKeys(available, readColumnKeys(params), prefs.columns[slug], defaultKeys);
+  const visible = new Set(visibleKeys);
+  const cols = available.filter((c) => visible.has(c.key));
+  const colByKey = new Map(available.map((c) => [c.key, c]));
+
+  const applyColumns = (keys: string[]) => {
+    updateParams((p) => writeColumnKeys(p, keys, defaultKeys));
+    setColumnKeys(slug, keys);
+  };
+
   const activeClientFilters = clientFilters(view.filters, set.dimensions);
   const filtersActive = hasActiveFilters(activeClientFilters);
 
@@ -159,7 +208,11 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
   let rows = set.funnels.filter((f) => !q || f.id.toLowerCase().includes(q) || f.name.toLowerCase().includes(q));
   if (view.sort) {
     const { key, dir } = view.sort;
-    const value = (f: FunnelDef): number | string | null => key === 'name' ? f.name : (f.metrics[key]?.v ?? null);
+    // Sorts on ANY column, derived ones included — one lookup, so a new column
+    // kind never needs a new sort branch. Unknown key (a stale deep link) → null.
+    const col = colByKey.get(key);
+    const value = (f: FunnelDef): number | string | null =>
+      key === 'name' ? f.name : col ? overviewCellValue(f, col) : null;
     rows = rows
       .map((f, i) => ({ f, i }))
       .sort((a, b) => {
@@ -214,30 +267,13 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
       <Breadcrumb onBack={onBack} title={title} />
 
       <div className="funnel-ovw-toolbar">
-        {rangeTweak && (
-          <div className="funnel-ovw-ranges" role="group" aria-label="Date range">
-            {(rangeTweak.options ?? []).map((opt) => (
-              <button
-                key={opt}
-                className={`funnel-ovw-range${opt === currentRange ? ' funnel-ovw-range--on' : ''}`}
-                onClick={() => applyRange(opt)}
-                disabled={updateTweaks.isPending || sync.isPending}
-                aria-pressed={opt === currentRange}
-              >{opt.replace(/^last_/, '').replace(/_/g, ' ')}</button>
-            ))}
-            {hasCustomRange && (
-              <CustomRange
-                from={tweaks.find((t) => t.key === 'from')?.value ?? ''}
-                to={tweaks.find((t) => t.key === 'to')?.value ?? ''}
-                disabled={updateTweaks.isPending || sync.isPending}
-                onApply={(from, to) => {
-                  updateParams((p) => { p.set('from', from); p.set('to', to); p.delete('range'); });
-                  applyTweaksAndSync({ from, to }, 'Custom range');
-                }}
-              />
-            )}
-          </div>
-        )}
+        {/* Unconditional: every funnel insight has a window, whether or not its
+            manifest declared knobs for one. */}
+        <RangeControl
+          tweaks={tweaks}
+          disabled={updateTweaks.isPending || sync.isPending}
+          onApply={applyRange}
+        />
         <span className="funnel-ovw-window" title={`Data window ${entry.range.fromISO} → ${entry.range.toISO}`}>
           {entry.range.fromISO} → {entry.range.toISO}
         </span>
@@ -250,6 +286,13 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Search funnels by id or name"
+        />
+        <ColumnPicker
+          available={available}
+          visibleKeys={visibleKeys}
+          isDefault={visibleKeys.length === defaultKeys.length && visibleKeys.every((k) => defaultKeys.includes(k))}
+          onToggle={(key) => applyColumns(visible.has(key) ? visibleKeys.filter((k) => k !== key) : [...visibleKeys, key])}
+          onReset={() => applyColumns(defaultKeys)}
         />
         <button className="funnel-ovw-action" onClick={copyTableMarkdown} title="Copy the visible table as Markdown">Copy MD</button>
         <button
@@ -309,7 +352,6 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
             <tbody>
               {rows.map((funnel) => {
                 const low = isLowSample(funnel, set);
-                const prevMetrics = prev?.metrics[funnel.id] ?? {};
                 return (
                   <tr
                     key={funnel.id}
@@ -339,10 +381,13 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
                       )}
                     </td>
                     {cols.map((c) => {
-                      const metric = funnel.metrics[c.key];
-                      const v = metric?.v ?? null;
-                      const p = prevMetrics[c.key] ?? null;
-                      const bench = benchmarkClass(v, set.benchmarks?.[c.key]);
+                      const v = overviewCellValue(funnel, c);
+                      const p = overviewCellPrev(funnel, c, prev);
+                      // Benchmarks are declared per PAYLOAD metric key; a derived
+                      // column has no benchmark to be measured against.
+                      const bench = c.kind === 'metric' ? benchmarkClass(v, set.benchmarks?.[c.key]) : null;
+                      // The F4 rule reaches derived rates too — a conversion on a
+                      // tiny cohort is noise no matter who computed it.
                       const deEmph = low && c.format === 'pct';
                       return (
                         <td
@@ -435,6 +480,92 @@ function SortableTh({ label, sortKey, sort, onSort, numeric = false }: {
   );
 }
 
+/** Popover section titles — the picker groups by column kind so a 60-step funnel
+ *  stays navigable instead of listing 120 undifferentiated checkboxes. */
+const COLUMN_GROUPS: { kind: OverviewColumnKind; label: string }[] = [
+  { kind: 'metric', label: 'Metrics' },
+  { kind: 'conversion', label: 'Step conversion' },
+  { kind: 'of_top', label: '% of top' },
+];
+
+/**
+ * The Columns popover (FilterPopover idiom, same as RangeControl): every
+ * available column as a checkbox, grouped and scrolled, plus a Reset to the
+ * payload's metric columns. Toggling is instant — the parent owns the selection
+ * and mirrors it into the URL + prefs.
+ */
+function ColumnPicker({ available, visibleKeys, isDefault, onToggle, onReset }: {
+  available: OverviewColumn[];
+  visibleKeys: string[];
+  isDefault: boolean;
+  onToggle: (key: string) => void;
+  onReset: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const overlayId = `funnel-columns-${useId()}`;
+  const visible = new Set(visibleKeys);
+
+  // While open the popover OWNS Escape (overlayStack) — the same reason
+  // RangeControl registers: Esc must close the picker, not the surface under it.
+  useEffect(() => {
+    if (!open) return;
+    pushOverlay(overlayId);
+    return () => popOverlay(overlayId);
+  }, [open, overlayId]);
+
+  const trigger = (
+    <button
+      type="button"
+      className={`funnel-ovw-action funnel-ovw-colbtn${open ? ' funnel-ovw-colbtn--open' : ''}`}
+      onClick={() => setOpen((v) => !v)}
+      aria-expanded={open}
+      aria-haspopup="dialog"
+      title="Choose which columns the table shows"
+    >
+      Columns <span className="funnel-ovw-colcount">{visibleKeys.length}</span>
+    </button>
+  );
+
+  const content = (
+    <div className="funnel-ovw-colpick">
+      <div className="funnel-ovw-colpick-head">
+        <span>Columns</span>
+        <button type="button" className="funnel-ovw-colpick-reset" onClick={onReset} disabled={isDefault}>
+          Reset
+        </button>
+      </div>
+      <div className="funnel-ovw-colpick-list">
+        {COLUMN_GROUPS.map(({ kind, label }) => {
+          const group = available.filter((c) => c.kind === kind);
+          if (group.length === 0) return null;
+          return (
+            <div key={kind} className="funnel-ovw-colpick-group">
+              <div className="funnel-ovw-colpick-grouphead">{label}</div>
+              {group.map((c) => (
+                <label key={c.key} className="funnel-ovw-colpick-row">
+                  <input type="checkbox" checked={visible.has(c.key)} onChange={() => onToggle(c.key)} />
+                  <span className="funnel-ovw-colpick-label">{c.label}</span>
+                </label>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  return (
+    <FilterPopover
+      trigger={trigger}
+      content={content}
+      isOpen={open}
+      onClose={() => setOpen(false)}
+      align="right"
+      width={300}
+    />
+  );
+}
+
 function DeltaChip({ current, prev, format }: { current: number; prev: number; format: Parameters<typeof formatDelta>[2] }) {
   const delta = formatDelta(current, prev, format);
   return (
@@ -442,28 +573,5 @@ function DeltaChip({ current, prev, format }: { current: number; prev: number; f
       className={`funnel-delta funnel-delta--${delta.direction}`}
       title={`${formatMetricValue(current, format)} now vs ${formatMetricValue(prev, format)} previous period`}
     >{delta.text}</span>
-  );
-}
-
-function CustomRange({ from, to, disabled, onApply }: {
-  from: string;
-  to: string;
-  disabled: boolean;
-  onApply: (from: string, to: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [f, setF] = useState(from);
-  const [t, setT] = useState(to);
-  return (
-    <span className="funnel-ovw-custom">
-      <button className="funnel-ovw-range" onClick={() => setOpen((v) => !v)} aria-expanded={open}>custom</button>
-      {open && (
-        <span className="funnel-ovw-custom-pop">
-          <input type="date" value={f} onChange={(e) => setF(e.target.value)} aria-label="From date" />
-          <input type="date" value={t} onChange={(e) => setT(e.target.value)} aria-label="To date" />
-          <button disabled={disabled || !f || !t} onClick={() => { onApply(f, t); setOpen(false); }}>Apply</button>
-        </span>
-      )}
-    </span>
   );
 }

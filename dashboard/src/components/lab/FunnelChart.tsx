@@ -7,9 +7,11 @@ import type { Series } from '../../hooks/useLab';
  *  and of the previous step. Clicking two steps pins an A → B conversion strip;
  *  clicking a pinned step unpins, a third click re-anchors. */
 
-const BAR_COLOR = '#7b68ee';
-const BAR_COLOR_DIM = '#7b68ee55';
-const BAR_COLOR_PINNED = '#0091ff';
+const BAR_COLOR = 'var(--chart-1)';
+/** Same hue at a third of its weight — `color-mix` because a token can't carry
+ *  an appended alpha the way the old literal hex could. */
+const BAR_COLOR_DIM = 'color-mix(in srgb, var(--chart-1) 33%, transparent)';
+const BAR_COLOR_PINNED = 'var(--chart-2)';
 
 interface Step {
   name: string;

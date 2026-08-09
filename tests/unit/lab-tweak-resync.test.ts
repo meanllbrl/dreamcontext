@@ -60,6 +60,40 @@ describe('Lab tweak saves re-sync (#235)', () => {
     });
   }
 
+  /** The `onApply={...}` handler a surface hands to its RangeControl. */
+  function rangeHandler(source: string): string | null {
+    const at = source.indexOf('<RangeControl');
+    if (at === -1) return null;
+    const m = /onApply=\{\s*([A-Za-z_$][\w$]*)\s*\}/.exec(source.slice(at, at + 600));
+    return m ? m[1] : null;
+  }
+
+  /** A named handler's body: from its `const <name> = ` to the blank line that
+   *  ends the declaration. Same crudeness as mutationBlocks, same reason. */
+  function handlerBody(source: string, name: string): string {
+    const at = source.indexOf(`const ${name} = `);
+    if (at === -1) return '';
+    const end = source.indexOf('\n\n', at);
+    return source.slice(at, end === -1 ? source.length : end);
+  }
+
+  // The RangeControl writes nothing itself — it hands the tweak patch back to the
+  // surface. That indirection is exactly where a "the pills don't refresh the
+  // chart" regression would hide, so the walk follows the handoff: every mount
+  // must name a handler, and that handler must be one of the saves checked above.
+  for (const file of TWEAK_SAVERS) {
+    it(`${file}: the RangeControl hands off to a tweak save that re-syncs`, () => {
+      const source = readFileSync(join(ROOT, file), 'utf-8');
+      expect(source, `${file} must mount the shared RangeControl`).toContain('<RangeControl');
+      const handler = rangeHandler(source);
+      expect(handler, `${file}: RangeControl needs an onApply={handler}`).toBeTruthy();
+      const body = handlerBody(source, handler!);
+      expect(body, `${file}: onApply handler "${handler}" is not defined in this file`).not.toBe('');
+      const saves = /updateTweaks\.mutate\(/.test(body) || /applyTweaksAndSync\(/.test(body);
+      expect(saves, `${file}: a range change must PATCH the tweaks (#235)`).toBe(true);
+    });
+  }
+
   it('the shared helper names the outcome instead of claiming a refresh that failed', () => {
     for (const file of ['InsightCard.tsx', 'InsightDetailPanel.tsx']) {
       const source = readFileSync(join(ROOT, file), 'utf-8');
