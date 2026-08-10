@@ -51,17 +51,19 @@ describe('collectBrainDirty', () => {
     expect(report.paths).toEqual(['_dream_context/state/x.json']);
   });
 
-  it('nested vault: another project\'s files inside the enclosing repo NEVER surface', () => {
+  it('a path that cannot be re-based under the vault marks the report INCONCLUSIVE, never silently clean', () => {
     const statusImpl = () => [
-      // What the ENCLOSING repo's status would show for a DIFFERENT project —
-      // must never be blamed on this vault.
+      // The pathspec guarantees every real git entry lives under our context
+      // dir — an entry that resolves OUTSIDE the vault means the
+      // topLevel/projectRoot resolution assumption broke. That must surface
+      // as "could not verify", and it must never blame another project.
       'some-other-project/_dream_context/state/x.json',
     ];
     const report = collectBrainDirty('/enclosing/nested-vault', {
       statusImpl,
       topLevelImpl: () => '/enclosing', // toplevel walks UP past the nested vault
     });
-    expect(report.unavailable).toBe(false);
+    expect(report.unavailable).toBe(true);
     expect(report.paths).toEqual([]);
   });
 

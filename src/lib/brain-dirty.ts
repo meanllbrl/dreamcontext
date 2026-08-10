@@ -94,10 +94,20 @@ export function collectBrainDirty(
     return relative(realProjectRoot, abs).split(sep).join('/');
   };
 
+  // The pathspec means every entry git returned lives under OUR context dir —
+  // so a path that cannot be re-based under projectRoot says the
+  // topLevel/projectRoot resolution assumption itself broke (case-folding
+  // mismatch, an exotic symlink the realpath fallback didn't bridge). That
+  // report is INCONCLUSIVE, not clean: this warning exists so a stray
+  // `git checkout .` can't silently erase a sleep's output, and a silent
+  // false-negative here fails it in exactly the mode it was built to prevent.
   const prefix = `${contextDirName}/`;
-  const paths = raw
-    .map(rebase)
-    .filter((p): p is string => p !== null && (p === contextDirName || p.startsWith(prefix)));
+  const paths: string[] = [];
+  for (const entry of raw) {
+    const rebased = rebase(entry);
+    if (rebased === null) return { paths: [], unavailable: true };
+    if (rebased === contextDirName || rebased.startsWith(prefix)) paths.push(rebased);
+  }
   return { paths, unavailable: false };
 }
 
