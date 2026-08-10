@@ -51,17 +51,39 @@ describe('collectBrainDirty', () => {
     expect(report.paths).toEqual(['_dream_context/state/x.json']);
   });
 
-  it('nested-non-repo: projectRoot sits inside an enclosing repo — reports unavailable, never the enclosing repo\'s files', () => {
+  it('nested vault: another project\'s files inside the enclosing repo NEVER surface', () => {
     const statusImpl = () => [
-      // What the ENCLOSING repo's status would show — must NEVER surface.
+      // What the ENCLOSING repo's status would show for a DIFFERENT project —
+      // must never be blamed on this vault.
       'some-other-project/_dream_context/state/x.json',
     ];
     const report = collectBrainDirty('/enclosing/nested-vault', {
       statusImpl,
       topLevelImpl: () => '/enclosing', // toplevel walks UP past the nested vault
     });
-    expect(report.unavailable).toBe(true);
+    expect(report.unavailable).toBe(false);
     expect(report.paths).toEqual([]);
+  });
+
+  it('nested vault: its own dirty brain files are re-based from repo-top-relative to vault-relative', () => {
+    // Git prints paths relative to the repo TOP; the vault lives a level down.
+    const statusImpl = () => ['nested-vault/_dream_context/state/x.json'];
+    const report = collectBrainDirty('/enclosing/nested-vault', {
+      statusImpl,
+      topLevelImpl: () => '/enclosing',
+    });
+    expect(report.unavailable).toBe(false);
+    expect(report.paths).toEqual(['_dream_context/state/x.json']);
+  });
+
+  it('scopes the git status probe with a context-dir pathspec', () => {
+    let seen: string[] | undefined;
+    const statusImpl = (_cwd: string, pathspecs?: string[]) => {
+      seen = pathspecs;
+      return [];
+    };
+    collectBrainDirty('/repo', { statusImpl, topLevelImpl: sameRootTopLevel });
+    expect(seen).toEqual(['/repo/_dream_context']);
   });
 
   it('rev-parse failure (not a repo at all, or git absent): unavailable', () => {

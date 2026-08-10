@@ -114,13 +114,29 @@ const MAX_TEXT_BLOCK_CHARS = 20000;
  * Analyze a JSONL transcript file for tool usage.
  * Returns change count (Write/Edit), total tool count, and auto-detected task slugs.
  * Returns zeros on any error.
+ *
+ * `sinceISO` (the last completed consolidation, `state.last_consolidated_at`)
+ * bounds what counts as debt: records stamped at or before it are EXCLUDED
+ * from every scored axis. Without the bound, a session that spans a sleep
+ * re-books its whole already-consolidated history at its next Stop — the
+ * consolidation deletes the session RECORD but the transcript persists, so the
+ * re-stop scored the full file from scratch and debt could never reach 0.
+ * The same bound zeroes out the sleep fan-out itself: the orchestrating
+ * session's sub-agent transcripts (the sleep specialists) all predate
+ * `sleep done`, so they stop counting as ~10 fresh debt per cycle.
+ *
+ * Task slugs stay whole-transcript on purpose — they are linkage metadata,
+ * not debt, and dropping a pre-boundary slug would orphan the session.
+ * Records without a parseable timestamp count (fail-open): losing real work
+ * is worse than over-counting a malformed line.
  */
-export function analyzeTranscript(transcriptPath: string): TranscriptAnalysis {
+export function analyzeTranscript(transcriptPath: string, sinceISO?: string | null): TranscriptAnalysis {
   if (!existsSync(transcriptPath)) return ZERO_ANALYSIS;
   try {
     const stat = statSync(transcriptPath);
     if (stat.size === 0 || stat.size > MAX_TRANSCRIPT_BYTES) return ZERO_ANALYSIS;
     const content = readFileSync(transcriptPath, 'utf-8');
+    const sinceMs = sinceISO ? Date.parse(sinceISO) : NaN;
     const changeMatches = content.match(/"name"\s*:\s*"(?:Write|Edit)"/g);
     const toolMatches = content.match(/"name"\s*:\s*"[A-Za-z_]+"/g);
 
@@ -146,19 +162,36 @@ export function analyzeTranscript(transcriptPath: string): TranscriptAnalysis {
     let assistantChars = 0;
     let decisionMarkers = 0;
     let novelTokens = 0;
+    // Per-record tool counts, used ONLY when the boundary actually excluded
+    // something — the flat-regex counts above can't be time-bucketed. When
+    // nothing is excluded the regex counts are returned unchanged, so every
+    // session that doesn't span a consolidation scores bit-for-bit as before.
+    let excludedAny = false;
+    let boundedChanges = 0;
+    let boundedTools = 0;
     for (const line of content.split('\n')) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      if (DECISION_RE.test(trimmed) || CORRECTION_RE.test(trimmed)) {
-        decisionMarkers++;
-      }
+      const isDecision = DECISION_RE.test(trimmed) || CORRECTION_RE.test(trimmed);
       let rec: unknown;
       try {
         rec = JSON.parse(trimmed);
       } catch {
+        if (isDecision) decisionMarkers++;
         continue; // not a JSON record (or partial) — skip
       }
-      if (!rec || typeof rec !== 'object') continue;
+      if (!rec || typeof rec !== 'object') {
+        if (isDecision) decisionMarkers++;
+        continue;
+      }
+      if (!Number.isNaN(sinceMs)) {
+        const ts = recordTimestampMs(rec);
+        if (ts !== null && ts <= sinceMs) {
+          excludedAny = true;
+          continue; // already consolidated — contributes to no scored axis
+        }
+      }
+      if (isDecision) decisionMarkers++;
       novelTokens += novelTokensFromUsage(rec);
       const role = recordRole(rec);
       if (role === 'user') {
@@ -166,11 +199,14 @@ export function analyzeTranscript(transcriptPath: string): TranscriptAnalysis {
       } else if (role === 'assistant') {
         assistantChars += sumAssistantTextChars(rec);
       }
+      const uses = countToolUseBlocks(rec);
+      boundedTools += uses.tools;
+      boundedChanges += uses.changes;
     }
 
     return {
-      changeCount: changeMatches ? changeMatches.length : 0,
-      toolCount: toolMatches ? toolMatches.length : 0,
+      changeCount: excludedAny ? boundedChanges : (changeMatches ? changeMatches.length : 0),
+      toolCount: excludedAny ? boundedTools : (toolMatches ? toolMatches.length : 0),
       taskSlugs: [...slugs],
       userTurns,
       assistantChars,
@@ -205,6 +241,44 @@ function insightReadDirective(slug: string, vault?: string): string {
     ? `read \`${vault}\`'s \`lab/insights/${slug}.md\` + \`lab/cache/${slug}.json\` (or run \`lab show ${slug}\` in that vault)`
     : `\`dreamcontext lab show ${slug}\` — cached series, never fetches`;
   return `    → ALREADY TRACKED as an insight: ${how}. Do NOT fetch this metric from an API, an MCP tool, or a one-off script; only \`lab sync ${slug}\` when the cache is TTL-stale.`;
+}
+
+/**
+ * Millisecond timestamp of one transcript record, or null when absent or
+ * unparseable. Claude Code stamps every JSONL record with a top-level ISO
+ * `timestamp`; null means the caller must treat the record as countable
+ * (fail-open — see analyzeTranscript's boundary contract).
+ */
+function recordTimestampMs(rec: object): number | null {
+  const t = (rec as { timestamp?: unknown }).timestamp;
+  if (typeof t !== 'string') return null;
+  const ms = Date.parse(t);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Count `tool_use` content blocks in one record (and how many are Write/Edit).
+ * The per-record twin of the whole-file `"name":"…"` regexes — used only when
+ * a consolidation boundary excludes part of the transcript, where a flat regex
+ * can't be time-bucketed.
+ */
+function countToolUseBlocks(rec: object): { tools: number; changes: number } {
+  const r = rec as { message?: { content?: unknown }; content?: unknown };
+  const content = (r.message && typeof r.message === 'object' ? r.message.content : undefined) ?? r.content;
+  let tools = 0;
+  let changes = 0;
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block && typeof block === 'object') {
+        const b = block as { type?: unknown; name?: unknown };
+        if (b.type === 'tool_use') {
+          tools++;
+          if (b.name === 'Write' || b.name === 'Edit') changes++;
+        }
+      }
+    }
+  }
+  return { tools, changes };
 }
 
 /** Extract the role of a transcript record, tolerating both flat and nested message shapes. */
@@ -446,12 +520,12 @@ export function mergeAnalyses(main: TranscriptAnalysis, subs: TranscriptAnalysis
  * Sub-agent harvesting is best-effort — a missing or unreadable `subagents/`
  * dir yields the main analysis unchanged, never a throw.
  */
-export function analyzeSession(loc: TranscriptLocation): TranscriptAnalysis {
-  const main = loc.mainPath ? analyzeTranscript(loc.mainPath) : ZERO_ANALYSIS;
+export function analyzeSession(loc: TranscriptLocation, sinceISO?: string | null): TranscriptAnalysis {
+  const main = loc.mainPath ? analyzeTranscript(loc.mainPath, sinceISO) : ZERO_ANALYSIS;
   try {
     const subPaths = listSubagentTranscripts(loc);
     if (subPaths.length === 0) return main;
-    return mergeAnalyses(main, subPaths.map(p => analyzeTranscript(p)));
+    return mergeAnalyses(main, subPaths.map(p => analyzeTranscript(p, sinceISO)));
   } catch {
     return main;
   }
@@ -532,6 +606,7 @@ export function resolveCatchupFinalization(
   session: Pick<SessionRecord, 'stopped_at' | 'last_assistant_message' | 'task_slugs'>,
   loc: TranscriptLocation,
   nowMs: number,
+  sinceISO?: string | null,
 ): CatchupFinalizeResult | null {
   if (!loc.mainPath) {
     const stoppedMs = Date.parse(session.stopped_at ?? '') || 0;
@@ -548,7 +623,7 @@ export function resolveCatchupFinalization(
     };
   }
 
-  const analysis = analyzeSession(loc);
+  const analysis = analyzeSession(loc, sinceISO);
   const score = scoreSession(analysis);
   return {
     changeCount: analysis.changeCount,
@@ -1239,9 +1314,13 @@ export function registerHookCommand(program: Command): void {
       // Resolve the full location (not just the flat path) so `analyzeSession`
       // can fold in this session's sub-agent transcripts — a fan-out session's
       // real work lives in `subagents/`, not in the one `Task` call the main
-      // transcript records.
+      // transcript records. Bounded by the last completed consolidation:
+      // records at or before `last_consolidated_at` were either consolidated
+      // (pre-epoch work) or produced BY the consolidation (the sleep fan-out),
+      // and re-scoring them here is exactly how debt was flooring at 9-10
+      // right after every sleep instead of resting at 0.
       const analysis = transcriptOnDisk
-        ? analyzeSession(resolveTranscript(transcriptPath, { sessionId }))
+        ? analyzeSession(resolveTranscript(transcriptPath, { sessionId }), state.last_consolidated_at)
         : ZERO_ANALYSIS;
       const { changeCount, toolCount } = analysis;
       // Weighted-sum debt: log-compressed token / change / tool axes plus the
@@ -1441,7 +1520,10 @@ export function registerHookCommand(program: Command): void {
         // transcript-location change degrades gracefully instead of silently
         // zeroing capture.
         const loc = resolveTranscript(session.transcript_path, { sessionId: session.session_id });
-        const result = resolveCatchupFinalization(session, loc, Date.now());
+        // Same consolidation bound as the Stop hook — a pending session that
+        // spans a sleep must not re-book its already-consolidated records when
+        // the catch-up finally scores it.
+        const result = resolveCatchupFinalization(session, loc, Date.now(), state.last_consolidated_at);
         if (result === null) continue; // still pending — a later start catches it up
 
         session.change_count = result.changeCount;
