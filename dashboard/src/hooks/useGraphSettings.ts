@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { usePersistedState } from './usePersistedState';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 export interface GraphColorGroup {
   id: string;
@@ -89,6 +89,7 @@ function mergeSettings(server: Partial<GraphSettings>): GraphSettings {
 }
 
 export function useGraphSettings() {
+  const api = useApi();
   const [settings, setSettings] = usePersistedState<GraphSettings>(
     'brain:settings:v1',
     DEFAULT_SETTINGS,
@@ -131,7 +132,7 @@ export function useGraphSettings() {
         /* best-effort; localStorage already has it */
       });
     }, 600);
-  }, []);
+  }, [api]);
 
   const update = useCallback(
     (updater: (prev: GraphSettings) => GraphSettings) => {

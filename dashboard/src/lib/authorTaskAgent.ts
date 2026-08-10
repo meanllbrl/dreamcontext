@@ -72,13 +72,19 @@ export function buildAuthorPrompt(idea: string, hints: AuthorTaskHints = {}): st
  * Bypass defaults to the caller's choice; authoring is low-risk (it writes a task file), so the
  * composer arms it ON by default — the agent can run `tasks create` / `tasks doctor` without an
  * approval prompt per command, while still interviewing you for the content.
+ *
+ * `vault` names the project the new task belongs to and is threaded into `preparePrompt`: the
+ * seed prompt must be minted against the project whose board the composer was opened from.
+ * `bus` names the same project for the hand-off itself — see `requestDelegateAgent`.
  */
 export async function authorTaskWithAgent(
+  bus: EventTarget,
+  vault: string | null,
   args: { idea: string; hints?: AuthorTaskHints; bypass: boolean },
 ): Promise<boolean> {
   const prompt = buildAuthorPrompt(args.idea, args.hints);
-  const { inline, token } = await preparePrompt(prompt);
-  return requestDelegateAgent({
+  const { inline, token } = await preparePrompt(vault, prompt);
+  return requestDelegateAgent(bus, {
     title: AUTHOR_TASK_TITLE, prompt: inline, promptToken: token, bypass: args.bypass,
     // reveal:false — start minimized (A3). It surfaces as a corner chip; click it to answer
     // the agent's interview questions, and the chip raises an attention badge when it's done.

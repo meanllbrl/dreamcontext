@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { agentFileUrl } from '../../../api/client';
+import { useVault } from '../../../context/VaultContext';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { holdsItsWidth } from '../../../lib/markdownTables';
 import { ActionRow } from './ActionRow';
@@ -42,10 +43,11 @@ const REMOTE_SRC_RE = /^https:\/\//i;
 /** An image src coming out of `sanitizeImageSrc` is always either an `https:` URL or a
  *  project-relative path — nothing else survives validation. Local paths need the
  *  vault-aware file endpoint; remote ones are used exactly as written (query/fragment
- *  already stripped upstream). */
-function resolveImage(src: string): { url: string; remote: boolean } {
+ *  already stripped upstream). A module function, not a component — the vault comes from
+ *  whichever component calls it. */
+function resolveImage(vault: string | null, src: string): { url: string; remote: boolean } {
   const remote = REMOTE_SRC_RE.test(src);
-  return { url: remote ? src : agentFileUrl(src, { raw: true }), remote };
+  return { url: remote ? src : agentFileUrl(vault, src, { raw: true }), remote };
 }
 
 function prefersReducedMotion(): boolean {
@@ -175,9 +177,10 @@ function Rail({ widget, onAction, onOpenFile }: { widget: RailWidgetSpec } & Wid
 // ─── card — the owner's whole named list: photo, price, badges, specs, body, actions ─────
 
 function CardImage({ image }: { image: { src: string; alt: string } }) {
+  const { vault } = useVault();
   const [failed, setFailed] = useState(false);
   if (failed) return null;
-  const { url } = resolveImage(image.src);
+  const { url } = resolveImage(vault, image.src);
   return (
     <div className="chat-pv-card-media">
       <img
@@ -302,9 +305,10 @@ function Stat({ widget }: { widget: StatWidgetSpec }) {
 // ─── image — a standalone photo; local ones zoom into the existing lightbox ───────────────
 
 function ImageWidget({ widget, onOpenFile }: { widget: ImageWidgetSpec; onOpenFile?: (path: string) => void }) {
+  const { vault } = useVault();
   const [failed, setFailed] = useState(false);
   if (failed) return null;
-  const { url, remote } = resolveImage(widget.src);
+  const { url, remote } = resolveImage(vault, widget.src);
   const img = (
     <img
       src={url}

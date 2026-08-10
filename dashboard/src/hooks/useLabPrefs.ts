@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { usePersistedState } from './usePersistedState';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 /**
  * Insights (Lab) board preferences — per-group card order + collapsed groups.
@@ -69,6 +69,7 @@ interface LabPrefsResponse {
 }
 
 export function useLabPrefs() {
+  const api = useApi();
   const [stored, setPrefs] = usePersistedState<LabPrefs>('lab:prefs:v1', DEFAULT_LAB_PREFS);
   const prefs = useMemo(() => mergePrefs(stored), [stored]);
 
@@ -105,7 +106,7 @@ export function useLabPrefs() {
     writeTimer.current = setTimeout(() => {
       api.put('/lab-prefs', { settings: next }).catch(() => { /* best-effort */ });
     }, 600);
-  }, []);
+  }, [api]);
 
   const update = useCallback((updater: (prev: LabPrefs) => LabPrefs) => {
     setPrefs((prev) => {

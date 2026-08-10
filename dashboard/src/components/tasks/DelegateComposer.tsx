@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Task } from '../../hooks/useTasks';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
+import { useVault } from '../../context/VaultContext';
 import { delegateTaskToAgent } from '../../lib/delegateAgent';
 import {
   DELEGATE_MODES, DEFAULT_DELEGATE_MODE, delegateMode, delegateTitle,
@@ -38,6 +39,9 @@ interface Replaced { mode: DelegateModeId; prompt: string; bypass: boolean; }
  * modal + field CSS.
  */
 export function DelegateComposer({ task, onClose, onDelegated, reveal }: DelegateComposerProps) {
+  // The board this composer was opened from names the project the task belongs to — the prompt
+  // token has to be minted against THAT project, not against whichever chip is active.
+  const { vault, bus } = useVault();
   // ONE source for the title: the prompt's "Task:" line and the delegated tab's title both
   // come from this call, so they can't drift.
   const title = taskName(task);
@@ -108,7 +112,7 @@ export function DelegateComposer({ task, onClose, onDelegated, reveal }: Delegat
     // Hand the prompt over WHOLE — `delegateTaskToAgent` picks a transport that can carry it
     // (inline for a short prompt, a POSTed token for a long one), so what is shown above is
     // exactly what the agent receives. Nothing is trimmed behind the user's back.
-    void delegateTaskToAgent({
+    void delegateTaskToAgent(bus, vault, {
       title: delegateTitle(mode, title),
       prompt,
       bypass,

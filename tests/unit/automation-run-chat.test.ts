@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 /**
  * The automation-run → chat bridge (`dashboard/src/lib/automationRunChat.ts`).
@@ -7,39 +7,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
  * `chat-actions.test.ts` is: the module is pure TS with no React in it, and this suite
  * already reaches into `dashboard/src` by path.
  *
- * `requestAutomationRunChat` talks to `window`, which a node-environment vitest run does
- * not have — so the test installs a bare `EventTarget` as `window`. That is not a
- * convenience: it is exactly the contract the function needs (addEventListener /
- * dispatchEvent, dispatch running its listeners INLINE), so a stub that satisfies it
- * proves the real thing works for the reason the real thing works.
+ * This suite used to install a bare `EventTarget` as a fake `window`, because the request
+ * was broadcast there. It no longer needs one: `openAutomationRunChat` takes the caller's
+ * INSTANCE BUS explicitly, so a plain `new EventTarget()` per test IS the production object,
+ * not a stand-in for it — and the absence of any `window` in this file is itself the check
+ * that nothing crept back onto the global.
  */
 
-let listeners: Array<{ type: string; fn: EventListener }> = [];
-
-beforeEach(async () => {
-  const target = new EventTarget();
-  const realAdd = target.addEventListener.bind(target);
-  // Track registrations so each test can tear its own down — a leaked listener would make
-  // the "no surface mounted" case pass for the wrong reason in whatever test ran next.
-  (target as EventTarget & { addEventListener: EventTarget['addEventListener'] }).addEventListener = ((
-    type: string, fn: EventListener,
-  ) => {
-    listeners.push({ type, fn });
-    realAdd(type, fn);
-  }) as EventTarget['addEventListener'];
-  (globalThis as unknown as { window: EventTarget }).window = target;
-});
-
-afterEach(() => {
-  const target = (globalThis as unknown as { window?: EventTarget }).window;
-  for (const l of listeners) target?.removeEventListener(l.type, l.fn);
-  listeners = [];
-  delete (globalThis as unknown as { window?: EventTarget }).window;
-});
-
 async function load() {
-  // Imported AFTER the window stub exists. The module has no import-time window access
-  // today, and this ordering keeps the test honest if that ever changes.
   return import('../../dashboard/src/lib/automationRunChat.js');
 }
 
@@ -100,38 +75,41 @@ describe('runChatUnavailableReason', () => {
   });
 });
 
-describe('requestAutomationRunChat', () => {
+describe('openAutomationRunChat', () => {
   it('reports FALSE when no surface is mounted to take it', async () => {
-    const { requestAutomationRunChat } = await load();
+    const { openAutomationRunChat } = await load();
     // A button that silently does nothing is exactly what the ACK exists to prevent.
-    expect(requestAutomationRunChat(RUN)).toBe(false);
+    expect(openAutomationRunChat(new EventTarget(), RUN)).toBe(false);
   });
 
   it('reports FALSE when a mounted surface declines (guards rejected)', async () => {
-    const { requestAutomationRunChat, AUTOMATION_RUN_CHAT_EVENT } = await load();
+    const { openAutomationRunChat, AUTOMATION_RUN_CHAT_EVENT } = await load();
+    const bus = new EventTarget();
     // A listener that looks but never acks — not desktop, no claude CLI, Agents disabled.
-    window.addEventListener(AUTOMATION_RUN_CHAT_EVENT, () => { /* declines */ });
-    expect(requestAutomationRunChat(RUN)).toBe(false);
+    bus.addEventListener(AUTOMATION_RUN_CHAT_EVENT, () => { /* declines */ });
+    expect(openAutomationRunChat(bus, RUN)).toBe(false);
   });
 
   it('reports TRUE synchronously once the surface acks', async () => {
-    const { requestAutomationRunChat, AUTOMATION_RUN_CHAT_EVENT } = await load();
-    window.addEventListener(AUTOMATION_RUN_CHAT_EVENT, (e) => {
+    const { openAutomationRunChat, AUTOMATION_RUN_CHAT_EVENT } = await load();
+    const bus = new EventTarget();
+    bus.addEventListener(AUTOMATION_RUN_CHAT_EVENT, (e) => {
       (e as CustomEvent<{ accepted?: boolean }>).detail.accepted = true;
     });
     // Synchronous by construction: dispatchEvent runs listeners inline. If anything async
     // is ever introduced between the dispatch and the read, this is the test that fails.
-    expect(requestAutomationRunChat(RUN)).toBe(true);
+    expect(openAutomationRunChat(bus, RUN)).toBe(true);
   });
 
   it('carries every field the resumed tab needs to describe itself', async () => {
-    const { requestAutomationRunChat, AUTOMATION_RUN_CHAT_EVENT } = await load();
+    const { openAutomationRunChat, AUTOMATION_RUN_CHAT_EVENT } = await load();
+    const bus = new EventTarget();
     let seen: Record<string, unknown> | null = null;
-    window.addEventListener(AUTOMATION_RUN_CHAT_EVENT, (e) => {
+    bus.addEventListener(AUTOMATION_RUN_CHAT_EVENT, (e) => {
       seen = { ...(e as CustomEvent).detail };
       (e as CustomEvent<{ accepted?: boolean }>).detail.accepted = true;
     });
-    requestAutomationRunChat(RUN);
+    openAutomationRunChat(bus, RUN);
     expect(seen).toMatchObject(RUN);
     // `seen` is the detail as it ARRIVED (copied before this listener acked): the ACK field
     // must start false. A detail that arrived pre-accepted would make the surface's answer
@@ -140,13 +118,31 @@ describe('requestAutomationRunChat', () => {
   });
 
   it('never mutates the caller\'s run object', async () => {
-    const { requestAutomationRunChat, AUTOMATION_RUN_CHAT_EVENT } = await load();
-    window.addEventListener(AUTOMATION_RUN_CHAT_EVENT, (e) => {
+    const { openAutomationRunChat, AUTOMATION_RUN_CHAT_EVENT } = await load();
+    const bus = new EventTarget();
+    bus.addEventListener(AUTOMATION_RUN_CHAT_EVENT, (e) => {
       (e as CustomEvent<{ accepted?: boolean }>).detail.accepted = true;
     });
     const original = { ...RUN };
-    requestAutomationRunChat(RUN);
+    openAutomationRunChat(bus, RUN);
     expect(RUN).toEqual(original);
     expect('accepted' in RUN).toBe(false);
+  });
+
+  it('reaches ONLY the project it was asked of (M0)', async () => {
+    const { openAutomationRunChat, AUTOMATION_RUN_CHAT_EVENT } = await load();
+    // Two live projects in one window, each with its own agent surface listening on its own
+    // bus. Broadcast, B would also `--resume` A's conversation uuid — two live CLIs appending
+    // to one transcript, neither seeing the other's turns — and whichever listener ran first
+    // would set the ACK, so A's panel could report success for a tab that opened in B.
+    const busA = new EventTarget();
+    const busB = new EventTarget();
+    let bSaw = 0;
+    busA.addEventListener(AUTOMATION_RUN_CHAT_EVENT, (e) => {
+      (e as CustomEvent<{ accepted?: boolean }>).detail.accepted = true;
+    });
+    busB.addEventListener(AUTOMATION_RUN_CHAT_EVENT, () => { bSaw += 1; });
+    expect(openAutomationRunChat(busA, RUN)).toBe(true);
+    expect(bSaw).toBe(0);
   });
 });

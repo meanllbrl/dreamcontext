@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 /**
  * Theses (proactive learning layer) — dashboard hooks. Mirrors useObjectives.ts
@@ -145,6 +145,7 @@ export interface SetStatusInput {
  * mirrors the server's "still readable, just hinted" disabled-layer behavior.
  */
 export function useTheses() {
+  const api = useApi();
   return useQuery({
     queryKey: ['theses'],
     queryFn: () => api.get<ThesesListResult>('/theses'),
@@ -154,6 +155,7 @@ export function useTheses() {
 
 /** One thesis — full manifest + confidence breakdown + parsed changelog. */
 export function useThesis(slug: string | null) {
+  const api = useApi();
   return useQuery({
     queryKey: ['theses', slug],
     queryFn: () => api.get<ThesisShowResult>(`/theses/${slug}`),
@@ -164,6 +166,7 @@ export function useThesis(slug: string | null) {
 
 export function useCreateThesis() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (input: CreateThesisInput) => api.post<{ thesis: ThesisView }>('/theses', input),
     onSuccess: () => {
@@ -174,6 +177,7 @@ export function useCreateThesis() {
 
 export function useAddEvidence() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, input }: { slug: string; input: AddEvidenceInput }) =>
       api.post<{ thesis: ThesisView }>(`/theses/${slug}/evidence`, input),
@@ -185,6 +189,7 @@ export function useAddEvidence() {
 
 export function useAddPrediction() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, text }: { slug: string; text: string }) =>
       api.post<{ thesis: ThesisView }>(`/theses/${slug}/predictions`, { text }),
@@ -196,6 +201,7 @@ export function useAddPrediction() {
 
 export function useSetStatus() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, input }: { slug: string; input: SetStatusInput }) =>
       api.post<{ thesis: ThesisView }>(`/theses/${slug}/status`, input),
@@ -208,6 +214,7 @@ export function useSetStatus() {
 /** Link a thesis to an insight/objective/task (target must already exist). */
 export function useLinkThesis() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, kind, target }: { slug: string; kind: ThesisLinkKind; target: string }) =>
       api.post<{ thesis: ThesisView }>(`/theses/${slug}/links`, { kind, slug: target }),
@@ -220,6 +227,7 @@ export function useLinkThesis() {
 
 export function useUnlinkThesis() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, kind, target }: { slug: string; kind: ThesisLinkKind; target: string }) =>
       api.del<{ thesis: ThesisView }>(`/theses/${slug}/links/${kind}/${target}`),
@@ -233,6 +241,7 @@ export function useUnlinkThesis() {
 /** Append a per-cycle understanding-changelog entry (LIFO, store-capped). */
 export function useAppendChangelog() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, text, cycle, condensed }: { slug: string; text: string; cycle?: number | null; condensed?: boolean }) =>
       api.post<{ thesis: ThesisView }>(`/theses/${slug}/changelog`, { text, cycle, condensed }),
@@ -245,6 +254,7 @@ export function useAppendChangelog() {
 /** Record the knowledge doc a validated/invalidated thesis promoted into; optionally retires it. */
 export function usePromoteThesis() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, knowledgePath, retire }: { slug: string; knowledgePath: string; retire?: boolean }) =>
       api.post<{ thesis: ThesisView }>(`/theses/${slug}/promote`, { knowledgePath, retire }),
@@ -257,6 +267,7 @@ export function usePromoteThesis() {
 /** The one-command switch: POST /api/learning/enable or /disable. */
 export function useSetLearningEnabled() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (enabled: boolean) =>
       api.post<{ enabled: boolean }>(enabled ? '/learning/enable' : '/learning/disable', {}),

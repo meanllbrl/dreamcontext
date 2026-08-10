@@ -4,9 +4,8 @@ import { useAnnouncementInbox } from '../../hooks/useAnnouncements';
 import { formatVersion, readSeenIds, unreadAnnouncements, type Announcement } from '../../lib/announcements';
 import { AnnouncementStoryTeaser } from '../announcements/AnnouncementStoryTeaser';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
+import { useOverlayId } from '../../lib/useOverlayId';
 import './AnnouncementsModal.css';
-
-const OVERLAY_ID = 'announcements-modal';
 
 interface Props {
   /**
@@ -44,6 +43,7 @@ interface Props {
  */
 export function AnnouncementsModal({ onOpenPage }: Props) {
   const { t } = useI18n();
+  const overlayId = useOverlayId('announcements-modal');
   const { unread, loading, markAllRead } = useAnnouncementInbox();
   const dismissed = useRef(false);
   // One-way latch for the pin effect below. Idempotency invariant: the
@@ -102,9 +102,9 @@ export function AnnouncementsModal({ onOpenPage }: Props) {
   // components gate on their `open` prop.
   useEffect(() => {
     if (!show) return;
-    pushOverlay(OVERLAY_ID);
+    pushOverlay(overlayId);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || !isTopOverlay(OVERLAY_ID)) return;
+      if (e.key !== 'Escape' || !isTopOverlay(overlayId)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       dismiss();
@@ -112,9 +112,9 @@ export function AnnouncementsModal({ onOpenPage }: Props) {
     window.addEventListener('keydown', onKey, true);
     return () => {
       window.removeEventListener('keydown', onKey, true);
-      popOverlay(OVERLAY_ID);
+      popOverlay(overlayId);
     };
-  }, [show, dismiss]);
+  }, [show, dismiss, overlayId]);
 
   if (!show || !hero) return null;
 

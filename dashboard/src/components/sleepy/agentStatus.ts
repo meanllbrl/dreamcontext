@@ -114,3 +114,59 @@ export function orderRows(rows: SessionRow[]): SessionRow[] {
   const asking = rows.filter((r) => r.info.kind === 'asking');
   return asking.length ? [...asking, ...rows.filter((r) => r.info.kind !== 'asking')] : rows;
 }
+
+/**
+ * One project's worth of session rows, rolled up into what the chip strip needs to draw a
+ * single chip: a colour, a live-count badge, and whether it should bounce. This is the
+ * project-level counterpart to the collapsed dock's `rollupKind` — same worst-of urgency
+ * signal, but a chip in a background project also needs to say HOW MANY conversations are
+ * actually live and whether any of them are stuck waiting on the user, which a single kind
+ * can't carry on its own.
+ *
+ * `live` and `alive` look redundant and are NOT — do not collapse them. `live` is a
+ * PRESENTATION count (chats/agents only, shells excluded) for the chip badge. `alive` is a
+ * SAFETY count (every kind, shells included) for the ceiling-eviction decision: a project
+ * whose only live thing is a running shell (a dev server, a build watch) has `live: 0` but
+ * must never read as idle, or the eviction rule kills its PTY mid-process. Only `alive` may
+ * ever gate a teardown decision.
+ */
+export interface ProjectRollup {
+  /** Dot + badge colour: the worst-of across every session in this project. */
+  worst: SessionStatusKind;
+  /** The badge NUMBER — how many chats/agents in this project are actually alive. Excludes
+   *  shells: a plain terminal has no agent behind it and isn't an "active chat". */
+  live: number;
+  /** Drives the chip's one-shot bounce: sessions blocked on the user or flagged since
+   *  you last looked. */
+  waiting: number;
+  /** Eviction safety: how many sessions of ANY kind still hold a live PTY/WebSocket — agent,
+   *  chat AND shell. This is the ONLY field the ceiling rule may consult; `live` must never
+   *  decide whether an instance can be torn down. */
+  alive: number;
+}
+
+/**
+ * Roll a project's session rows up into its chip state. `worst` reuses `rollupKind` rather
+ * than re-deriving the urgency order a second time — one source of truth for "what's the
+ * worst thing happening here". `live` deliberately excludes `saved` (a restored roster
+ * entry with no live session — the dormant "Resume" row) and `ended` (a dead PTY): neither
+ * is a conversation actually happening right now, so counting them would badge a chip for a
+ * project that isn't doing anything. A `shell` row is excluded outright — it's a plain
+ * terminal with no agent behind it (see `SessionRow.kind` above), so it can never ask a
+ * question and never belongs in an "active chat" count. `alive` counts the same `saved`/
+ * `ended` exclusion but WITHOUT the shell exclusion — a shell still holds a real PTY/
+ * WebSocket the ceiling rule must not tear down. `waiting` counts a row once even when it
+ * is both `asking` and flagged for `attention` — one row, one interruption.
+ */
+export function rollupProject(rows: SessionRow[]): ProjectRollup {
+  let live = 0;
+  let waiting = 0;
+  let alive = 0;
+  for (const r of rows) {
+    const holdsSession = r.info.kind !== 'saved' && r.info.kind !== 'ended';
+    if (holdsSession && r.kind !== 'shell') live++;
+    if (holdsSession) alive++;
+    if (r.info.kind === 'asking' || r.attention) waiting++;
+  }
+  return { worst: rollupKind(rows), live, waiting, alive };
+}

@@ -1,44 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useTheme } from '../../context/ThemeContext';
-import { startTitleBarDrag, toggleMaximizeWindow } from '../../lib/desktop';
+import { useVault } from '../../context/VaultContext';
 import { SearchIcon } from '../sleepy/TypeIcons';
 import { UpdateBadge } from './UpdateBadge';
 import { SleepDebtTracker } from './SleepDebtTracker';
 import type { Page } from './Sidebar';
 import './Header.css';
-
-const ZOOM_LEVELS = [0.85, 0.9, 1.0, 1.1, 1.2];
-const ZOOM_STORAGE_KEY = 'dreamcontext-zoom';
-
-function getStoredZoom(): number {
-  try {
-    const stored = localStorage.getItem(ZOOM_STORAGE_KEY);
-    if (stored !== null) {
-      const val = parseFloat(stored);
-      if (ZOOM_LEVELS.includes(val)) return val;
-    }
-  } catch { /* ignore */ }
-  return 1.0;
-}
-
-function applyZoom(zoom: number) {
-  document.documentElement.style.setProperty('--zoom', String(zoom));
-  // Broadcast so surfaces that don't read CSS font tokens can react — notably the
-  // embedded Agent terminal, whose xterm font size is set imperatively in JS and
-  // would otherwise ignore app zoom entirely.
-  window.dispatchEvent(new CustomEvent('dreamcontext-zoom', { detail: zoom }));
-}
-
-/** Active vault display name (passed by the launcher via `?vault=`). */
-function readVaultLabel(): string {
-  if (typeof window === 'undefined') return '';
-  try {
-    return new URLSearchParams(window.location.search).get('vault') ?? '';
-  } catch {
-    return '';
-  }
-}
 
 interface HeaderProps {
   /** Switch the active page (used by the update badge to open Packs). */
@@ -52,17 +19,21 @@ interface HeaderProps {
 }
 
 /**
- * Title bar. Mirrors the design: a sidebar toggle on the left, the active vault
- * name centered, and utility controls on the right. The brand wordmark lives
- * ONLY in the sidebar lockup now — the header no longer repeats it.
+ * One PROJECT's header — a sidebar toggle and the search pill on the left, that project's
+ * own status controls on the right.
+ *
+ * It is no longer the title bar, and it no longer says which project it belongs to. One
+ * window now holds several projects at once, so both of those became window-level jobs and
+ * moved to `WindowChrome`: the chip strip names the projects, and the zoom control, the
+ * theme toggle and the drag/maximize gestures belong to the window that contains them all.
+ * What stays here is what is genuinely per-vault — this project's sleep debt, this project's
+ * refresh, this project's update badge — because N of them are mounted at once and each must
+ * answer for its own vault.
  */
 export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar, onOpenSearch }: HeaderProps) {
-  const { theme, setTheme, resolved } = useTheme();
   const queryClient = useQueryClient();
-  const [zoom, setZoom] = useState(getStoredZoom);
+  const { isActive } = useVault();
   const [refreshing, setRefreshing] = useState(false);
-
-  const vaultLabel = readVaultLabel();
 
   // Manual refresh: pull every active query at once (sleep debt, tasks,
   // knowledge, …). Queries also poll on an interval, but this gives an
@@ -76,45 +47,8 @@ export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar, onOpenSe
     }
   };
 
-  useEffect(() => {
-    applyZoom(zoom);
-  }, [zoom]);
-
-  const cycleTheme = () => {
-    const next = theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system';
-    setTheme(next);
-  };
-
-  const themeLabel = theme === 'system' ? `System (${resolved})` : resolved === 'dark' ? 'Dark' : 'Light';
-
-  const zoomIndex = ZOOM_LEVELS.indexOf(zoom);
-  const canZoomOut = zoomIndex > 0;
-  const canZoomIn = zoomIndex < ZOOM_LEVELS.length - 1;
-
-  const changeZoom = (delta: -1 | 1) => {
-    const nextIndex = zoomIndex + delta;
-    if (nextIndex < 0 || nextIndex >= ZOOM_LEVELS.length) return;
-    const next = ZOOM_LEVELS[nextIndex];
-    setZoom(next);
-    try { localStorage.setItem(ZOOM_STORAGE_KEY, String(next)); } catch { /* ignore */ }
-  };
-
   return (
-    <header
-      className="header"
-      // NOTE: deliberately NO `data-tauri-drag-region`. That attribute injects
-      // Tauri's OWN drag + double-click-maximize handlers, and the dblclick →
-      // toggleMaximize part fires even with `dragDropEnabled: false` — competing
-      // with our handler (and macOS native zoom) and flickering the window
-      // between maximized/restored. We remove it and own both gestures in JS.
-      //
-      // Drag: start ONLY after the pointer moves past a small threshold, so plain
-      // clicks and double-clicks are NOT forwarded to the native window (which
-      // would trigger native zoom on top of ours). Maximize is our single,
-      // deterministic onDoubleClick below.
-      onMouseDown={startTitleBarDrag}
-      onDoubleClick={(e) => void toggleMaximizeWindow(e.target)}
-    >
+    <header className="header">
       <div className="header-left">
         <button
           className="header-icon-btn"
@@ -145,14 +79,12 @@ export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar, onOpenSe
         </button>
       </div>
 
-      {vaultLabel && <div className="header-vault" title={vaultLabel}>{vaultLabel}</div>}
-
       <div className="header-right">
         <SleepDebtTracker onOpen={onNavigate ? () => onNavigate('sleep') : undefined} />
         <button
           className={`header-refresh ${refreshing ? 'header-refresh--spinning' : ''}`}
           onClick={refreshAll}
-          disabled={refreshing}
+          disabled={refreshing || !isActive}
           title="Refresh now"
           aria-label="Refresh now"
         >
@@ -162,22 +94,6 @@ export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar, onOpenSe
           </svg>
         </button>
         <UpdateBadge onManagePacks={onNavigate ? () => onNavigate('packs') : undefined} />
-        <div className="zoom-controls">
-          <button className="zoom-btn" onClick={() => changeZoom(-1)} disabled={!canZoomOut} title="Zoom out">-</button>
-          <span className="zoom-label">{Math.round(zoom * 100)}%</span>
-          <button className="zoom-btn" onClick={() => changeZoom(1)} disabled={!canZoomIn} title="Zoom in">+</button>
-        </div>
-        <button className="theme-toggle" onClick={cycleTheme} title={`Theme: ${themeLabel}`}>
-          {resolved === 'dark' ? (
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M8 1a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 1zm0 10a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 11zm7-3a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 15 8zM5 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 5 8zm7.07-4.07a.5.5 0 0 1 0 .71l-1.41 1.41a.5.5 0 1 1-.71-.71l1.41-1.41a.5.5 0 0 1 .71 0zM6.05 10.66a.5.5 0 0 1 0 .71l-1.41 1.41a.5.5 0 0 1-.71-.71l1.41-1.41a.5.5 0 0 1 .71 0zm7.72 3.12a.5.5 0 0 1-.71 0l-1.41-1.41a.5.5 0 1 1 .71-.71l1.41 1.41a.5.5 0 0 1 0 .71zM5.34 6.05a.5.5 0 0 1-.71 0L3.22 4.64a.5.5 0 0 1 .71-.71l1.41 1.41a.5.5 0 0 1 0 .71zM8 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
-            </svg>
-          ) : (
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z" />
-            </svg>
-          )}
-        </button>
       </div>
     </header>
   );

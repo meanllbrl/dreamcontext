@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 /**
  * A Key Result metric — outcome-based progress source (e.g. MRR, customers). When set
@@ -99,6 +99,7 @@ export interface RoadmapModel {
  * start_date/impact/effort) by slug in the board. Empty on an older backend.
  */
 export function useRoadmap() {
+  const api = useApi();
   return useQuery({
     queryKey: ['roadmap'],
     queryFn: () => api.get<RoadmapModel>('/roadmap'),
@@ -108,6 +109,7 @@ export function useRoadmap() {
 
 /** List every objective. Empty array when none / the route is absent (older backend). */
 export function useObjectives() {
+  const api = useApi();
   return useQuery({
     queryKey: ['objectives'],
     queryFn: () => api.get<{ objectives: Objective[] }>('/objectives').then((r) => r.objectives),
@@ -118,6 +120,7 @@ export function useObjectives() {
 
 export function useCreateObjective() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (input: CreateObjectiveInput) => api.post<{ objective: Objective }>('/objectives', input),
     onSuccess: () => {
@@ -143,6 +146,7 @@ export interface UpdateObjectivePatch {
 /** PATCH one objective — persists timeline drag-to-reschedule and inline edits. */
 export function useUpdateObjective() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, patch }: { slug: string; patch: UpdateObjectivePatch }) =>
       api.patch<{ objective: Objective }>(`/objectives/${slug}`, patch),
@@ -156,6 +160,7 @@ export function useUpdateObjective() {
 /** Declare `slug` depends on `to` (drag-to-connect). Cycle rejections surface as errors. */
 export function useAddDependency() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, to }: { slug: string; to: string }) =>
       api.post<{ objective: Objective }>(`/objectives/${slug}/dependencies`, { to }),
@@ -169,6 +174,7 @@ export function useAddDependency() {
 /** Delete an objective. Fully self-heals server-side (strips it from deps + tasks). */
 export function useDeleteObjective() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (slug: string) => api.del<{ deleted: string; unhealedTasks: string[] }>(`/objectives/${slug}`),
     onSuccess: () => {
@@ -183,6 +189,7 @@ export function useDeleteObjective() {
 /** Remove the `to → slug` dependency edge. */
 export function useRemoveDependency() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, to }: { slug: string; to: string }) =>
       api.del<{ objective: Objective }>(`/objectives/${slug}/dependencies/${to}`),

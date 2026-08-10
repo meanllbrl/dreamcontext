@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
 import { CouncilLivePanel } from './CouncilLivePanel';
-import { api, agentFileUrl } from '../../api/client';
+import { agentFileUrl } from '../../api/client';
+import { useApi, useVault } from '../../context/VaultContext';
 import type { ModelConfig } from '../../lib/agentComposer';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
@@ -137,6 +138,7 @@ interface TaskLinkInfo { name: string; objectiveLabels: string[] }
 /** Linked-task chip + objectives data, fetched only when `taskSlug` is supplied. No caller
  *  sets `taskSlug` yet, so this hook is a built-but-dormant mechanism in this release. */
 function useTaskLink(taskSlug?: string): TaskLinkInfo | null {
+  const api = useApi();
   const [info, setInfo] = useState<TaskLinkInfo | null>(null);
   useEffect(() => {
     if (!taskSlug) { setInfo(null); return; }
@@ -156,7 +158,7 @@ function useTaskLink(taskSlug?: string): TaskLinkInfo | null {
       }
     })();
     return () => { cancelled = true; };
-  }, [taskSlug]);
+  }, [api, taskSlug]);
   return info;
 }
 
@@ -298,6 +300,8 @@ export function ChatPane({
 }) {
   const [, force] = useReducer((n: number) => n + 1, 0);
   useEffect(() => session.subscribe(() => force()), [session]);
+  const { vault } = useVault();
+  const api = useApi();
 
   const conv = session.getModel();
   const hasPendingQuestion = conv.pending.some((p) => p.kind === 'question');
@@ -981,7 +985,7 @@ export function ChatPane({
     // routing decision in one place rather than relying on that being true forever.
     if (ref.kind === 'board') { setBoardFull(path); return; }
     if (ref.isImage) {
-      setLightbox({ src: agentFileUrl(path, { raw: true }), caption: ref.label, path });
+      setLightbox({ src: agentFileUrl(vault, path, { raw: true }), caption: ref.label, path });
       return;
     }
     // A PDF is a document the window can DISPLAY, so it gets the image's treatment rather
@@ -990,7 +994,7 @@ export function ChatPane({
     // answers "exceeds the preview size cap" and for a small one answers mojibake.
     if (ref.kind === 'pdf') { setPdf({ path, label: ref.label }); return; }
     setSlideOver({ mode: 'file', path });
-  }, []);
+  }, [vault]);
   const handleOpenBoard = useCallback((path: string) => setBoardFull(path), []);
   // The sub-agent card now also holds headless `claude` runs (see `isHeadlessAgentShell`),
   // and those are `local_bash` tasks: the CLI writes no sidechain transcript for them, so
@@ -1026,7 +1030,7 @@ export function ChatPane({
         // Never a dead button (owner report 07-28): if the OS wouldn't take it — gone, or a
         // path that escapes the project root — fall back to this pane's own file panel,
         // which SAYS why instead of the click going nowhere.
-        void revealPath(action.path!).then((err) => { if (err) handleOpenFile(action.path!); });
+        void revealPath(api, action.path!).then((err) => { if (err) handleOpenFile(action.path!); });
         break;
       case 'ask':
         session.sendText(action.text!);
@@ -1036,7 +1040,7 @@ export function ChatPane({
         void openExternalUrl(action.url!);
         break;
     }
-  }, [handleNavApp, handleOpenFile, session]);
+  }, [handleNavApp, handleOpenFile, session, api]);
 
   // ── Transcript pass: skip the spawning Agent/Task tool's OWN card (state 9 — it's
   //    already represented by ONE combined SubAgentCard, rendered at the position of the

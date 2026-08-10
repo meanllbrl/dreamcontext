@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useVersionCheck } from '../../hooks/useVersionCheck';
 import { MarkdownPreview } from '../core/MarkdownPreview';
 import { useI18n } from '../../context/I18nContext';
-import { api } from '../../api/client';
+import { useApi } from '../../context/VaultContext';
 import { closeCurrentWindow } from '../../lib/desktop';
 import './UpdateBadge.css';
 
@@ -33,6 +33,7 @@ const POLL_MS = 1200;
 
 export function UpdateBadge({ onManagePacks }: UpdateBadgeProps) {
   const { t } = useI18n();
+  const api = useApi();
   const { data } = useVersionCheck();
   const nudge = data?.nudge ?? null;
   const newPacks = data?.newPacks ?? [];
@@ -70,7 +71,7 @@ export function UpdateBadge({ onManagePacks }: UpdateBadgeProps) {
         .then(applyStatus)
         .catch(() => { /* transient — keep polling */ });
     }, POLL_MS);
-  }, [applyStatus, stopPolling]);
+  }, [api, applyStatus, stopPolling]);
 
   // Restore an in-flight OR just-finished upgrade on (re)mount — popover closed+reopened,
   // window reloaded mid-upgrade, or an upgrade that completed but wasn't relaunched yet. We
@@ -87,7 +88,7 @@ export function UpdateBadge({ onManagePacks }: UpdateBadgeProps) {
       })
       .catch(() => { /* ignore */ });
     return () => { cancelled = true; };
-  }, [applyStatus, startPolling]);
+  }, [api, applyStatus, startPolling]);
 
   useEffect(() => () => stopPolling(), [stopPolling]);
 
@@ -101,7 +102,7 @@ export function UpdateBadge({ onManagePacks }: UpdateBadgeProps) {
       setPhase('error');
       setLog(e instanceof Error ? e.message : 'Failed to start the upgrade.');
     }
-  }, [startPolling]);
+  }, [api, startPolling]);
 
   const relaunch = useCallback(async () => {
     setRelaunching(true);
@@ -121,7 +122,7 @@ export function UpdateBadge({ onManagePacks }: UpdateBadgeProps) {
       setLog((prev) => `${prev}\n\nCouldn't reach the relaunch service. Reopen the app manually to finish.`.trimStart());
     }
     setRelaunching(false);
-  }, []);
+  }, [api]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {

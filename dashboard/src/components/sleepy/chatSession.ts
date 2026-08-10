@@ -1,4 +1,4 @@
-import { api, getActiveVault } from '../../api/client';
+import { ApiClient } from '../../api/client';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { raiseAskAttention } from '../../lib/attention';
 import {
@@ -402,7 +402,15 @@ let chatSessionSeq = 0;
  * ALWAYS delivered server-side (submitted as the first user frame, or parked for the
  * UserPromptSubmit hook when deferred) — there is no client-side injection path here.
  */
+/**
+ * Spawn one chat session against `vault` — the project this conversation belongs to, passed in
+ * rather than read from a module global. One window now holds several live projects, so an
+ * "active vault" module read would open the stream in whichever project the user last clicked;
+ * the vault also names this session's alarm source, which is what lets a background project's
+ * chip raise the user (see `pushAsk` below). Empty string = no project pinned.
+ */
 export function createChatSession(
+  vault: string,
   bypass: boolean,
   notify: () => void,
   claudeId: string,
@@ -416,11 +424,14 @@ export function createChatSession(
   const id = `chat-${++chatSessionSeq}`;
   const container = document.createElement('div');
   container.className = 'agent-pane-chat';
+  // `/agent/chat-history` is per-vault (not on the server's agnostic list), and this factory
+  // is framework-free — no `useApi()` here — so the client is built once from the vault this
+  // session was spawned against, exactly as its own WS URL below is.
+  const api = new ApiClient(vault);
 
   // ── WS URL (contract C2) — same param conventions as agentSession.ts:268-305, plus
   //    `effort` (chat sets it at spawn via `--effort`; the terminal only ever switches it
   //    live via `/effort`, so it never appears in the terminal's own URL builder). ──
-  const vault = getActiveVault();
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const idParam = resume ? `&resume=${encodeURIComponent(claudeId)}` : `&sessionId=${encodeURIComponent(claudeId)}`;
   const modelParam = model ? `&model=${encodeURIComponent(model)}` : '';
@@ -433,7 +444,7 @@ export function createChatSession(
       ? `&promptToken=${encodeURIComponent(promptToken)}`
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
-  const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault ?? '')}`
+  const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
     + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${promptParam}${deferParam}`;
   const ws = new WebSocket(url);
 
@@ -586,7 +597,9 @@ export function createChatSession(
       session.attention = true;
       // Chat is the one surface that can put the actual words in the banner: the ask
       // arrives as structured JSON, so what the notification shows is what the card shows.
-      raiseAskAttention({ source: getActiveVault(), detail: askSummary(entry) });
+      // `source` is this session's own VAULT: it is what the chip strip keys a background
+      // project's alarm off, so a title here would silence the wrong project's chip.
+      raiseAskAttention({ source: vault, detail: askSummary(entry) });
     }
   }
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useVault } from '../../context/VaultContext';
 import { authorTaskWithAgent } from '../../lib/authorTaskAgent';
 import { SparkIcon } from '../sleepy/TypeIcons';
 import { PRIO_ORDER, STATUS_ORDER, STATUS_META, levelLabel } from './boardModel';
@@ -25,6 +26,8 @@ interface AuthorTaskComposerProps {
  * the manual `TaskCreateModal` stays the fallback on web (A6).
  */
 export function AuthorTaskComposer({ onClose, onStarted, initialStatus }: AuthorTaskComposerProps) {
+  // The board this composer was opened from names the project the new task belongs to.
+  const { vault, bus } = useVault();
   const [idea, setIdea] = useState('');
   const [status, setStatus] = useState(initialStatus && (STATUS_ORDER as readonly string[]).includes(initialStatus) ? initialStatus : '');
   const [priority, setPriority] = useState('');
@@ -48,7 +51,7 @@ export function AuthorTaskComposer({ onClose, onStarted, initialStatus }: Author
   const submit = () => {
     if (!canSend) return;
     setSending(true);
-    void authorTaskWithAgent({ idea, hints: { status, priority }, bypass })
+    void authorTaskWithAgent(bus, vault, { idea, hints: { status, priority }, bypass })
       .then((accepted) => {
         // Report what REALLY happened — the surface gates on its own capabilities snapshot,
         // which can disagree with the one that made this affordance visible. An optimistic

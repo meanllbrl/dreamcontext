@@ -1,0 +1,564 @@
+/*
+ * The window-level chrome: the title bar that now belongs to the WINDOW rather than to any
+ * one project, and the centred chip strip inside it.
+ *
+ * Both live in this one stylesheet on purpose — `WindowChrome.tsx` ships no `.css` of its
+ * own, and the bar exists only to hold the strip, so splitting them would put two halves of
+ * one layout in two files that must stay in lock-step. Every palette value here is a design
+ * token — the only literal colour is the opaque end of a mask gradient, where the channel is
+ * ignored and only the alpha ramp is read.
+ */
+
+/* ─────────────────────────── Window chrome (the title bar) ─────────────────────────── */
+
+.window-chrome {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--color-bg);
+  /* The chrome bar is one title bar tall. Captured here, BEFORE the rebasing below
+     redefines `--header-height` for the instances, so the two can't drift apart. */
+  --chrome-bar-height: var(--header-height);
+}
+
+.window-chrome-bar {
+  position: relative;
+  z-index: 40; /* above the instance Header (30) — this bar is never covered by a project */
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--header-height);
+  padding: 0 var(--space-3);
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+  /* It's a title bar: nothing in it is selectable, or a double-click to maximize would
+     select text instead (the same reason `.header` sets this). */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/*
+ * macOS overlay title bar: the native traffic lights float over our own bar's top-left, so
+ * the strip has to start clear of them. `.tauri-overlay` is set on <html> by main.tsx and is
+ * the ONLY probe for this case anywhere in the app — no new detection here.
+ */
+/*
+ * CENTRED AGAINST THE WINDOW, NOT AGAINST THE LEFTOVER SPACE.
+ *
+ * The obvious layout — a strip with `flex: 1` between a left inset and a right cluster —
+ * centres the strip inside whatever is LEFT OVER, so the zoom and theme controls on the right
+ * push it visibly off-centre by half their width. The eye reads the capsule against the
+ * WINDOW, and it lands wrong.
+ *
+ * Giving both sides `flex: 1 1 0` makes them share the free space EQUALLY, so the middle is
+ * centred on the window's own axis with no measurement and no JS. `min-width` still guards
+ * both ends: the macOS traffic lights on the left, and the controls' own content on the right
+ * (a flex item's default `min-width: auto` refuses to shrink below min-content).
+ */
+.window-chrome-inset {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.tauri-overlay .window-chrome-inset {
+  min-width: 86px;
+}
+
+.window-chrome-right {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+/*
+ * Why a tab was refused (the 6-instance ceiling, closing the last chip, detaching it).
+ * Transient and inline rather than a toast: it answers a click the user just made, so it
+ * belongs next to the thing they clicked.
+ */
+/*
+ * Sits between the strip and the right cluster, so while it is up the strip is nudged off the
+ * window's axis. Accepted: it is transient (it answers a click the user just made) and rare
+ * (a refused tab), and a momentary shift toward the thing that just refused is a reasonable
+ * thing for the eye to follow.
+ */
+.window-chrome-notice {
+  flex: 0 1 auto;
+  max-width: 320px;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Every mounted project lives here, stacked. Exactly one is visible; the rest are hidden
+ * with `hidden` + `inert` (T6) and stay MOUNTED so their PTYs and WebSockets survive.
+ * `position: relative` so an instance's own fixed/absolute surfaces measure against the
+ * body area rather than the viewport's title-bar row.
+ */
+.window-chrome-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+
+  /*
+   * REBASING THE TITLE-BAR ORIGIN — one declaration instead of a dozen patches.
+   *
+   * Every surface in the app that has to sit "below the title bar" measures that distance as
+   * `--header-height`, against the viewport: the expanded agent overlay
+   * (`AgentTerminal.css:30,43`), `FullscreenOverlay`, `TaskDetailPanel`, the sidebar's
+   * `calc(100vh - …)`, and the three board components' inline `calc(100dvh - …)`.
+   *
+   * There are now TWO bars above a project's content — this window's chrome bar and the
+   * project's own header — so for anything INSIDE an instance that distance is both of them.
+   * Redefining the variable for this subtree makes every one of those surfaces correct
+   * without editing a single one of their stylesheets, and keeps them correct if the bar
+   * height ever changes. The project header is the one thing that must stay one bar tall, so
+   * it is put back onto the captured value below.
+   */
+  --header-height: calc(var(--chrome-bar-height) * 2);
+}
+
+/* The visible instance fills the body; hidden ones are `display:none` and take no space. */
+.window-chrome-body > *:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/*
+ * `.shell` is `height: 100vh` (Shell.css), which predates having anything above it — inside
+ * the chrome that overflows by exactly the bar. It fills the body instead.
+ */
+.window-chrome-body .shell {
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* One bar tall, against the rebased variable above. */
+.window-chrome-body .header {
+  height: var(--chrome-bar-height);
+}
+
+/*
+ * The traffic lights float over the CHROME bar now, not over a project's header — so the
+ * inset that used to clear them (`Header.css`'s `.tauri-overlay .header`) would leave the
+ * rail toggle stranded 80px from the left edge for no reason.
+ */
+.tauri-overlay .window-chrome-body .header {
+  padding-left: var(--space-4);
+}
+
+/* ───────────────────────────────── The chip strip ───────────────────────────────── */
+
+/*
+ * ONE PIECE OF GLASS, NOT N PILLS.
+ *
+ * The projects read as options inside a single continuous capsule — the segmented-control
+ * shape Apple's Liquid Glass uses — rather than as separate bordered chips. The reason is
+ * semantic, not decorative: these are mutually exclusive choices about ONE thing (which
+ * project this window is showing), and a segmented control says "pick one of these" where a
+ * row of independent pills says "here are some unrelated buttons".
+ *
+ * Three layers make the material, and each is doing a job:
+ *   1. a translucent fill + backdrop blur — the surface behind shows through, so the bar
+ *      belongs to the window instead of sitting on top of it;
+ *   2. a specular top highlight (inset hairline) — light hits the top edge of a real curved
+ *      surface, and this is the single cheapest cue that reads as "glass" rather than "grey box";
+ *   3. a soft ambient shadow — it lifts off the bar just enough to be a distinct object.
+ *
+ * Every colour is derived from a token via `color-mix`, so the whole material re-tints itself
+ * in light and dark mode with no second palette to keep in sync. The only literal colour in
+ * this file remains the opaque end of the overflow mask, where the channel is ignored and
+ * only the alpha ramp is read.
+ */
+.project-tabs {
+  /* Sized by its content and allowed to shrink — the two side regions above are what claim
+     the free space, and they are what centres this. */
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* A 42px bar has no room for a scrollbar; the edge fades below are the affordance. */
+  scrollbar-width: none;
+}
+
+.project-tabs::-webkit-scrollbar {
+  height: 0;
+}
+
+.project-tabs[data-overflow='true'] {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+}
+
+/*
+ * The track IS the capsule now. `margin-inline: auto` still carries RULE 2 (fall left when it
+ * doesn't fit): auto margins resolve to 0 the moment the content outgrows its scroll
+ * container, so the glass left-aligns and becomes scrollable at exactly the width where
+ * centring would start clipping — in CSS, so it can never disagree with the observer for a
+ * frame. The observer only publishes `data-overflow`, which turns on the edge fades.
+ */
+.project-tabs-track {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-1);
+  margin-inline: auto; /* ← Rule 2 (see above) */
+  border-radius: var(--radius-full);
+  background: color-mix(in oklab, var(--color-text) 6%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-text) 8%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--color-bg) 65%, transparent),
+    0 1px 2px color-mix(in oklab, var(--color-text) 8%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+}
+
+/*
+ * RULE 1 — frozen while the pointer is inside the strip. The measured leading gap is written
+ * to `--tabs-lead` and the auto margins are dropped, so closing a chip cannot slide the
+ * neighbouring chip under the cursor and invite a second accidental close.
+ */
+.project-tabs[data-frozen='true'] .project-tabs-track {
+  margin-inline: 0 auto;
+  margin-left: var(--tabs-lead, 0);
+}
+
+/* The empty slot a chip left behind while the layout is frozen. */
+.project-tab-ghost {
+  flex: 0 0 auto;
+  height: 28px;
+}
+
+/* ───────────────────────────── One segment of the glass ───────────────────────────── */
+
+/*
+ * A segment carries no shell of its own — the capsule around it is the shell. What used to be
+ * a border and a background here would now be a box drawn inside a box.
+ */
+.project-tab {
+  --tab-kind-color: var(--color-text-tertiary); /* neutral: ready / starting / saved / ended */
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding-right: 2px;
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  background: transparent;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+/*
+ * Only the two states that mean "this project needs your eyes" take colour; everything else
+ * is neutral. An idle project rolls up as `ended` (the calmest state, and what an empty row
+ * set answers), so mapping `ended` to the error hue would paint every quiet chip red.
+ */
+.project-tab[data-kind='asking'] {
+  --tab-kind-color: var(--color-error);
+}
+
+.project-tab[data-kind='working'] {
+  --tab-kind-color: var(--color-accent);
+}
+
+/* Hovering an inactive segment fogs the glass under it — a hint, not a selection. */
+.project-tab:hover:not([data-active='true']) {
+  background: color-mix(in oklab, var(--color-text) 5%, transparent);
+}
+
+/*
+ * THE LENS — the active segment.
+ *
+ * TWO CHANNELS, KEPT APART. The lens says WHERE YOU ARE; the dot and badge inside it say WHAT
+ * IS HAPPENING. So "you are here" is a raised pane of brighter glass, never a change to the
+ * state colours — a project that is asking looks the same whether or not you are standing in
+ * it, because it IS the same. The strip has exactly one active segment, so the lens is
+ * unambiguous even when the dot inside it happens to be the accent hue too.
+ *
+ * It reads as a piece of glass floating INSIDE the capsule rather than a filled tab: a
+ * brighter surface, its own specular top edge, and a small drop shadow for the gap between
+ * the two layers. The accent appears only as a whisper in the border — enough to tie it to
+ * the app's action colour without turning the strip into a coloured widget.
+ *
+ * The other half of this separation lives in ProjectTabs.tsx: the active segment never
+ * bounces. Motion is the "come over here" signal, and it is wrong for the place the user is.
+ */
+.project-tab[data-active='true'] {
+  background: color-mix(in oklab, var(--color-bg-elevated) 88%, var(--color-accent) 4%);
+  border-color: color-mix(in oklab, var(--color-accent) 22%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--color-bg) 80%, transparent),
+    0 1px 3px color-mix(in oklab, var(--color-text) 14%, transparent);
+}
+
+/* A torn-down segment: the project is still listed, its instance is not mounted. */
+.project-tab[data-cold='true'] {
+  opacity: 0.55;
+}
+
+.project-tab[data-cold='true'] .project-tab-dot {
+  box-shadow: inset 0 0 0 1px var(--tab-kind-color);
+  background: transparent;
+}
+
+.project-tab[data-cold='true']:hover {
+  opacity: 1;
+}
+
+.project-tab-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: 26px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-caption);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.project-tab-main:hover {
+  color: var(--color-text);
+}
+
+.project-tab[data-active='true'] .project-tab-main {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.project-tab-main:focus-visible,
+.project-tab-close:focus-visible,
+.project-tabs-add:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-accent-soft), 0 0 0 1px var(--color-accent);
+}
+
+.project-tab-main:active {
+  transform: scale(0.98);
+}
+
+.project-tab-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--tab-kind-color);
+}
+
+/* The one state that is genuinely in motion gets a pulse; the rest hold still. */
+.project-tab[data-kind='working'] .project-tab-dot {
+  animation: projectTabDotPulse 1.6s ease-in-out infinite;
+}
+
+.project-tab-name {
+  min-width: 0;
+  max-width: 168px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/*
+ * The live-conversation count. Omitted entirely at 0 (see ProjectTabs.tsx) — a "0" badge is
+ * noise on a chip that has nothing going on.
+ */
+.project-tab-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--tab-kind-color);
+  color: var(--color-text-on-brand);
+  /* Matches `.header-search-pill-kbd`'s 10px, scaled by app zoom like every other size. */
+  font-size: calc(10px * var(--zoom));
+  font-weight: var(--font-weight-bold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.project-tab-close {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+
+/* The × stays out of the way until the chip is in play — but never hides from the keyboard. */
+.project-tab:hover .project-tab-close,
+.project-tab[data-active='true'] .project-tab-close,
+.project-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.project-tab-close:hover:not(:disabled) {
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+}
+
+.project-tab-close:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.project-tab-close:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.project-tab[data-active='true'] .project-tab-close:disabled,
+.project-tab:hover .project-tab-close:disabled {
+  opacity: 0.35;
+}
+
+/*
+ * One-shot bounce when a BACKGROUND project starts waiting on the user — the moment the whole
+ * strip exists for. Driven by a flag the component sets on the `waiting` 0→>0 edge and clears
+ * on `animationend`, so it fires once per question rather than looping, and never on the chip
+ * the user is already looking at.
+ */
+.project-tab[data-bouncing='true'] {
+  animation: projectTabBounce var(--transition-bounce) both;
+}
+
+@keyframes projectTabBounce {
+  0% { transform: translateY(0); }
+  30% { transform: translateY(-5px); }
+  55% { transform: translateY(0); }
+  75% { transform: translateY(-2px); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes projectTabDotPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* ─────────────────────────────── The `+` affordance ─────────────────────────────── */
+
+/*
+ * Inside the capsule, behind a hairline — "add another option to this set", not a separate
+ * button parked next to the glass. The divider is what stops it reading as a sixth project.
+ */
+.project-tabs-add {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: var(--space-1);
+  padding-left: var(--space-1);
+  border: none;
+  border-left: 1px solid color-mix(in oklab, var(--color-text) 10%, transparent);
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  box-sizing: content-box;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.project-tabs-add:hover {
+  background: color-mix(in oklab, var(--color-text) 6%, transparent);
+  color: var(--color-text);
+}
+
+.project-tabs-add:active {
+  transform: scale(0.94);
+}
+
+/* ───────────────────────────── Chip context menu ───────────────────────────── */
+
+.project-tab-menu {
+  position: fixed;
+  z-index: 70; /* above the chrome bar and the instance Header, below modals (1100) */
+  min-width: 200px;
+  padding: var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-xl);
+}
+
+.project-tab-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.project-tab-menu-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.project-tab-menu-item:focus-visible {
+  outline: none;
+  background: var(--color-bg-tertiary);
+  box-shadow: 0 0 0 2px var(--color-accent-soft) inset;
+}
+
+/* ───────────────────────────────── Reduced motion ───────────────────────────────── */
+
+/*
+ * The bounce and the pulse are the only motion here, and both encode state that is ALSO
+ * carried by colour and by the badge — so removing them loses nothing but the movement.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .project-tab[data-bouncing='true'],
+  .project-tab[data-kind='working'] .project-tab-dot {
+    animation: none;
+  }
+
+  .project-tab-main:active,
+  .project-tab-close:active:not(:disabled),
+  .project-tabs-add:active {
+    transform: none;
+  }
+}

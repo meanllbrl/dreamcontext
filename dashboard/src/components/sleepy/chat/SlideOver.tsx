@@ -1,5 +1,6 @@
 import { Component, useEffect, useState, type ReactNode } from 'react';
-import { api, agentFileUrl } from '../../../api/client';
+import { agentFileUrl } from '../../../api/client';
+import { useApi, useVault } from '../../../context/VaultContext';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { ItemView } from './TranscriptItem';
 import {
@@ -91,8 +92,9 @@ function NumberedText({ content }: { content: string }) {
  * is where that consent is asked, so this points back at it instead of duplicating it.
  */
 function MediaPreview({ path, kind }: { path: string; kind: 'image' | 'video' | 'audio' }) {
+  const { vault } = useVault();
   const [failed, setFailed] = useState(false);
-  const src = agentFileUrl(path, { raw: true });
+  const src = agentFileUrl(vault, path, { raw: true });
   if (failed) {
     return (
       <p className="chat-slideover-status error">
@@ -150,6 +152,7 @@ function DirListing({
 }
 
 function FileSlideOver({ path, reference, onClose, onNavApp, onOpenPath }: SlideOverFileProps) {
+  const api = useApi();
   const [state, setState] = useState<{ loading: boolean; data: FileContent | null; error: string | null }>(
     { loading: true, data: null, error: null },
   );
@@ -167,7 +170,7 @@ function FileSlideOver({ path, reference, onClose, onNavApp, onOpenPath }: Slide
       .then((data) => { if (!cancelled) setState({ loading: false, data, error: null }); })
       .catch((err: Error) => { if (!cancelled) setState({ loading: false, data: null, error: err.message || 'Failed to load file.' }); });
     return () => { cancelled = true; };
-  }, [path, mediaKind]);
+  }, [api, path, mediaKind]);
 
   return (
     <>
@@ -262,6 +265,7 @@ function usageLine(usage: SubAgentRun['usage']): string | null {
 }
 
 function SubAgentSlideOver({ run, conversationId, onClose }: SlideOverSubAgentProps) {
+  const api = useApi();
   const [state, setState] = useState<{ loading: boolean; items: ChatItem[] }>({ loading: true, items: [] });
 
   useEffect(() => {
@@ -279,7 +283,7 @@ function SubAgentSlideOver({ run, conversationId, onClose }: SlideOverSubAgentPr
     return () => { cancelled = true; };
     // Refetch when the run's lifecycle advances (e.g. task-updated/task-notification
     // landed after the drill-in was already open) or a different run is opened.
-  }, [conversationId, run.taskId, run.status, run.endedAt]);
+  }, [api, conversationId, run.taskId, run.status, run.endedAt]);
 
   const usage = usageLine(run.usage);
 
@@ -349,6 +353,7 @@ function SubAgentSlideOver({ run, conversationId, onClose }: SlideOverSubAgentPr
 const SHELL_POLL_MS = 1200;
 
 function ShellSlideOver({ run, conversationId, onStop, onClose }: SlideOverShellProps) {
+  const api = useApi();
   const [state, setState] = useState<{
     loading: boolean; content: string; truncated: boolean; exists: boolean; error: string | null;
   }>({ loading: true, content: '', truncated: false, exists: true, error: null });
@@ -394,7 +399,7 @@ function ShellSlideOver({ run, conversationId, onStop, onClose }: SlideOverShell
     poll();
 
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [conversationId, run.taskId, isRunning, run.status]);
+  }, [api, conversationId, run.taskId, isRunning, run.status]);
 
   return (
     <>

@@ -1,5 +1,16 @@
 import { api } from '../api/client';
 
+/**
+ * UNREFERENCED — grep confirms zero consumers of `getChatHistory`/`resetChat`/`startChat`/
+ * `streamChat` anywhere in `dashboard/src`. Left on the singleton `api` deliberately (not
+ * migrated to `useApi()`) because there is no call site to thread a vault through.
+ *
+ * `/api/sleepy/chat` IS per-vault server-side (it writes `<contextRoot>/state/.sleepy-chat.json`
+ * — see `src/server/routes/sleepy-chat.ts`), so this is NOT vault-agnostic. Whoever wires this
+ * up must take an `ApiClient` (or `vault: string | null`) as a parameter and pass it through —
+ * do not just start calling these against the singleton `api` above.
+ */
+
 /** UI tiers — the underlying model (sonnet/opus) is intentionally hidden. */
 export type ChatTier = 'normal' | 'intelligent';
 

@@ -7,8 +7,14 @@
  * These are surface preferences shared by every project window, so they're
  * app-global (not vault-scoped). The Settings page writes them; the persistent
  * AgentSurface reads them and re-applies live via the window event below.
+ *
+ * ONE field is deliberately NOT in this blob: `chatPermissionMode`. It is a permission
+ * gate, not a surface preference — see {@link readChatPermissionMode} at the bottom of
+ * this file.
  */
 import { api } from '../api/client';
+import { SCOPE_PREFIX } from './scopedStorage';
+import { emitInstance } from '../context/VaultContext';
 
 /** localStorage key (versioned so a shape change can invalidate cleanly). */
 const CONFIG_KEY = 'agent:settings:v1';
@@ -59,14 +65,6 @@ export interface AgentSettings {
    *  onto Chat; from the first coerce onward the marker rides along, so a DELIBERATE
    *  switch back to Terminal (legacy) in Settings sticks forever after. */
   screenMigrated: boolean;
-  /** Remembered default permission mode for Chat (BETA) sessions (redesign task
-   *  agent-chat-view-beta-…, state 6's top-right dropdown): `'auto'` maps to the CLI's
-   *  `auto` mode (NOT `acceptEdits` — that one asks on every non-edit command), `'bypass'`
-   *  to `bypassPermissions` — identical mapping to `permissionModeFor` in
-   *  `src/server/routes/agent-chat.ts`. Selecting a mode here applies to the NEXT chat
-   *  session spawned (new, split, resume, sleep/brain/delegate, skill-insert fallback) AND
-   *  to every running one (`changeChatPermissionMode` → `set_permission_mode`). */
-  chatPermissionMode: 'auto' | 'bypass';
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -78,7 +76,6 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   renderer: 'webgl',
   chatView: true,
   screenMigrated: true,
-  chatPermissionMode: 'auto',
 };
 
 /** Coerce an arbitrary blob to a valid AgentSettings (defaults fill gaps). `enabled`
@@ -104,9 +101,8 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     // blob → Chat (that IS the migration); migrated blob → whatever the user picked.
     chatView: r.screenMigrated === true ? r.chatView !== false : true,
     screenMigrated: true,
-    // Only an explicit 'bypass' opts into the caution mode; anything else (absent key,
-    // old blob, garbage) lands on the safer 'auto' default.
-    chatPermissionMode: r.chatPermissionMode === 'bypass' ? 'bypass' : 'auto',
+    // NOTE: a legacy blob's `chatPermissionMode` is dropped here, on purpose — it is no
+    // longer part of this shape. See {@link readChatPermissionMode}.
   };
 }
 
@@ -167,6 +163,77 @@ export async function initAgentSettingsFromServer(): Promise<AgentSettings> {
   } catch {
     return readAgentSettings();
   }
+}
+
+// ─── Chat permission mode — PER VAULT, split out of the global blob ─────────────
+//
+// `'auto'` maps to the CLI's `auto` mode (NOT `acceptEdits` — that one asks on every
+// non-edit command), `'bypass'` to `bypassPermissions` — the same mapping as
+// `permissionModeFor` in `src/server/routes/agent-chat.ts`. The chosen mode applies to the
+// NEXT chat session spawned (new, split, resume, sleep/brain/delegate, skill-insert
+// fallback) AND to every running one (`changeChatPermissionMode` → `set_permission_mode`).
+//
+// WHY IT LEFT THE BLOB. Everything else above is a surface preference that is genuinely the
+// same in every project. This one is a permission gate: it decides whether an agent
+// auto-approves everything it is asked to do, against one project's files and one project's
+// git. It could not cross projects while each vault owned an OS window (one JS realm per
+// project). With several live projects in ONE window it would: flipping bypass while looking
+// at project A rewrites the remembered default for B, and every session B spawns afterwards
+// runs auto-approved in a project the user never touched. So the value is stored per vault
+// and its change notification rides the INSTANCE BUS, never `window`.
+
+export type ChatPermissionMode = 'auto' | 'bypass';
+
+/** Storage key. Namespaced per vault by {@link permissionModeStorageKey}, never read bare. */
+export const CHAT_PERMISSION_MODE_KEY = 'agent:settings:chatPermissionMode';
+
+/** Change notification. Dispatched on the INSTANCE BUS (`useVault().bus`), not `window` —
+ *  a permission change must reach only the project it was made in. */
+export const CHAT_PERMISSION_MODE_EVENT = 'dc-chat-permission-mode';
+
+/**
+ * The one key in the app that is namespaced by hand rather than through
+ * `scopedStorage`'s `readScopedRaw`/`writeScopedRaw`.
+ *
+ * MIGRATION IS THE REASON, and it is deliberate. `readScopedRaw` MOVES a value found at the
+ * bare legacy key into the first vault that reads it — the right default for a preference,
+ * and precisely wrong for this one: the pre-split value must be DROPPED, not carried forward,
+ * because a `'bypass'` set once when it meant "this window's project" would otherwise fan out
+ * to a project the user never opted in for. Relying on "the key is new so nothing is at the
+ * bare name" would make that safety an accident of history — an old build, a hand-edited
+ * store or a future rename would silently resurrect it, and a permission gate must not fail
+ * open on a coincidence. So the bare name is never read, for a null vault either.
+ *
+ * `SCOPE_PREFIX` is still imported rather than re-spelled, so the namespace stays
+ * single-sourced with the rest of the scoped keys.
+ */
+function permissionModeStorageKey(vault: string | null): string {
+  return `${SCOPE_PREFIX}${vault ?? ''}:${CHAT_PERMISSION_MODE_KEY}`;
+}
+
+/**
+ * This vault's remembered chat permission mode.
+ *
+ * Only an exact `'bypass'` opts into the caution mode; absent, stale, malformed or unreadable
+ * storage all read as `'auto'` — the same posture the old `coerceAgentSettings` held, and the
+ * only safe direction for a value that decides whether an agent auto-approves everything.
+ * Every vault therefore starts at `'auto'` and the user re-opts-in per project: a one-time
+ * reset of a permission toggle, which is the correct trade.
+ */
+export function readChatPermissionMode(vault: string | null): ChatPermissionMode {
+  try {
+    return localStorage.getItem(permissionModeStorageKey(vault)) === 'bypass' ? 'bypass' : 'auto';
+  } catch {
+    return 'auto'; // storage unavailable (private mode) — fail safe, never open
+  }
+}
+
+/** Persist this vault's mode and tell THIS instance's surfaces about it. */
+export function writeChatPermissionMode(bus: EventTarget, vault: string | null, mode: ChatPermissionMode): void {
+  try {
+    localStorage.setItem(permissionModeStorageKey(vault), mode);
+  } catch { /* quota/disabled — the live sessions below still get the change */ }
+  emitInstance<ChatPermissionMode>(bus, CHAT_PERMISSION_MODE_EVENT, mode);
 }
 
 /**

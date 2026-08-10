@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 // ─── Types (duplicated client-side — can't import from src/lib) ───────────────
 
@@ -40,6 +40,7 @@ export interface VersionCheck {
  * could be added if live polling is desired in the future.
  */
 export function useVersionCheck() {
+  const api = useApi();
   return useQuery({
     queryKey: ['version-check'],
     queryFn: () => api.get<VersionCheck>('/version-check'),

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 // ─── Types (duplicated client-side — can't import from src/lib) ───────────────
 
@@ -40,6 +40,7 @@ export interface ConnectPayload {
 
 /** Registered vaults + which one is the current project. */
 export function useVaults() {
+  const api = useApi();
   return useQuery({
     queryKey: ['vaults'],
     queryFn: () => api.get<VaultsResponse>('/vaults'),
@@ -48,6 +49,7 @@ export function useVaults() {
 
 /** This vault's federation connections. */
 export function useConnections() {
+  const api = useApi();
   return useQuery({
     queryKey: ['connections'],
     queryFn: () => api.get<ConnectionsResponse>('/connections'),
@@ -58,6 +60,7 @@ export function useConnections() {
 /** Add or upsert a connection (direction change / topics edit reuse this). */
 export function useAddConnection() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (payload: ConnectPayload) =>
       api.post<ConnectionsResponse>('/connections', payload),
@@ -76,6 +79,7 @@ export function useAddConnection() {
 /** Remove a connection. NOTE: the api client's DELETE method is `api.del`. */
 export function useRemoveConnection() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (vault: string) =>
       api.del<ConnectionsResponse>(`/connections/${encodeURIComponent(vault)}`),

@@ -826,6 +826,10 @@
 }
 .agent-tab.active .agent-tab-kind { color: var(--color-text-secondary); }
 .agent-tab-kind[data-session-kind="shell"] { color: var(--color-accent); opacity: 0.85; }
+/* An automation run is the one tab the user did not open — it ran unattended
+   under bypassPermissions. Full opacity and the accent colour so it reads as a
+   distinct class of thing rather than a dimmer agent tab. */
+.agent-tab-kind[data-session-kind="automation"] { color: var(--color-accent); opacity: 1; }
 
 .agent-tab-title {
   /* Don't grow to fill — take exactly the name's natural width so the bar tracks the

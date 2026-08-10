@@ -1588,40 +1588,48 @@ describe('stepHistory', () => {
 // Replaying a known natural size reserves the box up front. (Measured: an unreserved image
 // in this transcript's CSS goes 2px → 420px on load; a reserved one is 420px throughout.)
 
+// Every box below is remembered PER VAULT. A reference is a bare relative path, so
+// `shots/a.png` names a different file in every project — one shared map would replay one
+// project's aspect ratio onto another's image, and one shared 400-entry bound would let a
+// busy project evict a quiet one's boxes. `V` is this block's project unless a test is
+// specifically about two of them.
+
+const V = 'boxes-vault';
+
 describe('remembered image boxes', () => {
   it('an image never displayed has no remembered box', () => {
-    expect(knownMediaBox('never/seen/at/all.png')).toBeNull();
+    expect(knownMediaBox(V, 'never/seen/at/all.png')).toBeNull();
   });
 
   it('remembers a natural size and replays it for the next element built for that path', () => {
-    rememberMediaBox('shots/a.png', 1200, 800);
-    expect(knownMediaBox('shots/a.png')).toEqual({ w: 1200, h: 800 });
+    rememberMediaBox(V, 'shots/a.png', 1200, 800);
+    expect(knownMediaBox(V, 'shots/a.png')).toEqual({ w: 1200, h: 800 });
   });
 
   it('a file that changed shape overwrites the stale box rather than keeping it', () => {
-    rememberMediaBox('shots/b.png', 800, 600);
-    rememberMediaBox('shots/b.png', 640, 640);
-    expect(knownMediaBox('shots/b.png')).toEqual({ w: 640, h: 640 });
+    rememberMediaBox(V, 'shots/b.png', 800, 600);
+    rememberMediaBox(V, 'shots/b.png', 640, 640);
+    expect(knownMediaBox(V, 'shots/b.png')).toEqual({ w: 640, h: 640 });
   });
 
   it('refuses a size that is not an aspect ratio — a NaN box would reserve unpredictable height', () => {
     for (const [w, h] of [[0, 100], [100, 0], [-5, 5], [Number.NaN, 10], [10, Number.POSITIVE_INFINITY]]) {
-      rememberMediaBox('shots/bad.png', w, h);
-      expect(knownMediaBox('shots/bad.png')).toBeNull();
+      rememberMediaBox(V, 'shots/bad.png', w, h);
+      expect(knownMediaBox(V, 'shots/bad.png')).toBeNull();
     }
   });
 
   it('a decode that reports 0x0 (a failed image) never displaces a good remembered box', () => {
-    rememberMediaBox('shots/c.png', 900, 300);
-    rememberMediaBox('shots/c.png', 0, 0);
-    expect(knownMediaBox('shots/c.png')).toEqual({ w: 900, h: 300 });
+    rememberMediaBox(V, 'shots/c.png', 900, 300);
+    rememberMediaBox(V, 'shots/c.png', 0, 0);
+    expect(knownMediaBox(V, 'shots/c.png')).toEqual({ w: 900, h: 300 });
   });
 
   it('is bounded — the oldest box goes, not the newest arrival', () => {
-    rememberMediaBox('evict/oldest.png', 10, 10);
-    for (let i = 0; i < 420; i += 1) rememberMediaBox(`evict/filler-${i}.png`, 30, 40);
-    expect(knownMediaBox('evict/oldest.png')).toBeNull();
-    expect(knownMediaBox('evict/filler-419.png')).toEqual({ w: 30, h: 40 });
+    rememberMediaBox(V, 'evict/oldest.png', 10, 10);
+    for (let i = 0; i < 420; i += 1) rememberMediaBox(V, `evict/filler-${i}.png`, 30, 40);
+    expect(knownMediaBox(V, 'evict/oldest.png')).toBeNull();
+    expect(knownMediaBox(V, 'evict/filler-419.png')).toEqual({ w: 30, h: 40 });
   });
 
   it('re-seeing an UNCHANGED image refreshes its place in the queue', () => {
@@ -1629,12 +1637,30 @@ describe('remembered image boxes', () => {
     // it is exactly the signal that this image is still being looked at. Without the refresh
     // a screenshot the reader keeps scrolling past is evicted by images they passed once,
     // and the reveal it is mounted in grows under them again.
-    rememberMediaBox('lru/kept.png', 20, 20);
-    for (let i = 0; i < 399; i += 1) rememberMediaBox(`lru/fill-a-${i}.png`, 30, 40);
-    expect(knownMediaBox('lru/kept.png')).toEqual({ w: 20, h: 20 }); // at the cap, still in
-    rememberMediaBox('lru/kept.png', 20, 20);                        // same size — a refresh
-    for (let i = 0; i < 300; i += 1) rememberMediaBox(`lru/fill-b-${i}.png`, 30, 40);
-    expect(knownMediaBox('lru/kept.png')).toEqual({ w: 20, h: 20 });
+    rememberMediaBox(V, 'lru/kept.png', 20, 20);
+    for (let i = 0; i < 399; i += 1) rememberMediaBox(V, `lru/fill-a-${i}.png`, 30, 40);
+    expect(knownMediaBox(V, 'lru/kept.png')).toEqual({ w: 20, h: 20 }); // at the cap, still in
+    rememberMediaBox(V, 'lru/kept.png', 20, 20);                        // same size — a refresh
+    for (let i = 0; i < 300; i += 1) rememberMediaBox(V, `lru/fill-b-${i}.png`, 30, 40);
+    expect(knownMediaBox(V, 'lru/kept.png')).toEqual({ w: 20, h: 20 });
+  });
+
+  it('two projects sharing a relative path keep SEPARATE boxes', () => {
+    // The cross-project defect: both projects keep screenshots under `shots/`, and one
+    // window now holds both. Project A's 1200×800 must never be reserved for B's image.
+    rememberMediaBox('proj-a', 'shots/shared-name.png', 1200, 800);
+    rememberMediaBox('proj-b', 'shots/shared-name.png', 400, 400);
+    expect(knownMediaBox('proj-a', 'shots/shared-name.png')).toEqual({ w: 1200, h: 800 });
+    expect(knownMediaBox('proj-b', 'shots/shared-name.png')).toEqual({ w: 400, h: 400 });
+    // A third project has simply never seen it — not "inherits whoever loaded first".
+    expect(knownMediaBox('proj-c', 'shots/shared-name.png')).toBeNull();
+  });
+
+  it('one project filling its cache does not evict another project’s boxes', () => {
+    // The bound is per vault, so a busy project cannot push a quiet one's screenshots out.
+    rememberMediaBox('quiet-proj', 'keep/me.png', 50, 50);
+    for (let i = 0; i < 420; i += 1) rememberMediaBox('busy-proj', `flood/${i}.png`, 30, 40);
+    expect(knownMediaBox('quiet-proj', 'keep/me.png')).toEqual({ w: 50, h: 50 });
   });
 });
 

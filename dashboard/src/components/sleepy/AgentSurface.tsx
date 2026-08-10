@@ -3,7 +3,8 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import './AgentTerminal.css';
-import { api, getActiveVault } from '../../api/client';
+import { api } from '../../api/client';
+import { useVault, useApi, useInstanceEvent, emitInstance } from '../../context/VaultContext';
 import { uploadAgentFile } from '../../lib/agentDrop';
 import {
   createSession, currentZoom,
@@ -12,11 +13,13 @@ import {
 import { createChatSession, type ChatSession, type ChatUserItem } from './chatSession';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
-  initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
+  initAgentSettingsFromServer, readAgentSettings, matchesAccel,
   doubleTapToken, createDoubleTapMatcher,
   AGENT_SETTINGS_EVENT, type AgentSettings,
+  readChatPermissionMode, writeChatPermissionMode,
+  CHAT_PERMISSION_MODE_EVENT, type ChatPermissionMode,
 } from '../../lib/agentSettings';
-import { deriveSessionStatus, type SessionRow } from './agentStatus';
+import { deriveSessionStatus, rollupProject, type ProjectRollup, type SessionRow } from './agentStatus';
 import { PaneFragment, type PaneActions } from './PaneFragment';
 import { AgentTabs, type PaneVM } from './AgentTabs';
 import { AgentDock } from './AgentDock';
@@ -72,6 +75,16 @@ import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
  * Desktop-only and capability-gated. Bypass-permissions is OFF by default (armed
  * explicitly per session, shown as a ⚡ on that session's tab).
  */
+
+/**
+ * This project's chip state, published on the INSTANCE bus for the window chrome to draw.
+ *
+ * On the bus rather than on `window` for the usual reason — with several projects mounted in
+ * one window, a `window` event would have every chip repainted from whichever surface emitted
+ * last. The detail is a {@link ProjectRollup}; the chrome keys it by the vault of the instance
+ * that forwarded it, so the surface never has to name itself.
+ */
+export const PROJECT_ROLLUP_EVENT = 'dc-project-rollup';
 
 // ── Layout model ─────────────────────────────────────────────────────────────────
 
@@ -170,6 +183,22 @@ function removeFromPane(p: PaneState, sid: string): PaneState {
 // ── The persistent surface ─────────────────────────────────────────────────────
 
 export function AgentSurface() {
+  // Which project this surface belongs to. Every session it spawns, every file it uploads and
+  // the checklist bridge it registers are bound to THIS vault — one window holds several live
+  // projects, so reading an "active vault" module global here would spawn a project's agent
+  // against whichever chip the user last touched.
+  // `isActive` is whether this project is the chip the user is LOOKING at. It gates two
+  // things only — when a terminal grabs focus, and when it is (re)fitted. It must never
+  // reach a WebSocket: a hidden instance stays mounted and fully live, its chat still
+  // streaming, and the only thing a chip switch changes is what the pixels are measured
+  // against (see HARD CONSTRAINT #2 in the project-tabs plan).
+  const { vault, isActive, bus } = useVault();
+  // A vault-scoped client for the PER-VAULT routes below (session roster, auto-title,
+  // open-terminal) — none of these are on the server's `VAULT_AGNOSTIC_PREFIXES` list, so the
+  // module `api` singleton would resolve them against whichever vault the server happens to be
+  // pinned to. `/agent/capabilities` and `/agent/session-model` stay on the singleton: they are
+  // agnostic (machine-level facts / keyed by claudeId), same answer for every instance.
+  const scopedApi = useApi();
   // The whole surface is mounted once (App.tsx) and toggled between a hidden state and
   // a fullscreen overlay by this local flag. Sessions live in the detached-DOM garage
   // either way, so toggling `expanded` NEVER remounts xterm/WebSocket/PTY.
@@ -244,11 +273,51 @@ export function AgentSurface() {
   const claudeReady = chatMode || !!(caps?.embeddedTerminal && caps?.claudeCli);
 
   const sessions = useRef<Map<string, Session | ChatSession>>(new Map());
-  // The remembered chat permission mode, mirrored into a ref so `spawn` reads the CURRENT
-  // value even when called from a closure captured before the change landed in state —
-  // see `changeChatPermissionMode` and spawn's chat arm.
-  const chatPermissionModeRef = useRef(agentSettings.chatPermissionMode);
-  chatPermissionModeRef.current = agentSettings.chatPermissionMode;
+
+  // Dispose every session when this surface unmounts.
+  //
+  // Until projects became chips this was unnecessary — the surface was mounted once, at the
+  // app root, and outlived everything, so the only way to end a session was to close it
+  // explicitly (`closeSessionById` and the chat resume/hand-off paths). A `ProjectInstance`
+  // can now be torn down under the user: closing a chip, and the ceiling rule evicting the
+  // oldest idle project into a cold chip. Without this, that teardown leaks the PTY, the
+  // WebSocket, the xterm, the theme `MutationObserver` and the per-session
+  // `AGENT_SETTINGS_EVENT` listener — and leaves an orphaned `claude` process on the machine.
+  //
+  // This is the cleanup for an unmount somebody ELSE decided on; nothing here ever decides to
+  // unmount an instance. Empty deps so it runs on unmount ONLY, never on a re-render.
+  // `dispose()` is internally try/caught per teardown step, but wrap per SESSION too so one
+  // throw cannot abort the loop and strand the rest.
+  useEffect(() => () => {
+    sessions.current.forEach((s) => { try { s.dispose(); } catch { /* best-effort */ } });
+    sessions.current.clear();
+  }, []);
+  // ── The remembered chat permission mode — PER VAULT, not part of `agentSettings` ────
+  //
+  // Everything in `agentSettings` is a surface preference that is genuinely the same in every
+  // project. This one decides whether an agent auto-approves everything it is asked to do,
+  // against ONE project's files and ONE project's git, so it is stored per vault and its
+  // change notification rides this instance's bus (see `lib/agentSettings.ts`'s split note).
+  // On `window` — which is where it lived while a project meant a whole OS window — flipping
+  // bypass while looking at project A would rewrite the remembered default for every other
+  // live project, and every session they spawned afterwards would run auto-approved in a
+  // project the user never opted in for.
+  //
+  // `vault` is fixed for the life of this mount (`ProjectInstance` reads it once and never
+  // changes it), so seeding from storage in the initializer is the whole read path.
+  const [chatPermissionMode, setChatPermissionMode] = useState<ChatPermissionMode>(
+    () => readChatPermissionMode(vault),
+  );
+  // Mirrored into a ref so `spawn` reads the CURRENT value even when called from a closure
+  // captured before the change landed in state — see `changeChatPermissionMode` and spawn's
+  // chat arm.
+  const chatPermissionModeRef = useRef(chatPermissionMode);
+  chatPermissionModeRef.current = chatPermissionMode;
+  // A Settings page in THIS project changed it. Same instance, same bus — and a Settings page
+  // in another chip cannot reach us, which is the point.
+  useInstanceEvent<ChatPermissionMode>(CHAT_PERMISSION_MODE_EVENT, (mode) => {
+    if (mode) setChatPermissionMode(mode);
+  });
   const garageRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   // The session id of the tab currently being dragged. The DnD payload is ALSO written to
@@ -294,6 +363,10 @@ export function AgentSurface() {
 
   // ── Agent-surface settings: load the server-persisted prefs once, then track
   //    live changes the Settings page broadcasts (no reload needed). ──
+  // Deliberately on `window`: what remains in this blob (surface on/off, restore-tabs,
+  // renderer, hotkey, Chat-vs-Terminal) is genuinely app-global and mirrored to
+  // ~/.dreamcontext/agent-ui.json, so EVERY live project should re-apply a change at once.
+  // The one field that was not — `chatPermissionMode` — has left this blob entirely.
   useEffect(() => {
     let cancelled = false;
     void initAgentSettingsFromServer().then((s) => {
@@ -331,7 +404,7 @@ export function AgentSurface() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await api.get<{ sessions: SavedMeta[] }>('/agent/sessions');
+        const res = await scopedApi.get<{ sessions: SavedMeta[] }>('/agent/sessions');
         // Terminals are never remembered — drop any shell entry, plus any legacy roster
         // row still named "Terminal N" (a stale shell saved before we stopped persisting
         // them; auto-title only ever renames AGENTS, so that default name is a reliable
@@ -370,7 +443,7 @@ export function AgentSurface() {
       finally { if (!cancelled) hydratedRef.current = true; }
     })();
     return () => { cancelled = true; };
-  }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView]);
+  }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView, scopedApi]);
 
   // Persist on every roster change (post-hydrate), debounced. AGENTS and CHATS are
   // remembered — plain TERMINALS are session-local and never reopened on launch (the server
@@ -388,10 +461,10 @@ export function AgentSurface() {
             title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
           })),
       };
-      void api.put('/agent/sessions', payload).catch(() => { /* best-effort mirror */ });
+      void scopedApi.put('/agent/sessions', payload).catch(() => { /* best-effort mirror */ });
     }, 400);
     return () => clearTimeout(handle);
-  }, [sessionList]);
+  }, [sessionList, scopedApi]);
 
   // ── Session actions ────────────────────────────────────────────────────────
   // claudeId omitted → a fresh conversation (new UUID via `--session-id`); provided with
@@ -400,8 +473,8 @@ export function AgentSurface() {
   // `preparePrompt` (lib/agentPrompt.ts) BEFORE calling spawn, so spawn itself stays
   // synchronous (the delegate ACK in lib/delegateAgent.ts depends on that).
   // `bp` is every caller's REQUESTED bypass (the surface-wide toggle, a delegate's own
-  // per-card choice, …) — for a CHAT session it is overridden here by the remembered
-  // permission-mode default (`agentSettings.chatPermissionMode`, state 6's top-right
+  // per-card choice, …) — for a CHAT session it is overridden here by THIS VAULT's remembered
+  // permission-mode default (`chatPermissionMode`, state 6's top-right
   // dropdown) rather than trusted verbatim. Centralizing the resolution HERE (instead of
   // at each call site) means every current and future chat-spawn path — addSession,
   // addSplitSession, openAgentInChat, dormant resume, resumeChatSession, runSleepAgent,
@@ -418,27 +491,27 @@ export function AgentSurface() {
   // run under bypassPermissions.
   const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '', explicitBypass = false) => {
     if (kind === 'chat') {
-      // Read through the REF, not the settings object: `changeChatPermissionMode` below can
+      // Read through the REF, not the state value: `changeChatPermissionMode` below can
       // respawn a conversation in the very same tick it changes the mode, and this closure's
-      // `agentSettings` would still be the pre-change render's — spawning the fallback under
-      // exactly the mode the user just left.
+      // `chatPermissionMode` would still be the pre-change render's — spawning the fallback
+      // under exactly the mode the user just left.
       const effectiveBypass = explicitBypass ? bp : chatPermissionModeRef.current === 'bypass';
       // Chat (BETA) is a headless stream-json engine, not a PTY — createChatSession has its
       // own factory (chatSession.ts), takes `effort` at spawn (the terminal only ever
       // switches it live via `/effort`, so its own createSession has no such param), and has
       // no `submitInitial` concept (an initial prompt is always delivered server-side; see
       // chatSession.ts's header note).
-      const cs = createChatSession(effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, model, effort, initialPrompt, promptToken, deferPrompt);
+      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, model, effort, initialPrompt, promptToken, deferPrompt);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
       return cs;
     }
     // A shell has no permission model, so bypass is meaningless for it — force it off.
-    const s = createSession(kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind, initialPrompt, model, submitInitial, promptToken, deferPrompt);
+    const s = createSession(vault ?? '', kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind, initialPrompt, model, submitInitial, promptToken, deferPrompt);
     s.applyZoom(currentZoom());
     sessions.current.set(s.id, s);
     return s;
-  }, [agentSettings.chatPermissionMode]);
+  }, [chatPermissionMode, vault]);
 
   // Spawn a fresh session AND append its roster entry — the two steps every "new session"
   // path shares. Callers keep only their pane placement, so the roster-entry shape lives in
@@ -565,12 +638,10 @@ export function AgentSurface() {
   // Settings → here. The System doctor now reports the sign-in state (the server probes it
   // via `claude auth status` — see src/lib/claude-auth.ts) and its "Sign in" button lands on
   // this same flow, because a page below this surface in the tree has no handle on it. Same
-  // page-dispatches/surface-listens bridge as the sleep tracker and Delegate.
-  useEffect(() => {
-    const onRequest = () => { if (canSignInInApp) signInToClaude(); };
-    window.addEventListener(CLAUDE_SIGNIN_EVENT, onRequest);
-    return () => window.removeEventListener(CLAUDE_SIGNIN_EVENT, onRequest);
-  }, [canSignInInApp, signInToClaude]);
+  // page-dispatches/surface-listens bridge as the sleep tracker and Delegate — on THIS
+  // instance's bus, so the one Settings page that asked gets the one sign-in tab it wanted
+  // rather than one per live project.
+  useInstanceEvent(CLAUDE_SIGNIN_EVENT, () => { if (canSignInInApp) signInToClaude(); });
 
   // ── Chat ↔ Terminal conversion (AC7's two directions, BETA) ──────────────────────
   //
@@ -606,9 +677,9 @@ export function AgentSurface() {
     })));
   }, [spawn]);
 
-  // The `bypass` dropdown in a chat composer. The mode is ONE app-wide setting (there is a
-  // single `agentSettings.chatPermissionMode`, and every composer's chip shows it), so
-  // changing it from any pane must mean three things at once:
+  // The `bypass` dropdown in a chat composer. The mode is ONE setting PER PROJECT (there is a
+  // single `chatPermissionMode` for this vault, and every composer's chip in this project
+  // shows it), so changing it from any pane must mean three things at once:
   //   1. remembered      — persisted, so every FUTURE chat spawns under it (`spawn`'s chat arm),
   //   2. applied now     — every LIVE chat conversation switches without being restarted
   //                        (`set_permission_mode`), because a chip that reads "bypass" while
@@ -618,29 +689,29 @@ export function AgentSurface() {
   //                        state at the cost of a process restart.
   const changeChatPermissionMode = useCallback((mode: 'auto' | 'bypass') => {
     chatPermissionModeRef.current = mode;  // eagerly, so a fallback respawn in THIS tick is correct
-    // PATCH, not a whole-object write: this control owns one field, and spreading a render's
-    // settings snapshot would rewrite the others from whatever that render happened to hold
-    // (see patchAgentSettings — it is how `chatView` got reset to its default here).
-    patchAgentSettings({ chatPermissionMode: mode });
+    // Persist under THIS vault's key and announce on THIS instance's bus, which is also what
+    // feeds our own `useInstanceEvent` above and moves the state — one write path, no
+    // second `setChatPermissionMode` here that could disagree with what was stored.
+    writeChatPermissionMode(bus, vault, mode);
     sessions.current.forEach((s) => {
       if (s.kind !== 'chat') return;
       const cs = s as ChatSession;
       cs.setPermissionMode(mode, () => resumeChatSession(cs));
     });
-  }, [agentSettings, resumeChatSession]);
+  }, [bus, vault, resumeChatSession]);
 
   // ChatPane's "Open in app ↗" (state 3 — a dreamcontext entity referenced from chat).
-  // AgentSurface is mounted above the router (App.tsx) with no direct handle on Shell's
-  // navigation state, and threading one through is out of this task's file ownership —
-  // so this does the honest subset available from here: collapse the overlay so the page
-  // underneath is actually visible, and fire a forward-compatible window event (unconsumed
-  // today — a future Shell/page listener can pick it up to deep-link the exact item,
-  // exactly the "page dispatches → surface listens" bridge this file already uses in the
-  // other direction for TASK_MANAGER_STATUS_EVENT etc.).
+  // AgentSurface is mounted beside Shell (under `ProjectInstance`) with no direct handle on
+  // Shell's navigation state, so this collapses the overlay and fires the event
+  // `AgentPageNavBridge` listens for, which does the actual `nav.navigate()`.
+  //
+  // On the INSTANCE bus. `id` is a task/knowledge slug that means something in exactly one
+  // vault: broadcast, every mounted project's bridge would navigate, and all but one would
+  // be deep-linking to a slug that does not exist in their brain.
   const onOpenAppPage = useCallback((page: 'tasks' | 'knowledge' | 'core', id: string) => {
     setExpanded(false);
-    try { window.dispatchEvent(new CustomEvent('dreamcontext-agent-open-page', { detail: { page, id } })); } catch { /* SSR/none */ }
-  }, []);
+    emitInstance(bus, 'dreamcontext-agent-open-page', { page, id });
+  }, [bus]);
 
   // terminal→chat: the per-tab "Open in Chat (BETA)" action (AgentTabs). CLOSE-FIRST
   // semantics — the chat route keeps its OWN `liveConversations` guard Set (server-side,
@@ -818,11 +889,9 @@ export function AgentSurface() {
     setActivePaneId(pid);
   }, [caps, agentSettings.enabled, sessionList, spawn, bypass, focusSession, serverCurrent, claudeKind, claudeReady, resubmitPrompt]);
 
-  useEffect(() => {
-    const onRun = () => runSleepAgent();
-    window.addEventListener(RUN_SLEEP_AGENT_EVENT, onRun);
-    return () => window.removeEventListener(RUN_SLEEP_AGENT_EVENT, onRun);
-  }, [runSleepAgent]);
+  // This project's tracker only. A consolidation rewrites one brain; on `window` a single
+  // click would start one in every project the chip strip is holding.
+  useInstanceEvent(RUN_SLEEP_AGENT_EVENT, () => runSleepAgent());
 
   // ── Run brain-resolve agent (the sidebar's one-click "Resolve with AI") ──────────
   // Spawn a dedicated "/dream-sync" session that reconciles the deferred team merge,
@@ -847,11 +916,7 @@ export function AgentSurface() {
     setExpanded(true);
   }, [caps, agentSettings.enabled, sessionList, spawn, bypass, focusSession, serverCurrent, claudeKind, claudeReady, resubmitPrompt]);
 
-  useEffect(() => {
-    const onRun = () => runBrainResolveAgent();
-    window.addEventListener(RUN_BRAIN_RESOLVE_EVENT, onRun);
-    return () => window.removeEventListener(RUN_BRAIN_RESOLVE_EVENT, onRun);
-  }, [runBrainResolveAgent]);
+  useInstanceEvent(RUN_BRAIN_RESOLVE_EVENT, () => runBrainResolveAgent());
 
   // ── Delegate a task to a background agent (from a board card's context menu) ──────
   // A board task card hands a task to Claude via the DELEGATE_AGENT_EVENT bridge (the
@@ -907,17 +972,17 @@ export function AgentSurface() {
     return true;
   }, [caps, agentSettings.enabled, spawn, serverCurrent, panes, activePaneId, claudeKind, claudeReady]);
 
-  useEffect(() => {
-    // Synchronous ACK: `dispatchEvent` runs listeners inline, so writing `accepted` back onto
-    // the detail is visible to `requestDelegateAgent` the moment it returns.
-    const onDelegate = (e: Event) => {
-      const detail = (e as CustomEvent<DelegateAgentDetail>).detail;
-      // Either transport counts as "there is a prompt"; a detail carrying neither is a no-op.
-      if ((detail?.prompt || detail?.promptToken) && delegateAgent(detail)) detail.accepted = true;
-    };
-    window.addEventListener(DELEGATE_AGENT_EVENT, onDelegate);
-    return () => window.removeEventListener(DELEGATE_AGENT_EVENT, onDelegate);
-  }, [delegateAgent]);
+  // Synchronous ACK: dispatch runs listeners inline, so writing `accepted` back onto the
+  // detail is visible to `requestDelegateAgent` the moment it returns.
+  //
+  // The instance bus is load-bearing HERE above everywhere else. On `window` this listener is
+  // one of N, and the first to run sets `accepted` — so the composer in project A is told its
+  // task was delegated while the agent doing the work is in project B, reading a task file
+  // that does not exist there. See `lib/delegateAgent.ts`'s header.
+  useInstanceEvent<DelegateAgentDetail>(DELEGATE_AGENT_EVENT, (detail) => {
+    // Either transport counts as "there is a prompt"; a detail carrying neither is a no-op.
+    if ((detail?.prompt || detail?.promptToken) && delegateAgent(detail)) detail.accepted = true;
+  });
 
   // ── Open an automation run's conversation (from the Automations run history) ──────
   //
@@ -994,14 +1059,12 @@ export function AgentSurface() {
     restoreMinimized, focusSession, spawn, bypass, claudeKind, panes, activePaneId,
   ]);
 
-  useEffect(() => {
-    const onOpenRun = (e: Event) => {
-      const detail = (e as CustomEvent<AutomationRunChatDetail>).detail;
-      if (detail?.sessionId && openAutomationRunChat(detail)) detail.accepted = true;
-    };
-    window.addEventListener(AUTOMATION_RUN_CHAT_EVENT, onOpenRun);
-    return () => window.removeEventListener(AUTOMATION_RUN_CHAT_EVENT, onOpenRun);
-  }, [openAutomationRunChat]);
+  // Bus, not `window`, for the same ACK reason as the delegate above — and because N surfaces
+  // `--resume`ing one conversation uuid is the dual-attach the bring-forward guard exists to
+  // prevent (two live CLIs interleave their appends on one transcript).
+  useInstanceEvent<AutomationRunChatDetail>(AUTOMATION_RUN_CHAT_EVENT, (detail) => {
+    if (detail?.sessionId && openAutomationRunChat(detail)) detail.accepted = true;
+  });
 
   // ── Checklist submit bridge (T8, plan §1.11/§1.12) ────────────────────────────────
   // The pinned checklist window is a SEPARATE OS window with no WebSocket of its own; its
@@ -1039,10 +1102,9 @@ export function AgentSurface() {
   }, [sessionList]);
 
   useEffect(() => {
-    const vault = getActiveVault();
     if (!vault) return;
     return listenForChecklistSubmits(vault, handleChecklistSubmit);
-  }, [handleChecklistSubmit]);
+  }, [vault, handleChecklistSubmit]);
 
   // ── Bottom strip ─────────────────────────────────────────────────────────────────
   // There is NO separate text field: a skill/file goes straight into the terminal's OWN
@@ -1352,7 +1414,7 @@ export function AgentSurface() {
     panes.forEach((pane) => {
       const s = sessions.current.get(pane.active);
       const slot = slots.get(pane.id);
-      if (s && slot && s.container.parentElement !== slot) { slot.appendChild(s.container); s.ensureOpen(); }
+      if (s && slot && s.container.parentElement !== slot) { slot.appendChild(s.container); s.ensureOpen({ focus: isActive }); }
     });
     sessions.current.forEach((s) => {
       if (!homed.has(s.id) && garageRef.current && s.container.parentElement !== garageRef.current) {
@@ -1362,9 +1424,14 @@ export function AgentSurface() {
     // A freshly-shown container only has offsetParent after display, so open/fit next
     // frame. Refits everything ON SCREEN (a split/combine changes every pane's width).
     const raf = requestAnimationFrame(() => {
-      foreground.forEach((id) => { const s = sessions.current.get(id); if (s) { s.ensureOpen(); s.fitAndResize(); } });
+      foreground.forEach((id) => { const s = sessions.current.get(id); if (s) { s.ensureOpen({ focus: isActive }); s.fitAndResize(); } });
     });
     return () => cancelAnimationFrame(raf);
+    // `isActive` is deliberately NOT a dependency: React runs the effect belonging to the
+    // render whose deps changed, so the flag read here is always the current one, and
+    // re-running the whole placement pass on every chip switch would thrash the DOM for a
+    // set of appendChild calls that are all no-ops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panes, expanded]);
 
   // Keep activePaneId pointing at a real pane (panes shrink as tabs close/move).
@@ -1407,14 +1474,38 @@ export function AgentSurface() {
   // ── On EXPAND the panes go from display:none (offsetParent null) to visible, so
   //    refit every visible session next frame. ──
   const fitVisible = useCallback(() => {
-    panes.forEach((p) => { const s = sessions.current.get(p.active); if (s) { s.ensureOpen(); s.fitAndResize(); } });
-  }, [panes]);
+    // "Visible" now means visible in TWO senses: the overlay is expanded AND this project is
+    // the chip on screen. Fitting a hidden instance measures a `display:none` subtree, where
+    // `getComputedStyle().height` is the computed `auto` rather than a used pixel value — the
+    // FitAddon's NaN guard makes that a no-op today, but "no-op by luck" is not a contract to
+    // hand a live PTY (one explicit height on `.agent-pane-term` and it becomes a 2×1 resize).
+    // No-op when `isActive` is true, so a single-project window behaves exactly as before.
+    if (!isActive) return;
+    panes.forEach((p) => { const s = sessions.current.get(p.active); if (s) { s.ensureOpen({ focus: isActive }); s.fitAndResize(); } });
+  }, [panes, isActive]);
 
   useEffect(() => {
     if (!expanded) return;
     const raf = requestAnimationFrame(() => fitVisible());
     return () => cancelAnimationFrame(raf);
   }, [expanded, fitVisible]);
+
+  // ── On ACTIVATION this project's whole subtree goes from hidden (offsetParent null) to
+  //    visible, so re-drive open+fit next frame. ──
+  // Nothing else fires on "my instance became visible": the placement effect is keyed on
+  // [panes, expanded], the effect above on [expanded], and the ResizeObserver below only
+  // exists while expanded AND is 150ms-debounced. Without this, a terminal spawned while its
+  // project was a background chip never opens (`ensureOpen` bails on a null `offsetParent`)
+  // and, because `fitAndResize` no-ops while `!session.opened`, its PTY keeps the server's
+  // default grid — the TUI comes back clipped at the wrong width.
+  //
+  // The rAF is load-bearing: a freshly-shown container only has a non-null `offsetParent`
+  // after the browser has laid it out, so measuring in the same commit measures nothing.
+  useEffect(() => {
+    if (!isActive) return;
+    const raf = requestAnimationFrame(() => fitVisible());
+    return () => cancelAnimationFrame(raf);
+  }, [isActive, fitVisible]);
 
   // Any container width change → refit every visible pane. A ResizeObserver on the host
   // (not just window `resize`) is required because collapsing/expanding the sidebar is a
@@ -1427,8 +1518,13 @@ export function AgentSurface() {
   // fit reflows every xterm grid mid-animation — the visible frame-by-frame judder.
   // Each event resets the timer, so a continuous animation (sidebar toggle, window
   // drag) yields exactly one fit after its final frame.
+  //
+  // Gated on `isActive` as well as `expanded`: a background project's slots keep changing
+  // size (the sidebar hoist, a window resize) while nobody is looking at them, and an
+  // observer left armed there wakes a debounce timer per frame to fit a hidden grid. The
+  // activation effect above re-fits on the way back in, so nothing is lost by not watching.
   useEffect(() => {
-    if (!expanded) return;
+    if (!expanded || !isActive) return;
     const host = hostRef.current;
     if (!host || typeof ResizeObserver === 'undefined') return;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1444,7 +1540,7 @@ export function AgentSurface() {
     // pane add/remove re-arms the observer over the current slot set.
     host.querySelectorAll<HTMLElement>('.agent-pane-slot[data-pane]').forEach((el) => ro.observe(el));
     return () => { ro.disconnect(); if (timer) clearTimeout(timer); };
-  }, [expanded, fitVisible]);
+  }, [expanded, isActive, fitVisible]);
 
   // ── Esc collapses the overlay — but ONLY when focus is outside the terminal, so it
   //    never steals Esc from Claude's TUI (which uses Esc to cancel). It also yields to
@@ -1555,7 +1651,7 @@ export function AgentSurface() {
       const firstUserText = s.kind === 'chat'
         ? (s as ChatSession).getModel().items.find((it): it is ChatUserItem => it.kind === 'user')?.text.trim()
         : undefined;
-      void api.post<{ title: string | null; reason?: string }>(
+      void scopedApi.post<{ title: string | null; reason?: string }>(
         '/agent/title',
         firstUserText ? { claudeId: s.claudeId, message: firstUserText } : { claudeId: s.claudeId },
       )
@@ -1582,7 +1678,7 @@ export function AgentSurface() {
         .catch(() => { /* best-effort: a failed title just leaves the default name */ })
         .finally(() => { titleInFlightRef.current.delete(id); });
     });
-  }, [statusTick, agentSettings.enabled, agentSettings.autoTitle, sessionList]);
+  }, [statusTick, agentSettings.enabled, agentSettings.autoTitle, sessionList, scopedApi]);
 
   // ── Drop-overlay leak guard (the "terminal unreachable after a split" fix) ───────
   // While a tab is dragged, each pane mounts a full-bleed `.agent-pane-droplayer`
@@ -1608,11 +1704,11 @@ export function AgentSurface() {
   // When the user clicks a sidebar item (or jumps via the ⌘K palette) while the agent
   // is fullscreen, collapse it so the page they navigated to is actually visible. The
   // sessions stay alive in the garage — collapsing never tears anything down.
-  useEffect(() => {
-    const onNavigate = () => setExpanded((cur) => (cur ? false : cur));
-    window.addEventListener('dreamcontext-navigate', onNavigate);
-    return () => window.removeEventListener('dreamcontext-navigate', onNavigate);
-  }, []);
+  //
+  // This instance's Shell only (it emits on the same bus): navigating in the foreground
+  // project must not collapse a backgrounded project's overlay out from under it, so that
+  // switching back lands on the agent you left open rather than on its page.
+  useInstanceEvent('dreamcontext-navigate', () => setExpanded((cur) => (cur ? false : cur)));
 
   // ── "＋ New ▾" dropdown: close on outside-click or Esc ────────────────────────
   // The menu is opened by clicking the caret and stays open (no hover-close). A
@@ -1635,6 +1731,10 @@ export function AgentSurface() {
   // ── App zoom → terminal font size. The window's `- 100% +` control sets `--zoom`
   //    (scaling CSS font tokens) and broadcasts `dreamcontext-zoom`; xterm's size is
   //    imperative, so we resize every session's font to match and refit the grid. ──
+  // Stays on `window` ON PURPOSE, unlike the bridges above: zoom is a property of the WINDOW,
+  // the control lives in the window chrome above every instance, and every xterm in it —
+  // foreground and background alike — must end up at the same size. A backgrounded project
+  // that missed a zoom step would repaint at the wrong font the moment you switched to it.
   useEffect(() => {
     const onZoom = (e: Event) => {
       const detail = (e as CustomEvent).detail;
@@ -1681,7 +1781,7 @@ export function AgentSurface() {
   }, [started, addSession, addSplitSession, closeSessionById, focusedSessionId, claudeKind]);
 
   const openExternal = async () => {
-    try { await api.post('/agent/open-terminal', { bypass }); }
+    try { await scopedApi.post('/agent/open-terminal', { bypass }); }
     catch (e) { alert(e instanceof Error ? e.message : 'Could not open Terminal.'); }
   };
 
@@ -1693,14 +1793,14 @@ export function AgentSurface() {
   // (JSON-only), so use raw fetch.
   const deliverDrops = useCallback(async (files: File[], sid: string) => {
     for (const file of files) {
-      const path = await uploadAgentFile(file, file.name);
+      const path = await uploadAgentFile(vault, file, file.name);
       // Inject the path AND land keyboard focus on this session — a drop is async
       // (read bytes → POST), so the user may start typing before it resolves; grabbing
       // focus here guarantees the follow-up prompt goes to the session that got the file.
       const s = sessions.current.get(sid);
       if (path && s) { s.sendText(quoteIfNeeded(path) + ' '); s.focus(); }
     }
-  }, []);
+  }, [vault]);
 
   // NATIVE DOM listeners on the always-mounted surface host — NOT React onDragOver/onDrop
   // props on `.agent-term`. A chat pane's DOM is React-portaled into its detached session
@@ -1785,6 +1885,37 @@ export function AgentSurface() {
       claudeId: s?.claudeId,
     };
   });
+  /*
+   * ── This project's chip, published to the window chrome ──────────────────────────
+   *
+   * The dock already knows everything a chip needs — how many conversations are alive, the
+   * worst state among them, whether any is blocked on an answer — and it knows it for a
+   * project the user may not be looking at. `rollupProject` reduces those rows to the three
+   * scalars the strip draws from.
+   *
+   * NOT PUBLISHED PER RENDER. `dockRows` is rebuilt every render, and this surface re-renders
+   * on every status flip the PTY produces — several a second while a turn is streaming. The
+   * dependency array below IS the shallow compare: four primitives, so the effect runs only
+   * when one of them genuinely changed, and a chip that has nothing new to say never reaches
+   * the chrome at all. (The chrome bails out a second time on the same four fields; both ends
+   * matter, because this one keeps the event off the bus and that one keeps the re-render out
+   * of every other chip.)
+   *
+   * `alive` rides along even though nothing here renders it — it's the ceiling's eviction
+   * signal (a live shell with no chat still has `live: 0`, and reading THAT as idle is what
+   * killed a running PTY before T18 split the two apart). Dropping it from the dependency
+   * array would let a shell open or close without the chrome ever hearing about it, because
+   * `worst`/`live`/`waiting` can all sit unchanged while `alive` moves — the exact staleness
+   * the ceiling rule cannot tolerate.
+   */
+  const rollup: ProjectRollup = rollupProject(dockRows);
+  const { worst: rollupWorst, live: rollupLive, waiting: rollupWaiting, alive: rollupAlive } = rollup;
+  useEffect(() => {
+    emitInstance<ProjectRollup>(bus, PROJECT_ROLLUP_EVENT, {
+      worst: rollupWorst, live: rollupLive, waiting: rollupWaiting, alive: rollupAlive,
+    });
+  }, [bus, rollupWorst, rollupLive, rollupWaiting, rollupAlive]);
+
   // Rows for the corner dock that floats over the EXPANDED overlay — only the sessions the
   // user minimized out of the panes (in minimize order). Empty → no corner dock shown.
   const minimizedRows: SessionRow[] = minimizedIds
@@ -2158,7 +2289,7 @@ export function AgentSurface() {
           // tab-id swap every resume path performs. Undefined for every ordinary chat, which
           // is what keeps the header absent from all of them.
           automation={automationRuns[cs.claudeId]}
-          permissionMode={agentSettings.chatPermissionMode}
+          permissionMode={chatPermissionMode}
           canSignInInApp={canSignInInApp}
           signInCommand={signInCommand}
         />,

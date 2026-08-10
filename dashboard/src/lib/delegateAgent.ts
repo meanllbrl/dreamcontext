@@ -1,14 +1,25 @@
 import type { Task } from '../hooks/useTasks';
 import { preparePrompt } from './agentPrompt';
+import { emitInstance } from '../context/VaultContext';
 
 /**
  * The "Delegate a task to Claude" bridge. A task card lives deep in the board's React
  * tree; the Agent surface (which actually spawns Claude Code sessions) is mounted once,
  * ABOVE the page router, so it never remounts on navigation. They can't share a ref, so
- * the board's Delegate composer asks for an agent by dispatching a window event and the
- * always-mounted `AgentSurface` listens for it — the same decoupled pattern the surface
- * already uses for `dreamcontext-navigate` / `dreamcontext-zoom` / the Sleep + brain-resolve
- * agents. No prop threading across the tree.
+ * the board's Delegate composer asks for an agent by firing an event and the always-mounted
+ * `AgentSurface` listens for it — the same decoupled pattern the surface already uses for
+ * `dreamcontext-navigate` / the Sleep + brain-resolve agents. No prop threading across the
+ * tree.
+ *
+ * THE ONE THAT MUST NOT BE BROADCAST. Of every bridge in this app, this is the one where
+ * `window` does not merely duplicate an action — it misroutes it. The ACK below is written
+ * back onto the payload SYNCHRONOUSLY by the listener, so with several projects mounted in
+ * one window the FIRST `AgentSurface` to run its listener claims the delegate and sets
+ * `accepted`. The composer then reports "Delegated ✓" while the task is being worked on in
+ * a project it does not belong to, against the wrong repo, by an agent reading a
+ * `_dream_context/state/<slug>.md` that is not there. Every other listener spawns its own
+ * duplicate agent on top. The bus is what makes the ACK mean "the project I delegated FROM
+ * took it", which is the only thing it was ever supposed to mean.
  */
 export const DELEGATE_AGENT_EVENT = 'dreamcontext-delegate-agent';
 
@@ -128,23 +139,46 @@ export function taskContextBlock(task: Task, title: string): string {
  * `accepted` is already visible by the time it returns — no async plumbing needed. That is
  * exactly why the prompt must be transport-prepared BEFORE this call, never inside the
  * listener: an await in there would make the ack a lie again.
+ *
+ * `bus` names WHICH project is being asked (`useVault().bus`). It is not plumbing: it is what
+ * makes the ack answer for the project the composer was opened from rather than for whichever
+ * surface in the window happened to run its listener first — see this module's header.
  */
-export function requestDelegateAgent(detail: DelegateAgentDetail): boolean {
+export function requestDelegateAgent(bus: EventTarget, detail: DelegateAgentDetail): boolean {
   const payload: DelegateAgentDetail = { ...detail, accepted: false };
-  window.dispatchEvent(new CustomEvent<DelegateAgentDetail>(DELEGATE_AGENT_EVENT, { detail: payload }));
+  emitInstance<DelegateAgentDetail>(bus, DELEGATE_AGENT_EVENT, payload);
   return payload.accepted === true;
+}
+
+/** What a composer hands {@link delegateTaskToAgent}: the tab title, the prompt as the user
+ *  last saw it, the bypass choice, and the optional model / reveal overrides. */
+export interface DelegateAgentArgs {
+  title: string;
+  prompt: string;
+  bypass: boolean;
+  model?: string;
+  reveal?: boolean;
 }
 
 /**
  * Prepare + dispatch in one step: route the prompt to a transport that can carry it, then ask
  * the surface for a session. Throws if the prompt can't be handed over (see `preparePrompt`);
  * resolves to the surface's ACK otherwise.
+ *
+ * `vault` names the project the task belongs to and is threaded straight into `preparePrompt`
+ * — the token has to be minted against the project the composer was opened from, not against
+ * whichever of the window's live projects happened to be touched last. `bus` names the same
+ * project for the hand-off itself, and both must come from the SAME `useVault()`: a token
+ * minted against project A and redeemed by project B's surface is the misroute this bridge
+ * exists to prevent.
  */
 export async function delegateTaskToAgent(
-  args: { title: string; prompt: string; bypass: boolean; model?: string; reveal?: boolean },
+  bus: EventTarget,
+  vault: string | null,
+  args: DelegateAgentArgs,
 ): Promise<boolean> {
-  const { inline, token } = await preparePrompt(args.prompt.trim());
-  return requestDelegateAgent({
+  const { inline, token } = await preparePrompt(vault, args.prompt.trim());
+  return requestDelegateAgent(bus, {
     title: args.title, prompt: inline, promptToken: token, bypass: args.bypass,
     model: args.model, reveal: args.reveal,
   });

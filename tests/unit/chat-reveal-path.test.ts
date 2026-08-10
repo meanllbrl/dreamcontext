@@ -11,9 +11,14 @@
  * `fetch` is stubbed, so no server and no OS opener are involved.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { ApiClient } from '../../dashboard/src/api/client.js';
 import { revealPath } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 
 const realFetch = globalThis.fetch;
+// `revealPath` now takes its client as a parameter (one window can hold several live
+// projects) — no vault pinned, matching what the old module-global `api` singleton read in
+// this test environment (nothing ever called `setActiveVault`).
+const api = new ApiClient(null);
 
 /** A stubbed `fetch` answering one status + JSON body, recording what it was called with. */
 function stubFetch(status: number, body: Record<string, unknown>): { calls: Array<[string, RequestInit]> } {
@@ -34,12 +39,12 @@ afterEach(() => { globalThis.fetch = realFetch; });
 describe('revealPath', () => {
   it('resolves null when the OS took the path — nothing for the caller to say', async () => {
     stubFetch(200, { opened: true });
-    await expect(revealPath('_dream_context/tmp/shot.png')).resolves.toBeNull();
+    await expect(revealPath(api, '_dream_context/tmp/shot.png')).resolves.toBeNull();
   });
 
   it('POSTs the path verbatim to the reveal route, letting the route decide by default', async () => {
     const { calls } = stubFetch(200, { opened: true });
-    await revealPath('_dream_context/tmp/shot.png');
+    await revealPath(api, '_dream_context/tmp/shot.png');
     const [url, init] = calls[0];
     expect(url).toContain('/api/agent/reveal');
     expect(init.method).toBe('POST');
@@ -51,7 +56,7 @@ describe('revealPath', () => {
   // never be SHOWN in the file manager, only opened.
   it('asks for the file manager outright when told to', async () => {
     const { calls } = stubFetch(200, { opened: true, mode: 'reveal' });
-    await expect(revealPath('_dream_context/tmp/shot.png', 'reveal')).resolves.toBeNull();
+    await expect(revealPath(api, '_dream_context/tmp/shot.png', 'reveal')).resolves.toBeNull();
     expect(JSON.parse(String(calls[0][1].body))).toEqual({ path: '_dream_context/tmp/shot.png', mode: 'reveal' });
   });
 
@@ -60,7 +65,7 @@ describe('revealPath', () => {
   // reported as a failure, or `handleAction`'s reveal case would open a panel on top of it.
   it('treats the executable downgrade as success, not something to report', async () => {
     stubFetch(200, { opened: true, mode: 'reveal' });
-    await expect(revealPath('/tmp/install.sh')).resolves.toBeNull();
+    await expect(revealPath(api, '/tmp/install.sh')).resolves.toBeNull();
   });
 
   // The words are the UI's, not the route's. "Path escapes the project root" is a correct
@@ -69,24 +74,24 @@ describe('revealPath', () => {
   // itself, so the `error` slug is what these map from.
   it('says a missing file is missing, in words meant for a person', async () => {
     stubFetch(404, { error: 'not_found', message: 'Not found: /tmp/gone.png' });
-    const said = await revealPath('/tmp/gone.png');
+    const said = await revealPath(api, '/tmp/gone.png');
     expect(said).toBe('this file isn’t there any more');
     expect(said).not.toContain('/tmp/gone.png');
   });
 
   it('says the desktop gate plainly instead of looking like a no-op in the browser', async () => {
     stubFetch(403, { error: 'desktop_only', message: 'Available only in the desktop app.' });
-    await expect(revealPath('/tmp/shot.png')).resolves.toBe('only available in the desktop app');
+    await expect(revealPath(api, '/tmp/shot.png')).resolves.toBe('only available in the desktop app');
   });
 
   it('still says SOMETHING when the request never lands (server down, offline)', async () => {
     globalThis.fetch = vi.fn(async () => { throw new Error(''); }) as unknown as typeof fetch;
-    await expect(revealPath('/tmp/shot.png')).resolves.toBe('couldn’t open this one');
+    await expect(revealPath(api, '/tmp/shot.png')).resolves.toBe('couldn’t open this one');
   });
 
   it('never leaks a raw route message, whatever the failure was', async () => {
     stubFetch(500, { error: 'open_failed', message: 'The system opener could not be started.' });
-    await expect(revealPath('/tmp/shot.png')).resolves.toBe('couldn’t open this one');
+    await expect(revealPath(api, '/tmp/shot.png')).resolves.toBe('couldn’t open this one');
   });
 
   // A rejection here would take down whatever drew the button; the contract is that it
@@ -94,7 +99,7 @@ describe('revealPath', () => {
   it('never rejects, whatever the route did', async () => {
     for (const status of [200, 400, 403, 404, 500]) {
       stubFetch(status, { message: 'nope' });
-      await expect(revealPath('/tmp/x.png')).resolves.not.toThrow();
+      await expect(revealPath(api, '/tmp/x.png')).resolves.not.toThrow();
     }
   });
 
@@ -102,6 +107,6 @@ describe('revealPath', () => {
   // a real file, the route opens it, and there is nothing to say.
   it('says nothing at all for the reference from the 07-28 report', async () => {
     stubFetch(200, { opened: true });
-    await expect(revealPath('../../tmp/dc-verify-auto/automations-light.png')).resolves.toBeNull();
+    await expect(revealPath(api, '../../tmp/dc-verify-auto/automations-light.png')).resolves.toBeNull();
   });
 });

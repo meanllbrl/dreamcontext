@@ -3,7 +3,6 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
-import { getActiveVault } from '../../api/client';
 import { copyPreservingUnicode } from '../../lib/clipboard';
 import { nextLineShadow } from '../../lib/lineShadow';
 import { raiseAskAttention } from '../../lib/attention';
@@ -63,9 +62,18 @@ export interface Capabilities {
 }
 
 export type TermStatus = 'connecting' | 'open' | 'closed';
-/** What a session runs: the real Claude Code agent (terminal), a plain vault-scoped login
- *  shell, or a headless stream-json Chat session (beta — see chatSession.ts). */
-export type SessionKind = 'agent' | 'shell' | 'chat';
+/**
+ * What a session runs: the real Claude Code agent (terminal), a plain vault-scoped login
+ * shell, a headless stream-json Chat session (beta — see chatSession.ts), or an
+ * AUTOMATION RUN reopened as a conversation.
+ *
+ * `automation` is a DISPLAY distinction, not a transport one — the run's conversation is
+ * resumed through whichever Claude surface the user has chosen, exactly as before. It earns
+ * its own member because a tab holding a machine's unattended `bypassPermissions` session is
+ * not the same object as one holding a conversation you started, and the tab strip is where
+ * that difference has to be legible. See `AgentTabs`' glyph map.
+ */
+export type SessionKind = 'agent' | 'shell' | 'chat' | 'automation';
 export const ACCENT = '#8b7bff';
 
 // Base xterm font size at 100% zoom. Multiplied by the app's `--zoom` so terminal
@@ -196,7 +204,14 @@ export interface Session {
   asking: boolean;      // a question is on screen — Claude is blocked on YOUR answer
   attention: boolean;   // finished / rang the bell since you last looked
   minimized: boolean;   // mirrored from layout state so the idle timer can read it
-  ensureOpen: () => void;
+  /** Open the terminal into its container once it is in the DOM and visible.
+   *
+   *  `focus` (default `true`) exists because one window now holds several LIVE projects:
+   *  the pane-placement effect can open a terminal belonging to a BACKGROUND project, and
+   *  an unconditional `term.focus()` there would yank the caret out of whatever the user is
+   *  typing in the project they are actually looking at. Callers that may be driving a
+   *  hidden instance pass `{ focus: false }`; everyone else keeps today's behaviour. */
+  ensureOpen: (opts?: { focus?: boolean }) => void;
   fitAndResize: () => void;
   applyZoom: (zoom: number) => void;
   /** Write arbitrary text to the PTY (used to inject a dropped image's path). */
@@ -235,7 +250,14 @@ const WORKING_RE = /esc to interrupt|ctrl\+b to run in background/i;
  * for the upgrade URL never has to be truncated. When set it REPLACES `initialPrompt` on the
  * wire — pass one or the other, never both.
  */
-export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false): Session {
+/**
+ * Spawn one terminal session against `vault` — the project this session belongs to, passed in
+ * rather than read from a module global. One window now holds several live projects, so an
+ * "active vault" module read would open the PTY in whichever project the user last clicked;
+ * the vault also names this session's alarm source, which is what lets a background project's
+ * chip raise the user (see `raiseAskAttention` below). Empty string = no project pinned.
+ */
+export function createSession(vault: string, bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false): Session {
   const id = `agent-${++sessionSeq}`;
   const container = document.createElement('div');
   container.className = 'agent-pane-term';
@@ -306,7 +328,6 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
   themeObserver.observe(document.body, { attributes: true, attributeFilter: ['data-theme', 'class'] });
 
-  const vault = getActiveVault();
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const theme = currentTermTheme();
   // A shell has no conversation and no permission model, so it carries neither the
@@ -343,7 +364,7 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   // context rather than opening the conversation itself.
   // Meaningful only when a server-submitted prompt exists at all.
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
-  const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypassParam}&theme=${theme}${idParam}${kindParam}${modelParam}${promptParam}${deferParam}`;
+  const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault)}&bypass=${bypassParam}&theme=${theme}${idParam}${kindParam}${modelParam}${promptParam}${deferParam}`;
   const ws = new WebSocket(url);
   // Binary frames are the server's control channel (hook-reported turn state);
   // arraybuffer (not the default Blob) so they can be decoded synchronously in
@@ -447,8 +468,10 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
         // ONCE per question — redraws can't re-trigger, asking only rises on a fresh edge.
         // No `detail`: all this surface has is a screenful of pixels the regex matched, and
         // scraping a prompt off the terminal tail would put garbled ANSI in a banner.
+        // `source` is this session's own VAULT: it is what the chip strip keys a background
+        // project's alarm off, so a title here would silence the wrong project's chip.
         session.attention = true;
-        raiseAskAttention({ source: getActiveVault() });
+        raiseAskAttention({ source: vault });
       }
       notify();
       return;
@@ -675,7 +698,7 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   // the DOM renderer (NOT WebGL) on purpose: it renders real text nodes that get
   // macOS-native anti-aliasing, so glyph edges are soft — not the WebGL atlas's hard,
   // "sharp" rasterisation the user found eye-tiring.
-  function ensureOpen() {
+  function ensureOpen(opts: { focus?: boolean } = {}) {
     if (session.opened || !container.isConnected) return;
     const doOpen = () => {
       // Must be connected AND visible (offsetParent is null while parked in the
@@ -697,7 +720,9 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
           fitAndResize();
         }
       });
-      term.focus();
+      // Not unconditional: a background project's terminal opening must not steal the
+      // caret from the project the user is looking at (see the `focus` option's note).
+      if (opts.focus !== false) term.focus();
     };
     // Measure with the EXACT mono font (both weights) actually loaded — otherwise
     // xterm builds its cell metrics from a wider fallback advance and every glyph

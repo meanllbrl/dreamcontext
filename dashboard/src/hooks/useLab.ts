@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 import type { FunnelCacheEntry, FunnelPrev, FunnelSnapshot } from '../components/lab/funnel/funnelModel';
 import type { InsightSize, Render } from '../components/lab/chartRegistry';
 
@@ -116,6 +116,7 @@ export interface SyncResult {
 
 /** List every insight (for the board). Empty on an older backend / no route. */
 export function useLabInsights() {
+  const api = useApi();
   return useQuery({
     queryKey: ['lab'],
     queryFn: () => api.get<{ insights: InsightSummary[] }>('/lab').then((r) => r.insights),
@@ -125,6 +126,7 @@ export function useLabInsights() {
 
 /** Full manifest + cached series for one insight. */
 export function useLabInsight(slug: string | null) {
+  const api = useApi();
   return useQuery({
     queryKey: ['lab', slug],
     queryFn: () => api.get<InsightDetail>(`/lab/${slug}`),
@@ -136,6 +138,7 @@ export function useLabInsight(slug: string | null) {
 /** Sync one insight (always forces a refetch — the explicit user action). */
 export function useSyncInsight() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (slug: string) =>
       api.post<{ results: SyncResult[]; failed: SyncResult[] }>('/lab/sync', { slug, force: true }),
@@ -169,6 +172,7 @@ export interface LabSyncJob {
 }
 
 export function useLabSyncJob() {
+  const api = useApi();
   return useQuery({
     queryKey: ['lab-sync-job'],
     queryFn: () => api.get<{ job: LabSyncJob | null }>('/lab/sync-jobs/current'),
@@ -183,6 +187,7 @@ export function useLabSyncJob() {
 /** Start (or adopt) the bulk sync job. Returns immediately — watch `useLabSyncJob`. */
 export function useStartLabSyncJob() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (force: boolean = true) =>
       api.post<{ job: LabSyncJob; started: boolean }>('/lab/sync-jobs', { force }),
@@ -200,6 +205,7 @@ export function useStartLabSyncJob() {
  *  roadmap queries are invalidated too. */
 export function useUpdateBinding() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, binding }: { slug: string; binding: Binding | null }) =>
       api.patch<{ insight: PublicManifest; unbound: string[]; seededCurrent: number | null }>(`/lab/${slug}/binding`, { binding }),
@@ -221,6 +227,7 @@ export interface CredentialKeyStatus {
 
 /** Required-credential status for the board's missing-credentials banner. */
 export function useLabCredentials() {
+  const api = useApi();
   return useQuery({
     queryKey: ['lab-credentials'],
     queryFn: () => api.get<{ keys: CredentialKeyStatus[] }>('/lab/credentials').then((r) => r.keys),
@@ -233,6 +240,7 @@ export function useLabCredentials() {
  *  unblock syncs, so the board's error badges may change too. */
 export function useSetLabCredential() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ key, value }: { key: string; value: string }) =>
       api.post<{ keys: CredentialKeyStatus[] }>('/lab/credentials', { key, value }),
@@ -246,6 +254,7 @@ export function useSetLabCredential() {
 /** Persist edited tweak values for one insight. */
 export function useUpdateTweaks() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, tweaks }: { slug: string; tweaks: Record<string, string> }) =>
       api.patch<{ insight: PublicManifest }>(`/lab/${slug}/tweaks`, { tweaks }),

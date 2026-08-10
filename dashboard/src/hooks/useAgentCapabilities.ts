@@ -1,9 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 import type { Capabilities } from '../components/sleepy/agentSession';
 import { FALLBACK_MODEL_CONFIG, type ModelConfig, type SessionStats } from '../lib/agentComposer';
 import type { GoalLiveResponse } from '../lib/goalLive';
 import type { CouncilLiveResponse } from '../lib/councilLive';
+
+/**
+ * Every query below pins its own `refetchInterval` rather than inheriting one. That's
+ * load-bearing, not incidental: a backgrounded project's `QueryClient` defaults
+ * `refetchInterval` to `false` (`lib/instanceQueryClient.ts`) so idle page data stops
+ * polling, but session-stats/goal-live/council-live back a background chip's live badge —
+ * they must keep polling while `enabled`, independent of whether the project is the
+ * foreground chip. Do not drop their explicit `refetchInterval` in favor of the default.
+ */
 
 /**
  * Agent prerequisite probe (`GET /api/agent/capabilities`) — desktop gate + node-pty
@@ -12,6 +21,7 @@ import type { CouncilLiveResponse } from '../lib/councilLive';
  * Used by the header's Sleep tracker to enable/disable "Run sleep agent".
  */
 export function useAgentCapabilities() {
+  const api = useApi();
   return useQuery({
     queryKey: ['agent-capabilities'],
     queryFn: () => api.get<Capabilities>('/agent/capabilities'),
@@ -45,6 +55,7 @@ export function isSleepAgentReady(caps: Capabilities | undefined, chatView = fal
  * composer strip's model/effort pickers.
  */
 export function useAgentModelConfig() {
+  const api = useApi();
   return useQuery({
     queryKey: ['agent-model-config'],
     queryFn: () => api.get<ModelConfig>('/agent/model-config'),
@@ -65,6 +76,7 @@ const EMPTY_STATS: SessionStats = { contextTokens: null, contextLimit: null, cos
  * a dormant tab, or before a claudeId exists. Consumed per pane by {@link AgentComposerBar}.
  */
 export function useAgentSessionStats(claudeId: string | undefined, enabled: boolean) {
+  const api = useApi();
   return useQuery({
     queryKey: ['agent-session-stats', claudeId],
     queryFn: () => api.get<SessionStats>(`/agent/session-stats?claudeId=${encodeURIComponent(claudeId!)}`),
@@ -86,6 +98,7 @@ const GOAL_LIVE_INACTIVE: GoalLiveResponse = { active: false };
  * server just reads one small JSON file.
  */
 export function useAgentGoalLive(claudeId: string | undefined, enabled: boolean) {
+  const api = useApi();
   return useQuery({
     queryKey: ['agent-goal-live', claudeId],
     queryFn: () => api.get<GoalLiveResponse>(`/agent/goal-live?claudeId=${encodeURIComponent(claudeId!)}`),
@@ -107,6 +120,7 @@ const COUNCIL_LIVE_INACTIVE: CouncilLiveResponse = { active: false };
  * panel and the dock badge dedupe into one poll per conversation.
  */
 export function useAgentCouncilLive(claudeId: string | undefined, enabled: boolean) {
+  const api = useApi();
   return useQuery({
     queryKey: ['agent-council-live', claudeId],
     queryFn: () => api.get<CouncilLiveResponse>(`/agent/council-live?claudeId=${encodeURIComponent(claudeId!)}`),

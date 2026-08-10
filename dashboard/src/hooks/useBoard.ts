@@ -14,7 +14,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
+import type { ApiClient } from '../api/client';
 import {
   type BoardFilters, type BoardView, type CardProps, type Dim, type LocalBoard,
   type SaveScope, type SharedBoard, type SortKey, type SortDir, type ViewConfig, type Layout,
@@ -26,6 +27,7 @@ import {
 interface BoardResponse { shared: unknown; local: unknown; }
 
 function useBoardQuery() {
+  const api = useApi();
   return useQuery({
     queryKey: ['board'],
     queryFn: () => api.get<BoardResponse>('/board'),
@@ -33,10 +35,10 @@ function useBoardQuery() {
   });
 }
 
-function putShared(board: SharedBoard): Promise<unknown> {
+function putShared(api: ApiClient, board: SharedBoard): Promise<unknown> {
   return api.put('/board/shared', { board });
 }
-function putLocal(board: LocalBoard): Promise<unknown> {
+function putLocal(api: ApiClient, board: LocalBoard): Promise<unknown> {
   return api.put('/board/local', { board });
 }
 
@@ -91,6 +93,7 @@ export interface BoardState {
 
 export function useBoardState(): BoardState {
   const { data, isSuccess } = useBoardQuery();
+  const api = useApi();
 
   const [shared, setShared] = useState<SharedBoard>(defaultSharedBoard);
   const [local, setLocal] = useState<LocalBoard>(defaultLocalBoard);
@@ -102,8 +105,8 @@ export function useBoardState(): BoardState {
   const localTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flushLocal = useCallback((next: LocalBoard) => {
     if (localTimer.current) clearTimeout(localTimer.current);
-    localTimer.current = setTimeout(() => { void putLocal(next).catch(() => {}); }, 500);
-  }, []);
+    localTimer.current = setTimeout(() => { void putLocal(api, next).catch(() => {}); }, 500);
+  }, [api]);
   useEffect(() => () => { if (localTimer.current) clearTimeout(localTimer.current); }, []);
 
   // Seed runtime state once the server blobs arrive.
@@ -131,8 +134,8 @@ export function useBoardState(): BoardState {
   // ── persistence helpers ────────────────────────────────────────────────────
   const persistShared = useCallback((next: SharedBoard) => {
     setShared(next);
-    void putShared(next).catch(() => {});
-  }, []);
+    void putShared(api, next).catch(() => {});
+  }, [api]);
   const persistLocal = useCallback((updater: (l: LocalBoard) => LocalBoard) => {
     setLocal((prev) => { const next = updater(prev); flushLocal(next); return next; });
   }, [flushLocal]);

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useServerHealth } from '../../hooks/useServerHealth';
 import { useI18n } from '../../context/I18nContext';
-import { api } from '../../api/client';
+import { useApi } from '../../context/VaultContext';
 import { isDesktop, closeAllWindows } from '../../lib/desktop';
 import './UpgradeRelaunchBanner.css';
 
@@ -30,6 +30,7 @@ const RELAUNCH_STUCK_MS = 8_000;
 
 export function UpgradeRelaunchBanner() {
   const { t } = useI18n();
+  const api = useApi();
   const { health } = useServerHealth();
   const ready = health?.upgradeReady ?? null;
   const running = __DC_VERSION__;
@@ -68,7 +69,7 @@ export function UpgradeRelaunchBanner() {
     firedRef.current = false;
     setRelaunching(false);
     setFailed(true);
-  }, []);
+  }, [api]);
 
   // Countdown ticker — runs only while a relaunch is pending, not deferred/failed.
   useEffect(() => {

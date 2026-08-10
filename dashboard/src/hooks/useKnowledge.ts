@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 export interface KnowledgeEntry {
   slug: string;
@@ -27,6 +27,7 @@ interface KnowledgeResponse {
 }
 
 export function useKnowledgeList() {
+  const api = useApi();
   return useQuery({
     queryKey: ['knowledge'],
     queryFn: () => api.get<KnowledgeListResponse>('/knowledge'),
@@ -35,6 +36,7 @@ export function useKnowledgeList() {
 }
 
 export function useKnowledge(slug: string) {
+  const api = useApi();
   return useQuery({
     queryKey: ['knowledge', slug],
     queryFn: () => api.get<KnowledgeResponse>(`/knowledge/${slug}`),
@@ -62,6 +64,7 @@ interface KnowledgeAssetsResponse {
  * the global 15s refetch — images only change when the board is reopened.
  */
 export function useKnowledgeAssets(slug: string, enabled: boolean) {
+  const api = useApi();
   return useQuery({
     queryKey: ['knowledge-assets', slug],
     queryFn: () => api.get<KnowledgeAssetsResponse>(`/knowledge-assets/${slug}`),
@@ -102,6 +105,7 @@ export function useKnowledgeLiveRefresh(
 
 export function useToggleKnowledgePin() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, pinned }: { slug: string; pinned: boolean }) =>
       api.patch<KnowledgeResponse>(`/knowledge/${slug}`, { pinned }),

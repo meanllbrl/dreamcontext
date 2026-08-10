@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { useApi } from '../../../context/VaultContext';
 import { revealPath } from './chatEntities';
 
 /**
@@ -36,13 +37,14 @@ export function FileActions({
   /** Icon-and-short-label form, for a viewer's chrome rather than a panel's toolbar. */
   compact?: boolean;
 }) {
+  const api = useApi();
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<'open' | 'reveal' | null>(null);
 
   const handoff = (mode: 'auto' | 'reveal') => {
     setNote(null);
     setBusy(mode === 'auto' ? 'open' : 'reveal');
-    void revealPath(path, mode).then((err) => {
+    void revealPath(api, path, mode).then((err) => {
       setBusy(null);
       setNote(err);
     });

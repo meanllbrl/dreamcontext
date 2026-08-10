@@ -30,7 +30,8 @@ vi.mock('../../dashboard/src/api/client', () => ({
   getActiveVault: () => 'test-vault',
 }));
 
-const { buildDelegatePrompt } = await import('../../dashboard/src/lib/delegateAgent');
+const { buildDelegatePrompt, requestDelegateAgent, DELEGATE_AGENT_EVENT } =
+  await import('../../dashboard/src/lib/delegateAgent');
 const { encodedPromptLen, promptFitsInline, preparePrompt, MAX_PROMPT_ENCODED } =
   await import('../../dashboard/src/lib/agentPrompt');
 
@@ -76,19 +77,19 @@ describe('agentPrompt — inline ceiling', () => {
 describe('agentPrompt — preparePrompt routing', () => {
   it('inlines a short prompt with NO server round-trip', async () => {
     const p = 'Do the thing.';
-    await expect(preparePrompt(p)).resolves.toEqual({ inline: p, token: '' });
+    await expect(preparePrompt('test-vault', p)).resolves.toEqual({ inline: p, token: '' });
     expect(post).not.toHaveBeenCalled();
   });
 
   it('mints a token for an oversized prompt and inlines nothing', async () => {
     const huge = 'x'.repeat(MAX_PROMPT_ENCODED * 3);
-    await expect(preparePrompt(huge)).resolves.toEqual({ inline: '', token: 'tok-123' });
+    await expect(preparePrompt('test-vault', huge)).resolves.toEqual({ inline: '', token: 'tok-123' });
     expect(post).toHaveBeenCalledWith('/agent/prompt', { vault: 'test-vault', prompt: huge });
   });
 
   it('sends the prompt WHOLE — the token path must not truncate', async () => {
     const huge = `HEAD${'x'.repeat(MAX_PROMPT_ENCODED * 3)}TAIL`;
-    await preparePrompt(huge);
+    await preparePrompt('test-vault', huge);
     const sent = (post.mock.calls[0][1] as { prompt: string }).prompt;
     expect(sent).toBe(huge);
     expect(sent).toContain('TAIL'); // the exact content the old truncation would have shed
@@ -96,12 +97,17 @@ describe('agentPrompt — preparePrompt routing', () => {
 
   it('REJECTS rather than degrading when the server refuses a token', async () => {
     post.mockRejectedValue(new Error('desktop_only'));
-    await expect(preparePrompt('y'.repeat(MAX_PROMPT_ENCODED * 3))).rejects.toThrow('desktop_only');
+    // A real vault, not null: this exercises the SERVER-REFUSAL path (api.post rejects), not
+    // the missing-vault guard — passing null here would throw "No vault is active" instead and
+    // the assertion below would fail for the wrong reason.
+    await expect(preparePrompt('test-vault', 'y'.repeat(MAX_PROMPT_ENCODED * 3))).rejects.toThrow('desktop_only');
   });
 
   it('rejects a malformed token response instead of returning an empty token', async () => {
     post.mockResolvedValue({ ok: true, token: '' });
-    await expect(preparePrompt('z'.repeat(MAX_PROMPT_ENCODED * 3))).rejects.toThrow(/token/i);
+    // Same reasoning as above: a real vault, so the failure exercised is the malformed-response
+    // guard inside mintPromptToken, not the "no vault pinned" guard ahead of it.
+    await expect(preparePrompt('test-vault', 'z'.repeat(MAX_PROMPT_ENCODED * 3))).rejects.toThrow(/token/i);
   });
 });
 
@@ -128,6 +134,50 @@ describe('delegateAgent — buildDelegatePrompt', () => {
 
   it('uses the caller-supplied title verbatim (no drift from the tab title)', () => {
     expect(buildDelegatePrompt(task({ slug: 'a-b-c', name: '' }), 'a b c')).toContain('Task: a b c');
+  });
+});
+
+// ── The delegate lands in the project it was delegated FROM (finding M0) ────────────────
+// The worst failure this refactor had to fix. One window now holds several live projects, so
+// while this event was broadcast on `window` every mounted `AgentSurface` heard it — and the
+// ACK is written back onto the payload SYNCHRONOUSLY by the listener, so the FIRST one to run
+// claimed the delegate. The composer in project A was told "Delegated ✓" while the agent
+// doing the work sat in project B, against B's repo, reading a
+// `_dream_context/state/<slug>.md` that does not exist there. The bus is what makes the ACK
+// mean "the project I delegated from took it".
+const DETAIL = { title: 'T', prompt: 'do it', promptToken: '', bypass: false };
+
+describe('delegateAgent — requestDelegateAgent is scoped to one project', () => {
+  it('reports FALSE when no surface on that bus takes it', () => {
+    expect(requestDelegateAgent(new EventTarget(), { ...DETAIL })).toBe(false);
+  });
+
+  it('reports TRUE synchronously once that project\'s surface acks', () => {
+    const bus = new EventTarget();
+    bus.addEventListener(DELEGATE_AGENT_EVENT, (e) => {
+      (e as CustomEvent<{ accepted?: boolean }>).detail.accepted = true;
+    });
+    // Synchronous by construction: dispatch runs listeners inline, so the ACK is readable on
+    // the next line. An `await` anywhere between the two makes this the failing test.
+    expect(requestDelegateAgent(bus, { ...DETAIL })).toBe(true);
+  });
+
+  it('never reaches another live project, and never lets it answer', () => {
+    const busA = new EventTarget();
+    const busB = new EventTarget();
+    let bSaw = 0;
+    // B is the eager one — it would have claimed the delegate on `window` (listeners fire in
+    // registration order, and B's surface may well have mounted first).
+    busB.addEventListener(DELEGATE_AGENT_EVENT, (e) => {
+      bSaw += 1;
+      (e as CustomEvent<{ accepted?: boolean }>).detail.accepted = true;
+    });
+    // A declines (its guards rejected: not desktop / prereqs missing / surface disabled).
+    busA.addEventListener(DELEGATE_AGENT_EVENT, () => { /* declines */ });
+    // The honest answer is FALSE. A `true` here would be the exact lie M0 describes: B's ACK
+    // answering for a hand-off A never accepted.
+    expect(requestDelegateAgent(busA, { ...DETAIL })).toBe(false);
+    expect(bSaw).toBe(0);
   });
 });
 
@@ -185,7 +235,7 @@ describe('delegateAgent — every real task in the vault is delegable intact', (
       const { slug, prompt } = built;
 
       post.mockClear();
-      const { inline, token } = await preparePrompt(prompt);
+      const { inline, token } = await preparePrompt('test-vault', prompt);
 
       // Exactly one transport, and whichever it is must carry the prompt unmodified.
       if (token) {

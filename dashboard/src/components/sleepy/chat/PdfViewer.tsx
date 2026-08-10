@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api, agentFileUrl } from '../../../api/client';
+import { agentFileUrl } from '../../../api/client';
+import { useApi, useVault } from '../../../context/VaultContext';
 import { FileActions } from './FileActions';
 
 /**
@@ -52,10 +53,12 @@ export function PdfViewer({
   src?: string;
   onClose: () => void;
 }) {
+  const api = useApi();
+  const { vault } = useVault();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [probe, setProbe] = useState<Probe>({ state: 'checking' });
   const [granting, setGranting] = useState(false);
-  const src = srcOverride ?? agentFileUrl(path, { raw: true });
+  const src = srcOverride ?? agentFileUrl(vault, path, { raw: true });
 
   // Ask the endpoint BEFORE embedding. An `<iframe>`/`<object>` reports nothing useful when it
   // fails — no status, no reason — so a file that merely needs consent would render as a blank

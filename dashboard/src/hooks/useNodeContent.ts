@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 import type { GraphNode } from './useGraph';
 
 export interface NodeContentMarkdown {
@@ -25,6 +25,7 @@ export interface NodeContentText {
 export type NodeContent = NodeContentMarkdown | NodeContentJson | NodeContentText;
 
 export function useNodeContent(node: GraphNode | null) {
+  const api = useApi();
   return useQuery({
     queryKey: ['graph', 'content', node?.path ?? null],
     queryFn: () => {

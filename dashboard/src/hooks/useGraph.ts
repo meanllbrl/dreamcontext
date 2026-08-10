@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 export type GraphGroup =
   | 'soul'
@@ -47,6 +47,7 @@ export interface Graph {
 }
 
 export function useGraph() {
+  const api = useApi();
   return useQuery({
     queryKey: ['graph'],
     queryFn: () => api.get<Graph>('/graph'),

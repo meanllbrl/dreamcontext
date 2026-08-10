@@ -10,8 +10,9 @@ import {
   type ScrubBlock,
 } from '../../hooks/useBrainStatus';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
+import { useVault } from '../../context/VaultContext';
 import { readAgentSettings } from '../../lib/agentSettings';
-import { requestBrainResolveAgent, DREAM_SYNC_COMMAND } from '../../lib/brainResolveAgent';
+import { runBrainResolveAgent, DREAM_SYNC_COMMAND } from '../../lib/brainResolveAgent';
 import { readAutoCheckpointOnOpen } from '../../lib/brainSyncPrefs';
 import './BrainSyncControl.css';
 
@@ -54,6 +55,7 @@ interface BrainSyncControlProps {
 
 export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
   const { t } = useI18n();
+  const { vault, bus } = useVault();
   const { data: brainStatus } = useBrainStatus();
   const { data: caps } = useAgentCapabilities();
   const runSync = useRunBrainSync();
@@ -156,13 +158,13 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
   useEffect(() => {
     if (autoSyncedRef.current) return;
     autoSyncedRef.current = true;
-    runSyncWithFeedback('pull-only', { silentNoop: true, noCheckpoint: !readAutoCheckpointOnOpen() });
+    runSyncWithFeedback('pull-only', { silentNoop: true, noCheckpoint: !readAutoCheckpointOnOpen(vault) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleResolveClick = () => {
     if (canRunAgent) {
-      requestBrainResolveAgent();
+      runBrainResolveAgent(bus);
       showFeedback({ kind: 'ok', message: t('brain.resolve.launching') });
       setFallbackOpen(false);
     } else {

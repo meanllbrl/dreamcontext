@@ -1,10 +1,17 @@
+import { emitInstance } from '../context/VaultContext';
+
 /**
  * The "Resolve with AI" bridge (github-cloud-collaboration-brain-repo-sync, item 1).
  * The sidebar's teammate-conflict banner lives in the page tree; the Agent surface
  * (which actually spawns Claude Code sessions) is mounted once, ABOVE the router, so
- * they can't share a ref. The banner asks for a resolve session by dispatching a
- * window event and the always-mounted `AgentSurface` listens for it — the same
- * decoupled pattern `sleepAgent.ts` uses for "Run sleep agent".
+ * they can't share a ref. The banner asks for a resolve session by firing an event on
+ * THIS project's instance bus and the always-mounted `AgentSurface` listens for it —
+ * the same decoupled pattern `sleepAgent.ts` uses for "Run sleep agent".
+ *
+ * The bus rather than `window` because a merge resolution is per-brain: `/dream-sync`
+ * reconciles ONE vault's deferred team merge and pushes it. Broadcast, a single click on
+ * one project's banner would launch a resolve agent inside every project the window holds,
+ * each one rewriting a brain repo whose merge nobody asked it to touch.
  *
  * This is the REAL one-click resolve: in the desktop app it launches an in-app agent
  * running `/dream-sync` (which drives `brain sync --resume` → resolves the deferred
@@ -31,9 +38,9 @@ export const BRAIN_RESOLVE_PROMPT =
   '`dreamcontext brain sync --continue` to commit and push. When finished, reply with a SHORT ' +
   'Markdown summary of what you reconciled.';
 
-/** Ask the always-mounted Agent surface to open + run a "/dream-sync" resolve session. */
-export function requestBrainResolveAgent(): void {
-  window.dispatchEvent(new CustomEvent(RUN_BRAIN_RESOLVE_EVENT));
+/** Ask THIS project's Agent surface to open + run a "/dream-sync" resolve session. */
+export function runBrainResolveAgent(bus: EventTarget): void {
+  emitInstance(bus, RUN_BRAIN_RESOLVE_EVENT);
 }
 
 /**

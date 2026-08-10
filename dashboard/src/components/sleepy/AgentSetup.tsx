@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, type CSSProperties } from 'react';
-import { api } from '../../api/client';
+import { useApi } from '../../context/VaultContext';
 import { ACCENT, type Capabilities, type ConfirmRequest } from './agentSession';
 
 /**
@@ -103,6 +103,7 @@ export function BypassPill({ bypass, setBypass }: { bypass: boolean; setBypass: 
 type InstallTarget = 'claude' | 'pty';
 
 export function Prereqs({ caps, onRefresh }: { caps: Capabilities; onRefresh: () => Promise<Capabilities | null> }) {
+  const api = useApi();
   const [busy, setBusy] = useState<InstallTarget | null>(null);
   const [log, setLog] = useState('');
   const [err, setErr] = useState('');
@@ -126,7 +127,7 @@ export function Prereqs({ caps, onRefresh }: { caps: Capabilities; onRefresh: ()
     } finally {
       setBusy(null);
     }
-  }, [onRefresh]);
+  }, [api, onRefresh]);
 
   const rows: { target: InstallTarget; label: string; ok: boolean; desc: string }[] = [
     { target: 'claude', label: 'Claude CLI', ok: caps.claudeCli, desc: 'Anthropic’s claude command — the agent that runs in the terminal.' },

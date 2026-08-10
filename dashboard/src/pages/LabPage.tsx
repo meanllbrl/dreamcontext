@@ -2,7 +2,14 @@ import { useEffect, useState } from 'react';
 import { LabBoard } from '../components/lab/LabBoard';
 import { FunnelOverviewPage } from '../components/lab/funnel/FunnelOverviewPage';
 import { FunnelDetailPage } from '../components/lab/funnel/FunnelDetailPage';
-import { clearLabPath, pushLabPath, useLabRoute } from '../components/lab/funnel/labRoute';
+import {
+  clearLabPath,
+  flushBufferedRoute,
+  pushLabPath,
+  setLabRouteWritable,
+  useLabRoute,
+} from '../components/lab/funnel/labRoute';
+import { useInstanceEvent, useVault } from '../context/VaultContext';
 import type { FocusTarget } from '../hooks/useFocusTarget';
 import './LabPage.css';
 
@@ -18,6 +25,7 @@ interface LabPageProps {
  * deep links work. Strictly self-contained; no reach into Roadmap.
  */
 export function LabPage({ focus }: LabPageProps = {}) {
+  const { bus, isActive } = useVault();
   const route = useLabRoute();
   const [toast, setToast] = useState<string | null>(null);
 
@@ -29,18 +37,28 @@ export function LabPage({ focus }: LabPageProps = {}) {
 
   // Leaving the Lab page (sidebar/palette navigation unmounts us) resets the
   // path so a reload doesn't resurrect a funnel page under another section.
-  useEffect(() => () => clearLabPath(), []);
+  // Declared BEFORE the address-bar effect on purpose: React runs a component's cleanups in
+  // declaration order, so on unmount this one still runs while we hold the address bar.
+  useEffect(() => () => clearLabPath(bus), [bus]);
+
+  // This page is the only surface that routes, so it is also the one that claims the
+  // window's single address bar for its project — held while this chip is the one you're
+  // looking at, handed back when it isn't. Coming forward restores the route parked on the
+  // way out, which is what makes switching chips land you where you left the funnel.
+  useEffect(() => {
+    if (!isActive) return;
+    setLabRouteWritable(true, bus);
+    flushBufferedRoute();
+    return () => setLabRouteWritable(false, bus);
+  }, [isActive, bus]);
 
   // Re-clicking "Insights" in the sidebar (or palette) while deep in a funnel
-  // page returns to the board — the nav event fires for every navigate().
-  useEffect(() => {
-    const onNavigate = (e: Event) => {
-      const page = (e as CustomEvent<{ page?: string }>).detail?.page;
-      if (page === 'lab') clearLabPath();
-    };
-    window.addEventListener('dreamcontext-navigate', onNavigate);
-    return () => window.removeEventListener('dreamcontext-navigate', onNavigate);
-  }, []);
+  // page returns to the board — the nav event fires for every navigate(). On this instance's
+  // bus, not `window`: `Shell` emits it per project, so on `window` one project's navigation
+  // would reset every other open project's funnel page to its board.
+  useInstanceEvent<{ page?: string } | undefined>('dreamcontext-navigate', (detail) => {
+    if (detail?.page === 'lab') clearLabPath(bus);
+  });
 
   let content;
   if (route.slug && route.funnelId) {
@@ -48,8 +66,8 @@ export function LabPage({ focus }: LabPageProps = {}) {
       <FunnelDetailPage
         slug={route.slug}
         funnelId={route.funnelId}
-        onBack={() => pushLabPath(route.slug, null)}
-        onBackToBoard={() => pushLabPath(null, null)}
+        onBack={() => pushLabPath(route.slug, null, bus)}
+        onBackToBoard={() => pushLabPath(null, null, bus)}
         onToast={setToast}
       />
     );
@@ -57,7 +75,7 @@ export function LabPage({ focus }: LabPageProps = {}) {
     content = (
       <FunnelOverviewPage
         slug={route.slug}
-        onBack={() => pushLabPath(null, null)}
+        onBack={() => pushLabPath(null, null, bus)}
         onToast={setToast}
       />
     );

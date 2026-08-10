@@ -1,156 +1,28 @@
 import { Component, useEffect, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { setActiveVault } from './api/client';
-import { useServerHealth } from './hooks/useServerHealth';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createInstanceQueryClient } from './lib/instanceQueryClient';
 import { LauncherPage } from './pages/LauncherPage';
 import { CaptureBar } from './pages/CaptureBar';
 import { SleepyPerch } from './components/sleepy/SleepyPerch';
 import { applySleepyHotkey, readSleepyConfig, initSleepyFromServer, SLEEPY_CONFIG_KEY } from './lib/sleepy';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
-import { ProjectProvider } from './context/ProjectContext';
-import { Shell, type ShellNavigation } from './components/layout/Shell';
 import { UpgradeRelaunchBanner } from './components/layout/UpgradeRelaunchBanner';
 import { ProjectSwitcher } from './components/search/ProjectSwitcher';
-import { AgentSurface } from './components/sleepy/AgentSurface';
-import { TasksPage } from './pages/TasksPage';
-import { RoadmapPage } from './pages/RoadmapPage';
-import { HypothesesPage } from './pages/HypothesesPage';
-import { LabPage } from './pages/LabPage';
-import { AutomationsPage } from './pages/AutomationsPage';
-import { SleepPage } from './pages/SleepPage';
-import { CorePage } from './pages/CorePage';
-import { KnowledgePage } from './pages/KnowledgePage';
-import { BrainPage, type BrainNavigatePage } from './pages/BrainPage';
-import { CouncilPage } from './pages/CouncilPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { PacksPage } from './pages/PacksPage';
-import { AboutPage } from './pages/AboutPage';
-import { TaxonomyPage } from './pages/TaxonomyPage';
-import { AnnouncementsPage } from './pages/AnnouncementsPage';
-import { AnnouncementsModal } from './components/layout/AnnouncementsModal';
+import { WindowChrome } from './components/layout/WindowChrome';
 import { ChecklistWindow } from './components/checklist/ChecklistWindow';
-import type { Page } from './components/layout/Sidebar';
 import './styles/global.css';
 
 /**
- * Version handshake against the running server process. This bundle is served
- * fresh from disk, but a long-lived server keeps its route table in memory —
- * after an upgrade it serves THIS (new) bundle with an OLD API and newer routes
- * 404 ("No route: POST /api/tasks/token"). An exact version match is the only
- * check that can't drift; the old REQUIRED_CAPABILITIES list rotted the moment
- * a route shipped without an entry. A server with no `version` field predates
- * the handshake entirely and is stale by definition. Servers ≥ this fix also
- * self-exit on upgrade (lifecycle.ts), so this banner mainly covers pre-fix
- * servers and the ≤30s window before the drift watch fires.
- */
-function StaleServerBanner() {
-  const { health, serverCurrent } = useServerHealth();
-  if (!health || serverCurrent) return null;
-  return (
-    <div className="stale-server-banner">
-      ⚠ The dashboard server is running an older build (
-      {health.version ?? 'unknown'} vs {__DC_VERSION__}) — some actions will fail.
-      Restart it: <code>dreamcontext dashboard</code>
-    </div>
-  );
-}
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 5000,
-      retry: 1,
-      refetchOnWindowFocus: true,
-      // Live-update while the app stays open (sleep debt, tasks, knowledge all
-      // go stale as the agent works). Polls only when the tab is visible, and
-      // react-query's structural sharing skips re-renders when nothing changed,
-      // so this is cheap against the local server. The Header also exposes a
-      // manual refresh button for an immediate pull.
-      refetchInterval: 15_000,
-      refetchIntervalInBackground: false,
-    },
-    mutations: {
-      retry: 0,
-    },
-  },
-});
-
-/**
- * The listener half of the agent surface's "open this in the app" bridge.
+ * The window-level query cache: the launcher's project list, the server version handshake,
+ * the upgrade banner. All of it is per-SERVER or per-machine, never per-vault, so it is the
+ * one cache a window can share. Each open project gets its OWN client inside its
+ * `ProjectInstance` — see `lib/instanceQueryClient.ts` for why that separation matters.
  *
- * `AgentSurface` is mounted OUTSIDE `Shell` (so its PTY/scrollback survives navigation), which
- * leaves it with no handle on Shell's navigation state — it fires a
- * `dreamcontext-agent-open-page` window event instead. Until this existed nothing listened,
- * so the chat's "Open in app ↗" collapsed the overlay onto whatever page happened to be
- * underneath. This closes that loop, and is what makes the transcript's `task`/`knowledge`/
- * `core` action buttons actually land on the item.
- *
- * Rendered inside Shell's children, so it has `nav`; renders nothing.
+ * One client for both branches below because they are mutually exclusive: a window is either
+ * the launcher or a vault window, never both.
  */
-function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
-  useEffect(() => {
-    const onOpen = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { page?: unknown; id?: unknown } | undefined;
-      const page = detail?.page;
-      if (page !== 'tasks' && page !== 'knowledge' && page !== 'core') return;
-      nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null);
-    };
-    window.addEventListener('dreamcontext-agent-open-page', onOpen);
-    return () => window.removeEventListener('dreamcontext-agent-open-page', onOpen);
-  }, [nav]);
-  return null;
-}
-
-function PageRouter({ nav }: { nav: ShellNavigation }) {
-  const handleBrainNavigate = (target: BrainNavigatePage, nodeId: string) => {
-    const pageMap: Record<BrainNavigatePage, Page> = {
-      tasks: 'tasks',
-      knowledge: 'knowledge',
-      core: 'core',
-    };
-    nav.navigate(pageMap[target], nodeId);
-  };
-
-  // A navigation focus target (set by the ⌘K palette and the Brain map). The
-  // `nonce` bumps on every navigate() so destination pages re-open the item even
-  // when it's the same page or the same id. Without this, pages render their
-  // default state and the navigated-to doc never opens.
-  const focus = { id: nav.focusId, nonce: nav.nonce };
-
-  switch (nav.page) {
-    case 'brain':
-      return <BrainPage onNavigate={handleBrainNavigate} />;
-    case 'tasks':
-      return <TasksPage focus={focus} />;
-    case 'roadmap':
-      return <RoadmapPage onNavigate={(page, id) => nav.navigate(page, id ?? null)} focus={focus} />;
-    case 'hypotheses':
-      return <HypothesesPage focus={focus} />;
-    case 'lab':
-      return <LabPage focus={focus} />;
-    case 'automations':
-      return <AutomationsPage />;
-    case 'sleep':
-      return <SleepPage />;
-    case 'core':
-      return <CorePage onNavigateTaxonomy={() => nav.navigate('taxonomy', null)} focus={focus} />;
-    case 'knowledge':
-      return <KnowledgePage focus={focus} />;
-    case 'council':
-      return <CouncilPage />;
-    case 'settings':
-      return <SettingsPage focus={focus} />;
-    case 'packs':
-      return <PacksPage />;
-    case 'taxonomy':
-      return <TaxonomyPage />;
-    case 'about':
-      return <AboutPage />;
-    case 'announcements':
-      return <AnnouncementsPage focus={focus} />;
-  }
-}
+const windowQueryClient = createInstanceQueryClient();
 
 interface ErrorBoundaryState {
   error: Error | null;
@@ -178,18 +50,20 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 }
 
 /**
- * Read the `?vault=` URL param ONCE at module load and pin it as the active
- * vault before any query fires. Absent → launcher mode (render LauncherPage);
- * present → the normal vault Shell with every request carrying the vault header.
+ * Read the `?vault=` URL param ONCE at module load. Absent → launcher mode (render
+ * LauncherPage); present → the window's FIRST CHIP.
+ *
+ * It no longer pins anything globally. A window used to be one project, so the vault could be
+ * a module-level fact that every request read back out of the API client; now a window holds
+ * several live projects at once and that global would be shared state between unrelated ones.
+ * The vault travels down the tree per instance instead (`VaultProvider` → `useApi()`), and
+ * this param only decides which project the window opens WITH.
  */
 const params = new URLSearchParams(window.location.search);
 const initialVault = params.get('vault');
 const captureMode = params.get('capture') === '1';
 const perchMode = params.get('perch') === '1';
 const checklistId = params.get('checklist');
-if (initialVault) {
-  setActiveVault(initialVault);
-}
 
 /**
  * Owns the Sleepy global hotkey from the persistent launcher window. Registers on
@@ -251,7 +125,7 @@ export function App() {
   if (!initialVault) {
     return (
       <ErrorBoundary>
-        <QueryClientProvider client={queryClient}>
+        <QueryClientProvider client={windowQueryClient}>
           <ThemeProvider>
             <I18nProvider>
               <UpgradeRelaunchBanner />
@@ -265,32 +139,25 @@ export function App() {
     );
   }
 
+  /*
+   * A vault window. Everything that used to be rendered here directly — Shell, the page
+   * router, the agent surface — now belongs to a ProjectInstance, and this window may hold
+   * more than one of them. `WindowChrome` owns the chip strip and mounts them.
+   *
+   * Theme and locale sit ABOVE the chrome because they are properties of the window, not of
+   * any project in it: `ThemeProvider` writes `data-theme` onto <html> (one document, one
+   * palette), and the chrome's own `UpgradeRelaunchBanner` reads translations, so it needs a
+   * locale in scope before any instance exists.
+   */
   return (
     <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <ProjectProvider>
-          <ThemeProvider>
-            <I18nProvider>
-              <UpgradeRelaunchBanner />
-              <StaleServerBanner />
-              <Shell>
-                {(nav) => (
-                  <>
-                    <PageRouter nav={nav} />
-                    <AgentPageNavBridge nav={nav} />
-                    <AnnouncementsModal onOpenPage={(id) => nav.navigate('announcements', id ?? null)} />
-                  </>
-                )}
-              </Shell>
-              {/* Mounted ONCE, outside the page switch: the global Agent floater (a
-                  bottom-right FAB that expands to a fullscreen overlay) keeps its
-                  PTY/scrollback alive across navigation and collapse/expand. */}
-              <AgentSurface />
-              <ProjectSwitcher />
-            </I18nProvider>
-          </ThemeProvider>
-        </ProjectProvider>
-      </QueryClientProvider>
+      <ThemeProvider>
+        <QueryClientProvider client={windowQueryClient}>
+          <I18nProvider>
+            <WindowChrome initialVault={initialVault} />
+          </I18nProvider>
+        </QueryClientProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   );
 }

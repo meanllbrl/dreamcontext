@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useRecall, haikuRecallOnce, recallOnce, type RecallHit } from '../../hooks/useRecall';
 import { useRecallMode } from '../../hooks/useSleep';
+import { useApi } from '../../context/VaultContext';
 import { TypeIcon, SearchIcon, SparkIcon } from '../sleepy/TypeIcons';
 import { tagHue } from '../../lib/tagColor';
 import './BrainSearch.css';
@@ -88,6 +89,7 @@ function Highlight({ text, tokens }: { text: string; tokens: string[] }) {
 export function BrainSearch({
   scope, placeholder, selectedSlug, onOpen, browse, detail, formatTitle,
 }: BrainSearchProps) {
+  const api = useApi();
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   // When the vault recall mode is 'hybrid', live search already runs BM25+dense
@@ -149,16 +151,16 @@ export function BrainSearch({
     setIntelliQuery(query);
     setFocused(0);
     try {
-      const res = await haikuRecallOnce(query, types);
+      const res = await haikuRecallOnce(api, query, types);
       setIntelliHits(res.hits);
       setIntelliMode(res.mode);
     } catch {
       // Haiku unreachable — degrade to local BM25 so search still answers.
-      try { setIntelliHits(await recallOnce(query, types, 14)); } catch { setIntelliHits([]); }
+      try { setIntelliHits(await recallOnce(api, query, types, 14)); } catch { setIntelliHits([]); }
       setIntelliMode('bm25');
     }
     setIntelliState('done');
-  }, [trimmedQ, types]);
+  }, [api, trimmedQ, types]);
 
   const toggleIntelligent = () => {
     setIntelligentPref(v => {

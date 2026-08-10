@@ -10,6 +10,7 @@ import { isExcalidrawSlug } from '../lib/excalidraw';
 import { knowledgeLinkTarget, isPdfHref } from '../lib/knowledgeLinks';
 import { PdfViewer } from '../components/sleepy/chat/PdfViewer';
 import { graphContentUrl } from '../api/client';
+import { useVault } from '../context/VaultContext';
 import { tagHue } from '../lib/tagColor';
 import { BrainSearch } from '../components/search/BrainSearch';
 import './KnowledgePage.css';
@@ -193,6 +194,7 @@ interface KnowledgePageProps {
 
 export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
   const { t } = useI18n();
+  const { vault } = useVault();
   const { data: entries, isLoading, isError, error } = useKnowledgeList();
   const togglePin = useToggleKnowledgePin();
   const [selected, setSelected] = useState<string | null>(null);
@@ -360,7 +362,7 @@ export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
     e.preventDefault();
     setPdf({
       path: `_dream_context/${target}`,
-      src: graphContentUrl(target, { raw: true }),
+      src: graphContentUrl(vault, target, { raw: true }),
       label: anchor?.textContent?.trim() || target.split('/').pop() || target,
     });
   };

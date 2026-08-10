@@ -1,5 +1,6 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
+import type { ApiClient } from '../api/client';
 
 /**
  * A single recall hit as returned by GET /api/recall.
@@ -45,6 +46,7 @@ export interface RecallResponse {
  * the list doesn't flash empty between keystrokes.
  */
 export function useRecall(query: string, types: string[], topK = 12, minLevel?: number) {
+  const api = useApi();
   const trimmed = query.trim();
   const typeParam = types.length ? types.join(',') : '';
   return useQuery<RecallResponse>({
@@ -64,7 +66,7 @@ export function useRecall(query: string, types: string[], topK = 12, minLevel?: 
 }
 
 /** Imperative one-shot recall (used by Ask to ground an answer in top hits). */
-export async function recallOnce(query: string, types: string[], topK = 4, minLevel?: number): Promise<RecallHit[]> {
+export async function recallOnce(api: ApiClient, query: string, types: string[], topK = 4, minLevel?: number): Promise<RecallHit[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
   const params = new URLSearchParams({ q: trimmed, top: String(topK) });
@@ -92,7 +94,7 @@ export interface HaikuRecallResponse {
  * this costs a few seconds and tokens, so callers should show a loading state.
  * Falls back to BM25 server-side when the claude CLI isn't available.
  */
-export async function haikuRecallOnce(query: string, types: string[], minLevel?: number): Promise<HaikuRecallResponse> {
+export async function haikuRecallOnce(api: ApiClient, query: string, types: string[], minLevel?: number): Promise<HaikuRecallResponse> {
   const trimmed = query.trim();
   if (!trimmed) return { query: '', mode: 'haiku', skip: false, tookMs: 0, hits: [] };
   const params = new URLSearchParams({ q: trimmed });

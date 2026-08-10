@@ -1,0 +1,20 @@
+/*
+ * The hiding contract for a background project — one rule, and it has to be unconditional.
+ *
+ * `hidden` is not a strong guarantee: the browser implements it as a UA stylesheet
+ * `display: none`, which ANY author rule that sets `display` on the same element silently
+ * beats. A layout rule meant for the visible instance that forgets to exclude `[hidden]`
+ * would therefore stack every open project on top of the others — and worse than the visual
+ * mess, a subtree that still computes to a real `display` keeps a live geometry: xterm
+ * re-fits itself to a size nobody is looking at, and `inert` is left as the only thing
+ * standing between a hidden project and the user's keystrokes.
+ *
+ * So the state is asserted here, with `!important`, and nothing in this file gives
+ * `.project-instance` a `display` of its own that could apply while hidden — the visible
+ * instance's layout belongs to the chrome that lays instances out (`ProjectTabs.css`'s
+ * `.window-chrome-body > *:not([hidden])`), which is exactly the shape that stays compatible
+ * with this rule.
+ */
+.project-instance[hidden] {
+  display: none !important;
+}

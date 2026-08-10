@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 export interface Version {
   id: string;
@@ -21,6 +21,7 @@ interface ReleaseResponse {
 }
 
 export function useVersions() {
+  const api = useApi();
   return useQuery({
     queryKey: ['releases'],
     queryFn: () => api.get<ReleasesResponse>('/releases'),
@@ -32,6 +33,7 @@ export function useVersions() {
 }
 
 export function usePlanningVersions() {
+  const api = useApi();
   return useQuery({
     queryKey: ['releases'],
     queryFn: () => api.get<ReleasesResponse>('/releases'),
@@ -43,6 +45,7 @@ export function usePlanningVersions() {
 
 export function useCreateVersion() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (input: { version: string; summary?: string }) =>
       api.post<ReleaseResponse>('/releases', { ...input, status: 'planning' }),
@@ -54,6 +57,7 @@ export function useCreateVersion() {
 
 export function useUpdateVersion() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ version, updates }: { version: string; updates: { status?: string; summary?: string } }) =>
       api.patch<ReleaseResponse>(`/releases/${encodeURIComponent(version)}`, updates),
@@ -71,6 +75,7 @@ export function useUpdateVersion() {
  */
 export function useRenameVersion() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ from, to }: { from: string; to: string }) =>
       api.patch<ReleaseResponse>(`/releases/${encodeURIComponent(from)}`, { version: to }),
@@ -95,6 +100,7 @@ interface DeleteVersionResponse {
  */
 export function useDeleteVersion() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (version: string) =>
       api.del<DeleteVersionResponse>(`/releases/${encodeURIComponent(version)}`),
@@ -111,6 +117,7 @@ interface ActiveVersionResponse {
 
 /** The active planning version ("current sprint"), or null if none is set. */
 export function useActiveVersion() {
+  const api = useApi();
   return useQuery({
     queryKey: ['releases', 'active'],
     queryFn: () => api.get<ActiveVersionResponse>('/releases/active'),
@@ -126,6 +133,7 @@ export function useActiveVersion() {
  */
 export function useSetActiveVersion() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (version: string | null) =>
       api.put<ActiveVersionResponse>('/releases/active', { version }),
@@ -142,6 +150,7 @@ export function useSetActiveVersion() {
  */
 export function useCompleteVersion() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ version, exists }: { version: string; exists: boolean }) =>
       exists

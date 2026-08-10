@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 export interface RiceFields {
   reach: number | null;
@@ -103,6 +103,7 @@ interface InsertTaskSectionInput {
 }
 
 export function useTasks() {
+  const api = useApi();
   return useQuery({
     queryKey: ['tasks'],
     queryFn: () => api.get<TasksResponse>('/tasks'),
@@ -111,6 +112,7 @@ export function useTasks() {
 }
 
 export function useTask(slug: string) {
+  const api = useApi();
   return useQuery({
     queryKey: ['tasks', slug],
     queryFn: () => api.get<TaskResponse>(`/tasks/${slug}`),
@@ -121,6 +123,7 @@ export function useTask(slug: string) {
 
 export function useCreateTask() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (input: CreateTaskInput) => api.post<TaskResponse>('/tasks', input),
     onSuccess: () => {
@@ -131,6 +134,7 @@ export function useCreateTask() {
 
 export function useUpdateTask() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, updates }: UpdateTaskInput) =>
       api.patch<TaskResponse>(`/tasks/${slug}`, updates),
@@ -155,6 +159,7 @@ export function useUpdateTask() {
 
 export function useDeleteTask() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (slug: string) => api.del<{ success: boolean }>(`/tasks/${slug}`),
     onSuccess: () => {
@@ -173,6 +178,7 @@ export interface RemoteMember {
 }
 
 export function useTaskMembers() {
+  const api = useApi();
   return useQuery({
     queryKey: ['task-members'],
     queryFn: () => api.get<{ members: RemoteMember[] }>('/tasks/members'),
@@ -190,6 +196,7 @@ export interface SyncStatus {
 }
 
 export function useSyncStatus() {
+  const api = useApi();
   return useQuery({
     queryKey: ['tasks-sync-status'],
     queryFn: () => api.get<{ status: SyncStatus }>('/tasks/sync-status'),
@@ -232,6 +239,7 @@ export interface SyncJob {
 }
 
 export function useSyncJob() {
+  const api = useApi();
   return useQuery({
     queryKey: ['tasks-sync-job'],
     queryFn: () => api.get<{ job: SyncJob | null }>('/tasks/sync-jobs/current'),
@@ -244,6 +252,7 @@ export function useSyncJob() {
 
 export function useStartSyncJob() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (vars?: { hard?: boolean }) =>
       api.post<{ job: SyncJob; started: boolean }>('/tasks/sync-jobs', { direction: 'both', hard: !!vars?.hard }),
@@ -257,6 +266,7 @@ export function useStartSyncJob() {
 
 /** The active task custom-field schema (from overrides/task.md). Empty when none. */
 export function useTaskOverrides() {
+  const api = useApi();
   return useQuery({
     queryKey: ['task-overrides'],
     queryFn: () => api.get<{ present: boolean; customFields: CustomFieldDef[] }>('/task-overrides'),
@@ -274,6 +284,7 @@ export interface TaskOverrideDoc {
 
 /** The RAW override markdown (for the Settings editor). */
 export function useTaskOverrideDoc() {
+  const api = useApi();
   return useQuery({
     queryKey: ['task-override-doc'],
     queryFn: () => api.get<TaskOverrideDoc>('/task-overrides/doc'),
@@ -289,6 +300,7 @@ function invalidateOverrides(queryClient: ReturnType<typeof useQueryClient>) {
 /** Save the RAW override markdown. */
 export function useSaveTaskOverrideDoc() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (raw: string) =>
       api.put<{ present: boolean; customFields: CustomFieldDef[]; warnings: string[] }>('/task-overrides/doc', { raw }),
@@ -299,6 +311,7 @@ export function useSaveTaskOverrideDoc() {
 /** Add or replace one custom-field definition (project-wide schema). */
 export function useAddCustomFieldDef() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (input: AddCustomFieldInput) =>
       api.post<{ customFields: CustomFieldDef[]; warnings: string[] }>('/task-overrides/fields', input),
@@ -309,6 +322,7 @@ export function useAddCustomFieldDef() {
 /** Remove a custom-field definition by id/key. */
 export function useRemoveCustomFieldDef() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (key: string) =>
       api.del<{ customFields: CustomFieldDef[] }>(`/task-overrides/fields/${encodeURIComponent(key)}`),
@@ -326,6 +340,7 @@ export function useRemoveCustomFieldDef() {
  * folder-qualified slug round-trips unchanged.)
  */
 export function useFeatureOptions() {
+  const api = useApi();
   return useQuery({
     queryKey: ['knowledge'],
     queryFn: () => api.get<{ entries: Array<{ slug: string; name?: string; type?: string }> }>('/knowledge'),
@@ -343,6 +358,7 @@ export function useFeatureOptions() {
 
 export function useAddTaskChangelog() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, content }: { slug: string; content: string }) =>
       api.post<{ success: boolean }>(`/tasks/${slug}/changelog`, { content }),
@@ -354,6 +370,7 @@ export function useAddTaskChangelog() {
 
 export function useInsertTaskSection() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, section, content }: InsertTaskSectionInput) =>
       api.post<{ success: boolean }>(`/tasks/${slug}/insert`, { section, content }),

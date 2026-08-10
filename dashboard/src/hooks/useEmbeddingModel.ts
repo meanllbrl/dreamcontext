@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 /** Mirrors EmbedModelState in src/lib/embeddings/embedder.ts. */
 export type EmbedModelState = 'not_downloaded' | 'downloading' | 'ready' | 'error';
@@ -34,6 +34,7 @@ export interface EmbedModelStatus {
  * polling for users who never touch Hybrid mode.
  */
 export function useEmbeddingModelStatus(enabled: boolean) {
+  const api = useApi();
   return useQuery({
     queryKey: ['embedding-model-status'],
     queryFn: () => api.get<EmbedModelStatus>('/embeddings/status'),
@@ -51,6 +52,7 @@ export function useEmbeddingModelStatus(enabled: boolean) {
  */
 export function useDownloadEmbeddingModel() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: () => api.post<EmbedModelStatus & { ok: boolean }>('/embeddings/download', {}),
     onSuccess: (data) => queryClient.setQueryData(['embedding-model-status'], data),
@@ -77,6 +79,7 @@ export interface EmbedIndexStatus {
  * idles. Enabled only while the Hybrid card is visible.
  */
 export function useEmbeddingIndexStatus(enabled: boolean) {
+  const api = useApi();
   return useQuery({
     queryKey: ['embedding-index-status'],
     queryFn: () => api.get<EmbedIndexStatus>('/embeddings/index/status'),
@@ -94,6 +97,7 @@ export function useEmbeddingIndexStatus(enabled: boolean) {
  */
 export function useBuildEmbeddingIndex() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: () => api.post<EmbedIndexStatus & { ok: boolean }>('/embeddings/index', {}),
     onSuccess: (data) => queryClient.setQueryData(['embedding-index-status'], data),

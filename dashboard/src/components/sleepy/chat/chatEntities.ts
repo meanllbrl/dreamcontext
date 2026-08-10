@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
-import { api, agentFileUrl, RequestError } from '../../../api/client';
+import { agentFileUrl, RequestError, type ApiClient } from '../../../api/client';
+import { useVault } from '../../../context/VaultContext';
+import { readScopedRaw, writeScopedRaw } from '../../../lib/scopedStorage';
 
 /**
  * Pure, framework-light logic shared by the Agent Chat (beta) redesign's card
@@ -2019,59 +2021,84 @@ const MEDIA_KEEP_MAX = 8;
 // A stale entry (the file was overwritten at a different aspect) costs one ordinary
 // correction — the same one an unreserved image costs today — and is repaired on load.
 
-/** Remembered `naturalWidth`/`naturalHeight` per referenced path. */
-const mediaBoxes = new Map<string, { w: number; h: number }>();
-const MEDIA_BOX_KEY = 'dreamcontext.chat.mediaBoxes';
-/** Bound on what is persisted. Oldest out — a vault's screenshots are read newest-first. */
-const MEDIA_BOX_MAX = 400;
-let mediaBoxesLoaded = false;
+// Everything below is PER VAULT — the map, the load latch and the LRU bound, not merely the
+// storage key. A reference is a bare relative path (`shots/a.png`), so two projects that both
+// keep screenshots under the same folder name are talking about different files with the same
+// key. Scoping only the key would leave three sharper bugs behind: one shared latch means the
+// FIRST project to hydrate marks the cache loaded and the second one never reads its own key
+// at all; one shared map means project B's `rememberMediaBox` serialises project A's entries
+// into B's key; and one shared 400-entry bound means a busy project evicts a quiet one's boxes.
 
-/** Hydrate the remembered boxes once per page. Any failure leaves the map empty, which is
- *  simply the behaviour that existed before this cache — never an exception into a render. */
-function loadMediaBoxes(): void {
-  if (mediaBoxesLoaded) return;
-  mediaBoxesLoaded = true;
+/** Remembered `naturalWidth`/`naturalHeight` per referenced path, per vault. */
+type MediaBox = { w: number; h: number };
+const mediaBoxesByVault = new Map<string, Map<string, MediaBox>>();
+const MEDIA_BOX_KEY = 'dreamcontext.chat.mediaBoxes';
+/** Bound on what is persisted, applied PER VAULT. Oldest out — a vault's screenshots are
+ *  read newest-first. */
+const MEDIA_BOX_MAX = 400;
+/** Which vaults have already been hydrated from storage this page. */
+const hydratedVaults = new Set<string>();
+
+/** Bucket key for the per-vault maps. `null` and `''` both mean launcher/browser, which is
+ *  exactly how `scopedKey` reads them, so they must share one bucket. */
+function bucketOf(vault: string | null): string {
+  return vault || '';
+}
+
+/**
+ * This vault's box map, hydrated from storage on first touch. Any failure leaves the map
+ * empty, which is simply the behaviour that existed before this cache — never an exception
+ * into a render.
+ */
+function boxesFor(vault: string | null): Map<string, MediaBox> {
+  const bucket = bucketOf(vault);
+  let boxes = mediaBoxesByVault.get(bucket);
+  if (!boxes) {
+    boxes = new Map<string, MediaBox>();
+    mediaBoxesByVault.set(bucket, boxes);
+  }
+  if (hydratedVaults.has(bucket)) return boxes;
+  hydratedVaults.add(bucket);
   try {
-    const raw = localStorage.getItem(MEDIA_BOX_KEY);
-    if (!raw) return;
+    const raw = readScopedRaw(vault, MEDIA_BOX_KEY);
+    if (!raw) return boxes;
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return boxes;
     for (const [path, box] of Object.entries(parsed as Record<string, unknown>)) {
       const b = box as { w?: unknown; h?: unknown };
       // Only a pair of finite positive numbers is an aspect ratio. Anything else would put
       // a NaN into an attribute and reserve a box of unpredictable height.
       if (typeof b?.w === 'number' && typeof b?.h === 'number'
         && Number.isFinite(b.w) && Number.isFinite(b.h) && b.w > 0 && b.h > 0) {
-        mediaBoxes.set(path, { w: b.w, h: b.h });
+        boxes.set(path, { w: b.w, h: b.h });
       }
     }
   } catch { /* unreadable/disabled storage — reserve nothing, exactly as before */ }
+  return boxes;
 }
 
-/** Remember one image's natural size, and mirror the map to storage. */
-export function rememberMediaBox(path: string, w: number, h: number): void {
+/** Remember one image's natural size in `vault`, and mirror that vault's map to storage. */
+export function rememberMediaBox(vault: string | null, path: string, w: number, h: number): void {
   if (!(w > 0 && h > 0) || !Number.isFinite(w) || !Number.isFinite(h)) return;
-  const known = mediaBoxes.get(path);
+  const boxes = boxesFor(vault);
+  const known = boxes.get(path);
   // Re-insert at the END so eviction is least-recently-SEEN rather than insertion order: a
   // screenshot the reader keeps scrolling past must outlive images they only ever passed once.
-  mediaBoxes.delete(path);
-  mediaBoxes.set(path, { w, h });
-  while (mediaBoxes.size > MEDIA_BOX_MAX) {
-    mediaBoxes.delete(mediaBoxes.keys().next().value as string);
+  boxes.delete(path);
+  boxes.set(path, { w, h });
+  while (boxes.size > MEDIA_BOX_MAX) {
+    boxes.delete(boxes.keys().next().value as string);
   }
   // Seeing a known image again reorders the queue but writes nothing: `load` fires for every
   // image on every mount, and serializing the whole map each time would put a few hundred
   // entries through `JSON.stringify` on a scroll.
   if (known && known.w === w && known.h === h) return;
-  try {
-    localStorage.setItem(MEDIA_BOX_KEY, JSON.stringify(Object.fromEntries(mediaBoxes)));
-  } catch { /* quota/disabled — the in-memory map still serves this page */ }
+  writeScopedRaw(vault, MEDIA_BOX_KEY, JSON.stringify(Object.fromEntries(boxes)));
 }
 
-/** The remembered box for a path, or null when this image has never been displayed. */
-export function knownMediaBox(path: string): { w: number; h: number } | null {
-  loadMediaBoxes();
-  return mediaBoxes.get(path) ?? null;
+/** The box `vault` remembers for a path, or null when this image has never been displayed. */
+export function knownMediaBox(vault: string | null, path: string): MediaBox | null {
+  return boxesFor(vault).get(path) ?? null;
 }
 
 // ─── Folders (the file panel's directory listing) ────────────────────────────────────
@@ -2185,9 +2212,11 @@ function isLocalRef(href: string): boolean {
 
 /** Bytes for a referenced path. Built through the api client, NOT by hand: the vault has to
  *  ride in the URL because the browser fetches an element `src` itself and sends no headers
- *  (see `agentFileUrl`). Hand-building this is what made every clip 400 in launcher mode. */
-function rawUrl(path: string): string {
-  return agentFileUrl(path, { raw: true });
+ *  (see `agentFileUrl`). Hand-building this is what made every clip 400 in launcher mode.
+ *  `vault` is a parameter — this is a module function with no React above it, and with several
+ *  projects live in one window the wrong one would serve another project's file. */
+function rawUrl(vault: string | null, path: string): string {
+  return agentFileUrl(vault, path, { raw: true });
 }
 
 function basenameOf(path: string): string {
@@ -2213,8 +2242,12 @@ function basenameOf(path: string): string {
  * and what every inline card uses) lets the route decide, which for anything executable is a
  * reveal regardless: that downgrade is a SUCCESS, not something to report. The file manager
  * comes to the front with the file selected, which is the honest answer to the click.
+ *
+ * `api` is a PARAMETER, not a module read: `/agent/reveal` is per-vault (not on the server's
+ * agnostic list), and this is a plain function called from event handlers, not a hook — it
+ * can't read `useVault()` itself, so every caller passes the client bound to ITS OWN project.
  */
-export function revealPath(path: string, mode: 'auto' | 'reveal' = 'auto'): Promise<string | null> {
+export function revealPath(api: ApiClient, path: string, mode: 'auto' | 'reveal' = 'auto'): Promise<string | null> {
   return api.post('/agent/reveal', { path, mode }).then(
     () => null,
     (err: unknown) => {
@@ -2259,6 +2292,10 @@ export function useInlineMedia(
     onGrant?: (path: string) => Promise<boolean>;
   } = {},
 ): void {
+  // Which project's files these references name. Read here, in the hook, and threaded into the
+  // module-level `rawUrl` below — the effect it feeds runs on every render, so it always builds
+  // its `src` against the project whose transcript is on screen.
+  const { vault } = useVault();
   // The elements this pass has built, by path. A media element that is merely DETACHED still
   // holds its decoded frames and its buffer, so putting the same one back is free where
   // building a new one costs a fresh request for the whole clip. That is the difference the
@@ -2384,12 +2421,12 @@ export function useInlineMedia(
         // reader who has scrolled up (see `mediaBoxes`). The attributes only supply an aspect
         // ratio here — `.chat-md-image` keeps `width/height: auto` under its two caps, so the
         // used size is still decided by the column and `max-height`, exactly as before.
-        const box = knownMediaBox(path);
+        const box = knownMediaBox(vault, path);
         if (box) { el.width = box.w; el.height = box.h; }
-        // First sight of this image (or a file that changed shape) teaches the cache, so the
-        // next transcript that mounts it reserves the right box from the start.
+        // First sight of this image (or a file that changed shape) teaches THIS project's
+        // cache, so the next transcript that mounts it reserves the right box from the start.
         el.addEventListener('load', () => {
-          rememberMediaBox(path, el.naturalWidth, el.naturalHeight);
+          rememberMediaBox(vault, path, el.naturalWidth, el.naturalHeight);
         });
         el.addEventListener('click', () => live.current.onOpen?.(path));
       }
@@ -2404,7 +2441,7 @@ export function useInlineMedia(
         // consent. One byte costs nothing even for a large clip.
         // The 403 body also carries the file the server RESOLVED the reference to, which is
         // what "Allow access" has to grant — see `buildFallback`.
-        void fetch(rawUrl(path), { headers: { Range: 'bytes=0-0' } })
+        void fetch(rawUrl(vault, path), { headers: { Range: 'bytes=0-0' } })
           .then(async (r): Promise<{ reason: 'grant' | 'open'; grantPath: string }> => {
             if (r.status !== 403) return { reason: 'open', grantPath: path };
             const body = await r.json().catch(() => null) as { path?: unknown } | null;
@@ -2418,7 +2455,7 @@ export function useInlineMedia(
             if (el.isConnected) el.replaceWith(buildFallback(path, reason, grantPath));
           });
       }, { once: true });
-      el.src = rawUrl(path);
+      el.src = rawUrl(vault, path);
       // Cap what a single message can keep alive: a detached clip still holds its buffer, and
       // an answer with two dozen screenshots should not pin all of them off-screen. Oldest out.
       if (cache.current.size >= MEDIA_KEEP_MAX) {

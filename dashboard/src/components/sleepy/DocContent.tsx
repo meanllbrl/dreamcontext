@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../../api/client';
+import { useApi } from '../../context/VaultContext';
 import { MarkdownPreview } from '../core/MarkdownPreview';
 import { SqlPreview } from '../core/SqlPreview';
 import { ExcalidrawPreview } from '../core/ExcalidrawPreview';
@@ -54,6 +54,7 @@ function pick(obj: unknown, path: string[]): string {
 }
 
 export function DocContent({ hit }: { hit: RecallHit }) {
+  const api = useApi();
   const plan = useMemo(() => detailPlan(hit), [hit]);
 
   const { data, isLoading, isError } = useQuery({

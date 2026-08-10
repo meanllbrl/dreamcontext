@@ -1,11 +1,20 @@
+import { emitInstance } from '../context/VaultContext';
+
 /**
  * The "open this automation run as a chat" bridge.
  *
  * An automation's run history lives on the Automations page, deep in the page router. The
  * Agent surface that owns Claude sessions is mounted ONCE, above that router, so it never
- * remounts on navigation — the two cannot share a ref. Same decoupled window-event pattern
- * as `delegateAgent.ts` / the Sleep + brain-resolve agents: the panel dispatches, the
- * always-mounted `AgentSurface` listens.
+ * remounts on navigation — the two cannot share a ref. Same decoupled event pattern as
+ * `delegateAgent.ts` / the Sleep + brain-resolve agents: the panel fires on its project's
+ * instance bus, that project's `AgentSurface` listens.
+ *
+ * The bus, not `window`, and the ACK is the sharp edge again (as in `delegateAgent.ts`): the
+ * listener writes `accepted` back synchronously, so broadcast, the first surface to run wins
+ * the flag while every other one ALSO `--resume`s the same conversation uuid. Two live CLIs
+ * attached to one transcript interleave their appends and neither sees the other's turns —
+ * the exact dual-attach this file's own bring-forward guard exists to prevent, arrived at
+ * from the outside. A run belongs to one project's automation; one surface opens it.
  *
  * What makes this different from every other spawn-from-elsewhere bridge: nothing is being
  * STARTED here. The conversation already happened — headless, on a schedule, while nobody
@@ -51,15 +60,19 @@ export interface AutomationRunChatDetail extends AutomationRunRef {
 }
 
 /**
- * Ask the agent surface to open this run's conversation. Returns whether it did.
+ * Ask THIS project's agent surface to open this run's conversation. Returns whether it did.
  *
  * Synchronous by construction: `dispatchEvent` runs every listener before it returns, so
  * the ACK is readable on the next line. Nothing async may be introduced between the
  * dispatch and the read, or the ACK stops meaning anything.
+ *
+ * Returns `boolean`, not `void`: the ACK is the whole reason this is a function rather than a
+ * bare emit — the panel reports what actually happened ("Couldn't open the run") instead of
+ * optimistically claiming success, exactly like `requestDelegateAgent`.
  */
-export function requestAutomationRunChat(run: AutomationRunRef): boolean {
+export function openAutomationRunChat(bus: EventTarget, run: AutomationRunChatDetail): boolean {
   const detail: AutomationRunChatDetail = { ...run, accepted: false };
-  window.dispatchEvent(new CustomEvent<AutomationRunChatDetail>(AUTOMATION_RUN_CHAT_EVENT, { detail }));
+  emitInstance<AutomationRunChatDetail>(bus, AUTOMATION_RUN_CHAT_EVENT, detail);
   return detail.accepted === true;
 }
 

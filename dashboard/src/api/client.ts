@@ -18,13 +18,17 @@ export class RequestError extends Error {
 }
 
 /**
- * The vault this window is pinned to. Set once at boot from the `?vault=` URL
- * param (see setActiveVault). When present it is forwarded on every request as
- * the X-Dreamcontext-Vault header, which the server resolves per-request to the
- * matching context root. Null in launcher mode (no vault pinned).
+ * The vault this WINDOW was pinned to at boot.
+ *
+ * @deprecated Legacy single-vault state. One window now holds N live projects, so the vault
+ * is a property of the CLIENT (`new ApiClient(vault)`), not of the module — see
+ * `context/VaultContext.tsx`'s `useApi()`. This variable exists solely to keep the two
+ * deprecated accessors below working while the call sites migrate; it is deleted, together
+ * with them, at the end of Faz 2. Nothing else in this module reads it.
  */
 let activeVault: string | null = null;
 
+/** @deprecated Removed at the end of Faz 2 — construct an `ApiClient` with the vault instead. */
 export function setActiveVault(v: string | null): void {
   activeVault = v;
 }
@@ -33,6 +37,8 @@ export function setActiveVault(v: string | null): void {
  * The pinned vault name, for callers that can't use the header — notably the
  * agent-terminal WebSocket (the browser WS API can't set request headers), which
  * carries the vault as a `?vault=<name>` query param instead.
+ *
+ * @deprecated Removed at the end of Faz 2 — take the vault from `useVault()` and thread it.
  */
 export function getActiveVault(): string | null {
   return activeVault;
@@ -48,13 +54,18 @@ export function getActiveVault(): string | null {
  * `no_vault`, and the transcript showed a can't-load card for a file sitting right there.
  * Anything that reaches the file endpoint as an element `src` must be built here.
  *
+ * Deliberately a MODULE FUNCTION taking the vault, not an `ApiClient` method: two of its
+ * callers are pure, non-React helpers (`chatEntities.ts`'s `rawUrl`, `PageView.tsx`'s
+ * `resolveImage`) that render markdown and have no business holding a client just to read
+ * one scalar. Same one-parameter shape as `uploadAgentFile`/`mintPromptToken` — one pattern.
+ *
  * `raw` asks for the bytes (range-streamed, so video seeks); without it the endpoint
  * answers the JSON text preview that `api.get` reads.
  */
-export function agentFileUrl(path: string, opts: { raw?: boolean } = {}): string {
+export function agentFileUrl(vault: string | null, path: string, opts: { raw?: boolean } = {}): string {
   const raw = opts.raw ? '&raw=1' : '';
-  const vault = activeVault ? `&vault=${encodeURIComponent(activeVault)}` : '';
-  return `${BASE_URL}/agent/file?path=${encodeURIComponent(path)}${raw}${vault}`;
+  const scope = vault ? `&vault=${encodeURIComponent(vault)}` : '';
+  return `${BASE_URL}/agent/file?path=${encodeURIComponent(path)}${raw}${scope}`;
 }
 
 /**
@@ -68,20 +79,32 @@ export function agentFileUrl(path: string, opts: { raw?: boolean } = {}): string
  * distilled from is a vault file being read by a vault page, so it belongs here — routing it
  * through the chat surface's endpoint would answer "desktop only" outside the app.
  */
-export function graphContentUrl(path: string, opts: { raw?: boolean } = {}): string {
+export function graphContentUrl(vault: string | null, path: string, opts: { raw?: boolean } = {}): string {
   const raw = opts.raw ? '&raw=1' : '';
-  const vault = activeVault ? `&vault=${encodeURIComponent(activeVault)}` : '';
-  return `${BASE_URL}/graph/content?path=${encodeURIComponent(path)}${raw}${vault}`;
+  const scope = vault ? `&vault=${encodeURIComponent(vault)}` : '';
+  return `${BASE_URL}/graph/content?path=${encodeURIComponent(path)}${raw}${scope}`;
 }
 
-class ApiClient {
+/**
+ * One project's view of the local API. The vault is bound at CONSTRUCTION and forwarded on
+ * every request as `X-Dreamcontext-Vault`, which the server resolves per-request to that
+ * project's context root.
+ *
+ * Per-instance rather than a module singleton because one window now hosts several live
+ * projects at once: a module-level "active vault" would make every in-flight request race
+ * whichever chip the user touched last. Components get theirs from `useApi()`; the `null`
+ * client below is the launcher/browser case, where no project is pinned.
+ */
+export class ApiClient {
+  constructor(private readonly vault: string | null) {}
+
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options?.headers as Record<string, string> | undefined),
     };
-    if (activeVault) {
-      headers['X-Dreamcontext-Vault'] = activeVault;
+    if (this.vault) {
+      headers['X-Dreamcontext-Vault'] = this.vault;
     }
     const res = await fetch(`${BASE_URL}${path}`, {
       ...options,
@@ -135,4 +158,9 @@ class ApiClient {
   }
 }
 
-export const api = new ApiClient();
+/**
+ * The unpinned client — no vault header, so the server answers for its own pinned root.
+ * This is what the launcher, the capture bar, the perch and the checklist window use (and
+ * what `useApi()` returns outside a `VaultProvider`), which is why it must stay exported.
+ */
+export const api = new ApiClient(null);

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 // ─── Types (duplicated client-side — can't import from src/lib) ───────────────
 
@@ -53,6 +53,7 @@ export interface ConfigPatch {
 // ─── Hooks ────────────────────────────────────────────────────────────────────
 
 export function useConfig() {
+  const api = useApi();
   return useQuery({
     queryKey: ['config'],
     queryFn: () => api.get<ConfigResponse>('/config'),
@@ -62,6 +63,7 @@ export function useConfig() {
 
 export function useUpdateConfig() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (patch: ConfigPatch) =>
       api.patch<ConfigUpdateResponse>('/config', patch),

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { getActiveVault } from '../../../api/client';
+import { useVault } from '../../../context/VaultContext';
 
 /**
  * Which property sections are open, remembered per user.
@@ -18,13 +18,16 @@ const KEY_PREFIX = 'dreamcontext:task-sections:';
 
 type CollapseMap = Record<string, boolean>;
 
-function storageKey(): string {
-  return `${KEY_PREFIX}${getActiveVault() ?? ''}`;
+/** The vault travels as a PARAMETER because these two are module functions called at read/write
+ *  time, not from React — `useVault()` cannot be called inside them, and with several projects
+ *  live in one window a module-level read would give one project's accordions to another. */
+function storageKey(vault: string | null): string {
+  return `${KEY_PREFIX}${vault ?? ''}`;
 }
 
-function read(): CollapseMap {
+function read(vault: string | null): CollapseMap {
   try {
-    const raw = localStorage.getItem(storageKey());
+    const raw = localStorage.getItem(storageKey(vault));
     if (!raw) return {};
     const parsed: unknown = JSON.parse(raw);
     // Defensive: a hand-edited or half-written value must not crash the whole task view.
@@ -73,7 +76,10 @@ export interface SectionCollapse {
 }
 
 export function useSectionCollapse(): SectionCollapse {
-  const [map, setMap] = useState<CollapseMap>(read);
+  const { vault } = useVault();
+  // Seeded from THIS subtree's vault once, exactly as the module-global read did at mount: a
+  // mounted task panel belongs to one project for its whole life.
+  const [map, setMap] = useState<CollapseMap>(() => read(vault));
 
   // The default is looked up here rather than passed in by the caller: a caller that could pass
   // the fallback could pass the WRONG one, and then a section's default would depend on which
@@ -85,10 +91,10 @@ export function useSectionCollapse(): SectionCollapse {
       // The stored value is the user's explicit choice, so flip against what they SEE. Defaults
       // can change per release; only explicit overrides persist.
       const next = { ...prev, [id]: !(prev[id] ?? DEFAULTS[id]) };
-      try { localStorage.setItem(storageKey(), JSON.stringify(next)); } catch { /* best-effort */ }
+      try { localStorage.setItem(storageKey(vault), JSON.stringify(next)); } catch { /* best-effort */ }
       return next;
     });
-  }, []);
+  }, [vault]);
 
   return { isOpen, toggle };
 }

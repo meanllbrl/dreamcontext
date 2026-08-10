@@ -1,30 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLauncherStatus, type VaultStatus } from '../../hooks/useLauncher';
-import { goToProject, openLauncherHome } from '../../lib/desktop';
+import { goToProject, openLauncherHome, openVaultWindow } from '../../lib/desktop';
+import { useChrome } from '../layout/WindowChrome';
 import { CommandModal, useListKeyboardNav } from './CommandModal';
 import { VaultDot } from '../layout/VaultDot';
 import './ProjectSwitcher.css';
 
 /**
- * ⌘P "Go to Project" — a fast, tab-like project switcher available in EVERY
- * window (launcher and vault). It removes the two big multi-window pains:
- * hunting for another project's window, and having no quick way back to the
- * launcher.
+ * ⌘P "Go to Project" — a fast, tab-like project switcher, mounted once per window.
  *
- * Every project keeps its OWN window: picking one opens it, or FOCUSES it if it's
- * already open (see `goToProject`) — the window you're in is never closed. The
- * "Launcher" row (shown in vault windows) focuses or reopens the home window the
- * same way. ⌘1…⌘9 jump straight to the Nth project without opening the palette.
+ * A window used to hold exactly one project, so picking one from here meant opening
+ * or focusing that project's OWN window. Now a vault window holds several LIVE
+ * projects as chips, so the default action is to add (or focus) a chip in THIS
+ * window instead (`useChrome().addTab`) — `openVaultWindow` remains as the
+ * ⇧-click / ⇧+Enter escape hatch for anyone who wants a real second OS window.
+ *
+ * The launcher window has no chips to add to (it renders no `WindowChrome`), so it
+ * keeps the old behaviour untouched: picking a project opens/focuses that project's
+ * window. `useChrome()` tells the two apart — see `inLauncher` below.
  */
-
-/** The vault this window is pinned to (`?vault=`), or null in the launcher. */
-function currentVault(): string | null {
-  try {
-    return new URLSearchParams(window.location.search).get('vault');
-  } catch {
-    return null;
-  }
-}
 
 /** Don't hijack ⌘1-9 while the user is typing in a field or the agent terminal. */
 function isEditableTarget(el: EventTarget | null): boolean {
@@ -44,8 +38,18 @@ function isTerminalTarget(el: EventTarget | null): boolean {
 }
 
 export function ProjectSwitcher() {
+  const chrome = useChrome();
+  // A real `WindowChrome` always seeds a non-empty `activeVault` (the launcher's
+  // `?vault=`, read once at boot). The only way to see '' is `DETACHED_CHROME` —
+  // the context's default with no provider above it, i.e. this mount is the
+  // launcher window, which renders no chrome at all.
+  const inLauncher = chrome.activeVault === '';
+  const active = inLauncher ? null : chrome.activeVault;
+
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
+  /** Why the last `addTab` attempt didn't open anything — cleared on any successful pick. */
+  const [blockedReason, setBlockedReason] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Fetch ONLY while open. Without this gate the query inherits the app-wide 15s
@@ -54,12 +58,19 @@ export function ProjectSwitcher() {
   // result cached, so a reopen within the cache window renders instantly.
   const { data } = useLauncherStatus(open);
   const vaults = useMemo(() => data?.vaults ?? [], [data]);
-  const active = currentVault();
-  const inLauncher = active === null;
 
-  // Existing projects, in listed order — the target set for both the palette and
-  // the ⌘1-9 quick jumps (a gone folder can't be opened).
+  // Existing projects, in listed order — the launcher's ⌘1-9 target set (a gone
+  // folder can't be opened).
   const openable = useMemo(() => vaults.filter((v) => v.exists), [vaults]);
+
+  // The ⌘1-9 quick-jump set: in a vault window it's THIS WINDOW'S CHIPS in chip
+  // order (not registry order — chip order and registry order are unrelated once a
+  // window can hold several projects); in the launcher it's every registered
+  // project, exactly as before.
+  const quickTargets = useMemo(
+    () => (inLauncher ? openable.map((v) => v.name) : chrome.open.map((p) => p.vault)),
+    [inLauncher, openable, chrome.open],
+  );
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -69,12 +80,38 @@ export function ProjectSwitcher() {
     );
   }, [vaults, q]);
 
-  const pick = useCallback((v: VaultStatus) => {
-    setOpen(false);
+  const pick = useCallback((v: VaultStatus, opts?: { newWindow?: boolean }) => {
     if (!v.exists) return; // gone folder — nothing to open
-    if (v.name === active) return; // already here
-    void goToProject(v.name);
-  }, [active]);
+
+    // The escape hatch: a real second OS window, regardless of chip state or window.
+    if (opts?.newWindow) {
+      setOpen(false);
+      setBlockedReason(null);
+      void openVaultWindow(v.name);
+      return;
+    }
+
+    if (inLauncher) {
+      setOpen(false);
+      setBlockedReason(null);
+      void goToProject(v.name);
+      return;
+    }
+
+    void chrome.addTab(v.name).then((result) => {
+      if (result === 'refused-ceiling') {
+        // Every open project has a live session, so a new tab would have to evict
+        // one and there's nothing safe to evict. Don't close silently — the user
+        // needs to know why nothing happened, and how to get it anyway.
+        setBlockedReason(
+          `Every open project has a live session — close one first, or ⇧-click ${v.name} to open it in its own window.`,
+        );
+        return;
+      }
+      setBlockedReason(null);
+      setOpen(false);
+    });
+  }, [inLauncher, chrome]);
 
   const goHome = useCallback(() => {
     setOpen(false);
@@ -94,15 +131,15 @@ export function ProjectSwitcher() {
   const rows = useMemo<Row[]>(() => {
     const list: Row[] = [];
     if (!inLauncher) list.push({ kind: 'home' });
-    for (const v of filtered) list.push({ kind: 'vault', vault: v, quickIdx: openable.indexOf(v) });
+    for (const v of filtered) list.push({ kind: 'vault', vault: v, quickIdx: quickTargets.indexOf(v.name) });
     return list;
-  }, [inLauncher, filtered, openable]);
+  }, [inLauncher, filtered, quickTargets]);
 
-  const activate = useCallback((i: number) => {
+  const activate = useCallback((i: number, opts?: { newWindow?: boolean }) => {
     const row = rows[i];
     if (!row) return;
     if (row.kind === 'home') goHome();
-    else pick(row.vault);
+    else pick(row.vault, opts);
   }, [rows, goHome, pick]);
 
   // Shared ↑/↓/Enter list nav (+ length clamp). Esc is owned by <CommandModal>.
@@ -110,6 +147,18 @@ export function ProjectSwitcher() {
     length: rows.length,
     onEnter: activate,
   });
+
+  // Shift+Enter is the same escape hatch as ⇧-click. The shared nav hook has no
+  // notion of modifier keys, so it's intercepted here and everything else falls
+  // through to it unchanged.
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault();
+      activate(focused, { newWindow: true });
+      return;
+    }
+    onKeyDown(e);
+  }, [activate, focused, onKeyDown]);
 
   // Keep the keyboard-focused row scrolled into view as ↑/↓ move past the fold.
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -119,7 +168,7 @@ export function ProjectSwitcher() {
       ?.scrollIntoView({ block: 'nearest' });
   }, [focused]);
 
-  // Global keys: ⌘P toggles the palette; ⌘1-9 jump to the Nth openable project.
+  // Global keys: ⌘P toggles the palette; ⌘1-9 jump to the Nth quick target.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -130,20 +179,29 @@ export function ProjectSwitcher() {
         return;
       }
       if (/^[1-9]$/.test(e.key) && !e.shiftKey && !isEditableTarget(e.target)) {
-        const target = openable[Number(e.key) - 1];
-        if (!target) return;
-        e.preventDefault();
-        if (target.name !== active) void goToProject(target.name);
+        const idx = Number(e.key) - 1;
+        if (inLauncher) {
+          const target = openable[idx];
+          if (!target) return;
+          e.preventDefault();
+          if (target.name !== active) void goToProject(target.name);
+        } else {
+          const target = chrome.open[idx];
+          if (!target) return;
+          e.preventDefault();
+          chrome.activate(target.vault);
+        }
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openable, active]);
+  }, [openable, active, inLauncher, chrome]);
 
   // Reset + focus each time it opens.
   useEffect(() => {
     if (!open) return;
     setQ('');
+    setBlockedReason(null);
     setFocused(0);
     const raf = requestAnimationFrame(() => { try { inputRef.current?.focus(); } catch { /* ignore */ } });
     return () => cancelAnimationFrame(raf);
@@ -160,11 +218,27 @@ export function ProjectSwitcher() {
           spellCheck={false}
           autoComplete="off"
           aria-label="Go to project"
-          onChange={(e) => { setQ(e.target.value); setFocused(0); }}
-          onKeyDown={onKeyDown}
+          onChange={(e) => { setQ(e.target.value); setFocused(0); setBlockedReason(null); }}
+          onKeyDown={handleKeyDown}
         />
         <kbd className="psw-kbd">esc</kbd>
       </div>
+
+      {blockedReason && (
+        <div
+          className="psw-blocked-notice"
+          role="status"
+          style={{
+            padding: '8px 16px',
+            fontSize: 12,
+            lineHeight: 1.4,
+            color: 'var(--color-text-secondary)',
+            borderBottom: '1px solid var(--color-border)',
+          }}
+        >
+          {blockedReason}
+        </div>
+      )}
 
       <div className="psw-list" role="listbox" aria-label="Projects" ref={listRef}>
         {rows.map((row, i) => {
@@ -188,7 +262,12 @@ export function ProjectSwitcher() {
             );
           }
           const { vault: v, quickIdx } = row;
-          const isCurrent = v.name === active;
+          // "current" = the one active chip; "open" = any other chip already in this
+          // window. Both reuse the existing dimmed treatment so an already-open
+          // project reads as "nothing to do here" at a glance; only the active one
+          // gets the accent-coloured label.
+          const isActiveChip = !inLauncher && v.name === active;
+          const isOpenChip = !inLauncher && chrome.open.some((p) => p.vault === v.name);
           return (
             <button
               key={v.name}
@@ -197,8 +276,8 @@ export function ProjectSwitcher() {
               aria-selected={isFocused}
               data-row-index={i}
               disabled={!v.exists}
-              className={`psw-row${isFocused ? ' psw-row--focused' : ''}${isCurrent ? ' psw-row--current' : ''}`}
-              onClick={() => pick(v)}
+              className={`psw-row${isFocused ? ' psw-row--focused' : ''}${isOpenChip ? ' psw-row--current' : ''}`}
+              onClick={(e) => pick(v, { newWindow: e.shiftKey })}
               onMouseEnter={() => setFocused(i)}
             >
               <VaultDot exists={v.exists} needsUpdate={v.needsUpdate} />
@@ -206,8 +285,10 @@ export function ProjectSwitcher() {
                 <span className="psw-row-name">{v.name}</span>
                 <span className="psw-row-path">{v.path}</span>
               </span>
-              {isCurrent ? (
+              {isActiveChip ? (
                 <span className="psw-row-hint psw-row-hint--current">current</span>
+              ) : isOpenChip ? (
+                <span className="psw-row-hint">open</span>
               ) : quickIdx >= 0 && quickIdx < 9 ? (
                 <kbd className="psw-row-num">⌘{quickIdx + 1}</kbd>
               ) : null}

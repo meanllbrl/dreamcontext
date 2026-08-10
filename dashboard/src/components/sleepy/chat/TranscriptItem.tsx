@@ -1,6 +1,7 @@
 import { memo, useMemo, useRef, useState } from 'react';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
-import { api, agentFileUrl } from '../../../api/client';
+import { agentFileUrl, type ApiClient } from '../../../api/client';
+import { useApi, useVault } from '../../../context/VaultContext';
 import {
   useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens,
   inlineMediaKind, splitUserMedia, revealPath,
@@ -33,8 +34,9 @@ function copyText(text: string): void {
 }
 
 /** The user allowing ONE file outside the project root to be shown inline. Resolves false
- *  when the server refused (gone, or not a file), so the card can stay put and say so. */
-function grantFile(path: string): Promise<boolean> {
+ *  when the server refused (gone, or not a file), so the card can stay put and say so. A
+ *  module function, not a component — the caller passes its own vault-bound client. */
+function grantFile(api: ApiClient, path: string): Promise<boolean> {
   return api.post('/agent/grant', { path }).then(() => true, () => false);
 }
 
@@ -49,6 +51,8 @@ function grantFile(path: string): Promise<boolean> {
  * image icon.
  */
 function UserMediaItem({ path, onOpenFile }: { path: string; onOpenFile?: (path: string) => void }) {
+  const { vault } = useVault();
+  const api = useApi();
   const [failed, setFailed] = useState(false);
   // Why the OS opener refused, if it did. The chip promised "still opens" and used to break
   // that promise in silence — a refusal now shows next to it (owner report 07-28).
@@ -62,7 +66,7 @@ function UserMediaItem({ path, onOpenFile }: { path: string; onOpenFile?: (path:
         <button
           type="button"
           className="chat-msg-user-media-gone"
-          onClick={() => { setRevealError(null); void revealPath(path).then(setRevealError); }}
+          onClick={() => { setRevealError(null); void revealPath(api, path).then(setRevealError); }}
           title={path}
         >
           <span aria-hidden>{kind === 'video' ? '🎬' : kind === 'audio' ? '🎵' : '🖼'}</span> {name}
@@ -75,7 +79,7 @@ function UserMediaItem({ path, onOpenFile }: { path: string; onOpenFile?: (path:
     return (
       <video
         className="chat-msg-user-media-el"
-        src={agentFileUrl(path, { raw: true })}
+        src={agentFileUrl(vault, path, { raw: true })}
         controls
         preload="metadata"
         onError={() => setFailed(true)}
@@ -85,7 +89,7 @@ function UserMediaItem({ path, onOpenFile }: { path: string; onOpenFile?: (path:
   return (
     <img
       className="chat-msg-user-media-el"
-      src={agentFileUrl(path, { raw: true })}
+      src={agentFileUrl(vault, path, { raw: true })}
       alt={name}
       title={name}
       loading="lazy"
@@ -174,6 +178,7 @@ function AssistantMessage({
   conversationId?: string;
   readOnly: boolean;
 }) {
+  const api = useApi();
   const [confirming, setConfirming] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -190,7 +195,7 @@ function AssistantMessage({
   // chatEntities.ts — keying them to the message's own text is what let a whole answer revert
   // to raw markdown, `<a href="…mp4">` and all, on somebody else's re-render.
   useCopyableCodeBlocks(bodyRef);
-  useInlineMedia(bodyRef, { onOpen: onOpenFile, onReveal: revealPath, onGrant: grantFile });
+  useInlineMedia(bodyRef, { onOpen: onOpenFile, onReveal: (path) => revealPath(api, path), onGrant: (path) => grantFile(api, path) });
   useClickablePaths(bodyRef, (path) => onOpenFile?.(path));
 
   // Nothing left to show: an empty finished text block, or one that was ONLY a fence/board

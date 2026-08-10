@@ -25,6 +25,13 @@ function readUserPref(): boolean {
  *
  * `collapsed` = the user's explicit preference OR a forced auto-collapse at
  * ≤1024px viewport. The toggle only mutates the persisted user preference.
+ *
+ * CALL THIS FROM EXACTLY ONE OWNER — `WindowChrome`, which passes `collapsed` and `toggle`
+ * down to every mounted project instance. The KEY above stays app-global on purpose (one
+ * rail width per window is right; two rails of different widths side by side would read as
+ * broken), but the STATE is per-hook-call: a second caller reads the key at mount and then
+ * never hears about the first one's toggle, so N callers in one window silently diverge.
+ * Scoping the key per vault would be the wrong fix for the same reason.
  */
 export function useSidebarCollapse() {
   const [userPref, setUserPref] = useState<boolean>(readUserPref);

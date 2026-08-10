@@ -6,8 +6,10 @@ import {
   useAutomationSession,
   useRunAutomation,
 } from '../../hooks/useAutomations';
-import { requestAutomationRunChat, runChatUnavailableReason } from '../../lib/automationRunChat';
+import { openAutomationRunChat, runChatUnavailableReason } from '../../lib/automationRunChat';
+import { useVault } from '../../context/VaultContext';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
+import { useOverlayId } from '../../lib/useOverlayId';
 import './AutomationDetailPanel.css';
 
 /**
@@ -146,6 +148,7 @@ function RunHandoff({
   onBack: () => void;
   onOpened: () => void;
 }) {
+  const { bus } = useVault();
   const { data: session, isLoading, isError } = useAutomationSession(slug, runNumber);
   /** One dispatch per hand-off. The query re-delivers its (cached) data on every render of
    *  this panel, and a second dispatch would ask the surface to reopen a tab it just
@@ -158,7 +161,7 @@ function RunHandoff({
     const reason = runChatUnavailableReason(session, pendingReviewCardId);
     if (reason) { setRefused(reason); return; }
     sentRef.current = true;
-    const accepted = requestAutomationRunChat({
+    const accepted = openAutomationRunChat(bus, {
       slug,
       automationTitle,
       runNumber,
@@ -207,14 +210,14 @@ export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }
   const detail = useAutomation(summary.slug);
   const runNow = useRunAutomation();
   const approve = useApproveAutomation();
+  const overlayId = useOverlayId('automation-detail-panel');
   /** Which run's session is open, 1-based newest-first. Null = the history list. */
   const [openSession, setOpenSession] = useState<number | null>(null);
 
   useEffect(() => {
-    const id = 'automation-detail-panel';
-    pushOverlay(id);
+    pushOverlay(overlayId);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || !isTopOverlay(id)) return;
+      if (e.key !== 'Escape' || !isTopOverlay(overlayId)) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
         target.blur();
@@ -227,9 +230,9 @@ export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }
     window.addEventListener('keydown', onKey, true);
     return () => {
       window.removeEventListener('keydown', onKey, true);
-      popOverlay(id);
+      popOverlay(overlayId);
     };
-  }, [onClose]);
+  }, [onClose, overlayId]);
 
   const automation = detail.data?.automation ?? null;
   const approved = detail.data?.approved ?? summary.approved;

@@ -2,27 +2,34 @@
  * Unit tests for `attention.ts` — the "Claude is asking" alarm that a fresh question
  * fires from both session engines (chat's `pushAsk`, the terminal's `onSettle`).
  *
- * Three properties are worth locking, because all three are invisible until they're wrong:
+ * Four properties are worth locking, because all four are invisible until they're wrong:
  *
- *   1. ONE interruption. The throttle is shared by chime + banner + Dock bounce, so two
- *      agents asking in the same breath produce one alarm, not two of each. This moved UP
- *      from chime.ts (which used to throttle only itself) when the banner and bounce were
- *      added — a per-transport throttle would have let the banner double while the chime
- *      stayed single.
- *   2. The banner is for someone who is ELSEWHERE. A system notification sliding over the
- *      very chat that raised it is noise, so a focused, visible window gets the chime only.
- *   3. The body says what is actually being asked, clipped to something scannable.
+ *   1. ONE interruption PER PROJECT. Within a project, agents asking in the same breath
+ *      produce one alarm rather than three of each. ACROSS projects they do not collapse:
+ *      one window now holds several live projects, and two of them asking a second apart are
+ *      two separate things the user has to answer — under the old single window-wide gate
+ *      the second one was silently dropped. The chime is the one transport that keeps a
+ *      window-wide floor, because it plays through a single shared AudioContext.
+ *   2. The banner is for someone who is ELSEWHERE — and "elsewhere" now includes another
+ *      CHIP in this same window. A focused window showing project A must still raise the
+ *      user when project B asks; only an alarm from the project on screen stays quiet.
+ *   3. With no chip probe registered (the launcher, the browser build), the alarm behaves
+ *      exactly as it did when a window held one project.
+ *   4. The body says what is actually being asked, clipped to something scannable.
  *
  * There is no jsdom/happy-dom in this repo (root vitest runs plain Node — see
  * checklist-store.test.ts), so `window`/`document`/`Notification` are shimmed here with the
  * minimal surface the module actually touches. `window` is deliberately a BARE object: no
  * `__TAURI_INTERNALS__`, so `isDesktop()` is false and the alarm takes its browser path —
- * which is the arm a Node test can observe. `AudioContext` is left undefined on purpose;
- * the chime swallows its own absence, and that it does so is part of the contract (a
- * headless/blocked audio context must never stop the banner).
+ * which is the arm a Node test can observe. `chime.ts` is mocked to a counter so the voices
+ * are countable in Node (it needs a real AudioContext to do anything else); swallowing a
+ * missing/blocked audio context is chime.ts's own contract, not this module's.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { raiseAskAttention } from '../../dashboard/src/lib/attention.js';
+import { raiseAskAttention, setChipActiveProbe } from '../../dashboard/src/lib/attention.js';
+import { playAskChime } from '../../dashboard/src/lib/chime.js';
+
+vi.mock('../../dashboard/src/lib/chime.js', () => ({ playAskChime: vi.fn() }));
 
 interface SentNotification { title: string; body?: string; tag?: string }
 
@@ -57,6 +64,7 @@ beforeEach(() => {
   clock += 60_000;
   vi.useFakeTimers();
   vi.setSystemTime(clock);
+  vi.mocked(playAskChime).mockClear();
   (globalThis as unknown as { window: unknown }).window = {}; // present, but not Tauri
   setWatching(false);
   installNotificationStub();
@@ -64,6 +72,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  // The probe is module state on `attention.ts` — a test that registers one must not leave
+  // it answering for the next test's alarms.
+  setChipActiveProbe(null);
 });
 
 /** Let the alarm's fire-and-forget transports settle (they are async, nobody awaits them). */
@@ -96,6 +107,34 @@ describe('raiseAskAttention — one alarm per interruption', () => {
     await settle();
     expect(sent.map((n) => n.body)).toEqual(['first', 'later']);
   });
+
+  it('keeps a burst inside ONE project to a single banner', async () => {
+    raiseAskAttention({ source: 'atlas', detail: 'first' });
+    raiseAskAttention({ source: 'atlas', detail: 'second' });
+    raiseAskAttention({ source: 'atlas', detail: 'third' });
+    await settle();
+    expect(sent.map((n) => n.body)).toEqual(['first']);
+  });
+
+  it('does NOT collapse two different projects — they are two interruptions', async () => {
+    raiseAskAttention({ source: 'atlas', detail: 'atlas asks' });
+    await vi.advanceTimersByTimeAsync(1000); // well inside the 1.5s gate
+    raiseAskAttention({ source: 'borealis', detail: 'borealis asks' });
+    await settle();
+    expect(sent.map((n) => n.title)).toEqual([
+      'Claude is asking · atlas',
+      'Claude is asking · borealis',
+    ]);
+  });
+
+  it('rings ONE chime for two projects asking together — one AudioContext, one voice', async () => {
+    raiseAskAttention({ source: 'atlas', detail: 'atlas asks' });
+    await vi.advanceTimersByTimeAsync(200);
+    raiseAskAttention({ source: 'borealis', detail: 'borealis asks' });
+    await settle();
+    expect(sent).toHaveLength(2); // two banners…
+    expect(playAskChime).toHaveBeenCalledTimes(1); // …one voice
+  });
 });
 
 describe('raiseAskAttention — the banner is for someone elsewhere', () => {
@@ -114,6 +153,52 @@ describe('raiseAskAttention — the banner is for someone elsewhere', () => {
     raiseAskAttention({ detail: 'minimized' });
     await settle();
     expect(sent).toHaveLength(1);
+  });
+});
+
+/**
+ * The headline scenario of the project-tabs work: one window, several live projects, and the
+ * one that is asking is not the one on screen. Window focus alone cannot answer that, so
+ * `WindowChrome` registers a probe saying which chip is visible.
+ */
+describe('raiseAskAttention — a background CHIP counts as elsewhere', () => {
+  it('raises for a project that is not the visible chip, even with the window focused', async () => {
+    setWatching(true);
+    setChipActiveProbe((vault) => vault === 'atlas');
+    raiseAskAttention({ source: 'borealis', detail: 'which branch should I use?' });
+    await settle();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].title).toBe('Claude is asking · borealis');
+  });
+
+  it('stays quiet for the project the user is looking straight at', async () => {
+    setWatching(true);
+    setChipActiveProbe((vault) => vault === 'atlas');
+    raiseAskAttention({ source: 'atlas', detail: 'you can already see this' });
+    await settle();
+    expect(sent).toHaveLength(0);
+  });
+
+  it('with no probe registered, a focused window suppresses exactly as it always did', async () => {
+    setWatching(true);
+    raiseAskAttention({ source: 'atlas', detail: 'launcher / browser build — no chips' });
+    await settle();
+    expect(sent).toHaveLength(0);
+  });
+
+  it('does not attribute a sourceless alarm to a background chip', async () => {
+    setWatching(true);
+    setChipActiveProbe((vault) => vault === 'atlas');
+    raiseAskAttention({ detail: 'no project pinned' });
+    await settle();
+    expect(sent).toHaveLength(0);
+  });
+
+  it('still raises when the window itself is unfocused, whatever the probe says', async () => {
+    setChipActiveProbe(() => true); // claims "on screen"…
+    raiseAskAttention({ source: 'atlas', detail: 'window is in the background' });
+    await settle();
+    expect(sent).toHaveLength(1); // …but nobody is looking at the window at all
   });
 });
 

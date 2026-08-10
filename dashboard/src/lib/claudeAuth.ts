@@ -1,4 +1,5 @@
 import type { Capabilities } from '../components/sleepy/agentSession';
+import { emitInstance } from '../context/VaultContext';
 
 /**
  * What the System doctor says about Claude Code's sign-in state, and the bridge that
@@ -58,11 +59,17 @@ export function claudeAuthRow(auth: ClaudeAuthInfo | undefined): ClaudeAuthRow |
 /**
  * Settings → the agent surface. The sign-in flow needs an interactive terminal, which only
  * `AgentSurface` can open (it owns every session), and Settings is a page BELOW it in the
- * tree with no handle on it — so the request travels as a window event, the same
+ * tree with no handle on it — so the request travels as an event, the same
  * page-dispatches/surface-listens bridge the sleep tracker and Delegate already use.
+ *
+ * It rides the INSTANCE bus, not `window`. Sign-in is one machine-wide act, so N of them is
+ * not dangerous the way N sleeps or N delegates are — it is simply wrong: every project the
+ * window holds would open its own "Sign in" shell tab, and the user would be looking at one
+ * login while three more sat in the dock behind it. The Settings page that asked is inside
+ * exactly one project; exactly one surface should answer.
  */
 export const CLAUDE_SIGNIN_EVENT = 'dreamcontext-claude-signin';
 
-export function requestClaudeSignIn(): void {
-  try { window.dispatchEvent(new CustomEvent(CLAUDE_SIGNIN_EVENT)); } catch { /* SSR/none */ }
+export function requestClaudeSignIn(bus: EventTarget): void {
+  emitInstance(bus, CLAUDE_SIGNIN_EVENT);
 }

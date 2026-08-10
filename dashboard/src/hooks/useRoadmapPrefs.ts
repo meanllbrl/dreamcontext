@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { usePersistedState } from './usePersistedState';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 import type { RoadmapLayout, RoadmapSortKey } from '../components/roadmap/chrome';
 import type { RoadmapFilters, RoadmapCardProps } from '../components/roadmap/RoadmapToolbar';
 
@@ -55,6 +55,7 @@ interface RoadmapPrefsResponse {
 }
 
 export function useRoadmapPrefs() {
+  const api = useApi();
   const [stored, setPrefs] = usePersistedState<RoadmapPrefs>('roadmap:prefs:v1', DEFAULT_ROADMAP_PREFS);
   // Normalize on read: a prefs blob saved before a new field existed (e.g. a new
   // card property) would be missing that key. Merging over the defaults backfills
@@ -94,7 +95,7 @@ export function useRoadmapPrefs() {
     writeTimer.current = setTimeout(() => {
       api.put('/roadmap-prefs', { settings: next }).catch(() => { /* best-effort */ });
     }, 600);
-  }, []);
+  }, [api]);
 
   const update = useCallback((updater: (prev: RoadmapPrefs) => RoadmapPrefs) => {
     setPrefs((prev) => {

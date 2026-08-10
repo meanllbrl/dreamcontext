@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 export interface DebateIndexEntry {
   id: string;
@@ -75,6 +75,7 @@ interface CouncilDebateResponse {
 }
 
 export function useCouncilList() {
+  const api = useApi();
   return useQuery({
     queryKey: ['council'],
     queryFn: () => api.get<CouncilListResponse>('/council'),
@@ -83,6 +84,7 @@ export function useCouncilList() {
 }
 
 export function useCouncilDebate(debateId: string | null) {
+  const api = useApi();
   return useQuery({
     queryKey: ['council', debateId],
     queryFn: () => api.get<CouncilDebateResponse>(`/council/${debateId}`),

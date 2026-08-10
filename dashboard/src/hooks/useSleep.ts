@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 interface SessionRecord {
   session_id: string;
@@ -117,6 +117,7 @@ export function displayDebt(sleep: Pick<SleepState, 'debt' | 'effective_debt'>):
 }
 
 export function useSleep() {
+  const api = useApi();
   return useQuery({
     queryKey: ['sleep'],
     queryFn: () => api.get<SleepState>('/sleep'),
@@ -136,6 +137,7 @@ export function useRecallMode(): RecallMode {
 /** PATCH /api/sleep — partial update (recall_mode, manual debt). Returns the fresh state. */
 export function useUpdateSleep() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (patch: { recall_mode?: RecallMode; debt?: number }) =>
       api.patch<SleepState>('/sleep', patch),

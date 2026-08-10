@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 export interface TaxonomyVocabulary {
   facetTags: Record<string, string[]>;
@@ -27,6 +27,7 @@ export interface TaxonomyResponse {
 }
 
 export function useTaxonomy() {
+  const api = useApi();
   return useQuery({
     queryKey: ['taxonomy'],
     queryFn: () => api.get<TaxonomyResponse>('/taxonomy'),

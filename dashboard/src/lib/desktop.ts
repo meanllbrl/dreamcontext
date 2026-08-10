@@ -359,6 +359,30 @@ export async function openVaultWindow(name: string): Promise<void> {
 }
 
 /**
+ * Focus an already-open window by its REAL Tauri label — the one half of "this project is
+ * already open in another window, surface it instead of opening it twice" that has to happen
+ * over there rather than here. The label comes from `windowRegistry.ts`, not from
+ * {@link vaultWindowLabel}: with several projects per window, a label derived from a vault
+ * name no longer names the window that holds it.
+ *
+ * Resolves `false` on every miss — no such window, an ACL denial, or off-desktop — because
+ * every one of those means the same thing to the caller ("couldn't surface it, do something
+ * else"), and the registry it came from is allowed to be stale by design.
+ */
+export async function focusWindow(label: string): Promise<boolean> {
+  if (!isDesktop() || !label) return false;
+  try {
+    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+    const win = await WebviewWindow.getByLabel(label);
+    if (!win) return false;
+    await win.setFocus();
+    return true;
+  } catch {
+    return false; // ACL / window died between the lookup and the focus
+  }
+}
+
+/**
  * Open the pinned checklist window for one project's checklist `id`. Mirrors
  * `openVaultWindow` exactly: focus an already-open window instead of spawning a
  * duplicate, otherwise build a new always-on-top window at the same dashboard
@@ -433,13 +457,46 @@ export async function openLauncherHome(): Promise<void> {
   window.location.assign(`${window.location.origin}/`);
 }
 
+/** How a window that can hold chips takes over {@link goToProject}. */
+type GoToProjectHandler = (vault: string) => Promise<void>;
+
 /**
- * Go to a project from the ⌘P switcher. Every project keeps its OWN window, so
- * this always opens/focuses the target's window (see `openVaultWindow`) and never
- * touches the current window — switching from project B to A leaves B open, and
- * re-picking an already-open project just surfaces its existing window.
+ * Set by whichever `WindowChrome` is mounted in THIS window; null in the launcher, the
+ * capture bar, the perch and the checklist window, none of which hold projects.
+ */
+let goToProjectHandler: GoToProjectHandler | null = null;
+
+/**
+ * Register (or clear, with `null`) the in-window handler for {@link goToProject}.
+ *
+ * A registration seam rather than a direct call because this module is deliberately not
+ * React: it is imported by plain libraries and by the launcher bundle, so it cannot reach
+ * `useChrome()` — and importing chrome state here would drag the whole instance tree into
+ * every file that just wants to open a folder picker. `WindowChrome` registers on mount and
+ * clears on unmount; a window that registers nothing keeps the old behaviour untouched.
+ */
+export function setGoToProjectHandler(fn: GoToProjectHandler | null): void {
+  goToProjectHandler = fn;
+}
+
+/**
+ * Go to a project from the ⌘P switcher.
+ *
+ * The default INVERTED when one window started holding several projects: going to a project
+ * now means adding a chip HERE (the registered handler), not spawning a second OS window for
+ * it. A separate window is still reachable — it is just an explicit choice now (⇧-click in the
+ * switcher, or a chip's "Open in New Window"), both of which call {@link openVaultWindow}
+ * directly rather than coming through here.
+ *
+ * With no handler registered — the launcher window, and any surface that holds no projects —
+ * this falls back to exactly what it always did, which is what the launcher needs: it has no
+ * chip strip to add to, so picking a project there must open that project's own window.
  */
 export async function goToProject(name: string): Promise<void> {
+  if (goToProjectHandler) {
+    await goToProjectHandler(name);
+    return;
+  }
   await openVaultWindow(name);
 }
 

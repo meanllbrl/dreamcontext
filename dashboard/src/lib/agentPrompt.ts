@@ -1,5 +1,4 @@
 import { api } from '../api/client';
-import { getActiveVault } from '../api/client';
 
 /**
  * How an initial prompt gets from the dashboard to a freshly-spawned `claude`.
@@ -59,9 +58,12 @@ interface PromptTokenResponse { ok: boolean; token: string; expiresInMs: number 
  * sanitization) — callers must surface that rather than degrade to a truncated inline
  * prompt, because a session seeded with a silently-shortened brief is the exact failure this
  * whole path exists to remove.
+ *
+ * `vault` is a PARAMETER, not a module read: one window now holds several live projects, so
+ * a module-level "active vault" would mint a token against whichever project the user last
+ * touched and hand another project's agent the wrong brief.
  */
-export async function mintPromptToken(prompt: string): Promise<string> {
-  const vault = getActiveVault();
+export async function mintPromptToken(vault: string | null, prompt: string): Promise<string> {
   if (!vault) throw new Error('No vault is active — cannot hand a prompt to an agent.');
   const res = await api.post<PromptTokenResponse>('/agent/prompt', { vault, prompt });
   if (!res?.ok || !res.token) throw new Error('The server did not return a prompt token.');
@@ -85,8 +87,8 @@ export interface PreparedPrompt {
  *
  * Rejects rather than degrading: see {@link mintPromptToken}.
  */
-export async function preparePrompt(prompt: string): Promise<PreparedPrompt> {
+export async function preparePrompt(vault: string | null, prompt: string): Promise<PreparedPrompt> {
   if (!prompt) return { inline: '', token: '' };
   if (promptFitsInline(prompt)) return { inline: prompt, token: '' };
-  return { inline: '', token: await mintPromptToken(prompt) };
+  return { inline: '', token: await mintPromptToken(vault, prompt) };
 }

@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useRecall, haikuRecallOnce, recallOnce, type RecallHit } from '../../hooks/useRecall';
 import { useRecallMode } from '../../hooks/useSleep';
+import { useApi } from '../../context/VaultContext';
 import { TypeIcon, SearchIcon, SparkIcon } from '../sleepy/TypeIcons';
 import { DocContent } from '../sleepy/DocContent';
 import { recallNavTarget } from '../../lib/recallNav';
+import { useOverlayId } from '../../lib/useOverlayId';
 import { CommandModal, useListKeyboardNav } from './CommandModal';
 import type { Page } from '../layout/Sidebar';
 import './CommandPalette.css';
@@ -75,6 +77,8 @@ interface CommandPaletteProps {
 }
 
 export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProps) {
+  const api = useApi();
+  const overlayId = useOverlayId('command-palette');
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -153,15 +157,15 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
     setFocused(0);
     const level = minLevel || undefined;
     try {
-      const res = await haikuRecallOnce(query, [], level);
+      const res = await haikuRecallOnce(api, query, [], level);
       setIntelliHits(res.hits);
       setIntelliMode(res.mode);
     } catch {
-      try { setIntelliHits(await recallOnce(query, [], 12, level)); } catch { setIntelliHits([]); }
+      try { setIntelliHits(await recallOnce(api, query, [], 12, level)); } catch { setIntelliHits([]); }
       setIntelliMode('bm25');
     }
     setIntelliState('done');
-  }, [trimmed, setFocused, minLevel]);
+  }, [api, trimmed, setFocused, minLevel]);
 
   // 0 → 2 → 3 → 0. A 3-position dial, so clicking cycles rather than opening a menu.
   const cycleLevel = useCallback(() => {
@@ -207,7 +211,7 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
 
   return (
     <CommandModal
-      id="command-palette"
+      id={overlayId}
       open={open}
       onClose={onClose}
       ariaLabel="Search the brain"

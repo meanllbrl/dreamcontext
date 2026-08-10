@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 /**
  * Automations — the dashboard's read + "run now" + approve surface over
@@ -199,6 +199,7 @@ export interface AutomationRunJob {
 
 /** List every automation (for the board). Empty on an older backend / no route. */
 export function useAutomations() {
+  const api = useApi();
   return useQuery({
     queryKey: ['automations'],
     queryFn: () => api.get<{ automations: AutomationSummary[] }>('/automations').then((r) => r.automations),
@@ -208,6 +209,7 @@ export function useAutomations() {
 
 /** Full manifest (every hashed field for review) + approval state + cache/history. */
 export function useAutomation(slug: string | null) {
+  const api = useApi();
   return useQuery({
     queryKey: ['automations', slug],
     queryFn: () => api.get<AutomationDetail>(`/automations/${slug}`),
@@ -225,6 +227,7 @@ export function useAutomation(slug: string | null) {
  * same run free.
  */
 export function useAutomationSession(slug: string | null, runNumber: number | null) {
+  const api = useApi();
   return useQuery({
     queryKey: ['automations', slug, 'session', runNumber],
     queryFn: () =>
@@ -241,6 +244,7 @@ export function useAutomationSession(slug: string | null, runNumber: number | nu
  *  sync-job precedent, `useTasks.ts`'s `useSyncJob`), idle otherwise — a
  *  headless `claude -p` run can take up to an hour, so idle polling must stop. */
 export function useAutomationRunJob() {
+  const api = useApi();
   return useQuery({
     queryKey: ['automations-run-job'],
     queryFn: () => api.get<{ job: AutomationRunJob | null }>('/automations/runs').then((r) => r.job),
@@ -254,6 +258,7 @@ export function useAutomationRunJob() {
  *  runner (server-side) — this mutation carries no prompt and no bypass. */
 export function useRunAutomation() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (slug: string) =>
       api.post<{ job: AutomationRunJob; started: boolean }>(`/automations/${slug}/run`, {}),
@@ -304,6 +309,7 @@ export interface DispatcherInstallResult {
 }
 
 export function useAutomationDispatcher() {
+  const api = useApi();
   return useQuery({
     queryKey: ['automations-dispatcher'],
     queryFn: () => api.get<{ dispatcher: AutomationDispatcher }>('/automations/dispatcher').then((r) => r.dispatcher),
@@ -326,6 +332,7 @@ export function useAutomationDispatcher() {
  */
 export function useInstallDispatcher() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (opts: { force?: boolean } = {}) =>
       api.post<DispatcherInstallResult>('/automations/dispatcher/install', { force: opts.force === true }),
@@ -339,6 +346,7 @@ export function useInstallDispatcher() {
 /** Turn the scheduler back off. Manifests, approvals and run history all stay. */
 export function useUninstallDispatcher() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: () =>
       api.post<{ bootedOut: boolean; removedNotifier: boolean; dispatcher: AutomationDispatcher }>(
@@ -357,6 +365,7 @@ export function useUninstallDispatcher() {
  *  blocks an already-approved automation. */
 export function useSetAutomationEnabled() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ slug, enabled }: { slug: string; enabled: boolean }) =>
       api.post<{ automation: AutomationSummary }>(`/automations/${slug}/${enabled ? 'enable' : 'disable'}`, {}),
@@ -373,6 +382,7 @@ export function useSetAutomationEnabled() {
  *  fires). */
 export function useApproveAutomation() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (slug: string) =>
       api.post<{ slug: string; approval: { manifestSha256: string; approvedAt: string; payloadVersion: string } }>(
@@ -432,6 +442,7 @@ export interface ReviewCard {
  * but showing it is better than catching it.
  */
 export function useReviewQueue() {
+  const api = useApi();
   return useQuery({
     queryKey: ['automations-review'],
     queryFn: () => api.get<{ cards: ReviewCard[] }>('/automations/review').then((r) => r.cards),
@@ -458,6 +469,7 @@ export interface ReviewAnswerResult {
  */
 export function useAnswerReviewCard() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: ({ id, verdict, steer }: { id: string; verdict?: 'approve' | 'discard' | 'drop'; steer?: string }) =>
       api.post<ReviewAnswerResult>(`/automations/review/${id}`, verdict ? { verdict } : { steer }),

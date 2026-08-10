@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 // ─── Types (duplicated client-side — can't import from src/lib) ───────────────
 
@@ -49,6 +49,7 @@ interface SyncPreviewResponse {
 
 /** Pending + consumed federation inbox entries (read-only). */
 export function useFederationInbox() {
+  const api = useApi();
   return useQuery({
     queryKey: ['federation', 'inbox'],
     queryFn: () => api.get<InboxResponse>('/federation/inbox'),
@@ -61,6 +62,7 @@ export function useFederationInbox() {
  * mutation never mutates server state.
  */
 export function useSyncPreview() {
+  const api = useApi();
   return useMutation({
     mutationFn: () => api.post<SyncPreviewResponse>('/federation/sync', {}),
   });

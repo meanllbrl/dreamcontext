@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { pickFiles, pickFolders } from '../../../lib/desktop';
+import { useVault } from '../../../context/VaultContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
 import { useAgentSessionStats } from '../../../hooks/useAgentCapabilities';
 import {
@@ -131,6 +132,10 @@ export function Composer({
    *  nothing. The handler opens an interactive terminal Claude tab that CAN run the flow. */
   onSignIn: () => void;
 }) {
+  // Which project a pasted image is uploaded into. From THIS subtree, never a module global:
+  // with several projects live in one window the bytes would otherwise land in the temp dir of
+  // whichever chip the user last touched.
+  const { vault } = useVault();
   // Re-read on every render (the pane re-renders on every applied event — see ChatPane): this
   // is the live conversation model, not a snapshot.
   const conv = session.getModel();
@@ -254,7 +259,7 @@ export function Composer({
       // and the unmount cleanup read, and it must know about this chip before the next render.
       attachmentsRef.current = [...attachmentsRef.current, chip];
       setAttachments((prev) => [...prev, chip]);
-      const job = uploadAgentFile(file, name).then((path) => {
+      const job = uploadAgentFile(vault, file, name).then((path) => {
         const settle = (list: Attachment[]) => list.map((a) => (a.id === id
           ? { ...a, path: path ?? undefined, uploading: false, failed: !path }
           : a));

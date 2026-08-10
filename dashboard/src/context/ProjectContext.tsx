@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { api } from '../api/client';
+import { useApi } from './VaultContext';
 
 interface HealthResponse {
   ok: boolean;
@@ -29,6 +29,7 @@ type LoadState =
   | { kind: 'ready'; value: ProjectContextValue };
 
 export function ProjectProvider({ children }: { children: ReactNode }) {
+  const api = useApi();
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
 
   useEffect(() => {
@@ -44,7 +45,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       // Fallback: no project scoping (still render the app)
       setState({ kind: 'ready', value: { projectId: '', contextRoot: '' } });
     });
-  }, []);
+  }, [api]);
 
   if (state.kind === 'loading') {
     return (

@@ -5,20 +5,48 @@
  * dashboard side only; the two are kept in lockstep by applying the identical rule per
  * field — verified by inspection, same convention as the existing renderer/chatView
  * coverage below). Focus: the `renderer` field added for the GPU/comfort terminal
- * toggle, the `chatView` field added for the Agent Chat view (beta) — task_nQb0y85X —
- * and `chatPermissionMode` added for the Agent Chat redesign's state-6 remembered
- * permission-mode dropdown. Contract for all three: the default (webgl / Chat / auto)
- * applies whenever the key is absent or garbage, and ONLY the documented explicit
- * opt-out value flips it, so an old persisted blob without the key never silently
- * changes behavior.
+ * toggle and the `chatView` field added for the Agent Chat view (beta) — task_nQb0y85X.
+ * Contract for both: the default (webgl / Chat) applies whenever the key is absent or
+ * garbage, and ONLY the documented explicit opt-out value flips it, so an old persisted
+ * blob without the key never silently changes behavior.
  *
  * `chatView` is the one field with a MIGRATION on top of that contract: Chat became the
  * standard Agent screen in 0.22, and every blob written before then carries a
  * `chatView:false` that came from the old opt-in default rather than from a user's
  * choice — so an explicit `false` is honoured only on a `screenMigrated` blob.
+ *
+ * `chatPermissionMode` USED to be a field of this blob and is now a per-vault value with
+ * its own accessors — a permission gate cannot be shared by every project living in one
+ * window. Its old coercion contract ("only an exact 'bypass' opts in") is unchanged and is
+ * asserted at the bottom of this file against `readChatPermissionMode`, alongside the
+ * isolation and legacy-drop rules that are new. `localStorage` is shimmed in-memory here
+ * for the same reason as in `scoped-storage.test.ts`: root vitest runs under plain Node.
  */
-import { describe, it, expect } from 'vitest';
-import { coerceAgentSettings, DEFAULT_AGENT_SETTINGS } from '../../dashboard/src/lib/agentSettings.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  coerceAgentSettings, DEFAULT_AGENT_SETTINGS,
+  readChatPermissionMode, writeChatPermissionMode,
+  CHAT_PERMISSION_MODE_KEY, CHAT_PERMISSION_MODE_EVENT,
+} from '../../dashboard/src/lib/agentSettings.js';
+import { SCOPE_PREFIX } from '../../dashboard/src/lib/scopedStorage.js';
+
+function makeLocalStorageStub(): Storage {
+  const store = new Map<string, string>();
+  return {
+    getItem: (key: string) => (store.has(key) ? (store.get(key) as string) : null),
+    setItem: (key: string, value: string) => { store.set(key, String(value)); },
+    removeItem: (key: string) => { store.delete(key); },
+    clear: () => { store.clear(); },
+    key: (index: number) => Array.from(store.keys())[index] ?? null,
+    get length() { return store.size; },
+  } as unknown as Storage;
+}
+
+// `scopedStorage`'s migration latch is module-level and survives between tests in a file, so
+// each test below uses its OWN vault name rather than trying to reset it.
+beforeEach(() => {
+  (globalThis as unknown as { localStorage: Storage }).localStorage = makeLocalStorageStub();
+});
 
 describe('coerceAgentSettings renderer', () => {
   it('defaults to webgl when the key is absent (old persisted blob)', () => {
@@ -99,29 +127,63 @@ describe('coerceAgentSettings chatView (Chat is the default Agent screen, 0.22)'
   });
 });
 
-describe('coerceAgentSettings chatPermissionMode (Agent Chat redesign, state 6 remembered mode)', () => {
-  it('defaults to auto when the key is absent (old persisted blob)', () => {
-    expect(coerceAgentSettings({}).chatPermissionMode).toBe('auto');
-    expect(coerceAgentSettings(null).chatPermissionMode).toBe('auto');
-    expect(coerceAgentSettings(undefined).chatPermissionMode).toBe('auto');
-    expect(DEFAULT_AGENT_SETTINGS.chatPermissionMode).toBe('auto');
+describe('chatPermissionMode (per vault, split out of the global blob)', () => {
+  it('is NOT part of the app-global settings blob any more', () => {
+    // The whole point of the split: a permission gate cannot ride a blob that every project
+    // in the window shares. A stray `chatPermissionMode` in an old persisted blob is dropped
+    // on the floor by the coercer rather than being carried into the new shape.
+    expect(DEFAULT_AGENT_SETTINGS).not.toHaveProperty('chatPermissionMode');
+    expect(coerceAgentSettings({ chatPermissionMode: 'bypass' } as never)).not.toHaveProperty('chatPermissionMode');
+  });
+
+  it('defaults to auto when this vault has never chosen', () => {
+    expect(readChatPermissionMode('proj-unset')).toBe('auto');
+    expect(readChatPermissionMode(null)).toBe('auto');
   });
 
   it('honors an explicit bypass opt-in', () => {
-    expect(coerceAgentSettings({ chatPermissionMode: 'bypass' }).chatPermissionMode).toBe('bypass');
+    writeChatPermissionMode(new EventTarget(), 'proj-optin', 'bypass');
+    expect(readChatPermissionMode('proj-optin')).toBe('bypass');
   });
 
+  // Same contract the coercer used to hold, asserted on the new reader: ONLY an exact
+  // 'bypass' opts into the caution mode, so a stale or malformed value can never fail open.
   it('coerces garbage values to the auto default', () => {
-    expect(coerceAgentSettings({ chatPermissionMode: 'yes' as never }).chatPermissionMode).toBe('auto');
-    expect(coerceAgentSettings({ chatPermissionMode: 1 as never }).chatPermissionMode).toBe('auto');
-    expect(coerceAgentSettings({ chatPermissionMode: 'Bypass' as never }).chatPermissionMode).toBe('auto');
-    expect(coerceAgentSettings({ chatPermissionMode: null as never }).chatPermissionMode).toBe('auto');
-    expect(coerceAgentSettings({ chatPermissionMode: undefined }).chatPermissionMode).toBe('auto');
+    for (const [i, garbage] of ['yes', '1', 'Bypass', 'null', '{"mode":"bypass"}', ''].entries()) {
+      const vault = `proj-garbage-${i}`;
+      localStorage.setItem(`${SCOPE_PREFIX}${vault}:${CHAT_PERMISSION_MODE_KEY}`, garbage);
+      expect(readChatPermissionMode(vault)).toBe('auto');
+    }
   });
 
-  it('keeps the pre-existing field contracts intact alongside chatPermissionMode (regression)', () => {
+  it('one project opting into bypass leaves every OTHER project on auto', () => {
+    // The defect the split exists for. With the value on the global blob, flipping bypass in
+    // one project rewrote the remembered default for every project in the window.
+    writeChatPermissionMode(new EventTarget(), 'proj-a', 'bypass');
+    expect(readChatPermissionMode('proj-a')).toBe('bypass');
+    expect(readChatPermissionMode('proj-b')).toBe('auto');
+  });
+
+  it('DROPS a pre-split global bypass instead of migrating it into every vault', () => {
+    // Deliberate: carrying the legacy value forward is the harm here — a `bypass` set once,
+    // when it meant "this window's project", would fan out to every project at once. The key
+    // is new, so nothing is at the legacy name to migrate and every vault starts at 'auto'.
+    localStorage.setItem(CHAT_PERMISSION_MODE_KEY, 'bypass');
+    expect(readChatPermissionMode('proj-legacy')).toBe('auto');
+  });
+
+  it('notifies the INSTANCE bus, never window', () => {
+    // A permission change must reach only the project it was made in.
+    const bus = new EventTarget();
+    let heard: string | null = null;
+    bus.addEventListener(CHAT_PERMISSION_MODE_EVENT, (e) => { heard = (e as CustomEvent<string>).detail; });
+    writeChatPermissionMode(bus, 'proj-bus', 'bypass');
+    expect(heard).toBe('bypass');
+  });
+
+  it('keeps the pre-existing field contracts intact after the split (regression)', () => {
     const cfg = coerceAgentSettings({
-      enabled: false, autoTitle: true, hotkey: '  ', renderer: 'dom', chatView: true, chatPermissionMode: 'bypass',
+      enabled: false, autoTitle: true, hotkey: '  ', renderer: 'dom', chatView: true,
     });
     expect(cfg.enabled).toBe(false);
     expect(cfg.restoreTabs).toBe(true);
@@ -129,6 +191,5 @@ describe('coerceAgentSettings chatPermissionMode (Agent Chat redesign, state 6 r
     expect(cfg.hotkey).toBe(DEFAULT_AGENT_SETTINGS.hotkey);
     expect(cfg.renderer).toBe('dom');
     expect(cfg.chatView).toBe(true);
-    expect(cfg.chatPermissionMode).toBe('bypass');
   });
 });

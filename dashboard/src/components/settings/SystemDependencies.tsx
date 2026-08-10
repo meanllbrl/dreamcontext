@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
-import { api } from '../../api/client';
+import { useApi, useVault } from '../../context/VaultContext';
 import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { claudeAuthRow, requestClaudeSignIn } from '../../lib/claudeAuth';
 import type { Capabilities } from '../sleepy/agentSession';
@@ -85,6 +85,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  */
 export function useSystemInstall() {
   const queryClient = useQueryClient();
+  const api = useApi();
   const [running, setRunning] = useState<InstallTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -172,6 +173,7 @@ function DepRow({ dep, caps }: { dep: DepMeta; caps: Capabilities }) {
  */
 function ClaudeAccountRow({ caps }: { caps: Capabilities }) {
   const { t } = useI18n();
+  const { bus } = useVault();
   const row = claudeAuthRow(caps.claudeAuth);
   if (!row) return null;
   // The in-app sign-in opens a terminal pane, which needs the embedded terminal. Without
@@ -190,7 +192,7 @@ function ClaudeAccountRow({ caps }: { caps: Capabilities }) {
       </span>
       {row.identity && <span className="sysdep-manual">{row.identity}</span>}
       {canSignInInApp && (
-        <button className="btn btn--primary btn--sm" onClick={requestClaudeSignIn}>
+        <button className="btn btn--primary btn--sm" onClick={() => requestClaudeSignIn(bus)}>
           {t('system.auth.signIn')}
         </button>
       )}

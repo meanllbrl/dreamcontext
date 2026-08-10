@@ -246,15 +246,18 @@
   --page-max-width: 1200px;
   --card-padding: 12px;
   /* Left edge of the page content area (= current sidebar width). Flipped to the
-     collapsed width by `:root[data-sidebar="collapsed"]` below so a surface mounted
-     OUTSIDE the Shell (the expanded Agent overlay) can bound itself to the content
-     area, below the header and right of the sidebar. */
+     collapsed width by `.project-instance[data-sidebar="collapsed"]` below so a surface
+     mounted OUTSIDE the Shell (the expanded Agent overlay) can bound itself to the content
+     area, below the header and right of the sidebar. Set here (unconditionally) so a first
+     paint before Shell's effect runs sees the expanded width, not an unset custom property. */
   --app-content-left: var(--sidebar-width);
 }
 
-/* Shell.tsx publishes the sidebar collapse state on <html> so surfaces outside the
-   Shell tree can react to it (the Agent overlay is mounted at the app root). */
-:root[data-sidebar="collapsed"] {
+/* Shell.tsx publishes the sidebar collapse state on the nearest `.project-instance`
+   ancestor (one window can hold several projects, each with a life of its own rail state)
+   so surfaces outside the Shell tree but inside that instance — the expanded Agent overlay —
+   can react to it. */
+.project-instance[data-sidebar="collapsed"] {
   --app-content-left: var(--sidebar-width-collapsed);
 }
 

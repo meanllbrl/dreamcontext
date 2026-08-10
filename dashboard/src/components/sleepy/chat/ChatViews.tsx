@@ -1,4 +1,4 @@
-import { getActiveVault } from '../../../api/client';
+import { useVault } from '../../../context/VaultContext';
 import { isDesktop, openChecklistWindow } from '../../../lib/desktop';
 import { writeEnvelope } from '../../../lib/checklistStore';
 import type { ChatViewSpec, ChecklistViewSpec } from '../../../lib/chatViewSpec';
@@ -89,14 +89,16 @@ function PendingViewPill() {
  *
  * `writeEnvelope` is the single authority for `conversationId` (§1.10): the checklist
  * window's URL carries only `checklist`+`vault`, and reads `conversationId` back out of
- * the envelope this writes. `getActiveVault()` returns `string | null` — off-desktop, or
+ * the envelope this writes. The vault comes from THIS subtree's `useVault()` (never a module
+ * global — several projects are live in one window) and is `string | null`: off-desktop, or
  * with no vault pinned (shouldn't happen for a mounted Chat view, but never assumed), the
  * button is disabled rather than falling back to an invented vault, which would risk
  * writing into the wrong project's checklist (the exact defect this design fixed).
  */
 function ChecklistCard({ spec, conversationId }: { spec: ChecklistViewSpec; conversationId: string }) {
   const desktop = isDesktop();
-  const vault = desktop ? getActiveVault() : null;
+  const { vault: activeVault } = useVault();
+  const vault = desktop ? activeVault : null;
   const itemCount = spec.items.length;
 
   const handleOpen = () => {

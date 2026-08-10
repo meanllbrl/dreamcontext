@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api } from '../../../api/client';
+import { useApi } from '../../../context/VaultContext';
 import { ExcalidrawPreview } from '../../core/ExcalidrawPreview';
 import { FullscreenOverlay } from '../../layout/FullscreenOverlay';
 
@@ -36,6 +36,7 @@ interface BoardScene {
  * backed) asset resolve entirely.
  */
 export function useBoardScene(path: string): BoardScene {
+  const api = useApi();
   const [scene, setScene] = useState<BoardScene>({
     content: null, assets: undefined, assetsLoading: false, failed: false,
   });
@@ -60,7 +61,7 @@ export function useBoardScene(path: string): BoardScene {
       .catch(() => { if (!cancelled) setScene({ content: null, assets: {}, assetsLoading: false, failed: true }); });
 
     return () => { cancelled = true; };
-  }, [path]);
+  }, [api, path]);
 
   return scene;
 }

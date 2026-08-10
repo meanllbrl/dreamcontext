@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
 import { useI18n } from '../context/I18nContext';
 import { SqlPreview } from '../components/core/SqlPreview';
@@ -75,6 +75,7 @@ interface CorePageProps {
 
 export function CorePage({ onNavigateTaxonomy, focus }: CorePageProps = {}) {
   const { t } = useI18n();
+  const api = useApi();
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<Selection | null>(null);
   const [editContent, setEditContent] = useState<string | null>(null);

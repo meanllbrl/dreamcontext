@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 /**
  * Thin react-query layer over `/api/linked-repos/*` (src/server/routes/
@@ -19,6 +19,7 @@ const LINKED_REPOS_KEY = ['linked-repos'] as const;
 
 /** Present/missing status for every linked repo — reads local files only, no net/git. */
 export function useLinkedRepos() {
+  const api = useApi();
   return useQuery({
     queryKey: LINKED_REPOS_KEY,
     queryFn: () => api.get<{ repos: LinkedRepo[] }>('/linked-repos'),
@@ -36,6 +37,7 @@ export interface LinkRepoArgs {
 /** Bind a local checkout of a linked repo (records name+URL shared, path machine-local). */
 export function useLinkRepo() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (args: LinkRepoArgs) => api.post<{ ok: boolean; repos: LinkedRepo[] }>('/linked-repos/link', args),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: LINKED_REPOS_KEY }),
@@ -45,6 +47,7 @@ export function useLinkRepo() {
 /** Clone a MISSING linked repo. `confirmed` is the trust gate (the URL is team-writable). */
 export function useCloneLinkedRepo() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (name: string) =>
       api.post<{ ok: boolean; path: string; repos: LinkedRepo[] }>('/linked-repos/clone', { name, confirmed: true }),
@@ -55,6 +58,7 @@ export function useCloneLinkedRepo() {
 /** Unlink a repo — removes the shared config entry; keeps the machine-local path. */
 export function useUnlinkRepo() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (name: string) => api.post<{ ok: boolean; repos: LinkedRepo[] }>('/linked-repos/unlink', { name }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: LINKED_REPOS_KEY }),

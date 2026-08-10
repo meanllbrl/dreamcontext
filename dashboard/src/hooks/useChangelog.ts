@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 /** One entry from core/CHANGELOG.json (newest-first). */
 export interface ChangelogEntry {
@@ -18,6 +18,7 @@ interface ChangelogResponse {
 
 /** Project ship-narrative changelog — written during the RemSleep cycle. */
 export function useChangelog() {
+  const api = useApi();
   return useQuery({
     queryKey: ['changelog'],
     queryFn: () => api.get<ChangelogResponse>('/changelog'),

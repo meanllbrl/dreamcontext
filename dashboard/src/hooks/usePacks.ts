@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 // ─── Types (duplicated client-side — can't import from src/lib) ───────────────
 
@@ -41,6 +41,7 @@ interface PacksResponse {
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function usePacks() {
+  const api = useApi();
   return useQuery({
     queryKey: ['packs'],
     queryFn: () => api.get<PacksResponse>('/packs'),
@@ -65,6 +66,7 @@ interface UninstallResponse {
 /** Install a pack/standalone skill, then refresh the packs list so pills flip. */
 export function useInstallPack() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (name: string) =>
       api.post<InstallResponse>(`/packs/${encodeURIComponent(name)}/install`, {}),
@@ -77,6 +79,7 @@ export function useInstallPack() {
 /** Uninstall a pack/standalone skill, then refresh the packs list. */
 export function useUninstallPack() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (name: string) =>
       api.del<UninstallResponse>(`/packs/${encodeURIComponent(name)}`),

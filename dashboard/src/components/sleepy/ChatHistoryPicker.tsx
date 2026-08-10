@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '../../api/client';
+import { useApi } from '../../context/VaultContext';
+import { useOverlayId } from '../../lib/useOverlayId';
 import { CommandModal, useListKeyboardNav } from '../search/CommandModal';
 import './ChatHistoryPicker.css';
 
@@ -95,6 +96,8 @@ function sizeLabel(bytes: number): string {
 }
 
 export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistoryPickerProps) {
+  const api = useApi();
+  const overlayId = useOverlayId('chat-history');
   const [q, setQ] = useState('');
   const [data, setData] = useState<ChatHistoryResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -138,7 +141,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
         .finally(() => { if (reqRef.current === seq) setLoading(false); });
     }, q ? 140 : 0);
     return () => clearTimeout(handle);
-  }, [open, q, showAgentRuns]);
+  }, [api, open, q, showAgentRuns]);
 
   const sessions = data?.sessions ?? [];
 
@@ -178,7 +181,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
   const hiddenRuns = data?.agentRuns ?? 0;
 
   return (
-    <CommandModal id="chat-history" open={open} onClose={onClose} ariaLabel="Past chats" className="chp-modal">
+    <CommandModal id={overlayId} open={open} onClose={onClose} ariaLabel="Past chats" className="chp-modal">
       <div className="chp-input-row">
         <span className="chp-input-icon" aria-hidden="true">◷</span>
         <input

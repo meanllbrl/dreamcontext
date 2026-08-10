@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../context/I18nContext';
-import { api } from '../api/client';
+import { useApi, useVault } from '../context/VaultContext';
 import { useConfig, useUpdateConfig, type PlatformId, type SetupConfig } from '../hooks/useConfig';
 import { SearchableSelect } from '../components/tasks/SearchableSelect';
 import { ConnectionsManager } from '../components/settings/ConnectionsManager';
@@ -164,6 +164,7 @@ interface SettingsPageProps {
 
 export function SettingsPage({ focus }: SettingsPageProps) {
   const { t } = useI18n();
+  const api = useApi();
   const queryClient = useQueryClient();
   const { data: config, isLoading: configLoading, isError: configError } = useConfig();
   const updateConfig = useUpdateConfig();
@@ -181,8 +182,11 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   // SW2 — Cloud sync master toggle (Brain Repo & Collaboration section).
   const { data: brainSettings } = useBrainSettings();
   const updateBrainSettings = useUpdateBrainSettings();
-  // Item 7 — machine-local "auto-checkpoint on open" preference (localStorage, not team config).
-  const [autoCheckpoint, setAutoCheckpoint] = useState<boolean>(() => readAutoCheckpointOnOpen());
+  // Item 7 — machine-local "auto-checkpoint on open" preference (localStorage, not team
+  // config), and PER VAULT: it decides whether opening THIS project auto-commits its
+  // uncommitted work, so it is read and written against this instance's vault.
+  const { vault } = useVault();
+  const [autoCheckpoint, setAutoCheckpoint] = useState<boolean>(() => readAutoCheckpointOnOpen(vault));
 
   // Memory recall mode — lives in .sleep.json (not the setup config), so it is
   // persisted immediately via PATCH /api/sleep rather than buffered behind Save.
@@ -874,7 +878,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
             <input
               type="checkbox"
               checked={autoCheckpoint}
-              onChange={(e) => { setAutoCheckpoint(e.target.checked); writeAutoCheckpointOnOpen(e.target.checked); }}
+              onChange={(e) => { setAutoCheckpoint(e.target.checked); writeAutoCheckpointOnOpen(vault, e.target.checked); }}
             />
             <span>{t('brain.scope.autoCheckpoint.label')}</span>
           </label>

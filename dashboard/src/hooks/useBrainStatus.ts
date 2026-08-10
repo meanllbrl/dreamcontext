@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useApi } from '../context/VaultContext';
 
 /**
  * Thin react-query layer over the M2 brain cloud-sync endpoints
@@ -145,6 +145,7 @@ function invalidateBrain(queryClient: ReturnType<typeof useQueryClient>): void {
 
 /** Resolved brain-repo status for the active vault. Polls on the app's default 15s tick. */
 export function useBrainStatus() {
+  const api = useApi();
   return useQuery({
     queryKey: BRAIN_KEYS.status,
     queryFn: () => api.get<BrainStatus>('/brain/status'),
@@ -152,6 +153,7 @@ export function useBrainStatus() {
 }
 
 export function useBrainSettings() {
+  const api = useApi();
   return useQuery({
     queryKey: BRAIN_KEYS.settings,
     queryFn: () => api.get<BrainSettings>('/brain/settings'),
@@ -165,6 +167,7 @@ export function useBrainSettings() {
  */
 export function useUpdateBrainSettings() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (enabled: boolean) => api.post<BrainSettings>('/brain/settings', { enabled }),
     onSuccess: (data) => {
@@ -205,6 +208,7 @@ export interface CreateOriginArgs {
 
 /** Preview a repo URL before attaching (no mutation). Returns `{ reachable, reason }`. */
 export function usePreviewOrigin() {
+  const api = useApi();
   return useMutation({
     mutationFn: (url: string) => api.post<OriginPreview>('/brain/origin/preview', { url }),
   });
@@ -213,6 +217,7 @@ export function usePreviewOrigin() {
 /** Create a new GitHub repo as the project's origin, then enable + first-sync. */
 export function useCreateOrigin() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (args: CreateOriginArgs = {}) => api.post<OriginSetupResult>('/brain/origin/create', args),
     // Settled, not success: even when the request errors mid-flight, the repo may
@@ -224,6 +229,7 @@ export function useCreateOrigin() {
 /** Attach an existing GitHub repo as the project's origin, then enable + first-sync. */
 export function useAttachOrigin() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (url: string) => api.post<OriginSetupResult>('/brain/origin/attach', { url }),
     onSettled: () => invalidateBrain(queryClient),
@@ -238,6 +244,7 @@ export function useAttachOrigin() {
  */
 export function useUpdateOrigin() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (url: string) => api.post<OriginSetupResult>('/brain/origin/update', { url }),
     onSuccess: () => invalidateBrain(queryClient),
@@ -247,6 +254,7 @@ export function useUpdateOrigin() {
 /** Remove the origin + revert cloud sync to in-tree (connected-card "Disconnect"). */
 export function useDetachOrigin() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: () => api.post<{ ok: boolean; remote: null }>('/brain/origin/detach', {}),
     onSuccess: () => invalidateBrain(queryClient),
@@ -256,6 +264,7 @@ export function useDetachOrigin() {
 // ─── GitHub sign-in (app-global — device flow + PAT fallback) ────────────────
 
 export function useAuthStatus() {
+  const api = useApi();
   return useQuery({
     queryKey: BRAIN_KEYS.authStatus,
     queryFn: () => api.get<AuthStatus>('/brain/auth/status'),
@@ -263,6 +272,7 @@ export function useAuthStatus() {
 }
 
 export function useDeviceStart() {
+  const api = useApi();
   return useMutation({
     mutationFn: () => api.post<DeviceStartResult>('/brain/auth/device/start', {}),
   });
@@ -270,6 +280,7 @@ export function useDeviceStart() {
 
 /** One poll tick. The CALLER drives the loop timing off the server-returned interval. */
 export function useDevicePoll() {
+  const api = useApi();
   return useMutation({
     mutationFn: (sessionId: string) => api.post<DevicePollResult>('/brain/auth/device/poll', { sessionId }),
   });
@@ -277,6 +288,7 @@ export function useDevicePoll() {
 
 export function useSubmitPatToken() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (token: string) => api.post<AuthStatus>('/brain/auth/token', { token }),
     onSuccess: (data) => queryClient.setQueryData(BRAIN_KEYS.authStatus, data),
@@ -285,6 +297,7 @@ export function useSubmitPatToken() {
 
 export function useLogoutGitHub() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: () => api.post<AuthStatus>('/brain/auth/logout', {}),
     onSuccess: (data) => queryClient.setQueryData(BRAIN_KEYS.authStatus, data),
@@ -299,6 +312,7 @@ export interface RunBrainSyncArgs {
 
 export function useRunBrainSync() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     // Every dashboard-initiated sync is FOREGROUND (a human is watching): WARN
     // scrub hits stay non-blocking, only real secrets stop it.
@@ -313,6 +327,7 @@ export function useRunBrainSync() {
 /** One-click "add <path> to .gitignore" for a scrub-blocked local secret file (item 6). */
 export function useAddScrubIgnore() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (path: string) => api.post<{ ok: boolean; added: string[]; path: string }>('/brain/scrub/ignore', { path }),
     onSuccess: () => invalidateBrain(queryClient),
@@ -323,6 +338,7 @@ export function useAddScrubIgnore() {
 
 /** Cache-only — zero network in the request path. Polls on the default 15s tick. */
 export function useTeamUpdates() {
+  const api = useApi();
   return useQuery({
     queryKey: BRAIN_KEYS.teamUpdates,
     queryFn: () => api.get<{ vaults: TeamVaultUpdate[] }>('/brain/team/updates'),
@@ -333,6 +349,7 @@ export function useTeamUpdates() {
 /** "Check now" — an in-process pull-only sync across vaults (or one, if `vault` is given). */
 export function useTeamFetch() {
   const queryClient = useQueryClient();
+  const api = useApi();
   return useMutation({
     mutationFn: (vault?: string) =>
       api.post<{ results: TeamFetchVaultResult[] }>('/brain/team/fetch', vault ? { vault } : {}),

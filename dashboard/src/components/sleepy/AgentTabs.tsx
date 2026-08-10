@@ -167,10 +167,20 @@ export function AgentTabs({
                   title={
                     tab.sessionKind === 'shell' ? 'Terminal (login shell)'
                       : tab.sessionKind === 'chat' ? 'Claude Code chat'
-                        : 'Claude Code agent'
+                        : tab.sessionKind === 'automation' ? 'Automation run — a scheduled job\'s own conversation'
+                          : 'Claude Code agent'
                   }
                   aria-hidden
-                >{tab.sessionKind === 'shell' ? '>_' : tab.sessionKind === 'chat' ? '◆' : '◇'}</span>
+                >{
+                  tab.sessionKind === 'shell' ? '>_'
+                    : tab.sessionKind === 'chat' ? '◆'
+                      // An automation run is the one tab you did not open yourself — it ran
+                      // unattended, with bypassPermissions, while nobody was watching. The
+                      // glyph is deliberately unlike the other three so a strip of tabs
+                      // makes that legible at a glance.
+                      : tab.sessionKind === 'automation' ? '⬡'
+                        : '◇'
+                }</span>
                 {renaming ? (
                   <input
                     className="agent-tab-rename"

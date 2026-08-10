@@ -3,8 +3,9 @@ import { useI18n } from '../../context/I18nContext';
 import { useSleep, getSleepLevelKey, getSleepMood, displayDebt, SLEEP_DEBT_MAX } from '../../hooks/useSleep';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
 import { readAgentSettings, AGENT_SETTINGS_EVENT, type AgentSettings } from '../../lib/agentSettings';
+import { useVault, useInstanceEvent } from '../../context/VaultContext';
 import {
-  requestSleepAgent,
+  runSleepAgent,
   markSleepPending,
   clearSleepPending,
   sleepPendingSince,
@@ -38,22 +39,27 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
   const { data: caps } = useAgentCapabilities();
   const [menuOpen, setMenuOpen] = useState(false);
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(() => readAgentSettings());
-  const [pendingAt, setPendingAt] = useState<number | null>(() => sleepPendingSince());
+  // Every sleep signal below is per PROJECT: the debt itself comes from this instance's
+  // `useSleep()` query, the "waiting" marker is stored under this vault's key, and the spawn
+  // request goes to this instance's agent surface. One window can hold several projects, each
+  // with its own debt and its own consolidation.
+  const { vault, bus } = useVault();
+  const [pendingAt, setPendingAt] = useState<number | null>(() => sleepPendingSince(vault));
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  // Mirror the persisted "waiting to sleep" marker (set on click, cleared once a real sleep
-  // starts). Broadcast keeps us in sync instantly; the interval re-evaluates so the marker's
-  // TTL self-clears the shim if the spawned agent never reaches `sleep start`.
+  // Mirror this vault's persisted "waiting to sleep" marker (set on click, cleared once a real
+  // sleep starts). The bus event keeps us in sync instantly; the interval re-evaluates so the
+  // marker's TTL self-clears the shim if the spawned agent never reaches `sleep start`.
+  useInstanceEvent(SLEEP_PENDING_EVENT, () => setPendingAt(sleepPendingSince(vault)));
   useEffect(() => {
-    const sync = () => setPendingAt(sleepPendingSince());
-    window.addEventListener(SLEEP_PENDING_EVENT, sync);
-    const iv = window.setInterval(sync, 4_000);
-    return () => { window.removeEventListener(SLEEP_PENDING_EVENT, sync); window.clearInterval(iv); };
-  }, []);
+    const iv = window.setInterval(() => setPendingAt(sleepPendingSince(vault)), 4_000);
+    return () => window.clearInterval(iv);
+  }, [vault]);
 
   // Track the Agents-surface enable toggle live (Settings broadcasts on save) — a
   // disabled surface renders no dock, so "Run sleep agent" must be disabled too or a
-  // click would spawn an invisible session.
+  // click would spawn an invisible session. Still on `window`: what is left in that blob is
+  // genuinely app-global, so every project's tracker should react to it at once.
   useEffect(() => {
     const onChange = (e: Event) => {
       const detail = (e as CustomEvent<AgentSettings>).detail;
@@ -66,8 +72,8 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
   // Once a real sleep actually begins (epoch stamped), retire the "waiting" shim — the
   // tracker hands off to its authoritative "Sleeping 💤" state.
   useEffect(() => {
-    if (sleep?.sleep_started_at && sleepPendingSince() != null) clearSleepPending();
-  }, [sleep?.sleep_started_at]);
+    if (sleep?.sleep_started_at && sleepPendingSince(vault) != null) clearSleepPending(bus, vault);
+  }, [sleep?.sleep_started_at, bus, vault]);
 
   // Close the menu on any outside click or Esc — a lightweight popover, no backdrop.
   useEffect(() => {
@@ -103,8 +109,8 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
 
   const runAgent = () => {
     setMenuOpen(false);
-    markSleepPending();
-    requestSleepAgent();
+    markSleepPending(bus, vault);
+    runSleepAgent(bus);
   };
   const showDetails = () => {
     setMenuOpen(false);

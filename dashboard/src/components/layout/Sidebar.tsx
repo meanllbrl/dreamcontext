@@ -7,17 +7,9 @@ import { useAuthStatus, useBrainStatus } from '../../hooks/useBrainStatus';
 import { useAnnouncementInbox } from '../../hooks/useAnnouncements';
 import { useTheses } from '../../hooks/useTheses';
 import { BrainSyncControl } from '../brain/BrainSyncControl';
+import { useVault } from '../../context/VaultContext';
+import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Sidebar.css';
-
-/** The active vault's display name, as passed by the launcher via `?vault=`. */
-function readVaultLabel(): string {
-  if (typeof window === 'undefined') return '';
-  try {
-    return new URLSearchParams(window.location.search).get('vault') ?? '';
-  } catch {
-    return '';
-  }
-}
 
 export type Page = 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements';
 
@@ -80,9 +72,13 @@ const NAV_GROUPS: NavGroup[] = [
 ];
 
 // One-time first-run nudge: the "What is this?" entry pulses until the user
-// opens it once, then this flag persists so it never nags again.
+// opens it once, then this flag persists so it never nags again. GLOBAL on purpose —
+// "I have read what this app is" lives in the user's head, not in a project, and
+// re-explaining dreamcontext once per project would be nagging.
 const ABOUT_SEEN_STORAGE_KEY = 'dreamcontext.dashboard.aboutSeen';
-// Same pattern for the GitHub cloud-sync CTA pinned to the rail footer.
+// Same first-run pattern for the GitHub cloud-sync CTA pinned to the rail footer, but
+// PER VAULT: unlike `aboutSeen`, what this CTA *does* (`brain enable`) is per-project, so
+// dismissing it in a synced project must not hide it in one that is still unsynced.
 const GITHUB_SYNC_SEEN_STORAGE_KEY = 'dreamcontext.dashboard.githubSyncSeen';
 
 function readFlag(key: string): boolean {
@@ -104,10 +100,15 @@ function writeFlag(key: string): void {
 
 export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   const { t } = useI18n();
+  // Which project this rail belongs to. Read from the instance, NOT from `?vault=`: the
+  // window's URL names the first chip, and several projects render their own rail here.
+  const { vault } = useVault();
   // aboutSeen: whether the user has opened "What is this?" at least once.
   // Until then, the entry bounces to invite the first click.
   const [aboutSeen, setAboutSeen] = useState<boolean>(() => readFlag(ABOUT_SEEN_STORAGE_KEY));
-  const [githubSyncSeen, setGithubSyncSeen] = useState<boolean>(() => readFlag(GITHUB_SYNC_SEEN_STORAGE_KEY));
+  const [githubSyncSeen, setGithubSyncSeen] = useState<boolean>(
+    () => readScopedRaw(vault, GITHUB_SYNC_SEEN_STORAGE_KEY) === '1',
+  );
 
   const { data: authStatus } = useAuthStatus();
   const { data: brainStatus } = useBrainStatus();
@@ -123,7 +124,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   // worse than one that simply doesn't label it yet.
   const { data: thesesData } = useTheses();
   const learningOff = thesesData?.enabled === false;
-  const vaultLabel = readVaultLabel();
+  const vaultLabel = vault ?? '';
 
   // 3-state cloud-sync CTA: not signed in → invite sign-in; signed in but no
   // remote configured yet → invite setup; connected → the sync control
@@ -143,7 +144,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   const openGithubSync = () => {
     if (!githubSyncSeen) {
       setGithubSyncSeen(true);
-      writeFlag(GITHUB_SYNC_SEEN_STORAGE_KEY);
+      writeScopedRaw(vault, GITHUB_SYNC_SEEN_STORAGE_KEY, '1');
     }
     onNavigate('settings', 'brain');
   };

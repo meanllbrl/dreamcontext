@@ -45,7 +45,8 @@
     "verify:automation-run-chat": "node scripts/verify/automation-run-chat.mjs",
     "verify:delegate-modes": "node scripts/verify/delegate-modes.mjs",
     "verify:hypotheses": "node scripts/verify/hypotheses-ui.mjs",
-    "verify:lab-board": "node scripts/verify/lab-board.mjs"
+    "verify:lab-board": "node scripts/verify/lab-board.mjs",
+    "verify:project-tabs": "node scripts/verify/project-tabs.mjs"
   },
   "keywords": [
     "ai",

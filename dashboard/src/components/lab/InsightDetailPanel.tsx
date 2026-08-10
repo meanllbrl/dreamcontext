@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import type { InsightSummary, SyncEvent } from '../../hooks/useLab';
 import { useLabInsight, useSyncInsight, useUpdateTweaks } from '../../hooks/useLab';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
+import { useOverlayId } from '../../lib/useOverlayId';
 import { TweakEditor } from './TweakEditor';
 import { RangeControl, nonWindowTweaks } from './RangeControl';
 import { chartEntry, detailBodyFor } from './chartRegistry';
@@ -72,15 +73,15 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
   const sync = useSyncInsight();
   const updateTweaks = useUpdateTweaks();
   const { locale } = useI18n();
+  const overlayId = useOverlayId('insight-detail-panel');
 
   // Esc closes — but only when this panel is the topmost overlay (overlayStack,
   // same contract as CommandModal) and never while the user is typing in a form
   // field (Esc there dismisses the field, not the panel with their unsaved edits).
   useEffect(() => {
-    const id = 'insight-detail-panel';
-    pushOverlay(id);
+    pushOverlay(overlayId);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || !isTopOverlay(id)) return;
+      if (e.key !== 'Escape' || !isTopOverlay(overlayId)) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
         target.blur();
@@ -93,9 +94,9 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
     window.addEventListener('keydown', onKey, true);
     return () => {
       window.removeEventListener('keydown', onKey, true);
-      popOverlay(id);
+      popOverlay(overlayId);
     };
-  }, [onClose]);
+  }, [onClose, overlayId]);
 
   const manifest = detail.data?.insight ?? null;
   const cache = detail.data?.cache ?? null;
