@@ -142,11 +142,7 @@ export async function handleKnowledgeList(
   // knowledge on the dashboard Knowledge page — the standalone Features tab is
   // gone. Other index consumers (snapshot, graph, recall) keep the default
   // exclusion because they surface features through their own dedicated paths.
-  // includeHidden: `visibility: false` hides a file from the AGENT (index,
-  // snapshot, recall, embeddings, federation digest) — not from its author. The
-  // dashboard is the one surface that keeps listing it (flagged `hidden: true`),
-  // because a file you can't see is a file whose visibility you can't turn back on.
-  const entries = buildKnowledgeIndex(contextRoot, { includeFeatures: true, includeHidden: true });
+  const entries = buildKnowledgeIndex(contextRoot, { includeFeatures: true });
   sendJson(res, 200, { entries });
 }
 

@@ -19,7 +19,6 @@ dreamcontext knowledge touch <slug>     # record access AFTER reading — powers
 - **Pin** frequently-needed files so they load in full every session: set `pinned: true` (via `dreamcontext memory update <slug> --pin`). Read non-pinned files on demand, then `knowledge touch`.
 - **Surgical edits mid-session**: `dreamcontext memory update <slug> [--description|--tags|--content|--append <text>|--pin|--unpin]`. Heavy maintenance (merging, deduping, restructuring) belongs to `sleep-product`.
 - **Quick capture**: `dreamcontext memory remember "<text>"` writes a `type=note` CHANGELOG entry; sleep reconciles it into knowledge later.
-- **Hide a file from the agent**: set `visibility: false` in its frontmatter. The file stays on disk and stays listed on the dashboard Knowledge page (badged `hidden`), but leaves **every agent surface** — knowledge index, snapshot (roster, features, and the active-task product injection), brain graph, `memory recall` (BM25 **and** semantic), embeddings, taxonomy, sleep, cross-vault peer reads, and any federation digest pushed to a peer. It works on **any** frontmatter doc — knowledge, feature, task, thesis, objective, insight, automation — and beats `pinned: true` when both are set. Only an explicit opt-out hides a file: `false`, `"false"`, `private`, `hidden`. Use it for a private draft or a sensitive note that must not leave the vault; to bring it back, delete the field or set `visibility: true`.
 
 ### Organize knowledge into context folders (the promoted convention)
 

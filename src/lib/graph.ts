@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import fg from 'fast-glob';
-import { readFrontmatter, isHiddenFromIndex } from './frontmatter.js';
+import { readFrontmatter } from './frontmatter.js';
 import { buildKnowledgeIndex } from './knowledge-index.js';
 import { featuresDir, featureSlug } from './features-path.js';
 
@@ -146,10 +146,6 @@ export function buildGraph(contextRoot: string): Graph {
       const fileSlug = featureSlug(featuresPath, file);
       try {
         const { data } = readFrontmatter(file);
-        // Hidden docs leave the graph as a whole: buildKnowledgeIndex already
-        // drops hidden knowledge here, so keeping a hidden task/feature node
-        // would make the same flag mean two different things on one canvas.
-        if (isHiddenFromIndex(data as Record<string, unknown>)) continue;
         const id = data.id ? String(data.id) : `feature/${fileSlug}`;
         addNode(
           {
@@ -186,7 +182,6 @@ export function buildGraph(contextRoot: string): Graph {
       const fileSlug = basename(file, '.md');
       try {
         const { data } = readFrontmatter(file);
-        if (isHiddenFromIndex(data as Record<string, unknown>)) continue;
         const id = data.id ? String(data.id) : `task/${fileSlug}`;
         const slug = data.name ? String(data.name) : fileSlug;
         addNode(
