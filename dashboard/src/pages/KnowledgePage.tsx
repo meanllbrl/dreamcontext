@@ -40,6 +40,12 @@ type KnowledgeListEntry = {
   type?: string;
   /** Frontmatter `status` — feature PRDs carry planning/active/…/shipped. */
   status?: string;
+  /**
+   * Frontmatter `visibility: false` — the file is excluded from every agent
+   * surface. The dashboard is the only place it still shows, so it needs a badge:
+   * otherwise a hidden file looks identical to a live one.
+   */
+  hidden?: boolean;
 };
 
 // "data-structures" -> "Data Structures", "diagrams" -> "Diagrams".
@@ -264,6 +270,11 @@ export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
           {entry.type === 'feature' && entry.status && (
             <span className={`knowledge-card-status knowledge-card-status--${entry.status}`}>
               {entry.status}
+            </span>
+          )}
+          {entry.hidden && (
+            <span className="knowledge-card-hidden" title={t('knowledge.hiddenTitle')}>
+              {t('knowledge.hidden')}
             </span>
           )}
         </span>

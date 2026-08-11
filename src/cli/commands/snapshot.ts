@@ -5,7 +5,7 @@ import fg from 'fast-glob';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { resolveVaultContextRoot, VaultError } from '../../lib/vaults.js';
 import { error } from '../../lib/format.js';
-import { readFrontmatter } from '../../lib/frontmatter.js';
+import { readFrontmatter, isHiddenFromIndex } from '../../lib/frontmatter.js';
 import { readJsonArray } from '../../lib/json-file.js';
 import { readSection } from '../../lib/markdown.js';
 import { readSleepState, writeSleepState, readSleepHistory } from './sleep.js';
@@ -418,6 +418,11 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
   for (const file of taskFiles) {
     try {
       const { data } = readFrontmatter(file);
+      // `visibility: false` — the Active Tasks roster is auto-loaded agent
+      // context, so a hidden task must not surface here (name, Why and custom
+      // field VALUES all render inline). This loader globs state/ directly, so
+      // it needs its own check like the product injection below.
+      if (isHiddenFromIndex(data as Record<string, unknown>)) continue;
       const status = String(data.status ?? 'unknown');
       if (status === 'completed') continue;
       const slug = basename(file, '.md');
@@ -523,7 +528,13 @@ function resolveActiveTaskPath(root: string): string | null {
       const slug = readFileSync(overridePath, 'utf-8').trim();
       if (slug) {
         const taskPath = join(stateDir, `${slug}.md`);
-        if (existsSync(taskPath)) return taskPath;
+        // `visibility: false` beats the explicit pointer: hiding is the stricter,
+        // more predictable rule, and a stale `.active-task` left behind on a task
+        // the author later hid would otherwise re-inject it into the snapshot.
+        if (existsSync(taskPath)
+          && !isHiddenFromIndex(readFrontmatter(taskPath).data as Record<string, unknown>)) {
+          return taskPath;
+        }
       }
     } catch { /* fall through to heuristic */ }
   }
@@ -536,6 +547,9 @@ function resolveActiveTaskPath(root: string): string | null {
   for (const file of taskFiles) {
     try {
       const { data } = readFrontmatter(file);
+      // A hidden task must never become THE active task: that selection renders
+      // the task inline and pulls in its product knowledge file.
+      if (isHiddenFromIndex(data as Record<string, unknown>)) continue;
       const status = String(data.status ?? '');
       if (status !== 'in_progress') continue;
       let mtime = 0;
@@ -591,6 +605,16 @@ function getActiveProductKnowledge(root: string): string[] {
 
   const productKnowledgePath = join(root, 'knowledge', 'products', `${product}.md`);
   if (!existsSync(productKnowledgePath)) return [];
+
+  // This injection reads the file directly instead of going through
+  // buildKnowledgeIndex, so it needs its own `visibility: false` check — a
+  // hidden product file must not ride into the snapshot through the back door.
+  try {
+    const { data } = readFrontmatter(productKnowledgePath);
+    if (isHiddenFromIndex(data as Record<string, unknown>)) return [];
+  } catch {
+    return [];
+  }
 
   let raw: string;
   try {
@@ -1957,6 +1981,8 @@ export function measureSnapshot(
     for (const file of featureFiles) {
       try {
         const { data } = readFrontmatter(file);
+        // `visibility: false` — hidden PRDs stay out of the auto-loaded roster.
+        if (isHiddenFromIndex(data as Record<string, unknown>)) continue;
         // Folder-qualified slug: unambiguous label + correct path pointer for
         // nested features (flat features round-trip to their basename).
         const name = featureSlug(featuresPath, file);
@@ -2346,6 +2372,9 @@ export function generateSubagentBriefing(): string {
     for (const file of featureFiles) {
       try {
         const { data } = readFrontmatter(file);
+        // `visibility: false` — hidden PRDs stay out of the full-detail roster,
+        // which renders each feature's `Why` line inline.
+        if (isHiddenFromIndex(data as Record<string, unknown>)) continue;
         // Folder-qualified slug → correct Read: path pointer for nested features.
         const name = featureSlug(featuresPath, file);
         const status = String(data.status ?? 'unknown');

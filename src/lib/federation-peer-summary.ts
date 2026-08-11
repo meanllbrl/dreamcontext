@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import fg from 'fast-glob';
-import { readFrontmatter } from './frontmatter.js';
+import { readFrontmatter, isHiddenFromIndex } from './frontmatter.js';
 import { readJsonArray } from './json-file.js';
 import { capAtWordBoundary } from './snapshot-compress.js';
 import { listVaults, resolveVaultContextRoot } from './vaults.js';
@@ -187,6 +187,9 @@ function readActiveTask(peerRoot: string): string {
   for (const file of files) {
     try {
       const { data } = readFrontmatter(file);
+      // A peer's `visibility: false` binds US too: this reads ACROSS a vault
+      // boundary, so a hidden task title must never land in our snapshot.
+      if (isHiddenFromIndex(data as Record<string, unknown>)) continue;
       const status = String(data.status ?? '');
       if (status !== 'in_progress' && status !== 'active') continue;
       const title = String(data.name ?? data.title ?? '').trim();
@@ -218,6 +221,7 @@ function readTopTags(peerRoot: string): string[] {
     for (const file of files) {
       try {
         const { data } = readFrontmatter(file);
+        if (isHiddenFromIndex(data as Record<string, unknown>)) continue;
         if (!Array.isArray(data.tags)) continue;
         for (const tag of data.tags) {
           const t = String(tag).trim();
@@ -259,6 +263,7 @@ function readPinnedTitles(peerRoot: string): string[] {
     for (const file of files) {
       try {
         const { data } = readFrontmatter(file);
+        if (isHiddenFromIndex(data as Record<string, unknown>)) continue;
         if (data.pinned !== true) continue;
         const title = String(data.name ?? data.title ?? '').trim();
         if (title) seen.add(title);

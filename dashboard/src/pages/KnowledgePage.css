@@ -242,6 +242,22 @@
   border-color: var(--color-border);
 }
 
+/* `visibility: false` — listed here, invisible to the agent. Muted + dashed so
+   it reads as "excluded", never as another status the file is progressing through. */
+.knowledge-card-hidden {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  border: 1px dashed var(--color-border);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 [data-theme='dark'] .knowledge-card-status--active,
 [data-theme='dark'] .knowledge-card-status--planning {
   background: rgba(74, 222, 128, 0.14);

@@ -170,6 +170,8 @@ const translations: Record<string, Record<string, string>> = {
     'knowledge.unpin': 'Unpin',
     'knowledge.search': 'Search knowledge...',
     'knowledge.fullscreen': 'Full screen',
+    'knowledge.hidden': 'hidden',
+    'knowledge.hiddenTitle': 'visibility: false — on disk and listed here, but excluded from the agent (index, snapshot, recall, embeddings, peer digests)',
     'settings.title': 'Settings',
     'settings.nav.platforms': 'Platforms',
     'settings.nav.tasks': 'Cloud Tasks',

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, basename, dirname, relative } from 'node:path';
 import fg from 'fast-glob';
-import { readFrontmatter } from './frontmatter.js';
+import { readFrontmatter, isHiddenFromIndex } from './frontmatter.js';
 import { expandQueryTerms } from './recall-synonyms.js';
 import { loadDigestDocs } from './session-digest.js';
 import { tagIndexValue } from './taxonomy.js';
@@ -474,6 +474,12 @@ function loadMarkdownDocs(
   for (const file of files) {
     try {
       const { data, content } = readFrontmatter(file);
+      // `visibility: false` — author opted the doc out of every agent surface.
+      // Filtering HERE (not at each caller) is what makes the field total: BM25
+      // recall, semantic embeddings, taxonomy, sleep and the federation digest
+      // pushed to peers all read this corpus, so a hidden doc can never leak
+      // through a surface someone forgot to patch.
+      if (isHiddenFromIndex(data as Record<string, unknown>)) continue;
       // Exclude dark siblings — tooling beside a board — UNLESS the .md declares
       // itself as knowledge via `name:` frontmatter (a co-located teardown).
       const isIndexableKnowledge =
