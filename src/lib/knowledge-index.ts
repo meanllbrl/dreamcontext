@@ -1,7 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import fg from 'fast-glob';
-import { readFrontmatter } from './frontmatter.js';
+import { readFrontmatter, isHiddenFromIndex } from './frontmatter.js';
 import {
   isExcalidrawPath,
   extractExcalidrawText,
@@ -54,6 +54,12 @@ export interface KnowledgeEntry {
   mtime: number;
   pinnedPreviewLines?: number;
   pinnedPreviewAll?: boolean;
+  /**
+   * Frontmatter `visibility: false` — the file is excluded from every agent
+   * surface. Only ever set on entries returned under `includeHidden` (the
+   * dashboard), so the UI can mark the file as invisible to the agent.
+   */
+  hidden?: boolean;
 }
 
 // ─── Index Builder ─────────────────────────────────────────────────────────
@@ -76,6 +82,13 @@ export interface KnowledgeIndexOptions {
    * there since the standalone Features tab was removed).
    */
   includeFeatures?: boolean;
+  /**
+   * Include files the author hid with `visibility: false`, flagged as
+   * `hidden: true`. Default false: index, snapshot and graph are AGENT surfaces
+   * and hiding is exactly the point. Only the dashboard opts in — a file you
+   * cannot see is a file whose `visibility` you can never turn back on.
+   */
+  includeHidden?: boolean;
 }
 
 export function buildKnowledgeIndex(
@@ -94,6 +107,10 @@ export function buildKnowledgeIndex(
   for (const file of files) {
     try {
       const { data, content } = readFrontmatter(file);
+      // `visibility: false` — author opted the file out of every agent surface.
+      // The dashboard passes includeHidden so the file stays findable/editable.
+      const hidden = isHiddenFromIndex(data as Record<string, unknown>);
+      if (hidden && !options.includeHidden) continue;
       // Dark siblings: tooling files beside a board (generator/spec/notes) are
       // excluded — UNLESS the .md declares itself as knowledge via `name:`
       // frontmatter, which surfaces a co-located teardown as first-class.
@@ -134,6 +151,9 @@ export function buildKnowledgeIndex(
       }
       if (data.pinned_preview === 'all') {
         entry.pinnedPreviewAll = true;
+      }
+      if (hidden) {
+        entry.hidden = true;
       }
       entries.push(entry);
     } catch {

@@ -21,6 +21,31 @@ export function readFrontmatter<T = Record<string, unknown>>(
 }
 
 /**
+ * `visibility: false` is the author's escape hatch: the file stays on disk and
+ * stays listed on the dashboard, but it never enters an AGENT surface — not the
+ * knowledge index, snapshot, `memory recall` (BM25 + semantic), embeddings,
+ * taxonomy, sleep, or a federation digest pushed to a peer.
+ *
+ * Both choke points call this — `buildKnowledgeIndex` (index/snapshot/graph) and
+ * `loadMarkdownDocs` (the whole recall corpus) — so the field works on ANY
+ * frontmatter doc: knowledge, feature, task, thesis, objective, insight,
+ * automation.
+ *
+ * Only an explicit opt-out hides a file. Boolean `false` is the documented form;
+ * the quoted `'false'` and the human synonyms `private`/`hidden` are accepted
+ * too, because a YAML author who writes `visibility: private` means it and a
+ * silently-still-indexed private file is the one failure mode worth preventing.
+ * Anything else (absent, `true`, `public`, garbage) indexes as normal.
+ */
+export function isHiddenFromIndex(data: Record<string, unknown>): boolean {
+  const v = data.visibility;
+  if (v === false) return true;
+  if (typeof v !== 'string') return false;
+  const s = v.trim().toLowerCase();
+  return s === 'false' || s === 'private' || s === 'hidden';
+}
+
+/**
  * Write a markdown file with YAML frontmatter.
  */
 export function writeFrontmatter(

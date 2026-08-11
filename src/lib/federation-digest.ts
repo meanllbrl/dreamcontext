@@ -10,7 +10,7 @@ import {
   type CorpusDoc,
   type CorpusType,
 } from './recall.js';
-import { readFrontmatter } from './frontmatter.js';
+import { readFrontmatter, isHiddenFromIndex } from './frontmatter.js';
 import { DIGEST_SCHEMA_VERSION, type DigestEntry, type DigestEntryKind } from './federation-inbox.js';
 
 /**
@@ -77,6 +77,9 @@ function activeTaskTerms(peerRoot: string): string[] {
   for (const file of files) {
     try {
       const { data } = readFrontmatter(file);
+      // Cross-vault read: a hidden task's title must not seed the interest
+      // profile we compute from the peer's own root.
+      if (isHiddenFromIndex(data as Record<string, unknown>)) continue;
       if (String(data.status ?? '') !== 'in_progress') continue;
       const name = String(data.name ?? data.title ?? '');
       for (const t of tokenize(name)) out.add(t);
