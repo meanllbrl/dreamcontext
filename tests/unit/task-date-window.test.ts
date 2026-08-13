@@ -225,3 +225,35 @@ describe('dashboard PATCH date window', () => {
     expect(dueEntries[0].to).toBe(TODAY);
   });
 });
+
+/**
+ * The rescheduled due date is DERIVED, not sent — so it skipped the format
+ * check every client-supplied date on these surfaces passes. Past year 9999
+ * the shift overflows into `toISOString()`'s extended ±YYYYYY form and the
+ * 10-character slice yields "+019996-01", a string no later `isCalendarDate`
+ * accepts. Both surfaces now refuse instead of persisting it.
+ */
+describe('a reschedule that runs off the end of the calendar', () => {
+  it('is refused by the PATCH route instead of written to disk', async () => {
+    await cli('tasks', 'create', 'Far Future', '-w', 'why', '--start', '0001-01-01', '--due', '9998-01-01');
+    expect((await window('far-future')).due).toBe('9998-01-01');
+
+    const res = await patch('far-future', { start_date: '9999-01-02' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toContain('invalid_date_range');
+    const after = await window('far-future');
+    expect(after.due).toBe('9998-01-01');
+    expect(after.start).toBe('0001-01-01');
+  });
+
+  it('is refused by the CLI instead of written to disk', async () => {
+    await cli('tasks', 'create', 'Far Future Cli', '-w', 'why', '--start', '0001-01-01', '--due', '9998-01-01');
+
+    await cli('tasks', 'start', 'far-future-cli', '9999-01-02');
+
+    const after = await window('far-future-cli');
+    expect(after.due).toBe('9998-01-01');
+    expect(after.start).toBe('0001-01-01');
+  });
+});

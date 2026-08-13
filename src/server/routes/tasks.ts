@@ -916,7 +916,13 @@ export async function handleTasksUpdate(
       const shifted = duePatched
         ? null
         : dueDateAfterStartMove(existing.start_date, existing.due_date, effStart);
-      if (!shifted) {
+      // The computed date is validated like any client-supplied one. Past year
+      // 9999 `toISOString()` switches to the extended ±YYYYYY form and the
+      // slice yields "+019996-01" — a string that fails every `isCalendarDate`
+      // downstream. Every OTHER date on this route passes `isYmd`; this is the
+      // one that is derived rather than sent, so it has to be checked here or
+      // it reaches disk unchecked.
+      if (!shifted || !isYmd(shifted)) {
         sendError(res, 400, 'invalid_date_range', `start_date (${effStart}) cannot be after due_date (${effDue}).`);
         return;
       }

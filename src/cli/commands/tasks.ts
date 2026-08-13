@@ -143,6 +143,14 @@ async function setTaskDate(
     error(`Due date (${raw}) cannot be before the start date (${before.start_date}). Move the start date first, or clear it.`);
     return;
   }
+  // The rescheduled date is validated like the one the user typed. Past year
+  // 9999 the shift overflows into `toISOString()`'s extended ±YYYYYY form and
+  // the slice yields "+019996-01", which no later `isCalendarDate` accepts —
+  // so refuse rather than write it.
+  if (shiftedDue && !isCalendarDate(shiftedDue)) {
+    error(`Rescheduling the due date from ${raw} runs past the end of the supported calendar.`);
+    return;
+  }
   const updated = await backend.updateFields(slug, {
     [field]: raw,
     ...(shiftedDue ? { due_date: shiftedDue } : {}),
