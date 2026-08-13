@@ -245,11 +245,11 @@ export function computeDebateStats(debate: DebateDetail): DebateStats {
   let minorityViews = 0;
   if (debate.finalReport) {
     const c = debate.finalReport.content;
-    const risksMatch = c.match(/##\s+Open\s+risks\s*\n([\s\S]*?)(?=^##\s+|\Z)/im);
+    const risksMatch = c.match(/##\s+Open\s+risks\s*\n([\s\S]*?)(?=^##\s+|$(?![\s\S]))/im);
     if (risksMatch) {
       openRisks = (risksMatch[1].match(/^\s*[-*]/gm) ?? []).length;
     }
-    const minorityMatch = c.match(/##\s+Minority\s+views\s*\n([\s\S]*?)(?=^##\s+|\Z)/im);
+    const minorityMatch = c.match(/##\s+Minority\s+views\s*\n([\s\S]*?)(?=^##\s+|$(?![\s\S]))/im);
     if (minorityMatch) {
       const body = minorityMatch[1].trim();
       if (body.length > 0 && !/\(none\)|n\/?a/i.test(body)) {
@@ -315,7 +315,12 @@ export interface FinalReportSections {
 
 export function parseFinalReport(content: string): FinalReportSections {
   const result: FinalReportSections = { verdict: '', appendix: null, sections: [] };
-  const re = /^##\s+(.+?)\s*\n([\s\S]*?)(?=^##\s+|\Z)/gim;
+  // The body runs to the next H2 or to end of input. JavaScript has NO `\Z`
+  // anchor — written as `\Z` it degrades to the literal letter "Z", so under
+  // `/i` every section was silently cut at its first "z" (brutal in Turkish,
+  // where "z" ends a great many words). `$(?![\s\S])` is end-of-input even
+  // under `/m`, where a bare `$` would only mean end-of-line.
+  const re = /^##\s+(.+?)\s*\n([\s\S]*?)(?=^##\s+|$(?![\s\S]))/gim;
   let m: RegExpExecArray | null;
   while ((m = re.exec(content)) !== null) {
     const heading = m[1].trim();

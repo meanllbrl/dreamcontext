@@ -455,8 +455,9 @@ function registerRoundContext(council: Command): void {
         // Also print the debate's Question + Constraints
         const debateFile = join(getDebateDir(debateId), 'debate.md');
         const debateRaw = readFileSync(debateFile, 'utf-8');
-        const questionMatch = debateRaw.match(/##\s+Question\s*\n([\s\S]*?)(?=\n##\s|\Z)/);
-        const constraintsMatch = debateRaw.match(/##\s+Constraints & Known Facts\s*\n([\s\S]*?)(?=\n##\s|\Z)/);
+        // `$(?![\s\S])` is end-of-input; JS has no `\Z` (it would read as a literal "Z").
+        const questionMatch = debateRaw.match(/##\s+Question\s*\n([\s\S]*?)(?=\n##\s|$(?![\s\S]))/);
+        const constraintsMatch = debateRaw.match(/##\s+Constraints & Known Facts\s*\n([\s\S]*?)(?=\n##\s|$(?![\s\S]))/);
 
         if (questionMatch) {
           console.log('\n---\n');

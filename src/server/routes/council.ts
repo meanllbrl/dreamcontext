@@ -66,7 +66,8 @@ interface DebateDetail {
 
 function extractNamedSubsection(body: string, heading: string): string | null {
   const pattern = new RegExp(
-    `^###\\s+${heading.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}\\s*\\n([\\s\\S]*?)(?=^###\\s+|\\Z)`,
+    // `$(?![\s\S])` is end-of-input; JS has no `\Z` (it would read as a literal "Z").
+    `^###\\s+${heading.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}\\s*\\n([\\s\\S]*?)(?=^###\\s+|$(?![\\s\\S]))`,
     'm',
   );
   const match = body.match(pattern);

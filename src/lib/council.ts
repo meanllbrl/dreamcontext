@@ -220,7 +220,8 @@ export function validateRoundEntry(body: string): ValidationResult {
   }
 
   const execMatch = body.match(
-    /^###\s+Executive Summary\s*\n([\s\S]*?)(?=^###\s+|\Z)/m,
+    // `$(?![\s\S])` is end-of-input; JS has no `\Z` (it would read as a literal "Z").
+    /^###\s+Executive Summary\s*\n([\s\S]*?)(?=^###\s+|$(?![\s\S]))/m,
   );
   if (execMatch) {
     const words = execMatch[1].trim().split(/\s+/).filter(Boolean).length;
@@ -238,7 +239,8 @@ export function validateRoundEntry(body: string): ValidationResult {
  */
 export function extractExecutiveSummary(roundBody: string): string | null {
   const match = roundBody.match(
-    /^###\s+Executive Summary\s*\n([\s\S]*?)(?=^###\s+|\Z)/m,
+    // `$(?![\s\S])` is end-of-input; JS has no `\Z` (it would read as a literal "Z").
+    /^###\s+Executive Summary\s*\n([\s\S]*?)(?=^###\s+|$(?![\s\S]))/m,
   );
   return match ? match[1].trim() : null;
 }
