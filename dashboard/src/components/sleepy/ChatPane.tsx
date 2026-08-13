@@ -64,7 +64,19 @@ import './ChatPane.css';
  * introducing i18n into a component family that has never used it.
  */
 
-const WATCHDOG_MS = 4000;
+/** How long an `AskUserQuestion` may be routing before the pane says so. Short enough that
+ *  the wait is never silent, long enough that a question which routes promptly never flashes
+ *  a loading pill on its way in. */
+const ASK_PREPARING_MS = 600;
+
+/** How long an `AskUserQuestion` may be routing before it is treated as BROKEN rather than
+ *  slow. Was 4s, which a healthy-but-slow route (a long questions payload, a busy machine)
+ *  overran routinely — so the escape hatch fired on questions that then arrived fine a beat
+ *  later, and the user read "Continue in Terminal view" as the answer to a question the pane
+ *  was about to render itself. The wait now has a loading state of its own
+ *  ({@link ASK_PREPARING_MS}); this threshold only has to catch a genuine CLI regression, so
+ *  it is set past any plausible routing delay. */
+const WATCHDOG_MS = 30000;
 
 /** How long an UPWARD gesture keeps ownership of the scroller. Covers the frame or two
  *  between the gesture and the scroll it produces, plus the gaps inside trackpad momentum
@@ -188,31 +200,64 @@ function ChatLiveRail({ session, taskSlug }: { session: ChatSession; taskSlug?: 
   );
 }
 
-// ─── Degraded AskUserQuestion card (AC5's capability-detection safety net) ─────────
+// ─── AskUserQuestion routing state: preparing, then the degraded card ──────────────
 //
-// Not one of the 12 design states — a fallback for a future CLI regression, kept from
-// the pre-redesign ChatPane verbatim (the spike PROVED headless routing works on
-// 2.1.218; this only ever fires if a later CLI breaks it). Styled locally since it
-// isn't one of T5's card components.
+// An `AskUserQuestion` tool call and the `question` control_request that carries its
+// payload are two separate arrivals, and the gap between them is dead air: the tool row
+// is running, `turnHasVisibleProgress` is therefore true so the working indicator stays
+// down, and nothing on screen says a question is on its way. That gap is what this pair
+// of states fills — `preparing` while it is merely slow, the degraded card only once it
+// is long enough to mean broken.
+//
+// The degraded card is not one of the 12 design states — a fallback for a future CLI
+// regression, kept from the pre-redesign ChatPane verbatim (the spike PROVED headless
+// routing works on 2.1.218). Styled locally since it isn't one of T5's card components.
+
+/** What the pane should show for an `AskUserQuestion` whose payload hasn't landed yet.
+ *  `null` = nothing to show (no ask in flight, or the real question has arrived). */
+type AskRoutingState = { item: ChatToolItem; phase: 'preparing' | 'degraded' } | null;
 
 /**
- * Watches for an `AskUserQuestion` tool call that never surfaced a matching `question`
- * control_request within {@link WATCHDOG_MS}. Cleared the moment a real pending question
- * arrives, or the tool card itself resolves (answered some other way, or errored).
+ * Watches an `AskUserQuestion` tool call that has not yet surfaced its matching `question`
+ * control_request: `preparing` past {@link ASK_PREPARING_MS}, `degraded` past
+ * {@link WATCHDOG_MS}. Cleared the moment a real pending question arrives, or the tool card
+ * itself resolves (answered some other way, or errored).
  */
-function useAskQuestionWatchdog(items: ChatItem[], hasPendingQuestion: boolean): ChatToolItem | null {
-  const [stuck, setStuck] = useState<ChatToolItem | null>(null);
+function useAskQuestionWatchdog(items: ChatItem[], hasPendingQuestion: boolean): AskRoutingState {
+  const [state, setState] = useState<AskRoutingState>(null);
   useEffect(() => {
     const running = [...items].reverse().find(
       (it): it is ChatToolItem => it.kind === 'tool' && it.name === 'AskUserQuestion' && it.status === 'running',
     ) ?? null;
-    if (!running || hasPendingQuestion) { setStuck(null); return; }
+    if (!running || hasPendingQuestion) { setState(null); return; }
+
     const elapsed = Date.now() - running.startedAt;
-    if (elapsed >= WATCHDOG_MS) { setStuck(running); return; }
-    const t = setTimeout(() => setStuck(running), WATCHDOG_MS - elapsed);
-    return () => clearTimeout(t);
+    const enter = (phase: 'preparing' | 'degraded') => setState({ item: running, phase });
+    // Both thresholds are re-armed from the tool's OWN start time, so an unrelated re-render
+    // mid-wait can't restart either clock.
+    if (elapsed >= WATCHDOG_MS) { enter('degraded'); return; }
+
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    if (elapsed >= ASK_PREPARING_MS) {
+      enter('preparing');
+    } else {
+      setState(null);
+      timers.push(setTimeout(() => enter('preparing'), ASK_PREPARING_MS - elapsed));
+    }
+    timers.push(setTimeout(() => enter('degraded'), WATCHDOG_MS - elapsed));
+    return () => timers.forEach(clearTimeout);
   }, [items, hasPendingQuestion]);
-  return stuck;
+  return state;
+}
+
+/**
+ * The question is on its way — the tool is running, its payload hasn't arrived. Reuses
+ * `WorkingIndicator`'s dots-and-clock pill rather than inventing a second waiting shape:
+ * this IS the working indicator's job (a live turn with nothing on screen), just for a gap
+ * that `turnHasVisibleProgress` reads as covered because the tool row is running.
+ */
+function PreparingQuestionCard({ item }: { item: ChatToolItem }) {
+  return <WorkingIndicator label="Preparing a question…" startedAt={item.startedAt} />;
 }
 
 function DegradedQuestionCard({ item, onContinueInTerminal }: { item: ChatToolItem; onContinueInTerminal: () => void }) {
@@ -471,7 +516,7 @@ export function ChatPane({
 
   const conv = session.getModel();
   const hasPendingQuestion = conv.pending.some((p) => p.kind === 'question');
-  const stuckQuestion = useAskQuestionWatchdog(conv.items, hasPendingQuestion);
+  const askRouting = useAskQuestionWatchdog(conv.items, hasPendingQuestion);
 
   const [slideOver, setSlideOver] = useState<SlideOverState>(null);
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
@@ -1534,7 +1579,10 @@ export function ChatPane({
             {conv.pending
               .filter((p): p is PendingPlan => p.kind === 'plan')
               .map((p) => <PlanCard key={p.requestId} item={p} session={session} />)}
-            {stuckQuestion && <DegradedQuestionCard item={stuckQuestion} onContinueInTerminal={onContinueInTerminal} />}
+            {askRouting?.phase === 'preparing' && <PreparingQuestionCard item={askRouting.item} />}
+            {askRouting?.phase === 'degraded' && (
+              <DegradedQuestionCard item={askRouting.item} onContinueInTerminal={onContinueInTerminal} />
+            )}
             {/* D2's ask-and-exit HITL question, if this run stopped on one — scoped to
                 THIS automation only (see AutomationQuestionSlot). Alongside the CLI's own
                 pending cards above rather than inside AutomationRunHeader: both are "what
