@@ -16,6 +16,7 @@ import type { ProjectRollup } from '../sleepy/agentStatus';
 import { ProjectInstance } from '../../ProjectInstance';
 import { ProjectSwitcher } from '../search/ProjectSwitcher';
 import { UpgradeRelaunchBanner } from './UpgradeRelaunchBanner';
+import { ChromeSlotsProvider, type ChromeSlots } from './chromeSlots';
 import { ProjectTabs, type ProjectChip } from './ProjectTabs';
 import './ProjectTabs.css';
 import './Header.css';
@@ -29,7 +30,9 @@ import './Header.css';
  * live in a project's Header, and a chip strip was unnecessary. Now one window holds several
  * LIVE projects at once. This component owns the split: the chip strip and the controls that
  * are genuinely per-window (zoom, theme, the server-level banners, the rail width) live here;
- * everything per-vault (sleep debt, refresh, the update badge) stays in the instance Header.
+ * everything per-vault (the rail toggle, the search pill, sleep debt, the update badge) is
+ * still OWNED by the instance's Header, which portals it into this bar's two slots — one bar
+ * on screen, N possible owners behind it (see `chromeSlots.tsx`).
  *
  * The instances themselves are all MOUNTED, all the time. Switching a chip toggles
  * visibility — it never unmounts, because an unmounted instance is a killed PTY and a dropped
@@ -192,6 +195,20 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
   const [zoom, setZoom] = useState(getStoredZoom);
   const [notice, setNotice] = useState<string | null>(null);
 
+  /*
+   * The bar's two per-project mount points, held as STATE rather than refs: the active
+   * instance portals its controls into them (see `chromeSlots.tsx`), and a portal target
+   * read from a ref would be null on the instances' first render — they mount in the same
+   * commit as the bar. The ref-callback → setState round trip re-renders the subtree once
+   * the nodes exist, which is exactly when the portals can attach.
+   */
+  const [leftSlot, setLeftSlot] = useState<HTMLElement | null>(null);
+  const [rightSlot, setRightSlot] = useState<HTMLElement | null>(null);
+  const chromeSlots = useMemo<ChromeSlots>(
+    () => ({ left: leftSlot, right: rightSlot }),
+    [leftSlot, rightSlot],
+  );
+
   /**
    * One rail width for the whole window. Hoisted out of `Shell` because N instances each
    * running their own `useSidebarCollapse()` would read the shared key at mount and then
@@ -342,6 +359,42 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
 
     setActive(vault);
   }, [mintInstanceId, notify, setActive, setOpen]);
+
+  /**
+   * ⌃Tab / ⌃⇧Tab walks the chip strip, in strip order, wrapping at both ends.
+   *
+   * NOT ⌘Tab, which is the combo the hand reaches for first: macOS gives it to the app
+   * switcher before any web view is offered it, so it cannot be bound at all — `lib/sleepy.ts`
+   * refuses it in `RESERVED_HOTKEYS` for exactly this reason. ⌃Tab is the in-window
+   * equivalent every browser already uses for its own tabs.
+   *
+   * Listens on `window` in the CAPTURE phase, and that placement is the whole trick: a chip
+   * can be switched while a terminal pane holds focus, and without capturing above it the same
+   * keystroke would ALSO be written to the PTY. This is the second and last Ctrl chord the app
+   * claims (`AgentSurface` has ⌃` for a new terminal) — every other one belongs to the shell.
+   *
+   * With a single chip the key is not claimed at all: there is nowhere to go, and swallowing a
+   * keystroke to do nothing is worse than leaving it whatever meaning it already had.
+   *
+   * Cold chips are cycled INTO, like clicking one: reviving is what a chip in the strip means.
+   * At the ceiling with every other project busy that revival can be refused, and then the
+   * cycle sits still — the refusal says why, in the same notice a click would have raised.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || !e.ctrlKey || e.metaKey || e.altKey) return;
+      const current = openRef.current;
+      if (current.length < 2) return;
+      const index = current.findIndex((p) => p.vault === activeRef.current);
+      if (index === -1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const step = e.shiftKey ? -1 : 1;
+      activate(current[(index + step + current.length) % current.length].vault);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [activate]);
 
   const addTab = useCallback(async (vault: string): Promise<AddTabResult> => {
     // 1. Already a chip in THIS window — the same project must never be open twice.
@@ -521,6 +574,7 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
 
   return (
     <ChromeContext.Provider value={chrome}>
+      <ChromeSlotsProvider value={chromeSlots}>
       <div className="window-chrome">
         <UpgradeRelaunchBanner />
         <StaleServerBanner />
@@ -538,7 +592,12 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
           onMouseDown={startTitleBarDrag}
           onDoubleClick={(e) => void toggleMaximizeWindow(e.target)}
         >
-          <div className="window-chrome-inset" aria-hidden="true" />
+          {/* Everything left of the strip: the traffic-light clearance, then the active
+              project's rail toggle + search pill (portalled in — see `chromeSlots.tsx`). */}
+          <div className="window-chrome-left">
+            <div className="window-chrome-inset" aria-hidden="true" />
+            <div className="chrome-slot" ref={setLeftSlot} />
+          </div>
 
           <ProjectTabs
             chips={chips}
@@ -551,6 +610,8 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
           {notice && <div className="window-chrome-notice" role="status">{notice}</div>}
 
           <div className="window-chrome-right">
+            {/* The active project's sleep tracker + update badge land here. */}
+            <div className="chrome-slot" ref={setRightSlot} />
             <div className="zoom-controls">
               <button className="zoom-btn" onClick={() => changeZoom(-1)} disabled={zoomIndex <= 0} title="Zoom out">-</button>
               <span className="zoom-label">{Math.round(zoom * 100)}%</span>
@@ -591,6 +652,7 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
         {/* One switcher for the window, not one per project. */}
         <ProjectSwitcher />
       </div>
+      </ChromeSlotsProvider>
     </ChromeContext.Provider>
   );
 }

@@ -41,6 +41,7 @@
   --zoom: 1;
 
   /* ClickUp type scale: 12 / 14 / 16 / 26 / 34 / 40 / 52 / 76 */
+  --font-size-2xs: calc(11px * var(--zoom)); /* chrome — title-bar / strip controls only */
   --font-size-xs: calc(12px * var(--zoom));   /* caption */
   --font-size-sm: calc(14px * var(--zoom));   /* body-sm — UI labels */
   --font-size-base: calc(16px * var(--zoom)); /* body */

@@ -138,7 +138,7 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
           : `${t('sleep.level')}: ${level}. ${t('sleep.debt')} ${debt} / ${SLEEP_DEBT_MAX}.`}
       >
         <span className="sleep-tracker-face" aria-hidden>
-          <SleepyMascot mood={mood} size={30} compact />
+          <SleepyMascot mood={mood} size={24} compact />
         </span>
 
         <span className="sleep-tracker-body">

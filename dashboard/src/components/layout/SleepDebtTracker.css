@@ -12,8 +12,8 @@
 .sleep-tracker {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 3px 8px 3px 4px;
+  gap: var(--space-1);
+  padding: 3px 7px 3px 4px;
   border-radius: var(--radius-md);
   background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border);
@@ -35,35 +35,40 @@ button.sleep-tracker[aria-expanded='true'] {
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 30px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   overflow: visible;
 }
 
+/* No forced floor beyond what the longest level word needs — the tracker earns its width
+   from its content, so the strip gets the leftover room. */
 .sleep-tracker-body {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  min-width: 84px;
+  min-width: 60px;
 }
 
 .sleep-tracker-top {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--space-2);
+  gap: var(--space-1);
   line-height: 1;
 }
 
+/* Title-bar chrome speaks at `2xs` — the same size as the chip names and the search pill,
+   so the tracker sits IN the strip instead of shouting over it. */
 .sleep-tracker-level {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caption);
   color: var(--color-text);
   white-space: nowrap;
 }
 
 .sleep-tracker-count {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-2xs);
   color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
 }

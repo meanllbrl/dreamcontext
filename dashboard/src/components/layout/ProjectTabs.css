@@ -16,14 +16,14 @@
   flex-direction: column;
   height: 100vh;
   background: var(--color-bg);
-  /* The chrome bar is one title bar tall. Captured here, BEFORE the rebasing below
-     redefines `--header-height` for the instances, so the two can't drift apart. */
-  --chrome-bar-height: var(--header-height);
 }
 
 .window-chrome-bar {
   position: relative;
-  z-index: 40; /* above the instance Header (30) — this bar is never covered by a project */
+  /* Above every project surface (agent overlay 20, its dock 25) so bar-anchored popovers —
+     the sleep tracker menu, the update badge — open OVER the content region. Stays below
+     modals (CommandModal 60, FullscreenOverlay 1100), which are meant to cover the bar. */
+  z-index: 40;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -32,7 +32,7 @@
   background: var(--color-bg-secondary);
   border-bottom: 1px solid var(--color-border);
   /* It's a title bar: nothing in it is selectable, or a double-click to maximize would
-     select text instead (the same reason `.header` sets this). */
+     select text instead. */
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
@@ -56,13 +56,31 @@
  * both ends: the macOS traffic lights on the left, and the controls' own content on the right
  * (a flex item's default `min-width: auto` refuses to shrink below min-content).
  */
-.window-chrome-inset {
+.window-chrome-left {
   flex: 1 1 0;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Inside the left cluster the inset is a FIXED spacer for the traffic lights — the cluster
+   itself now owns the flexible half of the centring (mirrored by `.window-chrome-right`). */
+.window-chrome-inset {
+  flex: 0 0 auto;
+  width: 0;
 }
 
 .tauri-overlay .window-chrome-inset {
-  min-width: 86px;
+  width: 68px;
+}
+
+/* A per-project mount point (see `chromeSlots.tsx`); empty while its owner is hidden. */
+.chrome-slot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .window-chrome-right {
@@ -113,21 +131,16 @@
   flex-direction: column;
 
   /*
-   * REBASING THE TITLE-BAR ORIGIN — one declaration instead of a dozen patches.
+   * NO `--header-height` REBASE ANY MORE — and that absence is load-bearing.
    *
-   * Every surface in the app that has to sit "below the title bar" measures that distance as
-   * `--header-height`, against the viewport: the expanded agent overlay
+   * Every surface that sits "below the title bar" measures that distance as
+   * `--header-height` against the viewport: the expanded agent overlay
    * (`AgentTerminal.css:30,43`), `FullscreenOverlay`, `TaskDetailPanel`, the sidebar's
-   * `calc(100vh - …)`, and the three board components' inline `calc(100dvh - …)`.
-   *
-   * There are now TWO bars above a project's content — this window's chrome bar and the
-   * project's own header — so for anything INSIDE an instance that distance is both of them.
-   * Redefining the variable for this subtree makes every one of those surfaces correct
-   * without editing a single one of their stylesheets, and keeps them correct if the bar
-   * height ever changes. The project header is the one thing that must stay one bar tall, so
-   * it is put back onto the captured value below.
+   * `calc(100vh - …)`, and the boards' inline `calc(100dvh - …)`. When the window briefly
+   * had TWO bars (chrome + a per-project header) this block doubled the variable for the
+   * subtree. The project header row is gone — its controls portal into the chrome bar — so
+   * the original one-bar value is correct again for every one of those surfaces.
    */
-  --header-height: calc(var(--chrome-bar-height) * 2);
 }
 
 /* The visible instance fills the body; hidden ones are `display:none` and take no space. */
@@ -146,20 +159,6 @@
   height: auto;
   flex: 1 1 auto;
   min-height: 0;
-}
-
-/* One bar tall, against the rebased variable above. */
-.window-chrome-body .header {
-  height: var(--chrome-bar-height);
-}
-
-/*
- * The traffic lights float over the CHROME bar now, not over a project's header — so the
- * inset that used to clear them (`Header.css`'s `.tauri-overlay .header`) would leave the
- * rail toggle stranded 80px from the left edge for no reason.
- */
-.tauri-overlay .window-chrome-body .header {
-  padding-left: var(--space-4);
 }
 
 /* ───────────────────────────────── The chip strip ───────────────────────────────── */
@@ -336,7 +335,9 @@
   border-radius: var(--radius-full);
   color: var(--color-text-secondary);
   font-family: var(--font-family-text);
-  font-size: var(--font-size-xs);
+  /* `2xs` is the strip's voice — shared with the search pill and the sleep tracker, one
+     notch under the app's caption size so the chrome recedes behind the content. */
+  font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-medium);
   letter-spacing: var(--letter-spacing-caption);
   cursor: pointer;

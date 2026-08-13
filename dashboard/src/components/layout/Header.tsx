@@ -1,9 +1,9 @@
-import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { createPortal } from 'react-dom';
 import { useVault } from '../../context/VaultContext';
 import { SearchIcon } from '../sleepy/TypeIcons';
 import { UpdateBadge } from './UpdateBadge';
 import { SleepDebtTracker } from './SleepDebtTracker';
+import { useChromeSlots } from './chromeSlots';
 import type { Page } from './Sidebar';
 import './Header.css';
 
@@ -19,82 +19,70 @@ interface HeaderProps {
 }
 
 /**
- * One PROJECT's header — a sidebar toggle and the search pill on the left, that project's
- * own status controls on the right.
+ * One PROJECT's title-bar controls, portalled into the window's ONE bar.
  *
- * It is no longer the title bar, and it no longer says which project it belongs to. One
- * window now holds several projects at once, so both of those became window-level jobs and
- * moved to `WindowChrome`: the chip strip names the projects, and the zoom control, the
- * theme toggle and the drag/maximize gestures belong to the window that contains them all.
- * What stays here is what is genuinely per-vault — this project's sleep debt, this project's
- * refresh, this project's update badge — because N of them are mounted at once and each must
- * answer for its own vault.
+ * This used to be a second bar under the chip strip, which spent a full row on four
+ * controls. The window bar has the room, so the strip and the controls now share it: the
+ * rail toggle and the search pill go into the chrome's LEFT slot, the sleep tracker and the
+ * update badge into its RIGHT slot, and the chip strip lives in between. The controls stay
+ * mounted HERE — inside this instance's providers — because every one of them is per-vault:
+ * the pill opens THIS project's palette, the tracker reads THIS project's sleep debt.
+ *
+ * Only the active instance renders into the slots. A portal escapes `.project-instance`, so
+ * the `hidden`/`inert` shroud that hides a background project would never reach these — N
+ * projects would stack N trackers into one slot. `isActive` is the gate instead.
+ *
+ * The manual refresh button is gone: queries poll on their own interval, and the one bar
+ * has better things to hold.
  */
 export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar, onOpenSearch }: HeaderProps) {
-  const queryClient = useQueryClient();
   const { isActive } = useVault();
-  const [refreshing, setRefreshing] = useState(false);
+  const slots = useChromeSlots();
 
-  // Manual refresh: pull every active query at once (sleep debt, tasks,
-  // knowledge, …). Queries also poll on an interval, but this gives an
-  // immediate update without waiting or switching pages.
-  const refreshAll = async () => {
-    setRefreshing(true);
-    try {
-      await queryClient.refetchQueries({ type: 'active' });
-    } finally {
-      setRefreshing(false);
-    }
-  };
+  if (!isActive) return null;
 
   return (
-    <header className="header">
-      <div className="header-left">
-        <button
-          className="header-icon-btn"
-          data-testid="sidebar-collapse"
-          onClick={onToggleSidebar}
-          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-expanded={!sidebarCollapsed}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect x="1.4" y="2.4" width="13.2" height="11.2" rx="2.2" stroke="currentColor" strokeWidth="1.4" />
-            <line x1="6.1" y1="2.8" x2="6.1" y2="13.2" stroke="currentColor" strokeWidth="1.4" />
-          </svg>
-        </button>
+    <>
+      {slots.left && createPortal(
+        <>
+          <button
+            className="header-icon-btn"
+            data-testid="sidebar-collapse"
+            onClick={onToggleSidebar}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-expanded={!sidebarCollapsed}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="1.4" y="2.4" width="13.2" height="11.2" rx="2.2" stroke="currentColor" strokeWidth="1.4" />
+              <line x1="6.1" y1="2.8" x2="6.1" y2="13.2" stroke="currentColor" strokeWidth="1.4" />
+            </svg>
+          </button>
 
-        {/* Persistent global search pill → ⌘K command palette. A real <button> with
-            data-no-drag so clicking it never starts the title-bar window drag. */}
-        <button
-          className="header-search-pill"
-          data-no-drag
-          onClick={onOpenSearch}
-          title="Search the brain (⌘K)"
-          aria-label="Search the brain"
-        >
-          <span className="header-search-pill-icon" aria-hidden="true"><SearchIcon size={14} /></span>
-          <span className="header-search-pill-text">Search the brain…</span>
-          <kbd className="header-search-pill-kbd">⌘K</kbd>
-        </button>
-      </div>
+          {/* Persistent global search pill → ⌘K command palette. A real <button> with
+              data-no-drag so clicking it never starts the title-bar window drag. */}
+          <button
+            className="header-search-pill"
+            data-no-drag
+            onClick={onOpenSearch}
+            title="Search the brain (⌘K)"
+            aria-label="Search the brain"
+          >
+            <span className="header-search-pill-icon" aria-hidden="true"><SearchIcon size={14} /></span>
+            <span className="header-search-pill-text">Search the brain…</span>
+            <kbd className="header-search-pill-kbd">⌘K</kbd>
+          </button>
+        </>,
+        slots.left,
+      )}
 
-      <div className="header-right">
-        <SleepDebtTracker onOpen={onNavigate ? () => onNavigate('sleep') : undefined} />
-        <button
-          className={`header-refresh ${refreshing ? 'header-refresh--spinning' : ''}`}
-          onClick={refreshAll}
-          disabled={refreshing || !isActive}
-          title="Refresh now"
-          aria-label="Refresh now"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M13.65 4.5A6 6 0 1 0 14 8" />
-            <path d="M14 2v3h-3" />
-          </svg>
-        </button>
-        <UpdateBadge onManagePacks={onNavigate ? () => onNavigate('packs') : undefined} />
-      </div>
-    </header>
+      {slots.right && createPortal(
+        <>
+          <SleepDebtTracker onOpen={onNavigate ? () => onNavigate('sleep') : undefined} />
+          <UpdateBadge onManagePacks={onNavigate ? () => onNavigate('packs') : undefined} />
+        </>,
+        slots.right,
+      )}
+    </>
   );
 }
