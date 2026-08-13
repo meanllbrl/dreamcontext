@@ -1,12 +1,120 @@
 [
   {
+    "date": "2026-08-13",
+    "type": "docs",
+    "scope": "workspace",
+    "description": "The validated plans and design boards for both large features were sitting untracked or in gitignored tmp/. Preserved verbatim rather than tidied: the automations plan accreted six override passes and the overrides ARE the record (§12 beats §11 beats §10 beats §9/§8 beats §3/§4, precedence stated in README). The README also lists what the plan got WRONG and the build corrected (T12's file list omitting the two modules that still created review cards, AC31 contradicting the shipped tick, D-K specifying a diff the approval registry cannot produce) — a preserved plan that reads as authoritative where it is stale is worse than none. Filed under workspace/<lane>/, following project-tabs' own precedent. Includes the Excalidraw board project-tabs was designed on and all wave prompts + implementation JSONs.",
+    "breaking": false,
+    "summary": "Workspace planning artifacts for automations-redesign and project-tabs preserved with the brain",
+    "references": [
+      "commit:742501f",
+      "commit:276f44a",
+      "file:_dream_context/workspace/automations-redesign/plan-validated.md",
+      "file:_dream_context/workspace/automations-redesign/README.md",
+      "file:_dream_context/workspace/project-tabs/"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-13",
+    "type": "change",
+    "scope": "knowledge",
+    "description": "The knowledge visibility:false feature (allowing knowledge files to be hidden from certain surfaces) was reverted. Remote main carried three commits local did not: the feature, its merge, and the revert of that merge (commit cea8ea6, merge 0403c80). Net file change is zero — the feature is out on both sides. Taken as history so the local branch is a strict superset before pushing. This feature must NOT appear in v0.24.0 release notes or any shipped payload.",
+    "breaking": false,
+    "summary": "Revert: knowledge visibility:false feature was reverted and is not in HEAD",
+    "references": [
+      "commit:cea8ea6",
+      "commit:0403c80"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-13",
+    "type": "fix",
+    "scope": "tasks",
+    "description": "Moving a start past the due date used to be a hard rejection. It now reschedules, preserving the window's original length, so a five-day job that starts late stays a five-day job. Completing stamps the real end so the timeline shows what happened rather than what was planned. All of it lives in one module every surface routes through (CLI, dashboard PATCH, Gantt drag) so the rules cannot drift. Derived dates now run through the same validation as client-supplied ones: a PATCH naming both status and an inverted due_date skipped the reschedule but applied the start stamp anyway, and the range check had already run — stamping now runs BEFORE the range check. A task completed without ever having a start now gets today at BOTH ends (not-started → done in one move). The backlog tag drops with it (existing dates/backlog exclusion). Derived dates replace rather than append their change-tracker entry (a reschedule followed by a completion stamp no longer logs an intermediate value that never hit disk). tests/unit/task-date-window.test.ts fails against the unguarded code (200 instead of 400 on the route, +019996-01 on disk from the CLI — past year 9999 the shift overflows into toISOString's extended ±YYYYYY form).",
+    "breaking": false,
+    "summary": "Task date semantics: a moved start reschedules the due date instead of erroring, done stamps the real end, stamped dates are validated like typed ones, and a never-started task closes on both ends",
+    "references": [
+      "commit:202941c",
+      "commit:75480d0",
+      "commit:017835b",
+      "commit:adab230",
+      "pr:296",
+      "file:src/lib/task-dates.ts",
+      "file:src/server/routes/tasks.ts",
+      "file:src/cli/commands/tasks.ts",
+      "file:tests/unit/task-date-window.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-13",
+    "type": "fix",
+    "scope": "sleep",
+    "description": "A session spanning a consolidation re-booked its whole history at its next Stop: sleep deletes the session record but the transcript file stays, so the re-stop scored the file from scratch and debt could never settle at 0. analyzeTranscript now takes the last-consolidation timestamp and skips records at or before it. The sleep fan-out stops charging itself ~10 debt per cycle for the same reason. The fix keeps legacy whole-file regex counts when the boundary excludes nothing, and switches to per-record structured counts when it excludes something (two measurement methods behind one boolean — the tools axis is log-compressed with weight 1.5 and saturates at 200, so the score delta is exactly 0.000 across all observed transcripts). git status gains pathspec scoping with a -- terminator (dash-leading path can no longer read as a flag). brain-dirty degrades to unavailable rather than silently clean when a path cannot be re-based.",
+    "breaking": false,
+    "summary": "Consolidated work stops re-booking itself, so debt can reach 0; brain-dirty report degrades gracefully when a path can't be re-based",
+    "references": [
+      "commit:dbf47b6",
+      "pr:295",
+      "commit:18b4616",
+      "file:src/lib/sleep.ts",
+      "file:src/lib/git-sync/brain-dirty.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-13",
+    "type": "fix",
+    "scope": "council",
+    "description": "\\Z is not an anchor in JavaScript — it is an identity escape for the letter Z, and under /i it matched lowercase z too, so every council section body was cut at its first z (19,999 of 20,000 synthetic sections truncated). With no z in a trailing section the pattern failed outright and the section vanished. All 8 sites now terminate with $(?![\\s\\S]) (true end-of-input). The heading escape was written as if inside a string literal but sits in a regex literal, so the character class closed early and the escape matched nothing — a.b, a(b)c, a[b]c, a*b all passed untouched. A sanitiser that does nothing is worse than none. Not exploitable today (all call sites pass fixed literals), but changes what happens the first time someone passes something else. tests/unit/council-report-parse.test.ts fails 6/8 against unfixed code; the catastrophic-backtracking case dragged 40 chars to 111,857ms before the fix.",
+    "breaking": false,
+    "summary": "Council report sections run to the next heading (not the first 'z'), and the heading regex-escape works",
+    "references": [
+      "commit:d915491",
+      "commit:a7b0874",
+      "pr:294",
+      "file:src/server/routes/council.ts",
+      "file:tests/unit/council-report-parse.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-13",
+    "type": "fix",
+    "scope": "bookmark",
+    "description": "The repair command read .sleep.json, awaited the task backend (a network round-trip on ClickUp/GitHub), then wrote that stale snapshot back — anything another writer appended in the gap (Stop hook, parallel bookmark add, sleep done) was silently erased. Both awaits now happen before the read; read-mutate-write is synchronous. A bookmark that consolidation cleared mid-flight now reports 'is gone' instead of false success. state/.active-task joins both gitignore lists (per-session state — bookmark add reads it as implicit --task, so a synced one would file a teammate's bookmarks against their open task). An empty --task is rejected before any backend call (it used to prefix-match the whole vault). tests/unit/bookmark-relink-race.test.ts drives the race deterministically and fails on the old ordering.",
+    "breaking": false,
+    "summary": "Bookmark relink command can no longer erase what it raced, and .active-task is machine-local",
+    "references": [
+      "commit:e1fd628",
+      "file:src/cli/commands/bookmark.ts",
+      "file:tests/unit/bookmark-relink-race.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-11",
     "type": "feat",
     "scope": "automations",
     "description": "UNCOMMITTED WORK, continuing automations-redesign from waves 1-2 logged last cycle. This window completed the full redesign across remaining waves (3-11 of an 11-wave goal-skill run, 9 waves needing resume). New: dashboard/src/components/automations/AutomationFlowCanvas.tsx + flowLayout.ts (visual flow editor), dashboard/src/lib/automationCreateChat.ts (chat-based run interface), scripts/verify/automations.mjs (44-assertion runtime harness, both themes). RETIRED: src/lib/automations/review.ts (535 lines), card-registry.ts (127 lines), and AutomationsReviewQueue.tsx/.css — the review-queue model shipped under f9ffba0 five commits ago and is now GONE, replaced by the flow-based HITL model. Modified extensively: runner.ts (27,994 → 68,642 lines), types.ts (pure contract root, no imports), verdict.ts (837 → refactored), telegram.ts, tick.ts, store.ts. The contract surface itself moved: skill/SKILL.md, skill/references/automations.md (HITL questions store owned by nobody, private-derivation ack gate), skill/references/cli-reference.md, skill/references/sleep.md (sleep↔automations boundary), agents/sleep-product.md. Runtime proof found 3 defects 6,944 unit tests missed: (1) unsubscribed create-chat bridge (T19 built it, listener belonged in T18a's file, neither owned the wire), (2) test passing for wrong reason (baseline captured before silently-failing step), (3) chatPanes filtering on display kind so every automation-run tab spawned a live-but-never-mounted ChatSession — one field double-booked between tab glyph and pane mount. Process finding: 9 of 11 waves needed a resume, several because an implementer returned completion-shaped text with work half-done — verifying via git status and test counts caught it every time. Full suite: 6,944 tests passed, 0 failed; tsc clean (root + dashboard); build clean; verify:automations 44/44 both themes. Task: automations-redesign (in_progress).",
     "breaking": false,
-    "summary": "Automations redesign completion: HITL flow canvas, chat-based runs, contract surface changes — UNCOMMITTED",
+    "summary": "Automations redesign completion: HITL flow canvas, chat-based runs, contract surface changes",
     "references": [
+      "commit:0098f57",
       "file:dashboard/src/components/automations/AutomationFlowCanvas.tsx",
       "file:dashboard/src/components/automations/flowLayout.ts",
       "file:dashboard/src/lib/automationCreateChat.ts",
@@ -49,8 +157,10 @@
     "scope": "dashboard",
     "description": "UNCOMMITTED WORK, continuing from Waves 1-2 already logged. New: components/layout/WindowChrome.tsx (MAX_LIVE_INSTANCES=6 ceiling, eviction via rollup.alive field — the SOLE gate; a project whose only row is a live shell reports live:0 but alive:1 and is never evictable), ProjectTabs.tsx+.css (center-aligned chip strip with hover expansion, active/background state, one-shot bounce on ask, badge shows live count), lib/windowRegistry.ts (localStorage heartbeat registry + desktop corroboration for duplicate-open detection across OS windows), lib/useOverlayId.ts (scoped overlay IDs so CommandPalette/ChatHistoryPicker/modals from background instances don't stomp the foreground), lib/scopedStorage.ts (per-instance localStorage namespacing). Modified: extensive per-instance wiring across hooks, agents, surfaces. Tests: agent-status-project-rollup.test.ts (regression lock: a shell-only project is alive, not evictable), scoped-storage.test.ts. scripts/verify/project-tabs.mjs runtime verification script. Planning artifacts in workspace/project-tabs/. Task status: in_review. This completes Waves 3-4 (T11-T20 + resume passes); Waves 1-2 (T1-T10) were logged in the previous cycle.",
     "breaking": false,
-    "summary": "Project-tabs Waves 3-4: WindowChrome ceiling, ProjectTabs strip, per-instance overlays — UNCOMMITTED",
+    "summary": "Project-tabs Waves 3-4: WindowChrome ceiling, ProjectTabs strip, per-instance overlays",
     "references": [
+      "commit:480b4f3",
+      "pr:291",
       "file:dashboard/src/components/layout/WindowChrome.tsx",
       "file:dashboard/src/components/layout/ProjectTabs.tsx",
       "file:dashboard/src/lib/windowRegistry.ts",
@@ -68,8 +178,10 @@
     "scope": "agents",
     "description": "UNCOMMITTED WORK. New: agentStatus.ts project rollup logic + tests/unit/agent-status-project-rollup.test.ts. Modified chat/file surfaces: PdfViewer, FileActions, SlideOver, PageView, TranscriptItem, ChatPane, BoardEmbed, Composer, chatEntities. revealPath call-site sweep verified green.",
     "breaking": false,
-    "summary": "Agent status project rollup + chat/file surface updates — UNCOMMITTED",
+    "summary": "Agent status project rollup + chat/file surface updates",
     "references": [
+      "commit:480b4f3",
+      "pr:291",
       "file:dashboard/src/components/sleepy/agentStatus.ts",
       "file:tests/unit/agent-status-project-rollup.test.ts"
     ],
@@ -83,8 +195,9 @@
     "scope": "automations",
     "description": "UNCOMMITTED WORK. New files: src/lib/automations/flow-registry.ts, queue.ts (enqueueFire, queuedFire), session-registry.ts, hitl.ts + tests for each. types.ts grew 608 → 938 lines as a pure contract root (no imports, no I/O). Modified: registry.ts, store.ts, src/server/routes/automations.ts. Full unit suite 6,292 tests / 364 files / zero failures reported green.",
     "breaking": false,
-    "summary": "Automations redesign (waves 1-2): flow-registry, queue, session-registry, types refactor — UNCOMMITTED",
+    "summary": "Automations redesign (waves 1-2): flow-registry, queue, session-registry, types refactor",
     "references": [
+      "commit:0098f57",
       "file:src/lib/automations/flow-registry.ts",
       "file:src/lib/automations/queue.ts",
       "file:src/lib/automations/session-registry.ts",
@@ -100,8 +213,10 @@
     "scope": "dashboard",
     "description": "UNCOMMITTED WORK (93 paths, 1927 insertions / 526 deletions). The load-bearing architectural change: api/client.ts became a per-vault ApiClient class (constructor(private readonly vault: string…)) and the module-level singleton 'api' import was retired across nearly every dashboard/src/hooks/*. New files: ProjectInstance.tsx(.css), components/layout/ProjectTabs.tsx(.css), WindowChrome.tsx, context/VaultContext.tsx, lib/instanceQueryClient.ts (createInstanceQueryClient() — one react-query client per vault instance), lib/scopedStorage.ts. Constants: MAX_LIVE_INSTANCES = 6, OpenProject {vault, instance…}. Planning artifacts in workspace/project-tabs/. This establishes the per-vault isolation contract: future dashboard code MUST use the ApiClient class, never a module-level singleton — hooks receive vault context from VaultContext and instantiate their client accordingly.",
     "breaking": false,
-    "summary": "Project tabs / one-window multi-vault (waves T1–T8) — UNCOMMITTED",
+    "summary": "Project tabs / one-window multi-vault (waves T1–T8)",
     "references": [
+      "commit:480b4f3",
+      "pr:291",
       "file:dashboard/src/api/client.ts",
       "file:dashboard/src/lib/instanceQueryClient.ts",
       "file:dashboard/src/context/VaultContext.tsx",

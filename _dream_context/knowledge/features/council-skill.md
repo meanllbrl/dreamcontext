@@ -69,6 +69,10 @@ When facing a non-trivial architectural or strategic decision, a single agent pe
 
 ## Constraints & Decisions
 
+### 2026-08-13 — PR #294: report section parsing fixed (true end-of-input anchor + heading escape)
+
+Two parsing defects fixed: (1) `\Z` is not an anchor in JavaScript — it is an identity escape for the letter Z, and under `/i` it matched lowercase 'z' too, so every council section body was cut at its first 'z'. In Turkish that is most of the prose. Worse: with no 'z' anywhere in a trailing section, the pattern failed outright and the section vanished (measured: 19999 of 20000 sections on a synthetic doc). All eight sites (`src/lib/council.ts`, `src/cli/commands/council.ts`, `src/server/routes/council.ts`, `dashboard/.../councilStats.ts`) now terminate with `$(?![\s\S])` — true end-of-input, correct under `/m`. (2) `extractNamedSubsection`'s regex escape was inert (character class closed early at the second `]`), so special chars in headings could break the match. Fixed: proper escape of `.*+?^${}()|[]\` in the regex literal. **Known and NOT fixed**: a heading stranded at EOF still drops its section (pre-existing, no regression test because the fix is non-trivial and the symptom is rare).
+
 ### 2026-07-23 — PID lockfile serialization for verdicts.json, not optimistic-merge
 
 Parallel persona sessions writing verdicts.json caused lost-update races. Verdict writes are now serialized via PID lockfile (O_EXCL + 2s bounded spin + 10s stale TTL + finally release). Each persona spins up to 2s in 25ms intervals; locks older than 10s are reclaimed even if the PID looks alive. This is safer than optimistic merge (which could silently lose a verdict) and faster than a mutex server.

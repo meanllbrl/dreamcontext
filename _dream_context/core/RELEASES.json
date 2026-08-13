@@ -3,11 +3,21 @@
     "id": "rel_4BMj2tR7",
     "version": "v0.24.0",
     "date": "",
-    "summary": "Automations grow a human in the loop: a run can stop and ask, the verdict comes back from anywhere, and a run opens as a chat you can continue",
+    "summary": "Automations redesign (the flow graph IS the manifest, HITL questions in chat, review queue retired), one-window desktop (project chip strip with background instances staying live), insights chart registry with 10 renders, hypotheses board redesign, in-app PDF opening, agent-ask notifications (banner + Dock bounce), task date fixes (moved start reschedules due, stamped dates validated, never-started closes on both ends), sleep-debt rebook fix (debt can reach 0), council section parsing fixes (\\Z→$ anchor, regex-escape actually escapes), bookmark relink race fix, and workspace planning artifacts preserved. NOTE: NOT RELEASE-READY as of 2026-08-13 pre-publish audit (6 version surfaces at 0.23.1, npm auth E401, no v0.24.0 announcement, wiki stale 08-02, README stale 08-09).",
     "breaking": false,
     "status": "planning",
-    "features": [],
-    "tasks": [],
+    "features": [
+      "automations-scheduled-headless-claude-jobs",
+      "project-tabs-one-window-multi-vault"
+    ],
+    "tasks": [
+      "automations-redesign-the-flow-graph-is-the-manifest-the-run-asks-in-chat-and-the-queue-never-loses-a-fire",
+      "automations-hitl-a-run-can-stop-and-ask-and-the-verdict-comes-back-from-wherever-you-are",
+      "one-window-holds-every-open-project-as-a-live-chip-strip",
+      "an-automation-run-opens-as-a-chat-session-not-an-inline-drill-in",
+      "chat-opens-a-pdf-in-the-app-and-every-file-panel-offers-open-on-computer-reveal-in-finder",
+      "pre-publish-checklist-v0-24-0"
+    ],
     "changelog": []
   },
   {
