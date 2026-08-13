@@ -19,6 +19,7 @@ rice:
   confidence: 50
   effort: 3
   score: 0.67
+start_date: '2026-06-11'
 ---
 ## Why
 

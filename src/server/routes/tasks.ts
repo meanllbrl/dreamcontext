@@ -6,6 +6,7 @@ import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import { listObjectives } from '../../lib/objectives-store.js';
+import { dueDateAfterStartMove, dateUpdatesForStatus } from '../../lib/task-dates.js';
 import { resolveFeature, applyTaskFeatureLink } from '../../lib/feature-links.js';
 import { PeopleStoreError, listPeople } from '../../lib/people-store.js';
 import {
@@ -857,24 +858,69 @@ export async function handleTasksUpdate(
       return;
     }
   }
-  // Range sanity: the EFFECTIVE start (after this patch) must not be after the
-  // effective due. A backlog task clears both in the backend, so only check when
-  // both resolve to a real date here.
-  {
-    const effStart = updates.start_date !== undefined ? updates.start_date : existing.start_date;
-    const effDue = updates.due_date !== undefined ? updates.due_date : existing.due_date;
-    if (isYmd(effStart) && isYmd(effDue) && effStart > effDue) {
-      sendError(res, 400, 'invalid_date_range', `start_date (${effStart}) cannot be after due_date (${effDue}).`);
-      return;
-    }
-  }
+  /**
+   * Record a date this handler derived (a status stamp, a reschedule) rather
+   * than one the caller sent. REPLACES any earlier entry for the same field so
+   * the change tracker never logs an intermediate value that never hit disk.
+   */
+  const deriveDate = (field: 'start_date' | 'due_date', value: string): void => {
+    updates[field] = value;
+    const existingChange = fieldChanges.find((c) => c.field === field);
+    if (existingChange) existingChange.to = value;
+    else fieldChanges.push({ field, from: (existing[field] ?? null) as FieldChange['from'], to: value });
+  };
 
-  // Validate status
+  // Validate status. Stamping runs BEFORE the range check below, so a stamped
+  // start is validated like any other — a patch that pairs a status change with
+  // an inverted explicit due date is rejected instead of writing start>due.
   if (updates.status) {
     const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
     if (!validStatuses.includes(updates.status as string)) {
       sendError(res, 400, 'invalid_status', `Status must be one of: ${validStatuses.join(', ')}`);
       return;
+    }
+    // Same real-world timing the CLI stamps on a status change, so a task dragged
+    // across the board records the same dates as `dreamcontext tasks status`:
+    // `in_progress` stamps the actual start (rescheduling a now-impossible due
+    // date), `completed` stamps the actual end. A date explicitly named in THIS
+    // patch always wins over the stamp.
+    const stamped = dateUpdatesForStatus(
+      updates.status as string,
+      {
+        start_date: (updates.start_date !== undefined ? updates.start_date : existing.start_date) as string | null,
+        due_date: (updates.due_date !== undefined ? updates.due_date : existing.due_date) as string | null,
+      },
+      today(),
+    );
+    for (const field of ['start_date', 'due_date'] as const) {
+      const value = stamped[field];
+      if (value === undefined || body[field] !== undefined) continue;
+      deriveDate(field, value);
+    }
+  }
+
+  // Range sanity: the EFFECTIVE start (after this patch) must not be after the
+  // effective due. A backlog task clears both in the backend, so only check when
+  // both resolve to a real date here.
+  //
+  // A start-only move (the detail panel's start picker, a CLI-equivalent patch)
+  // RESCHEDULES the due date rather than failing — pushed just far enough to keep
+  // the window's original length, per lib/task-dates.ts. Only a patch that names
+  // the due end and still inverts it is the caller contradicting itself, and that
+  // is still rejected.
+  {
+    const duePatched = body.due_date !== undefined;
+    const effStart = updates.start_date !== undefined ? updates.start_date : existing.start_date;
+    const effDue = updates.due_date !== undefined ? updates.due_date : existing.due_date;
+    if (isYmd(effStart) && isYmd(effDue) && effStart > effDue) {
+      const shifted = duePatched
+        ? null
+        : dueDateAfterStartMove(existing.start_date, existing.due_date, effStart);
+      if (!shifted) {
+        sendError(res, 400, 'invalid_date_range', `start_date (${effStart}) cannot be after due_date (${effDue}).`);
+        return;
+      }
+      deriveDate('due_date', shifted);
     }
   }
 

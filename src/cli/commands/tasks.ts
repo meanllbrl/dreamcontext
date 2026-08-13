@@ -20,6 +20,12 @@ import { resolveFeature, applyTaskFeatureLink, anyFeaturesExist } from '../../li
 import { loadTaskOverride, fieldKey, type CustomFieldDef } from '../../lib/overrides.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import {
+  isCalendarDate,
+  dueDateAfterStartMove,
+  dateUpdatesForStatus,
+  type TaskDateUpdates,
+} from '../../lib/task-dates.js';
+import {
   getTaskBackend,
   installTaskSyncHooks,
   uninstallTaskSyncHooks,
@@ -49,10 +55,6 @@ function collectOption(value: string, previous: string[]): string[] {
   return previous.concat(value);
 }
 
-/** True for a real calendar date in YYYY-MM-DD form (rejects e.g. 2026-13-40). */
-function isCalendarDate(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
-}
 
 /**
  * Parse + validate a comma-separated objective-slug list against the objectives
@@ -77,15 +79,32 @@ function parseObjectiveSlugs(raw: string): string[] | null {
   return slugs;
 }
 
+// Re-exported for the existing unit test + any caller that imported it from the
+// CLI before the date rules moved to their shared home.
+export { shouldStampStartDate } from '../../lib/task-dates.js';
+
 /**
- * Whether moving a task to `newStatus` should auto-stamp its actual start date.
- * Rule: the FIRST time a task enters `in_progress` with no `start_date` yet, we
- * record today as the real start. An already-set (explicitly planned) start is
- * never overwritten, and no other transition stamps anything — so this only ever
- * captures a previously-unrecorded start.
+ * Report the date stamps a status transition wrote, so no verb rewrites a
+ * planned date silently. Prints nothing when the transition wrote no dates.
  */
-export function shouldStampStartDate(newStatus: string, currentStart: string | null | undefined): boolean {
-  return newStatus === 'in_progress' && !currentStart;
+function reportDateStamps(
+  status: string,
+  dates: TaskDateUpdates,
+  prevDue: string | null | undefined,
+): void {
+  if (dates.start_date) {
+    console.log(chalk.dim(status === 'completed'
+      ? `  start date set to ${dates.start_date} (never started — closed same-day).`
+      : `  start date set to ${dates.start_date} (work started).`));
+  }
+  if (dates.due_date) {
+    if (status === 'completed') {
+      const replaced = prevDue && prevDue !== dates.due_date ? `, replacing the planned ${prevDue}` : '';
+      console.log(chalk.dim(`  due date set to ${dates.due_date} (work finished)${replaced}.`));
+    } else {
+      console.log(chalk.dim(`  due date moved ${prevDue} → ${dates.due_date} (the new start was past it).`));
+    }
+  }
 }
 
 /**
@@ -112,15 +131,27 @@ async function setTaskDate(
     return;
   }
   const before = await backend.get(slug);
-  // Range sanity: a start date can never be after the due date.
-  const start = field === 'start_date' ? raw : (before?.start_date ?? null);
-  const due = field === 'due_date' ? raw : (before?.due_date ?? null);
-  if (start && due && start > due) {
-    error(`Start date (${start}) cannot be after the due date (${due}). Adjust or clear the other date first.`);
+  // Moving the START reschedules an impossible due date instead of rejecting the
+  // edit: the due date only shifts when the new start would land after it, and
+  // then by just enough to preserve the window's length (see task-dates.ts).
+  // Moving the DUE end has no such escape hatch — a due date before the start is
+  // the user contradicting themselves, so it stays an error.
+  const shiftedDue = field === 'start_date'
+    ? dueDateAfterStartMove(before?.start_date, before?.due_date, raw)
+    : null;
+  if (field === 'due_date' && before?.start_date && before.start_date > raw) {
+    error(`Due date (${raw}) cannot be before the start date (${before.start_date}). Move the start date first, or clear it.`);
     return;
   }
-  const updated = await backend.updateFields(slug, { [field]: raw, updated_at: today() });
+  const updated = await backend.updateFields(slug, {
+    [field]: raw,
+    ...(shiftedDue ? { due_date: shiftedDue } : {}),
+    updated_at: today(),
+  });
   success(`${label} on ${slug}: ${raw}`);
+  if (shiftedDue) {
+    console.log(chalk.dim(`  due date moved ${before?.due_date} → ${shiftedDue} (the new start was past it).`));
+  }
   if (before?.tags.some((t) => t.toLowerCase() === 'backlog') && !updated.tags.some((t) => t.toLowerCase() === 'backlog')) {
     console.log(chalk.dim('  backlog tag removed — a dated task is planned, not backlog.'));
   }
@@ -1160,6 +1191,10 @@ export function registerTasksCommand(program: Command): void {
 
       await backend.complete(slug, summary);
       success(`Task completed: ${slug}`);
+      // `complete()` stamps the real end of the window (and the start too, when a
+      // task went straight from not-started to done). Report it, so this verb is
+      // as loud about rewriting a planned date as `tasks status … completed` is.
+      reportDateStamps('completed', dateUpdatesForStatus('completed', current, today()), current?.due_date);
     });
 
   // Change status (todo, in_progress, in_review, completed)
@@ -1168,7 +1203,7 @@ export function registerTasksCommand(program: Command): void {
     .argument('<name>')
     .argument('<new-status>', 'todo, in_progress, in_review, or completed')
     .argument('[reason...]', 'Optional reason for the status change')
-    .description('Change a task\'s status (logs the change; stamps start_date on first in_progress if unset)')
+    .description('Change a task\'s status (logs the change; stamps start_date on first in_progress if unset, due_date on completed)')
     .action(async (name: string, newStatus: string, reasonParts: string[]) => {
       const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
       if (!validStatuses.includes(newStatus)) {
@@ -1195,21 +1230,17 @@ export function registerTasksCommand(program: Command): void {
 
       await backend.addChangelog(slug, logContent, { fallbackAppend: true });
 
-      // Auto-stamp the real start date the first time work actually begins (see
-      // shouldStampStartDate). Only fetch the task on the transition that can
-      // stamp, so other status changes stay a single write.
+      // Stamp real-world timing onto the date window: `in_progress` records when
+      // work actually began, `completed` records when it actually ended (see
+      // dateUpdatesForStatus). Only fetch the task on the transitions that can
+      // stamp, so the other status changes stay a single write.
       const now = today();
-      const before = newStatus === 'in_progress' ? await backend.get(slug) : null;
-      const startStamped = shouldStampStartDate(newStatus, before?.start_date);
-      await backend.updateFields(slug, {
-        status: newStatus,
-        updated_at: now,
-        ...(startStamped ? { start_date: now } : {}),
-      });
+      const stamping = newStatus === 'in_progress' || newStatus === 'completed';
+      const before = stamping ? await backend.get(slug) : null;
+      const dates = stamping ? dateUpdatesForStatus(newStatus, before, now) : {};
+      await backend.updateFields(slug, { status: newStatus, updated_at: now, ...dates });
       success(`Task ${slug} → ${newStatus}`);
-      if (startStamped) {
-        console.log(chalk.dim(`  start date set to ${now} (work started).`));
-      }
+      reportDateStamps(newStatus, dates, before?.due_date);
     });
 
   // Log entry (cross-session continuity)

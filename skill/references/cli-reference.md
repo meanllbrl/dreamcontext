@@ -92,14 +92,14 @@ A slug is a filesystem path segment and a dashboard route segment, so the charse
 | `tasks tags` | Distinct task tags with counts. `-a/--all`, `--json`. |
 | `tasks create <name>` | Create a task. Flags: `-d/--description`, `-p/--priority critical\|high\|medium\|low`, `-u/--urgency …`, `-s/--status`, `-t/--tags <csv>`, `-w/--why`, `-v/--version`, `--person <name>`, `--reach <1-10>`, `--impact <1-5>`, `--confidence 25\|50\|75\|100`, `--effort <weeks>`, `--start YYYY-MM-DD`, `--due YYYY-MM-DD`, `--objectives <csv>` (roadmap objective slugs this task serves; slugs must exist), `--field <key=value>` (repeatable; sets declared custom fields), `--allow-missing-required` (create a draft even when a required custom field is unset). **Fails** if a required custom field is unset and `--allow-missing-required` is not given. |
 | `tasks rice <name>` | Print or update RICE values. `--reach`/`--impact`/`--confidence`/`--effort`, `--clear`. |
-| `tasks start <name> <YYYY-MM-DD\|clear>` | Set or clear a planned start date (range start). Must be ≤ the due date; setting it removes the `backlog` tag. |
-| `tasks due <name> <YYYY-MM-DD\|clear>` | Set or clear a due/end date (range end). |
+| `tasks start <name> <YYYY-MM-DD\|clear>` | Set or clear a planned start date (range start). A start past the due date pushes the due date out by just enough to keep the window's length — it is never rejected. Setting it removes the `backlog` tag. |
+| `tasks due <name> <YYYY-MM-DD\|clear>` | Set or clear a due/end date (range end). Must be ≥ the start date. |
 | `tasks objectives <name> [slugs\|clear]` | Print, set (comma-separated, validated against `core/objectives/`), or clear the roadmap objectives a task serves. LOCAL-ONLY — never synced to a cloud backend. |
 | `tasks tag <name> <tags...>` | Add (or `--remove`) tags. `person:<slug>` assigns a person. |
 | `tasks field <name> <key> [value\|clear]` | Set or clear a user-defined custom field declared in `overrides/task.md` (synced to ClickUp/GitHub). Validates select options + number types. |
 | `tasks insert <name> <section> <content...>` | Insert into a section: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`. |
 | `tasks log <name> [content...]` | Add a changelog entry (cross-session continuity). **Use every session.** |
-| `tasks status <name> <todo\|in_progress\|in_review\|completed> [reason...]` | Change status (logs to changelog). On the first move to `in_progress`, stamps `start_date` with today if it is unset (a planned start is never overwritten). |
+| `tasks status <name> <todo\|in_progress\|in_review\|completed> [reason...]` | Change status (logs to changelog). On the first move to `in_progress`, stamps `start_date` with today if it is unset (a planned start is never overwritten) and pushes an already-passed `due_date` out to stay valid. On `completed`, stamps `due_date` with the real completion date (and `start_date` too when the task was never started — a same-day window). |
 | `tasks complete <name> [summary...]` | Mark completed (convenience). |
 | `tasks delete <name>` | Delete a task (propagates to remote backend on sync). `--yes`. |
 | `tasks rename <name> <new-name>` | Rename a task: rewrites the name, moves the file to the new slug, and re-keys the sync mapping by the stable dcId so the **same** remote task/issue is updated on next sync — never duplicated. Use this instead of hand-editing `name:` + renaming the file. |
