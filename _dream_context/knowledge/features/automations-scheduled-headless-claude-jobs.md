@@ -12,7 +12,7 @@ pinned: false
 date: '2026-07-26'
 status: in_review
 created: '2026-07-26'
-updated: '2026-08-11'
+updated: '2026-08-13'
 released_version: v0.22.0
 tags:
   - 'topic:agents'
@@ -72,6 +72,12 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-08-13 — Telegram result delivery for finished runs
+
+- **The runner now delivers a finished run's summary to the connected Telegram chat** — not just HITL questions/verdicts (which already worked), but the RESULT itself. Fired after the run completes with ✅ success + first sentence of the result, ❌ error + reason, or ✋ awaiting verdict (for runs that stopped with a proposal). Blocked/deferred runs stay silent like the desktop banner. Fires even when `notify: false` (that field governs the desktop banner; connecting a bot to this automation is delivery's own explicit opt-in, and the person who set it up is by definition not at the Mac). Best-effort with a 10s timeout cap — a network blip or hung request never delays or fails a completed run; the send is abandoned at the timeout boundary and the runner proceeds.
+- **The run's preamble names the connection** — when a per-automation Telegram binding exists (`~/.dreamcontext/telegram/<slug>.json`), the preamble tells the agent the channel exists and names the chat id, with explicit instructions: "do not claim Telegram is unconnected, and do not try to message it yourself — you have no credentials; delivery is automatic." The TOKEN never enters the prompt (it stays machine-local) — the run is told the channel EXISTS and is system-operated, never handed the capability. Without this line, a run (or its resumed chat) asked "why didn't this reach my Telegram?" would conclude — correctly, from its own view — that no connection exists, and start recommending the user wire up a different channel.
+- **Result message capped at 3000 chars** (well under Telegram's 4096 limit, same headroom reasoning as `TELEGRAM_BODY_MAX` elsewhere). The title line always survives; the summary is trimmed with `…` when needed.
 
 ### 2026-08-10/11 — Flow-graph redesign: manifest becomes executable diagram, questions move to chat
 
@@ -232,7 +238,7 @@ The review-queue model (shipped 2026-08-04 under `f9ffba0`) was **retired and de
 **Core modules (revised for flow architecture):**
 - `src/lib/automations/types.ts` (1500+ lines, +920 redesign) — contract root, pure, zero I/O. `FlowGraphNode`, `FlowNodeEntry`, `AutomationQuestion` (replaces `ReviewCard`), `QUESTION_KINDS` (replaces `REVIEW_CARD_STATES`), `ANSWER_VERDICTS`. `RUN_STATUSES` gains `'awaiting-approval'` (distinct from deleted `'awaiting-review'`). `ApprovalPayloadFields` now NINE-tuple (added `flow: FlowGraph | null`). Lenient `flow` reads toward `null` (no flow = pre-redesign manifest). Approval hashing: `flow` omitted-when-null and LAST, so a manifest with no `## Flow` hashes byte-identically to before.
 - `src/lib/automations/verdict.ts` (785 lines, repointed from `review.ts` to `hitl.ts`) — the answer engine. `resumeWithAnswer` (replaces `resumeWithVerdict`) spawns ONLY for `kind: 'flow-hitl'` (mid-flight stop-and-ask). `kind: 'approval'` calls `approveAutomation` + starts a FRESH run under `--permission-mode plan --disallowedTools <list> --append-system-prompt <guard>`, never resumes. Same load-bearing orderings: answer persisted BEFORE resume spawns; a resume that never spawned reopens the question; a resume that spawned and failed does NOT. `defaultPgidProbe` nested-ask guard. Steer → `automations learn` distillation.
-- `src/lib/automations/telegram.ts` (1780 lines, repointed to `hitl.ts`, per-automation credentials) — per-automation bot bindings at `~/.dreamcontext/telegram/<slug>.json` (0600, never synced — a bot token is a capability, not a preference). Long-poll `getUpdates`, inline-keyboard answers, edit-in-place on steer. Auth gate: every update checked against authorized chat id, silently dropped otherwise. Injectable `TelegramTransport`.
+- `src/lib/automations/telegram.ts` (1780 lines, repointed to `hitl.ts`, per-automation credentials, result delivery) — per-automation bot bindings at `~/.dreamcontext/telegram/<slug>.json` (0600, never synced — a bot token is a capability, not a preference). Long-poll `getUpdates`, inline-keyboard answers, edit-in-place on steer. Auth gate: every update checked against authorized chat id, silently dropped otherwise. Injectable `TelegramTransport`. **Result delivery** (2026-08-13): `notifyTelegram(cfg, text, transport)` sends the run's summary to the connected chat when the run finishes — ✅/❌/✋ emoji + title + summary, capped at 3000 chars. `runner.ts` awaits it with `Promise.race` against a 10s timeout; the loser is abandoned. `buildPreamble` gained optional `telegramChatId` parameter and appends the channel-exists instruction when non-null.
 - `src/lib/automations/runner.ts` (2330 lines, +1507 redesign) — 16-step sequence with flow execution + queue integration. `runAutomation` now calls `flow-runner.ts` when manifest has `## Flow`, composes prompt, spawns. Question gate (step 3) replaced review gate. `killRunGroup` CLI-only. Host discriminated union. `parseClaudeJson` pure. `buildPreamble` with OUTPUT CONTRACT.
 - `src/lib/automations/tick.ts` (450 lines, +258 queue drain) — `tickProject` now drains queue (one fire per slug per tick), checks `isDue`, runs. `tickAll` sequential. Empty registry ⇒ silent no-op. Rotates log >1 MB. Writes both heartbeat timestamps every tick.
 - `src/lib/automations/store.ts` (1690 lines, +1028 flow parse/serialize) — `readAutomationFile` gained flow parsing (lenient: malformed `## Flow` ⇒ `flow: null`, not fatal). `writeAutomationFile` gained flow serialization. `resolveOutputDir` strict-subdirectory containment. `readRunSidecar` validates, returns `null` if corrupt. `recordRun` sole writer of `lastFireAt`.

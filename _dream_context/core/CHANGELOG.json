@@ -1,6 +1,75 @@
 [
   {
     "date": "2026-08-13",
+    "type": "fix",
+    "scope": "verify",
+    "description": "The announcements modal is raised by an API round trip, but the harness sampled .announcements-modal-scrim the instant it got there. The modal landing AFTER the check read as \"no modal appeared\" (S7 FAIL) — and then the scrim would arrive on its own schedule and swallow the + click that opens the second project, failing M1 with a misleading \"chips=[scratch-a]\" message. The fix: wait bounded (15s for the first modal, 6s for subsequent ones) for the scrim to appear before concluding there's nothing to dismiss. A modal that genuinely never comes is still a failure (the point of the check), but the harness no longer manufactures a failure by looking too early. The generalizable lesson: an instant count() on anything raised by a network round trip is a race, and its failure surfaces later in an unrelated-looking check. scripts/verify/project-tabs.mjs now uses scrim.first().waitFor({ state: 'attached', timeout: N }) before every dismissal check. Both S7 and the second-project modal clear (used by M1) are fixed. Verified by three consecutive 13/13 harness runs.",
+    "breaking": false,
+    "summary": "Verification harness waits for modal arrival instead of racing it",
+    "references": [
+      "file:scripts/verify/project-tabs.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-13",
+    "type": "feat",
+    "scope": "automations",
+    "description": "A finished run delivers its summary to the per-automation Telegram chat when one exists on this machine: success/error/awaiting-verdict; blocked+deferred stay silent; works even when `notify:false` (that field governs the macOS banner, while connecting a bot to this automation is its own explicit opt-in to phone delivery). Best-effort like the desktop banner: a network blip never fails a run that already succeeded. Capped at TELEGRAM_RESULT_MAX_CHARS (3,000, well under Telegram's 4,096 message limit so the title line always survives). The send is awaited while the file lock is still held but races a TELEGRAM_SEND_TIMEOUT_MS (10s) deadline so a hung sendMessage cannot keep a finished run open; the loser is abandoned, not cancelled. The preamble tells the agent the connection exists and names the chat id (the TOKEN never enters the prompt — capability stays machine-local; the run is told only that the channel exists). buildPreamble() and composePrompt() now accept optional `telegramChatId` so existing callers and tests keep working unchanged. runner.ts reads the config once per run via readTelegramConfigForSlug(); sendTelegram is injectable so NO test in this repo reaches api.telegram.org. 8 new tests in tests/unit/automations-runner.test.ts; runner 73/73. skill/references/automations.md updated.",
+    "breaking": false,
+    "summary": "Automation runs deliver their result to the connected Telegram chat",
+    "references": [
+      "file:src/lib/automations/runner.ts",
+      "file:src/lib/automations/telegram.ts",
+      "file:tests/unit/automations-runner.test.ts",
+      "file:skill/references/automations.md"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-13",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "The window now has ONE title bar shared by every open project, replacing the per-project header row. Project-specific controls (rail toggle, search pill, sleep tracker, update badge) portal into LEFT and RIGHT chrome slots from the active instance's Header, so they stay connected to their providers (query cache, bus, palette state) without hoisting into WindowChrome. Only the ACTIVE instance renders into slots; hidden instances render nothing (a portal escapes the .project-instance subtree and would ignore hidden/inert). The manual refresh button is gone (auto-refresh covers it). ⌃Tab / ⌃⇧Tab cycle the chip strip forward/backward — listener on window in CAPTURE phase so a chip is switchable while a terminal pane holds focus; the key is NOT claimed when only one chip is open (swallowing a keystroke to do nothing is worse than leaving it its old meaning); cold chips are cycled into. Verified by REAL keystroke in the existing Chromium harness (new step M5), asserting both direction flips AND unchanged data-instance ids (hide, never remount). The --header-height double-rebase in ProjectTabs.css is gone with the second bar. New chromeSlots.tsx context exports ChromeSlots interface and useChromeSlots() hook; Header portals via createPortal(). Note: ⌘Tab is IMPOSSIBLE — macOS gives it to the app switcher before any web view sees it (already documented in dashboard/src/lib/sleepy.ts RESERVED_HOTKEYS).",
+    "breaking": false,
+    "summary": "Desktop chrome: ONE window bar, portaled controls, ⌃Tab chip cycling",
+    "references": [
+      "file:dashboard/src/components/layout/chromeSlots.tsx",
+      "file:dashboard/src/components/layout/WindowChrome.tsx",
+      "file:dashboard/src/components/layout/Header.tsx",
+      "file:dashboard/src/components/layout/ProjectTabs.css",
+      "file:dashboard/src/components/layout/SleepDebtTracker.tsx",
+      "file:scripts/verify/project-tabs.mjs",
+      "file:dashboard/src/lib/sleepy.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-13",
+    "type": "fix",
+    "scope": "automations",
+    "description": "SVG <text> neither wraps nor clips, and automation node titles are user data of unknown length (schedule phrases, names, output paths). A title like `automations/output/<slug>/` rendered ~100px past its box on each side, straight across neighbours, while glyph/title/caption stacked inside the box. Hand-authored About/Lab/Council specs never hit this — their titles were written for their boxes. The fix is opt-in per diagram; only the generated automation spec opts in. flow-text.ts (new) wraps titles to at most two lines (broken at `/` or space), scales down to TITLE_SCALE, ellipsizes if still overflowing, and preserves the full string as a hover <title>. FlowDiagram gets `fitTitles` and `minWidth` props (both off by default, so existing specs unchanged). Nodes grew 168x56 → 200x104 (104 is the design height for glyph layout; extra width paid from RANK_GAP so total width unchanged). Verified by rendering the real AutomationFlowCanvas in both themes; new unit test covers wrap/ellipsis contract and pins TITLE_SCALE against the actual rendered size.",
+    "breaking": false,
+    "summary": "Long automation node titles no longer overflow the flow diagram",
+    "references": [
+      "commit:7fc2bda",
+      "file:dashboard/src/components/about/flow-text.ts",
+      "file:dashboard/src/components/about/FlowDiagram.tsx",
+      "file:dashboard/src/components/automations/AutomationFlowCanvas.tsx",
+      "file:tests/unit/automations-flow-title-fit.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-13",
     "type": "docs",
     "scope": "workspace",
     "description": "The validated plans and design boards for both large features were sitting untracked or in gitignored tmp/. Preserved verbatim rather than tidied: the automations plan accreted six override passes and the overrides ARE the record (§12 beats §11 beats §10 beats §9/§8 beats §3/§4, precedence stated in README). The README also lists what the plan got WRONG and the build corrected (T12's file list omitting the two modules that still created review cards, AC31 contradicting the shipped tick, D-K specifying a diff the approval registry cannot produce) — a preserved plan that reads as authoritative where it is stale is worse than none. Filed under workspace/<lane>/, following project-tabs' own precedent. Includes the Excalidraw board project-tabs was designed on and all wave prompts + implementation JSONs.",

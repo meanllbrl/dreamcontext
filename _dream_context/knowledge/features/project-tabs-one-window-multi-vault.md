@@ -7,7 +7,7 @@ pinned: false
 date: "2026-08-10"
 status: "in_review"
 created: "2026-08-10"
-updated: "2026-08-11"
+updated: "2026-08-13"
 released_version: null
 product: desktop
 tags:
@@ -66,6 +66,11 @@ related_tasks:
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+### 2026-08-13 - ⌃Tab cycling + harness race fix
+
+- **⌃Tab / ⌃⇧Tab walks the chip strip** — Control+Tab moves forward, Control+Shift+Tab back, wrapping both ends. The user asked for ⌘Tab and it is impossible: macOS hands ⌘Tab to the app switcher before any web view is offered it — `dashboard/src/lib/sleepy.ts` already refuses it in `RESERVED_HOTKEYS` for the same reason. Listener on `window` in the CAPTURE phase so a chip is switchable while a terminal pane holds focus WITHOUT the keystroke also reaching the PTY (this is the app's second and last claimed Ctrl chord — `AgentSurface` has ⌃\` — every other Ctrl chord must reach the shell). The key is NOT claimed at all with a single chip. Cold chips are cycled into (revival, same as a click), and at the instance ceiling with every other project busy that revival can be refused, leaving the cycle still with the same notice a click would raise. Tooltip gains "· ⌃Tab to switch" once a second chip exists.
+- **Instant presence check on async-raised UI is a race** (harness S7 fix) — The announcements modal is raised by an API round trip, so an instant `.count()` check can read lateness as "no modal appeared" — and then the scrim would arrive on its own schedule and swallow the next click (the `+` that opens a second project), surfacing as a misleading failure about chips. Both sites (S7 check and `clearScrims()` helper) now wait bounded (`await scrim.first().waitFor({ state: 'attached', timeout: N })`) while still failing when nothing ever appears. An announcement that never comes is still a failure (the point of the check), it is just no longer a failure the harness manufactures by looking too early. This pattern has been seen ONCE (one fix, two similar sites in the same harness) — does not yet earn a pattern file, lives here until it recurs in a different context.
+
 ### Hard Constraints (red lines)
 - **Live chats NEVER unmounted.** PTY bound to live WebSocket; unmounting kills conversation. Hiding is `display:none` + `inert`, nothing else.
 - **WebSockets NEVER tied to `isActive`.** Only page-data `refetchInterval` pauses; agent surface's own polling continues in background so a background goal-skill run's badge doesn't freeze.
@@ -93,8 +98,9 @@ related_tasks:
 
 ### Architecture
 - **ProjectInstance** (`dashboard/src/ProjectInstance.tsx`): one mounted React app per vault, each with its own `instanceQueryClient` (React Query cache isolation), `VaultContext`, scoped localStorage, and event bus.
-- **WindowChrome** (`dashboard/src/components/layout/WindowChrome.tsx`): the shell that owns the instance lifecycle, chip registry (`OpenProject[]`), ceiling enforcement (`MAX_LIVE_INSTANCES=6`), eviction (oldest `rollup.alive === 0`), and window registry heartbeat.
-- **ProjectTabs** (`dashboard/src/components/layout/ProjectTabs.tsx` + `.css`): the center-aligned chip strip. Rule 1 (freeze): `pointerenter` snapshots leading gap + each chip's width, so a chip closed while frozen leaves a ghost and neighbors don't slide under cursor. Rule 2 (fall left): `margin-inline:auto` collapses to 0 when content exceeds container, so CSS and overflow flag can't disagree.
+- **WindowChrome** (`dashboard/src/components/layout/WindowChrome.tsx`): the shell that owns the instance lifecycle, chip registry (`OpenProject[]`), ceiling enforcement (`MAX_LIVE_INSTANCES=6`), eviction (oldest `rollup.alive === 0`), window registry heartbeat, and ⌃Tab cycling (capture-phase listener on `window`, only claimed with ≥2 chips). Also publishes chrome slots via `ChromeSlotsProvider`.
+- **ProjectTabs** (`dashboard/src/components/layout/ProjectTabs.tsx` + `.css`): the center-aligned chip strip. Rule 1 (freeze): `pointerenter` snapshots leading gap + each chip's width, so a chip closed while frozen leaves a ghost and neighbors don't slide under cursor. Rule 2 (fall left): `margin-inline:auto` collapses to 0 when content exceeds container, so CSS and overflow flag can't disagree. Tooltip appends "· ⌃Tab to switch" when ≥2 chips.
+- **One-bar chrome refactor** (`dashboard/src/components/layout/chromeSlots.tsx`, `Header.tsx`): The window has ONE bar, but the collapse toggle, search pill, and sleep tracker belong to whichever PROJECT is on screen — they read that instance's query cache, bus, and palette state. The chrome publishes two mount points (`ChromeSlots: {left, right}`) and the active instance's `Header` portals its controls into them. Only the ACTIVE instance renders into the slots; a hidden instance renders nothing, because a portal escapes the `.project-instance` subtree and would ignore its `hidden`/`inert` shroud entirely. The `--header-height` double-rebase in `ProjectTabs.css` is GONE because there is only one bar again; the manual refresh button was dropped.
 - **Per-vault ApiClient** (`dashboard/src/api/client.ts`): was module-level singleton `api`, now a class. Module-global `api` survives for capture/perch windows (separate OS windows, legitimately single-vault). Migrated ~28 hooks + 12 components off `getActiveVault()`.
 
 ### State Isolation
@@ -127,7 +133,7 @@ Ten events moved from `window` to instance bus: `navigate`, `agent-open-page`, `
 - **agentStatus.ts** (`dashboard/src/components/sleepy/agentStatus.ts`): `rollupProject(rows): ProjectRollup` → `{worst: SessionStatusKind; live: number; waiting: number; alive: number}`. `alive` counts rows where `info.kind ∉ {'saved','ended'}` (shells included); `live` excludes shells (chat badge count). Eviction gate reads `rollup.alive === 0`, never `live`.
 
 ### Verification
-- **scripts/verify/project-tabs.mjs**: runtime verification script (6/6 green against real server with isolated scratch HOME and `DREAMCONTEXT_DESKTOP=1`). Proven: vault window boots, one ProjectInstance mounts, chip renders, instance neither hidden nor inert, `.project-instance[hidden]` computes `display:none`, reload returns one project.
+- **scripts/verify/project-tabs.mjs**: runtime verification script (13/13 green against real server with isolated scratch HOME and `DREAMCONTEXT_DESKTOP=1`). Proven: vault window boots, one ProjectInstance mounts, chip renders, instance neither hidden nor inert, `.project-instance[hidden]` computes `display:none`, reload returns one project (S1-S7), two registered vaults open as two chips with both instances mounted, exactly one visible (M1-M4), **M5 (NEW)** — ⌃Tab/⌃⇧Tab cycle the chip strip by real keystroke without remounting instances. S7 and `clearScrims()` fixed for async modal race: both now wait bounded for the modal to appear (see Constraints & Decisions 2026-08-13).
 
 ### Wave-by-Wave Rollout
 20 tasks across 4 waves, dependency map mechanically audited (0 collisions). Wave 1 (contracts, behavior-neutral) → Wave 2 (instance shell, still one chip) → Wave 3 (global collisions, riskiest) → Wave 4 (badge + window bridge). Full plan: `_dream_context/workspace/project-tabs/plan-validated-v1.md` (838 lines).
