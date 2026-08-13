@@ -2128,7 +2128,7 @@
     },
     {
       "path": "tasks status",
-      "desc": "Change a task's status (logs the change; stamps start_date on first in_progress if unset)",
+      "desc": "Change a task's status (logs the change; stamps start_date on first in_progress if unset, due_date on completed)",
       "args": [
         "<name>",
         "<new-status>",

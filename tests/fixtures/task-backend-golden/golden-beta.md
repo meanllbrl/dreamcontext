@@ -12,6 +12,7 @@ parent_task: null
 related_feature: null
 version: null
 rice: null
+due_date: '2026-06-11'
 ---
 
 ## Why

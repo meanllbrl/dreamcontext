@@ -6,6 +6,7 @@ import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import { listObjectives } from '../../lib/objectives-store.js';
+import { dueDateAfterStartMove, dateUpdatesForStatus } from '../../lib/task-dates.js';
 import { resolveFeature, applyTaskFeatureLink } from '../../lib/feature-links.js';
 import { PeopleStoreError, listPeople } from '../../lib/people-store.js';
 import {
@@ -860,12 +861,26 @@ export async function handleTasksUpdate(
   // Range sanity: the EFFECTIVE start (after this patch) must not be after the
   // effective due. A backlog task clears both in the backend, so only check when
   // both resolve to a real date here.
+  //
+  // A start-only move (the Gantt's left handle, the detail panel's start picker)
+  // RESCHEDULES the due date rather than failing — pushed just far enough to keep
+  // the window's original length, per lib/task-dates.ts. Only a patch that names
+  // BOTH ends and still inverts them is the caller contradicting itself, and that
+  // is still rejected.
   {
+    const duePatched = body.due_date !== undefined;
     const effStart = updates.start_date !== undefined ? updates.start_date : existing.start_date;
     const effDue = updates.due_date !== undefined ? updates.due_date : existing.due_date;
     if (isYmd(effStart) && isYmd(effDue) && effStart > effDue) {
-      sendError(res, 400, 'invalid_date_range', `start_date (${effStart}) cannot be after due_date (${effDue}).`);
-      return;
+      const shifted = duePatched
+        ? null
+        : dueDateAfterStartMove(existing.start_date, existing.due_date, effStart);
+      if (!shifted) {
+        sendError(res, 400, 'invalid_date_range', `start_date (${effStart}) cannot be after due_date (${effDue}).`);
+        return;
+      }
+      updates.due_date = shifted;
+      fieldChanges.push({ field: 'due_date', from: existing.due_date ?? null, to: shifted });
     }
   }
 
@@ -875,6 +890,25 @@ export async function handleTasksUpdate(
     if (!validStatuses.includes(updates.status as string)) {
       sendError(res, 400, 'invalid_status', `Status must be one of: ${validStatuses.join(', ')}`);
       return;
+    }
+    // Same real-world timing the CLI stamps on a status change, so a task dragged
+    // across the board records the same dates as `dreamcontext tasks status`:
+    // `in_progress` stamps the actual start (rescheduling a now-impossible due
+    // date), `completed` stamps the actual end. An end explicitly named in THIS
+    // patch always wins over the stamp.
+    const stamped = dateUpdatesForStatus(
+      updates.status as string,
+      {
+        start_date: (updates.start_date !== undefined ? updates.start_date : existing.start_date) as string | null,
+        due_date: (updates.due_date !== undefined ? updates.due_date : existing.due_date) as string | null,
+      },
+      today(),
+    );
+    for (const field of ['start_date', 'due_date'] as const) {
+      const value = stamped[field];
+      if (value === undefined || body[field] !== undefined) continue;
+      updates[field] = value;
+      fieldChanges.push({ field, from: (existing[field] ?? null) as FieldChange['from'], to: value });
     }
   }
 

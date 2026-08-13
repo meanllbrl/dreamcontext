@@ -38,7 +38,7 @@ Sections: `why`, `user_stories`, `acceptance_criteria`, `workflow`, `constraints
 ### Lifecycle commands
 ```bash
 dreamcontext tasks log <name> "what was done"        # changelog entry — MANDATORY each session
-dreamcontext tasks status <name> in_progress "reason" # bump status; first in_progress auto-stamps start_date if unset
+dreamcontext tasks status <name> in_progress "reason" # bump status; first in_progress auto-stamps start_date if unset, completed stamps due_date with the real end
 dreamcontext tasks status <name> in_review "reason"  # bump status (logs automatically)
 dreamcontext tasks complete <name> "summary"         # mark complete
 dreamcontext tasks delete <name> --yes               # delete (propagates to remote on sync)
@@ -80,7 +80,8 @@ dreamcontext tasks start <name> clear        # clear the start
 dreamcontext tasks due <name> clear          # clear the due
 dreamcontext tasks create <name> --start 2026-06-25 --due 2026-07-01
 ```
-- `start` must be **on or before** `due` — an inverted range is rejected (clear one end first).
+- `start` is always **on or before** `due`. Moving the **start** past the due date doesn't fail — the due date is pushed out by just enough to preserve the window's length (a 5-day job that starts late is still a 5-day job). Moving the **due** end before the start is still rejected, since that's a direct contradiction.
+- Status transitions record real-world timing: the first `in_progress` stamps `start_date` (and reschedules a due date it would have invalidated), `completed` stamps `due_date` with the actual end date.
 - Setting either date on a `backlog`-tagged task **removes the `backlog` tag** (a dated task is planned, not backlog).
 - Both dates render in the dashboard timeline (Gantt) and calendar views.
 

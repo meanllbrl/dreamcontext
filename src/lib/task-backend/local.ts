@@ -7,6 +7,7 @@ import { insertToSection, listSections, readSection } from '../markdown.js';
 import { generateId, slugify, today } from '../id.js';
 import { normalizeRice } from '../rice.js';
 import { healTaskRemoved, healTaskRename } from '../feature-links.js';
+import { dateUpdatesForStatus } from '../task-dates.js';
 import { filterTasks, toTaskRecord, type TaskFilter } from '../task-query.js';
 import {
   TaskBackendError,
@@ -505,12 +506,18 @@ ${input.why || '(To be defined)'}
   }
 
   async complete(slug: string, summary?: string): Promise<TaskData> {
+    const now = today();
     await this.addChangelog(
       slug,
-      `### ${today()} - Completed\n- ${summary ?? 'Task completed.'}`,
+      `### ${now} - Completed\n- ${summary ?? 'Task completed.'}`,
       { fallbackAppend: true },
     );
-    return this.updateFields(slug, { status: 'completed', updated_at: today() });
+    // Completing stamps the REAL end of the window, so the timeline shows what
+    // happened rather than what was planned (see lib/task-dates.ts). Lives here
+    // rather than in the CLI so every backend and every caller of `complete()`
+    // records the same thing.
+    const dates = dateUpdatesForStatus('completed', await this.get(slug), now);
+    return this.updateFields(slug, { status: 'completed', updated_at: now, ...dates });
   }
 
   async delete(slug: string): Promise<void> {
