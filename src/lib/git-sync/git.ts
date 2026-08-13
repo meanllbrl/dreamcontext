@@ -369,11 +369,17 @@ export function hasMergeHead(cwd: string): boolean {
  * edit that must be committed/checkpointed too (an already-ignored file never
  * shows up here regardless — `git status` never lists ignored paths without
  * `--ignored`).
+ *
+ * `pathspecs` (absolute or cwd-relative) scopes the status to those paths.
+ * Returned entries stay exactly as git prints them: relative to the REPO
+ * TOP-LEVEL, not to `cwd` — callers below a repo root translate themselves.
  */
-export function statusPorcelainTracked(cwd: string): string[] {
+export function statusPorcelainTracked(cwd: string, pathspecs?: string[]): string[] {
   let raw: string;
   try {
-    raw = execFileSync('git', ['status', '--porcelain', '-z'], {
+    const args = ['status', '--porcelain', '-z'];
+    if (pathspecs && pathspecs.length > 0) args.push('--', ...pathspecs);
+    raw = execFileSync('git', args, {
       cwd,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],

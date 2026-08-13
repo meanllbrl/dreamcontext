@@ -51,9 +51,12 @@ describe('collectBrainDirty', () => {
     expect(report.paths).toEqual(['_dream_context/state/x.json']);
   });
 
-  it('nested-non-repo: projectRoot sits inside an enclosing repo — reports unavailable, never the enclosing repo\'s files', () => {
+  it('a path that cannot be re-based under the vault marks the report INCONCLUSIVE, never silently clean', () => {
     const statusImpl = () => [
-      // What the ENCLOSING repo's status would show — must NEVER surface.
+      // The pathspec guarantees every real git entry lives under our context
+      // dir — an entry that resolves OUTSIDE the vault means the
+      // topLevel/projectRoot resolution assumption broke. That must surface
+      // as "could not verify", and it must never blame another project.
       'some-other-project/_dream_context/state/x.json',
     ];
     const report = collectBrainDirty('/enclosing/nested-vault', {
@@ -62,6 +65,27 @@ describe('collectBrainDirty', () => {
     });
     expect(report.unavailable).toBe(true);
     expect(report.paths).toEqual([]);
+  });
+
+  it('nested vault: its own dirty brain files are re-based from repo-top-relative to vault-relative', () => {
+    // Git prints paths relative to the repo TOP; the vault lives a level down.
+    const statusImpl = () => ['nested-vault/_dream_context/state/x.json'];
+    const report = collectBrainDirty('/enclosing/nested-vault', {
+      statusImpl,
+      topLevelImpl: () => '/enclosing',
+    });
+    expect(report.unavailable).toBe(false);
+    expect(report.paths).toEqual(['_dream_context/state/x.json']);
+  });
+
+  it('scopes the git status probe with a context-dir pathspec', () => {
+    let seen: string[] | undefined;
+    const statusImpl = (_cwd: string, pathspecs?: string[]) => {
+      seen = pathspecs;
+      return [];
+    };
+    collectBrainDirty('/repo', { statusImpl, topLevelImpl: sameRootTopLevel });
+    expect(seen).toEqual(['/repo/_dream_context']);
   });
 
   it('rev-parse failure (not a repo at all, or git absent): unavailable', () => {

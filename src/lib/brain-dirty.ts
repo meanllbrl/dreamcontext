@@ -8,7 +8,8 @@
  * string literals rendered for the user to run themselves).
  */
 
-import { resolve } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { statusPorcelainTracked, repoToplevel } from './git-sync/git.js';
 
 export interface BrainDirtyReport {
@@ -24,13 +25,20 @@ export interface BrainDirtyReport {
  * Collect uncommitted paths under `<contextDirName>/`, scoped to that prefix so
  * a dirty CODE tree never triggers this warning — only brain output does.
  *
- * `projectRoot` MUST be its own repo top-level before `git status` output is
- * trusted: when a scratch vault sits NESTED inside an enclosing checkout (no
- * `.git` of its own), `git status` run there walks UP to the enclosing repo,
- * and its uncommitted paths have nothing to do with `projectRoot` — reporting
- * them would falsely warn about another project's files. `repoToplevel`
- * resolves the work-tree root git would actually operate on; a mismatch (or a
- * failed/absent repo) makes the report `unavailable` rather than wrong.
+ * The scoping is a git PATHSPEC, not a top-level equality check. The old
+ * `repoToplevel === projectRoot` gate existed so a vault nested inside an
+ * enclosing checkout couldn't be blamed for the enclosing repo's dirty files —
+ * but it also made every vault living in a SUBDIRECTORY of its repo (a
+ * monorepo app dir, the common team layout) report `unavailable` after every
+ * single sleep, which users read as a scary git failure. Passing
+ * `<projectRoot>/<contextDirName>` as the pathspec gives the same safety with
+ * none of the false alarms: whatever repo git resolves to, every returned path
+ * is under OUR context dir by construction. Only a truly absent repo (or a
+ * failing git) is `unavailable` now.
+ *
+ * Returned paths are re-based to be projectRoot-relative (git prints them
+ * relative to the repo top-level, which may sit above `projectRoot`), so the
+ * rendered warning and its `git add` command keep working from the vault.
  *
  * Reuses `statusPorcelainTracked` (already includes untracked files, already
  * swallows its own git-invocation errors to `[]`); the try/catch around both
@@ -41,7 +49,7 @@ export function collectBrainDirty(
   projectRoot: string,
   opts: {
     contextDirName?: string;
-    statusImpl?: (cwd: string) => string[];
+    statusImpl?: (cwd: string, pathspecs?: string[]) => string[];
     topLevelImpl?: (cwd: string) => string | null;
   } = {},
 ): BrainDirtyReport {
@@ -55,19 +63,51 @@ export function collectBrainDirty(
   } catch {
     return { paths: [], unavailable: true };
   }
-  if (!topLevel || resolve(topLevel) !== resolve(projectRoot)) {
+  if (!topLevel) {
     return { paths: [], unavailable: true };
   }
 
   let raw: string[];
   try {
-    raw = statusImpl(projectRoot);
+    raw = statusImpl(projectRoot, [join(projectRoot, contextDirName)]);
   } catch {
     return { paths: [], unavailable: true };
   }
 
+  // Re-base git's repo-top-relative paths onto projectRoot. realpath both
+  // sides first: git prints PHYSICAL paths (macOS `/tmp` → `/private/tmp`),
+  // and a symlinked projectRoot would otherwise never prefix-match. Falls back
+  // to the logical path when realpath fails (injected test doubles use paths
+  // that don't exist) — a mismatch there degrades to "no paths", never a throw.
+  const physical = (p: string): string => {
+    try {
+      return realpathSync(resolve(p));
+    } catch {
+      return resolve(p);
+    }
+  };
+  const realProjectRoot = physical(projectRoot);
+  const realTopLevel = physical(topLevel);
+  const rebase = (p: string): string | null => {
+    const abs = resolve(realTopLevel, p);
+    if (abs !== realProjectRoot && !abs.startsWith(realProjectRoot + sep)) return null;
+    return relative(realProjectRoot, abs).split(sep).join('/');
+  };
+
+  // The pathspec means every entry git returned lives under OUR context dir —
+  // so a path that cannot be re-based under projectRoot says the
+  // topLevel/projectRoot resolution assumption itself broke (case-folding
+  // mismatch, an exotic symlink the realpath fallback didn't bridge). That
+  // report is INCONCLUSIVE, not clean: this warning exists so a stray
+  // `git checkout .` can't silently erase a sleep's output, and a silent
+  // false-negative here fails it in exactly the mode it was built to prevent.
   const prefix = `${contextDirName}/`;
-  const paths = raw.filter((p) => p === contextDirName || p.startsWith(prefix));
+  const paths: string[] = [];
+  for (const entry of raw) {
+    const rebased = rebase(entry);
+    if (rebased === null) return { paths: [], unavailable: true };
+    if (rebased === contextDirName || rebased.startsWith(prefix)) paths.push(rebased);
+  }
   return { paths, unavailable: false };
 }
 
@@ -88,7 +128,8 @@ export function renderBrainDirtyWarning(
 
   if (r.unavailable) {
     return [
-      `⚠ Could not verify whether ${opts.contextDirName}/ is committed (git status unavailable) — check manually.`,
+      `⚠ Could not verify whether ${opts.contextDirName}/ is committed — this project is not a git repository (or git itself failed). ` +
+        'Your consolidated brain has no version history; consider `git init` so a stray deletion is recoverable.',
     ];
   }
   if (r.paths.length === 0) return [];
