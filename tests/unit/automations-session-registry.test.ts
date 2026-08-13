@@ -17,12 +17,15 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   automationSessionsPath,
+  foreignRunEvidence,
   isAutomationBoundSession,
   latestBoundSession,
   readAutomationSession,
   recordAutomationSession,
   retireAutomationSession,
 } from '../../src/lib/automations/session-registry.js';
+import { writeAutomationCache, automationCachePath } from '../../src/lib/automations/store.js';
+import type { AutomationCache, AutomationManifest, RunEvent } from '../../src/lib/automations/types.js';
 
 let home: string;
 /** Real "now" rather than a fixed calendar date: the TTL is enforced on READ as
@@ -255,5 +258,118 @@ describe('the file cannot grow forever, and cannot take the subsystem down', () 
     // entry — inert is the only safe reading of that.
     expect(readAutomationSession('digest', 'sess-unparseable-at', home)).toBeNull();
     expect(readAutomationSession('digest', 'sess-not-an-object', home)).toBeNull();
+  });
+});
+
+describe('foreignRunEvidence — the approve-time duplicate warning', () => {
+  // A separate contextRoot per test: the evidence reads the BRAIN-synced cache
+  // (`automations/cache/<slug>.json`), which lives under the project, not home.
+  let contextRoot: string;
+  beforeEach(() => {
+    contextRoot = mkdtempSync(join(tmpdir(), 'dc-foreign-'));
+  });
+  afterEach(() => {
+    rmSync(contextRoot, { recursive: true, force: true });
+  });
+
+  const manifest = (over: Partial<AutomationManifest> = {}): AutomationManifest =>
+    ({ slug: 'digest', shared: true, ...over }) as AutomationManifest;
+
+  const event = (over: Partial<RunEvent> = {}): RunEvent => ({
+    firedAt: new Date(NOW).toISOString(),
+    startedAt: new Date(NOW).toISOString(),
+    finishedAt: new Date(NOW).toISOString(),
+    status: 'ok',
+    durationMs: 1000,
+    outputPath: null,
+    error: null,
+    exitCode: 0,
+    sessionId: null,
+    costUsd: null,
+    numTurns: null,
+    permissionDenials: 0,
+    ...over,
+  });
+
+  const cacheWith = (history: RunEvent[]): AutomationCache => ({
+    slug: 'digest',
+    lastRunAt: history[0]?.startedAt ?? null,
+    lastFireAt: history[0]?.firedAt ?? null,
+    status: history[0]?.status ?? null,
+    durationMs: null,
+    outputPath: null,
+    error: null,
+    exitCode: null,
+    history,
+  });
+
+  it('a run whose session this machine never recorded is evidence of another machine', () => {
+    writeAutomationCache(contextRoot, 'digest', cacheWith([event({ sessionId: 'sess-theirs' })]));
+    const evidence = foreignRunEvidence(contextRoot, manifest(), home, NOW);
+    expect(evidence).toEqual({ count: 1, lastAt: new Date(NOW).toISOString() });
+  });
+
+  it('a run this machine recorded itself is NOT foreign', () => {
+    recordAutomationSession('digest', 'sess-ours', home, NOW);
+    writeAutomationCache(contextRoot, 'digest', cacheWith([event({ sessionId: 'sess-ours' })]));
+    expect(foreignRunEvidence(contextRoot, manifest(), home, NOW)).toEqual({ count: 0, lastAt: null });
+  });
+
+  it('returns null for a private manifest — a private cache never syncs, so "foreign" cannot exist', () => {
+    // A wiped or aged-out binding store must not misread local history as a
+    // machine that does not exist.
+    writeAutomationCache(contextRoot, 'digest', cacheWith([event({ sessionId: 'sess-unbound' })]));
+    expect(foreignRunEvidence(contextRoot, manifest({ shared: false }), home, NOW)).toBeNull();
+  });
+
+  it('reads `shared` strict-true, exactly as publishing does', () => {
+    writeAutomationCache(contextRoot, 'digest', cacheWith([event({ sessionId: 'sess-unbound' })]));
+    expect(foreignRunEvidence(contextRoot, manifest({ shared: 'yes' as unknown as boolean }), home, NOW)).toBeNull();
+  });
+
+  it('no cache at all is zero evidence, not an error', () => {
+    expect(foreignRunEvidence(contextRoot, manifest(), home, NOW)).toEqual({ count: 0, lastAt: null });
+  });
+
+  it('events that never spawned (sessionId null) say nothing about where they happened', () => {
+    writeAutomationCache(contextRoot, 'digest', cacheWith([event({ sessionId: null, status: 'blocked' })]));
+    expect(foreignRunEvidence(contextRoot, manifest(), home, NOW)).toEqual({ count: 0, lastAt: null });
+  });
+
+  it('events older than the binding TTL are unattributable, never counted as foreign', () => {
+    // A local run that old has had its binding legitimately expire — counting
+    // it would warn an operator about their own machine's history.
+    const old = new Date(NOW - 91 * DAY_MS).toISOString();
+    writeAutomationCache(contextRoot, 'digest', cacheWith([event({ sessionId: 'sess-ancient', startedAt: old })]));
+    expect(foreignRunEvidence(contextRoot, manifest(), home, NOW)).toEqual({ count: 0, lastAt: null });
+  });
+
+  it('counts every recent foreign run and reports the newest', () => {
+    recordAutomationSession('digest', 'sess-ours', home, NOW);
+    const newest = new Date(NOW - 1 * DAY_MS).toISOString();
+    const older = new Date(NOW - 3 * DAY_MS).toISOString();
+    writeAutomationCache(
+      contextRoot,
+      'digest',
+      cacheWith([
+        event({ sessionId: 'sess-ours' }),
+        event({ sessionId: 'sess-theirs-1', startedAt: newest }),
+        event({ sessionId: 'sess-theirs-2', startedAt: older }),
+      ]),
+    );
+    expect(foreignRunEvidence(contextRoot, manifest(), home, NOW)).toEqual({ count: 2, lastAt: newest });
+  });
+
+  it('a planted `__proto__` session id reads as foreign, never as ours', () => {
+    writeAutomationCache(contextRoot, 'digest', cacheWith([event({ sessionId: '__proto__' })]));
+    expect(foreignRunEvidence(contextRoot, manifest(), home, NOW)?.count).toBe(1);
+  });
+
+  it('a malformed synced cache degrades to zero evidence, never a throw', () => {
+    mkdirSync(join(contextRoot, 'automations', 'cache'), { recursive: true });
+    writeFileSync(automationCachePath(contextRoot, 'digest'), JSON.stringify({ slug: 'digest', history: 'nope' }), 'utf-8');
+    expect(foreignRunEvidence(contextRoot, manifest(), home, NOW)).toEqual({ count: 0, lastAt: null });
+    writeFileSync(automationCachePath(contextRoot, 'digest'), JSON.stringify({ slug: 'digest', history: [null, 'x'] }), 'utf-8');
+    expect(foreignRunEvidence(contextRoot, manifest(), home, NOW)).toEqual({ count: 0, lastAt: null });
   });
 });

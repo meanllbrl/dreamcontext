@@ -10,6 +10,7 @@ import {
   deriveFlowFromManifest,
 } from '../../lib/automations/store.js';
 import { resolveRunSession, readSessionDigest } from '../../lib/automations/session.js';
+import { foreignRunEvidence } from '../../lib/automations/session-registry.js';
 import {
   checkApproval,
   approveAutomation,
@@ -214,6 +215,12 @@ export async function handleAutomationsShow(
       },
       approved: approval.approved,
       approvalReason: approval.approved ? null : approval.reason,
+      // Rides the same payload the approve screen renders, for the same reason
+      // every hashed field does: the reviewer must see it BEFORE consenting. A
+      // shared manifest whose synced history holds runs this machine never
+      // performed is already running elsewhere, and approving it here runs it
+      // duplicated. null ⇒ private manifest, no evidence either way.
+      foreignRuns: foreignRunEvidence(contextRoot, manifest),
       cache: readAutomationCache(contextRoot, manifest.slug),
     });
   } catch {

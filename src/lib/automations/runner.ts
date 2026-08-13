@@ -10,7 +10,7 @@ import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { approvalFields, checkApproval, getApproval, renderApprovalReview } from './registry.js';
 import { backfillQuestionSession, createQuestion, pendingQuestion } from './hitl.js';
-import { recordAutomationSession } from './session-registry.js';
+import { foreignRunEvidence, recordAutomationSession } from './session-registry.js';
 import { enqueueFire } from './queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
 import { fetchTransport, notifyTelegram, readTelegramConfigForSlug } from './telegram.js';
@@ -1135,6 +1135,14 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         },
       );
       const asked = questionExecution.result?.parsed ? (questionExecution.result.result ?? '').trim() : '';
+      // The duplicate-run note rides the question itself, so it reaches every
+      // answer surface (chat, Telegram, `automations answer`) — the asking
+      // session can't know this, only this machine's binding store can.
+      const foreign = foreignRunEvidence(contextRoot, manifest);
+      const dupNote =
+        foreign && foreign.count > 0
+          ? ' Note: this shared automation already runs on another machine — approving here keeps it running on this machine too, duplicated.'
+          : '';
       createQuestion(contextRoot, {
         slug,
         runFiredAt: fireAt.toISOString(),
@@ -1144,7 +1152,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // kind anyway; passing null here says so at the call site too.
         sessionId: null,
         channel: 'chat',
-        question: asked || `"${manifest.title}" was edited since you approved it. Approve the change and let it run again?`,
+        question:
+          (asked || `"${manifest.title}" was edited since you approved it. Approve the change and let it run again?`) + dupNote,
         choices: ['approve', 'not now'],
         nowISO: nowFn().toISOString(),
       });

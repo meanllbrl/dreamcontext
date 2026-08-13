@@ -366,6 +366,7 @@ export function AutomationDetailPanel({ summary, runningSlug, autoOpenLatestRun,
   const automation = detail.data?.automation ?? null;
   const approved = detail.data?.approved ?? summary.approved;
   const approvalReason = detail.data?.approvalReason ?? summary.approvalReason;
+  const foreignRuns = detail.data?.foreignRuns ?? null;
   const cache = detail.data?.cache ?? null;
   // Already newest-first as stored: `recordRun` PREPENDS each event. The
   // `.reverse()` that used to be here was inverting it, so the panel showed the
@@ -592,6 +593,24 @@ export function AutomationDetailPanel({ summary, runningSlug, autoOpenLatestRun,
                         <pre className="adp-review-block">{automation.outputInstructions || <em>(none)</em>}</pre>
                       </div>
                     </div>
+                    {/* The duplicate-run warning, directly above the consent it
+                        qualifies. Approval is machine-local and shared
+                        automations have no cross-machine coordination, so a
+                        synced history holding runs this machine never performed
+                        means a teammate's machine is already running this — and
+                        approving here runs it duplicated. Advisory, never a
+                        block: duplication may be wanted, but not unwittingly. */}
+                    {foreignRuns !== null && foreignRuns.count > 0 && (
+                      <div className="adp-warn-banner">
+                        <span className="adp-warn-glyph">⚠</span>
+                        <div className="adp-warn-sub">
+                          This shared automation already runs on another machine — {foreignRuns.count} recent{' '}
+                          {foreignRuns.count === 1 ? 'run' : 'runs'} in its synced history did not happen here
+                          {foreignRuns.lastAt ? ` (last: ${new Date(foreignRuns.lastAt).toLocaleString()})` : ''}.
+                          Approving it here runs it on this machine too — duplicated, not moved.
+                        </div>
+                      </div>
+                    )}
                     <button className="adp-approve-btn" onClick={handleApprove} disabled={approve.isPending}>
                       {approve.isPending ? 'Approving…' : `Approve — this will run on this machine`}
                     </button>

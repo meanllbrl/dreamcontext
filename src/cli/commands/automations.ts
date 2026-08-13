@@ -71,6 +71,7 @@ import {
   readDispatcherHeartbeat,
 } from '../../lib/automations/registry.js';
 import { runAutomation, killRunGroup, type RunOutcome, type KillRunResult } from '../../lib/automations/runner.js';
+import { foreignRunEvidence } from '../../lib/automations/session-registry.js';
 import { tickProject, tickAll, type TickProjectResult, type TickAllResult } from '../../lib/automations/tick.js';
 import {
   dispatcherPlistPath,
@@ -1476,6 +1477,19 @@ export function registerAutomationsCommand(program: Command): void {
           const value = fields[key];
           console.log(chalk.dim(`  ${key}:`));
           console.log(`    ${value === null || value === '' ? chalk.dim('(none)') : String(value)}`);
+        }
+
+        // The duplicate-run warning. Approval is machine-local and shared
+        // automations have no cross-machine coordination, so approving one that
+        // already runs on a teammate's machine runs it HERE TOO. Advisory only
+        // — duplication may be wanted — but it must never happen unwittingly.
+        const foreign = foreignRunEvidence(root, manifest);
+        if (foreign && foreign.count > 0) {
+          warn(
+            `This shared automation already runs on another machine: ${foreign.count} recent run${foreign.count === 1 ? '' : 's'} in its synced history ` +
+              `did not happen here${foreign.lastAt ? ` (last: ${foreign.lastAt})` : ''}.`,
+          );
+          warn('Approving it here runs it on THIS machine too — duplicated, not moved.');
         }
 
         if (!opts.yes) {

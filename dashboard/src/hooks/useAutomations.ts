@@ -205,10 +205,23 @@ export interface AutomationSession {
   toolErrors: number;
 }
 
+/** Mirrors `ForeignRunEvidence` — runs in a SHARED automation's synced history
+ *  that this machine's own session-binding store never recorded, i.e. runs
+ *  that happened on some other machine. */
+export interface AutomationForeignRuns {
+  count: number;
+  lastAt: string | null;
+}
+
 export interface AutomationDetail {
   automation: AutomationManifestDetail;
   approved: boolean;
   approvalReason: ApprovalReason | null;
+  /** null ⇒ private manifest (no evidence either way), or an older backend.
+   *  Rendered on the approve screen: approving a shared automation that
+   *  already runs elsewhere runs it duplicated, and that must be consented to
+   *  knowingly, never discovered later. */
+  foreignRuns?: AutomationForeignRuns | null;
   cache: AutomationCache | null;
 }
 

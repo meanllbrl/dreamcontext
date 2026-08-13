@@ -86,8 +86,9 @@ import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { isSafeSessionId } from '../transcript-locate.js';
-import { isSafeAutomationSlug } from './store.js';
+import { isSafeAutomationSlug, readAutomationCache } from './store.js';
 import { AutomationError } from './types.js';
+import type { AutomationManifest } from './types.js';
 
 /** Outer bound on how long any binding stays resumable. Generous — a question
  *  can sit unanswered for a long time and must still be answerable, and a run
@@ -339,4 +340,79 @@ export function retireAutomationSession(
   if (!(sessionId in all)) return;
   delete all[sessionId];
   writeAll(slug, home, all, nowMs);
+}
+
+// ─── Foreign-run evidence (the approve-time duplicate warning) ───────────────
+
+/** What a SHARED automation's synced run history says about other machines —
+ *  see {@link foreignRunEvidence}. */
+export interface ForeignRunEvidence {
+  /** Recent history events that spawned a session this machine's own binding
+   *  store never recorded — i.e. runs that happened on some other machine. */
+  count: number;
+  /** `startedAt` of the newest such event, or null when `count` is 0. */
+  lastAt: string | null;
+}
+
+/**
+ * Evidence that a shared automation is ALREADY RUNNING on another machine.
+ *
+ * Shared automations have no cross-machine coordination — approval is
+ * deliberately machine-local, so a second machine approving one runs it
+ * DUPLICATED, not moved. This function is what lets every approval surface say
+ * so before the human consents: the synced cache's `history[].sessionId` is
+ * exactly the untrusted, teammate-writable assertion the module doc describes,
+ * but here it is used the one way an assertion safely can be — an id this
+ * machine's OWN binding store never recorded is a run this machine did not
+ * perform, wherever the id came from. A planted or malformed id therefore
+ * counts as foreign, which is the correct reading of unverifiable data for a
+ * warning (never a grant).
+ *
+ * Two deliberate boundaries on what is counted:
+ *   - Returns null — "no evidence either way" — for a PRIVATE manifest. A
+ *     private cache never syncs, so every event in it is local, and a wiped or
+ *     aged-out binding store would misread that history as foreign and warn an
+ *     operator about a machine that does not exist.
+ *   - Events older than the binding TTL are skipped, not counted. A local run
+ *     that old has had its binding legitimately expire, so it is
+ *     unattributable, and an unattributable event must not be presented as
+ *     evidence of another machine.
+ *
+ * Advisory only: callers WARN on it, never block. Read-only, never throws.
+ */
+export function foreignRunEvidence(
+  contextRoot: string,
+  manifest: AutomationManifest,
+  home: string = homedir(),
+  nowMs: number = Date.now(),
+): ForeignRunEvidence | null {
+  if (manifest.shared !== true) return null;
+  if (!isSafeAutomationSlug(manifest.slug)) return null;
+  const cache = readAutomationCache(contextRoot, manifest.slug);
+  // The cache is SYNCED, teammate-writable JSON and `readAutomationCache` does
+  // not validate its shape — a missing or non-array `history` must degrade to
+  // "no evidence", never throw out of a read that gates nothing.
+  const history = Array.isArray(cache?.history) ? cache.history : [];
+  const bindings = readAll(manifest.slug, home, nowMs);
+  let count = 0;
+  let lastAtMs = -Infinity;
+  let lastAt: string | null = null;
+  for (const e of history) {
+    if (!e || typeof e !== 'object') continue;
+    // Events that never spawned (blocked/deferred) carry `sessionId: null` and
+    // say nothing about WHERE they happened — skip, same as the TTL skip below.
+    if (typeof e.sessionId !== 'string' || e.sessionId === '') continue;
+    const at = Date.parse(e.startedAt);
+    if (!Number.isFinite(at)) continue;
+    if (nowMs - at > BINDING_TTL_MS) continue;
+    // `hasOwnProperty`, not a bare index: the id is synced, attacker-writable
+    // data, and a planted `__proto__` must read as foreign, not as ours.
+    if (Object.prototype.hasOwnProperty.call(bindings, e.sessionId)) continue;
+    count += 1;
+    if (at > lastAtMs) {
+      lastAtMs = at;
+      lastAt = e.startedAt;
+    }
+  }
+  return { count, lastAt };
 }
