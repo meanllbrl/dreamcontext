@@ -15,6 +15,13 @@ import {
   DEFAULT_CATCHUP_HOURS,
   DEFAULT_TIMEOUT_MINUTES,
   EFFORT_LEVELS,
+  FLOW_EDGE_LABEL_MAX_CHARS,
+  FLOW_GRAPH_VERSION,
+  FLOW_HEADING,
+  FLOW_LABEL_MAX_CHARS,
+  FLOW_MAX_EDGES,
+  FLOW_MAX_NODES,
+  FLOW_NODE_ID_RE,
   HISTORY_LIMIT,
   MAX_CATCHUP_HOURS,
   MAX_TIMEOUT_MINUTES,
@@ -32,6 +39,9 @@ import {
   type AutomationManifest,
   type AutomationPattern,
   type EffortLevel,
+  type FlowGraph,
+  type FlowGraphEdge,
+  type FlowGraphNode,
   type PatternLesson,
   type ReviewMode,
   type RunEvent,
@@ -144,6 +154,202 @@ export function extractSection(body: string, heading: string): string {
   return section.join('\n').trim();
 }
 
+// ─── The `## Flow` graph ────────────────────────────────────────────────────
+//
+// The graph is stored as fenced JSON under `## Flow` in the manifest, so one
+// file holds what the job DOES and what it is WIRED as, side by side, and both
+// travel together through sharing and through the approval hash.
+//
+// Reads here are LENIENT in the same specific way every other sub-block is: a
+// malformed graph reads as ABSENT (`null`), never as a partial graph. That
+// matters more than usual because `flow` is approval-hashed — a half-parsed
+// graph would hash differently from both "no graph" and "the graph the author
+// wrote", so an automation could block itself on a typo. Absent is a state the
+// system already handles everywhere (`deriveFlowFromManifest` covers the
+// display side); half-present is not.
+
+/** Strip a ``` / ```json fence, if the section is wrapped in one.
+ *
+ *  `extractSection` is line-based and stops at the next `## ` heading, so a
+ *  fenced block arrives intact but WITH its fence lines — and `JSON.parse`
+ *  cannot read those. Tolerates an unclosed fence (a hand-edited manifest) by
+ *  simply dropping the opening line. */
+function stripCodeFence(section: string): string {
+  const lines = section.trim().split('\n');
+  if (lines.length === 0 || !lines[0].trim().startsWith('```')) return section.trim();
+  const closing = lines.findIndex((l, i) => i > 0 && l.trim().startsWith('```'));
+  return (closing === -1 ? lines.slice(1) : lines.slice(1, closing)).join('\n').trim();
+}
+
+function truncateFlowLabel(v: unknown, max: number): string | undefined {
+  if (typeof v !== 'string') return undefined;
+  const t = v.trim();
+  if (!t) return undefined;
+  return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`;
+}
+
+/** One node, or null when it is unusable. `id` and `kind` are the only required
+ *  fields: everything else a renderer can do without. */
+function parseFlowNode(raw: unknown): FlowGraphNode | null {
+  const rec = asRecord(raw);
+  if (!rec) return null;
+  if (typeof rec.id !== 'string' || !FLOW_NODE_ID_RE.test(rec.id)) return null;
+  if (typeof rec.kind !== 'string' || !rec.kind.trim()) return null;
+  const node: FlowGraphNode = { id: rec.id, kind: rec.kind.trim() };
+  const label = truncateFlowLabel(rec.label, FLOW_LABEL_MAX_CHARS);
+  if (label !== undefined) node.label = label;
+  const config = asRecord(rec.config);
+  // An empty `config` is dropped rather than kept as `{}` — `canonicalFlowJson`
+  // omits it either way, and carrying it would make two graphs that hash the
+  // same look different to a reader diffing the manifest.
+  if (config && Object.keys(config).length > 0) node.config = config;
+  return node;
+}
+
+/**
+ * Parse the `## Flow` section into a graph, or null.
+ *
+ * Null — meaning "this manifest has no flow" — for every one of: no section, a
+ * fence with nothing in it, unparseable JSON, a `version` this build does not
+ * know, a non-array or empty `nodes`, or more nodes than {@link FLOW_MAX_NODES}.
+ * A wrong `version` is deliberately absent rather than an error: a graph written
+ * by a NEWER dreamcontext must leave the automation running on this one, not
+ * dead on arrival.
+ *
+ * Within a well-formed graph, individual items degrade instead of failing the
+ * block: an unusable node is dropped, a duplicate id keeps the FIRST occurrence
+ * (the later one is the accident), and an edge naming a node that does not exist
+ * is dropped — a dangling wire would otherwise draw from nowhere.
+ */
+export function parseFlowSection(content: string): FlowGraph | null {
+  const section = stripCodeFence(extractSection(content, FLOW_HEADING));
+  if (!section) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(section);
+  } catch {
+    return null;
+  }
+  const rec = asRecord(parsed);
+  if (!rec) return null;
+  if (rec.version !== FLOW_GRAPH_VERSION) return null;
+  if (!Array.isArray(rec.nodes)) return null;
+  if (rec.nodes.length === 0 || rec.nodes.length > FLOW_MAX_NODES) return null;
+
+  const nodes: FlowGraphNode[] = [];
+  const seen = new Set<string>();
+  for (const raw of rec.nodes) {
+    const node = parseFlowNode(raw);
+    if (!node || seen.has(node.id)) continue;
+    seen.add(node.id);
+    nodes.push(node);
+  }
+  if (nodes.length === 0) return null;
+
+  const edges: FlowGraphEdge[] = [];
+  if (Array.isArray(rec.edges)) {
+    for (const raw of rec.edges.slice(0, FLOW_MAX_EDGES)) {
+      const e = asRecord(raw);
+      if (!e || typeof e.from !== 'string' || typeof e.to !== 'string') continue;
+      if (!seen.has(e.from) || !seen.has(e.to)) continue;
+      const edge: FlowGraphEdge = { from: e.from, to: e.to };
+      const label = truncateFlowLabel(e.label, FLOW_EDGE_LABEL_MAX_CHARS);
+      if (label !== undefined) edge.label = label;
+      edges.push(edge);
+    }
+  }
+
+  return { version: FLOW_GRAPH_VERSION, nodes, edges };
+}
+
+/** Render a graph as the fenced JSON body of a `## Flow` section. Pretty-printed
+ *  on purpose: the manifest is a file a human reads and hand-edits, and a
+ *  one-line graph is not reviewable — which matters when reviewing it is exactly
+ *  what the approval hash asks of them. */
+export function renderFlowSection(graph: FlowGraph): string {
+  return ['```json', JSON.stringify(graph, null, 2), '```'].join('\n');
+}
+
+/** Write (or replace) an automation's `## Flow` section, preserving every byte
+ *  outside it — see {@link upsertSection}. Never touches frontmatter, so it
+ *  cannot disturb a field the approval hash covers other than `flow` itself. */
+export function writeFlowSection(contextRoot: string, slug: string, graph: FlowGraph): AutomationManifest {
+  const manifest = getAutomation(contextRoot, slug);
+  if (!manifest) throw new AutomationError(`No such automation: ${slug}`);
+  writeFileSync(
+    manifest.path,
+    upsertSection(readFileSync(manifest.path, 'utf-8'), FLOW_HEADING, renderFlowSection(graph)),
+    'utf-8',
+  );
+  return readAutomationFile(manifest.path);
+}
+
+/**
+ * The graph an automation that has no `## Flow` block implies.
+ *
+ * Every automation already IS a flow — it fires on a schedule, runs one agent,
+ * maybe stops to ask, and writes a document. A manifest written before this
+ * section existed simply never said so. Deriving it means the diagram is
+ * populated for every automation on day one instead of only for ones authored
+ * after the upgrade, and an empty canvas never has to be explained.
+ *
+ * PURE and total — no I/O, no throw, same graph for the same manifest. Note the
+ * derived graph is for DISPLAY and is never written to disk or hashed: the
+ * manifest's `flow` stays `null`, which is exactly what keeps its approval
+ * byte-identical across the upgrade.
+ */
+export function deriveFlowFromManifest(m: AutomationManifest): FlowGraph {
+  const nodes: FlowGraphNode[] = [
+    {
+      id: 'trigger',
+      kind: 'trigger',
+      label: formatScheduleLabel(m.schedule),
+      config: { source: 'schedule' },
+    },
+    {
+      id: 'run',
+      kind: 'agent',
+      label: m.title,
+      ...(m.model || m.effort ? { config: { ...(m.model ? { model: m.model } : {}), ...(m.effort ? { effort: m.effort } : {}) } } : {}),
+    },
+  ];
+  const edges: FlowGraphEdge[] = [{ from: 'trigger', to: 'run' }];
+
+  // A `review` mode IS a hitl node — the manifest already said "stop and ask",
+  // just in frontmatter rather than in the graph. Drawing it keeps the picture
+  // honest about where the run can pause.
+  if (m.review !== 'off') {
+    nodes.push({
+      id: 'ask',
+      kind: 'hitl',
+      label: m.review === 'output' ? 'Approve the document?' : 'The run may stop to ask',
+      config: { channel: 'chat', mode: m.review },
+    });
+    edges.push({ from: 'run', to: 'ask' });
+  }
+
+  nodes.push({
+    id: 'report',
+    kind: 'report',
+    label: m.outputDir ?? `automations/output/${m.slug}/`,
+    config: { target: 'output' },
+  });
+  edges.push({ from: m.review === 'off' ? 'run' : 'ask', to: 'report' });
+
+  return { version: FLOW_GRAPH_VERSION, nodes, edges };
+}
+
+/** `formatSchedule` lives in schedule.ts, which this module already imports for
+ *  `parseSchedule` — but only the label is wanted here, and importing it for one
+ *  string keeps the derived graph readable rather than printing a raw object. */
+function formatScheduleLabel(schedule: AutomationManifest['schedule']): string {
+  if (schedule === null) return 'no schedule';
+  if (schedule.days === 'daily') return `every day at ${schedule.at}`;
+  if (schedule.days.length === 0) return 'no schedule';
+  return `${schedule.days.join(', ')} at ${schedule.at}`;
+}
+
 // ─── Output-directory containment ───────────────────────────────────────────
 
 /**
@@ -239,6 +445,13 @@ export function readAutomationFile(filePath: string): AutomationManifest {
     prompt: extractSection(content, 'Prompt'),
     outputInstructions: extractSection(content, 'Output instructions'),
     pattern: extractSection(content, PATTERN_HEADING),
+    // `null` when the manifest has no `## Flow` — and `parseFlowSection` returns
+    // exactly that, never `undefined`. The distinction is the byte-identity
+    // guarantee: `canonicalApprovalPayload` omits the field via `flow !== null`,
+    // which is TRUE for `undefined`, so an undefined leaking through here would
+    // change the hash of every manifest written before this section existed and
+    // block all of them at once. See AutomationManifest.flow's doc comment.
+    flow: parseFlowSection(content),
     path: filePath,
     body: content.trim(),
   };

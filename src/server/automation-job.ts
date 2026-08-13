@@ -1,4 +1,6 @@
+import { dirname } from 'node:path';
 import { runAutomation, type RunOutcome } from '../lib/automations/runner.js';
+import { enqueueFire } from '../lib/automations/queue.js';
 import { trackChild } from './lifecycle.js';
 
 /**
@@ -80,6 +82,22 @@ async function runJob(contextRoot: string, job: AutomationJobState): Promise<voi
   } catch (err) {
     job.status = 'error';
     job.error = (err as Error).message ?? String(err);
+    // `runAutomation` REJECTS only for the two precondition violations it
+    // documents (a non-POSIX platform, a broken `host:"server"` contract) —
+    // every operational outcome, lock-busy included, RESOLVES and is handled
+    // above. A rejection here means no RunEvent was ever recorded and no
+    // watermark advanced, so without this the fire is silently dropped: the
+    // job just shows `error` and nothing ever retries it. Queue it exactly
+    // like the runner's own lock-busy path does, so the next dispatcher tick's
+    // `drainQueue` catches it up, bounded by `catchupHours` like any other
+    // deferred fire. Best-effort: a queue write failure must not mask the
+    // original error, which is why this is its own try/catch.
+    try {
+      enqueueFire(dirname(contextRoot), job.slug, new Date(job.startedAt).toISOString());
+    } catch {
+      // a queue that cannot be written leaves the fire simply not owed —
+      // the same degrade `runAutomation`'s own enqueue failure accepts.
+    }
   } finally {
     job.finishedAt = Date.now();
   }

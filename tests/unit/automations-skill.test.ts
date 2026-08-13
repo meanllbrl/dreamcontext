@@ -22,7 +22,13 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { APPROVAL_DIFF_FIELDS } from '../../src/lib/automations/types.js';
+import {
+  APPROVAL_DIFF_FIELDS,
+  FLOW_GRAPH_VERSION,
+  HITL_CHANNELS,
+  HITL_DIR,
+  QUESTION_KINDS,
+} from '../../src/lib/automations/types.js';
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 
@@ -243,9 +249,23 @@ describe('skill/references/cli-reference.md — share/unshare verbs and the six-
     expect(content).toMatch(/`automations unshare <slug>`/);
   });
 
-  it('describes the approve diff without hardcoding a field count numeral', () => {
-    expect(content).toMatch(/diffing every hashed field/i);
-    expect(content).not.toMatch(/(five|5)\s+(\w+\s+)?(hashed|approval-hashed)/i);
+  it('describes the approve REVIEW without hardcoding a field count numeral', () => {
+    // Still no numeral: the count has moved four times (5 → 6 with `effort`,
+    // 7 with `learning`, 8 with `review`, 9 with `flow`), and a doc that names
+    // it goes stale silently the next time a field joins the hash.
+    expect(content).toMatch(/every hashed field/i);
+    expect(content).not.toMatch(/(five|5|six|6|nine|9)\s+(\w+\s+)?(hashed|approval-hashed)/i);
+  });
+
+  it('does NOT call the approve screen a diff — the registry stores a hash, not prior values', () => {
+    // This assertion used to REQUIRE the word "diffing". It was wrong: the
+    // approval record holds only a sha256, so the tripwire can prove THAT a
+    // field changed and never WHAT it changed from. Calling the screen a diff
+    // told a reader they would be shown an old value that does not exist
+    // anywhere on disk — so the doc says "review", and this guards the claim
+    // from creeping back.
+    expect(content).not.toMatch(/diffing every hashed field/i);
+    expect(content).toMatch(/REVIEW, not a diff/i);
   });
 });
 
@@ -279,8 +299,8 @@ describe('agents/sleep-product.md — automation-output consumption contract', (
   });
 });
 
-describe('approval surface — eight hashed fields, everywhere it is claimed', () => {
-  it('APPROVAL_DIFF_FIELDS is the eight-tuple including effort, learning and review', () => {
+describe('approval surface — nine hashed fields, everywhere it is claimed', () => {
+  it('APPROVAL_DIFF_FIELDS is the nine-tuple including effort, learning, review and flow', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt',
       'outputInstructions',
@@ -290,6 +310,11 @@ describe('approval surface — eight hashed fields, everywhere it is claimed', (
       'outputDir',
       'learning',
       'review',
+      // The graph decides what the prompt says and whether the run stops to
+      // ask, so deleting a `hitl` node removes a human gate exactly as editing
+      // `review` back to `off` does. LAST, because appending is the only
+      // position that keeps every pre-`## Flow` manifest's hash byte-identical.
+      'flow',
     ]);
   });
 
@@ -367,5 +392,186 @@ describe('dashboard approval-review surface — every hashed field reaches the h
         `the detail route does not forward hashed field "${field}"`,
       ).toContain(`${field}: manifest.${field}`);
     }
+  });
+});
+
+/**
+ * T22 — the flow graph, HITL questions, per-automation Telegram, the run queue,
+ * session bindings, and the three approval paths. This surface replaced the
+ * review-card board entirely; these assertions are the lockstep guard for it,
+ * the same role the nine-hashed-fields block above plays for the approval
+ * payload. Several assertions derive their expectation from `types.ts`
+ * (`FLOW_GRAPH_VERSION`, `QUESTION_KINDS`, `HITL_CHANNELS`, `HITL_DIR`) rather
+ * than hardcoding a string, so a future rename of any of them fails the doc
+ * loudly instead of leaving it silently stale.
+ */
+describe('skill/references/automations.md — the flow graph (descriptive, never authority)', () => {
+  const content = AUTOMATIONS_MD;
+
+  it('names the flow graph version literal, in lockstep with types.ts', () => {
+    expect(content).toContain(FLOW_GRAPH_VERSION);
+  });
+
+  it('states the graph is descriptive of orchestration, never of authority', () => {
+    expect(content).toMatch(/descriptive of orchestration, not of authority/i);
+  });
+
+  it('states the interpreter is pure, synchronous, and spawn-free', () => {
+    expect(content.toLowerCase()).toContain('pure, synchronous, and spawn-free');
+  });
+
+  it('states an unknown node kind degrades and is surfaced, never breaks the run', () => {
+    expect(content).toMatch(/degrades and is surfaced, it does not break the run/i);
+  });
+
+  it('states flow is approval-hashed, appended LAST, and omitted when the manifest has none', () => {
+    expect(content).toMatch(/appended LAST to the hashed payload/);
+    expect(content).toMatch(/\*\*omitted entirely\*\*/);
+  });
+
+  it('documents the flow CLI verb', () => {
+    expect(content).toContain('dreamcontext automations flow <slug>');
+  });
+});
+
+describe('skill/references/automations.md — Questions (the review-card board\'s successor)', () => {
+  const content = AUTOMATIONS_MD;
+
+  it('QUESTION_KINDS is the two-kind security discriminator, in lockstep with types.ts', () => {
+    expect(QUESTION_KINDS).toEqual(['approval', 'flow-hitl']);
+  });
+
+  it('documents both question kinds by name', () => {
+    for (const kind of QUESTION_KINDS) {
+      expect(content, `automations.md never mentions question kind "${kind}"`).toContain(`\`${kind}\``);
+    }
+  });
+
+  it('states an approval question never resumes and takes an explicit decision, never free text', () => {
+    expect(content.toLowerCase()).toContain('answering it never resumes anything');
+    expect(content).toMatch(/free text is refused outright/i);
+  });
+
+  it('states a flow-hitl question resumes the exact session that asked', () => {
+    expect(content).toMatch(/resumes the exact session that asked/i);
+  });
+
+  it('names the hitl store path, machine-local and never brain-synced', () => {
+    expect(content).toContain(`automations/${HITL_DIR}/<slug>/<id>.json`);
+    expect(content.toLowerCase()).toContain('never brain-synced');
+  });
+
+  it('documents the questions and answer CLI verbs', () => {
+    expect(content).toContain('dreamcontext automations questions [slug]');
+    expect(content).toContain('dreamcontext automations answer <id> <answer>');
+  });
+
+  it('carries every HITL channel named in types.ts', () => {
+    expect(HITL_CHANNELS).toEqual(['chat', 'telegram']);
+    for (const channel of HITL_CHANNELS) {
+      expect(content.toLowerCase()).toContain(channel);
+    }
+  });
+});
+
+describe('skill/references/automations.md — Telegram is per-automation, never one bot for the project', () => {
+  const content = AUTOMATIONS_MD;
+
+  it('names the per-slug credential path, 0600, machine-local, never synced', () => {
+    expect(content).toContain('~/.dreamcontext/telegram/<slug>.json');
+    expect(content).toContain('mode 0600, machine-local, never synced');
+  });
+
+  it('frames a bot token as a capability, not a preference', () => {
+    expect(content.toLowerCase()).toContain('a capability, not a preference');
+  });
+
+  it('states the blast radius of a leaked token is one automation, never the whole project', () => {
+    expect(content).toMatch(/blast radius to one job/i);
+  });
+
+  it('documents the telegram setup/test/off verbs with a required slug', () => {
+    expect(content).toContain('dreamcontext automations telegram setup <slug>');
+    expect(content).toContain('dreamcontext automations telegram test <slug>');
+    expect(content).toContain('dreamcontext automations telegram off <slug>');
+  });
+});
+
+describe('skill/references/automations.md — approval has three paths', () => {
+  const content = AUTOMATIONS_MD;
+
+  it('names all three paths', () => {
+    expect(content).toContain('### Approval has three paths');
+    expect(content).toContain('**Local authorship.**');
+    expect(content).toContain('**In-session re-approval');
+    expect(content).toContain('**Never-approved manifests');
+  });
+
+  it('states path 2 takes an explicit decision only, never free text', () => {
+    expect(content).toMatch(/never free text, because a human typing/i);
+  });
+
+  it('states path 3 keeps the hard, silent blocked short-circuit with no spawn', () => {
+    expect(content).toMatch(/keeps the hard, silent `blocked` it always has: no spawn, no question, no chat tab/i);
+  });
+});
+
+describe('skill/references/automations.md — the run queue keeps a disabled automation\'s fire', () => {
+  const content = AUTOMATIONS_MD;
+
+  it('names the queue path, one waiting entry per automation', () => {
+    expect(content).toContain('~/.dreamcontext/automations-queue.json');
+  });
+
+  it('states a disabled automation\'s queued fire is kept and re-parked, not dropped', () => {
+    // The plan's original acceptance criterion (§8.3, AC31) said draining a
+    // disabled automation's queued fire "clears the entry" — the shipped
+    // `tick.ts` re-enqueues it instead (`enqueueFire` inside the `!manifest.enabled`
+    // branch), so the fire is owed once the automation is re-enabled rather than
+    // lost. The doc follows the code, not the earlier plan text.
+    expect(content).toMatch(/kept, re-parked for whenever the automation is re-enabled/i);
+  });
+});
+
+describe('skill/references/automations.md — session bindings are the sole resume authority', () => {
+  const content = AUTOMATIONS_MD;
+
+  it('names the session-binding path and the resume mode it authorizes', () => {
+    expect(content).toContain('~/.dreamcontext/automations/<slug>.sessions.json');
+    expect(content).toContain('bypassPermissions');
+  });
+
+  it('states a synced-cache/telegram/hand-edited session id resolves to null', () => {
+    expect(content).toMatch(/resolves to \*\*null\*\* here/i);
+  });
+
+  it('names the WS resume gate enforcing it on every bypass=1&resume connect', () => {
+    expect(content).toContain('src/server/routes/agent-chat.ts');
+    expect(content).toContain('bypass=1&resume=<uuid>');
+  });
+});
+
+describe('skill/SKILL.md — Automations capabilities row names Flow, HITL questions, and per-slug Telegram', () => {
+  it('mentions the Flow graph, questions, and per-automation Telegram in the capabilities row', () => {
+    expect(SKILL_MD).toMatch(/## Flow` graph/);
+    expect(SKILL_MD).toContain('a **question**');
+    expect(SKILL_MD).toMatch(/\*\*per-automation\*\* Telegram bot/);
+  });
+});
+
+describe('sleep docs — automations/hitl/ and its machine-local siblings are explicitly unowned', () => {
+  it('sleep.md names automations/hitl/ inside the "never OWNS" rule', () => {
+    expect(SLEEP_MD).toContain('automations/hitl/<slug>/*.json');
+  });
+
+  it('sleep.md names the per-slug Telegram credential and session-binding paths as out of bounds', () => {
+    expect(SLEEP_MD).toContain('~/.dreamcontext/telegram/<slug>.json');
+    expect(SLEEP_MD).toContain('~/.dreamcontext/automations/<slug>.sessions.json');
+  });
+
+  it('agents/sleep-product.md domain table names hitl/ questions and the machine-local Telegram/session state', () => {
+    expect(SLEEP_PRODUCT_MD).toMatch(/manifest\/cache\/output\/`hitl\/` questions/);
+    expect(SLEEP_PRODUCT_MD).toContain('~/.dreamcontext/telegram/*.json');
+    expect(SLEEP_PRODUCT_MD).toContain('~/.dreamcontext/automations/*.sessions.json');
   });
 });

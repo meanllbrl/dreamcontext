@@ -110,20 +110,86 @@
   font-size: 10.5px;
 }
 
-.auto-card-run-row {
+/* D5: last fire time + last status, always visible — a healthy ('ok') run
+   previously left no trace on the card at all, since only failure/blocked/
+   orphaned earned a badge above. Dot colors mirror `AutomationDetailPanel.css`'s
+   `.adp-history-dot--*` palette so a card and its own detail history read as
+   the same status language. */
+.auto-card-status-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  margin-top: 2px;
-}
-
-.auto-card-lastrun {
   font-size: 11px;
   color: var(--color-text-tertiary);
+  min-width: 0;
+}
+
+.auto-card-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  flex: 0 0 auto;
+  background: var(--color-text-tertiary);
+}
+
+.auto-card-status-dot--ok { background: var(--color-success); }
+.auto-card-status-dot--failed,
+.auto-card-status-dot--timeout,
+.auto-card-status-dot--orphaned { background: var(--color-error); }
+.auto-card-status-dot--blocked { background: var(--color-warning); }
+.auto-card-status-dot--awaiting-review { background: var(--color-accent); }
+.auto-card-status-dot--deferred,
+.auto-card-status-dot--none { background: var(--color-text-tertiary); }
+
+.auto-card-status-word {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: capitalize;
+  flex: 0 0 auto;
+}
+
+.auto-card-status-sep {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+
+.auto-card-lastfire {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+.auto-card-chat-btn {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-family: var(--font-family-text);
+  font-size: 10.5px;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.auto-card-chat-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.auto-card-chat-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.auto-card-run-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
 }
 
 .auto-card-actions {

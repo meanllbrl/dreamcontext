@@ -95,6 +95,23 @@
 }
 /* region & plain variants keep the inline gradient fill — no fill set here. */
 
+/* A node kind this build's registry does not recognise (`UNKNOWN_NODE_ENTRY`,
+   `src/lib/automations/flow-registry.ts`) — present in the diagram, but never
+   silently rendered as something it isn't. `region`/`plain` had no rect rule
+   to copy for this (C10), so this one is authored from the shared visual
+   language above: a flat token fill + a stroke that carries the meaning,
+   like `rem`/`accent`. The dashed stroke is the one thing that MUST differ —
+   it is the only signal in this language for "not understood", the same way
+   `.fd-wire--dashed` already marks a broken/cycle-closing wire. `--color-warning`
+   reads as caution rather than failure, matching D-C: an unknown node passes
+   the run through untouched, it does not fail it. */
+.fd-node--unknown rect {
+  fill: var(--color-warning-subtle);
+  stroke: var(--color-warning);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+
 .fd-node--breathe rect {
   /* A subtle scale pulse instead of an animated drop-shadow filter: transforms
      are compositor-accelerated, so the breathing stays smooth even with many

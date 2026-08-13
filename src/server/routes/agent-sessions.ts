@@ -2,10 +2,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join, dirname } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { ensureGitignoreEntries } from '../../lib/gitignore.js';
 import { UUID_RE } from '../../lib/agent-session-map.js';
+import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
+import { isSafeAutomationSlug } from '../../lib/automations/store.js';
 
 /**
  * Per-vault persistence of the embedded-agent session ROSTER (titles + layout) so a
@@ -24,6 +27,14 @@ import { UUID_RE } from '../../lib/agent-session-map.js';
  * reaches it (403). The loopback CSRF guard already fronts the PUT in the server entry.
  */
 
+/**
+ * Mirrors `dashboard/src/components/sleepy/agentSession.ts`'s `SessionKind`. Duplicated
+ * rather than imported: that module is browser-only (xterm, DOM globals) and cannot load
+ * inside the Node server. Kept in sync by hand — the four members are stable.
+ */
+type SessionKind = 'agent' | 'shell' | 'chat' | 'automation';
+const KNOWN_KINDS: readonly SessionKind[] = ['agent', 'shell', 'chat', 'automation'];
+
 /** One persisted session — the renameable title, its layout flags, and the Claude
  *  conversation UUID it's pinned to (so the next launch can `claude --resume` it). */
 export interface SavedMeta {
@@ -33,6 +44,17 @@ export interface SavedMeta {
   size: number;
   /** Canonical UUID of this tab's Claude conversation; absent on legacy rosters. */
   sessionId?: string;
+  /** Which surface this tab represents. Absent on legacy rosters and on anything outside
+   *  {@link KNOWN_KINDS} — the client treats a missing kind as a plain agent (back-compat). */
+  kind?: SessionKind;
+  /**
+   * Present only alongside `kind: 'automation'`: which automation produced this run, and
+   * when it fired. Never used to build a path here, but `slug` still travels through
+   * `isSafeAutomationSlug` on the way in — it is a path segment everywhere else in the
+   * automations subsystem (`session-registry.ts`), and this is the one place it arrives
+   * from an untrusted roster rather than from code that already validated it.
+   */
+  automation?: { slug: string; runFiredAt: string };
 }
 
 /** Hard ceiling on rostered sessions (extras are dropped, not rejected). */
@@ -44,6 +66,9 @@ const MAX_SIZE = 10;
 const DEFAULT_SIZE = 1;
 /** Generous cap on the serialized roster; a runaway client can't write an unbounded file. */
 const MAX_BYTES = 64 * 1024;
+/** Generous ceiling on `automation.runFiredAt` — an ISO timestamp is well under this; the
+ *  cap exists only to bound a hand-edited/malicious string before it reaches `Date.parse`. */
+const MAX_RUN_FIRED_AT = 64;
 
 const ROSTER_REL_PATH = join('state', '.agent-sessions.json');
 
@@ -52,10 +77,28 @@ function storePath(contextRoot: string): string {
 }
 
 /**
+ * Sanitize the `automation` companion object. Kept ONLY when it names a well-formed
+ * automation (`isSafeAutomationSlug`) and a `runFiredAt` that actually parses as a date —
+ * an unparseable timestamp means the entry wasn't produced by the code that writes this
+ * field, and inert is the only safe reading of that (mirrors `session-registry.ts`'s
+ * treatment of an unparseable binding `at`).
+ */
+function coerceAutomation(raw: unknown): SavedMeta['automation'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const slug = typeof o.slug === 'string' ? o.slug.trim() : '';
+  if (!isSafeAutomationSlug(slug)) return undefined;
+  const runFiredAt = typeof o.runFiredAt === 'string' ? o.runFiredAt.trim().slice(0, MAX_RUN_FIRED_AT) : '';
+  if (!runFiredAt || Number.isNaN(Date.parse(runFiredAt))) return undefined;
+  return { slug, runFiredAt };
+}
+
+/**
  * Coerce one untrusted roster entry into a safe {@link SavedMeta}. Strips every field
- * outside the known four; clamps title length + size; defaults a blank/non-string title
- * to "Agent"; treats anything but `true` as false for the booleans. Total function —
- * any input shape yields a valid meta.
+ * outside the known set; clamps title length + size; defaults a blank/non-string title
+ * to "Agent"; treats anything but `true` as false for the booleans; keeps `kind` only when
+ * it's one of {@link KNOWN_KINDS} and `automation` only alongside `kind: 'automation'`.
+ * Total function — any input shape yields a valid meta.
  */
 function coerceMeta(raw: unknown): SavedMeta {
   const o = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
@@ -66,12 +109,21 @@ function coerceMeta(raw: unknown): SavedMeta {
   // Only a canonical UUID is persisted as a session id — anything else is dropped, so a
   // malformed id can never round-trip into the `claude --resume <id>` shell invocation.
   const sessionId = typeof o.sessionId === 'string' && UUID_RE.test(o.sessionId) ? o.sessionId : undefined;
+  // Only a known kind round-trips — a future value this build doesn't recognize, a typo, or
+  // a hand-edited file is dropped rather than passed through unchecked, same discipline as
+  // every other field here. The client already treats an absent kind as 'agent'.
+  const kind = typeof o.kind === 'string' && (KNOWN_KINDS as readonly string[]).includes(o.kind)
+    ? (o.kind as SessionKind)
+    : undefined;
+  const automation = kind === 'automation' ? coerceAutomation(o.automation) : undefined;
   return {
     title: title || DEFAULT_TITLE,
     bypass: o.bypass === true,
     minimized: o.minimized === true,
     size,
     ...(sessionId ? { sessionId } : {}),
+    ...(kind ? { kind } : {}),
+    ...(automation ? { automation } : {}),
   };
 }
 
@@ -120,20 +172,49 @@ function writeRoster(contextRoot: string, sessions: SavedMeta[]): void {
 }
 
 /**
+ * One roster entry as GET actually returns it: the persisted fields plus a transient
+ * `bound` flag. NEVER persisted — recomputed on every request from THIS machine's
+ * automation session-registry, because "can this be resumed here" can change between two
+ * GETs (a fresh `recordAutomationSession`, a TTL expiry) even when the roster file hasn't.
+ */
+export interface SessionRosterEntry extends SavedMeta {
+  /**
+   * Can THIS machine actually resume `sessionId`? Computed with `isAutomationBoundSession`
+   * — the same authority a WS resume gate consults (see `session-registry.ts`'s module
+   * doc). `false` for every entry with no `sessionId` (nothing to check) and for a session
+   * id this machine's runner never recorded, including one that arrived via brain sync
+   * from a teammate's machine — that is exactly the case a restored automation tab must
+   * not try to connect for (see X2: a rejected upgrade closes before any application
+   * frame, so the client cannot tell a refusal from a crash on its own).
+   *
+   * Deliberately NOT the owning slug: the hydration filter needs "may I resume this", not
+   * "which other automation, if any, owns this id" — returning the slug would leak the
+   * existence of automations the caller never told us about.
+   */
+  bound: boolean;
+}
+
+/**
  * GET /api/agent/sessions — return the persisted roster for the current vault as
- * `{ sessions: SavedMeta[] }` (`[]` when absent/corrupt). Desktop-only.
+ * `{ sessions: SessionRosterEntry[] }` (`[]` when absent/corrupt). Desktop-only.
  */
 export async function handleAgentSessionsGet(
   _req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
   contextRoot: string,
+  /** Overridable only for tests — every real call resolves this machine's real HOME. */
+  home: string = homedir(),
 ): Promise<void> {
   if (!isDesktop()) {
     sendError(res, 403, 'desktop_only', 'Agent session roster is only available in the desktop app.');
     return;
   }
-  sendJson(res, 200, { sessions: readRoster(contextRoot) });
+  const sessions: SessionRosterEntry[] = readRoster(contextRoot).map((m) => ({
+    ...m,
+    bound: !!m.sessionId && isAutomationBoundSession(m.sessionId, home) !== null,
+  }));
+  sendJson(res, 200, { sessions });
 }
 
 /**

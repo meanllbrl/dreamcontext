@@ -13,6 +13,8 @@ import {
   canonicalApprovalPayload,
   manifestHash,
   approvalFields,
+  approvalDiff,
+  canonicalFlowJson,
   checkApproval,
   approveAutomation,
   revokeApproval,
@@ -33,6 +35,7 @@ import {
   negationIsEffective,
   shareOrderingProblems,
   type AutomationManifest,
+  type FlowGraph,
 } from '../../src/lib/automations/types.js';
 
 /** Fixed, injected — never Date.now() in assertions. */
@@ -68,6 +71,14 @@ function makeManifest(overrides: Partial<AutomationManifest> = {}): AutomationMa
     shared: false,
     notify: true,
     learning: false,
+    // Both stated explicitly. `tsconfig.json` includes only `src`, so nothing
+    // typechecks this literal — an omitted required field reads as `undefined`
+    // here and the compiler will never say so. `review` survived that for a
+    // while by luck (JSON.stringify drops an undefined VALUE, so the payload
+    // came out the same); `flow` would not have, because the payload calls a
+    // function on it. Keep every required field present.
+    review: 'off',
+    flow: null,
     pattern: '',
     prompt: 'Summarize what happened today.',
     outputInstructions: '',
@@ -300,6 +311,10 @@ describe('approvalFields', () => {
       outputDir: 'automations/output/x',
       outputInstructions: 'be terse',
     });
+    // EXACTLY, and every hashed field named. `toEqual` ignores an `undefined`
+    // property, so an expectation that simply omits a field passes whether the
+    // field is absent or present-and-undefined — which is how `review` went
+    // unasserted here after it started being hashed. Name all of them.
     expect(approvalFields(m)).toEqual({
       prompt: 'Raw\r\ntext\n\n',
       outputInstructions: 'be terse',
@@ -308,7 +323,16 @@ describe('approvalFields', () => {
       timeoutMinutes: 20,
       outputDir: 'automations/output/x',
       learning: false,
+      review: 'off',
+      flow: null,
     });
+  });
+
+  it('names every APPROVAL_DIFF_FIELDS entry — a hashed field the reviewer cannot see is one that changes invisibly', () => {
+    // The lockstep guard, asserted structurally rather than by a hand-copied
+    // list: `approve` renders this shape, so a field added to the hash and not
+    // to this shape would be approved unseen.
+    expect(Object.keys(approvalFields(makeManifest())).sort()).toEqual([...APPROVAL_DIFF_FIELDS].sort());
   });
 
   it('includes effort: null explicitly (unlike the hash payload, this shape is for display, not byte-identity)', () => {
@@ -317,11 +341,141 @@ describe('approvalFields', () => {
 });
 
 describe('APPROVAL_DIFF_FIELDS', () => {
-  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir/learning/review, in that exact order', () => {
+  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir/learning/review/flow, in that exact order', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
-      'prompt', 'outputInstructions', 'model', 'effort', 'timeoutMinutes', 'outputDir', 'learning', 'review',
+      'prompt', 'outputInstructions', 'model', 'effort', 'timeoutMinutes', 'outputDir', 'learning', 'review', 'flow',
     ]);
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(8);
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(9);
+  });
+
+  it('keeps `flow` LAST — the position is what preserves every legacy hash', () => {
+    // `canonicalApprovalPayload` appends `flow` to the end of its literal, and
+    // JSON.stringify emits keys in insertion order. Any other position would
+    // shift the serialization of the fields around it and re-block every
+    // already-approved automation on upgrade.
+    expect(APPROVAL_DIFF_FIELDS[APPROVAL_DIFF_FIELDS.length - 1]).toBe('flow');
+  });
+});
+
+describe('flow is hashed, but only when the manifest HAS one', () => {
+  const GRAPH: FlowGraph = {
+    version: 'automation-flow/v1',
+    nodes: [
+      { id: 'trigger', kind: 'trigger', label: 'Every weekday 18:00' },
+      { id: 'ask', kind: 'hitl', label: 'Send it?', config: { channel: 'chat' } },
+    ],
+    edges: [{ from: 'trigger', to: 'ask', label: 'ready' }],
+  };
+
+  it('a manifest with NO flow hashes exactly as it did before `## Flow` existed', () => {
+    // THE upgrade-safety property, and the highest-stakes instance of it in this
+    // file: every automation that exists today predates the section, so all of
+    // them read `flow: null`. Serializing a `"flow":null` key would re-block
+    // every one at once — and a blocked run notifies nobody, so the subsystem
+    // would simply go quiet.
+    const payload = canonicalApprovalPayload(makeManifest({ flow: null }));
+    expect(payload).not.toContain('flow');
+    // Byte-for-byte the pre-change string, reproduced literally rather than by
+    // calling the same function twice (which would pass even if both were wrong).
+    expect(payload).toBe(
+      'automation-approval/v1\n' +
+      '{"prompt":"Summarize what happened today.","outputInstructions":"","model":null,' +
+      '"timeoutMinutes":15,"outputDir":null}',
+    );
+  });
+
+  it('treats an undefined flow as absent rather than throwing — the hash path must be total', () => {
+    // A hand-built manifest object (a fixture, a future caller) can carry
+    // `undefined`. Reproducing the flow-less hash is the safe answer; throwing
+    // on the runner's approval path is an automation that stops and says nothing.
+    const undef = makeManifest({ flow: undefined as unknown as null });
+    expect(() => canonicalApprovalPayload(undef)).not.toThrow();
+    expect(canonicalApprovalPayload(undef)).toBe(canonicalApprovalPayload(makeManifest({ flow: null })));
+  });
+
+  it('adding a flow changes the hash, so a graph cannot appear without a re-approval', () => {
+    expect(manifestHash(makeManifest({ flow: GRAPH }))).not.toBe(manifestHash(makeManifest({ flow: null })));
+  });
+
+  it('deleting a hitl node changes the hash — that edit REMOVES a human gate', () => {
+    // The direction that earns the hash, exactly as with `review`: a teammate's
+    // synced edit that drops the node where the run stops to ask must block
+    // until someone on this machine approves losing it.
+    const withoutAsk: FlowGraph = {
+      ...GRAPH,
+      nodes: GRAPH.nodes.filter((n) => n.kind !== 'hitl'),
+      edges: [],
+    };
+    expect(manifestHash(makeManifest({ flow: withoutAsk }))).not.toBe(manifestHash(makeManifest({ flow: GRAPH })));
+  });
+
+  it('an edited config value changes the hash', () => {
+    const rerouted: FlowGraph = {
+      ...GRAPH,
+      nodes: GRAPH.nodes.map((n) => (n.id === 'ask' ? { ...n, config: { channel: 'telegram' } } : n)),
+    };
+    expect(manifestHash(makeManifest({ flow: rerouted }))).not.toBe(manifestHash(makeManifest({ flow: GRAPH })));
+  });
+
+  it('reordering nodes changes the hash — the order IS the wiring', () => {
+    const reversed: FlowGraph = { ...GRAPH, nodes: [...GRAPH.nodes].reverse() };
+    expect(manifestHash(makeManifest({ flow: reversed }))).not.toBe(manifestHash(makeManifest({ flow: GRAPH })));
+  });
+
+  it('canonicalFlowJson ignores key order and absent-vs-empty, so reformatting does not re-block', () => {
+    // The other half of the contract: an editor that reorders JSON keys, or a
+    // writer that emits `config: {}`, must NOT cost the user a re-approval.
+    const reformatted = {
+      nodes: GRAPH.nodes.map((n) => ({ config: n.config ?? {}, label: n.label, kind: n.kind, id: n.id })),
+      edges: GRAPH.edges.map((e) => ({ label: e.label, to: e.to, from: e.from })),
+      version: GRAPH.version,
+    } as unknown as FlowGraph;
+    expect(canonicalFlowJson(reformatted)).toBe(canonicalFlowJson(GRAPH));
+  });
+
+  it('approvalFields always reports flow, even when null — a reviewer must see whether one exists', () => {
+    expect(approvalFields(makeManifest({ flow: null })).flow).toBeNull();
+    expect(approvalFields(makeManifest({ flow: GRAPH })).flow).toEqual(GRAPH);
+  });
+});
+
+describe('approvalDiff', () => {
+  it('reports only what changed, in APPROVAL_DIFF_FIELDS order', () => {
+    const before = approvalFields(makeManifest({ timeoutMinutes: 15, model: null }));
+    const after = approvalFields(makeManifest({ timeoutMinutes: 30, model: 'sonnet' }));
+    const diff = approvalDiff(before, after);
+    expect(diff).toContain('model:');
+    expect(diff).toContain('timeoutMinutes:');
+    expect(diff).toContain('- (none)');
+    expect(diff).toContain('+ sonnet');
+    // Unchanged fields stay out: the reviewer is looking for the edit, and a
+    // wall of identical lines is where an edit hides.
+    expect(diff).not.toContain('prompt:');
+    expect(diff.indexOf('model:')).toBeLessThan(diff.indexOf('timeoutMinutes:'));
+  });
+
+  it('is empty when nothing among the hashed fields differs', () => {
+    expect(approvalDiff(approvalFields(makeManifest()), approvalFields(makeManifest()))).toBe('');
+  });
+
+  it('renders null as a word, so "unset" and "set to empty" never read the same', () => {
+    const diff = approvalDiff(
+      approvalFields(makeManifest({ outputDir: null })),
+      approvalFields(makeManifest({ outputDir: '' })),
+    );
+    expect(diff).toContain('- (none)');
+  });
+
+  it('surfaces a flow change as the canonical bytes the hash actually covered', () => {
+    const graph: FlowGraph = {
+      version: 'automation-flow/v1',
+      nodes: [{ id: 'ask', kind: 'hitl' }],
+      edges: [],
+    };
+    const diff = approvalDiff(approvalFields(makeManifest({ flow: null })), approvalFields(makeManifest({ flow: graph })));
+    expect(diff).toContain('flow:');
+    expect(diff).toContain('- (none)');
+    expect(diff).toContain('"kind":"hitl"');
   });
 });
 

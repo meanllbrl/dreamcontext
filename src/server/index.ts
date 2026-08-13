@@ -90,8 +90,12 @@ import {
   handleAutomationsDispatcherStatus,
   handleAutomationsDispatcherInstall,
   handleAutomationsDispatcherUninstall,
-  handleAutomationsReviewList,
-  handleAutomationsReviewAnswer,
+  handleAutomationsFlow,
+  handleAutomationsQuestionsList,
+  handleAutomationsQuestionAnswer,
+  handleAutomationsTelegramGet,
+  handleAutomationsTelegramSet,
+  handleAutomationsQueue,
 } from './routes/automations.js';
 import {
   handleThesesList,
@@ -465,11 +469,16 @@ export function buildRouter(): Router {
   router.get('/api/automations/dispatcher', handleAutomationsDispatcherStatus);
   router.post('/api/automations/dispatcher/install', handleAutomationsDispatcherInstall);
   router.post('/api/automations/dispatcher/uninstall', handleAutomationsDispatcherUninstall);
-  // `review` joins `runs` and `dispatcher` above the `/:slug` param route for
-  // the same reason, and the answer route is keyed by CARD id rather than slug:
-  // the board's question is "what am I holding up", which spans automations.
-  router.get('/api/automations/review', handleAutomationsReviewList);
-  router.post('/api/automations/review/:id', handleAutomationsReviewAnswer);
+  // `questions` and `queue` join `runs` and `dispatcher` above the `/:slug`
+  // param route for the same reason, and the answer route is keyed by
+  // QUESTION id rather than slug: the board's question is "what am I holding
+  // up", which spans automations — this replaces the retired `/review` +
+  // `/review/:id` pair (the review-card store they read is being repointed
+  // to the question store everywhere; `review.ts` itself does not go away
+  // until every importer has moved).
+  router.get('/api/automations/questions', handleAutomationsQuestionsList);
+  router.post('/api/automations/questions/:id', handleAutomationsQuestionAnswer);
+  router.get('/api/automations/queue', handleAutomationsQueue);
   // Before `/:slug` — a literal sub-path registered after a param route is
   // swallowed by it, the same ordering constraint `runs` above documents.
   router.get('/api/automations/:slug/session', handleAutomationsSession);
@@ -478,6 +487,13 @@ export function buildRouter(): Router {
   router.post('/api/automations/:slug/approve', handleAutomationsApprove);
   router.post('/api/automations/:slug/enable', handleAutomationsEnable);
   router.post('/api/automations/:slug/disable', handleAutomationsDisable);
+  // Distinct segment-count SHAPES from the bare `/:slug` routes above (see the
+  // theses comment below) — registration order relative to `/:slug` is not
+  // load-bearing for these, only relative to one another (never ambiguous:
+  // each has a unique literal suffix).
+  router.get('/api/automations/:slug/flow', handleAutomationsFlow);
+  router.get('/api/automations/:slug/telegram', handleAutomationsTelegramGet);
+  router.post('/api/automations/:slug/telegram', handleAutomationsTelegramSet);
 
   // Theses (proactive learning layer, opt-in via learning.enabled). Read
   // routes (list/show) work regardless of the flag — they surface `enabled`

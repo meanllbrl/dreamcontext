@@ -20,9 +20,17 @@ import {
   lockPathFor,
   readAutomationCache,
   readRunSidecar,
+  writeFlowSection,
   writeRunSidecar,
 } from '../../src/lib/automations/store.js';
 import { approveAutomation } from '../../src/lib/automations/registry.js';
+import { queuedFire } from '../../src/lib/automations/queue.js';
+import { pendingQuestion } from '../../src/lib/automations/hitl.js';
+import {
+  isAutomationBoundSession,
+  latestBoundSession,
+  readAutomationSession,
+} from '../../src/lib/automations/session-registry.js';
 import { MAX_PROMPT_BYTES, type AutomationManifest } from '../../src/lib/automations/types.js';
 import { NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from '../../src/lib/automations/notifier.js';
 import { writeSleepState } from '../../src/cli/commands/sleep.js';
@@ -932,5 +940,266 @@ describe('killRunGroup', () => {
     });
     const killImpl = vi.fn(() => { const e = new Error('gone') as NodeJS.ErrnoException; e.code = 'ESRCH'; throw e; });
     expect(() => killRunGroup(contextRoot, slug, { killImpl, nowMs: NOW.getTime() })).not.toThrow();
+  });
+});
+
+// ─── The approval question (a changed manifest asks about itself) ───────────
+//
+// The tripwire no longer just refuses in silence when a manifest CHANGES under
+// an existing grant — it asks. What must stay true is that the session doing
+// the asking cannot do the work it is asking permission for.
+
+/** A spawn that captures argv and replies with `json`. */
+function capturingSpawn(json: string) {
+  const calls: string[][] = [];
+  const impl = vi.fn((_cmd: string, args: string[]) => {
+    calls.push(args);
+    const { child, emitStdout, emitClose } = makeFakeChild(4242);
+    setImmediate(() => { emitStdout(json); emitClose(0); });
+    return child;
+  }) as unknown as SpawnImpl;
+  return { impl, calls };
+}
+
+const QUESTION_JSON = JSON.stringify({
+  session_id: 'sess_question', result: 'Your digest automation was edited. Approve it?', is_error: false,
+});
+
+/** Approved, then edited — the exact state that triggers the question. */
+function createEditedAfterApproval(slug = 'digest'): void {
+  createApproved(slug, { prompt: 'Say hello.' });
+  const path = join(contextRoot, 'automations', `${slug}.md`);
+  writeFileSync(path, readFileSync(path, 'utf-8').replace('Say hello.', 'Say hello, and also email everyone.'), 'utf-8');
+}
+
+describe('approval: never-approved still refuses outright', () => {
+  it('is blocked, and spawns NOTHING', async () => {
+    // A manifest with no prior grant has no session, no history here, and
+    // arrived over a channel someone else can write to. Letting it spawn even to
+    // "ask nicely" would let a synced manifest bootstrap its own execution.
+    createAutomation(contextRoot, { slug: 'digest', title: 'D', days: 'daily', at: '18:00', prompt: 'x' });
+    const { impl, calls } = capturingSpawn(QUESTION_JSON);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(outcome.status).toBe('blocked');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('does not enqueue a fire — nothing may run, so nothing is owed', async () => {
+    createAutomation(contextRoot, { slug: 'digest', title: 'D', days: 'daily', at: '18:00', prompt: 'x' });
+    const { impl } = capturingSpawn(QUESTION_JSON);
+    await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(queuedFire(projectRoot, 'digest', home)).toBeNull();
+  });
+});
+
+describe('approval: a CHANGED manifest asks, in a weaker envelope', () => {
+  it('spawns exactly once, in plan mode, with tools disallowed and NO bypassPermissions', async () => {
+    // The session asking permission must not be able to do the thing it is
+    // asking about. A single flag is not enough — this mirrors sleepy-chat.ts,
+    // which documents the same hazard class.
+    createEditedAfterApproval();
+    const { impl, calls } = capturingSpawn(QUESTION_JSON);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(outcome.status).toBe('awaiting-approval');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('--permission-mode');
+    expect(calls[0][calls[0].indexOf('--permission-mode') + 1]).toBe('plan');
+    expect(calls[0]).toContain('--disallowedTools');
+    expect(calls[0].join(' ')).not.toContain('bypassPermissions');
+  });
+
+  it('drops --model and --effort — both come from the manifest that is not approved', async () => {
+    createEditedAfterApproval();
+    const path = join(contextRoot, 'automations', 'digest.md');
+    writeFileSync(path, readFileSync(path, 'utf-8').replace('model: null', 'model: opus'), 'utf-8');
+    const { impl, calls } = capturingSpawn(QUESTION_JSON);
+    await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(calls[0]).not.toContain('--model');
+    expect(calls[0]).not.toContain('--effort');
+  });
+
+  it('records NO session binding — the question must never become resumable', async () => {
+    // `resumeWithAnswer` hardcodes bypassPermissions, and at this moment the
+    // manifest is unapproved by definition. A binding here would let it
+    // bootstrap its own elevated execution.
+    createEditedAfterApproval();
+    const { impl } = capturingSpawn(QUESTION_JSON);
+    await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(latestBoundSession('digest', home)).toBeNull();
+    expect(isAutomationBoundSession('sess_question', home)).toBeNull();
+  });
+
+  it('records the run event with sessionId null, and does NOT advance the watermark', async () => {
+    createEditedAfterApproval();
+    const { impl } = capturingSpawn(QUESTION_JSON);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(outcome.event!.sessionId).toBeNull();
+    // The fire is OWED: answer the question and it runs, rather than being lost.
+    expect(readAutomationCache(contextRoot, 'digest')!.lastFireAt).toBeNull();
+  });
+
+  it('leaves a pending approval question carrying the agent\'s words', async () => {
+    createEditedAfterApproval();
+    const { impl } = capturingSpawn(QUESTION_JSON);
+    await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    const q = pendingQuestion(contextRoot, 'digest')!;
+    expect(q.kind).toBe('approval');
+    expect(q.sessionId).toBeNull();
+    expect(q.question).toContain('Approve it?');
+  });
+
+  it('the next fire does NOT ask again — one question, not one per tick', async () => {
+    createEditedAfterApproval();
+    const first = capturingSpawn(QUESTION_JSON);
+    await runAutomation(contextRoot, 'digest', { home, spawnImpl: first.impl, now: () => NOW, fireAt: NOW });
+    const second = capturingSpawn(QUESTION_JSON);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: second.impl, now: () => NOW, fireAt: NOW });
+    expect(outcome.status).toBe('awaiting-approval');
+    expect(second.calls).toHaveLength(0);
+  });
+
+  it('holds the run lock while it asks — a question is still a child process', async () => {
+    createEditedAfterApproval();
+    let lockedDuringQuestion = false;
+    const impl = vi.fn(() => {
+      const { child, emitStdout, emitClose } = makeFakeChild(4242);
+      setImmediate(() => {
+        lockedDuringQuestion = existsSync(lockPathFor(contextRoot, 'digest'));
+        emitStdout(QUESTION_JSON);
+        emitClose(0);
+      });
+      return child;
+    }) as unknown as SpawnImpl;
+    await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(lockedDuringQuestion).toBe(true);
+    expect(existsSync(lockPathFor(contextRoot, 'digest'))).toBe(false);
+  });
+});
+
+// ─── The queue: a fire refused by the lock is owed, not lost ────────────────
+
+describe('the run queue', () => {
+  it('a lock-busy refusal returns deferred AND leaves a queue entry', async () => {
+    createApproved('digest');
+    const lockPath = lockPathFor(contextRoot, 'digest');
+    mkdirSync(dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, at: NOW.getTime() }), 'utf-8');
+    const { impl, calls } = capturingSpawn(CLAUDE_JSON_OK);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(outcome.status).toBe('deferred');
+    expect(calls).toHaveLength(0);
+    // The ORIGINAL fire time, so draining advances the watermark to the fire it
+    // answers for rather than to drain time.
+    expect(queuedFire(projectRoot, 'digest', home)!.firedAt).toBe(NOW.toISOString());
+  });
+
+  it('an ORPHANED refusal leaves NO queue entry', async () => {
+    // An orphan means a process group is loose. Queueing behind it builds a
+    // backlog that all fires the instant someone runs `automations kill`.
+    createApproved('digest');
+    writeRunSidecar(contextRoot, 'digest', {
+      slug: 'digest', runnerPid: 999999, childPid: 999998, childPgid: 999998,
+      fireAt: NOW.toISOString(), startedAt: NOW.toISOString(), timeoutAt: NOW.toISOString(),
+    });
+    const killImpl = vi.fn((pid: number) => {
+      if (pid === 999999) { const e = new Error('no such process') as NodeJS.ErrnoException; e.code = 'ESRCH'; throw e; }
+    });
+    const { impl } = capturingSpawn(CLAUDE_JSON_OK);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, killImpl, now: () => NOW, fireAt: NOW });
+    expect(outcome.status).toBe('orphaned');
+    expect(queuedFire(projectRoot, 'digest', home)).toBeNull();
+  });
+});
+
+// ─── The flow graph EXECUTES ────────────────────────────────────────────────
+
+/** Write a `## Flow` block onto an already-approved automation, then re-approve
+ *  so the change itself is not what blocks the run. */
+function giveFlow(slug: string, nodes: unknown[], edges: unknown[] = []): void {
+  writeFlowSection(contextRoot, slug, {
+    version: 'automation-flow/v1',
+    nodes: nodes as never,
+    edges: edges as never,
+  });
+  approveAutomation(projectRoot, getAutomation(contextRoot, slug)!, NOW, home);
+}
+
+describe('a hitl node in the graph is a real branch, not prose', () => {
+  it('WITH the node: nothing publishes, and a question is pending', async () => {
+    createApproved('digest');
+    giveFlow('digest', [
+      { id: 'run', kind: 'agent', label: 'Write it' },
+      { id: 'ask', kind: 'hitl', label: 'Send the digest?' },
+    ], [{ from: 'run', to: 'ask' }]);
+    const { impl } = capturingSpawn(CLAUDE_JSON_OK);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(outcome.status).toBe('awaiting-review');
+    expect(outcome.outputPath).toBeNull();
+    const q = pendingQuestion(contextRoot, 'digest')!;
+    expect(q.kind).toBe('flow-hitl');
+    expect(q.question).toBe('Send the digest?');
+  });
+
+  it('WITHOUT the node: the document publishes and nothing is pending', async () => {
+    // The pair that proves the graph executes. Same manifest, one node
+    // different, materially different outcome.
+    createApproved('digest');
+    giveFlow('digest', [{ id: 'run', kind: 'agent', label: 'Write it' }]);
+    const { impl } = capturingSpawn(CLAUDE_JSON_OK);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(outcome.status).toBe('ok');
+    expect(outcome.outputPath).not.toBeNull();
+    expect(existsSync(outcome.outputPath!)).toBe(true);
+    expect(pendingQuestion(contextRoot, 'digest')).toBeNull();
+  });
+
+  it('binds the asking session so the answer can resume it', async () => {
+    createApproved('digest');
+    giveFlow('digest', [{ id: 'ask', kind: 'hitl', label: 'Send?' }]);
+    const { impl } = capturingSpawn(CLAUDE_JSON_OK);
+    await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(readAutomationSession('digest', 'sess_abc123', home)).toBe('sess_abc123');
+  });
+
+  it('the graph reaches the prompt as the SHAPE of the job', async () => {
+    createApproved('digest');
+    giveFlow('digest', [{ id: 'gather', kind: 'agent', label: 'Read the commits' }]);
+    const { impl, calls } = capturingSpawn(CLAUDE_JSON_OK);
+    await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    const prompt = calls[0][calls[0].indexOf('-p') + 1];
+    expect(prompt).toContain('THE SHAPE OF THIS JOB');
+    expect(prompt).toContain('Read the commits');
+    // The approved prompt keeps the last word.
+    expect(prompt.indexOf('THE SHAPE OF THIS JOB')).toBeLessThan(prompt.indexOf('Say hello.'));
+  });
+});
+
+describe('flow warnings and report targets are surfaced, never absorbed', () => {
+  it('an unknown node kind rides RunEvent.error even on an ok run', async () => {
+    createApproved('digest');
+    giveFlow('digest', [{ id: 'x', kind: 'slack-post', label: 'Post it' }]);
+    const { impl } = capturingSpawn(CLAUDE_JSON_OK);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(outcome.status).toBe('ok');
+    expect(outcome.error).toContain('slack-post');
+  });
+
+  it('a report node redirects the output inside the brain', async () => {
+    createApproved('digest');
+    giveFlow('digest', [{ id: 'out', kind: 'report', config: { dir: 'automations/output/elsewhere' } }]);
+    const { impl } = capturingSpawn(CLAUDE_JSON_OK);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(outcome.outputPath).toContain(join('automations', 'output', 'elsewhere'));
+  });
+
+  it('a report node that escapes the brain degrades to the default, and still runs', async () => {
+    // Same containment the manifest's own output.dir gets: a graph cannot name
+    // its way outside however it is written, and a rejection is not fatal.
+    createApproved('digest');
+    giveFlow('digest', [{ id: 'out', kind: 'report', config: { dir: '../../../etc' } }]);
+    const { impl } = capturingSpawn(CLAUDE_JSON_OK);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(outcome.status).toBe('ok');
+    expect(outcome.outputPath).toContain(join('automations', 'output', 'digest'));
   });
 });

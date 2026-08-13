@@ -27,15 +27,24 @@ import { runAutomation } from '../../src/lib/automations/runner.js';
 import type { RunOptions, RunOutcome } from '../../src/lib/automations/runner.js';
 import { Router } from '../../src/server/router.js';
 import { killTrackedChildren } from '../../src/server/lifecycle.js';
-import { createAutomation } from '../../src/lib/automations/store.js';
+import { createAutomation, writeFlowSection, deriveFlowFromManifest } from '../../src/lib/automations/store.js';
 import { approveAutomation } from '../../src/lib/automations/registry.js';
-import { APPROVAL_DIFF_FIELDS } from '../../src/lib/automations/types.js';
+import { APPROVAL_DIFF_FIELDS, FLOW_GRAPH_VERSION, type FlowGraph } from '../../src/lib/automations/types.js';
+import { createQuestion, claimQuestion } from '../../src/lib/automations/hitl.js';
+import { enqueueFire } from '../../src/lib/automations/queue.js';
+import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../src/lib/automations/telegram.js';
 import {
   handleAutomationsList,
   handleAutomationsRunStatus,
   handleAutomationsShow,
   handleAutomationsRunNow,
   handleAutomationsApprove,
+  handleAutomationsFlow,
+  handleAutomationsQuestionsList,
+  handleAutomationsQuestionAnswer,
+  handleAutomationsTelegramGet,
+  handleAutomationsTelegramSet,
+  handleAutomationsQueue,
 } from '../../src/server/routes/automations.js';
 import {
   startAutomationJob,
@@ -66,6 +75,15 @@ function makeRes(): { res: ServerResponse; status: () => number; body: () => Rec
 function makePostReq(): IncomingMessage {
   // No body is ever sent — handleAutomationsRunNow must not require or read one.
   const readable = Readable.from([]);
+  return Object.assign(readable, { method: 'POST', headers: {} }) as unknown as IncomingMessage;
+}
+
+/** For the routes below that DO read a JSON body (questions answer, telegram
+ *  set). Buffers, not strings: `parseJsonBody` concats with `Buffer.concat`,
+ *  which throws on string chunks and degrades to a null body — a string-chunk
+ *  helper would make every "the body was honoured" assertion pass vacuously. */
+function makePostReqWithBody(body?: unknown): IncomingMessage {
+  const readable = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body), 'utf-8')]);
   return Object.assign(readable, { method: 'POST', headers: {} }) as unknown as IncomingMessage;
 }
 
@@ -163,6 +181,68 @@ describe('route registration order', () => {
     const match = router.match('GET', '/api/automations/runs');
     expect(match?.handler).toBe(handleAutomationsShow);
     expect(match?.params).toEqual({ slug: 'runs' });
+  });
+
+  /**
+   * `questions` and `queue` (C2/T13) — the same load-bearing shape as `runs`
+   * above: both are literal 3-segment sub-paths, exactly like `/:slug`, so
+   * registration order between them and `/:slug` decides which one wins.
+   */
+  it('/api/automations/questions and /api/automations/queue resolve to their own handlers, never captured as a :slug', () => {
+    // Mirrors index.ts's exact registration order for this route family.
+    const router = new Router();
+    router.get('/api/automations', handleAutomationsList);
+    router.get('/api/automations/runs', handleAutomationsRunStatus);
+    router.get('/api/automations/questions', handleAutomationsQuestionsList);
+    router.post('/api/automations/questions/:id', handleAutomationsQuestionAnswer);
+    router.get('/api/automations/queue', handleAutomationsQueue);
+    router.get('/api/automations/:slug', handleAutomationsShow);
+    router.get('/api/automations/:slug/flow', handleAutomationsFlow);
+    router.get('/api/automations/:slug/telegram', handleAutomationsTelegramGet);
+    router.post('/api/automations/:slug/telegram', handleAutomationsTelegramSet);
+
+    const questionsMatch = router.match('GET', '/api/automations/questions');
+    expect(questionsMatch?.handler).toBe(handleAutomationsQuestionsList);
+    expect(questionsMatch?.params).toEqual({});
+
+    const answerMatch = router.match('POST', '/api/automations/questions/q_abc123');
+    expect(answerMatch?.handler).toBe(handleAutomationsQuestionAnswer);
+    expect(answerMatch?.params).toEqual({ id: 'q_abc123' });
+
+    const queueMatch = router.match('GET', '/api/automations/queue');
+    expect(queueMatch?.handler).toBe(handleAutomationsQueue);
+    expect(queueMatch?.params).toEqual({});
+
+    // …and the :slug routes it sits in front of still resolve normally,
+    // including the 4-segment `/flow` and `/telegram` sub-paths, whose
+    // ordering relative to `/:slug` is NOT load-bearing (different shape).
+    const slugMatch = router.match('GET', '/api/automations/eod-digest');
+    expect(slugMatch?.handler).toBe(handleAutomationsShow);
+    expect(slugMatch?.params).toEqual({ slug: 'eod-digest' });
+
+    const flowMatch = router.match('GET', '/api/automations/eod-digest/flow');
+    expect(flowMatch?.handler).toBe(handleAutomationsFlow);
+    expect(flowMatch?.params).toEqual({ slug: 'eod-digest' });
+
+    const telegramGetMatch = router.match('GET', '/api/automations/eod-digest/telegram');
+    expect(telegramGetMatch?.handler).toBe(handleAutomationsTelegramGet);
+    const telegramPostMatch = router.match('POST', '/api/automations/eod-digest/telegram');
+    expect(telegramPostMatch?.handler).toBe(handleAutomationsTelegramSet);
+  });
+
+  it('WOULD misroute /questions and /queue as a slug if registered after /:slug (proves the ordering is load-bearing)', () => {
+    const router = new Router();
+    router.get('/api/automations/:slug', handleAutomationsShow);
+    router.get('/api/automations/questions', handleAutomationsQuestionsList);
+    router.get('/api/automations/queue', handleAutomationsQueue);
+
+    const questionsMatch = router.match('GET', '/api/automations/questions');
+    expect(questionsMatch?.handler).toBe(handleAutomationsShow);
+    expect(questionsMatch?.params).toEqual({ slug: 'questions' });
+
+    const queueMatch = router.match('GET', '/api/automations/queue');
+    expect(queueMatch?.handler).toBe(handleAutomationsShow);
+    expect(queueMatch?.params).toEqual({ slug: 'queue' });
   });
 });
 
@@ -340,6 +420,384 @@ describe('POST /api/automations/:slug/approve', () => {
     const showRes = makeRes();
     await handleAutomationsShow(getReq, showRes.res, { slug: 'needs-approval' }, contextRoot);
     expect(showRes.body().approved).toBe(true);
+  });
+});
+
+// ─── flow ────────────────────────────────────────────────────────────────────
+
+describe('GET /api/automations/:slug/flow', () => {
+  it('404s for a missing slug', async () => {
+    const { res, status } = makeRes();
+    await handleAutomationsFlow(getReq, res, { slug: 'nope' }, contextRoot);
+    expect(status()).toBe(404);
+  });
+
+  it('returns a DERIVED graph when the manifest has no ## Flow block', async () => {
+    const manifest = makeAutomation('flow-derived', { approve: false });
+
+    const { res, status, body } = makeRes();
+    await handleAutomationsFlow(getReq, res, { slug: 'flow-derived' }, contextRoot);
+    expect(status()).toBe(200);
+    expect(body().derived).toBe(true);
+    expect(body().flow).toEqual(deriveFlowFromManifest(manifest));
+  });
+
+  it('returns the AUTHORED graph verbatim when the manifest has a ## Flow block', async () => {
+    makeAutomation('flow-authored', { approve: false });
+    const graph: FlowGraph = {
+      version: FLOW_GRAPH_VERSION,
+      nodes: [
+        { id: 'trigger', kind: 'trigger', label: 'every day at 09:00' },
+        { id: 'run', kind: 'agent', label: 'Custom step' },
+      ],
+      edges: [{ from: 'trigger', to: 'run' }],
+    };
+    writeFlowSection(contextRoot, 'flow-authored', graph);
+
+    const { res, status, body } = makeRes();
+    await handleAutomationsFlow(getReq, res, { slug: 'flow-authored' }, contextRoot);
+    expect(status()).toBe(200);
+    expect(body().derived).toBe(false);
+    expect(body().flow).toEqual(graph);
+  });
+});
+
+// ─── questions (human-in-the-loop) ──────────────────────────────────────────
+
+describe('GET /api/automations/questions', () => {
+  it('reports an empty queue when nothing is pending — not an error', async () => {
+    const { res, status, body } = makeRes();
+    await handleAutomationsQuestionsList(getReq, res, {}, contextRoot);
+    expect(status()).toBe(200);
+    expect(body()).toEqual({ questions: [] });
+  });
+
+  it('returns pending questions across every slug, oldest first', async () => {
+    makeAutomation('q-slug-a', { approve: false });
+    makeAutomation('q-slug-b', { approve: false });
+    const older = createQuestion(contextRoot, {
+      slug: 'q-slug-a',
+      runFiredAt: '2026-08-01T18:00:00.000Z',
+      kind: 'flow-hitl',
+      sessionId: null,
+      channel: 'chat',
+      question: 'Which template?',
+      nowISO: '2026-08-01T18:00:01.000Z',
+    });
+    const newer = createQuestion(contextRoot, {
+      slug: 'q-slug-b',
+      runFiredAt: '2026-08-02T09:00:00.000Z',
+      kind: 'approval',
+      sessionId: null,
+      channel: 'chat',
+      question: 'Approve the edited manifest?',
+      nowISO: '2026-08-02T09:00:01.000Z',
+    });
+
+    const { res, status, body } = makeRes();
+    await handleAutomationsQuestionsList(getReq, res, {}, contextRoot);
+    expect(status()).toBe(200);
+    const ids = (body().questions as Array<{ id: string }>).map((q) => q.id);
+    expect(ids).toEqual([older.id, newer.id]);
+  });
+});
+
+describe('POST /api/automations/questions/:id', () => {
+  it('404s for an unknown id', async () => {
+    const { res, status, body } = makeRes();
+    await handleAutomationsQuestionAnswer(makePostReqWithBody({ answer: 'approve' }), res, { id: 'nope' }, contextRoot);
+    expect(status()).toBe(404);
+    expect(body().error).toBe('not_found');
+  });
+
+  it('400s on an empty answer', async () => {
+    makeAutomation('q-empty', { approve: false });
+    const question = createQuestion(contextRoot, {
+      slug: 'q-empty',
+      runFiredAt: new Date().toISOString(),
+      kind: 'approval',
+      sessionId: null,
+      channel: 'chat',
+      question: 'Approve?',
+    });
+
+    const { res, status } = makeRes();
+    await handleAutomationsQuestionAnswer(makePostReqWithBody({ answer: '   ' }), res, { id: question.id }, contextRoot);
+    expect(status()).toBe(400);
+  });
+
+  describe("kind: 'approval' (the sha256 tripwire's own gate, wearing a dashboard face)", () => {
+    it('approve/yes claims, approves the manifest, and starts a fresh run through the SAME run-now primitive', async () => {
+      makeAutomation('q-approve', { approve: false });
+      vi.mocked(runAutomation).mockResolvedValueOnce(fakeOutcome('q-approve', 'ok'));
+      const question = createQuestion(contextRoot, {
+        slug: 'q-approve',
+        runFiredAt: new Date().toISOString(),
+        kind: 'approval',
+        sessionId: null,
+        channel: 'chat',
+        question: 'The manifest changed — approve it?',
+      });
+
+      const { res, status, body } = makeRes();
+      // Whitespace + uppercase, to prove the decision is normalized before matching.
+      await handleAutomationsQuestionAnswer(makePostReqWithBody({ answer: '  APPROVE  ' }), res, { id: question.id }, contextRoot);
+      expect(status()).toBe(200);
+      expect(body()).toMatchObject({ status: 'ok', approved: true, started: true });
+
+      const showRes = makeRes();
+      await handleAutomationsShow(getReq, showRes.res, { slug: 'q-approve' }, contextRoot);
+      expect(showRes.body().approved).toBe(true);
+
+      await vi.waitFor(() => expect(currentAutomationJob(contextRoot)?.status).toBe('success'));
+    });
+
+    it('reject/no claims and records the decision, but approves nothing and starts nothing', async () => {
+      makeAutomation('q-reject', { approve: false });
+      const question = createQuestion(contextRoot, {
+        slug: 'q-reject',
+        runFiredAt: new Date().toISOString(),
+        kind: 'approval',
+        sessionId: null,
+        channel: 'chat',
+        question: 'The manifest changed — approve it?',
+      });
+
+      const { res, status, body } = makeRes();
+      await handleAutomationsQuestionAnswer(makePostReqWithBody({ answer: 'no' }), res, { id: question.id }, contextRoot);
+      expect(status()).toBe(200);
+      expect(body()).toMatchObject({ status: 'ok', approved: false });
+      expect(body().job).toBeUndefined();
+      expect(body().started).toBeUndefined();
+
+      const showRes = makeRes();
+      await handleAutomationsShow(getReq, showRes.res, { slug: 'q-reject' }, contextRoot);
+      expect(showRes.body().approved).toBe(false);
+      expect(currentAutomationJob(contextRoot)).toBeNull();
+
+      // The question itself is no longer pending — it does not keep re-asking
+      // the same diff forever — but nothing ran and nothing was approved.
+      const listRes = makeRes();
+      await handleAutomationsQuestionsList(getReq, listRes.res, {}, contextRoot);
+      expect(listRes.body().questions).toEqual([]);
+    });
+
+    /**
+     * THE DEFECT this coverage exists to lock closed: an approval question
+     * must never treat free text as consent. "no, this looks wrong" reads as
+     * a refusal to a human — converting it into approval would be worse than
+     * no gate at all, because the human believes they said no.
+     */
+    it('free text is NEVER interpreted as consent — 400, and nothing is decided', async () => {
+      makeAutomation('q-freetext', { approve: false });
+      const question = createQuestion(contextRoot, {
+        slug: 'q-freetext',
+        runFiredAt: new Date().toISOString(),
+        kind: 'approval',
+        sessionId: null,
+        channel: 'chat',
+        question: 'The manifest changed — approve it?',
+      });
+
+      const { res, status, body } = makeRes();
+      await handleAutomationsQuestionAnswer(
+        makePostReqWithBody({ answer: 'no, this looks wrong' }),
+        res,
+        { id: question.id },
+        contextRoot,
+      );
+      expect(status()).toBe(400);
+      expect(body().error).toBe('bad_request');
+
+      // Nothing was decided: the question is still open for a real decision,
+      // the manifest is exactly as unapproved as before, and nothing ran.
+      const listRes = makeRes();
+      await handleAutomationsQuestionsList(getReq, listRes.res, {}, contextRoot);
+      expect((listRes.body().questions as Array<{ id: string }>).map((q) => q.id)).toEqual([question.id]);
+
+      const showRes = makeRes();
+      await handleAutomationsShow(getReq, showRes.res, { slug: 'q-freetext' }, contextRoot);
+      expect(showRes.body().approved).toBe(false);
+      expect(currentAutomationJob(contextRoot)).toBeNull();
+    });
+
+    it('a second answer to an already-claimed question is 409 — disk is the authority, not the route\'s initial list read', async () => {
+      makeAutomation('q-race', { approve: false });
+      const question = createQuestion(contextRoot, {
+        slug: 'q-race',
+        runFiredAt: new Date().toISOString(),
+        kind: 'approval',
+        sessionId: null,
+        channel: 'chat',
+        question: 'The manifest changed — approve it?',
+      });
+
+      const { res, status, body } = makeRes();
+      const pending = handleAutomationsQuestionAnswer(
+        makePostReqWithBody({ answer: 'approve' }),
+        res,
+        { id: question.id },
+        contextRoot,
+      );
+
+      // Claim it out from under the in-flight request. Deterministic, not a
+      // timing race: this line runs SYNCHRONOUSLY, before the pending call's
+      // own `await parseJsonBody(req)` has had a chance to resolve (that
+      // resolution needs the request stream's 'data'/'end' events, which only
+      // fire on a later tick) — so this always wins.
+      claimQuestion(contextRoot, question, 'answered elsewhere', 'cli');
+
+      await pending;
+      expect(status()).toBe(409);
+      expect(body().error).toBe('refused');
+    });
+  });
+
+  it("kind: 'flow-hitl' routes through resumeWithAnswer, and free text IS accepted (refused here only for lack of a bound session, never for its shape)", async () => {
+    makeAutomation('q-flow', { approve: true });
+    const question = createQuestion(contextRoot, {
+      slug: 'q-flow',
+      runFiredAt: new Date().toISOString(),
+      kind: 'flow-hitl',
+      sessionId: null,
+      channel: 'chat',
+      question: 'Which template should I use?',
+    });
+
+    const { res, status, body } = makeRes();
+    await handleAutomationsQuestionAnswer(
+      makePostReqWithBody({ answer: 'the first one, please' }),
+      res,
+      { id: question.id },
+      contextRoot,
+    );
+    // Refused — but because nothing bound this question to a resumable
+    // session on this machine, not because of the free-text shape (which the
+    // approval branch above would have rejected at 400). Proves the route
+    // actually dispatched to `resumeWithAnswer`, and never spawns when it
+    // cannot resume.
+    expect(status()).toBe(409);
+    expect(body().error).toBe('refused');
+    expect(mockedSpawn).not.toHaveBeenCalled();
+  });
+});
+
+// ─── per-automation telegram ─────────────────────────────────────────────────
+
+describe('GET/POST /api/automations/:slug/telegram', () => {
+  it('404s for a missing slug on both verbs', async () => {
+    const getRes = makeRes();
+    await handleAutomationsTelegramGet(getReq, getRes.res, { slug: 'nope' }, contextRoot);
+    expect(getRes.status()).toBe(404);
+
+    const postRes = makeRes();
+    await handleAutomationsTelegramSet(
+      makePostReqWithBody({ botToken: 'x', chatId: '1' }),
+      postRes.res,
+      { slug: 'nope' },
+      contextRoot,
+    );
+    expect(postRes.status()).toBe(404);
+  });
+
+  it('reads as not configured before any bot is set', async () => {
+    makeAutomation('bot-unset', { approve: false });
+    const { res, status, body } = makeRes();
+    await handleAutomationsTelegramGet(getReq, res, { slug: 'bot-unset' }, contextRoot);
+    expect(status()).toBe(200);
+    expect(body()).toEqual({ telegram: { configured: false, chatId: null } });
+  });
+
+  it('400s on a malformed body — missing botToken or chatId', async () => {
+    makeAutomation('bot-bad-body', { approve: false });
+
+    const missingToken = makeRes();
+    await handleAutomationsTelegramSet(
+      makePostReqWithBody({ chatId: '123' }),
+      missingToken.res,
+      { slug: 'bot-bad-body' },
+      contextRoot,
+    );
+    expect(missingToken.status()).toBe(400);
+
+    const emptyBody = makeRes();
+    await handleAutomationsTelegramSet(makePostReqWithBody({}), emptyBody.res, { slug: 'bot-bad-body' }, contextRoot);
+    expect(emptyBody.status()).toBe(400);
+
+    // …and neither malformed attempt actually wrote a config.
+    expect(readTelegramConfigForSlug('bot-bad-body')).toBeNull();
+  });
+
+  it('sets the bot, and the token NEVER appears in either response body — asserted on the serialized JSON, not just object shape', async () => {
+    makeAutomation('bot-secret', { approve: false });
+    const secretToken = 'super-secret-bot-token-123456';
+
+    const setRes = makeRes();
+    await handleAutomationsTelegramSet(
+      makePostReqWithBody({ botToken: secretToken, chatId: '555' }),
+      setRes.res,
+      { slug: 'bot-secret' },
+      contextRoot,
+    );
+    expect(setRes.status()).toBe(200);
+    expect(setRes.body()).toEqual({ telegram: { configured: true, chatId: '555' } });
+    expect(JSON.stringify(setRes.body())).not.toContain(secretToken);
+
+    const getRes = makeRes();
+    await handleAutomationsTelegramGet(getReq, getRes.res, { slug: 'bot-secret' }, contextRoot);
+    expect(getRes.body()).toEqual({ telegram: { configured: true, chatId: '555' } });
+    expect(JSON.stringify(getRes.body())).not.toContain(secretToken);
+
+    // …and it really was written (never leaked over HTTP, but not silently
+    // dropped either) — the channel poller has to read it from somewhere.
+    expect(readTelegramConfigForSlug('bot-secret')?.botToken).toBe(secretToken);
+  });
+
+  it('preserves the getUpdates offset across a re-save, so re-saving credentials never replays already-processed updates', async () => {
+    makeAutomation('bot-reoffset', { approve: false });
+    writeTelegramConfigForSlug('bot-reoffset', { botToken: 'old-token', chatId: '1', offset: 42 });
+
+    const { res, status } = makeRes();
+    await handleAutomationsTelegramSet(
+      makePostReqWithBody({ botToken: 'new-token', chatId: '2' }),
+      res,
+      { slug: 'bot-reoffset' },
+      contextRoot,
+    );
+    expect(status()).toBe(200);
+
+    expect(readTelegramConfigForSlug('bot-reoffset')).toMatchObject({
+      botToken: 'new-token',
+      chatId: '2',
+      offset: 42,
+    });
+  });
+});
+
+// ─── queue ───────────────────────────────────────────────────────────────────
+
+describe('GET /api/automations/queue', () => {
+  it('reports an empty queue when nothing is waiting', async () => {
+    const { res, status, body } = makeRes();
+    await handleAutomationsQueue(getReq, res, {}, contextRoot);
+    expect(status()).toBe(200);
+    expect(body()).toEqual({ queue: [] });
+  });
+
+  it('returns queued fires for this project, and a GET never drains them', async () => {
+    makeAutomation('queued-one', { approve: true });
+    const firedAt = new Date('2026-08-01T18:00:00.000Z').toISOString();
+    enqueueFire(projectRoot, 'queued-one', firedAt);
+
+    const first = makeRes();
+    await handleAutomationsQueue(getReq, first.res, {}, contextRoot);
+    expect(first.status()).toBe(200);
+    expect(first.body().queue).toEqual([{ slug: 'queued-one', firedAt, enqueuedAt: expect.any(String) }]);
+
+    // A second GET sees the SAME entry — proof it was never drained by the first.
+    const second = makeRes();
+    await handleAutomationsQueue(getReq, second.res, {}, contextRoot);
+    expect(second.body().queue).toEqual(first.body().queue);
   });
 });
 

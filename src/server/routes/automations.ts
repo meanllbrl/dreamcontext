@@ -7,6 +7,7 @@ import {
   readAutomationCache,
   readPattern,
   setAutomationEnabled,
+  deriveFlowFromManifest,
 } from '../../lib/automations/store.js';
 import { resolveRunSession, readSessionDigest } from '../../lib/automations/session.js';
 import {
@@ -30,11 +31,12 @@ import {
   NOTIFY_SOUND_OK,
 } from '../../lib/automations/notifier.js';
 import { formatSchedule } from '../../lib/automations/schedule.js';
-import { allPendingReviewCards, pendingReviewCard } from '../../lib/automations/review.js';
-import { applySteer, resumeWithVerdict } from '../../lib/automations/verdict.js';
-import { REVIEW_VERDICTS, type ReviewVerdict } from '../../lib/automations/types.js';
+import { allPendingQuestions, claimQuestion, pendingQuestion } from '../../lib/automations/hitl.js';
+import { resumeWithAnswer } from '../../lib/automations/verdict.js';
+import { queuedFire, type QueuedFire } from '../../lib/automations/queue.js';
+import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../lib/automations/telegram.js';
 import { startAutomationJob, currentAutomationJob } from '../automation-job.js';
-import { AutomationError, type AutomationCache, type AutomationManifest } from '../../lib/automations/types.js';
+import { AutomationError, type AutomationCache, type AutomationManifest, type FlowGraph } from '../../lib/automations/types.js';
 
 /**
  * `/api/automations*` — the dashboard's read + "run now" + approve surface
@@ -66,8 +68,11 @@ interface AutomationSummary {
   approvalReason: string | null;
   cache: AutomationCacheSummary | null;
   review: AutomationManifest['review'];
-  /** The card holding this automation, if any — the board badges off this. */
-  pendingReviewCardId: string | null;
+  /** The question holding this automation, if any (either an unanswered
+   *  approval-diff ask or an in-flow HITL stop) — the board badges off this.
+   *  Repointed from the retired review-card store to `hitl.ts`'s question
+   *  store; the field is named for what it now holds. */
+  pendingQuestionId: string | null;
 }
 
 interface AutomationCacheSummary {
@@ -106,13 +111,13 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     approvalReason: approval.approved ? null : approval.reason,
     cache: cacheSummary(readAutomationCache(contextRoot, m.slug)),
     review: m.review,
-    // Live-computed from the card store, NOT from `cache.status`, for the same
-    // reason `approved` is live-computed rather than read off the last attempt:
-    // `cache.status` reflects the last RUN, so it still reads `awaiting-review`
-    // after a human answers and goes stale until the next tick — and it reads
-    // `ok` on the run that CREATED the card, which is the state most in need of
-    // a badge.
-    pendingReviewCardId: pendingReviewCard(contextRoot, m.slug)?.id ?? null,
+    // Live-computed from the question store, NOT from `cache.status`, for the
+    // same reason `approved` is live-computed rather than read off the last
+    // attempt: `cache.status` reflects the last RUN, so it still reads
+    // `awaiting-review`/`awaiting-approval` after a human answers and goes
+    // stale until the next tick — and it reads `ok` on the run that CREATED
+    // the question, which is the state most in need of a badge.
+    pendingQuestionId: pendingQuestion(contextRoot, m.slug)?.id ?? null,
   };
 }
 
@@ -193,6 +198,12 @@ export async function handleAutomationsShow(
         // to be losing rather than gaining: `agent → off` on a synced manifest
         // means a human gate someone was relying on has been deleted.
         review: manifest.review,
+        // Hashed, and it can carry the same loss in a different shape: deleting
+        // a `hitl` node from the graph removes a human gate exactly as editing
+        // `review` back to `off` does. Sent raw (null when the manifest has
+        // none) — the canvas derives a display graph for that case itself, but
+        // the REVIEW must show what was actually hashed, which is nothing.
+        flow: manifest.flow,
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:
@@ -368,90 +379,276 @@ async function setEnabled(
   }
 }
 
-// ─── Review cards ───────────────────────────────────────────────────────────
+// ─── Flow graph ──────────────────────────────────────────────────────────────
 
 /**
- * GET /api/automations/review — every proposal awaiting a verdict, across all
- * automations, oldest first.
- *
- * A flat list rather than one call per slug, because the board's question is
- * "what am I holding up?", not "does this particular automation have a card".
- * The staged document's PATH is exposed but its contents are not re-read here:
- * the card already carries the body a human judges, and the file only matters
- * once it publishes.
+ * GET /api/automations/:slug/flow — the canvas source. An automation authored
+ * with a `## Flow` block returns it verbatim (`derived: false`); one authored
+ * before the flow feature existed (or that never added a block) gets a graph
+ * DERIVED from its own schedule/model/review fields (`derived: true`) so the
+ * canvas is never empty. `deriveFlowFromManifest` is pure and never writes —
+ * the manifest's own `flow` stays `null` either way.
  */
-export async function handleAutomationsReviewList(
+export async function handleAutomationsFlow(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const manifest = getAutomation(contextRoot, params.slug);
+    if (!manifest) {
+      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
+      return;
+    }
+    const flow: FlowGraph = manifest.flow ?? deriveFlowFromManifest(manifest);
+    sendJson(res, 200, { flow, derived: manifest.flow === null });
+  } catch {
+    sendError(res, 500, 'flow_failed', 'Failed to read the automation flow.');
+  }
+}
+
+// ─── Questions (human-in-the-loop) ──────────────────────────────────────────
+
+/**
+ * GET /api/automations/questions — every question awaiting an answer, across
+ * all automations, oldest first. Deliberately project-wide (unlike the
+ * `:slug`-gated routes below): the board's question is "what am I holding
+ * up?", not "does this particular automation have one open" — this is the
+ * dashboard's own board, not a per-automation bot.
+ */
+export async function handleAutomationsQuestionsList(
   _req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
   try {
-    sendJson(res, 200, { cards: allPendingReviewCards(contextRoot) });
+    sendJson(res, 200, { questions: allPendingQuestions(contextRoot) });
   } catch {
-    sendError(res, 500, 'review_list_failed', 'Failed to read the review queue.');
+    sendError(res, 500, 'questions_list_failed', 'Failed to read the questions queue.');
   }
 }
 
+/** Case/whitespace-insensitive decisions an `'approval'` question accepts.
+ *  Deliberately a CLOSED set — see the doc comment on the branch below for why
+ *  free text is never enough here, unlike `'flow-hitl'`. */
+const APPROVAL_DECISIONS = { approve: true, yes: true, reject: false, no: false } as const;
+
 /**
- * POST /api/automations/review/:id — answer one card.
+ * POST /api/automations/questions/:id — answer one question.
  *
- * Body is `{ verdict: 'approve'|'discard'|'drop' }` or `{ steer: '<text>' }`.
- * NOTHING ELSE travels over HTTP: no session id, no prompt, no path. The card
- * already names the conversation a verdict resumes, and accepting that from a
- * request would make the most sensitive field on the card the one field nothing
- * verified — the same reasoning that keeps `propose` from taking `--session-id`.
+ * Body is `{ answer: string }`. Branches on `question.kind` (S1), and the two
+ * branches are NOT interchangeable — deliberately not just in WHAT they do,
+ * but in WHAT COUNTS AS AN ANSWER:
  *
- * This is not a trust elevation over the CLI. It is loopback-gated and
- * CSRF-blocked like every other write here, and the verdict engine applies the
- * identical claim lock, so a tap here and a tap in Telegram cannot both resume
- * the same session.
+ *  - `'approval'` — the manifest changed since it was last approved, and the
+ *    question is asking whether to trust it as it now stands. This is the
+ *    sha256 tripwire's own gate wearing a dashboard face, so it takes an
+ *    EXPLICIT decision (`approve`/`yes`/`reject`/`no`, case/whitespace
+ *    insensitive) and nothing else — free text is rejected with a 400, never
+ *    interpreted. The alternative (treat any non-empty string as consent)
+ *    would convert "no, this looks wrong" into an approval: worse than no
+ *    gate at all, because the human believes they refused. Approving NEVER
+ *    resumes the asking session (that session ran read-only and is discarded
+ *    either way) — it calls `approveAutomation` and starts a FRESH run
+ *    through `startAutomationJob`, the exact same primitive `POST /:slug/run`
+ *    uses, so there is exactly one spawn path for a dashboard-initiated run,
+ *    not two. Rejecting claims and records the decision (so the question
+ *    stops being pending and the same diff is not re-asked forever) but
+ *    approves nothing and starts nothing — the manifest stays exactly as
+ *    unapproved as it was, and the automation's own approval gate (not this
+ *    route) decides what happens on the next fire. `claimQuestion` gates the
+ *    race either way (two taps a second apart must not double-decide).
+ *  - `'flow-hitl'` — an already-approved run stopped mid-flight to ask a
+ *    question ABOUT ITS OWN WORK, not about whether to trust it, so free text
+ *    is the correct and only shape of answer. `resumeWithAnswer` is the one
+ *    path every channel (HTTP, CLI, Telegram) uses for this, and it re-checks
+ *    the kind itself before touching anything — this route's branch is a
+ *    nicer early exit for the wrong kind, not the defense. Do not fold this
+ *    branch back into the one above: the two kinds disagree about whether
+ *    prose is ever an acceptable answer, and that disagreement is the point.
  */
-export async function handleAutomationsReviewAnswer(
+export async function handleAutomationsQuestionAnswer(
   req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
   try {
-    const card = allPendingReviewCards(contextRoot).find((c) => c.id === params.id);
-    if (!card) {
-      sendError(res, 404, 'not_found', 'That card is not open — it may have been answered elsewhere.');
+    const question = allPendingQuestions(contextRoot).find((q) => q.id === params.id);
+    if (!question) {
+      sendError(res, 404, 'not_found', 'That question is not open — it may have been answered elsewhere.');
       return;
     }
     const body = await parseJsonBody(req);
-    const steer = typeof body?.steer === 'string' ? body.steer : null;
-    const verdict = typeof body?.verdict === 'string' ? body.verdict : null;
-
-    if (steer !== null && verdict !== null) {
-      sendError(res, 400, 'ambiguous', 'Send a verdict or a correction, not both.');
-      return;
-    }
-    if (steer === null && !REVIEW_VERDICTS.includes(verdict as ReviewVerdict)) {
-      sendError(res, 400, 'bad_request', `verdict must be one of: ${REVIEW_VERDICTS.join(', ')}`);
+    const answer = typeof body?.answer === 'string' ? body.answer : '';
+    if (!answer.trim()) {
+      sendError(res, 400, 'bad_request', 'answer must be a non-empty string.');
       return;
     }
 
-    const outcome = steer !== null
-      ? await applySteer(contextRoot, card, steer, 'dashboard')
-      : await resumeWithVerdict(contextRoot, card, verdict as ReviewVerdict, 'dashboard');
+    if (question.kind === 'approval') {
+      const manifest = getAutomation(contextRoot, question.slug);
+      if (!manifest) {
+        sendError(res, 404, 'not_found', `Automation not found: ${question.slug}`);
+        return;
+      }
+      const decision = answer.trim().toLowerCase() as keyof typeof APPROVAL_DECISIONS;
+      if (!(decision in APPROVAL_DECISIONS)) {
+        sendError(
+          res,
+          400,
+          'bad_request',
+          `An approval question takes an explicit decision, not free text — answer must be one of: ${Object.keys(APPROVAL_DECISIONS).join(', ')}.`,
+        );
+        return;
+      }
+      const claim = claimQuestion(contextRoot, question, answer, 'dashboard');
+      if (!claim.claimed) {
+        sendError(res, 409, 'refused', claim.reason);
+        return;
+      }
+      if (!APPROVAL_DECISIONS[decision]) {
+        // REJECTED. Recorded and done — no approval, no run. The manifest is
+        // left exactly as unapproved as it was; the next fire refuses through
+        // the SAME sha256 tripwire, never through a side door opened here.
+        sendJson(res, 200, { question: claim.question, status: 'ok', error: null, result: null, approved: false });
+        return;
+      }
+      // APPROVED. The exact primitive `handleAutomationsApprove` uses, then
+      // the exact primitive `handleAutomationsRunNow` uses — never a second
+      // spawn path.
+      approveAutomation(dirname(contextRoot), manifest, new Date());
+      const { job, started } = startAutomationJob(contextRoot, question.slug);
+      sendJson(res, 200, {
+        question: claim.question,
+        status: 'ok',
+        error: null,
+        result: null,
+        approved: true,
+        job,
+        started,
+      });
+      return;
+    }
 
+    const outcome = await resumeWithAnswer(contextRoot, question, answer, 'dashboard');
     if (outcome.status === 'refused') {
-      // 409, not 500: the card was answered elsewhere, or cannot be answered
-      // this way. That is a legitimate state the UI must render, not a fault.
-      sendError(res, 409, 'refused', outcome.error ?? 'that card could not be answered');
+      // 409, not 500: the question was answered elsewhere, or cannot be
+      // answered this way. That is a legitimate state the UI must render.
+      sendError(res, 409, 'refused', outcome.error ?? 'that question could not be answered');
       return;
     }
     sendJson(res, 200, {
-      card: outcome.card,
+      question: outcome.question,
       status: outcome.status,
       error: outcome.error,
       result: outcome.result,
-      lesson: outcome.lesson,
     });
   } catch (err) {
-    console.error('[automations] review answer failed:', err);
-    sendError(res, 500, 'review_failed', 'Failed to answer the card.');
+    console.error('[automations] question answer failed:', err);
+    sendError(res, 500, 'question_failed', 'Failed to answer the question.');
+  }
+}
+
+// ─── Per-automation Telegram config ─────────────────────────────────────────
+
+/** What the dashboard needs to answer "is Telegram set up for this
+ *  automation, and where does it reply" — never the bot token itself, the
+ *  same shape discipline `GET /api/lab/credentials` uses for lab secrets. */
+interface TelegramConfigView {
+  configured: boolean;
+  chatId: string | null;
+}
+
+function telegramView(cfg: ReturnType<typeof readTelegramConfigForSlug>): TelegramConfigView {
+  return cfg ? { configured: true, chatId: cfg.chatId } : { configured: false, chatId: null };
+}
+
+/** GET /api/automations/:slug/telegram — presence + chat id only. The bot
+ *  token is a capability (it can resume a `bypassPermissions` session) and
+ *  never leaves this process. */
+export async function handleAutomationsTelegramGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    if (!getAutomation(contextRoot, params.slug)) {
+      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
+      return;
+    }
+    sendJson(res, 200, { telegram: telegramView(readTelegramConfigForSlug(params.slug)) });
+  } catch {
+    sendError(res, 500, 'telegram_status_failed', 'Failed to read the Telegram configuration.');
+  }
+}
+
+/**
+ * POST /api/automations/:slug/telegram — set (or replace) this automation's
+ * bot credentials. Body is `{ botToken: string, chatId: string }`; both are
+ * required non-empty strings. The response echoes the same presence-only
+ * shape the GET route returns — the token that was just written is never
+ * read back over HTTP.
+ *
+ * The `offset` (getUpdates cursor) is carried over from any existing config
+ * rather than reset to 0: re-saving the same bot must not replay updates it
+ * already processed. A genuinely new bot (no prior config) starts at 0.
+ */
+export async function handleAutomationsTelegramSet(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    if (!getAutomation(contextRoot, params.slug)) {
+      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
+      return;
+    }
+    const body = await parseJsonBody(req);
+    const botToken = typeof body?.botToken === 'string' ? body.botToken.trim() : '';
+    const chatId = typeof body?.chatId === 'string' ? body.chatId.trim() : '';
+    if (!botToken || !chatId) {
+      sendError(res, 400, 'invalid_body', 'Request body must be { botToken, chatId } with non-empty strings.');
+      return;
+    }
+    const existing = readTelegramConfigForSlug(params.slug);
+    writeTelegramConfigForSlug(params.slug, { botToken, chatId, offset: existing?.offset ?? 0 });
+    sendJson(res, 200, { telegram: telegramView(readTelegramConfigForSlug(params.slug)) });
+  } catch (err) {
+    if (err instanceof AutomationError) {
+      sendError(res, 400, 'telegram_rejected', err.message);
+      return;
+    }
+    console.error('[automations] telegram set failed:', err);
+    sendError(res, 500, 'telegram_failed', 'Failed to store the Telegram configuration.');
+  }
+}
+
+// ─── Queue (machine-local, deferred fires) ──────────────────────────────────
+
+/**
+ * GET /api/automations/queue — every fire waiting for this project's lock to
+ * clear (D9). Read-only: `queuedFire` is a lookup, never `drainQueue`, which
+ * would clear entries a GET must not have the side effect of consuming.
+ */
+export async function handleAutomationsQueue(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const projectRoot = dirname(contextRoot);
+    const queue = listAutomations(contextRoot)
+      .map((m) => queuedFire(projectRoot, m.slug))
+      .filter((q): q is QueuedFire => q !== null);
+    sendJson(res, 200, { queue });
+  } catch {
+    sendError(res, 500, 'queue_failed', 'Failed to read the automations queue.');
   }
 }
 

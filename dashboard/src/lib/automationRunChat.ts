@@ -80,18 +80,29 @@ export function openAutomationRunChat(bus: EventTarget, run: AutomationRunChatDe
  * The tab's name. The conversation's own first prompt is the approved automation brief
  * ("You are scheduled dreamcontext automation …"), which is both enormous and identical
  * across every run of the same job — so titling from it, the way a past-chat resume does,
- * would produce a row of indistinguishable tabs. The automation's name plus the run number
- * is the only pair that tells two of these apart.
+ * would produce a row of indistinguishable tabs. The automation's name plus the run's fire
+ * date is the pair D7 asks for: it disambiguates the same way a run number would, but also
+ * says WHEN without a click — which matters once app-open restores several runs at once
+ * (D7's "every run since the last open") and the tab strip needs to be skimmable.
  *
- * Clipped to the same 34 chars `resumePastSession` clips to, and the run marker is kept
- * whole: it is the half that disambiguates.
+ * Clipped to the same 34 chars `resumePastSession` clips to, and the date marker is kept
+ * whole: it is the half that disambiguates. Month+day only (no year/time) — the fuller
+ * `toLocaleString` timestamp used elsewhere (`AutomationCard.tsx`) doesn't fit a tab.
  */
-export function automationRunTabTitle(automationTitle: string, runNumber: number): string {
-  const marker = ` · run #${runNumber}`;
+export function automationRunTabTitle(automationTitle: string, firedAt: string): string {
+  const marker = ` · ${formatRunDate(firedAt)}`;
   const name = automationTitle.trim() || 'Automation';
   const room = 34 - marker.length;
   const clipped = name.length > room ? `${name.slice(0, room - 1).trimEnd()}…` : name;
   return `${clipped}${marker}`;
+}
+
+/** `firedAt` as a short "Aug 10"-style marker. Falls back to the raw ISO string (same
+ *  degrade-gracefully convention as `AutomationCard.tsx`/`AutomationDetailPanel.tsx`) when
+ *  it doesn't parse — still legible, just not reformatted. */
+function formatRunDate(firedAt: string): string {
+  const d = new Date(firedAt);
+  return Number.isNaN(d.getTime()) ? firedAt : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 /**
@@ -111,28 +122,23 @@ export function automationRunTabTitle(automationTitle: string, runNumber: number
  * conversation under that same uuid (see `agent-chat.ts`'s `freshPin`). The user would be
  * looking at an empty chat that claims to be their run. So the caller must ask this first
  * and say why not, rather than opening something.
+ *
+ * A PENDING QUESTION IS NO LONGER A REASON TO REFUSE — this function used to take a
+ * `pendingQuestionId` and turn it away, on the reasoning that a chat turn could tell a
+ * `bypassPermissions` session to "just go ahead" while the card sat unresolved. That was
+ * right when the answer lived in a review queue on another screen. It is now exactly
+ * backwards: a `flow-hitl` question is a run that stopped and asked IN THIS CONVERSATION,
+ * and `ChatPane` renders the answer card inline (D2/D-G). Refusing to open the chat would
+ * make the only surface that can answer the question unreachable, and the copy pointed at
+ * a queue that no longer exists. The original hole is still closed, but by the pane rather
+ * than by this gate: while a question is pending `ChatPane` replaces the composer, so the
+ * card is the only way to continue the run. An `'approval'` question needs no special case
+ * here — `hitl.ts` forces its `sessionId` to null, and the run that asked one records no
+ * session either, so the first guard below already turns it away.
  */
 export function runChatUnavailableReason(
   run: { sessionId: string | null; transcriptPath: string | null },
-  /**
-   * Is a review card still open on this automation?
-   *
-   * THE HOLE THIS CLOSES: the chat tab talks to the resumed session directly,
-   * and that session runs with `bypassPermissions`. With a card pending, a user
-   * who typed "just go ahead" into the tab would get the proposal carried out
-   * with no verdict recorded, no card resolved, and no lesson learned — the
-   * review gate stepped around through a door it does not watch.
-   *
-   * A chat message is also NOT a steer, even when it looks like one: steering
-   * re-proposes, updates the card body and distills a lesson, while a chat turn
-   * does none of that. Merging the two surfaces would break both, so the tab
-   * refuses and points at the queue, which is the surface that does it properly.
-   */
-  pendingReviewCardId?: string | null,
 ): string | null {
-  if (pendingReviewCardId) {
-    return 'This run is waiting for your verdict. Answer it in the review queue above the board — talking to the session directly would let it act without the card ever being resolved.';
-  }
   if (!run.sessionId) return 'This run never started a claude session, so there is no conversation to open.';
   if (!run.transcriptPath) {
     return 'No transcript on disk for this run. Claude writes one only once a session has produced a turn, and nothing here owns that file’s lifetime.';

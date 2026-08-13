@@ -1,67 +1,65 @@
 /**
- * The verdict engine — what happens when a human answers a review card.
+ * The verdict engine — what happens when a human answers a question.
  *
- * Every path here resumes the claude session that WROTE the proposal. That is
- * the single decision the whole HITL design rests on, ported from Tilki's
+ * `resumeWithAnswer` resumes the claude session that WROTE the proposal. That
+ * is the single decision the whole HITL design rests on, ported from Tilki's
  * Concierge (where the drafting session travels with the card and every steer
- * `--resume`s it): because approving means "keep going" rather than "execute
- * what this card is carrying", a card never has to hold an action, and the
+ * `--resume`s it): because answering means "keep going" rather than "execute
+ * what this card is carrying", a question never has to hold an action, and the
  * feature adds no capability on top of the `bypassPermissions` the approved
  * prompt already bought.
  *
  * Two orderings in this file are load-bearing and pull in opposite directions;
  * both are honoured, and the boundary between them is precise:
  *
- *   - The verdict is persisted BEFORE the resume spawns, so a crash in that
+ *   - The answer is persisted BEFORE the resume spawns, so a crash in that
  *     window cannot replay the act.
- *   - A resume that never SPAWNED reopens the card, because provably nothing
- *     was carried out and the human's tap is owed a retry.
+ *   - A resume that never SPAWNED reopens the question, because provably
+ *     nothing was carried out and the human's tap is owed a retry.
  *   - A resume that spawned and then failed does NOT reopen it. An agent that
- *     ran for a while may have done half the work; re-approving would act
- *     twice. The failure is recorded ON the card instead, so it can never be
- *     mistaken for a clean success.
+ *     ran for a while may have done half the work; re-answering would act
+ *     twice. The failure is recorded ON the question instead, so it can never
+ *     be mistaken for a clean success.
+ *
+ * The review-card half of this file (`resumeWithVerdict`, `applySteer`, and
+ * everything they alone depended on) is retired: every surface that could
+ * answer a card is gone (the CLI's `review` verb, the dashboard queue, the
+ * server routes, Telegram), so `resumeWithAnswer` is now the ONE path an
+ * answer takes, whatever channel it arrived through.
  */
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
-import { dirname, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
-import { forgetCardSession, readCardSession } from './card-registry.js';
+import { readAutomationSession, retireAutomationSession } from './session-registry.js';
+import {
+  canResume as canResumeQuestion,
+  claimQuestion,
+  createQuestion,
+  noteResolution as noteQuestionResolution,
+  pendingQuestion,
+  refreshQuestion,
+  reopenQuestion,
+} from './hitl.js';
 import {
   clearRunSidecar,
   getAutomation,
   lockPathFor,
-  parsePattern,
   readRunSidecar,
-  recordLesson,
   writeRunSidecar,
 } from './store.js';
 import {
   executeClaudeDetached,
-  outputPathFor,
   sanitizeAutomationPrompt,
   type ClaudeExecution,
   type SpawnImpl,
 } from './runner.js';
 import {
-  canResume,
-  claimReviewCard,
-  createReviewCard,
-  noteResolution,
-  pendingReviewCard,
-  recordSteer,
-  refreshReviewCard,
-  reopenReviewCard,
-  resolveReviewCard,
-  writeReviewCard,
-} from './review.js';
-import {
-  PATTERN_LESSON_MAX_CHARS,
   REVIEW_BODY_MAX_CHARS,
   type AutomationManifest,
-  type ReviewCard,
+  type AutomationQuestion,
   type ReviewChannel,
-  type ReviewVerdict,
 } from './types.js';
 
 // ─── The propose guard ──────────────────────────────────────────────────────
@@ -93,16 +91,22 @@ export interface ProposeInput {
   title: string;
   summary?: string;
   body: string;
-  stagedBody?: string;
-  kind?: 'output' | 'agent';
 }
 
+/**
+ * `card` for the CLI's sake, unchanged since before this module retired the
+ * review-card store: `src/cli/commands/automations.ts`'s `propose` verb reads
+ * `result.card.id` and is not this task's file to touch. What it now holds is
+ * an {@link AutomationQuestion}, not a `ReviewCard` — a proposal is a question
+ * like any other from here on, just one a RUNNING agent asked on its own
+ * behalf instead of the runner asking on the manifest's.
+ */
 export type ProposeResult =
-  | { ok: true; card: ReviewCard }
+  | { ok: true; card: AutomationQuestion }
   | { ok: false; reason: string };
 
 /**
- * Create a card ON BEHALF OF A RUNNING RUN — the `automations propose` verb.
+ * Create a question ON BEHALF OF A RUNNING RUN — the `automations propose` verb.
  *
  * THE GUARD: the caller's process group must equal the one recorded in this
  * automation's run sidecar. A detached run gets its own process group, and
@@ -111,10 +115,18 @@ export type ProposeResult =
  * admits the run's own calls and rejects a human's shell, another project's
  * run, and any other process on the machine.
  *
- * Why it needs to be this strong: a card's approval resumes the session id the
- * card names. A planted card is therefore a request to run an arbitrary
+ * Why it needs to be this strong: an answer resumes the session id the
+ * question names. A planted question is therefore a request to run an arbitrary
  * conversation with `bypassPermissions` on the operator's tap — the exact thing
  * the approval tripwire exists to prevent, arriving by a different door.
+ *
+ * `kind: 'flow-hitl'`, always — never `'approval'`. The guard above already
+ * proves the caller IS this automation's own, already-approved, already-running
+ * session, which is exactly the condition {@link QUESTION_KINDS} requires before
+ * an answer may resume it. An `'approval'` question is reserved for the
+ * manifest-diff ask the runner raises on an UNAPPROVED manifest (step 6.5 of
+ * `runAutomation`) — a call this guard can never reach, since it requires a live
+ * sidecar for an approved run in the first place.
  */
 export function proposeFromRun(
   contextRoot: string,
@@ -140,29 +152,32 @@ export function proposeFromRun(
       reason: `\`propose\` may only be called from inside "${slug}"'s own run (process group ${sidecar.childPgid})`,
     };
   }
-  const open = pendingReviewCard(contextRoot, slug);
+  const open = pendingQuestion(contextRoot, slug);
   if (open) {
-    return { ok: false, reason: `"${slug}" already has a card awaiting review (${open.id})` };
+    return { ok: false, reason: `"${slug}" already has a question awaiting an answer (${open.id})` };
   }
-  const card = createReviewCard(contextRoot, {
+  const question = createQuestion(contextRoot, {
     slug,
     runFiredAt: sidecar.fireAt,
-    // The session id is NOT taken from the caller: a run knows its own id, but
-    // accepting it here would let the guard's whole point be handed back as an
-    // argument. It is resolved from the run's cache record by the caller that
-    // has one (the CLI passes it explicitly from the run event).
+    kind: 'flow-hitl',
+    // Not taken from the caller: a run knows its own id, but accepting it here
+    // would hand the guard's whole point back as an argument. Resolved from the
+    // run's cache record by the caller that has one (the CLI passes it
+    // explicitly from the run event) — see `backfillQuestionSession` for the
+    // common case where it is not known yet at propose time.
     sessionId: opts.sessionId ?? null,
-    kind: input.kind ?? (input.stagedBody === undefined ? 'agent' : 'output'),
-    title: input.title,
-    summary: input.summary,
-    body: input.body,
-    stagedBody: input.stagedBody,
+    channel: 'chat',
+    question: [input.title, input.summary, input.body]
+      .map((s) => s?.trim())
+      .filter((s): s is string => Boolean(s))
+      .join('\n\n'),
+    choices: [],
     nowISO: opts.nowISO,
   });
-  return { ok: true, card };
+  return { ok: true, card: question };
 }
 
-// ─── The resume preambles ───────────────────────────────────────────────────
+// ─── The resume preamble ────────────────────────────────────────────────────
 
 const COMMON_FRAME = [
   'This is a scheduled dreamcontext automation resuming after a HUMAN REVIEWED the proposal you made.',
@@ -176,135 +191,11 @@ function fenceCorrection(text: string): string {
   return ['--- THE HUMAN\'S CORRECTION (verbatim) ---', text.trim(), '--- END CORRECTION ---'].join('\n');
 }
 
-export function buildApprovePreamble(card: ReviewCard): string {
-  return [
-    COMMON_FRAME,
-    '',
-    `VERDICT: APPROVED. A human read your proposal ("${card.title}") and approved it.`,
-    'Carry it out now, exactly as proposed. Do not re-propose it, do not ask for confirmation again,',
-    'and do not widen it beyond what was approved — the approval covers what you described, nothing more.',
-    'Your final message is recorded against the card as what actually happened, so state the RESULT',
-    'plainly: what you did, and anything that did not go as proposed.',
-  ].join('\n');
-}
-
-export function buildDiscardPreamble(card: ReviewCard): string {
-  return [
-    COMMON_FRAME,
-    '',
-    `VERDICT: REJECTED. A human read your proposal ("${card.title}") and declined it.`,
-    'Do NOT carry it out. Do not act on it, do not do a smaller version of it, and do not propose',
-    'a variation of it now. Stop here.',
-    'Your final message is recorded against the card: acknowledge briefly, in one or two sentences.',
-  ].join('\n');
-}
-
-/**
- * The verdict people forget, and the one that makes review compound.
- *
- * `drop` does not judge this proposal — it judges the KIND. Concierge's third
- * button writes the lead to a do-not-contact list that the cold queue, the
- * follow-ups and the day-end planner all filter forever; the equivalent here is
- * a durable lesson, because the pattern is the only thing a future run reads.
- */
-export function buildDropPreamble(card: ReviewCard, m: AutomationManifest): string {
-  const lines = [
-    COMMON_FRAME,
-    '',
-    `VERDICT: REJECTED, PERMANENTLY. A human read your proposal ("${card.title}"), declined it, and does`,
-    'not want this KIND of proposal again. Do NOT carry it out.',
-  ];
-  if (m.learning) {
-    lines.push(
-      '',
-      'BEFORE YOU FINISH — record ONE durable lesson so no future run proposes this again. State the',
-      'CLASS of proposal to avoid, not this one instance, and say it as an instruction to your future self:',
-      `  dreamcontext automations learn ${m.slug} --lesson "<never propose ...>"`,
-    );
-  } else {
-    // Honest rather than silent: without learning there is no file a future run
-    // reads, so "never again" cannot actually be remembered.
-    lines.push(
-      '',
-      'NOTE: this automation has learning off, so there is no pattern for a future run to read.',
-      'The rejection applies to this proposal only — nothing durable can be recorded.',
-    );
-  }
-  lines.push(
-    '',
-    'Your final message is recorded against the card: acknowledge briefly, and say what you recorded.',
-  );
-  return lines.join('\n');
-}
-
-/**
- * A steer is NOT a verdict — the card stays pending afterwards.
- *
- * This preamble is the load-bearing half of the 2026-07-12 Tilki incident, in
- * which a reply meant as an instruction was delivered verbatim to a teacher.
- * The human's text is framed here as an instruction to REVISE, never as content
- * to emit, and the resumed agent is told in as many words that nothing has been
- * approved yet.
- */
-export function buildSteerPreamble(card: ReviewCard, m: AutomationManifest, correction: string): string {
-  const lines = [
-    COMMON_FRAME,
-    '',
-    `VERDICT: NOT YET. A human read your proposal ("${card.title}") and wants it CHANGED before deciding.`,
-    'Nothing has been approved and nothing has been carried out. Do not act on the proposal now.',
-    '',
-    fenceCorrection(correction),
-    '',
-    'That text is an INSTRUCTION TO YOU about how to revise the proposal. It is never content to emit,',
-    'to send, or to write into a document as-is.',
-    'Revise the proposal accordingly and reply with the REVISED PROPOSAL ITSELF as your final message —',
-    'no preamble, no "here is the revision", just the proposal as it should now read. It replaces the',
-    'card body and goes back to the human for the same three buttons.',
-  ];
-  if (m.learning) {
-    lines.push(
-      '',
-      'ALSO — this correction is not a one-off. Distill the GENERAL rule behind it and record it, so your',
-      'next run applies it without being told again:',
-      `  dreamcontext automations learn ${m.slug} --lesson "<the general rule>"`,
-      'One line, imperative, about the class of mistake — not a restatement of this particular fix.',
-    );
-  }
-  return lines.join('\n');
-}
-
-// ─── Resuming ───────────────────────────────────────────────────────────────
-
-export interface VerdictOptions {
-  now?: () => Date;
-  /** Machine-local home holding the card→session bindings. Injectable so no
-   *  test reaches the developer's real ~/.dreamcontext. */
-  home?: string;
-  spawnImpl?: SpawnImpl;
-  killImpl?: (pid: number, signal: NodeJS.Signals | 0) => void;
-  log?: (line: string) => void;
-  /** Overrides the manifest's timeout. Used by nothing in production — a
-   *  verdict resume is bounded by the same envelope the run was approved with. */
-  timeoutMinutes?: number;
-}
-
-export interface VerdictOutcome {
-  card: ReviewCard;
-  status: 'ok' | 'failed' | 'timeout' | 'not-spawned' | 'refused';
-  /** Null on `ok`. On `refused` this is the reason nothing was attempted. */
-  error: string | null;
-  /** The agent's final message. On a steer this is the revised proposal. */
-  result: string | null;
-  /** Set on a steer when a durable lesson was recorded. */
-  lesson: string | null;
-}
-
 // ─── The resume runs under the SAME guards a scheduled run does ─────────────
 //
 // A verdict resume spawns a detached `claude --resume` child with
 // bypassPermissions — the same kind of process `runAutomation` spawns, and
-// therefore owed the same two protections. The first version of this file
-// inherited the shared spawn core but NOT its guards, which cost two things:
+// therefore owed the same two protections:
 //
 //   1. NO SIDECAR ⇒ an untrackable orphan. If the process driving the resume
 //      dies, the detached child group survives with no record anywhere, and
@@ -313,10 +204,10 @@ export interface VerdictOutcome {
 //      to prevent, and it does not stop mattering because the spawn came from a
 //      human's tap instead of a timer.
 //   2. NO RUN LOCK ⇒ concurrent claude processes on one automation. Answering
-//      the card clears the review gate, so the very next tick is free to start
-//      a scheduled run while the resume is still going — two agents writing the
-//      same output directory, which is exactly the self-overlap the per-slug
-//      lock was added to prevent.
+//      the question clears the review gate, so the very next tick is free to
+//      start a scheduled run while the resume is still going — two agents
+//      writing the same output directory, which is exactly the self-overlap
+//      the per-slug lock was added to prevent.
 
 /** Take the automation's run lock, or null if a run (or another resume) holds
  *  it. Same staleness window and liveness probe `runAutomation` uses. */
@@ -338,46 +229,6 @@ function releaseRunLock(contextRoot: string, slug: string, lockPath: string): vo
 const LOCK_BUSY_REASON =
   'a run for this automation is still in progress — nothing was changed, try again in a moment';
 
-/** Spawn the resume, recording it in the sidecar synchronously before any await
- *  so the child stays findable if this process dies. */
-function spawnResume(
-  contextRoot: string,
-  m: AutomationManifest,
-  card: ReviewCard,
-  /** The MACHINE-LOCAL session, resolved by `authoritativeSession` — never
-   *  `card.sessionId`, which is an assertion by whoever wrote the card file. */
-  sessionId: string,
-  prompt: string,
-  opts: VerdictOptions,
-): Promise<ClaudeExecution> {
-  const nowFn = opts.now ?? (() => new Date());
-  const timeoutMs = (opts.timeoutMinutes ?? m.timeoutMinutes) * 60_000;
-  return executeClaudeDetached(
-    buildResumeArgs(m, sessionId, sanitizeAutomationPrompt(prompt)),
-    {
-      cwd: dirname(contextRoot),
-      timeoutMs,
-      spawnImpl: opts.spawnImpl,
-      killImpl: opts.killImpl,
-      log: opts.log,
-      now: nowFn,
-      onSpawned: (child, startedAt) => {
-        writeRunSidecar(contextRoot, m.slug, {
-          slug: m.slug,
-          runnerPid: process.pid,
-          childPid: child.pid as number,
-          childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
-          // The fire this resume answers for — it belongs to the card's run, not
-          // to the moment a human happened to tap.
-          fireAt: card.runFiredAt,
-          startedAt: startedAt.toISOString(),
-          timeoutAt: new Date(startedAt.getTime() + timeoutMs).toISOString(),
-        });
-      },
-    },
-  );
-}
-
 function buildResumeArgs(m: AutomationManifest, sessionId: string, prompt: string): string[] {
   const args = [
     '--resume',
@@ -396,437 +247,279 @@ function buildResumeArgs(m: AutomationManifest, sessionId: string, prompt: strin
   return args;
 }
 
+export interface VerdictOptions {
+  now?: () => Date;
+  /** Machine-local home holding the automation session bindings. Injectable so
+   *  no test reaches the developer's real ~/.dreamcontext. */
+  home?: string;
+  spawnImpl?: SpawnImpl;
+  killImpl?: (pid: number, signal: NodeJS.Signals | 0) => void;
+  log?: (line: string) => void;
+  /** Overrides the manifest's timeout. Used by nothing in production — a
+   *  verdict resume is bounded by the same envelope the run was approved with. */
+  timeoutMinutes?: number;
+}
+
+/** What answering a question produced. */
+export interface QuestionOutcome {
+  question: AutomationQuestion;
+  status: 'ok' | 'failed' | 'timeout' | 'not-spawned' | 'refused';
+  /** Null on `ok`. On `refused` this is the reason nothing was attempted. */
+  error: string | null;
+  /** The agent's final message after the answer resumed it. */
+  result: string | null;
+}
+
+// ─── Questions ───────────────────────────────────────────────────────────────
+//
+// `resumeWithAnswer` is the ONE path an answer takes, whatever channel it
+// arrived through — the HTTP route, the CLI verb, and the Telegram handler all
+// land here. That placement is the whole point of R1: the CLI does not go
+// through the server (`cli/commands/automations.ts` imports this module
+// directly) and Telegram reaches it by a third, independent route, so a refusal
+// living in the HTTP handler would guard exactly one of three doors.
+
 /**
- * Move an approved staged document into the automation's real output directory.
+ * THE KIND GATE. An `approval` question must never be resumed.
  *
- * This move IS the approval, in the literal sense: until it happens the file
- * lives under `automations/review/`, where the notification does not point at
- * it, sleep's `pendingOutputsSince` does not scan for it, and autoSync has no
- * reason to commit it. One rename opens all three gates at once, which is why
- * there is exactly one of them rather than a flag on each.
+ * `buildResumeArgs` hardcodes `--permission-mode bypassPermissions`, and at the
+ * moment an `approval` question exists the manifest is BY DEFINITION unapproved
+ * — that is what the question is asking about. Resuming it would let an
+ * unapproved manifest bootstrap its own elevated execution, which is precisely
+ * the attack the sha256 tripwire exists to prevent, arriving through a door the
+ * tripwire does not watch.
  *
- * `renameSync` first, copy+unlink as the fallback: the two paths are normally
- * on the same filesystem (both inside the brain), but a brain whose output dir
- * is a symlink to another volume would make rename fail with EXDEV, and losing
- * an approved document to a filesystem detail is not an acceptable outcome.
+ * Answering one "yes" calls `approveAutomation` and starts a FRESH run; the
+ * question's own session is discarded, never continued. That work belongs to the
+ * caller — this function's job is to make the wrong path impossible rather than
+ * merely undocumented.
  */
-function publishStagedDocument(
-  contextRoot: string,
-  manifest: AutomationManifest,
-  card: ReviewCard,
-  now: Date,
-): string {
-  // `outputPathFor` suffixes `-2`, `-3` rather than clobbering, so a same-day
-  // re-run (or a second approved card) never overwrites an earlier document.
-  const destination = outputPathFor(contextRoot, manifest, new Date(Date.parse(card.runFiredAt) || now.getTime()));
-  mkdirSync(dirname(destination), { recursive: true });
-  const staged = card.stagedPath as string;
+const APPROVAL_QUESTION_REFUSAL =
+  'an approval question is answered by approving the manifest, not by resuming its session';
+
+function buildAnswerPreamble(q: AutomationQuestion, answer: string): string {
+  return [
+    COMMON_FRAME,
+    '',
+    `A human answered the question you stopped to ask ("${q.question}").`,
+    '',
+    fenceCorrection(answer),
+    '',
+    'That text is their ANSWER. Continue the job accordingly, and do not ask the same thing again.',
+    'Your final message is recorded as what actually happened, so state the RESULT plainly: what you',
+    'did, and anything that did not go as expected.',
+  ].join('\n');
+}
+
+/**
+ * Was this session ever opened as a chat tab on this machine?
+ *
+ * Condition (b) of the retention rule. The roster is the vault's own
+ * `state/.agent-sessions.json`, which this module already has a `contextRoot`
+ * for — read directly rather than through the server route that owns it, since
+ * `src/lib` must not depend on `src/server`.
+ *
+ * A MISSING roster means no tab was ever opened, which is the common case on a
+ * machine that answers from Telegram or the CLI — so it correctly reports false
+ * and the binding retires. A CORRUPT roster reports false too, and that is the
+ * deliberate trade: the cost is one session that cannot be reopened as a tab
+ * (its output document still exists), against the cost of a standing
+ * `bypassPermissions` grant nobody asked for. Never throws.
+ */
+function sessionIsInTabRoster(contextRoot: string, sessionId: string): boolean {
   try {
-    renameSync(staged, destination);
+    const raw: unknown = JSON.parse(readFileSync(join(contextRoot, 'state', '.agent-sessions.json'), 'utf-8'));
+    const entries = Array.isArray(raw) ? raw : Array.isArray((raw as { sessions?: unknown })?.sessions) ? (raw as { sessions: unknown[] }).sessions : [];
+    return entries.some((e) => e && typeof e === 'object' && (e as { sessionId?: unknown }).sessionId === sessionId);
   } catch {
-    copyFileSync(staged, destination);
-    rmSync(staged, { force: true });
+    return false;
   }
-  return destination;
 }
 
 /**
- * The session a verdict may actually resume — read from the MACHINE-LOCAL
- * binding, never from the card.
+ * Retire a binding once it is provably done with — the capability-lifetime rule.
  *
- * The card is a file in the project directory, so its `sessionId` is an
- * assertion by whoever wrote that file, not a fact. Only the runner records a
- * binding, and only for a card it created itself, so a card that was planted
- * (or hand-edited to name a different conversation) resolves to null here and
- * cannot be approved or steered at all.
+ * The card store this replaces dropped its binding the instant a card stopped
+ * being pending, because "a resolvable session is a capability, and it should
+ * not outlive the decision it existed for". This store cannot do that: it is
+ * deliberately plural, so Telegram can talk to the latest run and the app can
+ * reopen past ones as tabs. But retiring NOTHING would leave an automation that
+ * fires daily with ~90 simultaneously resumable sessions — a widening of the old
+ * model rather than a port of it.
+ *
+ * So: retire only when the question is settled AND nobody kept the tab. If they
+ * did keep it, the lifetime hands off to the roster, which is machine-local,
+ * user-visible, and already what tab restore reads — rather than staying an
+ * indefinite grant.
  */
-function authoritativeSession(card: ReviewCard, home: string): string | null {
-  const bound = readCardSession(card.id, card.slug, home);
-  if (!bound) return null;
-  // A card whose FILE disagrees with the binding has been tampered with since
-  // it was written; refuse rather than silently preferring one of them.
-  if (card.sessionId && card.sessionId !== bound) return null;
-  return bound;
-}
-
-/** The newest lesson text, or null. Used to detect whether a resumed agent
- *  actually recorded one, rather than trusting that it did. */
-function newestLesson(m: AutomationManifest | null): string | null {
-  if (!m) return null;
-  const lessons = parsePattern(m.pattern).lessons;
-  return lessons.length > 0 ? lessons[0].text : null;
+function retireIfDone(contextRoot: string, q: AutomationQuestion, sessionId: string, home: string): void {
+  const latest = refreshQuestion(contextRoot, q);
+  // (a) settled, with nothing further pending for this automation.
+  if (!latest || latest.state === 'pending') return;
+  if (pendingQuestion(contextRoot, q.slug)) return;
+  // (b) never opened as a chat tab.
+  if (sessionIsInTabRoster(contextRoot, sessionId)) return;
+  retireAutomationSession(q.slug, sessionId, home);
 }
 
 /**
- * Answer a card with a verdict: approve, discard, or drop.
+ * Answer a question and resume the session that asked it.
  *
- * The card is resolved on disk BEFORE anything spawns. See this file's header
- * for why that ordering wins over "a failed send keeps the card open", and for
- * the one case (`not-spawned`) where the card is put back.
+ * The same two orderings this file's header describes: the lock is taken
+ * BEFORE the claim (resolving something we then cannot act on would burn the
+ * human's answer), and the answer is persisted BEFORE the spawn (a crash in
+ * that window must not replay the act). A resume that never SPAWNED reopens
+ * the question, because provably nothing happened; one that spawned and then
+ * failed does not, because it may have done half the work.
  */
-export async function resumeWithVerdict(
+export async function resumeWithAnswer(
   contextRoot: string,
-  card: ReviewCard,
-  verdict: ReviewVerdict,
+  question: AutomationQuestion,
+  answer: string,
   via: ReviewChannel,
   opts: VerdictOptions = {},
-): Promise<VerdictOutcome> {
+): Promise<QuestionOutcome> {
   const nowFn = opts.now ?? (() => new Date());
   const home = opts.home ?? homedir();
-  const manifest = getAutomation(contextRoot, card.slug);
-  if (!manifest) {
-    return { card, status: 'refused', error: `no such automation: ${card.slug}`, result: null, lesson: null };
-  }
-  // Disk is the authority, not the caller's copy — see `claimReviewCard`. Two
-  // surfaces can each be holding a card they believe is pending.
-  const current = refreshReviewCard(contextRoot, card);
-  if (!current) {
-    return { card, status: 'refused', error: 'this card no longer exists', result: null, lesson: null };
-  }
-  card = current;
-  if (card.state !== 'pending') {
-    return { card, status: 'refused', error: `this card was already ${card.state}`, result: null, lesson: null };
+
+  // THE KIND GATE, first and unconditional — before the manifest is read, before
+  // disk is touched, before anything can decide otherwise.
+  if (question.kind !== 'flow-hitl') {
+    return { question, status: 'refused', error: APPROVAL_QUESTION_REFUSAL, result: null };
   }
 
-  // A card with no resumable session can still be REFUSED — that is the whole
-  // point of being able to throw away a proposal you did not expect — but it
-  // can never be approved, because there is nothing to carry it out.
-  //
-  // "Resumable" means THIS MACHINE recorded the binding, not that the card
-  // claims a session: a planted or hand-edited card resolves to null here and
-  // is therefore only ever discardable.
-  const sessionId = authoritativeSession(card, home);
+  // NULs only - an answer is prose, and its spaces and newlines are the
+  // human's, not noise to flatten (same reasoning as sanitizeAutomationPrompt).
+  const text = answer.replace(/\u0000/g, '').trim();
+  if (!text) {
+    return { question, status: 'refused', error: 'an empty answer resolves nothing', result: null };
+  }
+
+  const manifest = getAutomation(contextRoot, question.slug);
+  if (!manifest) {
+    return { question, status: 'refused', error: `no such automation: ${question.slug}`, result: null };
+  }
+
+  // Disk is the authority, not the caller's copy — several surfaces can each be
+  // holding one they believe is pending.
+  const current = refreshQuestion(contextRoot, question);
+  if (!current) {
+    return { question, status: 'refused', error: 'this question no longer exists', result: null };
+  }
+  question = current;
+  // Re-checked after the fresh read: the kind is what the FILE says now, and a
+  // stale in-memory copy is exactly what the gate above cannot rely on alone.
+  if (question.kind !== 'flow-hitl') {
+    return { question, status: 'refused', error: APPROVAL_QUESTION_REFUSAL, result: null };
+  }
+  if (question.state !== 'pending') {
+    return { question, status: 'refused', error: `this question was already ${question.state}`, result: null };
+  }
+
+  // THE MACHINE-LOCAL BINDING IS THE AUTHORITY, never `question.sessionId` — a
+  // question is a file in the project directory, so what it names is an
+  // assertion by whoever wrote it. Only the runner records a binding.
+  const sessionId = question.sessionId ? readAutomationSession(question.slug, question.sessionId, home) : null;
   if (!sessionId) {
-    if (verdict === 'approve') {
-      return {
-        card,
-        status: 'refused',
-        error: canResume(card)
-          ? 'this card is not registered on this machine — it can be discarded, but not approved'
-          : 'this card has no resumable session — it can be discarded, but not approved',
-        result: null,
-        lesson: null,
-      };
-    }
-    const resolved = resolveReviewCard(contextRoot, card, verdict, via, nowFn().toISOString());
     return {
-      card: noteResolution(contextRoot, resolved, {
-        note: 'Closed without resuming — the proposing run left no session to reply to.',
-      }),
-      status: 'ok',
-      error: null,
+      question,
+      status: 'refused',
+      error: canResumeQuestion(question)
+        ? 'this question is not registered on this machine — it cannot be resumed here'
+        : 'the run that asked this left no session to reply to',
       result: null,
-      lesson: null,
     };
   }
 
-  // APPROVING A DOCUMENT IS A FILE MOVE, NOT A CONVERSATION.
-  //
-  // A `kind: 'output'` card already holds the finished artifact — the human
-  // read the very text that publishes. Resuming the session to "carry it out"
-  // would spend tokens re-deriving something that exists on disk, and give the
-  // agent a chance to produce something OTHER than what was approved, which is
-  // the one thing an approval must rule out. So this path publishes and stops.
-  // (Discard and drop still resume, because a rejection is worth telling the
-  // agent about — and `drop` has a lesson to record.)
-  if (verdict === 'approve' && card.kind === 'output') {
-    if (!card.stagedPath || !existsSync(card.stagedPath)) {
-      return {
-        card,
-        status: 'refused',
-        error: 'the staged document is missing — nothing to publish',
-        result: null,
-        lesson: null,
-      };
-    }
-    // The lock, even though nothing spawns here: publishing WRITES into the
-    // output directory, which is the one place a still-finishing run of this
-    // same automation is also writing. Taken before the claim for the same
-    // reason as the resume path — a verdict that cannot act must not be spent.
-    const publishLock = acquireRunLock(contextRoot, manifest, nowFn().getTime());
-    if (!publishLock) {
-      return { card, status: 'refused', error: LOCK_BUSY_REASON, result: null, lesson: null };
-    }
-    try {
-      const claimed = claimReviewCard(contextRoot, card, 'approve', via, nowFn().toISOString());
-      if (!claimed.claimed) {
-        return { card: claimed.card ?? card, status: 'refused', error: claimed.reason, result: null, lesson: null };
-      }
-      const destination = publishStagedDocument(contextRoot, manifest, claimed.card, nowFn());
-      return {
-        card: noteResolution(contextRoot, { ...claimed.card, stagedPath: destination }, {
-          note: `Published to ${relative(contextRoot, destination)}.`,
-          error: null,
-        }),
-        status: 'ok',
-        error: null,
-        result: null,
-        lesson: null,
-      };
-    } catch (err) {
-      // The move failed, so nothing published — but the card is already
-      // `approved` and must not be reopened blindly, because "approved" is a
-      // decision the human made and did not retract. Record the failure; the
-      // staged document is still there to retry from. Re-read rather than
-      // closing over the claim, which is now scoped inside the try above.
-      const detail = `could not publish the approved document: ${(err as Error).message}`;
-      const latest = refreshReviewCard(contextRoot, card) ?? card;
-      return {
-        card: noteResolution(contextRoot, latest, { error: detail }),
-        status: 'failed',
-        error: detail,
-        result: null,
-        lesson: null,
-      };
-    } finally {
-      releaseRunLock(contextRoot, manifest.slug, publishLock);
-    }
-  }
-
-  const prompt =
-    verdict === 'approve'
-      ? buildApprovePreamble(card)
-      : verdict === 'discard'
-        ? buildDiscardPreamble(card)
-        : buildDropPreamble(card, manifest);
-
-  // THE RUN LOCK COMES BEFORE THE CLAIM. Resolving a card we then cannot act on
-  // would burn the human's verdict: the card would read `approved` while
-  // nothing ran and nothing could be retried. So the lock is taken first, and
-  // failing to get it changes nothing at all.
   const lockPath = acquireRunLock(contextRoot, manifest, nowFn().getTime());
   if (!lockPath) {
-    return { card, status: 'refused', error: LOCK_BUSY_REASON, result: null, lesson: null };
+    return { question, status: 'refused', error: LOCK_BUSY_REASON, result: null };
   }
 
   try {
-    // THE ORDERING: resolve first, spawn second — and resolve ATOMICALLY, so two
-    // surfaces answering the same card cannot both reach the spawn below. Losing
-    // that race is a refusal, never a second resume.
-    const claim = claimReviewCard(contextRoot, card, verdict, via, nowFn().toISOString());
+    const claim = claimQuestion(contextRoot, question, text, via, nowFn().toISOString());
     if (!claim.claimed) {
-      return { card: claim.card ?? card, status: 'refused', error: claim.reason, result: null, lesson: null };
+      return { question: claim.question ?? question, status: 'refused', error: claim.reason, result: null };
     }
-    const resolved = claim.card;
+    const claimed = claim.question;
 
-    const execution = await spawnResume(contextRoot, manifest, card, sessionId, prompt, opts);
+    const execution = await spawnQuestionResume(contextRoot, manifest, question, sessionId, buildAnswerPreamble(question, text), opts);
 
     if (!execution.spawned) {
-      // Provably nothing ran, so the human's tap is owed a retry — the ONE path
-      // that may put a resolved card back to pending.
-      const reopened = reopenReviewCard(
-        contextRoot,
-        resolved,
-        'the claude binary could not be launched — your verdict was not carried out, try again',
-      );
+      // Provably nothing ran, so the answer is owed a retry — the ONE path that
+      // may put a settled question back to pending.
       return {
-        card: reopened,
+        question: reopenQuestion(contextRoot, claimed, 'the claude binary could not be launched — your answer was not carried out, try again'),
         status: 'not-spawned',
         error: 'spawn failed — the claude binary could not be launched',
         result: null,
-        lesson: null,
       };
     }
-
     if (execution.timedOut) {
       return {
-        card: noteResolution(contextRoot, resolved, {
+        question: noteQuestionResolution(contextRoot, claimed, {
           error: `the resumed session exceeded its ${manifest.timeoutMinutes}-minute timeout — it may have done part of the work`,
         }),
         status: 'timeout',
         error: 'the resumed session timed out',
         result: null,
-        lesson: null,
       };
     }
-
     const parsed = execution.result;
     if (!parsed?.parsed || parsed.isError) {
       const detail = execution.stderrTail || (parsed?.parsed ? 'claude reported is_error: true' : 'unparseable CLI output');
       return {
-        card: noteResolution(contextRoot, resolved, { error: detail }),
+        question: noteQuestionResolution(contextRoot, claimed, { error: detail }),
         status: 'failed',
         error: detail,
         result: null,
-        lesson: null,
       };
     }
 
     const note = (parsed.result ?? '').trim();
-    let lesson: string | null = null;
-    if (verdict === 'drop' && manifest.learning) {
-      // `drop` asks the agent to record the class of proposal to avoid. Verified,
-      // not assumed — see `applySteer` for why trusting the ask is not enough.
-      const after = newestLesson(getAutomation(contextRoot, card.slug));
-      if (after && after !== newestLesson(manifest)) lesson = after;
-    }
     return {
-      card: noteResolution(contextRoot, resolved, {
-        note: note.slice(0, REVIEW_BODY_MAX_CHARS) || null,
-        error: null,
-      }),
+      question: noteQuestionResolution(contextRoot, claimed, { note: note.slice(0, REVIEW_BODY_MAX_CHARS) || null, error: null }),
       status: 'ok',
       error: null,
       result: note,
-      lesson,
     };
   } finally {
-    // The lock and the sidecar are released on EVERY exit from the resume,
-    // including the early returns above — same discipline as `runAutomation`'s
-    // own finally, and the reason this is a try/finally rather than a cleanup
-    // call at the bottom.
     releaseRunLock(contextRoot, manifest.slug, lockPath);
-    // Retire the binding once the card is no longer pending: a resolvable
-    // session is a capability, and it should not outlive the decision it
-    // existed for. Re-read rather than trusting the in-memory copy, because the
-    // `not-spawned` path deliberately puts the card BACK to pending.
-    if (refreshReviewCard(contextRoot, card)?.state !== 'pending') {
-      forgetCardSession(card.id, home);
-    }
+    retireIfDone(contextRoot, question, sessionId, home);
   }
 }
 
-/**
- * Correct a pending card in words.
- *
- * The card STAYS pending — a steer revises, it never ships. Learning fires
- * HERE, at correction time, and not when the card is eventually approved: that
- * is the exact fix Tilki made when its first version learned at send time from
- * raw before/after examples and read, correctly, as "not learning".
- */
-export async function applySteer(
+/** The question equivalent of a resume spawn — sidecar-before-await contract,
+ *  the resume envelope, `buildResumeArgs`. */
+function spawnQuestionResume(
   contextRoot: string,
-  card: ReviewCard,
-  correction: string,
-  via: ReviewChannel,
-  opts: VerdictOptions = {},
-): Promise<VerdictOutcome> {
+  m: AutomationManifest,
+  q: AutomationQuestion,
+  sessionId: string,
+  prompt: string,
+  opts: VerdictOptions,
+): Promise<ClaudeExecution> {
   const nowFn = opts.now ?? (() => new Date());
-  // NULs only — a correction is prose, and its newlines are the human's, not
-  // noise to flatten (same reasoning as sanitizeAutomationPrompt).
-  const text = correction.replace(/\u0000/g, '').trim();
-  if (!text) {
-    return { card, status: 'refused', error: 'an empty correction steers nothing', result: null, lesson: null };
-  }
-  const home = opts.home ?? homedir();
-  const manifest = getAutomation(contextRoot, card.slug);
-  if (!manifest) {
-    return { card, status: 'refused', error: `no such automation: ${card.slug}`, result: null, lesson: null };
-  }
-  // Disk is the authority here too: a steer must not be applied on top of a
-  // body another channel already rewrote, or onto a card someone just answered.
-  const current = refreshReviewCard(contextRoot, card);
-  if (!current) {
-    return { card, status: 'refused', error: 'this card no longer exists', result: null, lesson: null };
-  }
-  card = current;
-  if (card.state !== 'pending') {
-    return { card, status: 'refused', error: `this card was already ${card.state}`, result: null, lesson: null };
-  }
-  const sessionId = authoritativeSession(card, home);
-  if (!sessionId) {
-    return {
-      card,
-      status: 'refused',
-      error: canResume(card)
-        ? 'this card is not registered on this machine — there is nobody to give the correction to'
-        : 'this card has no resumable session — there is nobody to give the correction to',
-      result: null,
-      lesson: null,
-    };
-  }
-
-  // Same two guards a scheduled run gets: a steer spawns a real detached child,
-  // so it must be trackable (sidecar) and must not run alongside another claude
-  // on the same automation (run lock). A steer resolves nothing, so failing to
-  // take the lock simply leaves the card exactly as it was.
-  const lockPath = acquireRunLock(contextRoot, manifest, nowFn().getTime());
-  if (!lockPath) {
-    return { card, status: 'refused', error: LOCK_BUSY_REASON, result: null, lesson: null };
-  }
-
-  const lessonBefore = newestLesson(manifest);
-  let execution: ClaudeExecution;
-  try {
-    execution = await spawnResume(contextRoot, manifest, card, sessionId, buildSteerPreamble(card, manifest, text), opts);
-  } finally {
-    releaseRunLock(contextRoot, manifest.slug, lockPath);
-  }
-
-  // Every failure below leaves the card exactly as it was: still pending, still
-  // holding the previous proposal. Nothing was consumed, so there is nothing to
-  // reopen and nothing to warn about beyond "that did not work, try again".
-  if (!execution.spawned) {
-    return {
-      card,
-      status: 'not-spawned',
-      error: 'spawn failed — the claude binary could not be launched; the card is unchanged',
-      result: null,
-      lesson: null,
-    };
-  }
-  if (execution.timedOut) {
-    return {
-      card,
-      status: 'timeout',
-      error: `the rewrite exceeded its ${manifest.timeoutMinutes}-minute timeout; the card is unchanged`,
-      result: null,
-      lesson: null,
-    };
-  }
-  const parsed = execution.result;
-  const revised = (parsed?.result ?? '').trim();
-  if (!parsed?.parsed || parsed.isError || !revised) {
-    const detail =
-      execution.stderrTail ||
-      (parsed?.parsed ? 'the rewrite came back empty' : 'unparseable CLI output');
-    return { card, status: 'failed', error: `${detail}; the card is unchanged`, result: null, lesson: null };
-  }
-
-  const lesson = distillLesson(contextRoot, card.slug, manifest, lessonBefore, text);
-
-  let next = recordSteer(contextRoot, card, { text, via, newBody: revised, lesson, nowISO: nowFn().toISOString() });
-  // A resume may hand back a different conversation id; the NEXT steer has to
-  // continue from where this one left off, not from the original proposal.
-  if (parsed.sessionId && parsed.sessionId !== card.sessionId) {
-    next = { ...next, sessionId: parsed.sessionId };
-    writeReviewCard(contextRoot, next);
-  }
-  return { card: next, status: 'ok', error: null, result: revised, lesson };
-}
-
-/**
- * What the correction taught, as one durable line — or null.
- *
- * VERIFIED, not assumed. The steer preamble asks the agent to distill and
- * record the general rule, but an ask is not a guarantee, and a correction that
- * silently taught nothing is exactly the failure mode Tilki shipped first and
- * had to fix. So: if the ledger grew, take what the agent wrote (it had the
- * full context and can generalise better than a string copy). If it did not,
- * record the human's own words rather than lose them — a verbatim correction is
- * a weaker lesson than a distilled rule, and infinitely better than none.
- */
-function distillLesson(
-  contextRoot: string,
-  slug: string,
-  before: AutomationManifest,
-  lessonBefore: string | null,
-  correction: string,
-): string | null {
-  // Nothing reads the pattern when learning is off, so writing to it would be
-  // an automation quietly accumulating a file it never opens — the same reason
-  // the `learn` CLI verb refuses outright.
-  if (!before.learning) return null;
-  const after = newestLesson(getAutomation(contextRoot, slug));
-  if (after && after !== lessonBefore) return after;
-  const fallback = correction.replace(/\s+/g, ' ').trim().slice(0, PATTERN_LESSON_MAX_CHARS);
-  if (!fallback) return null;
-  try {
-    recordLesson(contextRoot, slug, { lesson: fallback });
-    return fallback;
-  } catch {
-    // A pattern write that fails must not fail the steer — the revision is the
-    // thing the human asked for; the lesson is the bonus.
-    return null;
-  }
+  const timeoutMs = (opts.timeoutMinutes ?? m.timeoutMinutes) * 60_000;
+  return executeClaudeDetached(buildResumeArgs(m, sessionId, sanitizeAutomationPrompt(prompt)), {
+    cwd: dirname(contextRoot),
+    timeoutMs,
+    spawnImpl: opts.spawnImpl,
+    killImpl: opts.killImpl,
+    log: opts.log,
+    now: nowFn,
+    onSpawned: (child, startedAt) => {
+      writeRunSidecar(contextRoot, m.slug, {
+        slug: m.slug,
+        runnerPid: process.pid,
+        childPid: child.pid as number,
+        childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
+        // The fire this answer belongs to — the asking run's, not the moment a
+        // human happened to reply.
+        fireAt: q.runFiredAt,
+        startedAt: startedAt.toISOString(),
+        timeoutAt: new Date(startedAt.getTime() + timeoutMs).toISOString(),
+      });
+    },
+  });
 }

@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-08-03'
+updated: '2026-08-10'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -98,6 +98,7 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - [x] As a developer, Chat answer surfaces include a pinned checklist window (plan mode §1.14) that submits as flat GFM task-list markdown, so the agent reads plain text not structured payloads.
 - [x] As a developer, the Chat view lets me sign in to Claude directly from an auth-required banner that opens a shell tab with the correct login command, so I never hit a "run /login" dead-end in the headless surface.
 - [x] As a developer, goal-skill and council live panels render above the Chat transcript (not just the terminal), so orchestrated runs show the same progress no matter which surface I picked.
+- [x] As a developer, when an agent asks a question while I'm looking elsewhere, I receive a chime + native notification + bouncing Dock icon (macOS `UserAttentionType.Critical`, bounces until clicked) so the blocked turn reaches me even when dreamcontext is not the active window. *(Shipped 2026-08-09: `lib/attention.ts` unified alarm, per-source throttle, chip-active probe for multi-instance, notification body carries real words from structured ask JSON)*
 - [x] As a developer, the Chat view shows a working indicator (dots + elapsed clock) before the CLI's first frame and in every gap between tool results, so "nothing on screen yet" reads as "working" rather than "stuck".
 - [x] As a developer, auto-scroll in Chat sticks to the bottom through content-height changes (image loads, composer resize, split/move), not just new messages, so the answer stays in view instead of mysteriously scrolling off mid-turn.
 - [x] As a developer, scrolling back up through a long conversation keeps my place to the pixel — the window loading 40 more entries above me, an image in them decoding afterwards, or a card above me expanding or collapsing all leave the row I am reading exactly where it is on screen.

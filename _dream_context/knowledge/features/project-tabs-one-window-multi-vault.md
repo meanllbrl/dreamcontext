@@ -7,7 +7,7 @@ pinned: false
 date: "2026-08-10"
 status: "in_review"
 created: "2026-08-10"
-updated: "2026-08-10"
+updated: "2026-08-11"
 released_version: null
 product: desktop
 tags:
@@ -80,10 +80,14 @@ related_tasks:
 - **No escape to new window from chip strip itself** — only via Shift-click in ProjectSwitcher or right-click context menu (cut on YAGNI).
 - **Eviction gate is `alive`, not `live`.** `ProjectRollup.live` excludes shells (it's the chat badge count); a project with only a running shell (dev server) must not report `live:0` and be evictable mid-process. `ProjectRollup.alive` counts any row with a live PTY/WebSocket, shells included.
 
-### Review Findings
+### Review Findings (Waves 2-4, then post-in_review hardening)
 - **M7 (T8):** `fitVisible()` must early-return on `!isActive` — two other paths call it while hidden, and fitting a `display:none` xterm degrades to no-op only by luck (position:absolute;inset:0 → height auto → NaN → FitAddon bails).
 - **M8 (T11):** `markSleepPending`/`clearSleepPending` gained `vault` — a global key meant clicking "Run sleep" in A put B's tracker into "Waiting to sleep..." and disabled its menu item.
 - **M9 (T18/T19/T20, CRITICAL):** `ProjectRollup.live` was the eviction test but excludes shells → project with only a running shell reported `live:0`, was evicted, PTY killed mid-process. Fixed by adding `ProjectRollup.alive` as sole eviction gate, regression-locked.
+- **2026-08-10 post-in_review defects** (session 26f43715, committed `480b4f3` + PR #291):
+  - **Escape stack broken in both directions.** Single LIFO across mounted-but-hidden projects didn't know which was on-screen. A opens panel → switch to B → B opens panel → return to A: A's visible panel was Escape-deaf. Reverse order: B's Escape closed A's hidden panel. `popAllWithPrefix` existed but was uncalled — and calling it wouldn't fix it, because a mounted panel leaves no record on return so the bug would just move. Fixed: scope captured at PUSH time, Escape answered per-scope. This also fixed three popovers (tooltip, command palette, insight drill-in) using `useId()` vault-unaware.
+  - **Eviction ceiling read the `live` badge counter,** which excludes shells. A project whose only live row was a dev server looked idle (`live:0`) and would have had its PTY killed. Fixed: separate `alive` counter (any live PTY/WebSocket, shells included), regression test named after the bug.
+  - **Smoke test was single-vault** — the one shape that could never catch a cross-project bug. Now opens two vaults, 12/12. Step S7 had been passing with no modal to close (correctly rejected).
 
 ## Technical Details
 
@@ -136,6 +140,9 @@ Ten events moved from `window` to instance bus: `navigate`, `agent-open-page`, `
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-08-11 - Post-in_review hardening (session 26f43715, committed 480b4f3 + PR #291)
+- Fixed two real defects found by repeated review: (1) Escape stack broken in both directions across mounted-but-hidden projects — scope now captured at PUSH time, Escape answered per-scope; (2) eviction ceiling read `live` badge counter (excludes shells) — a project with only a running shell would have been evicted mid-process. Separate `alive` counter added, regression-locked. Smoke test upgraded from single-vault (could never catch cross-project bugs) to two-vault, 12/12. Commit split from concurrent automations work via `git apply --cached`, verified in isolated worktree. Status remains `in_review` — 3 runtime criteria still require live agent (B2, M-x1, B5/B6/B7).
 
 ### 2026-08-10 - Created at in_review
 - Feature PRD created after Waves 2–4 landed (all 20 tasks done). Automated validation 9/9 PASS; runtime 6/9 proven. Status `in_review` reflects partial runtime validation — human should close remaining 3 criteria against a second registered vault + live shell session.

@@ -21,7 +21,21 @@
  *  the automation refuses to spawn again until a human resolves it. Unlike
  *  every other refusal here it is not a fault: it is the scheduler running at
  *  the human's speed instead of the clock's, so a week away comes back as one
- *  owed fire rather than seven identical unreviewed proposals. */
+ *  owed fire rather than seven identical unreviewed proposals.
+ *  'awaiting-approval' = the EXACT TWIN of 'awaiting-review', for the other
+ *  gate. The manifest changed since it was last approved, so the run asked the
+ *  human about the diff in its own session and exited rather than running an
+ *  unapproved prompt. Also not a fault — the human is the bottleneck again —
+ *  and it shares the twin's whole discipline: the watermark is NOT advanced, so
+ *  the fire is OWED and comes back ONCE when the question is answered, not once
+ *  per tick for as long as it goes unanswered.
+ *
+ *  A run event recorded under this status carries `sessionId: null` ALWAYS. The
+ *  approval-question conversation must never become resumable: `resumeWithAnswer`
+ *  hardcodes `bypassPermissions`, and at that moment the manifest is by
+ *  definition still unapproved — binding that session would let an unapproved
+ *  manifest bootstrap its own elevated execution. Null by construction, never
+ *  by an omission a future edit could quietly undo. */
 export const RUN_STATUSES = [
   'ok',
   'failed',
@@ -30,6 +44,7 @@ export const RUN_STATUSES = [
   'deferred',
   'orphaned',
   'awaiting-review',
+  'awaiting-approval',
 ] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
@@ -68,6 +83,106 @@ export interface Schedule {
   days: 'daily' | Weekday[];
   at: string;
 }
+
+// ─── The flow graph (the `## Flow` manifest section) ────────────────────────
+//
+// An automation's ordered graph of `trigger → agent(+connectors) → hitl →
+// report`, stored as fenced JSON under `## Flow` in the manifest. One shape,
+// three readers: the runner EXECUTES it, the dashboard DRAWS it, and the
+// creation-chat agent WRITES it.
+//
+// "Executes" needs its precise meaning stated here, because the whole security
+// story rests on it: a node NEVER spawns a process. A node's registry entry
+// contributes a text/state fragment, and those fragments are folded into the
+// ONE prompt sent by the ONE existing spawn in `runner.ts`. So the graph is
+// DESCRIPTIVE OF ORCHESTRATION, NOT OF AUTHORITY — it decides what the prompt
+// says, never what the run is permitted to do. That is what makes an unknown
+// node kind safe to pass through instead of fatal (see `kind` below), and it
+// is why `config` needs no "UNTRUSTED NOTES" framing the way `## Pattern` does:
+// once `flow` is inside the approval hash, a `config` value is exactly as
+// reviewed as `prompt` itself. Both are gated by the same human, at the same
+// moment, over the same sha256.
+
+/** One node. `config` is opaque to the graph layer and interpreted only by the
+ *  node kind's registry entry. */
+export interface FlowGraphNode {
+  /** `/^[a-z0-9][a-z0-9_-]{0,39}$/`, unique within the graph. */
+  id: string;
+  /**
+   * DELIBERATELY a plain `string`, NOT a closed union — and this is a design
+   * decision, not an oversight waiting to be "fixed".
+   *
+   * The owner's requirement is lego: adding a new MCP-tool / API / chat
+   * connector must never require editing a union in this file and recompiling
+   * the world. {@link KNOWN_NODE_KINDS} documents what the shipped registry
+   * recognises; anything else is LEGAL and renders as an explicitly-unknown
+   * node rather than being dropped or rejected.
+   *
+   * Contrast `dashboard/src/components/lab/chartRegistry.ts`, whose
+   * `Record<Render, …>` deliberately will NOT compile without an entry. That is
+   * right for charts (a fixed, curated set the dashboard must draw) and wrong
+   * here (an open set the user extends).
+   */
+  kind: string;
+  /** ≤80 chars. Absent ⇒ renderers fall back to `kind`. */
+  label?: string;
+  /** NEVER executed as instruction. See the section comment above. */
+  config?: Record<string, unknown>;
+}
+
+/** A directed edge. `from`/`to` must reference an existing node id; a dangling
+ *  reference drops the edge (lenient read, never a throw). */
+export interface FlowGraphEdge {
+  from: string;
+  to: string;
+  /** ≤24 chars, drawn on the wire. */
+  label?: string;
+}
+
+/** The parsed `## Flow` block. A `version` other than the literal below makes
+ *  the whole block read as ABSENT (`null`), never as a partial graph — the same
+ *  lenient-degradation contract every other manifest sub-block follows. */
+export interface FlowGraph {
+  version: 'automation-flow/v1';
+  nodes: FlowGraphNode[];
+  edges: FlowGraphEdge[];
+}
+
+/** The literal `version` a v1 flow block must carry. */
+export const FLOW_GRAPH_VERSION = 'automation-flow/v1';
+
+/** The manifest heading the graph lives under, as fenced JSON. Here beside
+ *  {@link PATTERN_HEADING} and for the same reason: the store parses and writes
+ *  this section, and the CLI names it too, so neither may hold its own copy of
+ *  the string. */
+export const FLOW_HEADING = 'Flow';
+
+/** `FlowGraphNode.id` — path-safe-ish and short, because it is an anchor a human
+ *  writes by hand in `edges[]` and a renderer prints when a label is missing. */
+export const FLOW_NODE_ID_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+
+/**
+ * The node kinds the shipped registry recognises — DOCUMENTATION, not a
+ * constraint. `FlowGraphNode.kind` is `string` on purpose (see above), so an
+ * unknown kind is a legal, first-class value: it renders as a visibly
+ * unrecognised node and passes through the runner untouched.
+ *
+ * Both halves of that matter. Dropping an unknown node would make the diagram
+ * LIE about what the automation does — the exact failure this redesign exists
+ * to fix. Failing the run instead would make every manifest written by a newer
+ * dreamcontext dead on arrival on an older one.
+ */
+export const KNOWN_NODE_KINDS = ['trigger', 'agent', 'hitl', 'report', 'connector', 'branch'] as const;
+export type KnownNodeKind = (typeof KNOWN_NODE_KINDS)[number];
+
+/** Bound on `FlowGraph.nodes` — past this the block reads as absent. */
+export const FLOW_MAX_NODES = 24;
+/** Bound on `FlowGraph.edges`. */
+export const FLOW_MAX_EDGES = 48;
+/** `FlowGraphNode.label` ceiling; longer labels are truncated on read. */
+export const FLOW_LABEL_MAX_CHARS = 80;
+/** `FlowGraphEdge.label` ceiling — it is drawn on a wire, not in a paragraph. */
+export const FLOW_EDGE_LABEL_MAX_CHARS = 24;
 
 /** A manifest read from `automations/<slug>.md`. Reads are LENIENT (the store
  *  degrades a malformed sub-block rather than throwing); this shape is always
@@ -154,6 +269,24 @@ export interface AutomationManifest {
    *  only by `automations learn`, never by hand-editing during a run, and
    *  injected into the prompt as UNTRUSTED NOTES, never as instructions. */
   pattern: string;
+  /**
+   * The parsed `## Flow` graph, or null when the manifest has none.
+   *
+   * `null`, NEVER `undefined`, ON EVERY READ PATH. This is not style — it is
+   * the byte-identity guarantee, and getting it wrong is a silent mass-outage:
+   * `canonicalApprovalPayload` omits this field from the hashed literal via
+   * `m.flow !== null`, and that expression is TRUE for `undefined`. An
+   * `undefined` slipping through would therefore serialize a `flow` key for a
+   * manifest that has no flow at all, changing the hash of every automation
+   * written before this field existed, blocking all of them at once — and a
+   * blocked run notifies nobody, by design. Every construction site must state
+   * `flow: null` explicitly rather than leaving the property off.
+   *
+   * A manifest with no `## Flow` section keeps its existing approval untouched
+   * and renders a DERIVED graph instead (`deriveFlowFromManifest`), so the
+   * upgrade costs no re-approval anywhere.
+   */
+  flow: FlowGraph | null;
   path: string;
   body: string;
 }
@@ -212,31 +345,17 @@ export interface AutomationCache {
   history: RunEvent[];
 }
 
-// ─── Review cards (human-in-the-loop) ───────────────────────────────────────
+// ─── Answer channels + steers ───────────────────────────────────────────────
 //
-// A card is what a run hands a human when it needs a verdict before its work
-// takes effect. The design is ported from Tilki's WhatsApp Concierge, whose
-// load-bearing property is NOT the approve button — it is that the verdict
-// resumes the very claude session that produced the proposal. That is why a
-// card stores a `sessionId` and nothing resembling a command: approving does
-// not execute a payload the card carries, it unblocks a conversation the
-// approved prompt already bought. A card that carried an executable action
-// would be a genuinely new capability on top of `bypassPermissions`; a card
-// that says "keep going" is not.
+// The review CARD is gone (`review.ts`/`card-registry.ts` deleted in wave 9);
+// `AutomationQuestion` below is its successor. These two survive it because a
+// question needs them just as much: where an answer arrived from, and the trail
+// of corrections a human gave before answering.
 //
-// Cards are MACHINE-LOCAL and never brain-synced, for the same reason the
-// approval registry is not: a card holds a resumable session id, so a synced
-// card is an invitation for someone else's machine to resolve your capability.
-
-/** What a human can do to a card. `drop` is the one people forget, and it is
- *  the one that makes review compound: it does not judge THIS proposal, it
- *  teaches the automation never to make this kind of proposal again. */
-export const REVIEW_VERDICTS = ['approve', 'discard', 'drop'] as const;
-export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
-
-/** `pending` until a human answers; the other three mirror the verdicts. */
-export const REVIEW_CARD_STATES = ['pending', 'approved', 'discarded', 'dropped'] as const;
-export type ReviewCardState = (typeof REVIEW_CARD_STATES)[number];
+// The `REVIEW_` prefix is kept deliberately. Renaming these constants would be
+// a rename with no behaviour behind it, and their VALUES appear in on-disk
+// records written by earlier versions — a question's `answeredVia` reads the
+// same strings a card's `resolvedVia` did.
 
 /** Where a verdict or steer came from. Recorded so a card can say who answered
  *  it and from where — and so the OTHER channels can re-render a card that was
@@ -244,10 +363,11 @@ export type ReviewCardState = (typeof REVIEW_CARD_STATES)[number];
 export const REVIEW_CHANNELS = ['dashboard', 'cli', 'telegram', 'notification'] as const;
 export type ReviewChannel = (typeof REVIEW_CHANNELS)[number];
 
-/** One correction a human gave a pending card. Kept on the card (not only in
- *  the resumed transcript) so every channel can show the trail without reading
- *  a session file, and so the distilled lesson stays traceable to its steer. */
-export interface ReviewSteer {
+/** One correction a human gave a pending question (or, on the legacy surface, a
+ *  pending card). Kept on the record itself — not only in the resumed
+ *  transcript — so every channel can show the trail without reading a session
+ *  file, and so the distilled lesson stays traceable to its steer. */
+export interface QuestionSteer {
   at: string;
   via: ReviewChannel;
   /** The human's words, VERBATIM. Never rendered into the proposal body and
@@ -260,87 +380,172 @@ export interface ReviewSteer {
   lesson: string | null;
 }
 
-/** A proposal awaiting (or having received) a human verdict. */
-export interface ReviewCard {
+// ─── Questions (the human-in-the-loop successor to review cards) ────────────
+//
+// A question is what a run hands a human when it must ask before going on. It
+// inherits the review card's one load-bearing property — THE ANSWER RESUMES THE
+// SESSION THAT ASKED — and drops the queue around it: the question is delivered
+// where the human already is (their own chat, or Telegram), not onto a board
+// nobody is standing in front of at 18:00.
+//
+// That property is why a question stores a `sessionId` and NOTHING RESEMBLING A
+// COMMAND. Answering does not execute a payload the question carries; it
+// unblocks a conversation the approved prompt already bought. A question that
+// carried an executable action would be a genuinely new capability on top of
+// `bypassPermissions`; one that says "keep going" is not.
+//
+// Questions are MACHINE-LOCAL and never brain-synced, for the same reason the
+// approval registry is not: a resumable session id is a capability, so a synced
+// question invites someone else's machine to resolve yours.
+
+/** Where a question was asked, and therefore where its answer comes back. */
+export const HITL_CHANNELS = ['chat', 'telegram'] as const;
+export type HitlChannel = (typeof HITL_CHANNELS)[number];
+
+/**
+ * WHICH GATE this question belongs to. A SECURITY DISCRIMINATOR, not ergonomics
+ * — read this before touching any code that answers a question.
+ *
+ * - `flow-hitl` — the run is already approved and mid-flight; it stopped to ask.
+ *   This is the ONLY kind that may be answered through the verdict machinery
+ *   (`resumeWithAnswer` → `buildResumeArgs`), because resuming it continues a
+ *   conversation a human already granted `bypassPermissions` to.
+ *
+ * - `approval` — the manifest CHANGED since it was last approved, and the run
+ *   is asking about the diff. It must NEVER reach `resumeWithAnswer`.
+ *   `buildResumeArgs` hardcodes `--permission-mode bypassPermissions`, and at
+ *   the moment this question exists the manifest is BY DEFINITION unapproved —
+ *   resuming it would let an unapproved manifest bootstrap its own elevated
+ *   execution, which is precisely the attack the sha256 tripwire exists to
+ *   prevent, arriving through a door the tripwire does not watch. Answering
+ *   "yes" instead calls `approveAutomation` and starts a FRESH run; the
+ *   question's own session is discarded, never continued.
+ *
+ * The two are one field rather than two stores because every surface renders
+ * and routes them identically right up to the answer, and a branch the router
+ * must take is safer as a value it cannot forget to read than as a convention.
+ */
+export const QUESTION_KINDS = ['approval', 'flow-hitl'] as const;
+export type QuestionKind = (typeof QUESTION_KINDS)[number];
+
+/** `pending` until a human answers. `expired` is reserved and is NOT written by
+ *  any current path: a question deliberately never times out (D-J). An expiry
+ *  would silently convert an unanswered question into a resumed run, which is
+ *  the exact opposite of what the gate is for. It exists so a future opt-in
+ *  expiry has a state to write, and so a lenient read has somewhere to put an
+ *  unrecognised value it must not treat as `pending`. */
+export const QUESTION_STATES = ['pending', 'answered', 'expired'] as const;
+export type QuestionState = (typeof QUESTION_STATES)[number];
+
+/** A question awaiting (or having received) a human's answer. */
+export interface AutomationQuestion {
   /** Filename-safe, unique per slug. */
   id: string;
   slug: string;
-  /** The scheduled fire the proposing run answered for — ties the card back to
+  /** The scheduled fire the asking run answered for — ties the question back to
    *  its RunEvent without duplicating the event. */
   runFiredAt: string;
   /**
-   * The claude conversation that produced this proposal, and the whole point
-   * of the card. Every verdict and every steer `--resume`s exactly this.
-   * null ⇒ the run produced no session id (a failed or degraded run); such a
-   * card can still be discarded, but it can never be approved or steered,
-   * because there is nothing to resume — the surfaces must say so rather than
-   * offering a button that cannot work.
+   * The claude conversation that asked, and the whole point of the record: an
+   * answer `--resume`s exactly this. null ⇒ the run produced no session id, so
+   * the question can be closed but never resumed — surfaces must say so rather
+   * than offering a control that cannot work.
+   *
+   * ALWAYS null when `kind === 'approval'`. That is not incidental: see
+   * {@link QUESTION_KINDS}. The authority on what may actually be resumed is
+   * never this field anyway — it is the machine-local session binding, which
+   * only the runner writes.
    */
   sessionId: string | null;
-  kind: 'output' | 'agent';
-  title: string;
-  /** One line: what this is, for a notification banner and a list row. */
-  summary: string;
-  /** What the human actually judges — the proposed document, or the run's own
-   *  description of what it wants to do next. */
-  body: string;
-  /** For `kind: 'output'`: the staged document that reaches the real output
-   *  directory only on approve. contextRoot-relative. */
-  stagedPath: string | null;
-  state: ReviewCardState;
-  /** Newest LAST — a steer trail reads as a conversation, unlike the LIFO
-   *  ledgers elsewhere in the brain, which are scanned newest-first. */
-  steers: ReviewSteer[];
-  createdAt: string;
-  resolvedAt: string | null;
-  resolvedVia: ReviewChannel | null;
-  /** What the agent said after the verdict resumed it — the answer to "so what
-   *  actually happened when I approved that?", which a resolved card is
-   *  otherwise unable to give. null until a verdict has been acted on. */
+  /** WHICH GATE — see {@link QUESTION_KINDS}. Security-load-bearing. */
+  kind: QuestionKind;
+  channel: HitlChannel;
+  /** What the human is being asked, in the run's own words. */
+  question: string;
+  /** The answers offered. Empty ⇒ free text. Never a command — a choice is a
+   *  label the asking session interprets, not something a surface executes. */
+  choices: string[];
+  state: QuestionState;
+  answeredAt: string | null;
+  answeredVia: ReviewChannel | null;
+  /** What the human chose or typed, VERBATIM. */
+  answer: string | null;
+  /** What the agent said after the answer resumed it — the answer to "so what
+   *  actually happened?", which a resolved question is otherwise unable to
+   *  give. null until an answer has been acted on. */
   resolutionNote: string | null;
   /**
-   * Set when the verdict's resume did NOT complete cleanly.
+   * Set when the answer's resume did NOT complete cleanly.
    *
-   * Load-bearing, and the reason it is a card field rather than a log line: the
-   * verdict is persisted BEFORE the resume spawns (a crash in that window must
-   * not replay the act), so a card whose resume then failed is `approved` on
-   * disk while nothing may have been carried out. Without this field that card
-   * is indistinguishable from a clean success — the one state a human must
-   * never be shown as done.
+   * Load-bearing, and the reason it is a field rather than a log line: the
+   * answer is persisted BEFORE the resume spawns (a crash in that window must
+   * not replay the act), so a question whose resume then failed reads
+   * `answered` on disk while nothing may have been carried out. Without this
+   * field that record is indistinguishable from a clean success — the one state
+   * a human must never be shown as done.
    */
   resolutionError: string | null;
-  /** Per-channel handles for a card already rendered somewhere (a Telegram
-   *  message id, say), so a steer edits that card in place instead of posting
-   *  a second copy of a proposal that is still the same proposal. */
+  /** Newest LAST — a steer trail reads as a conversation, unlike the LIFO
+   *  ledgers elsewhere in the brain, which are scanned newest-first. */
+  steers: QuestionSteer[];
+  /** Per-channel handles for a question already rendered somewhere (a Telegram
+   *  message id, say), so a steer edits it in place instead of posting a second
+   *  copy of a question that is still the same question. */
   channelRefs: Record<string, string>;
+  createdAt: string;
 }
 
-/** Directory holding review cards, under `automations/`. Machine-local. */
+/** Directory holding questions, under `automations/`. Machine-local, never
+ *  brain-synced — covered by {@link AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES}. */
+export const HITL_DIR = 'hitl';
+
+/** Directory holding review cards, under `automations/`. Machine-local.
+ *  LEGACY — superseded by {@link HITL_DIR}. Deliberately still `'review'`: the
+ *  review surface is alive until the last of its six importers is migrated, and
+ *  repointing this constant early would make the old code read and write the
+ *  new directory, colliding with the question store mid-migration. */
 export const REVIEW_DIR = 'review';
-/** Cap on a card's steer trail — past this, the oldest steers drop off. A
- *  human who has corrected the same proposal this many times is not steering
- *  any more, and the trail is prepended to a resumed session, so it is subject
- *  to the same "never crowd out the actual job" rule as the pattern. */
+/** Cap on a steer trail — past this, the oldest steers drop off. A human who
+ *  has corrected the same thing this many times is not steering any more, and
+ *  the trail is prepended to a resumed session, so it is subject to the same
+ *  "never crowd out the actual job" rule as the pattern. Applies to
+ *  {@link AutomationQuestion.steers} and, until it is retired, the legacy
+ *  card's trail — one cap, because it bounds one prompt. */
 export const REVIEW_STEER_LIMIT = 12;
-/** Ceiling on a card's rendered body. A proposal a human cannot read on a
- *  phone is a proposal that gets rubber-stamped. */
+/** Ceiling on a rendered question or card body. Something a human cannot read
+ *  on a phone is something that gets rubber-stamped. */
 export const REVIEW_BODY_MAX_CHARS = 8_000;
 /**
- * Machine-local artifacts under `automations/review/` — cards and their staged
- * documents, neither of which may ever be committed.
+ * Machine-local human-in-the-loop artifacts under `automations/` — questions,
+ * none of which may ever be committed. Each holds a live, resumable session
+ * id, and `sleep done` auto-commits, so a miss here publishes a
+ * `bypassPermissions` capability to every teammate who pulls.
+ *
+ * THE NAME IS THE CONTRACT. `runner.ts` step 6 and `store.ts` both import this
+ * BY NAME and re-ensure it on every run, so extending the VALUE covers a new
+ * directory with zero code edit anywhere else — which is exactly why the
+ * question directory was added here rather than as a new constant nothing
+ * calls.
+ *
+ * The legacy `automations/review/` line lived here for the duration of the
+ * review→question migration and is gone now that the review surface is: T12
+ * deleted `review.ts`/`card-registry.ts`, so nothing under `automations/`
+ * writes a card any more, and `runner.ts` calls `removeGitignoreEntries` once
+ * to strip the stale line from a `.gitignore` written before this migration
+ * (never repeats it — `removeGitignoreEntries` is itself idempotent).
  *
  * DELIBERATELY NOT part of {@link AUTOMATIONS_GITIGNORE_ENTRIES}. That array is
  * the base-wildcard set that `automations share` writes negations against, and
  * `negationIsEffective` treats ANY base entry appearing after a negation as
  * having silently killed it. Appending a new base wildcard to an existing
  * `.gitignore` that already carries share negations would therefore report
- * every one of them as broken — a false alarm, since nothing under
- * `automations/review/` can match a shared manifest, cache record or output
- * file. Review has no shareable direction at all, so it gets its own block and
- * stays out of the ordering dance entirely.
+ * every one of them as broken — a false alarm, since nothing under this
+ * directory can match a shared manifest, cache record or output file. It has
+ * no shareable direction at all, so it gets its own block and stays out of the
+ * ordering dance entirely.
  */
-export const AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES = ['automations/review/'];
-export const AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES_ROOT = ['_dream_context/automations/review/'];
+export const AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES = ['automations/hitl/'];
+export const AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES_ROOT = ['_dream_context/automations/hitl/'];
 
 /** Machine-local record of an in-flight (or just-finished) child, written only
  *  on a successful spawn, so an orphaned process group stays findable after its
@@ -354,6 +559,42 @@ export interface RunSidecar {
   fireAt: string;
   startedAt: string;
   timeoutAt: string;
+  /**
+   * WHAT this child actually is, so `automations kill` can tell the operator
+   * what they are about to kill: the job itself, or the short restricted
+   * session that is only asking whether a changed manifest may run.
+   *
+   * OPTIONAL, and absent reads as `'run'` — the same "a field added later reads
+   * as its pre-feature default" discipline `learning`, `review` and `notify`
+   * follow on the manifest. A sidecar written before this field existed
+   * describes a real run, which is what `'run'` means, so callers read
+   * `sidecar.kind ?? 'run'` and no writer is forced to change. There is no
+   * hash or byte-identity concern here (a sidecar is machine-local and lives
+   * for one run), which is exactly why this may be optional where
+   * {@link AutomationManifest.flow} may not.
+   */
+  kind?: 'run' | 'question';
+}
+
+/**
+ * A fire that was DUE but could not start, held until the next tick can drain
+ * it. Machine-local, never brain-synced: a synced queue would be a remote-write
+ * primitive — a teammate pushing an entry would make YOUR machine execute an
+ * automation at a time you did not schedule, spending your `bypassPermissions`
+ * grant. Same threat class as a synced review card.
+ *
+ * At most ONE entry per slug, BY CONSTRUCTION (an object key), which IS the
+ * "a second enqueue drops the older waiting entry" rule rather than a check
+ * that could be forgotten.
+ */
+export interface QueuedFire {
+  slug: string;
+  /** The ORIGINAL scheduled fire this entry owes — never the moment it was
+   *  enqueued, or draining would advance the watermark to drain time and the
+   *  catch-up bound would be measured from the wrong instant. */
+  firedAt: string;
+  /** When it was parked. Diagnostics only; never used for watermark math. */
+  enqueuedAt: string;
 }
 
 /** The exact fields the approval sha256 is computed over — the CLI's
@@ -380,6 +621,17 @@ export interface ApprovalPayloadFields {
    *  mode — but a local write verb re-approves on the spot, so turning review
    *  ON from this machine is free in practice.) */
   review: ReviewMode;
+  /** Hashed because the graph decides what the run's prompt SAYS — which nodes
+   *  contribute instructions, whether it must stop and ask before publishing,
+   *  and where the report goes. A teammate's synced edit that deletes a `hitl`
+   *  node has removed a human gate, exactly like editing `review` back to
+   *  `off`, and must block until someone here re-approves.
+   *
+   *  Always present here (as `null` when the manifest has no flow), unlike the
+   *  hash payload, which OMITS it entirely when null — this shape is for
+   *  DISPLAY, so there is no byte-identity constraint to preserve and a
+   *  reviewer must be able to see that a flow exists at all. */
+  flow: FlowGraph | null;
 }
 
 /** Domain error for the automations subsystem — thrown only by strict
@@ -413,14 +665,23 @@ export const TICK_INTERVAL_SECONDS = 300;
 /** Dispatcher log rotates (renamed to `.log.1`) past this size. */
 export const LOG_ROTATE_BYTES = 1_048_576;
 /** Manifests are flat at `automations/<slug>.md`, so these sibling directory
- *  names are reserved and cannot be used as a slug. */
-export const RESERVED_SLUGS = ['cache', 'output', 'review'] as const;
+ *  names are reserved and cannot be used as a slug.
+ *
+ *  `'review'` STAYS alongside `'hitl'` even after questions replace cards: the
+ *  reservation is about a name colliding with a directory that exists ON DISK,
+ *  and `automations/review/` outlives the code that wrote it on any brain that
+ *  ever staged a card. Freeing the name would let a new automation called
+ *  `review` collide with that directory. Reserving one extra word costs
+ *  nothing; un-reserving one is unrecoverable for whoever hits it. */
+export const RESERVED_SLUGS = ['cache', 'output', 'review', 'hitl'] as const;
 export const APPROVAL_PAYLOAD_VERSION = 'automation-approval/v1';
 /** The exact field set `approve` must diff — kept in lockstep with
  *  ApprovalPayloadFields so the CLI's review surface can never diverge from
  *  what is actually hashed. `effort` sits between `model` and
  *  `timeoutMinutes`: all three are execution-envelope levers on an
- *  already-approved prompt. */
+ *  already-approved prompt. `flow` is LAST, mirroring its position in
+ *  `canonicalApprovalPayload`'s literal — the two orders must not drift, or the
+ *  surface a human reviews stops matching the bytes that were hashed. */
 export const APPROVAL_DIFF_FIELDS = [
   'prompt',
   'outputInstructions',
@@ -430,6 +691,7 @@ export const APPROVAL_DIFF_FIELDS = [
   'outputDir',
   'learning',
   'review',
+  'flow',
 ] as const;
 
 // ─── Pattern caps ────────────────────────────────────────────────────────────

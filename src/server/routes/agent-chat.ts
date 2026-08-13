@@ -4,7 +4,7 @@ import type { Duplex } from 'node:stream';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join, dirname, basename, extname } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import {
   writeFileSync, rmSync, readFileSync, existsSync, statSync, readdirSync, createReadStream,
   realpathSync, openSync, readSync, closeSync,
@@ -18,6 +18,8 @@ import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
+import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
+import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { resolveBoardAssets } from './knowledge.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
@@ -163,6 +165,119 @@ export function backgroundOutputPath(cwd: string, conversationId: string, taskId
   return join('/tmp', `claude-${uid}`, slug, uuid, 'tasks', `${id}.output`);
 }
 
+// ─── Automation-bound resume gate (T24 — the security-critical check) ─────────────────
+//
+// THE THREAT: this route IS the resume gate. `bypass=1&resume=<uuid>` becomes a live
+// `claude --resume <uuid> --permission-mode bypassPermissions` process (`permissionModeFor`
+// above, `idArg`/`argv` in `startChatSession` below) with zero automations-awareness.
+// Meanwhile an automation's session ids live in `automations/cache/<slug>.json` →
+// `history[].sessionId`, which IS BRAIN-SYNCED — writable by anyone who can push to the
+// shared brain. Planting a real session id there and then opening chat with
+// `bypass=1&resume=<that-id>` would otherwise hand an attacker a fully-armed, unattended
+// resume of a conversation they never ran. A resumable session id is a capability, and the
+// synced cache is not an authority on which ones are live — see session-registry.ts's module
+// doc for the full trust model this gate enforces.
+//
+// THE RULE (plan §11 R2, binding, quoted): "If `<uuid>` appears in ANY automation's
+// `cache.history[].sessionId` for this project (the brain-synced, teammate-writable side)
+// AND `isAutomationBoundSession(uuid)` returns null (the machine-local side), REJECT the
+// upgrade. Otherwise proceed as today." Restricted to `bypass=1` connects — see the
+// in-function comment on why a non-bypass resume is out of scope.
+//
+// UNCONDITIONAL: driven entirely by the `resume` uuid the caller must already supply to get
+// anything at all — never behind a client-suppliable flag (an early draft proposed gating on
+// a `kind:'automation'` tag; killed because an attacker simply omits it, which is not a gate).
+//
+// Compared on the RAW value `sanitizeUuid` returns: that function only validates against a
+// case-preserving UUID regex (`UUID_RE`, agent-session-map.ts) — it does not case-fold or
+// otherwise transform the string — so the value that reaches `--resume` is byte-identical to
+// whatever a `history[].sessionId` entry recorded, and a plain `===` is the correct compare.
+//
+// Called from the upgrade handler BEFORE `startChatSession` (and therefore before
+// `resolveAgentSession`) is even invoked, so a tab-session mapping can never launder an
+// unbound automation session id into a resumable one: a `true` return here rejects the
+// upgrade and returns immediately, so `startChatSession` — the ONLY place in this module
+// that spawns the resumable `claude` process this gate exists to guard — is never reached.
+// (A second, unrelated `spawn` lower in this file opens a file with the OS's default
+// app/file-manager for the file-open HTTP route; it is not part of this WS upgrade path.)
+export function shouldRejectAutomationResume(
+  bypass: boolean,
+  resumeId: string,
+  contextRoot: string,
+  home: string = homedir(),
+): boolean {
+  // The capability this gate protects is `bypassPermissions` specifically. A non-bypass
+  // resume of the very same uuid only ever reaches `auto` mode (permissionModeFor(false)),
+  // which still prompts for anything not auto-approved — not the unattended, fully-armed
+  // capability a planted synced session id would otherwise buy. Gating bypass=0 too would
+  // reject already-safe resumes for no security benefit, so this is a no-op whenever
+  // `bypass` is false or there is no resume id to check at all — exactly R2's own framing
+  // ("on every bypass=1&resume=<uuid> connect").
+  if (!bypass || !resumeId) return false;
+
+  // Brain-synced side: does ANY automation's CACHE FILE on this project claim this uuid?
+  //
+  // Enumerated from `automations/cache/*.json` DIRECTLY — never derived from
+  // `listAutomations` (which enumerates MANIFESTS, `automations/<slug>.md`). A cache and its
+  // manifest are two independent files, BOTH teammate-writable over brain sync: an attacker
+  // who can plant `automations/cache/evil.json` can just as easily decline to plant
+  // `automations/evil.md`, and a manifest-driven scan would silently never look at that
+  // file. Whether "every surface that hands out a session id also writes a manifest" holds
+  // today is a fact about OTHER code (chat hydration, Telegram) that this gate must not
+  // depend on to stay correct — so a cache file with no manifest is scanned exactly like any
+  // other.
+  //
+  // Every filename is put through `isSafeAutomationSlug` before it is used to build a path
+  // (via `readAutomationCache`) — the same discipline `session-registry.ts` applies to a
+  // slug it reads off disk rather than one it already validated upstream. This also happens
+  // to filter out the directory's OTHER dotfiles for free: `.<slug>.run.json` (the sidecar)
+  // and `.<slug>.lock` both start with `.`, which `isSafeAutomationSlug` rejects.
+  //
+  // Scanned defensively at TWO levels, because the source is teammate-writable and this read
+  // must never take the whole route down:
+  //   - the directory listing itself is wrapped, so an unreadable `automations/cache/`
+  //     directory (missing, or a stray file sitting where the directory should be) degrades
+  //     rather than throwing;
+  //   - each cache file's read is wrapped INDIVIDUALLY, so one malformed cache cannot blind
+  //     the scan of every OTHER automation's (well-formed) cache.
+  // Either way, a read failure degrades to "not claimed" — i.e. today's unchanged behaviour
+  // for that uuid. That is a deliberate choice of the AVAILABLE side over the paranoid one:
+  // this check exists to close one specific capability leak (a planted synced session id),
+  // and it is not this uuid's fault that some OTHER automation's cache is corrupt. Degrading
+  // to "reject" instead would let one bad cache file black out every chat resume on the
+  // machine — an availability outage far larger than the leak being closed, and orthogonal
+  // to it (a non-automation uuid was never at risk either way).
+  const CACHE_FILE_SUFFIX = '.json';
+  let cacheFileNames: string[] = [];
+  try { cacheFileNames = readdirSync(automationCacheDir(contextRoot)); } catch { cacheFileNames = []; }
+
+  const claimedByAutomation = cacheFileNames.some((name) => {
+    if (!name.endsWith(CACHE_FILE_SUFFIX)) return false;
+    const slug = name.slice(0, -CACHE_FILE_SUFFIX.length);
+    if (!isSafeAutomationSlug(slug)) return false;
+    try {
+      const cache = readAutomationCache(contextRoot, slug);
+      const history = Array.isArray(cache?.history) ? cache.history : [];
+      return history.some((event) => event && event.sessionId === resumeId);
+    } catch {
+      return false;
+    }
+  });
+  if (!claimedByAutomation) return false;
+
+  // Machine-local side: did THIS machine's runner actually record this session under SOME
+  // automation? `isAutomationBoundSession` (session-registry.ts) is the reverse lookup this
+  // gate exists to call — it never throws, and returns null for anything it did not itself
+  // write. It is DELIBERATELY slug-agnostic (it scans every `.sessions.json` file and
+  // returns whichever slug owns the uuid, if any), so a uuid bound under automation A but
+  // planted into automation B's synced cache still resolves as bound: the machine-local
+  // binding is the authority on whether this uuid is a real, already-granted capability,
+  // and slug identity is irrelevant to that question — it only matters to the (unrelated)
+  // per-conversation lookup `readAutomationSession(slug, sessionId)` uses elsewhere (e.g.
+  // "reply to THIS automation's thread"). See the test file for the worked example.
+  return isAutomationBoundSession(resumeId, home) === null;
+}
+
 // ─── WS upgrade ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -189,6 +304,16 @@ export function attachAgentChat(server: Server): void {
     const resumeId = sanitizeUuid(url.searchParams.get('resume'));
     const model = sanitizeModel(url.searchParams.get('model'));
     const effort = sanitizeEffort(url.searchParams.get('effort'));
+
+    // T24 — the automation-bound resume gate (see the block comment on
+    // `shouldRejectAutomationResume` above). Evaluated HERE, before `startChatSession` is
+    // called at all (and therefore before `resolveAgentSession`, currently agent-chat.ts:250),
+    // so a tab-session mapping can never launder an unbound automation session id into a
+    // resumable one.
+    if (shouldRejectAutomationResume(bypass, resumeId, join(projectRoot, '_dream_context'))) {
+      rejectUpgrade(socket, 403);
+      return;
+    }
 
     // Prompt hand-off (AC3 parity with the terminal — see agent-spawn-shared.ts): a
     // SUPPLIED-BUT-INVALID token rejects the upgrade rather than silently opening an

@@ -3,11 +3,13 @@
    7 — survey/permission/sub-agent cards share ONE width), the live rail (task chip +
    goal-skill + council bars — the context/cost readout moved into Composer, see
    ChatPane.tsx's header), the resumed-transcript divider, the permission-mode anchor,
-   and the degraded-question fallback card. Every other visual (bubbles, tool cards, survey/
-   permission cards, sub-agent group, slide-over, lightbox, board card, banners, composer) is
-   owned by `chat/cards.css` + `chat/overlays.css` + `chat/composer.css`, imported by
-   ChatPane.tsx. Uses only design tokens (no hardcoded colors) so light/dark theming is
-   automatic, same as every sibling component in this directory. */
+   the degraded-question fallback card, and the automation HITL question card (T18b —
+   D2/D-G's inline "Claude is asking" card for a scheduled run's ask-and-exit question).
+   Every other visual (bubbles, tool cards, survey/permission cards, sub-agent group,
+   slide-over, lightbox, board card, banners, composer) is owned by `chat/cards.css` +
+   `chat/overlays.css` + `chat/composer.css`, imported by ChatPane.tsx. Uses only design
+   tokens (no hardcoded colors) so light/dark theming is automatic, same as every sibling
+   component in this directory. */
 
 .chat-pane {
   position: absolute;
@@ -254,3 +256,103 @@
   max-height: 240px;
   overflow: auto;
 }
+
+/* ── Automation HITL question card (D2 / D-G) — an automation's own ask-and-exit
+   question, answered over `useAnswerQuestion`'s HTTP mutation rather than the CLI's
+   control channel, so it can't reuse SurveyCard/PermissionCard (both hardcode a
+   `session.answer*` call). Not one of the 12 design states, so it isn't in
+   chat/cards.css either; styled here to match that family's look (the accent pill
+   header, the card shell) for the same reason the degraded card above is — it must
+   read as Claude asking a question, never a foreign widget. Buttons/action row reuse
+   chat/cards.css's shared `.chat-btn`/`.chat-card-actions` atoms. ─────────────────── */
+
+.chat-hitlcard {
+  align-self: flex-start;
+  width: 100%;
+  max-width: var(--chat-card-width);
+  padding: 16px;
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  border: 1px solid var(--color-accent-soft);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* Replaces the composer while a question is open, so the card above is the only way to
+   continue the run (see AutomationQuestionComposerLock). Deliberately quiet — it is an
+   explanation of where to go, not a second thing competing with the card for attention. */
+.chat-hitlcard-lock {
+  padding: 12px 16px;
+  margin: 0 16px 12px;
+  border-radius: var(--radius-lg);
+  border: 1px dashed var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.chat-hitlcard-head { display: flex; align-items: center; }
+.chat-hitlcard-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.chat-hitlcard-question {
+  margin: 0;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-lg, 18px);
+  color: var(--color-text);
+}
+.chat-hitlcard-choices { display: flex; flex-direction: column; gap: 8px; }
+.chat-hitlcard-choice {
+  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+}
+.chat-hitlcard-choice:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-accent-soft); }
+.chat-hitlcard-choice:active:not(:disabled) { transform: scale(0.99); }
+.chat-hitlcard-choice:disabled { opacity: 0.5; cursor: default; }
+.chat-hitlcard-choice:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.chat-hitlcard-freetext { display: flex; flex-direction: column; gap: 8px; }
+.chat-hitlcard-input {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-accent);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.chat-hitlcard-input::placeholder { color: var(--color-text-tertiary); }
+.chat-hitlcard-input:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+.chat-hitlcard-input:disabled { opacity: 0.6; cursor: default; }
+.chat-hitlcard-receipt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+.chat-hitlcard-receipt-check { color: var(--color-success); font-weight: 700; }
+.chat-hitlcard-error { margin: 0; color: var(--color-error); font-size: 12px; }

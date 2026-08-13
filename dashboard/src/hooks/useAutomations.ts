@@ -59,11 +59,14 @@ export interface AutomationSummary {
   approvalReason: ApprovalReason | null;
   cache: AutomationCacheSummary | null;
   review: 'off' | 'agent' | 'output';
-  /** The card currently holding this automation. Live-computed server-side from
-   *  the card store, never from `cache.status` — that reflects the last RUN, so
-   *  it reads `ok` on the very run that created the card and stays
-   *  `awaiting-review` after a human answers. */
-  pendingReviewCardId: string | null;
+  /** The question currently holding this automation, if any (either an
+   *  unanswered approval-diff ask or an in-flow HITL stop). Live-computed
+   *  server-side from the question store, never from `cache.status` — that
+   *  reflects the last RUN, so it reads `ok` on the very run that created the
+   *  question and stays `awaiting-review` after a human answers. Repointed
+   *  from the retired review-card store; the field is named for what it now
+   *  holds. */
+  pendingQuestionId: string | null;
 }
 
 /** One recorded run attempt (or non-attempt) — mirrors `RunEvent`. */
@@ -96,6 +99,34 @@ export interface AutomationCache {
   error: string | null;
   exitCode: number | null;
   history: AutomationRunEvent[];
+}
+
+/**
+ * The flow graph — mirrors `FlowGraph` in `src/lib/automations/types.ts`.
+ *
+ * `kind` is a plain `string`, NOT a union, and that is deliberate on both sides
+ * of the wire: adding a connector must never require editing a type here and
+ * recompiling. An unrecognised kind renders as a visibly unknown node rather
+ * than being dropped — a diagram that silently omits a node lies about what the
+ * automation does.
+ */
+export interface AutomationFlowNode {
+  id: string;
+  kind: string;
+  label?: string;
+  config?: Record<string, unknown>;
+}
+
+export interface AutomationFlowEdge {
+  from: string;
+  to: string;
+  label?: string;
+}
+
+export interface AutomationFlowGraph {
+  version: 'automation-flow/v1';
+  nodes: AutomationFlowNode[];
+  edges: AutomationFlowEdge[];
 }
 
 /** What an automation has LEARNED — mirrors `AutomationPattern`. Not hashed
@@ -133,6 +164,14 @@ export interface AutomationManifestDetail {
    *  the output document). The direction to read carefully is a mode being
    *  REMOVED: that is a gate someone deleted. */
   review: 'off' | 'agent' | 'output';
+  /** Hashed. The ordered graph the run executes — `trigger → agent → hitl →
+   *  report`. `null` when the manifest has no `## Flow` section, which is what
+   *  every automation written before the section existed reads as, and what
+   *  keeps their approvals byte-identical across the upgrade.
+   *
+   *  Read carefully in the same direction as `review`: a `hitl` node that has
+   *  DISAPPEARED is a human gate someone deleted. */
+  flow: AutomationFlowGraph | null;
   prompt: string;
   outputInstructions: string;
   pattern: AutomationPattern;
@@ -396,88 +435,196 @@ export function useApproveAutomation() {
   });
 }
 
-// ─── Review cards ───────────────────────────────────────────────────────────
+// ─── Flow graph ──────────────────────────────────────────────────────────────
 
-/** One correction a human gave a pending card, with what it taught. */
-export interface ReviewSteer {
+/**
+ * GET /api/automations/:slug/flow — mirrors `handleAutomationsFlow`. An
+ * automation authored with a `## Flow` block returns it verbatim
+ * (`derived: false`); one authored before the flow feature existed gets a
+ * graph DERIVED from its own schedule/model/review fields (`derived: true`)
+ * so the canvas is never empty. `flow` itself is never null on the wire.
+ */
+export interface AutomationFlowResponse {
+  flow: AutomationFlowGraph;
+  derived: boolean;
+}
+
+export function useAutomationFlow(slug: string | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['automations', slug, 'flow'],
+    queryFn: () => api.get<AutomationFlowResponse>(`/automations/${slug}/flow`),
+    enabled: !!slug,
+    retry: 0,
+  });
+}
+
+// ─── Questions (human-in-the-loop) ──────────────────────────────────────────
+
+/** One correction a human gave a pending question, with what it taught —
+ *  mirrors `QuestionSteer` in `src/lib/automations/types.ts`. */
+export interface QuestionSteer {
   at: string;
   via: string;
-  /** The human's words, verbatim. Never emitted — it is an instruction to the
-   *  agent, which is why the card body next to it is the agent's rewrite. */
+  /** The human's words, verbatim. Never emitted as a command — it reaches a
+   *  resumed session only as an instruction ordered after the answer. */
   text: string;
   lesson: string | null;
 }
 
-/** Mirrors `ReviewCard` in `src/lib/automations/types.ts`. */
-export interface ReviewCard {
+/**
+ * A question awaiting (or having received) a human's answer — mirrors
+ * `AutomationQuestion` in `src/lib/automations/types.ts`.
+ *
+ * `kind` is a SECURITY DISCRIMINATOR, not ergonomics: `'approval'` is the
+ * sha256 approval tripwire wearing a dashboard face (the manifest changed
+ * since it was last approved), while `'flow-hitl'` is an already-approved run
+ * asking mid-flight about its own work. `useAnswerQuestion`'s input type
+ * branches on this field so the two can never be answered with the wrong
+ * shape — see that hook's doc comment.
+ */
+export interface AutomationQuestion {
   id: string;
   slug: string;
+  /** The scheduled fire the asking run answered for. */
   runFiredAt: string;
-  /** null ⇒ the proposing run left no session to reply to. Such a card can be
-   *  discarded but never approved or corrected, and the UI must say so rather
-   *  than offering buttons that cannot work. */
+  /** null ⇒ the run produced no session id (only possible for `'approval'`),
+   *  so the question can be closed but never resumed. */
   sessionId: string | null;
-  kind: 'output' | 'agent';
-  title: string;
-  summary: string;
-  body: string;
-  stagedPath: string | null;
-  state: 'pending' | 'approved' | 'discarded' | 'dropped';
-  steers: ReviewSteer[];
-  createdAt: string;
-  resolvedAt: string | null;
-  resolvedVia: string | null;
+  kind: 'approval' | 'flow-hitl';
+  channel: 'chat' | 'telegram';
+  /** What the human is being asked, in the run's own words. */
+  question: string;
+  /** The answers offered. Empty ⇒ free text. */
+  choices: string[];
+  state: 'pending' | 'answered' | 'expired';
+  answeredAt: string | null;
+  answeredVia: string | null;
+  /** What the human chose or typed, verbatim. */
+  answer: string | null;
   resolutionNote: string | null;
   resolutionError: string | null;
+  /** Newest LAST — a steer trail reads as a conversation. */
+  steers: QuestionSteer[];
   channelRefs: Record<string, string>;
+  createdAt: string;
 }
 
 /**
- * Everything awaiting a verdict, across every automation.
- *
- * Polled, unlike most reads here, and for a specific reason: a card can be
- * answered from Telegram or the CLI while this page is open, and a queue that
- * still offers buttons for a card someone already approved invites a second
- * verdict on a decision already made. The engine's claim lock makes that safe,
- * but showing it is better than catching it.
+ * Every question awaiting an answer, across every automation, oldest first —
+ * mirrors `handleAutomationsQuestionsList`. Polled, for the reason the
+ * retired review queue was: a question can be answered from Telegram or the
+ * CLI while this is open, and a stale list would keep offering controls for a
+ * question someone already answered elsewhere. The engine's claim lock makes
+ * that safe either way, but showing it is better than catching it.
  */
-export function useReviewQueue() {
+export function useAutomationQuestions() {
   const api = useApi();
   return useQuery({
-    queryKey: ['automations-review'],
-    queryFn: () => api.get<{ cards: ReviewCard[] }>('/automations/review').then((r) => r.cards),
+    queryKey: ['automations-questions'],
+    queryFn: () => api.get<{ questions: AutomationQuestion[] }>('/automations/questions').then((r) => r.questions),
     refetchInterval: 5000,
     refetchOnWindowFocus: true,
     retry: 0,
   });
 }
 
-export interface ReviewAnswerResult {
-  card: ReviewCard;
+/**
+ * The input to `useAnswerQuestion` — a discriminated union on `kind`, on
+ * purpose. Mirrors `handleAutomationsQuestionAnswer`'s own split: an
+ * `'approval'` question takes an EXPLICIT `'approve' | 'reject'` decision and
+ * nothing else (the server 400s on free text — a human typing "no, this looks
+ * wrong" must never be read as consent), while a `'flow-hitl'` question is an
+ * already-approved run asking about its own work, so free `answer` text is
+ * the correct and only shape. Typing this as a union makes sending the wrong
+ * shape to the wrong kind a compile error, not a 400 the caller has to catch.
+ */
+export type AnswerQuestionInput =
+  | { id: string; kind: 'approval'; decision: 'approve' | 'reject' }
+  | { id: string; kind: 'flow-hitl'; answer: string };
+
+/** What answering an `'approval'` question produced — mirrors the route's
+ *  approval branch. Never resumes the asking session (it is discarded either
+ *  way, approved or not); `job`/`started` are present only when `approved` —
+ *  the exact primitive `useRunAutomation` posts to, so there is one spawn
+ *  path for a dashboard-initiated run, not two. */
+export interface ApprovalAnswerResult {
+  question: AutomationQuestion;
+  status: 'ok';
+  error: null;
+  result: null;
+  approved: boolean;
+  job?: AutomationRunJob;
+  started?: boolean;
+}
+
+/** What answering a `'flow-hitl'` question produced — mirrors `QuestionOutcome`. */
+export interface FlowHitlAnswerResult {
+  question: AutomationQuestion;
   status: 'ok' | 'failed' | 'timeout' | 'not-spawned' | 'refused';
   error: string | null;
   result: string | null;
-  lesson: string | null;
 }
 
-/**
- * Answer a card: a verdict, or a correction in words.
- *
- * A correction leaves the card PENDING — it is rewritten and comes back for the
- * same three buttons. Nothing here carries a session id or a prompt; the card
- * already names the conversation the server resumes.
- */
-export function useAnswerReviewCard() {
+export type AnswerQuestionResult = ApprovalAnswerResult | FlowHitlAnswerResult;
+
+/** Answer one question — mirrors `handleAutomationsQuestionAnswer`. See
+ *  `AnswerQuestionInput` for why the two kinds are not interchangeable. */
+export function useAnswerQuestion() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    mutationFn: ({ id, verdict, steer }: { id: string; verdict?: 'approve' | 'discard' | 'drop'; steer?: string }) =>
-      api.post<ReviewAnswerResult>(`/automations/review/${id}`, verdict ? { verdict } : { steer }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['automations-review'] });
-      // The gate lifts the moment a card resolves, so the board's per-automation
-      // state is stale too.
+    mutationFn: (input: AnswerQuestionInput) =>
+      api.post<AnswerQuestionResult>(`/automations/questions/${input.id}`, {
+        answer: input.kind === 'approval' ? input.decision : input.answer,
+      }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['automations-questions'] });
+      // The gate lifts (or the run resumes) the moment a question resolves, so
+      // the board's per-automation state — `pendingQuestionId`, `approved` —
+      // is stale too.
       queryClient.invalidateQueries({ queryKey: ['automations'] });
+      queryClient.invalidateQueries({ queryKey: ['automations', data.question.slug] });
+    },
+  });
+}
+
+// ─── Per-automation Telegram ────────────────────────────────────────────────
+
+/** What the dashboard needs to answer "is Telegram set up for this
+ *  automation, and where does it reply" — mirrors `TelegramConfigView` in
+ *  `src/server/routes/automations.ts`. Deliberately has NO token field: the
+ *  bot token is a capability (it can resume a `bypassPermissions` session)
+ *  and never leaves the server process. */
+export interface TelegramConfigView {
+  configured: boolean;
+  chatId: string | null;
+}
+
+export function useAutomationTelegram(slug: string | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['automations', slug, 'telegram'],
+    queryFn: () =>
+      api.get<{ telegram: TelegramConfigView }>(`/automations/${slug}/telegram`).then((r) => r.telegram),
+    enabled: !!slug,
+    retry: 0,
+  });
+}
+
+/** Set (or replace) one automation's Telegram bot credentials. The response
+ *  echoes the same presence-only shape the read hook returns — the token that
+ *  was just written is never read back over HTTP. */
+export function useSetAutomationTelegram() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ slug, botToken, chatId }: { slug: string; botToken: string; chatId: string }) =>
+      api
+        .post<{ telegram: TelegramConfigView }>(`/automations/${slug}/telegram`, { botToken, chatId })
+        .then((r) => r.telegram),
+    onSuccess: (_data, { slug }) => {
+      queryClient.invalidateQueries({ queryKey: ['automations', slug, 'telegram'] });
     },
   });
 }

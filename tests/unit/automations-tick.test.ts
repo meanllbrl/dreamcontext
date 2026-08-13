@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { tickAll, tickProject } from '../../src/lib/automations/tick.js';
 import { createAutomation, setAutomationEnabled, writeAutomationCache } from '../../src/lib/automations/store.js';
+import { enqueueFire, queuedFire } from '../../src/lib/automations/queue.js';
 import { registerProject, readDispatcherHeartbeat } from '../../src/lib/automations/registry.js';
 import { automationsLogPath } from '../../src/lib/automations/launchd.js';
 import { LOG_ROTATE_BYTES, type AutomationCache, type RunOutcome } from '../../src/lib/automations/types.js';
@@ -236,6 +237,120 @@ describe('tickProject', () => {
     const runImpl = fakeRunner('ok');
     const result = await tickProject(projectRoot, { runImpl });
     expect(result.considered).toBe(0);
+  });
+});
+
+// ─── Draining the queue (D9), BEFORE isDue() ────────────────────────────────
+
+describe('tickProject — draining the queue before isDue()', () => {
+  it('runs a drained fire with its ORIGINAL firedAt, and does not run it a second time via isDue()', async () => {
+    // Schedule ALSO matches NOW exactly, so isDue() would independently want
+    // to run this too — proving the drain phase and the isDue() loop hand out
+    // exactly ONE run for the same owed fire, not two.
+    makeDue('eod-digest');
+    // Within the default 6h catchup window (so the drain phase actually runs
+    // it) but distinct from NOW (so a `fireAt` equal to NOW would prove
+    // nothing about which phase ran it).
+    const OLD_FIRE = '2026-07-26T16:00:00.000Z';
+    enqueueFire(projectRoot, 'eod-digest', OLD_FIRE, home, NOW.getTime());
+    const calls: Array<{ slug: string; fireAt: Date | undefined }> = [];
+    const runImpl = fakeRunner('ok', { calls });
+
+    const result = await tickProject(projectRoot, { now: NOW, home, runImpl });
+
+    expect(runImpl).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual([{ slug: 'eod-digest', fireAt: new Date(OLD_FIRE) }]);
+    expect(result.ran).toHaveLength(1);
+    expect(result.ran[0].slug).toBe('eod-digest');
+    expect(result.verdicts).toEqual([{ slug: 'eod-digest', verdict: 'due' }]);
+    // drained AND run ⇒ gone from the queue
+    expect(queuedFire(projectRoot, 'eod-digest', home)).toBeNull();
+  });
+
+  it('keeps a queued fire for a DISABLED automation — re-enqueued with the ORIGINAL firedAt, never run (R5)', async () => {
+    const m = makeDue('weekly-report');
+    setAutomationEnabled(contextRoot, m.slug, false);
+    const OLD_FIRE = '2026-07-25T18:00:00.000Z';
+    enqueueFire(projectRoot, m.slug, OLD_FIRE, home, NOW.getTime());
+    const runImpl = fakeRunner('ok');
+
+    const result = await tickProject(projectRoot, { now: NOW, home, runImpl });
+
+    expect(runImpl).not.toHaveBeenCalled();
+    expect(result.ran).toHaveLength(0);
+    // the isDue() loop still gives it its normal 'disabled' verdict — exactly
+    // once, not doubled by the drain phase.
+    expect(result.verdicts).toEqual([{ slug: m.slug, verdict: 'disabled' }]);
+    // OWED, not lost — still on disk with its ORIGINAL firedAt preserved.
+    expect(queuedFire(projectRoot, m.slug, home)).toEqual({
+      slug: m.slug,
+      firedAt: OLD_FIRE,
+      enqueuedAt: NOW.toISOString(),
+    });
+  });
+
+  it('drops a queued fire whose automation no longer exists, without throwing', async () => {
+    enqueueFire(projectRoot, 'ghost-automation', '2026-07-25T18:00:00.000Z', home, NOW.getTime());
+    const runImpl = fakeRunner('ok');
+
+    const result = await tickProject(projectRoot, { now: NOW, home, runImpl });
+
+    expect(runImpl).not.toHaveBeenCalled();
+    expect(result.considered).toBe(0);
+    expect(result.ran).toHaveLength(0);
+    expect(result.verdicts).toHaveLength(0);
+    // the drain already cleared it — nothing left to keep for a slug that
+    // does not exist.
+    expect(queuedFire(projectRoot, 'ghost-automation', home)).toBeNull();
+  });
+
+  it('drops a queued fire outside the manifest catchupHours window, without running it', async () => {
+    // Scheduled for 23:59 — not due right now for its own reasons, so the
+    // ONLY thing that could make this run is the drain phase.
+    makeDue('research', { at: '23:59', catchupHours: 6 });
+    const STALE_FIRE = '2026-07-20T18:00:00.000Z'; // days old
+    enqueueFire(projectRoot, 'research', STALE_FIRE, home, NOW.getTime());
+    const runImpl = fakeRunner('ok');
+
+    const result = await tickProject(projectRoot, { now: NOW, home, runImpl });
+
+    expect(runImpl).not.toHaveBeenCalled();
+    expect(result.ran).toHaveLength(0);
+    // drained (and dropped) regardless — the queue never grows unboundedly
+    // with fires nobody will ever run.
+    expect(queuedFire(projectRoot, 'research', home)).toBeNull();
+  });
+
+  it('an empty queue changes nothing — the fresh-machine no-op stays a no-op', async () => {
+    makeDue('eod-digest', { at: '23:59' }); // not due right now
+    const runImpl = fakeRunner('ok');
+
+    const result = await tickProject(projectRoot, { now: NOW, home, runImpl });
+
+    expect(runImpl).not.toHaveBeenCalled();
+    expect(result.ran).toHaveLength(0);
+    expect(result.verdicts).toHaveLength(1);
+  });
+
+  it('keeps considered.length === verdicts.length across a mixed drain + isDue pass', async () => {
+    makeDue('alpha'); // drained + run
+    const bravo = makeDue('bravo');
+    setAutomationEnabled(contextRoot, bravo.slug, false); // drained + kept (disabled)
+    makeDue('charlie', { at: '23:59' }); // normal isDue() path, not due
+
+    enqueueFire(projectRoot, 'alpha', '2026-07-26T16:00:00.000Z', home, NOW.getTime()); // within catchup
+    enqueueFire(projectRoot, 'bravo', '2026-07-25T18:00:00.000Z', home, NOW.getTime()); // disabled — never reaches the catchup check
+    enqueueFire(projectRoot, 'ghost', '2026-07-25T18:00:00.000Z', home, NOW.getTime()); // no manifest
+
+    const runImpl = fakeRunner('ok');
+    const result = await tickProject(projectRoot, { now: NOW, home, runImpl });
+
+    expect(result.considered).toBe(3); // alpha, bravo, charlie — ghost was never a manifest
+    expect(result.verdicts).toHaveLength(3);
+    expect(result.verdicts.map((v) => v.slug).sort()).toEqual(['alpha', 'bravo', 'charlie']);
+    expect(result.verdicts.find((v) => v.slug === 'alpha')?.verdict).toBe('due');
+    expect(result.verdicts.find((v) => v.slug === 'bravo')?.verdict).toBe('disabled');
+    expect(runImpl).toHaveBeenCalledTimes(1); // alpha only
   });
 });
 

@@ -2,7 +2,13 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFil
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
-import { APPROVAL_PAYLOAD_VERSION, type ApprovalPayloadFields, type AutomationManifest } from './types.js';
+import {
+  APPROVAL_DIFF_FIELDS,
+  APPROVAL_PAYLOAD_VERSION,
+  type ApprovalPayloadFields,
+  type AutomationManifest,
+  type FlowGraph,
+} from './types.js';
 
 /**
  * Automations registry — the machine-local approval tripwire + project
@@ -224,6 +230,37 @@ function normalizeText(s: string): string {
 }
 
 /**
+ * A flow graph as ONE canonical string, so the hash tracks what the graph MEANS
+ * rather than how its JSON happened to be typed.
+ *
+ * Key order is fixed by construction here rather than inherited from the parsed
+ * object, and `label`/`config` are omitted when empty — so re-saving a manifest
+ * through a formatter, or an editor that reorders JSON keys, does NOT re-block
+ * an approved automation. Node and edge ORDER is preserved and significant: the
+ * order is the wiring, and reordering nodes genuinely changes the graph.
+ *
+ * The reverse also has to hold, and is the point: any edit that changes what the
+ * run does — a node added or removed, a kind changed, a `config` value edited, a
+ * wire repointed — MUST change this string.
+ */
+export function canonicalFlowJson(graph: FlowGraph): string {
+  return JSON.stringify({
+    version: graph.version,
+    nodes: graph.nodes.map((n) => ({
+      id: n.id,
+      kind: n.kind,
+      ...(n.label ? { label: n.label } : {}),
+      ...(n.config && Object.keys(n.config).length > 0 ? { config: n.config } : {}),
+    })),
+    edges: graph.edges.map((e) => ({
+      from: e.from,
+      to: e.to,
+      ...(e.label ? { label: e.label } : {}),
+    })),
+  });
+}
+
+/**
  * The fields the approval hash is computed over, in FIXED key order
  * (object-literal insertion order for string keys is guaranteed by the JS
  * spec, so `JSON.stringify` never reorders them). Everything else on the
@@ -275,6 +312,32 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // harmless: a local write verb re-approves on the spot, and a teammate
     // ADDING a gate that then blocks is failing in the safe direction.
     ...(m.review !== 'off' ? { review: m.review } : {}),
+    // OMITTED when absent, and LAST in the literal — the same byte-identity
+    // reason as `effort`, `learning` and `review`, and the highest-stakes
+    // instance of it. Every automation that exists today predates `## Flow`, so
+    // every one of them reads `flow: null`; serializing a `"flow":null` key
+    // would change all of their hashes at once and block every automation on the
+    // machine on upgrade — and a blocked run notifies nobody, by design, so the
+    // symptom would be the whole subsystem going silent.
+    //
+    // LAST specifically so that adding it cannot perturb the serialization of
+    // any field before it. Appending is the only position that keeps a
+    // flow-less manifest's payload byte-for-byte what it was.
+    //
+    // When a flow IS present the hash changes and approval is required, which is
+    // the point: the graph decides what the prompt says and whether the run must
+    // stop and ask, so a teammate's synced edit deleting a `hitl` node has
+    // removed a human gate and must block until someone here re-approves.
+    //
+    // `undefined` is treated as absent alongside `null`, deliberately. Every
+    // read path states `flow: null` explicitly, so an `undefined` here means a
+    // hand-built manifest object (a test fixture, a future caller) — and the two
+    // ways to be wrong are not symmetric. Treating it as ABSENT reproduces the
+    // flow-less hash, which is the safe, byte-identical answer; treating it as
+    // present would call `canonicalFlowJson(undefined)` and THROW, on the
+    // runner's approval path, where a throw is an automation that stops running
+    // and tells nobody. A hash function on that path has to be total.
+    ...(m.flow !== null && m.flow !== undefined ? { flow: canonicalFlowJson(m.flow) } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -309,7 +372,68 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     // review mode renders as `agent → off` in the diff, which is exactly the
     // line this whole surface exists to make impossible to miss.
     review: m.review,
+    // Always present (as null when absent), for the same DISPLAY reason: a
+    // reviewer must be able to see that a graph exists and what it wires, since
+    // the graph is what decides whether the run stops to ask.
+    flow: m.flow,
   };
+}
+
+// ─── The diff a human actually reviews ──────────────────────────────────────
+
+/** One hashed field, rendered for review. `null` prints as the word, never as an
+ *  empty string — "nothing set" and "set to empty" are different approvals. */
+function renderApprovalValue(value: ApprovalPayloadFields[keyof ApprovalPayloadFields]): string {
+  if (value === null) return '(none)';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'string') return value;
+  // The only remaining member is `flow`, whose canonical form is what the hash
+  // covers — so the diff shows exactly the bytes that decided it.
+  return canonicalFlowJson(value as FlowGraph);
+}
+
+/**
+ * A field-by-field diff of two approval payloads, for a human to read before
+ * granting `bypassPermissions` again.
+ *
+ * Walks {@link APPROVAL_DIFF_FIELDS} rather than `Object.keys`, so the order is
+ * the declared one and — more importantly — a field ADDED to the hash but not to
+ * that list can never silently drop out of the review. Returns only what
+ * CHANGED: a reviewer looking for the edit should not have to find it inside a
+ * wall of identical lines.
+ *
+ * Empty string ⇒ nothing among the hashed fields differs. That is a real state
+ * worth rendering honestly (the hash can also differ because the payload FORMAT
+ * changed, which is `payload-format-changed`, not an edit).
+ */
+/**
+ * Every hashed field, rendered for a human to read.
+ *
+ * A FULL REVIEW, not an old-vs-new diff, and that is forced rather than chosen:
+ * the registry stores a sha256 and nothing else — no prior field values — so
+ * there is no "before" to diff against. The hash can prove that SOMETHING
+ * changed; it cannot say what. Surfaces must therefore show every field every
+ * time (the CLI's `approve` and the dashboard's review panel both do), and any
+ * copy describing this as a diff is lying to the reviewer about what they are
+ * being shown.
+ */
+export function renderApprovalReview(fields: ApprovalPayloadFields): string {
+  return APPROVAL_DIFF_FIELDS.map((field) => {
+    const value = renderApprovalValue(fields[field]);
+    return value.includes('\n') ? `${field}:\n  ${value.replace(/\n/g, '\n  ')}` : `${field}: ${value}`;
+  }).join('\n');
+}
+
+export function approvalDiff(stored: ApprovalPayloadFields, current: ApprovalPayloadFields): string {
+  const lines: string[] = [];
+  for (const field of APPROVAL_DIFF_FIELDS) {
+    const before = renderApprovalValue(stored[field]);
+    const after = renderApprovalValue(current[field]);
+    if (before === after) continue;
+    lines.push(`${field}:`, `  - ${before.replace(/\n/g, '\n    ')}`, `  + ${after.replace(/\n/g, '\n    ')}`);
+  }
+  return lines.join('\n');
 }
 
 // ─── The gate itself ─────────────────────────────────────────────────────────

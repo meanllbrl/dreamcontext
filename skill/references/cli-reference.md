@@ -165,7 +165,15 @@ Scheduled headless `claude` runs, user-authored, ships completely disabled until
 | `automations run <slug>` | Run one automation now. `-f/--force` bypasses dueness and sleep-deference only, never approval and never the orphan guard. |
 | `automations tick [slug]` | Simulate a dispatcher tick: evaluate dueness and run whatever is due (never forces). `[slug]` ticks only that automation in the current project; omit for the whole project. `-a/--all` ticks every project registered on this machine. `--json`. |
 | `automations enable <slug>` / `automations disable <slug>` | Enable (tick considers it again) or disable (tick skips it; approval untouched) an automation. |
-| `automations approve <slug>` | Review and approve an automation to run on this machine, diffing every hashed field (prompt, output instructions, model, effort, timeout, output directory) against the last approval. `-y/--yes` skips the interactive confirmation. |
+| `automations approve <slug>` | Review and approve an automation to run on this machine. Shows every hashed field — prompt, output instructions, model, effort, timeout, output directory, `learning`, `review`, and the `## Flow` graph. It is a REVIEW, not a diff: the approval record stores only a sha256, never prior field values, so the tripwire proves *that* something changed and never *what*. `-y/--yes` skips the interactive confirmation. |
+| `automations flow <slug>` | Print this automation's `## Flow` graph — its own block, or the one implied by its schedule and review mode (it says which). Validates the graph and names unknown node kinds, dangling edges, and cycles concretely. `--json`. |
+| `automations questions [slug]` | List questions awaiting a human answer, for one automation or all. Two kinds, answered differently: `flow-hitl` (a run stopped mid-flight to ask) and `approval` (a changed manifest asking whether to trust it as it now stands). |
+| `automations answer <id> <answer>` | Answer a question a run is waiting on. Free text for a `flow-hitl` question — it resumes that session. For an `approval` question the answer must be an explicit `approve`/`yes` or `reject`/`no`; free text is refused and decides nothing, so a typed "no, this looks wrong" can never be read as consent. |
+| `automations telegram setup <slug>` | Point a Telegram bot at ONE automation, so its questions reach you when you are not at the Mac. Stored at `~/.dreamcontext/telegram/<slug>.json`, mode 0600, machine-local, never synced. `--token <token>`, `--chat <id>` (the only chat allowed to answer). The token is a capability: it can resume a `bypassPermissions` session on this machine, which is exactly why it is not in the brain. |
+| `automations telegram test <slug>` / `automations telegram off <slug>` | Post this automation's waiting question now and report what its bot can see / forget this automation's bot token and stop its channel. |
+| `automations session <slug>` | Show the claude session a run actually had — its turns, tool calls, and errors. |
+| `automations pattern <slug>` / `automations learn <slug>` | Show what this automation has learned (its playbook and lesson ledger) / record a lesson into it. A run calls `learn` on itself; the pattern's CONTENTS are deliberately not approval-hashed, since they change every run by design — the `learning` switch that admits them is. |
+| `automations propose <slug>` | Stop and ask a human before acting. A run calls this about itself; it cannot be called by hand (a process-group probe refuses a nested call). |
 | `automations share <slug>` | Publish this automation: flips `shared` to `true` and publishes its manifest, cache, and output together. |
 | `automations unshare <slug>` | Stop publishing this automation from this machine. Prints a warning that this is not retroactive: anything already committed and pushed stays in git history. `-y/--yes` skips the interactive confirmation. |
 | `automations kill <slug>` | Kill a previous run's orphaned process group, read from its recorded sidecar. Never guesses with `pgrep`/`pkill`. `-y/--yes` skips confirmation, `--force` kills even when the sidecar is old enough that its process-group id may have been recycled. |
@@ -278,8 +286,9 @@ See [sleep.md](sleep.md) for the full flow.
 
 | Command | Description |
 |---|---|
-| `bookmark add <message...>` | Tag an important moment. `-s/--salience 1\|2\|3` (default 2), `-t/--task <slug>`. |
-| `bookmark list` / `bookmark clear` | Show / remove all bookmarks. |
+| `bookmark add <message...>` | Tag an important moment. `-s/--salience 1\|2\|3` (default 2), `-t/--task <slug>`. Omitting `--task` while open tasks exist prints a stderr advisory naming the likeliest 1–3 (never blocks, exit stays 0; silence with `DREAMCONTEXT_BOOKMARK_HINT=0`). With no `--task`, `state/.active-task` is used as an implicit one and said out loud. A `--task` that is a name or prefix resolves like every other task verb. |
+| `bookmark list` / `bookmark clear` | Show / remove all bookmarks. `list` marks each one `[slug]` or `[no task]` and prints its id (the `relink` handle). |
+| `bookmark relink <id> --task <slug>` | Point an existing bookmark at a task — the repair for one saved without `--task`, no need to rewrite it. Takes a unique id prefix. |
 | `trigger add <when> <remind...>` | Create a contextual reminder. `-m/--max-fires` (default 3), `-s/--source`. |
 | `trigger list` / `trigger remove <id>` | Show / remove triggers. |
 

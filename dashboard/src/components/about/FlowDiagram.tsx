@@ -20,7 +20,15 @@ import './FlowDiagram.css';
  * longer contains any `stroke: url(...)` / `fill: url(...)`.
  */
 
-export type FlowNodeVariant = 'hook' | 'region' | 'agent' | 'rem' | 'accent' | 'plain';
+/**
+ * `'unknown'` is additive — the automations flow canvas's escape hatch for a
+ * node kind this build's registry does not recognise (see
+ * `src/lib/automations/flow-registry.ts`'s `UNKNOWN_NODE_ENTRY`). It renders
+ * visibly unrecognised (dashed, `FlowDiagram.css`) rather than being dropped
+ * or mapped onto a variant that would misrepresent it. No hand-authored About
+ * page spec uses it, so this addition changes nothing about their rendering.
+ */
+export type FlowNodeVariant = 'hook' | 'region' | 'agent' | 'rem' | 'accent' | 'plain' | 'unknown';
 
 export interface FlowNode {
   id: string;

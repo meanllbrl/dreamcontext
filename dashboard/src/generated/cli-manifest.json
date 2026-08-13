@@ -37,6 +37,14 @@
       "group": true
     },
     {
+      "path": "automations answer",
+      "desc": "Answer a question a run is waiting on",
+      "args": [
+        "<id>",
+        "<answer>"
+      ]
+    },
+    {
       "path": "automations approve",
       "desc": "Review and approve an automation to run on this machine",
       "args": [
@@ -71,6 +79,13 @@
     {
       "path": "automations enable",
       "desc": "Enable an automation (tick will consider it again)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "automations flow",
+      "desc": "Print this automation's flow graph — its own ## Flow block, or the one implied by its schedule/prompt/review mode",
       "args": [
         "<slug>"
       ]
@@ -134,20 +149,17 @@
       ]
     },
     {
+      "path": "automations questions",
+      "desc": "List questions awaiting a human answer — an approval diff to trust, or a run that stopped mid-flight to ask",
+      "args": [
+        "[slug]"
+      ]
+    },
+    {
       "path": "automations remove",
       "desc": "Delete an automation manifest and its machine-local cache/lock/sidecar (approval revoked too)",
       "args": [
         "<slug>"
-      ]
-    },
-    {
-      "path": "automations review",
-      "desc": "Answer a proposal a run stopped to ask about: approve, reject, reject-forever, or correct it in words",
-      "args": [
-        "[slug]"
-      ],
-      "valueFlags": [
-        "--steer"
       ]
     },
     {
@@ -188,19 +200,23 @@
     },
     {
       "path": "automations telegram",
-      "desc": "Answer review cards from your phone (machine-local bot token; never synced)",
+      "desc": "Answer one automation's questions from your phone (a per-automation bot token; never synced)",
       "args": [],
       "group": true
     },
     {
       "path": "automations telegram off",
-      "desc": "Forget the bot token and stop the channel (cards stay answerable everywhere else)",
-      "args": []
+      "desc": "Forget this automation's bot token and stop its channel",
+      "args": [
+        "<slug>"
+      ]
     },
     {
       "path": "automations telegram setup",
-      "desc": "Point a Telegram bot at this machine so cards reach you where you already are",
-      "args": [],
+      "desc": "Point a Telegram bot at this automation so its questions reach you where you already are",
+      "args": [
+        "<slug>"
+      ],
       "valueFlags": [
         "--token",
         "--chat"
@@ -208,8 +224,10 @@
     },
     {
       "path": "automations telegram test",
-      "desc": "Post any waiting cards now and report what the channel can see",
-      "args": []
+      "desc": "Post this automation's waiting question now and report what its bot can see",
+      "args": [
+        "<slug>"
+      ]
     },
     {
       "path": "automations tick",
@@ -258,6 +276,17 @@
       "path": "bookmark list",
       "desc": "Show current bookmarks",
       "args": []
+    },
+    {
+      "path": "bookmark relink",
+      "desc": "Point an existing bookmark at a task (repairs a missing --task)",
+      "args": [
+        "<id>"
+      ],
+      "valueFlags": [
+        "-t",
+        "--task"
+      ]
     },
     {
       "path": "brain",

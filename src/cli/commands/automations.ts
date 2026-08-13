@@ -19,7 +19,9 @@ import {
   type Weekday,
   type EffortLevel,
   type AutomationManifest,
+  type AutomationQuestion,
   type ReviewMode,
+  type FlowGraph,
 } from '../../lib/automations/types.js';
 import {
   listAutomations,
@@ -33,23 +35,26 @@ import {
   shareStateFor,
   readPattern,
   recordLesson,
+  deriveFlowFromManifest,
+  writeFlowSection,
   type ShareState,
 } from '../../lib/automations/store.js';
 import { resolveRunSession, readSessionDigest, toolCallLabel } from '../../lib/automations/session.js';
-import { applySteer, proposeFromRun, resumeWithVerdict } from '../../lib/automations/verdict.js';
+import { proposeFromRun, resumeWithAnswer } from '../../lib/automations/verdict.js';
 import {
-  describeTelegram,
-  emitPendingCards,
+  adoptGlobalTelegramConfig,
+  forgetTelegramConfigForSlug,
   pollTelegram,
-  readTelegramConfig,
-  telegramConfigPath,
-  writeTelegramConfig,
+  readTelegramConfigForSlug,
+  telegramConfigPathForSlug,
+  writeTelegramConfigForSlug,
 } from '../../lib/automations/telegram.js';
 import {
-  allPendingReviewCards,
-  listReviewCards,
-  pendingReviewCard,
-} from '../../lib/automations/review.js';
+  allPendingQuestions,
+  claimQuestion,
+  pendingQuestion,
+} from '../../lib/automations/hitl.js';
+import { nodeEntry, isKnownNodeKind } from '../../lib/automations/flow-registry.js';
 import {
   shareAutomation,
   unshareAutomation,
@@ -283,6 +288,167 @@ function printRunOutcome(outcome: RunOutcome): void {
   if (outcome.denials > 0) warn(`  ${outcome.denials} permission denial(s) during this run.`);
 }
 
+// ─── Questions (human-in-the-loop) ──────────────────────────────────────────
+
+/**
+ * Kind-specific label + the answer this kind actually accepts, so a rendered
+ * question never reads as one interchangeable queue — see hitl.ts's module
+ * doc on why `approval` and `flow-hitl` are answered differently: one is a
+ * trust decision about the manifest itself, the other is the run asking
+ * about its own work.
+ */
+function describeQuestionKind(q: AutomationQuestion): { label: string; hint: string } {
+  if (q.kind === 'approval') {
+    return {
+      label: chalk.red('APPROVAL NEEDED — the manifest changed since it was last approved'),
+      hint: `dreamcontext automations answer ${q.id} approve${chalk.dim(' (or: reject)')}`,
+    };
+  }
+  return {
+    label: chalk.cyan('mid-run question — the run stopped to ask'),
+    hint: `dreamcontext automations answer ${q.id} "<your answer>"`,
+  };
+}
+
+/**
+ * Case/whitespace-insensitive decisions an `'approval'` question accepts —
+ * mirrors `handleAutomationsQuestionAnswer`'s `APPROVAL_DECISIONS` in
+ * `src/server/routes/automations.ts` EXACTLY (not imported: that route does
+ * not export it, and this file must not depend on `src/server/`). A CLOSED
+ * set: free text is refused rather than interpreted, because a human typing
+ * "no, this looks wrong" must never be read as consent.
+ */
+const APPROVAL_DECISIONS: Record<string, boolean> = { approve: true, yes: true, reject: false, no: false };
+
+/**
+ * Answer an `'approval'` question — the sha256 tripwire's own gate wearing a
+ * CLI face. Mirrors `handleAutomationsQuestionAnswer`'s `'approval'` branch:
+ * an explicit decision only, and approving NEVER resumes the asking session
+ * (it ran read-only and is discarded either way) — it calls
+ * `approveAutomation` and starts a FRESH run through the exact same
+ * `runAutomation` primitive `automations run` uses, never a second spawn
+ * path. Rejecting claims and records the decision so the same diff is not
+ * re-asked forever, but approves nothing and starts nothing.
+ */
+async function answerApprovalQuestion(root: string, question: AutomationQuestion, answerText: string): Promise<void> {
+  const manifest = requireAutomation(root, question.slug);
+  if (!manifest) return;
+
+  const decision = answerText.trim().toLowerCase();
+  if (!(decision in APPROVAL_DECISIONS)) {
+    error(`An approval question takes an explicit decision, not free text — answer must be one of: ${Object.keys(APPROVAL_DECISIONS).join(', ')}.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const claim = claimQuestion(root, question, answerText, 'cli');
+  if (!claim.claimed) {
+    error(claim.reason);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!APPROVAL_DECISIONS[decision]) {
+    // REJECTED. Recorded and done — no approval, no run. The manifest is left
+    // exactly as unapproved as it was; the next fire refuses through the SAME
+    // sha256 tripwire, never through a side door opened here.
+    warn(`"${question.slug}" — rejected. Nothing was approved and nothing ran.`);
+    return;
+  }
+
+  approveAutomation(projectRootFor(root), manifest, new Date());
+  success(`"${question.slug}" approved.`);
+  const now = new Date();
+  const outcome = await runAutomation(root, question.slug, { force: true, fireAt: now, now: () => now, host: 'cli' });
+  printRunOutcome(outcome);
+}
+
+/**
+ * Answer a `'flow-hitl'` question — an already-approved run stopped
+ * mid-flight to ask about its own work, so free text is the correct and only
+ * shape of answer. `resumeWithAnswer` is the ONE path every channel (HTTP,
+ * CLI, Telegram) uses for this, and it re-checks the kind itself before
+ * touching anything.
+ */
+async function answerFlowHitlQuestion(root: string, question: AutomationQuestion, answerText: string): Promise<void> {
+  const outcome = await resumeWithAnswer(root, question, answerText, 'cli');
+  if (outcome.status === 'refused') {
+    error(outcome.error ?? 'that question could not be answered');
+    process.exitCode = 1;
+    return;
+  }
+  if (outcome.status !== 'ok') {
+    warn(outcome.error ?? outcome.status);
+    process.exitCode = 1;
+    return;
+  }
+  success(`"${question.slug}" answered.`);
+  if (outcome.result) {
+    console.log('');
+    console.log(outcome.result.split('\n').map((l) => `  ${l}`).join('\n'));
+  }
+}
+
+// ─── Flow graphs ─────────────────────────────────────────────────────────────
+
+/**
+ * Concrete problems in a flow graph, named plainly: an unknown node kind, a
+ * dangling edge, or a cycle. Kind knowledge comes from `isKnownNodeKind`
+ * (flow-registry.ts) — never a second mapping. Pure; never throws.
+ */
+function validateFlowGraph(graph: FlowGraph): string[] {
+  const problems: string[] = [];
+  const ids = new Set(graph.nodes.map((n) => n.id));
+
+  for (const node of graph.nodes) {
+    if (!isKnownNodeKind(node.kind)) {
+      problems.push(`unknown node kind "${node.kind}" (${node.id}) — this build does not recognise it; it would pass through the run unexecuted`);
+    }
+  }
+
+  for (const edge of graph.edges) {
+    if (!ids.has(edge.from) || !ids.has(edge.to)) {
+      problems.push(`dangling edge ${edge.from} → ${edge.to} — one side names a node that is not in this graph`);
+    }
+  }
+
+  const stranded = findCycle(graph);
+  if (stranded.length > 0) {
+    problems.push(`cycle involving: ${stranded.join(', ')} — a run would still execute every node once, in manifest order for these`);
+  }
+
+  return problems;
+}
+
+/**
+ * Kahn's algorithm; returns the node ids still unvisited once the queue
+ * drains — exactly the ones on (or downstream of) a cycle. Edges naming a
+ * missing node are ignored here (already reported separately as dangling).
+ */
+function findCycle(graph: FlowGraph): string[] {
+  const ids = new Set(graph.nodes.map((n) => n.id));
+  const indegree = new Map(graph.nodes.map((n) => [n.id, 0]));
+  const outgoing = new Map<string, string[]>(graph.nodes.map((n) => [n.id, []]));
+  for (const e of graph.edges) {
+    if (!ids.has(e.from) || !ids.has(e.to)) continue;
+    outgoing.get(e.from)!.push(e.to);
+    indegree.set(e.to, (indegree.get(e.to) ?? 0) + 1);
+  }
+  const queue = graph.nodes.filter((n) => indegree.get(n.id) === 0).map((n) => n.id);
+  const seen = new Set<string>();
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const next of outgoing.get(id) ?? []) {
+      const remaining = (indegree.get(next) ?? 0) - 1;
+      indegree.set(next, remaining);
+      if (remaining === 0) queue.push(next);
+    }
+  }
+  return graph.nodes.filter((n) => !seen.has(n.id)).map((n) => n.id);
+}
+
 function printTickProjectResult(result: TickProjectResult): void {
   console.log(header('Tick'));
   if (result.considered === 0) {
@@ -404,7 +570,7 @@ export function registerAutomationsCommand(program: Command): void {
           }
           prompt = readFileSync(opts.promptFile, 'utf-8');
         }
-        const manifest = createAutomation(root, {
+        let manifest = createAutomation(root, {
           slug,
           title: opts.title,
           days,
@@ -429,6 +595,18 @@ export function registerAutomationsCommand(program: Command): void {
           // refusal here rather than a gate the owner believes they installed.
           review: opts.review as ReviewMode | undefined,
         });
+
+        // Every fresh automation gets a `## Flow` block that actually
+        // describes what it does — derived from what was just written,
+        // never an empty canvas, and NEVER a default `hitl` node: a `hitl`
+        // node makes the run stop and ask instead of publish, so drawing one
+        // by default would turn every newly created automation into one
+        // that never delivers anything. `deriveFlowFromManifest` only draws
+        // one when `review` is not `off`, i.e. only when `--review` was
+        // actually passed. Written BEFORE the auto-approval below, so the
+        // hash the reviewer sees in `show`/`approve` covers the exact flow
+        // they are shown.
+        manifest = writeFlowSection(root, manifest.slug, deriveFlowFromManifest(manifest));
 
         const projectRoot = projectRootFor(root);
         registerProject(projectRoot);
@@ -566,7 +744,12 @@ export function registerAutomationsCommand(program: Command): void {
         }
       }
       {
-        const card = pendingReviewCard(root, slug);
+        // Live-computed from the question store, the same primitive the
+        // dashboard's own summary reads (`server/routes/automations.ts`'s
+        // `summarize`) — covers BOTH an `approval` diff asking to be trusted
+        // and a `flow-hitl` node asking mid-run, and the two read
+        // differently (see `describeQuestionKind`).
+        const question = pendingQuestion(root, slug);
         console.log(
           `  review: ${manifest.review === 'off'
             ? chalk.dim('off — this automation acts without a human verdict')
@@ -577,9 +760,10 @@ export function registerAutomationsCommand(program: Command): void {
         // Rendered right under the mode, not buried in the history: this is the
         // reason the automation is not running, and a `show` that made you infer
         // that from an `awaiting-review` history entry would be hiding the lede.
-        if (card) {
-          warn(`  awaiting your verdict — "${card.title}" (card ${card.id})`);
-          console.log(chalk.dim(`    it will not run again until you answer — \`dreamcontext automations review ${slug}\``));
+        if (question) {
+          const { label } = describeQuestionKind(question);
+          warn(`  ${label} — "${truncateLine(question.question, 100)}" (id ${question.id})`);
+          console.log(chalk.dim(`    it will not run again until you answer — \`dreamcontext automations answer ${question.id} <answer>\``));
         }
       }
       console.log(`  approval: ${approval.approved ? chalk.green('approved') : chalk.red(`NOT approved (${approval.reason})`)}`);
@@ -622,6 +806,52 @@ export function registerAutomationsCommand(program: Command): void {
         } else {
           console.log(chalk.dim(`  currently running (pgid ${sidecar.childPgid}, started ${sidecar.startedAt}) — not an orphan, leave it to finish.`));
         }
+      }
+    });
+
+  automations
+    .command('flow')
+    .argument('<slug>', 'Automation slug')
+    .description("Print this automation's flow graph — its own ## Flow block, or the one implied by its schedule/prompt/review mode")
+    .option('--json', 'Emit the graph (and any problems found) as JSON')
+    .action((slug: string, opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const manifest = requireAutomation(root, slug);
+      if (!manifest) return;
+
+      const derived = manifest.flow === null;
+      const graph = manifest.flow ?? deriveFlowFromManifest(manifest);
+      const problems = validateFlowGraph(graph);
+
+      if (opts.json) {
+        console.log(JSON.stringify({ flow: graph, derived, problems }, null, 2));
+        if (problems.length > 0) process.exitCode = 1;
+        return;
+      }
+
+      console.log(header(`Flow: ${slug}`));
+      console.log(chalk.dim(derived
+        ? '  derived — this manifest has no ## Flow block; this is what its schedule/prompt/review mode imply.'
+        : "  this automation's own ## Flow block."));
+      console.log(chalk.dim(`  ${graph.nodes.length} node(s), ${graph.edges.length} edge(s)`));
+      console.log('');
+      for (const node of graph.nodes) {
+        const entry = nodeEntry(node.kind);
+        console.log(`  ${entry.glyph} ${node.id} — ${entry.describe(node)}`);
+      }
+      if (graph.edges.length > 0) {
+        console.log('');
+        console.log(chalk.dim('  edges:'));
+        for (const e of graph.edges) {
+          console.log(chalk.dim(`    ${e.from} → ${e.to}${e.label ? ` (${e.label})` : ''}`));
+        }
+      }
+      console.log('');
+      if (problems.length > 0) {
+        for (const p of problems) warn(`  ${p}`);
+        process.exitCode = 1;
+      } else {
+        success('  no problems found.');
       }
     });
 
@@ -713,11 +943,11 @@ export function registerAutomationsCommand(program: Command): void {
         const manifest = requireAutomation(root, slug);
         if (!manifest) return;
         // Refusing under `review: off` is the same honesty as `learn` refusing
-        // when learning is off: a card nobody is watching for is a run that
-        // stops and waits forever, and this automation's manifest says plainly
-        // that it does not do that.
+        // when learning is off: a proposal nobody is watching for is a run
+        // that stops and waits forever, and this automation's manifest says
+        // plainly that it does not do that.
         if (manifest.review === 'off') {
-          warn(`"${slug}" has review off — a card would be created that nothing is watching for.`);
+          warn(`"${slug}" has review off — a proposal would be created that nothing is watching for.`);
           console.log(chalk.dim(`  Set \`review: agent\` in automations/${slug}.md, then re-approve (it is a hashed field).`));
           process.exitCode = 1;
           return;
@@ -747,110 +977,64 @@ export function registerAutomationsCommand(program: Command): void {
     });
 
   automations
-    .command('review')
-    .argument('[slug]', 'Automation slug (omit to list every proposal awaiting a verdict)')
-    .description('Answer a proposal a run stopped to ask about: approve, reject, reject-forever, or correct it in words')
-    .option('--approve', 'Carry it out')
-    .option('--discard', 'Reject this one')
-    .option('--drop', 'Reject it, and teach the automation never to propose this again')
-    .option('--steer <text>', 'Correct it in plain language — it is rewritten and comes BACK to you, not sent')
-    .action(async (slug: string | undefined, opts: { approve?: boolean; discard?: boolean; drop?: boolean; steer?: string }) => {
+    .command('questions')
+    .argument('[slug]', 'Automation slug (omit to list every question awaiting an answer)')
+    .description('List questions awaiting a human answer — an approval diff to trust, or a run that stopped mid-flight to ask')
+    .action((slug: string | undefined) => {
       const root = ensureContextRoot();
 
-      // No slug ⇒ the queue. This is the answer to "what am I holding up?", and
-      // it must work with no arguments, because the person asking it has just
-      // been told by a snapshot that something is waiting and does not
-      // necessarily know which automation.
-      if (!slug) {
-        const open = allPendingReviewCards(root);
-        if (open.length === 0) {
-          console.log(chalk.dim('  Nothing is waiting for a verdict.'));
-          return;
-        }
-        console.log(header(`Awaiting your verdict (${open.length})`));
-        for (const card of open) {
-          console.log(`  ${chalk.bold(card.slug)} — ${card.title}`);
-          if (card.summary) console.log(chalk.dim(`    ${card.summary}`));
-          console.log(chalk.dim(`    ${card.createdAt} · card ${card.id} · \`dreamcontext automations review ${card.slug}\``));
-        }
+      let open: AutomationQuestion[];
+      if (slug) {
+        const manifest = requireAutomation(root, slug);
+        if (!manifest) return;
+        const q = pendingQuestion(root, slug);
+        open = q ? [q] : [];
+      } else {
+        // No slug ⇒ every open question, project-wide. This is the answer to
+        // "what am I holding up?", and it must work with no arguments, because
+        // the person asking it has just been told by a snapshot that something
+        // is waiting and does not necessarily know which automation.
+        open = allPendingQuestions(root);
+      }
+
+      if (open.length === 0) {
+        console.log(chalk.dim(slug ? `  "${slug}" has nothing awaiting an answer.` : '  Nothing is waiting for an answer.'));
         return;
       }
 
-      const manifest = requireAutomation(root, slug);
-      if (!manifest) return;
-      const card = pendingReviewCard(root, slug);
-      if (!card) {
-        console.log(chalk.dim(`  "${slug}" has nothing awaiting a verdict.`));
-        const answered = listReviewCards(root, slug).filter((c) => c.state !== 'pending');
-        if (answered.length > 0) {
-          const last = answered[answered.length - 1];
-          console.log(chalk.dim(`  last answered: ${last.title} → ${last.state} (${last.resolvedAt ?? '?'})`));
-        }
-        return;
+      console.log(header(`Awaiting your answer (${open.length})`));
+      for (const q of open) {
+        const { label, hint } = describeQuestionKind(q);
+        console.log(`  ${chalk.bold(q.slug)} — ${label}`);
+        console.log(`    ${truncateLine(q.question, 160)}`);
+        if (q.choices.length > 0) console.log(chalk.dim(`    choices: ${q.choices.join(' | ')}`));
+        console.log(chalk.dim(`    ${q.createdAt} · id ${q.id} · ${hint}`));
       }
+    });
 
-      const chosen = [opts.approve && 'approve', opts.discard && 'discard', opts.drop && 'drop', opts.steer && 'steer']
-        .filter(Boolean) as string[];
-      if (chosen.length > 1) {
-        error(`Pick one: ${chosen.join(', ')} were all given.`);
+  automations
+    .command('answer')
+    .argument('<id>', 'Question id — `dreamcontext automations questions` lists what is open')
+    .argument('<answer>', 'Your answer — free text for a mid-run question; approve/yes/reject/no for an approval question')
+    .description('Answer a question a run is waiting on')
+    .action(async (id: string, answerText: string) => {
+      const root = ensureContextRoot();
+      const question = allPendingQuestions(root).find((q) => q.id === id);
+      if (!question) {
+        error('That question is not open — it may have been answered elsewhere, or the id is wrong (`dreamcontext automations questions` lists what is open).');
         process.exitCode = 1;
         return;
       }
-
-      // No verdict flag ⇒ SHOW the proposal. Reading is the default because a
-      // verdict given without reading is the failure this whole feature exists
-      // to prevent — the flags are how you answer, never how you look.
-      if (chosen.length === 0) {
-        console.log(header(`${manifest.title} — awaiting your verdict`));
-        console.log(`  ${chalk.bold(card.title)}`);
-        console.log(chalk.dim(`  proposed ${card.createdAt} · card ${card.id}`));
-        if (card.stagedPath) console.log(chalk.dim(`  staged at ${card.stagedPath}`));
-        console.log('');
-        console.log(card.body.split('\n').map((l) => `  ${l}`).join('\n'));
-        if (card.steers.length > 0) {
-          console.log('');
-          console.log(chalk.dim(`  ${card.steers.length} correction(s) so far:`));
-          for (const s of card.steers) {
-            console.log(chalk.dim(`    → "${s.text}"${s.lesson ? ` · learned: ${s.lesson}` : ''}`));
-          }
-        }
-        console.log('');
-        console.log(chalk.dim(`  --approve · --discard · --drop · --steer "<what to change>"`));
-        if (!card.sessionId) {
-          warn('  This proposal has no resumable session — it can be discarded, but not approved or corrected.');
-        }
+      if (!answerText.trim()) {
+        error('An answer cannot be empty.');
+        process.exitCode = 1;
         return;
       }
-
       try {
-        const outcome = opts.steer
-          ? await applySteer(root, card, opts.steer, 'cli')
-          : await resumeWithVerdict(root, card, opts.approve ? 'approve' : opts.discard ? 'discard' : 'drop', 'cli');
-
-        if (outcome.status === 'refused' || outcome.status === 'not-spawned') {
-          error(outcome.error ?? 'refused');
-          process.exitCode = 1;
-          return;
-        }
-        if (outcome.status !== 'ok') {
-          warn(`${outcome.error ?? outcome.status}`);
-          process.exitCode = 1;
-          return;
-        }
-
-        if (opts.steer) {
-          success('Rewritten — still waiting for your verdict.');
-          console.log('');
-          console.log((outcome.result ?? '').split('\n').map((l) => `  ${l}`).join('\n'));
-          // The Concierge moment: the human sees the rule they just created, in
-          // words, at the instant they created it. Without it, steering feels
-          // like correcting the same thing forever.
-          if (outcome.lesson) console.log(chalk.dim(`\n  🧠 Learned: «${outcome.lesson}»`));
-          console.log(chalk.dim(`\n  \`dreamcontext automations review ${slug} --approve\` when it is right.`));
+        if (question.kind === 'approval') {
+          await answerApprovalQuestion(root, question, answerText);
         } else {
-          success(`${outcome.card.state}.`);
-          if (outcome.card.resolutionNote) console.log(chalk.dim(`  ${outcome.card.resolutionNote}`));
-          if (outcome.lesson) console.log(chalk.dim(`  🧠 Learned: «${outcome.lesson}»`));
+          await answerFlowHitlQuestion(root, question, answerText);
         }
       } catch (err) {
         handleAutomationsError(err);
@@ -859,60 +1043,98 @@ export function registerAutomationsCommand(program: Command): void {
 
   const telegram = automations
     .command('telegram')
-    .description('Answer review cards from your phone (machine-local bot token; never synced)');
+    .description("Answer one automation's questions from your phone (a per-automation bot token; never synced)");
 
   telegram
     .command('setup')
-    .description('Point a Telegram bot at this machine so cards reach you where you already are')
+    .argument('<slug>', 'Automation slug — one bot per automation, so a leaked token can only answer this one')
+    .description('Point a Telegram bot at this automation so its questions reach you where you already are')
     .requiredOption('--token <token>', 'Bot token from @BotFather')
-    .requiredOption('--chat <id>', 'Your chat id — the ONLY chat allowed to answer cards')
-    .action(async (opts: { token: string; chat: string }) => {
+    .requiredOption('--chat <id>', "Your chat id — the ONLY chat allowed to answer this automation's questions")
+    .action((slug: string, opts: { token: string; chat: string }) => {
       const root = ensureContextRoot();
-      writeTelegramConfig({ botToken: opts.token.trim(), chatId: String(opts.chat).trim(), offset: 0 });
-      success(`Telegram configured — ${telegramConfigPath()} (0600, machine-local, never synced).`);
-      console.log(chalk.dim('  This token can resume a bypassPermissions session on this machine.'));
-      console.log(chalk.dim('  It is deliberately NOT in the brain: a synced token would hand that to every teammate.'));
-      const state = describeTelegram(root);
-      if (state.pending > 0) {
-        console.log(chalk.dim(`  ${state.pending} card(s) already waiting — they post on the next tick, or run \`automations telegram test\`.`));
+      const manifest = requireAutomation(root, slug);
+      if (!manifest) return;
+      try {
+        const botToken = opts.token.trim();
+        const chatId = String(opts.chat).trim();
+        // The offset carries over from any existing config (per-slug, or one
+        // already adopted from the legacy global bot) rather than resetting
+        // to 0 — re-saving the same bot must not replay updates it already
+        // processed. Mirrors `handleAutomationsTelegramSet`'s own carry-over
+        // exactly.
+        const existing = readTelegramConfigForSlug(slug);
+        writeTelegramConfigForSlug(slug, { botToken, chatId, offset: existing?.offset ?? 0 });
+        success(`Telegram configured for "${slug}" — ${telegramConfigPathForSlug(slug)} (0600, machine-local, never synced).`);
+        console.log(chalk.dim('  This token can resume a bypassPermissions session on this machine.'));
+        console.log(chalk.dim('  It is deliberately NOT in the brain: a synced token would hand that to every teammate.'));
+        if (pendingQuestion(root, slug)) {
+          console.log(chalk.dim(`  A question is already waiting — it posts on the next tick, or run \`automations telegram test ${slug}\`.`));
+        }
+      } catch (err) {
+        handleAutomationsError(err);
       }
     });
 
   telegram
     .command('test')
-    .description('Post any waiting cards now and report what the channel can see')
-    .action(async () => {
+    .argument('<slug>', 'Automation slug')
+    .description("Post this automation's waiting question now and report what its bot can see")
+    .action(async (slug: string) => {
       const root = ensureContextRoot();
-      const cfg = readTelegramConfig();
+      const manifest = requireAutomation(root, slug);
+      if (!manifest) return;
+
+      // `adoptGlobalTelegramConfig`, not a plain per-slug read: someone who ran
+      // the OLD global `telegram setup` (no slug) must not read as
+      // "unconfigured" for an automation that is, in fact, still answered by
+      // it — this migrates that legacy config onto this slug the first time
+      // it is asked about, so nobody is silently unconfigured by the rename.
+      const cfg = adoptGlobalTelegramConfig(slug);
       if (!cfg) {
-        error('Telegram is not configured — run `dreamcontext automations telegram setup --token <t> --chat <id>`.');
+        error(`Telegram is not configured for "${slug}" — run \`dreamcontext automations telegram setup ${slug} --token <t> --chat <id>\`.`);
         process.exitCode = 1;
         return;
       }
-      const before = describeTelegram(root);
-      console.log(header('Telegram channel'));
+
+      console.log(header(`Telegram channel: ${slug}`));
       console.log(`  chat: ${cfg.chatId}`);
-      console.log(`  cards waiting: ${before.pending} (${before.posted} already posted)`);
-      const posted = await emitPendingCards(root, cfg);
+      console.log(`  question waiting: ${pendingQuestion(root, slug) ? 'yes' : 'no'}`);
+
+      // Drives the SAME multi-bot fan-out a real dispatcher tick uses
+      // (`pollTelegram`) — telegram.ts exports no single-bot post/poll
+      // primitive, and this file must not duplicate that internal logic.
+      // Every bot it touches stays scoped to its own slug(s) internally
+      // (S5); this verb's REPORT is scoped to `slug`, its ACTION is a real
+      // tick's worth of delivery for every bot configured on this machine.
       const result = await pollTelegram(root);
-      success(`Posted ${posted} card(s); handled ${result.processed} update(s).`);
+      success(`Handled ${result.processed} update(s) across every configured bot on this machine.`);
       if (result.unauthorized > 0) {
         warn(`  ${result.unauthorized} update(s) came from a chat that is NOT yours and were dropped.`);
       }
+      console.log(`  "${slug}" question waiting now: ${pendingQuestion(root, slug) ? 'yes' : 'no'}`);
     });
 
   telegram
     .command('off')
-    .description('Forget the bot token and stop the channel (cards stay answerable everywhere else)')
-    .action(() => {
-      const path = telegramConfigPath();
-      if (!existsSync(path)) {
-        console.log(chalk.dim('  Telegram was not configured.'));
+    .argument('<slug>', 'Automation slug')
+    .description("Forget this automation's bot token and stop its channel")
+    .action((slug: string) => {
+      const root = ensureContextRoot();
+      const manifest = requireAutomation(root, slug);
+      if (!manifest) return;
+      // Adopt first: a slug relying only on the legacy global bot must not
+      // read as "already off" when it is, in fact, still being answered —
+      // `off` has to actually stop that, not just check a per-slug file that
+      // never existed.
+      const cfg = adoptGlobalTelegramConfig(slug);
+      if (!cfg) {
+        console.log(chalk.dim(`  Telegram was not configured for "${slug}".`));
         return;
       }
-      rmSync(path, { force: true });
-      success('Telegram channel off — token removed from this machine.');
-      console.log(chalk.dim('  Cards are unaffected: the dashboard and `dreamcontext automations review` still answer them.'));
+      forgetTelegramConfigForSlug(slug);
+      success(`Telegram channel off for "${slug}" — token removed from this machine.`);
+      console.log(chalk.dim('  Its questions are unaffected: the dashboard and `dreamcontext automations answer` still answer them.'));
     });
 
   automations

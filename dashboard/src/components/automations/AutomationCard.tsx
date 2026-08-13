@@ -1,4 +1,4 @@
-import type { AutomationSummary } from '../../hooks/useAutomations';
+import type { AutomationSummary, RunStatus } from '../../hooks/useAutomations';
 import { useRunAutomation, useSetAutomationEnabled } from '../../hooks/useAutomations';
 import './AutomationCard.css';
 
@@ -18,18 +18,32 @@ function Badges({ summary }: { summary: AutomationSummary }) {
   const badges: React.ReactNode[] = [];
 
   if (!summary.approved) {
-    badges.push(
-      <span key="blocked" className="auto-badge auto-badge--blocked" title={`dreamcontext automations approve ${summary.slug}`}>
-        blocked — needs approval
-      </span>,
-    );
+    if (summary.approvalReason === 'never-approved') {
+      badges.push(
+        <span key="blocked" className="auto-badge auto-badge--blocked" title={`dreamcontext automations approve ${summary.slug}`}>
+          blocked — needs approval
+        </span>,
+      );
+    } else {
+      // `manifest-changed` / `payload-format-changed` (D-A path 2): this is NOT a
+      // hard block — the next run (including "Run now") spawns a restricted,
+      // question-only session that asks about the diff in its own chat and
+      // resumes on "yes". Badging it identically to `never-approved` would claim
+      // nothing can happen here until a human clicks Approve, which is no longer
+      // true. Accent, not warning — it isn't broken, it's about to ask.
+      badges.push(
+        <span key="pending-approval" className="auto-badge auto-badge--review" title="The next run will ask about this change in its own chat session before doing anything else">
+          manifest changed — will ask
+        </span>,
+      );
+    }
   }
   // Deliberately NOT styled as a failure. This automation is not broken — it is
   // waiting on the reader, and badging it red would teach them to clear it
   // rather than read it, which is the reflexive approval the gate exists to
   // prevent. Same reason it sits above `orphaned`: it is the one badge here
   // that names something the reader can act on right now.
-  if (summary.pendingReviewCardId) {
+  if (summary.pendingQuestionId) {
     badges.push(
       <span key="review" className="auto-badge auto-badge--review" title="It will not run again until you answer">
         waiting for your verdict
@@ -64,9 +78,27 @@ function fmtWhen(iso: string | null): string {
   });
 }
 
+/** The word for `cache.status` a human reads next to the fire time (D5: "last
+ *  status" must be unmistakable at a glance — an 'ok' run previously left NO
+ *  trace on the card at all, since only failure/blocked/orphaned get a badge). */
+function statusWord(status: RunStatus | null): string {
+  if (!status) return 'no runs yet';
+  switch (status) {
+    case 'ok': return 'ok';
+    case 'failed': return 'failed';
+    case 'timeout': return 'timed out';
+    case 'blocked': return 'blocked';
+    case 'deferred': return 'deferred';
+    case 'orphaned': return 'orphaned';
+    case 'awaiting-review': return 'awaiting verdict';
+    default: return status;
+  }
+}
+
 export function AutomationCard({
   summary,
   onOpen,
+  onOpenRun,
   onToast,
   /** The slug of the one project-wide "run now" job while it's running, or
    *  null — the server allows exactly one at a time (any slug), so a DIFFERENT
@@ -81,6 +113,16 @@ export function AutomationCard({
 }: {
   summary: AutomationSummary;
   onOpen: (slug: string) => void;
+  /** D5: one click on THIS automation's last run opens its session as a chat
+   *  tab, without the intermediate stop at the history list. The card itself
+   *  doesn't know the run's `sessionId` (the list endpoint deliberately trims
+   *  history off `AutomationCacheSummary` — see `useAutomations.ts`), so it
+   *  can't dispatch `openAutomationRunChat` directly; it asks the board to
+   *  open the detail panel already mid-transition into that run's hand-off,
+   *  which fetches the one thing needed and reuses the panel's own refusal
+   *  handling (no session, no transcript, a question pending) rather than a
+   *  second copy of it living here. */
+  onOpenRun: (slug: string) => void;
   onToast: (msg: string) => void;
   runningSlug: string | null;
   /** Dimmed "ghost" state while this card is the one being dragged. */
@@ -97,17 +139,25 @@ export function AutomationCard({
   const thisRunning = runningSlug === summary.slug;
   const otherRunning = runningSlug !== null && !thisRunning;
 
+  // D-A: only `never-approved` (path 3) is a HARD block — a synced manifest with
+  // no session and no prior grant, refused short-circuit, no spawn ever. The
+  // other two reasons (`manifest-changed`, `payload-format-changed`, path 2) are
+  // NOT blocks: the run spawns in a restricted, question-only envelope that asks
+  // about the diff in its own chat and resumes on "yes" — that ask IS how this
+  // gets resolved, so "Run now" must stay clickable for it, or the automation can
+  // never reach the very session that would clear it.
+  const hardBlocked = !summary.approved && summary.approvalReason === 'never-approved';
   // Running a blocked/orphaned automation is guaranteed to be refused server-
   // side (approval + the orphan guard are enforced inside the runner) — disable
   // the button rather than let the user click into a predictable no-op. Only
   // ONE run-now job exists per project (any slug), so another automation mid-run
   // also disables this card.
-  const runDisabled = runNow.isPending || thisRunning || otherRunning || !summary.approved || summary.cache?.status === 'orphaned';
+  const runDisabled = runNow.isPending || thisRunning || otherRunning || hardBlocked || summary.cache?.status === 'orphaned';
   const runTitle = thisRunning
     ? 'Running…'
     : otherRunning
       ? `Another automation (${runningSlug}) is running — only one runs at a time`
-      : !summary.approved
+      : hardBlocked
         ? 'Needs approval first'
         : summary.cache?.status === 'orphaned'
           ? 'An orphaned run must be killed first (CLI)'
@@ -140,6 +190,11 @@ export function AutomationCard({
     });
   };
 
+  const handleOpenRun = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onOpenRun(summary.slug);
+  };
+
   return (
     <div
       className={`auto-card auto-card--clickable${dragging ? ' auto-card--dragging' : ''}${dropTarget ? ' auto-card--drop-target' : ''}`}
@@ -166,10 +221,33 @@ export function AutomationCard({
         {summary.model && <span className="auto-card-model">{summary.model}</span>}
       </div>
 
+      {/* D5: last fire time + last status, unmistakable even on a healthy run —
+          `statusWord('ok')` is the one case that previously left no trace on the
+          card at all (only failure/blocked/orphaned earned a badge above). The
+          dot mirrors `AutomationDetailPanel.css`'s `.adp-history-dot--*` palette
+          so a card and its own detail history read as the same status language. */}
+      <div className="auto-card-status-row">
+        <span className={`auto-card-status-dot auto-card-status-dot--${summary.cache?.status ?? 'none'}`} aria-hidden="true" />
+        <span className="auto-card-status-word">{statusWord(summary.cache?.status ?? null)}</span>
+        <span className="auto-card-status-sep">·</span>
+        <span className="auto-card-lastfire">last fire: {fmtWhen(summary.cache?.lastFireAt ?? summary.cache?.lastRunAt ?? null)}</span>
+        {/* Only offered once something has actually fired — mirrors
+            `HistoryRow`'s own guard in the detail panel (a session id is
+            necessary but not sufficient; `RunHandoff` still checks the
+            transcript once this opens it). */}
+        {summary.cache?.lastRunAt && (
+          <button
+            type="button"
+            className="auto-card-chat-btn"
+            onClick={handleOpenRun}
+            title="Reopen the last run's conversation as a chat"
+          >
+            open chat
+          </button>
+        )}
+      </div>
+
       <div className="auto-card-run-row">
-        <span className="auto-card-lastrun">
-          last run: {fmtWhen(summary.cache?.lastRunAt ?? null)}
-        </span>
         <div className="auto-card-actions">
           <button
             className={`auto-card-toggle${summary.enabled ? ' auto-card-toggle--on' : ''}`}

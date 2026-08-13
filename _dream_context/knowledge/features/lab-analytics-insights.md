@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-08-08'
+updated: '2026-08-10'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -67,12 +67,16 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] As a user, clicking an insight card opens a detail panel with a large interactive chart, the insight's Meaning prose, sync history, and inline tweak editing. *(Shipped v0.13.0: InsightDetailPanel slide-over + bounded sync history)*
 - [x] As a user with many insights, I can organize them by top-level category (Marketing, Revenue, etc.) with a side-menu tab bar that collapses whole categories out of view, so a growing board stays navigable. *(Shipped v0.21.0: manifest `category` field + LabBoard category side menu)*
 
+- [x] As a user, every windowed insight (line, bar, bar_compare, stacked, heatmap) gains a universal date-range control that replaces tweak dropdowns, offers 7d/28d/90d/365d presets plus custom picks, expands inline to a calendar, and writes directly through to manifest tweaks — the chart re-syncs on change without leaving the page. *(Shipped 2026-08-09: RangeControl.tsx, 404 lines, 257 lines CSS, shared by all windowed renders via `chartBody.tsx`)*
+- [x] As a user, insights route through a plug-and-play chart registry (`chartRegistry.ts`) that maps render strings → (`{component, label, supportsRange}`) triples, eliminating hard-coded switch ladders; adding a new render means one registry entry and one chart file, no surgical edits across the stack. *(Shipped 2026-08-09: ten renders — number, line, pie, raw, funnel, bar, bar_compare, stacked, table, heatmap — all registered)*
+- [x] As a user, insight cards are size-aware — small cards (<360px wide) suppress labels/axes but keep the chart shape, so the Lab board stays scannable at narrow viewports without blank tiles. *(Shipped 2026-08-09: NumberCard/LineChart/PieChart responsive degradation)*
+
 ### Funnel analytics (multi-page insights, in_review)
 
-- [ ] As a funnel operator, I open ONE insight and see a **table of all my funnels** (users, spend, CPM, step rates, finish rate, click→sub, per-column delta vs the previous period), sortable by any column, so I can spot the underperformer in seconds.
-- [ ] As a funnel operator, I **click a table row and land on that funnel's detail page** (breadcrumb back to the table), so drilling down is one gesture, not a filter dance.
-- [ ] As a funnel operator, the detail page shows the funnel as a **horizontal, full-content-width lane of step NODES** (Excalidraw-board aesthetic: rounded node cards with step name + users + % of top, connected left→right), with the **drop between adjacent steps rendered as a first-class red badge** (−n users · −x%), so the leak is visible without reading numbers.
-- [ ] As a funnel operator, I **click node A and then node B, and an arrow is drawn from A to B** (curved arc above the lane, arrowhead at B) labeled with the A→B conversion % and the absolute counts (nA → nB), so I can interrogate any two steps — not just adjacent ones. I can pin several arcs at once, remove one by clicking its ✕ or either endpoint, and clear all with Esc.
+- [x] As a funnel operator, I open ONE insight and see a **table of all my funnels** (users, spend, CPM, step rates, finish rate, click→sub, per-column delta vs the previous period), sortable by any column, so I can spot the underperformer in seconds.
+- [x] As a funnel operator, I **click a table row and land on that funnel's detail page** (breadcrumb back to the table), so drilling down is one gesture, not a filter dance. *(Shipped 2026-08-09)*
+- [x] As a funnel operator, the detail page shows the funnel as a **horizontal, full-content-width lane of step NODES** (Excalidraw-board aesthetic: rounded node cards with step name + users + % of top, connected left→right), with the **drop between adjacent steps rendered as a first-class red badge** (−n users · −x%), so the leak is visible without reading numbers.
+- [x] As a funnel operator, I **click node A and then node B, and an arrow is drawn from A to B** (curved arc above the lane, arrowhead at B) labeled with the A→B conversion % and the absolute counts (nA → nB), so I can interrogate any two steps — not just adjacent ones. I can pin several arcs at once, remove one by clicking its ✕ or either endpoint, and clear all with Esc.
 - [ ] As a funnel operator, I can apply **filters** (date range, language, country, campaign/UTM, device, funnel type) on both pages, and **break the detail view down by one dimension** — either as stacked segments inside each node or as aligned small-multiple lanes (one lane per segment value) — so "step 3 leaks" becomes "step 3 leaks for DE mobile".
 - [ ] As a funnel operator, I can **select 2+ funnels in the table and compare them** as parallel lanes with steps aligned by step key, so A/B funnel variants are read side-by-side.
 - [ ] As a teammate, I can **open a link someone sent me** and see exactly their view — funnel, date range, filters, breakdown, pinned arcs are all in the URL.
@@ -292,7 +296,7 @@ A tweak is not a preference, it is part of the QUESTION the tile answers: change
 
 **Engine (`src/lib/lab/funnel.ts`):** schema validation + caps (MAX_FUNNELS=40, MAX_STEPS=30, MAX_DIMENSIONS=8, segment cardinality → top-8 + Other, MAX_SEGMENTS=64, MAX_FUNNEL_BYTES=400KB — every cap produces a loud notice), cache versioning (`cache.funnel` field + `funnelHistory` bounded trail of MAX=40 snapshots), synthesized `series` for backward compat (card binding uses `funnelLatest` = total users of the first funnel). Reuses tweak mechanism (date range + `refetch` dimension values are tweaks), credential layer, TTL/staleness, script-hash tripwire.
 
-**Dashboard (`dashboard/src/components/lab/funnel/`):** `FunnelOverviewPage.tsx` (table with sort/search/range/deltas/low-sample/benchmarks/kebab/multi-select), `FunnelDetailPage.tsx` (node lane with drop badges + arc gesture + step-table twin + filters + breakdown stack/lanes modes), `FunnelCompareView.tsx` (step-key aligned parallel lanes), `FunnelBars.tsx` (compact fallback), `FunnelCardPreview.tsx` (mini-table preview for the card body). Routing: `labRoute.ts` module owns `/lab/:slug` and `/lab/:slug/f/:funnelId` paths + a NAV_EVENT for same-document pushState pushes; Shell maps `/lab/` to page `'lab'` on load; LabPage clears the path on unmount. View state serialized to query params (F13).
+**Dashboard (`dashboard/src/components/lab/funnel/`):** `FunnelOverviewPage.tsx` (table with sort/search/range/deltas/low-sample/benchmarks/kebab/multi-select), `FunnelDetailPage.tsx` (node lane with drop badges + arc gesture + step-table twin + filters + breakdown stack/lanes modes), `FunnelCompareView.tsx` (step-key aligned parallel lanes), `FunnelBars.tsx` (compact fallback), `FunnelCardPreview.tsx` (mini-table preview for the card body). Routing: `labRoute.ts` module owns `/lab/:slug` and `/lab/:slug/f/:funnelId` paths + a NAV_EVENT for same-document pushState pushes; Shell maps `/lab/` to page `'lab'` on load; LabPage clears the path on unmount. View state serialized to query params (F13). **Multi-instance evolution (2026-08-10):** `setLabRouteWritable(on, bus)` claims/releases address bar ownership per instance; ownership held as bus (not boolean) so stale release can't unseat incoming instance; parked routes in WeakMap keyed by bus so background instances read their own state, never the live URL.
 
 **CLI (`src/cli/commands/lab.ts`):** `lab create --render funnel` scaffolds a funnel-payload script template with inline docs; `lab show <slug>` prints the step table + worst-drop highlight; `doctor` validates funnel cache shape and flags cap violations.
 

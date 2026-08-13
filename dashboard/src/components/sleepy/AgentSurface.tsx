@@ -35,6 +35,9 @@ import {
   AUTOMATION_RUN_CHAT_EVENT, automationRunTabTitle,
   type AutomationRunChatDetail, type AutomationRunRef,
 } from '../../lib/automationRunChat';
+import {
+  AUTOMATION_CREATE_CHAT_EVENT, type AutomationCreateChatDetail,
+} from '../../lib/automationCreateChat';
 import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
@@ -95,6 +98,16 @@ interface SessionMeta {
   bypass: boolean;
   claudeId: string;    // the Claude conversation UUID (persisted → `claude --resume` on reopen)
   dormant?: boolean;   // a restored roster entry with NO live Session yet (Resume to spawn)
+  /** Set only on a hydration-time placeholder for a `kind: 'automation'` entry this
+   *  machine never bound (see the X2 filter in the hydrate effect below) — `resumeSession`
+   *  refuses to spawn for a flagged entry instead of opening a doomed WS connect that would
+   *  read, from the client's side, indistinguishable from a crash. */
+  unbound?: boolean;
+  /** Which automation run this tab resumed, present only for `kind: 'automation'`.
+   *  Round-tripped through the server roster (`SavedMeta.automation`) purely so the
+   *  provenance survives a relaunch; nothing in THIS file reconstructs the richer
+   *  `AutomationRunRef` header from it. */
+  automation?: { slug: string; runFiredAt: string };
 }
 
 /** A fresh Claude conversation UUID for a new tab. `crypto.randomUUID()` works on the
@@ -129,6 +142,15 @@ function titleFor(s: Session | ChatSession): string {
   return `Agent ${num}`;
 }
 
+/** X2's placeholder title suffix, appended IDEMPOTENTLY: the tab this labels gets
+ *  persisted back to the roster with the suffix already on it (see the hydrate effect), so
+ *  a second launch that finds the SAME session still unbound must not pile up a second copy
+ *  of the explanation. */
+const NOT_AVAILABLE_SUFFIX = ' — not available on this machine';
+function withNotAvailableSuffix(title: string): string {
+  return title.endsWith(NOT_AVAILABLE_SUFFIX) ? title : `${title}${NOT_AVAILABLE_SUFFIX}`;
+}
+
 /** "Is this tab still carrying the name we gave it?" — the auto-title eligibility gate.
  *  Deliberately kind-AGNOSTIC across the two titleable kinds: a tab converted between
  *  terminal and chat (`openAgentInChat` / `resumeChatInTerminal`) keeps the roster title
@@ -159,6 +181,14 @@ interface SavedMeta {
   sessionId?: string;
   /** Absent on legacy rosters → treated as an agent (back-compat). */
   kind?: SessionKind;
+  /** Present only alongside `kind: 'automation'` — which automation produced this run, and
+   *  when it fired. Mirrors the server's `SavedMeta.automation`. */
+  automation?: { slug: string; runFiredAt: string };
+  /** GET-response-ONLY (never sent on PUT): can THIS machine actually resume `sessionId`,
+   *  per the server's `isAutomationBoundSession` check. Absent from a legacy server that
+   *  hasn't been updated is treated as "not bound" by the hydrate filter below — the safe
+   *  default for a flag whose whole job is gating a resume attempt. */
+  bound?: boolean;
 }
 
 /**
@@ -267,7 +297,13 @@ export function AgentSurface() {
   // Chat additionally needs the claude CLI; already-running sessions keep their surface —
   // the preference applies to sessions opened (or resumed) from then on.
   const chatMode = !!agentSettings.chatView && !!caps?.claudeCli;
-  const claudeKind: 'agent' | 'chat' = chatMode ? 'chat' : 'agent';
+  // Typed SessionKind (not the narrower 'agent' | 'chat') so it shares a type with the
+  // hydrate/resume/automation-tab call sites that need to fold in the THIRD case —
+  // 'automation' is a DISPLAY kind, decoupled from which surface actually resumes the
+  // conversation (see agentSession.ts's SessionKind doc), so this computation's VALUE never
+  // changes: every consumer below (past-chat resume, Sleep, brain-resolve, ⌘T/⌘D, …) keeps
+  // spawning exactly the agent/chat surface it always has.
+  const claudeKind: SessionKind = chatMode ? 'chat' : 'agent';
   // Can a Claude session of the CHOSEN surface spawn at all? (Terminal Claude needs
   // node-pty + the CLI; Chat needs only the CLI.)
   const claudeReady = chatMode || !!(caps?.embeddedTerminal && caps?.claudeCli);
@@ -418,11 +454,46 @@ export function AgentSurface() {
           // tab without one restores DORMANT (manual Resume). Spawn happens here, once —
           // and only on the non-cancelled invocation, so StrictMode can't double-spawn.
           const restored: SessionMeta[] = saved.map((m, i) => {
-            // Shells restore as shells; every Claude-backed tab (saved as agent OR chat)
-            // reopens as the CURRENTLY chosen Agent screen — the preference is a swap, so a
-            // tab saved under the other surface resumes the SAME conversation in this one
-            // (both renderers share the transcript + conversation UUID).
-            const kind: SessionKind = m.kind === 'shell' ? 'shell' : claudeKind;
+            // Shells restore as shells; an 'automation' entry KEEPS that display kind (see
+            // the branch below — C11/C12); every other Claude-backed tab (saved as agent OR
+            // chat) reopens as the CURRENTLY chosen Agent screen — the preference is a swap,
+            // so a tab saved under the other surface resumes the SAME conversation in this
+            // one (both renderers share the transcript + conversation UUID). Before this fix
+            // a persisted 'automation' kind fell through to `claudeKind` here and came back
+            // as a plain agent — the server-side fix (agent-sessions.ts's `coerceMeta`) was
+            // necessary but not sufficient without this read-side counterpart.
+            const kind: SessionKind = m.kind === 'shell' ? 'shell' : m.kind === 'automation' ? 'automation' : claudeKind;
+            if (kind === 'automation' && m.sessionId) {
+              // X2 (blocking): an automation session this MACHINE never bound must not
+              // attempt a WS connect at all. T24's server-side gate `rejectUpgrade`s it at
+              // the HTTP-upgrade level — below any application frame — so the client's
+              // `onclose`/`onerror` would both land in `stopOnClose` with no `lastError`,
+              // making a deliberate security refusal indistinguishable from a crash. The
+              // server tells us up front (`bound`, computed with `isAutomationBoundSession`
+              // — see agent-sessions.ts's `SessionRosterEntry`); a legacy server that hasn't
+              // shipped it omits the field, which reads as `false` here — the safe default
+              // for a flag whose only job is gating a resume attempt. Render a labelled,
+              // non-resumable placeholder INSTEAD of ever calling `spawn`.
+              if (!m.bound) {
+                return {
+                  id: `restored-${i}`,
+                  title: withNotAvailableSuffix(m.title),
+                  kind,
+                  bypass: m.bypass,
+                  claudeId: m.sessionId,
+                  dormant: true,
+                  unbound: true,
+                  automation: m.automation,
+                };
+              }
+              // Bound → safe to auto-resume. 'automation' is a DISPLAY kind, not a transport
+              // one (see agentSession.ts's SessionKind doc): the conversation is resumed
+              // through whichever Claude surface the user has chosen (`claudeKind`), exactly
+              // like any other tab, while the roster keeps `kind: 'automation'` so the glyph
+              // survives the restore.
+              const s = spawn(m.bypass, m.sessionId, true, claudeKind);
+              return { id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId, automation: m.automation };
+            }
             // An agent OR chat tab with a pinned conversation auto-RESUMES its real Claude
             // session on launch (both spawn a real `claude` against the same conversation
             // UUID). A shell has nothing to resume, and auto-spawning shells on launch is
@@ -459,6 +530,9 @@ export function AgentSurface() {
           .filter((m) => m.kind !== 'shell')
           .map((m) => ({
             title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
+            // Only carried for automation tabs — the server's `coerceMeta` drops it for
+            // every other kind anyway, but there's no reason to send it otherwise.
+            ...(m.kind === 'automation' && m.automation ? { automation: m.automation } : {}),
           })),
       };
       void scopedApi.put('/agent/sessions', payload).catch(() => { /* best-effort mirror */ });
@@ -575,6 +649,15 @@ export function AgentSurface() {
   const resumeSession = useCallback((sid: string) => {
     const meta = sessionList.find((m) => m.id === sid);
     if (!meta?.dormant) return;
+    if (meta.unbound) {
+      // X2's placeholder: this automation session was never bound on THIS machine (see the
+      // hydrate filter above) — resuming it would open a doomed WS connect that `rejectUpgrade`s
+      // at the HTTP-upgrade level, indistinguishable from a crash. Refuse, and say why, rather
+      // than silently doing nothing (the same "a refusal must not look like a crash" principle,
+      // one click later).
+      alert(`${meta.title}\n\nThis automation's session was recorded on a different machine and was never bound here, so it can't be resumed on this one.`);
+      return;
+    }
     // Agent/chat → resume the EXACT prior Claude conversation (`--resume <claudeId>`) in the
     // CURRENTLY chosen Agent screen (the surface preference is a swap — a tab dormant since
     // the other mode was active resumes the same conversation in this one). Shell → there is
@@ -582,7 +665,11 @@ export function AgentSurface() {
     const s = meta.kind === 'shell'
       ? spawn(meta.bypass, undefined, false, 'shell')
       : spawn(meta.bypass, meta.claudeId, true, claudeKind);
-    setSessionList((prev) => prev.map((m) => (m.id === sid ? { ...m, id: s.id, kind: s.kind, bypass: s.bypass, claudeId: s.claudeId, dormant: false } : m)));
+    // 'automation' is a DISPLAY kind decoupled from transport (see hydration above and
+    // `openAutomationRunChat` below) — preserve it rather than letting the spawned session's
+    // actual agent/chat kind overwrite it on a manual resume of a dormant automation tab.
+    const kind: SessionKind = meta.kind === 'automation' ? 'automation' : s.kind;
+    setSessionList((prev) => prev.map((m) => (m.id === sid ? { ...m, id: s.id, kind, bypass: s.bypass, claudeId: s.claudeId, dormant: false } : m)));
     setPanes((prev) => prev.map((p) => ({
       ...p,
       tabs: p.tabs.map((t) => (t === sid ? s.id : t)),
@@ -1037,12 +1124,19 @@ export function AgentSurface() {
     // Titled from the automation, NOT from the conversation's first prompt: that prompt is
     // the approved brief, which is identical across every run of the same job — the past-chat
     // titling rule would produce a row of tabs nobody can tell apart.
+    //
+    // `kind: 'automation'` — NOT `s.kind` — is the whole C11/C12 fix: `s.kind` is whichever
+    // transport `claudeKind` picked ('agent' or 'chat'), so mirroring it here is how this tab
+    // silently lost its automation glyph before. 'automation' is a DISPLAY kind decoupled
+    // from transport (see agentSession.ts's SessionKind doc); `automation` (slug + fire date)
+    // rides along too, so it round-trips through the roster for a future relaunch.
     setSessionList((prev) => [...prev, {
       id: s.id,
-      title: automationRunTabTitle(detail.automationTitle, detail.runNumber),
-      kind: s.kind,
+      title: automationRunTabTitle(detail.automationTitle, detail.firedAt),
+      kind: 'automation',
       bypass: s.bypass,
       claudeId: s.claudeId,
+      automation: { slug: detail.slug, runFiredAt: detail.firedAt },
     }]);
     if (panes.length === 0) {
       const pid = nextPaneId();
@@ -1062,6 +1156,28 @@ export function AgentSurface() {
   // Bus, not `window`, for the same ACK reason as the delegate above — and because N surfaces
   // `--resume`ing one conversation uuid is the dual-attach the bring-forward guard exists to
   // prevent (two live CLIs interleave their appends on one transcript).
+  // ── Author a NEW automation by chatting (D3) ──────────────────────────────────────
+  //
+  // The mirror image of the bridge below: that one RESUMES a conversation this app already
+  // had, this one STARTS one that will end with `dreamcontext automations create`. It is a
+  // plain delegate underneath — a fresh revealed session carrying the interview brief — so
+  // it reuses `delegateAgent` rather than growing a third spawn path, and a chat-authored
+  // automation ends up indistinguishable from a hand-authored one.
+  //
+  // REVEALED, never backgrounded: the user is about to be interviewed, so a corner chip
+  // answering questions to itself would be exactly wrong.
+  useInstanceEvent<AutomationCreateChatDetail>(AUTOMATION_CREATE_CHAT_EVENT, (detail) => {
+    if (!(detail?.prompt || detail?.promptToken)) return;
+    const accepted = delegateAgent({
+      title: detail.title || 'New automation',
+      prompt: detail.prompt,
+      promptToken: detail.promptToken,
+      bypass,
+      reveal: true,
+    });
+    if (accepted) detail.accepted = true;
+  });
+
   useInstanceEvent<AutomationRunChatDetail>(AUTOMATION_RUN_CHAT_EVENT, (detail) => {
     if (detail?.sessionId && openAutomationRunChat(detail)) detail.accepted = true;
   });
@@ -1086,7 +1202,7 @@ export function AgentSurface() {
   // comparison, so this handler only ever sees submits already confirmed to belong to this
   // window's vault.
   const handleChecklistSubmit = useCallback((payload: ChecklistSubmitPayload): boolean => {
-    const entry = sessionList.find((m) => m.kind === 'chat' && m.claudeId === payload.conversationId);
+    const entry = sessionList.find((m) => transportKind(m) === 'chat' && m.claudeId === payload.conversationId);
     const session = entry ? sessions.current.get(entry.id) : undefined;
     if (!session || session.kind !== 'chat') return false;
     const chat = session as ChatSession;
@@ -1120,6 +1236,28 @@ export function AgentSurface() {
     return s && s.status !== 'closed' ? s : undefined;
   }, [sessionList]);
 
+  /**
+   * A tab's TRANSPORT kind — which object actually runs it — as opposed to the display kind
+   * `SessionMeta.kind` carries for the tab strip's glyph.
+   *
+   * `'automation'` is the one place the two diverge, and conflating them is a defect this
+   * surface has already paid for: `chatPanes` below filters on `m.kind === 'chat'`, so every
+   * automation-run tab spawned a perfectly healthy `ChatSession` — WS open, transcript
+   * fetchable — that was then never portaled into a pane. The tab existed, the conversation
+   * existed, and the user saw an empty rectangle. `liveChat`/`liveAgent` had the same hole.
+   *
+   * An automation run rides whichever surface the user has chosen (`claudeKind` at spawn), so
+   * the live session is the only authority. `'chat'` is the fallback for a tab whose session
+   * is not live yet (dormant/restoring) because that is the transport `openAutomationRunChat`
+   * uses whenever the Chat screen is on — and a wrong guess here costs a render, not data:
+   * every consumer re-checks the real object before casting.
+   */
+  const transportKind = useCallback((meta?: SessionMeta): SessionKind | undefined => {
+    if (!meta) return undefined;
+    if (meta.kind !== 'automation') return meta.kind;
+    return sessions.current.get(meta.id)?.kind ?? 'chat';
+  }, []);
+
   // A live CLAUDE AGENT (not a shell, not a chat) — model/effort only apply this way to
   // TERMINAL agents (chat's model/effort pickers go through changeChatModelFor/EffortFor
   // below), so `/model`/`/effort` are never injected into a plain shell or a chat pane.
@@ -1127,7 +1265,7 @@ export function AgentSurface() {
   // `runCommand` draft-preserving path is what the pickers below need.
   const liveAgent = useCallback((sid: string): Session | undefined => {
     const meta = sessionList.find((m) => m.id === sid);
-    return meta?.kind === 'agent' ? (liveSession(sid) as Session | undefined) : undefined;
+    return transportKind(meta) === 'agent' ? (liveSession(sid) as Session | undefined) : undefined;
   }, [sessionList, liveSession]);
 
   // Type `text` into a terminal's readline WITHOUT submitting — the user finishes the line
@@ -1199,7 +1337,7 @@ export function AgentSurface() {
   // picker-state-only (applies on next resume) when the session isn't live.
   const liveChat = useCallback((sid: string): ChatSession | undefined => {
     const meta = sessionList.find((m) => m.id === sid);
-    if (meta?.kind !== 'chat') return undefined;
+    if (transportKind(meta) !== 'chat') return undefined;
     const s = liveSession(sid);
     return s?.kind === 'chat' ? (s as ChatSession) : undefined;
   }, [sessionList, liveSession]);
@@ -1928,7 +2066,7 @@ export function AgentSurface() {
   // like a terminal's xterm container, so ChatPane never unmounts while its session lives
   // (see ChatPane.tsx's composer-draft note for why that matters).
   const chatPanes: ChatSession[] = sessionList
-    .filter((m) => m.kind === 'chat' && !m.dormant)
+    .filter((m) => transportKind(m) === 'chat' && !m.dormant)
     .map((m) => sessions.current.get(m.id))
     .filter((s): s is ChatSession => !!s && s.kind === 'chat');
 
@@ -1983,10 +2121,10 @@ export function AgentSurface() {
                 active={isActive}
                 dormant={activeMeta?.dormant}
                 dragging={draggingTab}
-                composer={!activeMeta?.dormant && activeMeta?.kind !== 'chat' && (
+                composer={!activeMeta?.dormant && transportKind(activeMeta) !== 'chat' && (
                   <PaneComposer
                     claudeId={activeMeta?.claudeId}
-                    isAgent={activeMeta?.kind === 'agent'}
+                    isAgent={transportKind(activeMeta) === 'agent'}
                     isLiveAgent={!!liveAgent(pane.active)}
                     modelConfig={modelConfig}
                     model={sessionModel[pane.active] ?? modelConfig.defaultModel}

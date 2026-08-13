@@ -28,6 +28,10 @@ import { PdfViewer } from './chat/PdfViewer';
 import { BoardEmbed, BoardFullscreen } from './chat/BoardEmbed';
 import { AutomationRunHeader } from './chat/AutomationRunHeader';
 import type { AutomationRunRef } from '../../lib/automationRunChat';
+import {
+  useAutomationQuestions, useAnswerQuestion,
+  type AutomationQuestion, type AnswerQuestionInput,
+} from '../../hooks/useAutomations';
 import type { ChatAction } from './chat/chatActions';
 import { openExternalUrl } from '../../lib/desktop';
 import {
@@ -229,6 +233,168 @@ function DegradedQuestionCard({ item, onContinueInTerminal }: { item: ChatToolIt
   );
 }
 
+// ─── Automation HITL question card (D2 / D-G) ──────────────────────────────────────
+//
+// A scheduled automation is "ask-and-exit": the headless run writes its question and the
+// process EXITS rather than blocking, so nothing lands in `conv.pending` for it (that
+// channel is the live CLI's own control-channel asks — a wholly different transport from
+// this one, which answers over `useAnswerQuestion`'s HTTP mutation against
+// `/api/automations/questions/:id`). Reusing SurveyCard/PermissionCard directly isn't
+// possible — both hardcode a `session.answer*` call — so this is styled locally to match
+// that family's look, exactly the way `DegradedQuestionCard` above does for the same
+// reason: not one of the 12 design states, but must still read as Claude asking a
+// question rather than a foreign widget (D2's explicit constraint, and the whole reason
+// the old `AutomationsReviewQueue` panel was deleted).
+
+/** One question, rendered per its `kind` (see `AnswerQuestionInput`'s doc comment for why
+ *  the two are not interchangeable): explicit approve/reject for `'approval'`, choice
+ *  buttons or free text for `'flow-hitl'`. */
+function AutomationHitlCard({ question }: { question: AutomationQuestion }) {
+  const answerQuestion = useAnswerQuestion();
+  const [freeText, setFreeText] = useState('');
+  /** What the human picked, kept for the receipt. `null` after a failed send so the card
+   *  reopens for another try instead of stranding the human on a receipt that lied. */
+  const [picked, setPicked] = useState<string | null>(null);
+
+  const busy = answerQuestion.isPending;
+  const locked = picked !== null;
+
+  const submit = (input: AnswerQuestionInput, label: string) => {
+    if (busy || locked) return;
+    setPicked(label);
+    answerQuestion.mutate(input, { onError: () => setPicked(null) });
+  };
+
+  const submitFreeText = () => {
+    const text = freeText.trim();
+    if (!text) return;
+    submit({ id: question.id, kind: 'flow-hitl', answer: text }, text);
+  };
+
+  return (
+    <div className="chat-hitlcard">
+      <div className="chat-hitlcard-head">
+        <span className="chat-hitlcard-pill">
+          <span aria-hidden>{question.kind === 'approval' ? '🔐' : '❓'}</span>
+          {question.kind === 'approval' ? 'Approval needed' : 'Question'}
+        </span>
+      </div>
+      <p className="chat-hitlcard-question">{question.question}</p>
+
+      {locked ? (
+        <div className="chat-hitlcard-receipt">
+          <span className="chat-hitlcard-receipt-check" aria-hidden>✓</span>
+          <span>{question.kind === 'approval' ? picked : `You answered: “${picked}”`}</span>
+        </div>
+      ) : question.kind === 'approval' ? (
+        // The sha256 approval tripwire wearing a chat face (D-H): an explicit decision,
+        // never free text — typing "no, this looks wrong" must not read as consent.
+        <div className="chat-card-actions">
+          <button
+            type="button"
+            className="chat-btn pill"
+            disabled={busy}
+            onClick={() => submit({ id: question.id, kind: 'approval', decision: 'reject' }, 'Rejected')}
+          >Reject</button>
+          <button
+            type="button"
+            className="chat-btn pill primary"
+            disabled={busy}
+            onClick={() => submit({ id: question.id, kind: 'approval', decision: 'approve' }, 'Approved')}
+          >Approve</button>
+        </div>
+      ) : question.choices.length > 0 ? (
+        <div className="chat-hitlcard-choices">
+          {question.choices.map((choice) => (
+            <button
+              key={choice}
+              type="button"
+              className="chat-hitlcard-choice"
+              disabled={busy}
+              onClick={() => submit({ id: question.id, kind: 'flow-hitl', answer: choice }, choice)}
+            >{choice}</button>
+          ))}
+        </div>
+      ) : (
+        // The runner creates every `flow-hitl` question with an empty `choices` array today
+        // (T18b's brief), so free text is the NORMAL path here, not a fallback.
+        <div className="chat-hitlcard-freetext">
+          <textarea
+            className="chat-hitlcard-input"
+            rows={2}
+            value={freeText}
+            placeholder="Type your answer…"
+            disabled={busy}
+            aria-label={`Your answer — ${question.question}`}
+            onChange={(e) => setFreeText(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitFreeText(); }
+            }}
+          />
+          <div className="chat-card-actions">
+            <button type="button" className="chat-btn primary" disabled={busy || !freeText.trim()} onClick={submitFreeText}>
+              Send <span aria-hidden>→</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {answerQuestion.isError && (
+        <p className="chat-hitlcard-error">Couldn't send that — {(answerQuestion.error as Error).message || 'try again.'}</p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Every pending question that belongs to THIS pane's automation run — scoped to
+ * `automation.slug`, never a project-wide list. `useAutomationQuestions` polls across
+ * every automation (it also feeds the board's badges), so the filter is what keeps this
+ * reading as one conversation asking its own question rather than a foreign inbox pasted
+ * into it. Split into its own component (rather than called from `ChatPane` directly) so
+ * the 5s poll it needs exists only for a pane that is actually showing an automation run
+ * — an ordinary chat pane subscribes to neither automation hook.
+ */
+function AutomationQuestionSlot({
+  automation, onPendingChange,
+}: {
+  automation: AutomationRunRef;
+  /** Reported UP so the pane can replace the composer while a question is open (see the
+   *  composer branch near the bottom of `ChatPane`). The hook stays down here rather than
+   *  being lifted, so its 5s poll still exists only for a pane actually showing a run. */
+  onPendingChange: (pending: boolean) => void;
+}) {
+  const { data: questions } = useAutomationQuestions();
+  const mine = (questions ?? []).filter((q) => q.slug === automation.slug);
+  const pending = mine.length > 0;
+  // In an effect, not during render: reporting up mid-render would set state on the parent
+  // while this child is still rendering.
+  useEffect(() => { onPendingChange(pending); }, [pending, onPendingChange]);
+  useEffect(() => () => onPendingChange(false), [onPendingChange]);
+  if (!pending) return null;
+  return <>{mine.map((q) => <AutomationHitlCard key={q.id} question={q} />)}</>;
+}
+
+/**
+ * Replaces the composer while this run has an open question.
+ *
+ * THE HOLE THIS CLOSES — inherited from `runChatUnavailableReason`, which used to close it
+ * by refusing to open the chat at all. This session runs with `bypassPermissions`. A user
+ * who typed "just go ahead" here would get the run continued with the question still
+ * pending: nothing marks it answered, so `retireIfDone` never runs, the session binding is
+ * never retired, and every future fire keeps refusing with `awaiting-review`. The run would
+ * be permanently stuck AND would have acted. The card above is the only path that routes
+ * through `resumeWithAnswer`, so it is the only path offered.
+ */
+function AutomationQuestionComposerLock() {
+  return (
+    <div className="chat-hitlcard-lock" role="status">
+      This run stopped to ask you something. Answer it in the card above — a message typed
+      here would continue the run without recording your answer.
+    </div>
+  );
+}
+
 // ─── View-only state for the two overlay surfaces (state 3/9's slide-over, state 4's
 //    lightbox) + the composer's queued quote (state 11). Every OTHER piece of state
 //    this pane renders from lives in `session.getModel()` — this is purely presentation. ──
@@ -316,6 +482,11 @@ export function ChatPane({
    *  all four converge on the same overlay instead of drifting back apart. */
   const [boardFull, setBoardFull] = useState<string | null>(null);
   const [replyQuote, setReplyQuote] = useState<string | null>(null);
+  /** Does this automation run have an unanswered question right now? Reported up by
+   *  `AutomationQuestionSlot` (which owns the poll) so the composer can be replaced while
+   *  it is open — see `AutomationQuestionComposerLock` for why that matters. Always false
+   *  for an ordinary chat pane, which never mounts the slot. */
+  const [hitlPending, setHitlPending] = useState(false);
 
   // ── Transcript scroll: one scroller, one session, one stick-to-bottom state ──────────
   //
@@ -1364,6 +1535,12 @@ export function ChatPane({
               .filter((p): p is PendingPlan => p.kind === 'plan')
               .map((p) => <PlanCard key={p.requestId} item={p} session={session} />)}
             {stuckQuestion && <DegradedQuestionCard item={stuckQuestion} onContinueInTerminal={onContinueInTerminal} />}
+            {/* D2's ask-and-exit HITL question, if this run stopped on one — scoped to
+                THIS automation only (see AutomationQuestionSlot). Alongside the CLI's own
+                pending cards above rather than inside AutomationRunHeader: both are "what
+                is this conversation waiting on right now", and a question the run itself
+                raised belongs in the same spot as one the CLI's own turn raised. */}
+            {automation && <AutomationQuestionSlot automation={automation} onPendingChange={setHitlPending} />}
             {conv.lastError && <StreamErrorBanner message={conv.lastError} onRetry={retryLastMessage} />}
             {working && (
               <WorkingIndicator
@@ -1415,6 +1592,11 @@ export function ChatPane({
         />
       ) : ended ? (
         <SessionEndedBanner onResume={onResume} />
+      ) : hitlPending ? (
+        // AFTER `ended` on purpose: an ended session has nothing live to type into, so
+        // there is no bypass to close and "Resume" is still the right offer. This branch
+        // only fires while the resumed run is actually live.
+        <AutomationQuestionComposerLock />
       ) : (
         <Composer
           session={session}

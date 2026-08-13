@@ -27,6 +27,76 @@
   color: var(--color-error);
 }
 
+.auto-board-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+/* D3: the chat-authored "New automation" entry point — primary-action weight
+   (same gradient as `.adp-approve-btn`) since it is the one create affordance
+   on a non-empty board; the CLI scaffold stays documented on the empty state. */
+.auto-board-new-btn {
+  flex: 0 0 auto;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--gradient-brand);
+  color: var(--color-text-on-brand);
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.auto-board-new-btn:hover:not(:disabled) {
+  opacity: 0.92;
+}
+
+.auto-board-new-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.auto-board-new-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.auto-board-new-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* D-A path 3: automations that arrived over brain sync and have never run on
+   THIS machine — promoted from T17's inline styles (`AutomationsBoard.css` was
+   not yet this lane's to own) into real classes. Reuses `.auto-badge--blocked`
+   for the pill itself; these two only reset the button chrome the badge
+   doesn't need to carry on its own (in `AutomationCard.css`). */
+.auto-never-approved {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.auto-never-approved-label {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+.auto-never-approved-chip {
+  cursor: pointer;
+  border: none;
+}
+
+.auto-never-approved-chip:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 .auto-board-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

@@ -124,11 +124,19 @@ A newly created automation lives on this machine only. It does not sync to the t
 
 ## What approval covers, and what it does not
 
-Every automation carries a machine-local approval: a hash of exactly what it will do, computed the moment it's created, checked again every time it's about to run. If the prompt, output instructions, model, effort level, timeout, output directory, the `learning` switch, or the `review` mode change, the hash no longer matches, and the automation is **blocked**. It will not spawn, on this machine, until a human reviews it again with `dreamcontext automations approve <slug>`. `approve` shows exactly what changed across all eight of those fields before asking for confirmation, never just the prompt, because reviewing only the prompt would let a timeout or an output-directory change sail through unnoticed.
+Every automation carries a machine-local approval: a hash of exactly what it will do, computed the moment it's created, checked again every time it's about to run. If the prompt, output instructions, model, effort level, timeout, output directory, the `learning` switch, the `review` mode, or the `## Flow` graph change, the hash no longer matches, and the automation is **blocked**. It will not spawn, on this machine, until a human reviews it again with `dreamcontext automations approve <slug>`. `approve` shows exactly what changed across all nine of those fields before asking for confirmation, never just the prompt, because reviewing only the prompt would let a timeout or an output-directory change sail through unnoticed.
 
-One asymmetry in that list is deliberate. `learning` is hashed only in the ON direction: an automation with learning off hashes exactly as it did before the field existed, so upgrading dreamcontext never re-blocks a working automation (and a blocked run notifies nobody, by design, so that would be a silent outage). Turning it on changes the hash and demands a review, because it widens what the run reads.
+One asymmetry in that list is deliberate. `learning` is hashed only in the ON direction: an automation with learning off hashes exactly as it did before the field existed, so upgrading dreamcontext never re-blocks a working automation (and a blocked run notifies nobody, by design, so that would be a silent outage). Turning it on changes the hash and demands a review, because it widens what the run reads. `flow` is hashed the same shape, for the same reason, one level further: appended **LAST** to the hashed payload and **omitted entirely** (not written as `null`) whenever the manifest has no `## Flow` block, so a manifest written before this field existed keeps its exact byte-identical hash and gains a graph without costing a re-approval. Once a manifest has one, editing it is hashed like any other field — the graph decides what the run's prompt says and whether it stops to ask, so a teammate's synced edit that quietly deletes a `hitl` node has removed a human gate exactly as editing `review` back to `off` would, and both re-trigger review the same way.
 
-This is why the approval exists, and it exists regardless of whether the automation is shared. For a **shared** automation, the obvious case is a teammate's synced edit arriving through brain sync, and it's treated the same as new, unreviewed code. But approval isn't only about teammates: a fully **private** automation still has to re-approve after any of those six fields change, because anyone with local write access to this machine, not just a teammate, could alter the manifest before its next scheduled fire, and approval catches that too. Know precisely what that protection covers and what it doesn't.
+This is why the approval exists, and it exists regardless of whether the automation is shared. For a **shared** automation, the obvious case is a teammate's synced edit arriving through brain sync, and it's treated the same as new, unreviewed code. But approval isn't only about teammates: a fully **private** automation still has to re-approve after any of those nine fields change, because anyone with local write access to this machine, not just a teammate, could alter the manifest before its next scheduled fire, and approval catches that too. Know precisely what that protection covers and what it doesn't.
+
+### Approval has three paths, and only one of them still shows a screen
+
+1. **Local authorship.** `automations create` — and the chat-first creation flow, which writes through that same CLI verb — auto-approves on the spot. The human who just wrote the prompt is the approver; there is nothing left to ask.
+2. **In-session re-approval, when a prior approval already exists.** A manifest that changed since an automation on THIS machine was last approved does not fail in silence. The run spawns a short, deliberately weaker session — read-only (`--permission-mode plan`), stripped of the orchestration and mutating tools, hard-capped at two minutes, told in its system prompt to ask one question and stop — that reviews the automation **as it now stands** (not a before/after diff: the approval record stores a hash, never the old field values, so nothing can say which field changed) and asks whether to approve it. That question is an `approval`-kind question (see "Questions" below): it takes an explicit `approve`/`yes`/`reject`/`no` only, never free text, because a human typing "no, this looks wrong" must never be read as consent. Answering yes calls the exact same `approveAutomation` the CLI's `approve` uses and starts a **completely fresh** run; the asking session itself is discarded, never resumed with elevated permissions.
+3. **Never-approved manifests — the one path that still needs a screen.** A manifest that arrived over brain sync (or was hand-planted) and has never run on this machine keeps the hard, silent `blocked` it always has: no spawn, no question, no chat tab. A never-approved manifest has no prior grant and arrived over a channel a teammate — or an attacker — can write to, so letting it spawn to "ask nicely" would let a synced manifest bootstrap its own `bypassPermissions` execution, the exact attack the approval hash exists to prevent, one door over. It surfaces as its own row on the dashboard board and in `automations list`/`show`, and the only way through it is `dreamcontext automations approve <slug>` or the dashboard's own approve screen — never an automated "ask and wait".
+
+### What approval does not cover
 
 1. **It does not limit what a run can do once it starts.** An approved automation can read or write any file it can reach, run any command, and access the network. Approving a prompt means "I read this and I would run it myself," not "I have limited what it's allowed to do."
 2. **It does not follow references inside the prompt.** If a prompt says "read `knowledge/some-file.md` and follow its instructions," that file becomes an unreviewed, unhashed instruction source the moment anyone edits it. Approval never re-checks it. Never write an automation prompt that delegates its instructions to a file someone else can edit. Keep the instructions in the prompt itself.
@@ -137,6 +145,59 @@ This is why the approval exists, and it exists regardless of whether the automat
 5. **It does not cover timing, or whether the automation is shared.** An automation's schedule (which days, what time, how enabled it is, and how generous its catch-up window is) and its `shared` flag are both deliberately not part of what's reviewed. A synced edit can move an automation from weekly to daily, or re-enable a disabled one with a wide catch-up window, without ever needing re-approval, because the behavior hasn't changed, only when it happens or where it's visible. Read that as a real capability change, not a technicality. The same prompt running four times as often, or resurrected after being turned off, is a bigger footprint even though nothing was re-reviewed.
 6. **It does not vet the output for anything other than known credential shapes.** See the next section. This is important enough to read on its own.
 7. **It does not stop a run once it's spawned.** See "Stopping a run" below.
+
+## The flow graph: the shape of the job, never its authority
+
+An automation's manifest can carry a `## Flow` section — a fenced `automation-flow/v1` JSON graph of `trigger → agent (+ connectors) → hitl → report` nodes, one file holding both what the job does and what it is wired as. Three things read it: the runner **executes** it, the dashboard **draws** it, and the chat-first creation flow **writes** it.
+
+"Executes" has one precise meaning here, and the whole security story rests on it: **a node never spawns a process.** A node's entry in the registry contributes a short text fragment or a routing decision, and those fragments fold into the ONE prompt sent by the ONE spawn `runner.ts` already had. The graph is **descriptive of orchestration, not of authority** — it decides what the approved prompt says and which branch the run takes, never what the run is permitted to do. `executeFlow` (`flow-runner.ts`) is pure, synchronous, and spawn-free; it reads a graph and returns fragments, never touches a process, a socket, or a file.
+
+That is what makes an unrecognised node kind safe to pass through instead of fatal. Node kinds (`trigger`, `agent`, `connector`, `branch`, `hitl`, `report`) live in an **open registry** (`flow-registry.ts`) with a generic fallback: a kind this build doesn't know renders as a visibly unrecognised node, contributes nothing to the prompt, and is named in a warning — it degrades and is surfaced, it does not break the run. Dropping it silently would make the diagram lie about what the automation does; failing the run instead would make every manifest written by a newer dreamcontext dead on arrival on an older one.
+
+The graph is **approval-hashed**, appended LAST to the hashed payload and **omitted entirely** when the manifest has none — see "What approval covers" above for why that ordering matters. A manifest with no `## Flow` block still gets a graph for the dashboard's canvas: `deriveFlowFromManifest` draws one from the schedule, the prompt's title, and the `review` mode (a non-`off` `review` draws as its own `hitl` node), but that derived graph is never written to disk and never hashed, so every automation gets a picture from day one without a single automation owing a re-approval for it.
+
+```bash
+dreamcontext automations flow <slug>          # print the graph (own, or derived)
+dreamcontext automations flow <slug> --json    # the graph plus any problems found
+```
+
+`flow` reports concrete problems — an unknown node kind, a dangling edge, a cycle — without ever failing the run itself: a cycle is broken deterministically (nodes still unvisited after the topological sort run in manifest order, reported as a warning) rather than hung on, because the manifest is a file a human hand-edits and a drawing mistake must still produce a scheduled run. A `hitl` node in the graph makes the run stop and ask before its work takes effect — see Questions, next.
+
+## Questions: the human-in-the-loop successor to review cards
+
+A **question** is what a run hands a human when something must be decided before it continues, or before its work takes effect. It replaced the review-card board entirely (that store and its dashboard queue are gone) and lives at `automations/hitl/<slug>/<id>.json` — machine-local, never brain-synced, for the same reason the approval registry and the session bindings below are: a question can name a resumable session, which is a capability, and a synced one would hand it to every teammate who pulls.
+
+There are exactly two kinds, and the difference is a security boundary, not a label:
+
+- **`flow-hitl`** — an already-approved run stopped mid-flight to ask (a `hitl` node in its flow graph, or a manifest with `review: agent`/`review: output`). Free text is the correct answer here: it resumes the exact session that asked, so the reply lands in the conversation that raised it.
+- **`approval`** — the manifest changed since it was last approved and the run is asking about the diff (approval path 2, above). This kind is never given a session id, on every write path, and answering it never resumes anything — it takes an explicit `approve`/`yes`/`reject`/`no` only. Free text is refused outright, because "no, wait" typed into a box must never be silently read as consent.
+
+Every surface answers through the same store:
+
+```bash
+dreamcontext automations questions [slug]      # what is open — omit slug for everything
+dreamcontext automations answer <id> <answer>  # free text for flow-hitl; approve/yes/reject/no for approval
+```
+
+The dashboard renders the same card inline, in the automation's chat, below the run header — it reads as the agent itself asking, not a ported review board — and Telegram (below) answers the same store too, for when nobody is watching a screen. A slug with an unanswered question refuses to fire again: the watermark is not advanced, so the fire is OWED and comes back once, the moment the question is answered, not once per tick for as long as it sits open.
+
+## Telegram: one bot per automation, never one for the whole project
+
+Every other surface above requires a human at the Mac. An automation fires precisely because nobody is, so its Telegram channel is scoped **per automation**, at `~/.dreamcontext/telegram/<slug>.json`, mode 0600, machine-local, never synced. A bot token plus an authorized chat id is the ability to resume a `bypassPermissions` session on this machine — a capability, not a preference — so one bot per automation keeps a leaked token's blast radius to one job instead of every automation on the machine at once. Every inbound update is checked against the authorized chat id and silently dropped otherwise: not answered, not logged back to the sender, because anyone can message a bot whose token they don't have.
+
+```bash
+dreamcontext automations telegram setup <slug> --token <t> --chat <id>   # point a bot at this automation
+dreamcontext automations telegram test <slug>                            # post its waiting question now
+dreamcontext automations telegram off <slug>                             # forget the token, stop the channel
+```
+
+Turning a channel off only stops Telegram from answering that automation's questions — the dashboard and `automations answer` still do.
+
+## Session bindings: what a resume actually trusts
+
+Answering a `flow-hitl` question, or reopening a finished run as a chat tab, both end in the same act: `claude --resume <id> --permission-mode bypassPermissions`. A resumable session id is therefore a capability, and `automations/cache/<slug>.json` — where a run's session id is also recorded, for display — is brain-synced and teammate-writable, which makes it the wrong place to trust. The authority instead lives at `~/.dreamcontext/automations/<slug>.sessions.json`, machine-local and written only by this machine's own runner the moment it spawns a session. A session id arriving from the synced cache, a Telegram message, or a hand-edited chat-tab roster resolves to **null** here — never resumable — however convincingly it claims to belong.
+
+This is enforced in exactly one place that matters: the chat WebSocket's resume gate (`src/server/routes/agent-chat.ts`) rejects every `bypass=1&resume=<uuid>` connect whose uuid is claimed by some automation's synced cache but was never recorded by this machine's own session-binding store. A planted session id in a synced cache record can therefore never bootstrap an unattended, fully-armed resume of a conversation this machine never actually ran.
 
 ## If it's shared, know what protects the output and what doesn't
 
@@ -170,6 +231,11 @@ There is no automatic cleanup of a run left behind this way. If an automation's 
 
 Automations run one at a time, in the order they come due, never in parallel with each other on the same tick. If two automations share a fire time and one of them takes a while, the other can be pushed later than its own catch-up window allows, and once that window closes, the fire is skipped entirely rather than run late. Set an automation's catch-up window comfortably longer than the combined timeouts of anything else that shares its fire time, so a slow sibling never causes a skip.
 
+**The run queue is why a busy tick doesn't just lose a fire.** A fire that comes due while its own slug's lock is still held (a previous run overrunning into the next tick) is parked at `~/.dreamcontext/automations-queue.json` — machine-local, never brain-synced, one waiting entry per automation by construction (a second enqueue for the same slug overwrites the first, carrying the ORIGINAL scheduled time forward so a later drain still advances the watermark correctly), TTL-bounded at 7 days so a queue nobody ever drains cannot grow forever. The very next tick drains the queue before it asks `isDue()` anything, and re-resolves each entry's manifest rather than trusting what the queue entry remembered:
+
+- **A disabled automation's queued fire is kept, re-parked for whenever the automation is re-enabled** — never run, and never dropped either. The queue exists precisely so a fire is not silently lost, and "the user toggled it off for an hour" must not be allowed to destroy a fire the schedule still owes.
+- **A queued fire whose automation no longer exists at all is cleared.** That is the one case with genuinely nowhere to go — there is no manifest left to re-enable.
+
 ---
 
 ## Why the dispatcher resolves the way it does
@@ -200,11 +266,13 @@ A known, accepted gap: if the fallback resolution itself ever hangs, an extremel
 | `catchup_hours` | 1 to 168, default 6. How late a missed fire (e.g. the laptop was asleep) may still run. |
 | `output.dir` | Optional override for where this automation's output lands. Must be a subdirectory under the brain, never the brain root itself. |
 | `notify` | Whether a desktop notification fires when a run finishes, success or failure. `automations install` sets up a small notifier app so these arrive branded as "dreamcontext", with a sound: a soft one on success, macOS's error sound on failure, so an unattended failure is audibly different from a success. macOS asks for permission once, and **until it is allowed, notifications are filed silently and never appear on screen**. Sound is a **separate** switch from permission (System Settings > Notifications > dreamcontext > "Play sound for notifications"); allowing alerts does not turn it on. `install --check` reports whether the notifier is present. Defaults to `true`; only the literal value `false` silences it. Note the asymmetry with `shared`, which defaults the other way: an over-share is a leak, but a run nobody is told about is a silent loss, so the two flags fail toward opposite states on purpose. Not an approval-hashed field, for the same reason `shared` isn't — it changes whether you are told, never what the run does. |
-| `learning` | Whether this automation keeps a `## Pattern` — read before every run, appended to after one. Defaults to `true` for anything created from now on (`create` writes it explicitly); a manifest written before this field existed reads `false`, which is what keeps its approved hash byte-identical across the upgrade. The ONE flag in this table that IS approval-hashed: turning it on widens what the run reads to a file the run itself rewrites. See "The pattern" above. |
+| `learning` | Whether this automation keeps a `## Pattern` — read before every run, appended to after one. Defaults to `true` for anything created from now on (`create` writes it explicitly); a manifest written before this field existed reads `false`, which is what keeps its approved hash byte-identical across the upgrade. IS approval-hashed: turning it on widens what the run reads to a file the run itself rewrites. See "The pattern" above. |
+| `review` | Whether this automation stops and asks before its work takes effect, and who decides: `off` (default — publishes and notifies with no verdict in between), `agent` (the run decides at runtime, via `automations propose`), or `output` (blanket — every finished document waits for a verdict before it publishes). Reads leniently toward `off` on anything unrecognised, the opposite of how `shared` fails, because a malformed `review` failing CLOSED would mean an automation silently stopping to ask a human who doesn't know a question exists. IS approval-hashed in the non-`off` direction: turning it on is a gate a teammate's synced edit must not be able to remove for free. |
 
 Body sections:
 - **`## Prompt`**: required. What the scheduled run should do. Written as if there is no one to ask follow-up questions, because there isn't.
 - **`## Output instructions`**: optional. Extra guidance on formatting, tone, or where else the result should go.
+- **`## Flow`**: a fenced `automation-flow/v1` JSON graph — see "The flow graph" above. Written by `create`, editable by hand or through the chat-first creation flow; absent on any manifest that predates it, which reads as a derived, unhashed graph instead.
 - **`## Pattern`**: written by the runs themselves via `automations learn`, never by hand during a run. The playbook, then a `### Lessons` ledger, newest first. Absent until the automation has learned something.
 - **`## Changelog`**: automatic run history notes, newest first.
 
@@ -221,6 +289,10 @@ Full flags for every verb live in [cli-reference.md](cli-reference.md#automation
 | `automations run <slug> --force` | Run it right now, ignoring the schedule. The live-test step of the capture protocol. |
 | `automations learn <slug> --lesson "…"` | Record what a run learned into its pattern. The run calls this itself; you can too. |
 | `automations session <slug> [--run N]` | Read the claude session a run actually had: turns, tool calls, failures. |
+| `automations flow <slug>` | Print this automation's flow graph — its own `## Flow` block, or the one implied by its schedule/prompt/review mode — and any problems in it. |
+| `automations questions [slug]` | List questions awaiting a human answer, project-wide or for one automation. |
+| `automations answer <id> <answer>` | Answer one: free text for a mid-run question, `approve`/`reject` for a changed-manifest question. |
+| `automations telegram setup/test/off <slug>` | Point a per-automation Telegram bot at this automation's questions, post one now, or forget the token. `<slug>` is required — there is no project-wide bot any more. |
 | `automations tick [--all]` | Simulate what the dispatcher would do this instant. |
 | `automations enable` / `disable <slug>` | Turn dueness on or off without touching approval. |
 | `automations approve <slug>` | Review a changed automation and re-approve it on this machine. |

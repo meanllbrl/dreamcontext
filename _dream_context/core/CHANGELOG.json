@@ -1,5 +1,184 @@
 [
   {
+    "date": "2026-08-11",
+    "type": "feat",
+    "scope": "automations",
+    "description": "UNCOMMITTED WORK, continuing automations-redesign from waves 1-2 logged last cycle. This window completed the full redesign across remaining waves (3-11 of an 11-wave goal-skill run, 9 waves needing resume). New: dashboard/src/components/automations/AutomationFlowCanvas.tsx + flowLayout.ts (visual flow editor), dashboard/src/lib/automationCreateChat.ts (chat-based run interface), scripts/verify/automations.mjs (44-assertion runtime harness, both themes). RETIRED: src/lib/automations/review.ts (535 lines), card-registry.ts (127 lines), and AutomationsReviewQueue.tsx/.css — the review-queue model shipped under f9ffba0 five commits ago and is now GONE, replaced by the flow-based HITL model. Modified extensively: runner.ts (27,994 → 68,642 lines), types.ts (pure contract root, no imports), verdict.ts (837 → refactored), telegram.ts, tick.ts, store.ts. The contract surface itself moved: skill/SKILL.md, skill/references/automations.md (HITL questions store owned by nobody, private-derivation ack gate), skill/references/cli-reference.md, skill/references/sleep.md (sleep↔automations boundary), agents/sleep-product.md. Runtime proof found 3 defects 6,944 unit tests missed: (1) unsubscribed create-chat bridge (T19 built it, listener belonged in T18a's file, neither owned the wire), (2) test passing for wrong reason (baseline captured before silently-failing step), (3) chatPanes filtering on display kind so every automation-run tab spawned a live-but-never-mounted ChatSession — one field double-booked between tab glyph and pane mount. Process finding: 9 of 11 waves needed a resume, several because an implementer returned completion-shaped text with work half-done — verifying via git status and test counts caught it every time. Full suite: 6,944 tests passed, 0 failed; tsc clean (root + dashboard); build clean; verify:automations 44/44 both themes. Task: automations-redesign (in_progress).",
+    "breaking": false,
+    "summary": "Automations redesign completion: HITL flow canvas, chat-based runs, contract surface changes — UNCOMMITTED",
+    "references": [
+      "file:dashboard/src/components/automations/AutomationFlowCanvas.tsx",
+      "file:dashboard/src/components/automations/flowLayout.ts",
+      "file:dashboard/src/lib/automationCreateChat.ts",
+      "file:src/lib/automations/runner.ts",
+      "file:src/lib/automations/types.ts",
+      "file:src/lib/automations/verdict.ts",
+      "file:scripts/verify/automations.mjs",
+      "task:automations-redesign-the-flow-graph-is-the-manifest-the-run-asks-in-chat-and-the-queue-never-loses-a-fire"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-11",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "A second project used to mean a second OS window. One window now holds them all as a centered glass capsule of chips, and every open project stays LIVE: backgrounded instances are hidden + inert, never unmounted, so an agent keeps working and a terminal keeps its PTY while you look at something else. The key win: a background project's chip jumps and shows its live-chat count the moment one of its chats asks you a question — you no longer have to be looking at a project to learn it needs you. What made this large: 'one window = one project' was never a setting, it was an assumption threaded through the dashboard. The API client is now per-instance (sends vault as header); each instance owns its QueryClient; localStorage keys are namespaced per vault; ten window-level custom events moved onto a per-instance EventTarget bus; overlay IDs and the Escape stack are scoped to the project on screen (a panel in a background project can neither swallow Escape nor be closed by it — both locked by tests); the checklist submit resolves a corroborated live window or refuses. The ceiling is six live instances — past it, the oldest project with nothing alive becomes a cold chip that revives on click (and 'alive' counts a bare shell, so a dev server is never mistaken for idle). Multi-window remains the escape hatch: any chip detaches to its own window. Two defects fixed that 6,944 unit tests missed: (1) the Escape stack was broken in BOTH directions across mounted-but-hidden projects — popAllWithPrefix had been written for exactly this but never called, and wiring it would NOT have fixed it (the panel stays mounted, so returning leaves no record). Fix: capture the scope at PUSH time and answer Escape per-scope. (2) The instance-eviction ceiling was reading the live badge counter, which correctly excludes shells — so a project whose only live row was a dev server looked idle and would have had its PTY killed. Fixed with a separate alive counter plus a regression test named after the bug. The smoke test had been running SINGLE-vault and now opens two; smoke step S7 had been passing with no modal to close. Commits split hunk-by-hunk via git apply --cached so a concurrent workstream's 79 lines were never touched, and the committed tree was typechecked in an isolated worktree rather than assumed clean.",
+    "breaking": false,
+    "summary": "One window holds every open project as a live chip strip with background instances staying alive",
+    "references": [
+      "commit:480b4f3",
+      "pr:291",
+      "file:dashboard/src/ProjectInstance.tsx",
+      "file:dashboard/src/components/layout/ProjectTabs.tsx",
+      "file:dashboard/src/components/layout/WindowChrome.tsx",
+      "file:dashboard/src/lib/windowRegistry.ts",
+      "file:dashboard/src/lib/overlayStack.ts",
+      "file:dashboard/src/lib/scopedStorage.ts",
+      "file:tests/unit/overlay-stack-scope.test.ts",
+      "task:one-window-holds-every-open-project-as-a-live-chip-strip"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-10",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "UNCOMMITTED WORK, continuing from Waves 1-2 already logged. New: components/layout/WindowChrome.tsx (MAX_LIVE_INSTANCES=6 ceiling, eviction via rollup.alive field — the SOLE gate; a project whose only row is a live shell reports live:0 but alive:1 and is never evictable), ProjectTabs.tsx+.css (center-aligned chip strip with hover expansion, active/background state, one-shot bounce on ask, badge shows live count), lib/windowRegistry.ts (localStorage heartbeat registry + desktop corroboration for duplicate-open detection across OS windows), lib/useOverlayId.ts (scoped overlay IDs so CommandPalette/ChatHistoryPicker/modals from background instances don't stomp the foreground), lib/scopedStorage.ts (per-instance localStorage namespacing). Modified: extensive per-instance wiring across hooks, agents, surfaces. Tests: agent-status-project-rollup.test.ts (regression lock: a shell-only project is alive, not evictable), scoped-storage.test.ts. scripts/verify/project-tabs.mjs runtime verification script. Planning artifacts in workspace/project-tabs/. Task status: in_review. This completes Waves 3-4 (T11-T20 + resume passes); Waves 1-2 (T1-T10) were logged in the previous cycle.",
+    "breaking": false,
+    "summary": "Project-tabs Waves 3-4: WindowChrome ceiling, ProjectTabs strip, per-instance overlays — UNCOMMITTED",
+    "references": [
+      "file:dashboard/src/components/layout/WindowChrome.tsx",
+      "file:dashboard/src/components/layout/ProjectTabs.tsx",
+      "file:dashboard/src/lib/windowRegistry.ts",
+      "file:dashboard/src/lib/useOverlayId.ts",
+      "file:tests/unit/agent-status-project-rollup.test.ts",
+      "task:one-window-holds-every-open-project-as-a-live-chip-strip"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-09",
+    "type": "refactor",
+    "scope": "agents",
+    "description": "UNCOMMITTED WORK. New: agentStatus.ts project rollup logic + tests/unit/agent-status-project-rollup.test.ts. Modified chat/file surfaces: PdfViewer, FileActions, SlideOver, PageView, TranscriptItem, ChatPane, BoardEmbed, Composer, chatEntities. revealPath call-site sweep verified green.",
+    "breaking": false,
+    "summary": "Agent status project rollup + chat/file surface updates — UNCOMMITTED",
+    "references": [
+      "file:dashboard/src/components/sleepy/agentStatus.ts",
+      "file:tests/unit/agent-status-project-rollup.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-09",
+    "type": "refactor",
+    "scope": "automations",
+    "description": "UNCOMMITTED WORK. New files: src/lib/automations/flow-registry.ts, queue.ts (enqueueFire, queuedFire), session-registry.ts, hitl.ts + tests for each. types.ts grew 608 → 938 lines as a pure contract root (no imports, no I/O). Modified: registry.ts, store.ts, src/server/routes/automations.ts. Full unit suite 6,292 tests / 364 files / zero failures reported green.",
+    "breaking": false,
+    "summary": "Automations redesign (waves 1-2): flow-registry, queue, session-registry, types refactor — UNCOMMITTED",
+    "references": [
+      "file:src/lib/automations/flow-registry.ts",
+      "file:src/lib/automations/queue.ts",
+      "file:src/lib/automations/session-registry.ts",
+      "file:src/lib/automations/types.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-09",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "UNCOMMITTED WORK (93 paths, 1927 insertions / 526 deletions). The load-bearing architectural change: api/client.ts became a per-vault ApiClient class (constructor(private readonly vault: string…)) and the module-level singleton 'api' import was retired across nearly every dashboard/src/hooks/*. New files: ProjectInstance.tsx(.css), components/layout/ProjectTabs.tsx(.css), WindowChrome.tsx, context/VaultContext.tsx, lib/instanceQueryClient.ts (createInstanceQueryClient() — one react-query client per vault instance), lib/scopedStorage.ts. Constants: MAX_LIVE_INSTANCES = 6, OpenProject {vault, instance…}. Planning artifacts in workspace/project-tabs/. This establishes the per-vault isolation contract: future dashboard code MUST use the ApiClient class, never a module-level singleton — hooks receive vault context from VaultContext and instantiate their client accordingly.",
+    "breaking": false,
+    "summary": "Project tabs / one-window multi-vault (waves T1–T8) — UNCOMMITTED",
+    "references": [
+      "file:dashboard/src/api/client.ts",
+      "file:dashboard/src/lib/instanceQueryClient.ts",
+      "file:dashboard/src/context/VaultContext.tsx",
+      "file:dashboard/src/ProjectInstance.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-09",
+    "type": "feat",
+    "scope": "agents",
+    "description": "A fresh question already rang a chime, which only reaches you while looking AT dreamcontext. The same ask edge now fires two more signals that reach you when you are not: lib/attention.ts is the one alarm — chime + native notification + macOS Dock bounce behind a SHARED throttle, because they are one interruption. The rate limit moved up out of chime.ts (which throttled only itself); left there, two agents asking in the same breath would have doubled the banner while the chime stayed single. The banner is for someone ELSEWHERE: a focused, visible window gets the chime only, matching AppKit's own no-op for a bounce on the active app. Chat puts the real words in the body (the ask arrives as structured JSON, so the banner says what the card says, flattened and clipped to 180 chars); terminal surface has only pixels a regex matched, so it sends the generic line. UserAttentionType.Critical, not Informational: the turn is blocked on you, so the icon bounces until you come back. Desktop plumbing: WKWebView ships no window.Notification, so tauri-plugin-notification both injects the polyfill and delivers the banner. Capability gains the three notification permissions its init script invokes plus core:window:allow-request-user-attention. Delivery needs the bundled .app; boolean return lets chime and bounce carry signal when it doesn't. Verified: cargo check clean (capability identifiers validated by tauri-build), dashboard tsc -b clean, vite build clean with plugin landing as lazy chunk, 11 new tests covering throttle, focus gate, banner copy, silent degradation with permission denied or no Notification API.",
+    "breaking": false,
+    "summary": "Agent asks now reach you when you're not looking: notification banner and bouncing Dock icon",
+    "references": [
+      "commit:8b4eed4",
+      "file:dashboard/src/lib/attention.ts",
+      "file:desktop/src-tauri/Cargo.toml"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-09",
+    "type": "feat",
+    "scope": "automations",
+    "description": "Pre-redesign platform work landing together. Automations runs now pass a review gate: card registry + verdict model + AutomationsReviewQueue UI with telegram notification plumbing. The delegate composer gains modes (delegateModes + verify:delegate-modes harness). The task-manager pane and its skill are retired: DocComments/SessionDiff/TaskManagerPane/lineDiff deleted, TaskDetailPanel simplified, install-skill.ts now DELETES leftover task-manager/ from older installs. Owner's explicit directive: tasks are working documents, not agent sessions. Desktop gains permission manifests and dashboard dist sync script. Brain workspace carries hypotheses-redesign artifacts (board.cjs, shots, Excalidraw). Verified: tsc clean, 6045 unit tests passed, browser verify 46/46.",
+    "breaking": false,
+    "summary": "Automations gain review queue with telegram verdicts, delegate gains modes, task-manager pane retired",
+    "references": [
+      "commit:f9ffba0",
+      "file:src/lib/automations/review.ts",
+      "file:src/lib/automations/verdict.ts",
+      "file:src/lib/delegateModes.ts",
+      "file:scripts/sync-dashboard-dist.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-09",
+    "type": "feat",
+    "scope": "insights",
+    "description": "The Lab board redesign (task insights-board-redesign-plug-and-play-charts, 18/18 criteria). One chartRegistry wires a render type end to end; engine RENDERS list drives CLI/doctor/types, drift test pins dashboard mirror. Five new renders on the existing Series[] contract: bar, bar_compare, stacked, table, heatmap, plus inline sparkline on number cards. RangeControl (presets + custom from→to calendar) on every insight surface; range/from/to are well-known tweaks writable without manifest declarations, and picking a preset clears stale custom window. Every range change chains save → re-fetch. Raw tweak keys never reach UI: shared EN/TR humanizer for enum options, pills, chips and toasts. Pie legend caps at 5 (+k more) and ≥7 slices degrade to BarList; card bodies bounded; grid size-aware (container query grants span-2 to funnel/table/size:l). Funnel overview gains Columns picker: payload metrics plus derived step columns (A→B % per adjacent pair, % of top per step) computed client-side, honest nulls, low-sample de-emphasis, URL + prefs persistence, sort/export on visible set. Chart colors move to --chart-1..8 tokens (light + dark). Verified: dashboard + root tsc clean, full suite 6159 passed (103 new lab tests), verify:lab-board 51/51 against real server + Chromium.",
+    "breaking": false,
+    "summary": "Lab board gains chart registry (5 new render types), date range everywhere, and funnel column picker",
+    "references": [
+      "commit:d7be8b7",
+      "file:dashboard/src/components/lab/chartRegistry.ts",
+      "file:dashboard/src/components/lab/RangeControl.tsx",
+      "file:dashboard/src/components/lab/funnel/FunnelOverviewPage.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-09",
+    "type": "feat",
+    "scope": "hypotheses",
+    "description": "Redesign of the theses surfaces after owner review (08-08). Cards now lead with status chip + confidence % + claim (2-line clamp) + one activity line; all glyph soup removed. Two persisted view modes: activity list (default, inbox-style with All/Unread/Needs-attention tabs) and status kanban. Client-side seen-state diffs each thesis into an unread dot plus 'what changed' line (flips, confidence moves, evidence deltas); opening detail marks it read, Mark-all-read in summary strip. Detail modal rebuilt around one hero: lifecycle actions sit next to verdict (flip-citation/promote panels expand in place), evidence notes clamp to two lines and expand on click, predictions/changelog/rail lose their boxes. Proof: 12 unit tests on seen-state module + new verify:hypotheses harness (scratch vault, Playwright, 13 assertions × 2 themes), dashboard+root tsc and build clean.",
+    "breaking": false,
+    "summary": "Hypotheses board redesign: verdict-first cards, activity list view with unread tracking, and simplified detail modal",
+    "references": [
+      "commit:90981d6",
+      "file:dashboard/src/components/theses/ThesisBoard.tsx",
+      "file:dashboard/src/components/theses/ThesisListView.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-08",
     "type": "fix",
     "scope": "dashboard",

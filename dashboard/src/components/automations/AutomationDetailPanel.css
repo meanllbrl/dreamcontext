@@ -68,6 +68,9 @@
   font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--color-text-tertiary); margin-bottom: 10px;
 }
+/* Used where the label sits inline in its own header row (Flow, Telegram) —
+   that row already carries the bottom margin the label wants. */
+.adp-section-label--inline { margin-bottom: 0; }
 
 .adp-review { border: 1px solid var(--color-border); border-radius: 11px; overflow: hidden; margin-bottom: 16px; }
 .adp-review-row { padding: 8px 12px; }
@@ -191,3 +194,153 @@
 }
 .adp-review-pattern .adp-pattern,
 .adp-review-pattern .adp-pattern-empty { margin-bottom: 0; }
+
+/* The flow's node chain, inside the approval review. Wraps rather than
+   scrolling: a reviewer must be able to see the WHOLE chain at once, since the
+   thing they are looking for is a node that is missing. */
+.adp-review-flow-nodes {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+  margin-bottom: 4px;
+}
+
+/* ── Flow canvas (D4) — the detail screen's PRIMARY visual ──────────────── */
+
+.adp-flow-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* D4: say plainly this is dreamcontext's inference, not the automation's own
+   design — reuses `.auto-badge`'s shape (AutomationCard.css) rather than
+   redefining padding/radius, exactly the way `.auto-badge--approved` above
+   only adds color. Warning-toned for the same reason `review: off` reads
+   loudest in the approval review: it names something a reader could
+   otherwise mistake for a human decision. */
+.auto-badge--derived {
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+}
+
+.adp-flow-canvas {
+  margin-bottom: 20px;
+}
+
+/* ── Prompt: demoted to a collapsed disclosure beneath the flow (D4) ────── */
+
+.adp-prompt-details {
+  margin-bottom: 20px;
+}
+
+.adp-prompt-summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-tertiary);
+  margin-bottom: 12px;
+  user-select: none;
+}
+
+.adp-prompt-summary:hover { color: var(--color-text-secondary); }
+
+.adp-prompt-details[open] .adp-prompt-summary { margin-bottom: 12px; }
+.adp-prompt-details .adp-review-block--static:last-child { margin-bottom: 0; }
+
+/* ── Telegram (D8) — per-automation bot credentials ──────────────────────── */
+
+.adp-telegram {
+  border: 1px solid var(--color-border);
+  border-radius: 11px;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.adp-telegram-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.adp-telegram-status {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+}
+
+.adp-telegram-status--on { color: var(--color-success); }
+
+.adp-telegram-toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+
+.adp-telegram-toggle:hover { opacity: 0.8; }
+
+.adp-telegram-body {
+  margin-top: var(--space-3);
+}
+
+.adp-telegram-hint {
+  margin: 0 0 var(--space-3);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+}
+
+.adp-telegram-hint code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text);
+}
+
+.adp-telegram-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.adp-telegram-input {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 5px 9px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.adp-telegram-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.adp-telegram-save {
+  flex: 0 0 auto;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--gradient-brand);
+  color: var(--color-text-on-brand);
+}
+
+.adp-telegram-save:disabled {
+  cursor: default;
+  opacity: 0.55;
+}

@@ -31,25 +31,53 @@ const RUN = {
   outputPath: '/Users/x/p/_dream_context/automations/output/calbuddy-funnel-watch/2026-08-03-2.md',
 };
 
+/**
+ * The marker used to be `· run #1`; D7 changed it to the run's DATE, because app-open now
+ * restores every run since you last looked and a strip of tabs has to say WHEN without a
+ * click. These tests assert the properties that make the title do its job, not the exact
+ * rendered date — the helper formats with `toLocaleDateString`, so hardcoding "Aug 3" would
+ * pin the test to whatever timezone and locale the machine running it happens to have.
+ */
 describe('automationRunTabTitle', () => {
-  it('names the automation and its run, not the conversation', async () => {
+  const AUG_3 = '2026-08-03T08:00:00.000Z';
+  const AUG_9 = '2026-08-09T08:00:00.000Z';
+
+  it('names the automation and marks the run, not the conversation', async () => {
     const { automationRunTabTitle } = await load();
-    expect(automationRunTabTitle('CalBuddy Funnel Watch', 1)).toBe('CalBuddy Funnel Watch · run #1');
+    const title = automationRunTabTitle('CalBuddy Funnel Watch', AUG_3);
+    expect(title.startsWith('CalBuddy Funnel Watch · ')).toBe(true);
+    // The conversation's own first prompt is the approved automation brief — identical
+    // across every run of the same job — so it can never be the source of the name.
+    expect(title).not.toContain('You are scheduled');
   });
 
-  it('keeps the run marker whole when the name has to be clipped', async () => {
+  it('tells two runs of the SAME automation apart — the whole reason the marker exists', async () => {
     const { automationRunTabTitle } = await load();
-    const title = automationRunTabTitle('An automation with a really quite long name', 12);
+    expect(automationRunTabTitle('CalBuddy Funnel Watch', AUG_3))
+      .not.toBe(automationRunTabTitle('CalBuddy Funnel Watch', AUG_9));
+  });
+
+  it('keeps the date marker whole when the name has to be clipped', async () => {
+    const { automationRunTabTitle } = await load();
+    const title = automationRunTabTitle('An automation with a really quite long name', AUG_3);
     // The marker is the half that tells two tabs apart — clipping it would defeat the
     // entire reason this function exists.
-    expect(title.endsWith(' · run #12')).toBe(true);
+    const marker = automationRunTabTitle('x', AUG_3).slice('x'.length);
+    expect(title.endsWith(marker)).toBe(true);
     expect(title.length).toBeLessThanOrEqual(34);
     expect(title).toContain('…');
   });
 
   it('falls back to a name rather than rendering an empty tab', async () => {
     const { automationRunTabTitle } = await load();
-    expect(automationRunTabTitle('   ', 3)).toBe('Automation · run #3');
+    expect(automationRunTabTitle('   ', AUG_3).startsWith('Automation · ')).toBe(true);
+  });
+
+  it('renders an unparseable timestamp verbatim rather than "Invalid Date"', async () => {
+    const { automationRunTabTitle } = await load();
+    // Degrade legibly: a raw ISO-ish string still tells the user something, where the
+    // Date object's own failure string tells them only that the app is broken.
+    expect(automationRunTabTitle('Watch', 'not-a-date')).toBe('Watch · not-a-date');
   });
 });
 

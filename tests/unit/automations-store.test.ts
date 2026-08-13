@@ -9,6 +9,7 @@ import {
   automationsDir,
   createAutomation,
   defaultGitTrackedCheck,
+  deriveFlowFromManifest,
   extractSection,
   getAutomation,
   isSafeAutomationSlug,
@@ -17,6 +18,7 @@ import {
   outputDirFor,
   outputRootDir,
   parseEffort,
+  parseFlowSection,
   readAutomationCache,
   readAutomationFile,
   readRunSidecar,
@@ -28,6 +30,7 @@ import {
   shareStateFor,
   sidecarPathFor,
   validateAutomationForWrite,
+  writeFlowSection,
   writeAutomationCache,
   writeRunSidecar,
   clearRunSidecar,
@@ -877,13 +880,24 @@ describe('review on the WRITE path', () => {
     ).toThrow(/Invalid review mode/);
   });
 
-  it('ignores the review card directory from the moment an automation can exist', () => {
-    // A card holds a resumable session id — it must be uncommittable before the
-    // directory can be created, the same ordering guarantee the lock and the
-    // sidecar get.
+  it('ignores the question directory from the moment an automation can exist', () => {
+    // A question holds a resumable session id — it must be uncommittable before
+    // the directory can be created, the same ordering guarantee the lock and the
+    // sidecar get. This asserted `automations/review/` until wave 9 replaced the
+    // review card with the question store; the GUARANTEE is unchanged, only the
+    // directory it covers.
     createAutomation(contextRoot, { slug: 'ignored', title: 'Ignored', days: 'daily', at: '18:00' });
-    expect(readFileSync(join(contextRoot, '.gitignore'), 'utf-8')).toContain('automations/review/');
-    expect(readFileSync(join(projectRoot, '.gitignore'), 'utf-8')).toContain('_dream_context/automations/review/');
+    expect(readFileSync(join(contextRoot, '.gitignore'), 'utf-8')).toContain('automations/hitl/');
+    expect(readFileSync(join(projectRoot, '.gitignore'), 'utf-8')).toContain('_dream_context/automations/hitl/');
+  });
+
+  it('no longer writes the stale review entry — S7, so the covered directory is the one that exists', () => {
+    // `ensureGitignoreEntries` only ever APPENDS, so a line it stops emitting is
+    // not a line it removes. Proving the new value is emitted alone is what makes
+    // `removeGitignoreEntries` (runner.ts step 6) the only thing that has to clean
+    // up the projects that already carry the old one.
+    createAutomation(contextRoot, { slug: 'fresh', title: 'Fresh', days: 'daily', at: '18:00' });
+    expect(readFileSync(join(contextRoot, '.gitignore'), 'utf-8')).not.toContain('automations/review/');
   });
 
   it('does not add review to the share-negation base set (it would false-alarm every negation)', () => {
@@ -899,5 +913,234 @@ describe('review on the WRITE path', () => {
     expect(() =>
       createAutomation(contextRoot, { slug: 'review', title: 'Review', days: 'daily', at: '18:00' }),
     ).toThrow(/reserved/i);
+  });
+});
+
+// ─── The `## Flow` graph ─────────────────────────────────────────────────────
+//
+// The graph is approval-hashed, so the read has one rule above all others:
+// degrade to ABSENT, never to a partial graph. A half-parsed graph hashes
+// differently from both "no graph" and "the graph the author wrote", so a typo
+// in a manifest would block the automation — and a blocked run tells nobody.
+
+/** The `## Flow` section as it is actually written: fenced JSON. */
+function flowSection(json: string): string {
+  return ['## Flow', '', '```json', json, '```', ''].join('\n');
+}
+
+const VALID_FLOW = JSON.stringify({
+  version: 'automation-flow/v1',
+  nodes: [
+    { id: 'trigger', kind: 'trigger', label: 'Every weekday 18:00', config: { source: 'schedule' } },
+    { id: 'gather', kind: 'agent', label: "Read today's commits" },
+    { id: 'ask', kind: 'hitl', label: 'Send the digest?' },
+    { id: 'out', kind: 'report', label: 'Daily digest' },
+  ],
+  edges: [
+    { from: 'trigger', to: 'gather' },
+    { from: 'gather', to: 'ask' },
+    { from: 'ask', to: 'out', label: 'send' },
+  ],
+});
+
+describe('parseFlowSection', () => {
+  it('reads a fenced JSON graph', () => {
+    const flow = parseFlowSection(flowSection(VALID_FLOW));
+    expect(flow).not.toBeNull();
+    expect(flow!.nodes.map((n) => n.id)).toEqual(['trigger', 'gather', 'ask', 'out']);
+    expect(flow!.edges).toHaveLength(3);
+    expect(flow!.nodes[0].config).toEqual({ source: 'schedule' });
+  });
+
+  it('reads an UNFENCED graph too — a hand-edited manifest is still a manifest', () => {
+    expect(parseFlowSection(['## Flow', '', VALID_FLOW, ''].join('\n'))).not.toBeNull();
+  });
+
+  it('reads a bare ``` fence with no language tag', () => {
+    expect(parseFlowSection(['## Flow', '', '```', VALID_FLOW, '```'].join('\n'))).not.toBeNull();
+  });
+
+  it('tolerates an unclosed fence rather than losing the whole graph', () => {
+    expect(parseFlowSection(['## Flow', '', '```json', VALID_FLOW].join('\n'))).not.toBeNull();
+  });
+
+  it.each([
+    ['no section at all', '## Prompt\n\nDo the thing.\n'],
+    ['an empty section', '## Flow\n\n'],
+    ['an empty fence', flowSection('')],
+    ['malformed JSON', flowSection('{ not json !!')],
+    ['a bare array', flowSection('[]')],
+    ['a future version', flowSection(JSON.stringify({ version: 'automation-flow/v2', nodes: [{ id: 'a', kind: 'agent' }], edges: [] }))],
+    ['no version', flowSection(JSON.stringify({ nodes: [{ id: 'a', kind: 'agent' }], edges: [] }))],
+    ['nodes: []', flowSection(JSON.stringify({ version: 'automation-flow/v1', nodes: [], edges: [] }))],
+    ['nodes not an array', flowSection(JSON.stringify({ version: 'automation-flow/v1', nodes: {}, edges: [] }))],
+    ['every node unusable', flowSection(JSON.stringify({ version: 'automation-flow/v1', nodes: [{ id: 'NOPE!' }], edges: [] }))],
+  ])('%s ⇒ null, never a partial graph', (_label, content) => {
+    expect(parseFlowSection(content)).toBeNull();
+  });
+
+  it('a FUTURE version reads as absent, so a newer manifest still runs here', () => {
+    // Not an error and not a partial read: an automation authored by a newer
+    // dreamcontext must keep working on this one, just without its diagram.
+    const content = flowSection(JSON.stringify({ version: 'automation-flow/v9', nodes: [{ id: 'a', kind: 'agent' }], edges: [] }));
+    expect(() => parseFlowSection(content)).not.toThrow();
+    expect(parseFlowSection(content)).toBeNull();
+  });
+
+  it('drops an unusable node but keeps its usable siblings', () => {
+    const flow = parseFlowSection(flowSection(JSON.stringify({
+      version: 'automation-flow/v1',
+      nodes: [
+        { id: 'ok', kind: 'agent' },
+        { id: 'Bad Id', kind: 'agent' },
+        { id: 'nokind' },
+        'not an object',
+        { id: 'ok2', kind: 'report' },
+      ],
+      edges: [],
+    })));
+    expect(flow!.nodes.map((n) => n.id)).toEqual(['ok', 'ok2']);
+  });
+
+  it('keeps the FIRST of two nodes sharing an id — the later one is the accident', () => {
+    const flow = parseFlowSection(flowSection(JSON.stringify({
+      version: 'automation-flow/v1',
+      nodes: [{ id: 'a', kind: 'agent', label: 'first' }, { id: 'a', kind: 'report', label: 'second' }],
+      edges: [],
+    })));
+    expect(flow!.nodes).toHaveLength(1);
+    expect(flow!.nodes[0].label).toBe('first');
+  });
+
+  it('drops an edge naming a node that does not exist — a wire from nowhere', () => {
+    const flow = parseFlowSection(flowSection(JSON.stringify({
+      version: 'automation-flow/v1',
+      nodes: [{ id: 'a', kind: 'agent' }, { id: 'b', kind: 'report' }],
+      edges: [{ from: 'a', to: 'b' }, { from: 'a', to: 'ghost' }, { from: 'ghost', to: 'b' }],
+    })));
+    expect(flow!.edges).toEqual([{ from: 'a', to: 'b' }]);
+  });
+
+  it('truncates an over-long label rather than dropping the node', () => {
+    const flow = parseFlowSection(flowSection(JSON.stringify({
+      version: 'automation-flow/v1',
+      nodes: [{ id: 'a', kind: 'agent', label: 'x'.repeat(200) }],
+      edges: [],
+    })));
+    expect(flow!.nodes[0].label!.length).toBe(80);
+  });
+
+  it('refuses a graph with more nodes than the cap', () => {
+    const nodes = Array.from({ length: 25 }, (_, i) => ({ id: `n${i}`, kind: 'agent' }));
+    expect(parseFlowSection(flowSection(JSON.stringify({ version: 'automation-flow/v1', nodes, edges: [] })))).toBeNull();
+  });
+
+  it('drops an empty config so two graphs that hash the same also READ the same', () => {
+    const flow = parseFlowSection(flowSection(JSON.stringify({
+      version: 'automation-flow/v1',
+      nodes: [{ id: 'a', kind: 'agent', config: {} }],
+      edges: [],
+    })));
+    expect(flow!.nodes[0].config).toBeUndefined();
+  });
+
+  it('stops at the next heading — a `## Flow` block cannot swallow the prompt', () => {
+    const content = [flowSection(VALID_FLOW), '## Prompt', '', 'Do the thing.'].join('\n');
+    expect(parseFlowSection(content)!.nodes).toHaveLength(4);
+    expect(extractSection(content, 'Prompt')).toBe('Do the thing.');
+  });
+});
+
+describe('flow on the manifest', () => {
+  it('is null — NEVER undefined — when the manifest has no `## Flow`', () => {
+    // The byte-identity guarantee: `canonicalApprovalPayload` omits the field
+    // via `flow !== null`, which is TRUE for undefined, so an undefined leaking
+    // out of the read would re-hash and block every legacy automation at once.
+    const m = createAutomation(contextRoot, { slug: 'eod-digest', title: 'EOD', days: 'daily', at: '18:00' });
+    expect(m.flow).toBeNull();
+    expect(Object.prototype.hasOwnProperty.call(m, 'flow')).toBe(true);
+  });
+
+  it('round-trips a graph written with writeFlowSection', () => {
+    createAutomation(contextRoot, { slug: 'eod-digest', title: 'EOD', days: 'daily', at: '18:00' });
+    const graph = parseFlowSection(flowSection(VALID_FLOW))!;
+    const updated = writeFlowSection(contextRoot, 'eod-digest', graph);
+    expect(updated.flow).toEqual(graph);
+    expect(getAutomation(contextRoot, 'eod-digest')!.flow).toEqual(graph);
+  });
+
+  it('writing a flow leaves the approval-hashed prompt byte-identical', () => {
+    // `upsertSection` is surgical by contract, and this is the case that proves
+    // it matters: rewriting the prompt while adding a diagram would block the
+    // automation on its next run for a reason nobody could see.
+    const m = createAutomation(contextRoot, {
+      slug: 'eod-digest', title: 'EOD', days: 'daily', at: '18:00',
+      prompt: 'Line one.\n\n\nLine two after a real gap.',
+    });
+    const before = m.prompt;
+    const after = writeFlowSection(contextRoot, 'eod-digest', parseFlowSection(flowSection(VALID_FLOW))!);
+    expect(after.prompt).toBe(before);
+  });
+
+  it('replaces an existing flow rather than appending a second one', () => {
+    createAutomation(contextRoot, { slug: 'eod-digest', title: 'EOD', days: 'daily', at: '18:00' });
+    const graph = parseFlowSection(flowSection(VALID_FLOW))!;
+    writeFlowSection(contextRoot, 'eod-digest', graph);
+    const smaller = { ...graph, nodes: graph.nodes.slice(0, 2), edges: graph.edges.slice(0, 1) };
+    const updated = writeFlowSection(contextRoot, 'eod-digest', smaller);
+    expect(updated.flow!.nodes).toHaveLength(2);
+    expect(readFileSync(automationPath(contextRoot, 'eod-digest'), 'utf-8').match(/^## Flow$/gm)).toHaveLength(1);
+  });
+
+  it('refuses to write a flow for an automation that does not exist', () => {
+    expect(() => writeFlowSection(contextRoot, 'nope', parseFlowSection(flowSection(VALID_FLOW))!)).toThrow(/No such automation/);
+  });
+});
+
+describe('deriveFlowFromManifest', () => {
+  it('gives a flow-less automation the graph it already implies', () => {
+    // Every automation IS a flow — fires, runs, maybe asks, writes. A manifest
+    // written before the section existed simply never said so, and an empty
+    // canvas would need explaining where a derived one does not.
+    const m = createAutomation(contextRoot, { slug: 'eod-digest', title: 'EOD Digest', days: 'daily', at: '18:00' });
+    const g = deriveFlowFromManifest(m);
+    expect(g.nodes.map((n) => n.kind)).toEqual(['trigger', 'agent', 'report']);
+    expect(g.nodes[0].label).toBe('every day at 18:00');
+    expect(g.nodes[1].label).toBe('EOD Digest');
+    expect(g.edges).toEqual([{ from: 'trigger', to: 'run' }, { from: 'run', to: 'report' }]);
+  });
+
+  it('draws a hitl node when the manifest asks for review, wired in between', () => {
+    const m = createAutomation(contextRoot, {
+      slug: 'eod-digest', title: 'EOD', days: 'daily', at: '18:00', review: 'output',
+    });
+    const g = deriveFlowFromManifest(m);
+    expect(g.nodes.map((n) => n.kind)).toEqual(['trigger', 'agent', 'hitl', 'report']);
+    expect(g.edges).toEqual([
+      { from: 'trigger', to: 'run' },
+      { from: 'run', to: 'ask' },
+      { from: 'ask', to: 'report' },
+    ]);
+  });
+
+  it('is PURE and deterministic — the same manifest derives the same graph', () => {
+    const m = createAutomation(contextRoot, { slug: 'eod-digest', title: 'EOD', days: 'daily', at: '18:00' });
+    expect(JSON.stringify(deriveFlowFromManifest(m))).toBe(JSON.stringify(deriveFlowFromManifest(m)));
+  });
+
+  it('never throws on a manifest with no schedule', () => {
+    const m = createAutomation(contextRoot, { slug: 'eod-digest', title: 'EOD', days: 'daily', at: '18:00' });
+    const g = deriveFlowFromManifest({ ...m, schedule: null });
+    expect(g.nodes[0].label).toBe('no schedule');
+  });
+
+  it('is NEVER written to disk — the manifest keeps flow: null and its approval', () => {
+    // The derived graph is for DISPLAY. Persisting it would change the hash of
+    // every legacy automation, which is precisely the outage the null case
+    // exists to avoid.
+    const m = createAutomation(contextRoot, { slug: 'eod-digest', title: 'EOD', days: 'daily', at: '18:00' });
+    deriveFlowFromManifest(m);
+    expect(getAutomation(contextRoot, 'eod-digest')!.flow).toBeNull();
+    expect(readFileSync(automationPath(contextRoot, 'eod-digest'), 'utf-8')).not.toContain('## Flow');
   });
 });

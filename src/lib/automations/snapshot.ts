@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { listAutomations, readAutomationCache, readRunSidecar } from './store.js';
 import { checkApproval } from './registry.js';
-import { pendingReviewCard } from './review.js';
+import { pendingQuestion } from './hitl.js';
 import { pendingOutputsSince } from './consumption.js';
 
 /**
@@ -170,16 +170,18 @@ export function buildAutomationsSnapshot(
     }
 
     // ─── A proposal awaiting a verdict — the automation is HELD, not broken ─
-    // Read from the card store rather than from the last cache event, for the
-    // same reason `blocked` is read from the registry: the run that created the
-    // card may have been days ago and long since fallen out of the 24h window,
-    // but the card is still open and the automation is still not firing. A
+    // Read from the question store rather than from the last cache event, for
+    // the same reason `blocked` is read from the registry: the run that asked
+    // may have been days ago and long since fallen out of the 24h window, but
+    // the question is still open and the automation is still not firing. A
     // signal about something OWED cannot expire on a clock.
-    const card = pendingReviewCard(contextRoot, manifest.slug);
-    if (card) {
+    const question = pendingQuestion(contextRoot, manifest.slug);
+    if (question) {
+      const asked =
+        question.question.length > 120 ? `${question.question.slice(0, 119).trimEnd()}…` : question.question;
       reviewLines.push(
-        `- ${manifest.slug}: waiting for your verdict — "${card.title}" (${relativeAge(card.createdAt, now)}); ` +
-        `it will not run again until you answer — \`dreamcontext automations review ${manifest.slug}\``,
+        `- ${manifest.slug}: waiting for your verdict — "${asked}" (${relativeAge(question.createdAt, now)}); ` +
+        `it will not run again until you answer — \`dreamcontext automations questions ${manifest.slug}\``,
       );
     }
 

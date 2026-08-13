@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { APPROVAL_DIFF_FIELDS } from '../../src/lib/automations/types.js';
+import { parseFlowSection } from '../../src/lib/automations/store.js';
 import { unshareWarningLines } from '../../src/cli/commands/automations.js';
 
 /**
@@ -75,6 +76,76 @@ function run(args: string[], cwd: string, home: string): RunResult {
   }
 }
 
+/**
+ * Hand-write a pending `AutomationQuestion` fixture directly at
+ * `automations/hitl/<slug>/<id>.json` — the same shape `hitl.ts`'s
+ * `writeQuestion` produces. There is no way to make a real run reach the
+ * question store across this suite's real-subprocess boundary (a real spawn
+ * always fails deterministically, per SAFE_PATH), so a hand-written fixture
+ * is the only way to exercise `questions`/`answer` here — the same tradeoff
+ * the existing sidecar fixture above already accepts.
+ */
+function writeQuestionFixture(
+  projectDir: string,
+  opts: { slug: string; id: string; kind: 'approval' | 'flow-hitl'; question: string; sessionId?: string | null; choices?: string[] },
+): string {
+  const dir = join(projectDir, '_dream_context', 'automations', 'hitl', opts.slug);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${opts.id}.json`);
+  const now = new Date().toISOString();
+  const q = {
+    id: opts.id,
+    slug: opts.slug,
+    runFiredAt: now,
+    sessionId: opts.kind === 'approval' ? null : (opts.sessionId ?? null),
+    kind: opts.kind,
+    channel: 'chat',
+    question: opts.question,
+    choices: opts.choices ?? [],
+    state: 'pending',
+    answeredAt: null,
+    answeredVia: null,
+    answer: null,
+    resolutionNote: null,
+    resolutionError: null,
+    steers: [],
+    channelRefs: {},
+    createdAt: now,
+  };
+  writeFileSync(path, `${JSON.stringify(q, null, 2)}\n`, 'utf-8');
+  return path;
+}
+
+/** Hand-write the machine-local session binding a real run's runner would
+ *  have recorded via `session-registry.ts`'s `recordAutomationSession` — the
+ *  authority `resumeWithAnswer` actually trusts, never the question's own
+ *  claimed `sessionId`. */
+function writeSessionBindingFixture(home: string, slug: string, sessionId: string): void {
+  const dir = join(home, '.dreamcontext', 'automations');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${slug}.sessions.json`);
+  writeFileSync(
+    path,
+    `${JSON.stringify({ [sessionId]: { sessionId, slug, at: new Date().toISOString() } }, null, 2)}\n`,
+    'utf-8',
+  );
+}
+
+/** Edit an automation's manifest to change ONE hashed field (the prompt),
+ *  putting it into `manifest-changed` — mirrors the existing "approve shows
+ *  every hashed field" test's own setup, factored out because several new
+ *  tests below need the exact same starting state. */
+function editHashedPrompt(projectDir: string, slug: string): void {
+  const manifestPath = join(projectDir, '_dream_context', 'automations', `${slug}.md`);
+  const original = readFileSync(manifestPath, 'utf-8');
+  const edited = original.replace(
+    '(What should this automation do? Write the prompt the scheduled run will send.)',
+    "Summarize this week's CI logs.",
+  );
+  if (edited === original) throw new Error(`editHashedPrompt: the replace matched nothing in ${manifestPath}`);
+  writeFileSync(manifestPath, edited, 'utf-8');
+}
+
 describe('automations CLI (integration)', () => {
   // ── MANDATORY real-home non-interference proof ──────────────────────────
   // Snapshot the real machine's automations registry/heartbeat files BEFORE
@@ -129,15 +200,18 @@ describe('automations CLI (integration)', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('lists every verb in --help, including share/unshare', () => {
+  it('lists every verb in --help, including share/unshare and the questions/answer/flow verbs', () => {
     const out = run(['automations', '--help'], projectDir, home);
     expect(out.exitCode).toBe(0);
     for (const verb of [
       'create', 'list', 'show', 'run', 'tick', 'enable', 'disable', 'share', 'unshare',
       'approve', 'kill', 'remove', 'install', 'uninstall', 'logs',
+      'questions', 'answer', 'flow', 'telegram',
     ]) {
       expect(out.stdout).toContain(verb);
     }
+    // The retired `review` verb must be gone, not merely undocumented.
+    expect(out.stdout).not.toMatch(/^\s*review\s/m);
   });
 
   it('create → list → show → run --force → approve', () => {
@@ -229,8 +303,12 @@ describe('automations CLI (integration)', () => {
     expect(yesOut.exitCode).toBe(0);
     // The count is a deliberate canary on top of the iteration: adding a hashed
     // field must make a human look at this file rather than sail through green.
-    // 6 → 7 when `learning` joined; 7 → 8 when `review` (HITL mode) joined.
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(8);
+    // 6 → 7 when `learning` joined; 7 → 8 when `review` (HITL mode) joined;
+    // 8 → 9 when `flow` joined — the `## Flow` graph is orchestration a
+    // teammate can edit, so a reviewer who never sees it is approving a shape
+    // of run they were not shown. It is appended LAST and omitted when absent,
+    // so a manifest written before the block existed still hashes identically.
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(9);
     for (const field of APPROVAL_DIFF_FIELDS) {
       expect(yesOut.stdout).toContain(field);
     }
@@ -670,5 +748,269 @@ describe('automations CLI (integration)', () => {
     // remove a real developer's real scheduled job on whatever machine happens
     // to run `npm test` is not an acceptable trade for CI coverage, so this
     // is a disclosed scope decision, not an oversight.
+  });
+
+  // ── questions / answer (replaces the retired `review` verb) ───────────────
+  describe('questions / answer', () => {
+    it('reports nothing waiting with no question open, and lists both kinds distinctly once two are', () => {
+      run(['automations', 'create', 'q-approval', '--title', 'Q Approval', '--days', 'daily', '--at', '09:00'], projectDir, home);
+      run(['automations', 'create', 'q-hitl', '--title', 'Q Hitl', '--days', 'daily', '--at', '09:00'], projectDir, home);
+
+      const emptyOut = run(['automations', 'questions'], projectDir, home);
+      expect(emptyOut.exitCode).toBe(0);
+      expect(emptyOut.stdout).toMatch(/nothing is waiting/i);
+
+      // Per-slug empty case too.
+      const emptySlugOut = run(['automations', 'questions', 'q-approval'], projectDir, home);
+      expect(emptySlugOut.exitCode).toBe(0);
+      expect(emptySlugOut.stdout).toMatch(/nothing awaiting an answer/i);
+
+      writeQuestionFixture(projectDir, {
+        slug: 'q-approval', id: 'q_kind_approval', kind: 'approval',
+        question: 'The manifest changed since it was last approved — trust it?',
+      });
+      writeQuestionFixture(projectDir, {
+        slug: 'q-hitl', id: 'q_kind_hitl', kind: 'flow-hitl',
+        question: 'Should I publish this draft now, or hold it?',
+      });
+
+      const out = run(['automations', 'questions'], projectDir, home);
+      expect(out.exitCode).toBe(0);
+      const lines = out.stdout.split('\n');
+      const approvalLineIdx = lines.findIndex((l) => l.includes('q-approval'));
+      const hitlLineIdx = lines.findIndex((l) => l.includes('q-hitl'));
+      expect(approvalLineIdx).toBeGreaterThanOrEqual(0);
+      expect(hitlLineIdx).toBeGreaterThanOrEqual(0);
+      // The two kinds must NOT read as one interchangeable queue: the
+      // approval line is labelled as an approval decision, the flow-hitl
+      // line is not, and vice versa.
+      expect(lines[approvalLineIdx]).toMatch(/approval/i);
+      expect(lines[hitlLineIdx]).not.toMatch(/approval/i);
+      expect(out.stdout).toContain('q_kind_approval');
+      expect(out.stdout).toContain('q_kind_hitl');
+    });
+
+    it('answer <id> "<free text>" on a flow-hitl question resumes the asking session', () => {
+      run(
+        ['automations', 'create', 'hitl-answer-test', '--title', 'Hitl Answer Test', '--days', 'daily', '--at', '09:00', '--timeout', '1'],
+        projectDir, home,
+      );
+
+      const sessionId = 'fake-session-abc123';
+      writeSessionBindingFixture(home, 'hitl-answer-test', sessionId);
+      const qPath = writeQuestionFixture(projectDir, {
+        slug: 'hitl-answer-test', id: 'q_hitl_answer', kind: 'flow-hitl', sessionId,
+        question: 'Should I publish the digest now, or hold it for review?',
+      });
+
+      const out = run(['automations', 'answer', 'q_hitl_answer', 'go ahead and publish'], projectDir, home);
+      // claude is unreachable by construction (SAFE_PATH + isolated HOME — see
+      // the module doc) — the same deterministic 'failed' disposition the
+      // main create→run--force test documents, which proves this actually
+      // resumed a real spawn rather than short-circuiting on a bad session.
+      expect(out.exitCode).toBe(1);
+
+      const q = JSON.parse(readFileSync(qPath, 'utf-8'));
+      expect(q.state).toBe('answered');
+      expect(q.answer).toBe('go ahead and publish');
+    });
+
+    it('answer <id> approve on an approval question approves the manifest and starts a fresh run', () => {
+      run(
+        ['automations', 'create', 'approve-flow', '--title', 'Approve Flow', '--days', 'daily', '--at', '09:00', '--timeout', '1'],
+        projectDir, home,
+      );
+      editHashedPrompt(projectDir, 'approve-flow');
+      expect(run(['automations', 'show', 'approve-flow'], projectDir, home).stdout).toMatch(/NOT approved/i);
+
+      const qPath = writeQuestionFixture(projectDir, {
+        slug: 'approve-flow', id: 'q_appr_ok', kind: 'approval',
+        question: 'The manifest changed since it was last approved — trust it?',
+      });
+
+      const out = run(['automations', 'answer', 'q_appr_ok', 'approve'], projectDir, home);
+      expect(out.stdout).toMatch(/approved/i);
+
+      const afterShow = run(['automations', 'show', 'approve-flow'], projectDir, home);
+      expect(afterShow.stdout).toMatch(/approval:\s*approved/i);
+
+      const q = JSON.parse(readFileSync(qPath, 'utf-8'));
+      expect(q.state).toBe('answered');
+
+      // The exact primitive `automations run` uses fired a real (deterministically
+      // failing, claude-unreachable) attempt — proof a fresh run actually started.
+      const cachePath = join(projectDir, '_dream_context', 'automations', 'cache', 'approve-flow.json');
+      expect(existsSync(cachePath)).toBe(true);
+    });
+
+    it('answer <id> reject on an approval question approves nothing — the automation stays blocked', () => {
+      run(
+        ['automations', 'create', 'reject-flow', '--title', 'Reject Flow', '--days', 'daily', '--at', '09:00'],
+        projectDir, home,
+      );
+      editHashedPrompt(projectDir, 'reject-flow');
+
+      const qPath = writeQuestionFixture(projectDir, {
+        slug: 'reject-flow', id: 'q_appr_no', kind: 'approval',
+        question: 'The manifest changed since it was last approved — trust it?',
+      });
+
+      const out = run(['automations', 'answer', 'q_appr_no', 'reject'], projectDir, home);
+      expect(out.exitCode).toBe(0);
+      expect(out.stdout).toMatch(/reject/i);
+
+      // Still blocked afterwards.
+      const afterShow = run(['automations', 'show', 'reject-flow'], projectDir, home);
+      expect(afterShow.stdout).toMatch(/NOT approved/i);
+
+      const q = JSON.parse(readFileSync(qPath, 'utf-8'));
+      expect(q.state).toBe('answered');
+
+      // Nothing ran — same absence-of-cache proof the disabled-tick-test above
+      // uses: `recordRun` is the ONLY writer of this file and it is reachable
+      // only from inside `runAutomation`.
+      const cachePath = join(projectDir, '_dream_context', 'automations', 'cache', 'reject-flow.json');
+      expect(existsSync(cachePath)).toBe(false);
+    });
+
+    it('answer <id> "<free text>" on an approval question refuses rather than treating it as consent', () => {
+      run(
+        ['automations', 'create', 'freetext-flow', '--title', 'Freetext Flow', '--days', 'daily', '--at', '09:00'],
+        projectDir, home,
+      );
+      editHashedPrompt(projectDir, 'freetext-flow');
+
+      const qPath = writeQuestionFixture(projectDir, {
+        slug: 'freetext-flow', id: 'q_appr_free', kind: 'approval',
+        question: 'The manifest changed since it was last approved — trust it?',
+      });
+
+      const out = run(['automations', 'answer', 'q_appr_free', 'no, this looks wrong'], projectDir, home);
+      expect(out.exitCode).toBe(1);
+      expect(out.stdout).toMatch(/explicit decision/i);
+
+      // Never claimed — a human typing "no, this looks wrong" must never be
+      // read as consent, and it must not even resolve the question either way.
+      const q = JSON.parse(readFileSync(qPath, 'utf-8'));
+      expect(q.state).toBe('pending');
+
+      const afterShow = run(['automations', 'show', 'freetext-flow'], projectDir, home);
+      expect(afterShow.stdout).toMatch(/NOT approved/i);
+      const cachePath = join(projectDir, '_dream_context', 'automations', 'cache', 'freetext-flow.json');
+      expect(existsSync(cachePath)).toBe(false);
+    });
+
+    it('answer on an unknown id fails clearly rather than guessing which question was meant', () => {
+      const out = run(['automations', 'answer', 'q_does_not_exist', 'yes'], projectDir, home);
+      expect(out.exitCode).toBe(1);
+      expect(out.stdout).toMatch(/not open/i);
+    });
+  });
+
+  // ── telegram (per-automation) ──────────────────────────────────────────────
+  describe('telegram (per-automation)', () => {
+    it('setup refuses when no slug is given', () => {
+      const out = run(['automations', 'telegram', 'setup', '--token', 'tok', '--chat', '123'], projectDir, home);
+      expect(out.exitCode).not.toBe(0);
+      expect(out.stdout.toLowerCase()).toContain('slug');
+    });
+
+    it('setup requires an existing automation, writes a 0600 per-slug file, and test/off are slug-scoped', () => {
+      run(['automations', 'create', 'telegram-test', '--title', 'Telegram Test', '--days', 'daily', '--at', '09:00'], projectDir, home);
+
+      const missingOut = run(['automations', 'telegram', 'setup', 'does-not-exist', '--token', 'tok', '--chat', '123'], projectDir, home);
+      expect(missingOut.exitCode).toBe(1);
+      expect(missingOut.stdout).toMatch(/no such automation/i);
+
+      const setupOut = run(['automations', 'telegram', 'setup', 'telegram-test', '--token', 'tok-123', '--chat', '999'], projectDir, home);
+      expect(setupOut.exitCode).toBe(0);
+      expect(setupOut.stdout).toMatch(/configured for "telegram-test"/i);
+
+      const cfgPath = join(home, '.dreamcontext', 'telegram', 'telegram-test.json');
+      expect(existsSync(cfgPath)).toBe(true);
+      const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
+      expect(cfg.chatId).toBe('999');
+
+      const offOut = run(['automations', 'telegram', 'off', 'telegram-test'], projectDir, home);
+      expect(offOut.exitCode).toBe(0);
+      expect(offOut.stdout).toMatch(/off for "telegram-test"/i);
+      expect(existsSync(cfgPath)).toBe(false);
+
+      // Off on an automation that was never configured is a clean no-op, not
+      // an error — and it must not invent a config file.
+      const offAgainOut = run(['automations', 'telegram', 'off', 'telegram-test'], projectDir, home);
+      expect(offAgainOut.exitCode).toBe(0);
+      expect(offAgainOut.stdout).toMatch(/not configured/i);
+      expect(existsSync(cfgPath)).toBe(false);
+    });
+  });
+
+  // ── flow ─────────────────────────────────────────────────────────────────
+  describe('flow', () => {
+    it('prints the automation\'s own block, and says "derived" once that block is removed', () => {
+      run(
+        ['automations', 'create', 'flow-show-test', '--title', 'Flow Show Test', '--days', 'daily', '--at', '09:00'],
+        projectDir, home,
+      );
+
+      const withBlock = run(['automations', 'flow', 'flow-show-test'], projectDir, home);
+      expect(withBlock.exitCode).toBe(0);
+      expect(withBlock.stdout).not.toMatch(/derived/i);
+      expect(withBlock.stdout).toMatch(/no problems found/i);
+      expect(withBlock.stdout).toMatch(/trigger/i);
+
+      // Strip the `## Flow` block — it is always the LAST section a fresh
+      // manifest has (`writeFlowSection` appends when absent), so truncating
+      // at its heading removes exactly the block and nothing else.
+      const manifestPath = join(projectDir, '_dream_context', 'automations', 'flow-show-test.md');
+      const content = readFileSync(manifestPath, 'utf-8');
+      const flowIdx = content.indexOf('## Flow');
+      expect(flowIdx).toBeGreaterThan(-1);
+      writeFileSync(manifestPath, `${content.slice(0, flowIdx).trimEnd()}\n`, 'utf-8');
+
+      const derivedOut = run(['automations', 'flow', 'flow-show-test'], projectDir, home);
+      expect(derivedOut.exitCode).toBe(0);
+      expect(derivedOut.stdout).toMatch(/derived/i);
+      expect(derivedOut.stdout).toMatch(/no problems found/i);
+    });
+
+    it('flow on an unknown slug fails clearly', () => {
+      const out = run(['automations', 'flow', 'does-not-exist'], projectDir, home);
+      expect(out.exitCode).toBe(1);
+      expect(out.stdout).toMatch(/no such automation/i);
+    });
+  });
+
+  // ── create writes a ## Flow block ───────────────────────────────────────
+  describe('create writes a ## Flow block', () => {
+    it('produces a parseable ## Flow block with no hitl node by default', () => {
+      run(
+        ['automations', 'create', 'flow-create-test', '--title', 'Flow Create Test', '--days', 'daily', '--at', '09:00'],
+        projectDir, home,
+      );
+      const manifestPath = join(projectDir, '_dream_context', 'automations', 'flow-create-test.md');
+      const content = readFileSync(manifestPath, 'utf-8');
+      const flow = parseFlowSection(content);
+      expect(flow).not.toBeNull();
+      expect(flow!.nodes.length).toBeGreaterThan(0);
+      // A default `hitl` node would make every newly created automation stop
+      // and ask instead of ever publishing — it must only appear when
+      // `--review` was explicitly requested.
+      expect(flow!.nodes.some((n) => n.kind === 'hitl')).toBe(false);
+    });
+
+    it('with --review agent DOES draw a hitl node — the graph must stay honest about what was asked for', () => {
+      run(
+        [
+          'automations', 'create', 'flow-create-review-test', '--title', 'Flow Create Review Test',
+          '--days', 'daily', '--at', '09:00', '--review', 'agent',
+        ],
+        projectDir, home,
+      );
+      const manifestPath = join(projectDir, '_dream_context', 'automations', 'flow-create-review-test.md');
+      const flow = parseFlowSection(readFileSync(manifestPath, 'utf-8'));
+      expect(flow).not.toBeNull();
+      expect(flow!.nodes.some((n) => n.kind === 'hitl')).toBe(true);
+    });
   });
 });

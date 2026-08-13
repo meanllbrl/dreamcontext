@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAutomations, useAutomationRunJob } from '../../hooks/useAutomations';
 import { usePersistedState } from '../../hooks/usePersistedState';
+import { useVault } from '../../context/VaultContext';
+import { openAutomationCreateChat } from '../../lib/automationCreateChat';
 import { AutomationCard } from './AutomationCard';
 import { AutomationDetailPanel } from './AutomationDetailPanel';
 import { AutomationsDispatcherBar } from './AutomationsDispatcherBar';
-import { AutomationsReviewQueue } from './AutomationsReviewQueue';
 import { AutomationsEmptyState } from './AutomationsEmptyState';
 import './AutomationsBoard.css';
 
@@ -24,11 +25,19 @@ function applyOrder<T extends { slug: string }>(items: T[], order: string[]): T[
 export function AutomationsBoard() {
   const { data: automations, isLoading, isError, error } = useAutomations();
   const { data: runJob } = useAutomationRunJob();
+  const { vault, bus } = useVault();
   const [order, setOrder] = usePersistedState<string[]>('automations:order:v1', []);
   const [toast, setToast] = useState<string | null>(null);
   const [openSlug, setOpenSlug] = useState<string | null>(null);
+  // D5: a card's own "open chat" button skips straight to that automation's
+  // latest run instead of landing on the history list first — see
+  // `AutomationDetailPanel`'s `autoOpenLatestRun` prop. Reset alongside
+  // `openSlug` on close so the NEXT open (a plain card click) never inherits a
+  // stale "jump straight to the run" intent from a previous one.
+  const [openIntent, setOpenIntent] = useState<'detail' | 'run'>('detail');
   const [drag, setDrag] = useState<string | null>(null);
   const [dragOverSlug, setDragOverSlug] = useState<string | null>(null);
+  const [creatingChat, setCreatingChat] = useState(false);
 
   useEffect(() => {
     if (!toast) return;
@@ -40,6 +49,14 @@ export function AutomationsBoard() {
   // Re-derive from the live list so the panel header (approval, cache state)
   // refreshes after a run/approve instead of showing a stale snapshot.
   const openSummary = openSlug ? (automations ?? []).find((s) => s.slug === openSlug) ?? null : null;
+  // Automations that have NEVER been approved on this machine — nothing will
+  // run for them until a human reviews and approves. `approved` and
+  // `approvalReason` are both live-computed server-side (`checkApproval`), so
+  // this list is never stale the way a cached run status would be.
+  const neverApproved = useMemo(
+    () => (automations ?? []).filter((s) => !s.approved && s.approvalReason === 'never-approved'),
+    [automations],
+  );
   // The server allows exactly ONE run-now job per project (any slug) — every
   // card's "Run now" button needs to know if a DIFFERENT one is mid-run.
   const runningSlug = runJob?.status === 'running' ? runJob.slug : null;
@@ -57,6 +74,40 @@ export function AutomationsBoard() {
     setOrder(slugs);
     endDrag();
   }, [drag, ordered, setOrder, endDrag]);
+
+  const handleOpenDetail = useCallback((slug: string) => {
+    setOpenIntent('detail');
+    setOpenSlug(slug);
+  }, []);
+
+  const handleOpenRun = useCallback((slug: string) => {
+    setOpenIntent('run');
+    setOpenSlug(slug);
+  }, []);
+
+  const handleCloseDetail = useCallback(() => {
+    setOpenSlug(null);
+    setOpenIntent('detail');
+  }, []);
+
+  /**
+   * D3: "New automation" opens a chat session whose agent interviews the user then writes
+   * the manifest. `creatingChat` only guards against a double-click firing two sessions in
+   * the gap before the surface's ACK returns — it is not a loading state for the chat itself
+   * (that lives in the opened tab, not here).
+   */
+  const handleCreateAutomation = () => {
+    if (creatingChat) return;
+    setCreatingChat(true);
+    void openAutomationCreateChat(bus, vault)
+      .then((accepted) => {
+        if (!accepted) {
+          setToast('Could not open a new automation chat — this needs the desktop app with the claude CLI, and Agents enabled in Settings.');
+        }
+      })
+      .catch((err) => setToast(`Could not open a new automation chat — ${(err as Error).message}`))
+      .finally(() => setCreatingChat(false));
+  };
 
   if (isLoading) {
     return (
@@ -91,11 +142,40 @@ export function AutomationsBoard() {
 
   return (
     <div className="auto-board">
-      <AutomationsDispatcherBar onToast={setToast} />
+      <div className="auto-board-toolbar">
+        <AutomationsDispatcherBar onToast={setToast} />
+        {/* D3: the one place on the (non-empty) board a human reaches for a fresh
+            automation — the CLI scaffold command still works and stays documented
+            on the empty state, this is the chat-authored path. */}
+        <button
+          type="button"
+          className="auto-board-new-btn"
+          onClick={handleCreateAutomation}
+          disabled={creatingChat}
+        >
+          + New automation
+        </button>
+      </div>
       {/* Above the grid, under the scheduler switch: the switch says whether
-          automations CAN run, this says which ones are waiting on you before
-          they will. Renders nothing when the queue is empty. */}
-      <AutomationsReviewQueue onToast={setToast} />
+          automations CAN run at all, this says which ones have never been
+          reviewed on this machine, so nothing has run for them yet. Renders
+          nothing when every automation has been approved at least once. */}
+      {neverApproved.length > 0 && (
+        <div className="auto-never-approved">
+          <span className="auto-never-approved-label">Never approved on this machine:</span>
+          {neverApproved.map((s) => (
+            <button
+              key={s.slug}
+              type="button"
+              className="auto-badge auto-badge--blocked auto-never-approved-chip"
+              onClick={() => handleOpenDetail(s.slug)}
+              title={`Review and approve ${s.title}`}
+            >
+              {s.title}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div
         className="auto-board-grid"
@@ -116,7 +196,8 @@ export function AutomationsBoard() {
             summary={summary}
             runningSlug={runningSlug}
             onToast={setToast}
-            onOpen={setOpenSlug}
+            onOpen={handleOpenDetail}
+            onOpenRun={handleOpenRun}
             dragging={drag === summary.slug}
             dropTarget={dragOverSlug === summary.slug && drag !== summary.slug}
             onDragStart={(e) => {
@@ -146,7 +227,8 @@ export function AutomationsBoard() {
           key={openSummary.slug}
           summary={openSummary}
           runningSlug={runningSlug}
-          onClose={() => setOpenSlug(null)}
+          autoOpenLatestRun={openIntent === 'run'}
+          onClose={handleCloseDetail}
           onToast={setToast}
         />
       )}

@@ -23,6 +23,23 @@
  * (the fresh-machine state) must be a SILENT no-op that reads only the
  * registry file and manifest directories — no shell, no `claude`, spawned.
  *
+ * THE DRAIN, BEFORE `isDue()` (D9). A fire that could not run while the
+ * per-slug lock was held (`queue.ts`'s whole reason to exist) is drained and
+ * attempted FIRST, before this pass asks `isDue()` a fresh question that has
+ * nothing to do with what is already owed. Draining re-resolves the manifest
+ * rather than trusting the queue entry's own copy of it: `manifest.enabled`
+ * is otherwise checked ONLY inside the `isDue()` loop below, and firing a
+ * drained entry without repeating that check would let a disabled automation
+ * with a stale queue entry run anyway (A4). A disabled automation's queued
+ * fire is KEPT — re-enqueued with its ORIGINAL `firedAt` — never dropped: the
+ * user toggling something off for an hour must not destroy a fire it is owed
+ * (R5); the queue's own 7-day TTL is what eventually bounds it. A fire whose
+ * automation no longer exists at all IS dropped (the drain already cleared
+ * its entry, so there is nothing left to keep). A slug the drain phase
+ * actually ran is skipped by the `isDue()` loop below — it already has its
+ * verdict for this pass, and firing it again would spawn a second `claude`
+ * for the same owed fire in one tick.
+ *
  * `killRunGroup` (runner.ts) is CLI-ONLY and is never imported here — there is
  * no automatic reaper (see the task's Constraints & Decisions on orphaned
  * runs). `tests/unit/automations-no-auto-reap.test.ts` source-scans this file
@@ -32,7 +49,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDue, type DueVerdict } from './schedule.js';
-import { listAutomations, readAutomationCache } from './store.js';
+import { getAutomation, listAutomations, readAutomationCache } from './store.js';
+import { drainQueue, enqueueFire } from './queue.js';
 import { listRegisteredProjects, recordTickCompleted, recordTickStarted } from './registry.js';
 import { rotateLogIfLarge } from './launchd.js';
 import { runAutomation, type RunOutcome } from './runner.js';
@@ -73,8 +91,9 @@ export interface TickOptions {
  *  inspect WHY each considered automation did or didn't run, without needing
  *  the full `RunOutcome` for the ones that never attempted a run at all.
  *
- *  `'blocked'` and `'orphaned'` are `RunOutcome.status` values `isDue` cannot
- *  itself predict (approval state, a previous run's live orphan) — surfaced
+ *  `'blocked'`, `'orphaned'`, `'awaiting-review'` and `'awaiting-approval'` are
+ *  `RunOutcome.status` values `isDue` cannot itself predict (approval state, a
+ *  previous run's live orphan, a question nobody has answered yet) — surfaced
  *  here when the actual run outcome reaches them. Every OTHER non-`'due'`
  *  run outcome (`'ok'`, `'failed'`, `'timeout'`, `'deferred'`) has no
  *  dedicated slot in this literal union; those stay `'due'` (the automation
@@ -83,7 +102,7 @@ export interface TickOptions {
  *  mapping. */
 export interface SlugVerdict {
   slug: string;
-  verdict: DueVerdict['reason'] | 'blocked' | 'disabled' | 'orphaned' | 'awaiting-review';
+  verdict: DueVerdict['reason'] | 'blocked' | 'disabled' | 'orphaned' | 'awaiting-review' | 'awaiting-approval';
 }
 
 export interface TickProjectResult {
@@ -91,9 +110,20 @@ export interface TickProjectResult {
   contextRoot: string;
   /** Total manifests read from disk this pass (due or not, enabled or not). */
   considered: number;
-  /** One entry per automation actually handed to `runImpl`, in run order. */
+  /** One entry per automation actually handed to `runImpl`, in run order —
+   *  a slug drained off the queue and run counts here too, and runs FIRST
+   *  (the drain phase precedes the `isDue()` loop), before any slug `isDue()`
+   *  found due this same pass. */
   ran: RunOutcome[];
-  /** One entry per considered manifest — always `considered.length` long. */
+  /** One entry per considered manifest — always `considered.length` long.
+   *  A drained-and-run slug contributes its ONE entry from the drain phase
+   *  (mapped through the same `verdictFor` the `isDue()` loop uses); a
+   *  drained-but-kept (disabled) or drained-but-outside-catch-up slug
+   *  contributes none from the drain phase — it is still a manifest on disk,
+   *  so the `isDue()` loop below evaluates it fresh and contributes the one
+   *  entry itself. A drained slug whose automation no longer exists at all
+   *  contributes nothing anywhere, which is correct: it is not in `considered`
+   *  either, since it was never read back off disk this pass. */
   verdicts: SlugVerdict[];
 }
 
@@ -115,20 +145,32 @@ export interface TickAllResult {
  *  run-time-only gates `isDue` cannot foresee); every other status collapses
  *  to `'due'`, with the full status still available in `ran[]`. */
 function verdictFor(status: RunOutcome['status']): SlugVerdict['verdict'] {
-  // `awaiting-review` joins the two run-time-only gates for the same reason
-  // they are here: `isDue` cannot foresee it either (it depends on whether a
-  // human has answered a card since the last pass), and a tick that reported it
-  // as a plain `due` would say an automation ran when it deliberately did not.
-  if (status === 'blocked' || status === 'orphaned' || status === 'awaiting-review') return status;
+  // `awaiting-review` and `awaiting-approval` join the two run-time-only gates
+  // for the same reason those are here: `isDue` cannot foresee either of them
+  // (both depend on whether a human has answered a question since the last
+  // pass), and a tick that reported them as a plain `due` would say an
+  // automation ran when it deliberately stopped and asked instead. They stay
+  // DISTINCT from each other because they are different questions: one asks
+  // about a run's own work, the other asks whether to trust a changed manifest
+  // at all — and only the second leaves the automation ungated until answered.
+  if (
+    status === 'blocked' ||
+    status === 'orphaned' ||
+    status === 'awaiting-review' ||
+    status === 'awaiting-approval'
+  ) {
+    return status;
+  }
   return 'due';
 }
 
 /**
- * Tick ONE project: list its manifests, evaluate dueness (skipping disabled
- * automations without ever calling `isDue` for them), and run every due one
- * to completion, in order, before considering the next. Reads nothing beyond
- * `contextRoot`'s own manifest/cache files — a project with zero due
- * automations spawns nothing.
+ * Tick ONE project: drain the queue (D9), evaluate dueness for everything
+ * else (skipping disabled automations without ever calling `isDue` for
+ * them), and run every due one to completion, in order, before considering
+ * the next. Reads nothing beyond `contextRoot`'s own manifest/cache files and
+ * this machine's queue file — a project with zero due automations and zero
+ * queued fires spawns nothing.
  */
 export async function tickProject(projectRoot: string, opts: TickOptions = {}): Promise<TickProjectResult> {
   const now = opts.now ?? new Date();
@@ -139,8 +181,62 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   const manifests = listAutomations(contextRoot);
   const verdicts: SlugVerdict[] = [];
   const ran: RunOutcome[] = [];
+  // Slugs the drain phase already ran this pass — the `isDue()` loop below
+  // must not hand them a second run for the same owed fire.
+  const drainedAndRan = new Set<string>();
 
+  // ── Drain, BEFORE isDue() (D9/A4/R5 — see this module's header) ──────────
+  const drained = drainQueue(projectRoot, opts.home, now.getTime());
+  for (const fire of drained) {
+    // Re-resolve the manifest rather than trusting the queue entry: it may
+    // have been removed, or disabled, since it was queued.
+    const manifest = getAutomation(contextRoot, fire.slug);
+    if (!manifest) {
+      logFn(`[automations] queued fire for ${fire.slug} has no manifest — dropping`);
+      continue;
+    }
+    if (!manifest.enabled) {
+      // OWED, not lost: re-queue with the ORIGINAL firedAt so a later drain
+      // still advances the watermark to the fire it answers for, never to
+      // whenever it happened to be re-enqueued. The `isDue()` loop below
+      // still gives this slug its normal 'disabled' verdict, so this branch
+      // deliberately adds none — `verdicts[]` stays `considered.length` long.
+      enqueueFire(projectRoot, fire.slug, fire.firedAt, opts.home, now.getTime());
+      logFn(`[automations] ${fire.slug} is disabled — the queued fire from ${fire.firedAt} is kept for later`);
+      continue;
+    }
+
+    // Catch-up bound: a queued fire this old is no more useful than a
+    // schedule-derived one `isDue` would itself refuse as 'outside-catchup'.
+    // `schedule.ts` doesn't export that check standalone (it only ever
+    // applies it to a schedule-derived fire), so it is reproduced here with
+    // the identical formula (`isDue`'s own `catchupHours * 60 * 60 * 1000`).
+    const firedAtMs = Date.parse(fire.firedAt);
+    const catchupMs = manifest.catchupHours * 60 * 60 * 1000;
+    if (!Number.isFinite(firedAtMs) || now.getTime() - firedAtMs > catchupMs) {
+      logFn(
+        `[automations] queued fire for ${fire.slug} (fired ${fire.firedAt}) is outside its ${manifest.catchupHours}h catch-up window — dropping`,
+      );
+      continue;
+    }
+
+    logFn(`[automations] ${fire.slug} draining a queued fire (fired ${fire.firedAt}) — running`);
+    const outcome = await runImpl(contextRoot, fire.slug, {
+      now: () => now,
+      fireAt: new Date(firedAtMs),
+      home: opts.home,
+      log: logFn,
+    });
+    ran.push(outcome);
+    verdicts.push({ slug: fire.slug, verdict: verdictFor(outcome.status) });
+    drainedAndRan.add(fire.slug);
+    logFn(`[automations] ${fire.slug} finished (drained): ${outcome.status}`);
+  }
+
+  // ── isDue(), for everything the drain phase didn't already run ──────────
   for (const manifest of manifests) {
+    if (drainedAndRan.has(manifest.slug)) continue;
+
     if (!manifest.enabled) {
       verdicts.push({ slug: manifest.slug, verdict: 'disabled' });
       continue;
