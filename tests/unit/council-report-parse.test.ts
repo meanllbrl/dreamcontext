@@ -4,6 +4,7 @@ import {
   computeDebateStats,
 } from '../../dashboard/src/components/council/lib/councilStats';
 import { extractExecutiveSummary } from '../../src/lib/council';
+import { extractNamedSubsection } from '../../src/server/routes/council';
 
 /**
  * Regression: every section parser in the council pipeline terminated its body
@@ -104,5 +105,43 @@ describe('extractExecutiveSummary', () => {
       'ignored',
     ].join('\n');
     expect(extractExecutiveSummary(body)).toBe('Zaman kısıtı nedeniyle Zorunlu kapsam daraltıldı.');
+  });
+});
+
+/**
+ * The heading is interpolated into a live RegExp. Its escape was written as if
+ * it sat inside a string literal, so the character class closed early and the
+ * sanitizer escaped nothing at all — every metacharacter reached the pattern
+ * verbatim. No caller passes anything but a fixed literal today, so nothing
+ * was exploitable; these pin the control so it stays real if one ever does.
+ */
+describe('extractNamedSubsection — heading escaping', () => {
+  const body = [
+    '### Open questions (v2)',
+    '',
+    'gerçek gövde',
+    '',
+    '### Position',
+    '',
+    'başka bölüm',
+  ].join('\n');
+
+  it('matches a heading whose text contains regex metacharacters', () => {
+    expect(extractNamedSubsection(body, 'Open questions (v2)')).toBe('gerçek gövde');
+  });
+
+  it('treats a metacharacter heading as literal text, not as a pattern', () => {
+    // Unescaped, `.` would match the space and this would wrongly hit the
+    // real heading; escaped, it must find nothing.
+    expect(extractNamedSubsection(body, 'Open.questions.(v2)')).toBeNull();
+    expect(extractNamedSubsection(body, 'Position|Open questions (v2)')).toBeNull();
+  });
+
+  it('cannot be turned into a catastrophically backtracking pattern', () => {
+    // `(a+)+$` injected raw is the classic ReDoS shape. Escaped, it is a
+    // heading that simply does not exist — and it returns promptly.
+    const started = Date.now();
+    expect(extractNamedSubsection('### ' + 'a'.repeat(40) + '!\n\nx', '(a+)+$')).toBeNull();
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 });

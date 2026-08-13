@@ -64,10 +64,23 @@ interface DebateDetail {
   personas: PersonaDetail[];
 }
 
-function extractNamedSubsection(body: string, heading: string): string | null {
+/**
+ * Body of a `### <heading>` subsection, or null.
+ *
+ * `heading` is interpolated into a live RegExp, so it MUST be escaped. The
+ * escape here used to be written as if it lived inside a string literal —
+ * `[.*+?^${}()|[\\]\\\\]` — but this is a regex literal, so the class closed
+ * early at its second `]` and the trailing atoms fell outside it. The net
+ * effect was a sanitizer that escaped NOTHING: `a.b`, `a(b)c`, `a[b]c` all
+ * passed through untouched. Every current caller passes a fixed literal, so
+ * nothing was exploitable — but a control that silently does nothing is worse
+ * than no control, because the signature invites the next caller to trust it.
+ * Exported for the test that pins the escaping.
+ */
+export function extractNamedSubsection(body: string, heading: string): string | null {
   const pattern = new RegExp(
     // `$(?![\s\S])` is end-of-input; JS has no `\Z` (it would read as a literal "Z").
-    `^###\\s+${heading.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}\\s*\\n([\\s\\S]*?)(?=^###\\s+|$(?![\\s\\S]))`,
+    `^###\\s+${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\n([\\s\\S]*?)(?=^###\\s+|$(?![\\s\\S]))`,
     'm',
   );
   const match = body.match(pattern);
