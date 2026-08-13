@@ -19,7 +19,8 @@
  *     start is never overwritten), and rule 1 applies to that stamp.
  *  3. Reaching `completed` stamps the real end: `due_date` becomes the
  *     completion date, so the timeline shows what actually happened rather than
- *     what was planned.
+ *     what was planned. A task finished without ever having a start went from
+ *     not-started straight to done, so it gets today at BOTH ends.
  */
 
 /** True for a real calendar date in YYYY-MM-DD form (rejects e.g. 2026-13-40). */
@@ -116,8 +117,15 @@ export function dateUpdatesForStatus(
   }
 
   if (newStatus === 'completed') {
+    // No start on a finished task means it went straight from not-started to
+    // done, so `now` is both ends of the (same-day) window. Otherwise only the
+    // end is stamped — and a still-future planned start clamps it rather than
+    // writing an inverted window.
     const end = isCalendarDate(start) && start > now ? start : now;
-    return end === due ? {} : { due_date: end };
+    return {
+      ...(start ? {} : { start_date: now }),
+      ...(end === due ? {} : { due_date: end }),
+    };
   }
 
   return {};

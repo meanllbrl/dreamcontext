@@ -23,6 +23,7 @@ import {
   isCalendarDate,
   dueDateAfterStartMove,
   dateUpdatesForStatus,
+  type TaskDateUpdates,
 } from '../../lib/task-dates.js';
 import {
   getTaskBackend,
@@ -81,6 +82,30 @@ function parseObjectiveSlugs(raw: string): string[] | null {
 // Re-exported for the existing unit test + any caller that imported it from the
 // CLI before the date rules moved to their shared home.
 export { shouldStampStartDate } from '../../lib/task-dates.js';
+
+/**
+ * Report the date stamps a status transition wrote, so no verb rewrites a
+ * planned date silently. Prints nothing when the transition wrote no dates.
+ */
+function reportDateStamps(
+  status: string,
+  dates: TaskDateUpdates,
+  prevDue: string | null | undefined,
+): void {
+  if (dates.start_date) {
+    console.log(chalk.dim(status === 'completed'
+      ? `  start date set to ${dates.start_date} (never started — closed same-day).`
+      : `  start date set to ${dates.start_date} (work started).`));
+  }
+  if (dates.due_date) {
+    if (status === 'completed') {
+      const replaced = prevDue && prevDue !== dates.due_date ? `, replacing the planned ${prevDue}` : '';
+      console.log(chalk.dim(`  due date set to ${dates.due_date} (work finished)${replaced}.`));
+    } else {
+      console.log(chalk.dim(`  due date moved ${prevDue} → ${dates.due_date} (the new start was past it).`));
+    }
+  }
+}
 
 /**
  * Set or CLEAR one end of a task's date range. `raw` is a YYYY-MM-DD or the
@@ -1166,6 +1191,10 @@ export function registerTasksCommand(program: Command): void {
 
       await backend.complete(slug, summary);
       success(`Task completed: ${slug}`);
+      // `complete()` stamps the real end of the window (and the start too, when a
+      // task went straight from not-started to done). Report it, so this verb is
+      // as loud about rewriting a planned date as `tasks status … completed` is.
+      reportDateStamps('completed', dateUpdatesForStatus('completed', current, today()), current?.due_date);
     });
 
   // Change status (todo, in_progress, in_review, completed)
@@ -1211,14 +1240,7 @@ export function registerTasksCommand(program: Command): void {
       const dates = stamping ? dateUpdatesForStatus(newStatus, before, now) : {};
       await backend.updateFields(slug, { status: newStatus, updated_at: now, ...dates });
       success(`Task ${slug} → ${newStatus}`);
-      if (dates.start_date) {
-        console.log(chalk.dim(`  start date set to ${dates.start_date} (work started).`));
-      }
-      if (dates.due_date) {
-        console.log(chalk.dim(newStatus === 'completed'
-          ? `  due date set to ${dates.due_date} (work finished).`
-          : `  due date moved ${before?.due_date} → ${dates.due_date} (the new start was past it).`));
-      }
+      reportDateStamps(newStatus, dates, before?.due_date);
     });
 
   // Log entry (cross-session continuity)

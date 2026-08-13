@@ -76,18 +76,48 @@ describe('dateUpdatesForStatus', () => {
   it('stamps the real end on completed, overwriting the planned due date', () => {
     expect(dateUpdatesForStatus('completed', { start_date: '2026-08-01', due_date: '2026-09-01' }, '2026-08-13'))
       .toEqual({ due_date: '2026-08-13' });
-    expect(dateUpdatesForStatus('completed', { start_date: null, due_date: null }, '2026-08-13'))
-      .toEqual({ due_date: '2026-08-13' });
   });
 
-  it('writes nothing when the due date is already the completion date', () => {
+  it('gives a never-started task today at BOTH ends', () => {
+    // No start on a finished task means it went not-started → done in one move.
+    expect(dateUpdatesForStatus('completed', { start_date: null, due_date: null }, '2026-08-13'))
+      .toEqual({ start_date: '2026-08-13', due_date: '2026-08-13' });
+    // …and the start is still stamped when the due date already reads today.
     expect(dateUpdatesForStatus('completed', { start_date: null, due_date: '2026-08-13' }, '2026-08-13'))
+      .toEqual({ start_date: '2026-08-13' });
+  });
+
+  it('writes nothing when the window already matches the completion date', () => {
+    expect(dateUpdatesForStatus('completed', { start_date: '2026-08-13', due_date: '2026-08-13' }, '2026-08-13'))
       .toEqual({});
   });
 
   it('clamps the stamped end to a future planned start rather than inverting', () => {
     expect(dateUpdatesForStatus('completed', { start_date: '2026-09-01', due_date: null }, '2026-08-13'))
       .toEqual({ due_date: '2026-09-01' });
+  });
+
+  it('never emits an inverted window from any status transition', () => {
+    const windows = [
+      { start_date: null, due_date: null },
+      { start_date: null, due_date: '2026-01-01' },
+      { start_date: '2026-01-01', due_date: '2026-01-05' },
+      { start_date: '2026-12-01', due_date: null },
+      { start_date: '2026-12-01', due_date: '2026-12-31' },
+      { start_date: '2026-05-01', due_date: '2026-01-01' }, // already-corrupt legacy row
+    ];
+    for (const w of windows) {
+      for (const status of ['todo', 'in_progress', 'in_review', 'completed']) {
+        const out = dateUpdatesForStatus(status, w, '2026-08-13');
+        const start = out.start_date ?? w.start_date;
+        const due = out.due_date ?? w.due_date;
+        // Only assert on windows this transition actually touched — a legacy
+        // start>due row it declines to rewrite stays as broken as it was.
+        if (Object.keys(out).length > 0 && start && due) {
+          expect(start <= due, `${status} on ${JSON.stringify(w)} → ${start}..${due}`).toBe(true);
+        }
+      }
+    }
   });
 
   it('leaves todo and in_review untouched', () => {

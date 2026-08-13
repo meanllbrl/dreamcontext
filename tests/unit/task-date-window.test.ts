@@ -30,6 +30,7 @@ vi.mock('../../src/lib/id.js', async (importOriginal) => {
 import { registerTasksCommand } from '../../src/cli/commands/tasks.js';
 import { handleTasksUpdate } from '../../src/server/routes/tasks.js';
 import { LocalTaskBackend } from '../../src/lib/task-backend/local.js';
+import { readSleepState } from '../../src/cli/commands/sleep.js';
 
 const TODAY = '2026-06-11';
 
@@ -62,6 +63,12 @@ async function patch(slug: string, body: unknown): Promise<{ statusCode: number;
   const res = makeRes();
   await handleTasksUpdate(req, res, { slug }, contextRoot);
   return res;
+}
+
+/** Every field change the dashboard route recorded for rem-sleep, flattened. */
+function recordedFieldChanges(): Array<{ field: string; to: unknown }> {
+  const changes = readSleepState(contextRoot).dashboard_changes ?? [];
+  return changes.flatMap((c) => (c.fields ?? []) as Array<{ field: string; to: unknown }>);
 }
 
 /** The task's persisted date window, read back through the backend. */
@@ -121,15 +128,41 @@ describe('CLI date window', () => {
   });
 
   it('stamps the real end date on completion, over the planned one', async () => {
-    await cli('tasks', 'create', 'Shipped', '-w', 'why', '--due', '2026-08-01');
+    await cli('tasks', 'create', 'Shipped', '-w', 'why', '--start', '2026-06-02', '--due', '2026-08-01');
     await cli('tasks', 'complete', 'shipped', 'Done early.');
-    expect(await window('shipped')).toEqual({ start: null, due: TODAY, status: 'completed' });
+    expect(await window('shipped')).toEqual({ start: '2026-06-02', due: TODAY, status: 'completed' });
   });
 
   it('stamps the real end date via `tasks status completed` too', async () => {
-    await cli('tasks', 'create', 'Shipped Two', '-w', 'why', '--due', '2026-08-01');
+    await cli('tasks', 'create', 'Shipped Two', '-w', 'why', '--start', '2026-06-02', '--due', '2026-08-01');
     await cli('tasks', 'status', 'shipped-two', 'completed');
-    expect(await window('shipped-two')).toEqual({ start: null, due: TODAY, status: 'completed' });
+    expect(await window('shipped-two')).toEqual({ start: '2026-06-02', due: TODAY, status: 'completed' });
+  });
+
+  it('closes a never-started task same-day, on both ends', async () => {
+    // No start on a finished task means it went not-started → done in one move,
+    // so it gets a real (same-day) window rather than half a range.
+    await cli('tasks', 'create', 'Straight To Done', '-w', 'why');
+    await cli('tasks', 'complete', 'straight-to-done', 'Never picked up separately.');
+    expect(await window('straight-to-done')).toEqual({ start: TODAY, due: TODAY, status: 'completed' });
+  });
+
+  it('drops the backlog tag when completion dates a backlog task', async () => {
+    // Dates and `backlog` are mutually exclusive; a done task is not backlog.
+    await cli('tasks', 'create', 'Parked', '-w', 'why', '-t', 'backlog');
+    await cli('tasks', 'complete', 'parked', 'Closed straight out of the backlog.');
+    const task = await new LocalTaskBackend(join(contextRoot, 'state')).get('parked');
+    expect(task?.tags).toEqual([]);
+    expect(await window('parked')).toEqual({ start: TODAY, due: TODAY, status: 'completed' });
+  });
+
+  it('announces the end date it stamped over a planned one', async () => {
+    const lines: string[] = [];
+    (console.log as unknown as { mockImplementation: (f: (m?: unknown) => void) => void })
+      .mockImplementation((m?: unknown) => { lines.push(String(m)); });
+    await cli('tasks', 'create', 'Loud', '-w', 'why', '--start', '2026-06-02', '--due', '2026-08-01');
+    await cli('tasks', 'complete', 'loud', 'Done.');
+    expect(lines.join('\n')).toContain(`due date set to ${TODAY} (work finished), replacing the planned 2026-08-01`);
   });
 });
 
@@ -160,13 +193,35 @@ describe('dashboard PATCH date window', () => {
     await cli('tasks', 'create', 'Board Done', '-w', 'why', '--due', '2026-08-01');
     const res = await patch('board-done', { status: 'completed' });
     expect(res.statusCode).toBe(200);
-    expect(await window('board-done')).toEqual({ start: null, due: TODAY, status: 'completed' });
+    // Never started, so the board close gives it a real same-day window.
+    expect(await window('board-done')).toEqual({ start: TODAY, due: TODAY, status: 'completed' });
   });
 
   it('lets an explicit due date in the same patch win over the completion stamp', async () => {
-    await cli('tasks', 'create', 'Explicit', '-w', 'why', '--due', '2026-08-01');
+    await cli('tasks', 'create', 'Explicit', '-w', 'why', '--start', '2026-06-02', '--due', '2026-08-01');
     const res = await patch('explicit', { status: 'completed', due_date: '2026-06-09' });
     expect(res.statusCode).toBe(200);
     expect(await window('explicit')).toMatchObject({ due: '2026-06-09', status: 'completed' });
+  });
+
+  it('rejects a status change paired with a due date the stamped start would invert', async () => {
+    // The stamp is validated like any caller-supplied date, so this can no longer
+    // write the exact start>due corruption the rest of this PR removes.
+    await cli('tasks', 'create', 'Stamp Clash', '-w', 'why');
+    const res = await patch('stamp-clash', { status: 'in_progress', due_date: '2026-01-01' });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toBe('invalid_date_range');
+    expect(await window('stamp-clash')).toEqual({ start: null, due: null, status: 'todo' });
+  });
+
+  it('records one due_date change, not the intermediate value, when both rules fire', async () => {
+    await cli('tasks', 'create', 'Tracked', '-w', 'why', '--start', '2026-06-01', '--due', '2026-06-03');
+    const res = await patch('tracked', { start_date: '2026-06-10', status: 'completed' });
+    expect(res.statusCode).toBe(200);
+    // The reschedule (→ 2026-06-12) never hits disk; only the completion stamp does.
+    expect(await window('tracked')).toMatchObject({ start: '2026-06-10', due: TODAY });
+    const dueEntries = recordedFieldChanges().filter((c) => c.field === 'due_date');
+    expect(dueEntries).toHaveLength(1);
+    expect(dueEntries[0].to).toBe(TODAY);
   });
 });

@@ -858,14 +858,55 @@ export async function handleTasksUpdate(
       return;
     }
   }
+  /**
+   * Record a date this handler derived (a status stamp, a reschedule) rather
+   * than one the caller sent. REPLACES any earlier entry for the same field so
+   * the change tracker never logs an intermediate value that never hit disk.
+   */
+  const deriveDate = (field: 'start_date' | 'due_date', value: string): void => {
+    updates[field] = value;
+    const existingChange = fieldChanges.find((c) => c.field === field);
+    if (existingChange) existingChange.to = value;
+    else fieldChanges.push({ field, from: (existing[field] ?? null) as FieldChange['from'], to: value });
+  };
+
+  // Validate status. Stamping runs BEFORE the range check below, so a stamped
+  // start is validated like any other — a patch that pairs a status change with
+  // an inverted explicit due date is rejected instead of writing start>due.
+  if (updates.status) {
+    const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
+    if (!validStatuses.includes(updates.status as string)) {
+      sendError(res, 400, 'invalid_status', `Status must be one of: ${validStatuses.join(', ')}`);
+      return;
+    }
+    // Same real-world timing the CLI stamps on a status change, so a task dragged
+    // across the board records the same dates as `dreamcontext tasks status`:
+    // `in_progress` stamps the actual start (rescheduling a now-impossible due
+    // date), `completed` stamps the actual end. A date explicitly named in THIS
+    // patch always wins over the stamp.
+    const stamped = dateUpdatesForStatus(
+      updates.status as string,
+      {
+        start_date: (updates.start_date !== undefined ? updates.start_date : existing.start_date) as string | null,
+        due_date: (updates.due_date !== undefined ? updates.due_date : existing.due_date) as string | null,
+      },
+      today(),
+    );
+    for (const field of ['start_date', 'due_date'] as const) {
+      const value = stamped[field];
+      if (value === undefined || body[field] !== undefined) continue;
+      deriveDate(field, value);
+    }
+  }
+
   // Range sanity: the EFFECTIVE start (after this patch) must not be after the
   // effective due. A backlog task clears both in the backend, so only check when
   // both resolve to a real date here.
   //
-  // A start-only move (the Gantt's left handle, the detail panel's start picker)
+  // A start-only move (the detail panel's start picker, a CLI-equivalent patch)
   // RESCHEDULES the due date rather than failing — pushed just far enough to keep
   // the window's original length, per lib/task-dates.ts. Only a patch that names
-  // BOTH ends and still inverts them is the caller contradicting itself, and that
+  // the due end and still inverts it is the caller contradicting itself, and that
   // is still rejected.
   {
     const duePatched = body.due_date !== undefined;
@@ -879,36 +920,7 @@ export async function handleTasksUpdate(
         sendError(res, 400, 'invalid_date_range', `start_date (${effStart}) cannot be after due_date (${effDue}).`);
         return;
       }
-      updates.due_date = shifted;
-      fieldChanges.push({ field: 'due_date', from: existing.due_date ?? null, to: shifted });
-    }
-  }
-
-  // Validate status
-  if (updates.status) {
-    const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
-    if (!validStatuses.includes(updates.status as string)) {
-      sendError(res, 400, 'invalid_status', `Status must be one of: ${validStatuses.join(', ')}`);
-      return;
-    }
-    // Same real-world timing the CLI stamps on a status change, so a task dragged
-    // across the board records the same dates as `dreamcontext tasks status`:
-    // `in_progress` stamps the actual start (rescheduling a now-impossible due
-    // date), `completed` stamps the actual end. An end explicitly named in THIS
-    // patch always wins over the stamp.
-    const stamped = dateUpdatesForStatus(
-      updates.status as string,
-      {
-        start_date: (updates.start_date !== undefined ? updates.start_date : existing.start_date) as string | null,
-        due_date: (updates.due_date !== undefined ? updates.due_date : existing.due_date) as string | null,
-      },
-      today(),
-    );
-    for (const field of ['start_date', 'due_date'] as const) {
-      const value = stamped[field];
-      if (value === undefined || body[field] !== undefined) continue;
-      updates[field] = value;
-      fieldChanges.push({ field, from: (existing[field] ?? null) as FieldChange['from'], to: value });
+      deriveDate('due_date', shifted);
     }
   }
 
