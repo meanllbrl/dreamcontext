@@ -1,5 +1,6 @@
 import { useId, type JSX } from 'react';
 import './FlowDiagram.css';
+import { fitTitle, TITLE_LH } from './flow-text';
 
 /**
  * Data-driven SVG flow diagram. A generalization of the original
@@ -71,6 +72,23 @@ export interface FlowDiagramProps {
   spec: FlowSpec;
   className?: string;
   size?: 'full' | 'mini';
+  /**
+   * Floor, in px, on the rendered width. The SVG otherwise scales to whatever
+   * container it is in, which for a GENERATED spec (whose node count is data,
+   * not a design decision) means a long flow shrinks its own text to
+   * illegibility. Set this and the diagram scrolls horizontally instead of
+   * shrinking past it. Omit — as every hand-authored spec does, each laid out
+   * for the width it is shown at — for the plain scale-to-fit behaviour.
+   */
+  minWidth?: number;
+  /**
+   * Re-fit a title too wide for its node (see {@link fitTitle}) instead of
+   * letting it draw through its neighbours. Same reasoning as `minWidth`: a
+   * GENERATED spec's titles are user data of unknown length, where a
+   * hand-authored one's were written for the box they sit in — so this is
+   * off by default and every existing spec renders exactly as before.
+   */
+  fitTitles?: boolean;
 }
 
 /**
@@ -111,7 +129,13 @@ export function wrapSub(text: string, boxW: number, fontSize: number): string[] 
   return lines;
 }
 
-export function FlowDiagram({ spec, className, size = 'full' }: FlowDiagramProps): JSX.Element {
+export function FlowDiagram({
+  spec,
+  className,
+  size = 'full',
+  minWidth,
+  fitTitles = false,
+}: FlowDiagramProps): JSX.Element {
   const uid = useId();
   // useId() can include characters (":") that are illegal in SVG fragment ids,
   // so sanitize before composing url() references.
@@ -123,11 +147,16 @@ export function FlowDiagram({ spec, className, size = 'full' }: FlowDiagramProps
 
   return (
     <div
-      className={`fd fd--${size} ${className ?? ''}`}
+      className={`fd fd--${size}${minWidth ? ' fd--scroll' : ''} ${className ?? ''}`}
       role="img"
       aria-label={spec.ariaLabel}
     >
-      <svg viewBox={spec.viewBox} preserveAspectRatio="xMidYMid meet" className="fd-svg">
+      <svg
+        viewBox={spec.viewBox}
+        preserveAspectRatio="xMidYMid meet"
+        className="fd-svg"
+        style={minWidth ? { minWidth: `${minWidth}px` } : undefined}
+      >
         <defs>
           <linearGradient id={nodeId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" className="fd-node-grad-a" />
@@ -221,15 +250,26 @@ export function FlowDiagram({ spec, className, size = 'full' }: FlowDiagramProps
                   ? [node.sub]
                   : wrapSub(node.sub, node.w, size === 'mini' ? 10 : 12);
           const SUB_LH = 15; // sub line-height, in viewBox units
-          // Glyph nodes keep their fixed single-line layout; non-glyph nodes
-          // vertically center the (title + N sub lines) block so multi-line
-          // captions stay balanced inside the box.
-          const titleY = node.glyph
-            ? cy + 6
-            : subLines.length
-              ? cy - 8 - (subLines.length - 1) * (SUB_LH / 2)
-              : cy;
-          const subStartY = node.glyph ? node.y + node.h - 16 : titleY + 22;
+          // A title too wide for its box is re-fitted (smaller, wrapped to two
+          // lines, ellipsized only as a last resort) rather than drawn straight
+          // through the neighbouring node. One that fits is untouched.
+          const title = fitTitles
+            ? fitTitle(node.title, node.w, size === 'mini' ? 15 : 17)
+            : { lines: [node.title], scaled: false, truncated: false };
+          const titleBlock = (title.lines.length - 1) * TITLE_LH;
+          // Glyph nodes keep their fixed layout; non-glyph nodes vertically
+          // center the (title + N sub lines) block so multi-line captions stay
+          // balanced inside the box. Both re-center around the title block so a
+          // second title line grows symmetrically instead of downward, into the
+          // caption.
+          const titleY =
+            (node.glyph
+              ? cy + 6
+              : subLines.length
+                ? cy - 8 - (subLines.length - 1) * (SUB_LH / 2)
+                : cy) -
+            titleBlock / 2;
+          const subStartY = node.glyph ? node.y + node.h - 16 : titleY + titleBlock + 22;
           return (
             <g
               key={node.id}
@@ -255,8 +295,13 @@ export function FlowDiagram({ spec, className, size = 'full' }: FlowDiagramProps
                   {node.glyph}
                 </text>
               )}
-              <text x={cx} y={titleY} className="fd-node-title">
-                {node.title}
+              {title.truncated && <title>{node.title}</title>}
+              <text x={cx} y={titleY} className={`fd-node-title${title.scaled ? ' fd-node-title--fit' : ''}`}>
+                {title.lines.map((line, i) => (
+                  <tspan key={i} x={cx} dy={i === 0 ? 0 : TITLE_LH}>
+                    {line}
+                  </tspan>
+                ))}
               </text>
               {subLines.length > 0 && (
                 <text x={cx} y={subStartY} className="fd-node-sub">

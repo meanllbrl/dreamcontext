@@ -29,9 +29,21 @@ import { makeLink, type Box } from '../about/flow-geometry';
 
 // ─── Placement geometry — module constants, never inline literals. All
 // 4-divisible per the `design` skill's 4px grid law. ───────────────────────
-export const NODE_W = 168;
-export const NODE_H = 56;
-export const RANK_GAP = 88;
+/**
+ * Every automation node draws with a glyph (the registry always supplies one),
+ * and `FlowDiagram`'s glyph layout stacks three rows inside the box — glyph at
+ * `y + 26`, title at the centre, caption at `y + h - 16`. At the original
+ * `NODE_H = 56` those three rows landed on top of each other; 96 is the height
+ * that layout was designed against (the About page's own glyph nodes are 92)
+ * and gives a wrapped two-line title room to sit between glyph and caption.
+ * Width buys those titles — a schedule phrase, an automation name, an output
+ * path, all user data — more characters per line, paid for out of `RANK_GAP`
+ * so the diagram's total width (and so its on-screen text size, since the SVG
+ * scales to its container) stays where it was.
+ */
+export const NODE_W = 200;
+export const NODE_H = 104;
+export const RANK_GAP = 56;
 export const LANE_GAP = 24;
 /** Added on every side of the placed extents to compute the viewBox. */
 export const MARGIN = 16;

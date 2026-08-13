@@ -55,5 +55,30 @@ export function AutomationFlowCanvas({ graph, className, size }: AutomationFlowC
   }
 
   const spec = layoutFlow(graph);
-  return <FlowDiagram spec={spec} className={className} size={size} />;
+  return (
+    <FlowDiagram
+      spec={spec}
+      className={className}
+      size={size}
+      fitTitles
+      minWidth={minRenderWidth(spec.viewBox)}
+    />
+  );
+}
+
+/**
+ * The smallest width this diagram may be drawn at, in px — `MIN_SCALE` of its
+ * own viewBox width, which is the one thing a generated flow needs and a
+ * hand-authored one doesn't. Node count here is DATA (a six-step automation is
+ * as valid as a two-step one), and `FlowDiagram`'s SVG scales to its container,
+ * so without a floor a long flow silently shrinks its labels to nothing in the
+ * detail panel's fixed-width column. Below the floor it scrolls sideways
+ * instead. The value is under 1 so a typical three-node flow — the common case
+ * — still fits that column with no scrollbar at all.
+ */
+export const MIN_SCALE = 0.72;
+
+function minRenderWidth(viewBox: string): number | undefined {
+  const width = Number(viewBox.split(' ')[2]);
+  return Number.isFinite(width) && width > 0 ? Math.round(width * MIN_SCALE) : undefined;
 }

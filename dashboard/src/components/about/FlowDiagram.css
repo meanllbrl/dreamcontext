@@ -11,6 +11,14 @@
   overflow: visible;
 }
 
+/* Only when a `minWidth` floor is set (see FlowDiagram.tsx): the diagram is
+   wider than its column, so it scrolls rather than shrinking its own text. */
+.fd--scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 4px;
+}
+
 /* ── Gradient stops (theme-aware via tokens) ───────────────────────────────
    The gradients themselves are referenced through per-instance inline SVG
    attributes (stroke/fill) — NOT from this file — so several FlowDiagrams can
@@ -138,6 +146,12 @@
   font-weight: var(--font-weight-bold);
   letter-spacing: -0.4px;
 }
+/* A title that had to be wrapped to fit its node (`fitTitle`'s `scaled`) —
+   TITLE_SCALE in FlowDiagram.tsx is the same 0.8, and the wrap math is done at
+   this size, so the two must move together. */
+.fd-node-title--fit { font-size: 13.6px; letter-spacing: -0.2px; }
+.fd--mini .fd-node-title--fit { font-size: 12px; }
+
 /* Dark-surface nodes get light title/sub text. */
 .fd-node--agent .fd-node-title { fill: var(--color-snow); }
 .fd-node--agent .fd-node-sub { fill: rgba(255, 255, 255, 0.72); }
