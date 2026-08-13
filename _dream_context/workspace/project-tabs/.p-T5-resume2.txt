@@ -1,0 +1,67 @@
+DELTA for T5 — a real gap in MY brief, not your work. Everything you shipped stands; this adds
+the one thing I failed to ask for.
+
+My earlier brief told you to kill `getActiveVault()` and change the signatures. It never told
+you to move the **`api` singleton** to `useApi()` in your files. You did exactly what was
+asked. The Wave-1 gate task then found that four of your files still call the singleton, and
+some of those routes are genuinely vault-scoped — so with N live instances they would hit the
+SERVER-PINNED vault instead of their own.
+
+I checked each call site against `src/server/index.ts`'s `VAULT_AGNOSTIC_PREFIXES`. Three are
+fine and MUST NOT change. Six must be scoped.
+
+## LEAVE ALONE — these three are correctly on the singleton
+- `AgentSurface.tsx:296` `/agent/capabilities` — on the agnostic list; machine-level facts
+  (node-pty present, claude CLI present). Same answer for every project.
+- `AgentSurface.tsx:1169` `/agent/session-model` — on the agnostic list, keyed by `claudeId`.
+- `lib/agentPrompt.ts:68` `/agent/prompt` — on the agnostic list AND it already names its vault
+  explicitly in the request body (`{ vault, prompt }`). That is the correct pattern; leave it.
+
+## FIX — these six routes are NOT on the agnostic list, so they resolve per-vault
+
+### `AgentSurface.tsx` — React, use `useApi()`
+- `:340` `api.get<{sessions: SavedMeta[]}>('/agent/sessions')`
+- `:397` `api.put('/agent/sessions', payload)`
+- `:1563` `api.post(...)` — the auto-title call (`/agent/title`)
+- `:1689` `api.post('/agent/open-terminal', { bypass })`
+
+`:340` and `:397` are the **most important two changes in this delta.** `/api/agent/sessions`
+is the PER-VAULT session roster (`state/.agent-sessions.json`). On the singleton, every
+instance reads and writes whichever vault the server was pinned to — so two open projects
+would overwrite each other's roster and the same conversation could be `--resume`d twice.
+The plan's closed decision #2 ("a vault can never be open twice — the roster assumes a single
+writer") exists precisely to prevent that, and this would have defeated it silently.
+
+`const api = useApi()` at the top of the `AgentSurface` component body, then leave every call
+site's arguments untouched.
+
+### `chatSession.ts:1462` `/agent/chat-history` — NOT React
+This is inside the imperative session engine. It cannot call `useApi()`. `createChatSession`
+already receives `vault` as its first parameter — build a client from it once near the top of
+the factory and use that:
+```ts
+const api = new ApiClient(vault);
+```
+(`import { ApiClient } from '../../api/client';`)
+
+### `chatEntities.ts:2221` `/agent/reveal` — NOT React
+Same shape as the `rawUrl` fix you already did: give the enclosing function an `api: ApiClient`
+(or `vault: string | null`) parameter and thread it from the React caller. Pick whichever
+matches how you threaded `rawUrl` in that file — consistency inside the file matters more than
+which of the two you choose.
+
+## HARD RULES — unchanged
+- Only your 13 files (+ the test you already fixed). Do NOT touch anything else.
+- Do NOT change any WebSocket lifecycle line. Nothing here goes near a socket.
+- Do NOT tie anything to visibility.
+
+## STATEMENT OF DONE
+1. `grep -rn "\bapi\." dashboard/src/components/sleepy/AgentSurface.tsx dashboard/src/components/sleepy/chatSession.ts dashboard/src/components/sleepy/chat/chatEntities.ts dashboard/src/lib/agentPrompt.ts`
+   — every remaining singleton use is one of the three sanctioned ones above; say which line
+   each is and why it stayed.
+2. `cd dashboard && npx tsc --noEmit` — zero errors in your files.
+3. `npx vitest run tests/unit/delegate-agent.test.ts` — still green.
+4. `git status --porcelain` — no new file outside your lane.
+
+Report in under 15 lines: which six call sites moved, how you got a client into the two
+non-React modules, and the four checks.

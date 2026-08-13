@@ -1,0 +1,83 @@
+ROLE CHANGE: you are no longer the planner. You are the IMPLEMENTER for task **T3** of the
+project-tabs dependency map in the plan you have already read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill via the Skill tool. Non-negotiable.
+
+You are on branch `feat/project-tabs`. **T1 has already landed** — read
+`dashboard/src/api/client.ts` and `dashboard/src/context/VaultContext.tsx` before you start;
+they are your frozen contract. T2 (hooks) and T5 (the sleepy session spine) are editing
+OTHER files at the same time as you.
+
+## FILES YOU OWN — exactly these 12, touch NOTHING else
+- `dashboard/src/components/layout/UpdateBadge.tsx`
+- `dashboard/src/components/layout/UpgradeRelaunchBanner.tsx`
+- `dashboard/src/components/settings/SystemDependencies.tsx`
+- `dashboard/src/components/sleepy/AgentSetup.tsx`
+- `dashboard/src/components/sleepy/ChatHistoryPicker.tsx`
+- `dashboard/src/components/sleepy/ChatPane.tsx`
+- `dashboard/src/components/sleepy/DocContent.tsx`
+- `dashboard/src/components/sleepy/chat/BoardEmbed.tsx`
+- `dashboard/src/components/sleepy/chat/PageView.tsx`
+- `dashboard/src/components/sleepy/chat/PdfViewer.tsx`
+- `dashboard/src/components/sleepy/chat/SlideOver.tsx`
+- `dashboard/src/components/sleepy/chat/TranscriptItem.tsx`
+
+**EXPLICITLY NOT YOURS** (T5 owns them — do not touch even though they import api/client):
+`components/sleepy/AgentSurface.tsx`, `components/sleepy/agentSession.ts`,
+`components/sleepy/chatSession.ts`, `components/sleepy/chat/ChatViews.tsx`,
+`components/sleepy/chat/chatEntities.ts`, `components/sleepy/chat/Composer.tsx`,
+`components/tasks/detail/useSectionCollapse.ts`.
+**NEVER**: `components/sleepy/SleepyPerch.tsx` (perch window, vault-agnostic).
+
+## CHANGE 1 — the api client (all 12 files)
+```ts
+import { useApi } from '<relative>/context/VaultContext';
+export function Thing() {
+  const api = useApi();
+  … api.get<T>('/x') …            // every call site UNCHANGED
+}
+```
+`useApi()` is a hook — top level of the component body only. Never in a callback, condition,
+loop, or module function.
+
+## CHANGE 2 — the URL builders (6 of your files)
+T1 changed these from module functions to module functions **that take the vault first**
+(finding S11 — they were deliberately NOT made class methods):
+```ts
+export function agentFileUrl(vault: string | null, path: string, opts?: { raw?: boolean }): string;
+export function graphContentUrl(vault: string | null, path: string, opts?: { raw?: boolean }): string;
+```
+Get the vault from `const { vault } = useVault()` and pass it. Your affected call sites:
+- `ChatPane.tsx` ~984 — `agentFileUrl(vault, path, { raw: true })` inside `handleOpenFile`
+- `TranscriptItem.tsx` ~78 and ~88 — two `<img src>` builders
+- `PdfViewer.tsx` ~58 — `srcOverride ?? agentFileUrl(vault, path, { raw: true })`
+- `SlideOver.tsx` ~95
+- `PageView.tsx` ~48 — **this one is a MODULE function**, `resolveImage(src)`. It cannot call
+  `useVault()`. Change its signature to `resolveImage(vault: string | null, src: string)` and
+  pass the vault from the `PageView` component that calls it. If `resolveImage` is called
+  from more than one place inside this file, thread it to all of them.
+- `BoardEmbed.tsx` uses `api.get('/agent/file?path=…')` — a JSON fetch, **not** a URL builder.
+  It needs CHANGE 1 only. Do not "fix" it to use `agentFileUrl`.
+
+Search your own 12 files for `agentFileUrl` and `graphContentUrl` and fix every hit; the list
+above is a guide, not a substitute for grepping.
+
+## STATEMENT OF DONE — verify each yourself before reporting
+1. `grep -rn "from '.*api/client'" <your 12 files>` — any surviving import must be for
+   `RequestError` only (a named type/class import), never for `api`, `agentFileUrl` or
+   `graphContentUrl`.
+2. `cd dashboard && npx tsc --noEmit` reports no error in any file you own. Errors in files
+   owned by T2/T4/T5 are expected while they run — ignore those.
+3. `git status --porcelain` lists exactly your 12 files and nothing else.
+
+## HARD RULES
+- Touch ONLY your 12 files. Two other implementers are running concurrently.
+- Do NOT edit the plan or any task doc. Do NOT commit, push, or switch branches.
+- Do NOT change rendering, layout, CSS, or behaviour. This task is a plumbing swap only.
+- Match the surrounding code's comment density — this codebase explains WHY.
+
+## REPORT BACK (max 20 lines)
+- which of your 12 files needed CHANGE 2 and what you did to `resolveImage`,
+- the 3 statement-of-done checks with their command output,
+- anything you found that contradicts the plan.

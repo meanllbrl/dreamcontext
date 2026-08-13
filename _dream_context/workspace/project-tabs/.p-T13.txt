@@ -1,0 +1,90 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T13** (Wave 3, batch 2) of the project-tabs
+dependency map in the plan you have read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill. Non-negotiable.
+
+T11 and T15 run CONCURRENTLY on different files.
+
+**Your task is the goal's headline scenario.** The whole point of this refactor is: a chat in a
+BACKGROUND project asks a question, and the user finds out. Today two module-globals in
+`lib/attention.ts` silently prevent exactly that.
+
+## FILES YOU OWN — touch NOTHING else
+- `dashboard/src/lib/attention.ts`
+- `dashboard/src/components/layout/WindowChrome.tsx`
+
+**`lib/chime.ts` is OFF LIMITS.** Its single module `AudioContext` is CORRECT — one voice, N
+sources — and must survive this change untouched.
+
+## 1. THE THROTTLE IS PER-SOURCE, NOT GLOBAL (`attention.ts:22-23`)
+`let lastRaise = 0` with `MIN_INTERVAL_MS = 1500` is one gate for the whole app. Its comment
+explains why: several agents asking in the same breath must not stack into a klaxon. That
+reasoning holds WITHIN a project and breaks ACROSS projects — two different projects asking 1s
+apart are two different interruptions, and today the second one is silently dropped.
+
+Replace with `const lastRaiseBySource = new Map<string, number>()` keyed on the alarm's
+`source`. Verified: `source` IS the vault name — `agentSession.ts` and `chatSession.ts` both
+pass their factory's own `vault` (Wave 1 changed them from `getActiveVault()`).
+
+Keep ONE global floor for the CHIME only (`let lastChime = 0`, same `MIN_INTERVAL_MS`), because
+`playAskChime` shares a single `AudioContext` and two chimes 200ms apart is a klaxon regardless
+of which project rang. Banner and Dock bounce are per-source.
+
+## 2. THE FOCUS GUARD MUST KNOW WHICH CHIP IS ACTIVE (`attention.ts:58-64`, `:92`)
+`isWatchingThisWindow()` returns true when the WINDOW is focused, and `raiseAskAttention` uses
+it to SKIP the banner and the Dock bounce. With tabs, the window can be focused while the
+asking project is a BACKGROUND chip — which is precisely the scenario this feature exists for.
+As it stands the user would get nothing.
+
+Do NOT import React state into this module. Inject a predicate:
+```ts
+export function setChipActiveProbe(probe: ((vault: string) => boolean) | null): void;
+```
+and change the guard at `:92` to:
+```ts
+if (isWatchingThisWindow() && (chipActiveProbe?.(key) ?? true)) return;
+```
+`?? true` is load-bearing: with no probe registered the behaviour is byte-identical to today,
+so the launcher window, the browser build and every test keep working unchanged.
+
+**There is deliberately NO `subscribeAsk` export.** An earlier draft had one so the chip could
+bounce off the alarm; it was cut. The chip bounce has exactly one owner — the rollup's
+`waiting` 0→>0 edge, wired by T19 in Wave 4. Two writers to one bounce is how a chip
+double-bounces or flaps.
+
+## 3. REGISTER THE PROBE IN `WindowChrome` (its file, your change)
+`WindowChrome` knows `activeVault`. Register the probe ONCE on mount and clear it on unmount:
+```ts
+useEffect(() => {
+  setChipActiveProbe((v) => v === activeVaultRef.current);
+  return () => setChipActiveProbe(null);
+}, []);
+```
+Read `activeVault` through a REF that you keep current, not through the closure — an empty dep
+array with a captured `activeVault` would pin the probe to whichever project was active at
+mount and never update, which is a subtler version of the bug you are fixing.
+
+Touch nothing else in `WindowChrome.tsx`. T20 owns it again in Wave 4 for the registry
+heartbeat and the rollup sink; if your change needs anything beyond the probe registration,
+**STOP and report it.**
+
+## STANDING RULE
+Behavioural: **nothing in your files may assume one vault per window.** If satisfying that
+needs a file you do not own, **STOP and report it.**
+
+## STATEMENT OF DONE
+1. `grep -n "lastRaise\b" dashboard/src/lib/attention.ts` — no bare module-level `lastRaise`
+   remains; it is a Map keyed by source.
+2. `grep -n "subscribeAsk" dashboard/src` — no matches anywhere.
+3. `cd dashboard && npx tsc --noEmit` — zero errors in your two files. Errors in
+   `AgentSurface.tsx` (T11, concurrent) are expected; name them.
+4. `npx vitest run tests/unit/agent-ask-attention.test.ts` — green. That suite exists and
+   exercises this module; if it asserts the old single-throttle behaviour it is YOURS to
+   update, and you must say what the assertion means now. **Do not weaken a test to make it
+   pass** — if a case now fails for a real reason, stop and say so.
+5. `npm run build` — exit 0.
+6. `git status --porcelain` — exactly your two files (+ the attention test if you changed it).
+
+REPORT BACK (max 18 lines): the exported signature, how you keep the probe's `activeVault`
+current, what the attention test asserts now, the six checks, and anything you stopped on.

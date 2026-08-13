@@ -1,0 +1,111 @@
+ROLE CHANGE: you are no longer the planner. You are the IMPLEMENTER for task **T5** of the
+project-tabs dependency map in the plan you have already read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill via the Skill tool. Non-negotiable.
+
+You are on branch `feat/project-tabs`. **T1 has already landed** — read
+`dashboard/src/api/client.ts` and `dashboard/src/context/VaultContext.tsx` first.
+
+This is the hardest Wave-1 task: the agent/session spine. These modules are NOT React, so
+they cannot call `useVault()` — the vault must be threaded in as a parameter from the React
+caller. This is the task that kills the `getActiveVault()` module global.
+
+## FILES YOU OWN — exactly these 13, touch NOTHING else
+- `dashboard/src/components/sleepy/agentSession.ts`
+- `dashboard/src/components/sleepy/chatSession.ts`
+- `dashboard/src/components/sleepy/AgentSurface.tsx`
+- `dashboard/src/components/sleepy/chat/ChatViews.tsx`
+- `dashboard/src/components/sleepy/chat/Composer.tsx`
+- `dashboard/src/components/sleepy/chat/chatEntities.ts`
+- `dashboard/src/lib/agentDrop.ts`
+- `dashboard/src/lib/agentPrompt.ts`
+- `dashboard/src/lib/authorTaskAgent.ts`
+- `dashboard/src/lib/delegateAgent.ts`
+- `dashboard/src/components/tasks/AuthorTaskComposer.tsx`
+- `dashboard/src/components/tasks/DelegateComposer.tsx`
+- `dashboard/src/components/tasks/detail/useSectionCollapse.ts`
+
+## THE SIGNATURE CHANGES — pinned, do not improvise
+Each takes the vault as its FIRST parameter (there is exactly ONE call site for the two
+session factories, so a leading param is safe and reads best):
+
+```ts
+// components/sleepy/agentSession.ts  (was reading getActiveVault() at ~:309)
+export function createSession(vault: string, bypass: boolean, notify: () => void,
+  claudeId: string, resume?: boolean, kind?: SessionKind, initialPrompt?: string,
+  model?: string, submitInitial?: boolean, promptToken?: string, deferPrompt?: boolean): Session;
+
+// components/sleepy/chatSession.ts  (was reading getActiveVault() at ~:423)
+export function createChatSession(vault: string, bypass: boolean, notify: () => void,
+  claudeId: string, resume?: boolean, model?: string, effort?: string,
+  initialPrompt?: string, promptToken?: string, deferPrompt?: boolean): ChatSession;
+
+// lib/agentDrop.ts
+export async function uploadAgentFile(vault: string | null, file: File | Blob, name: string): Promise<string | null>;
+
+// lib/agentPrompt.ts
+export async function mintPromptToken(vault: string | null, prompt: string): Promise<string>;
+export async function preparePrompt(vault: string | null, prompt: string): Promise<PreparedPrompt>;
+
+// lib/authorTaskAgent.ts   (calls preparePrompt — thread it through)
+export async function authorTaskWithAgent(vault: string | null, …existing params unchanged…): …;
+
+// lib/delegateAgent.ts     (calls preparePrompt — thread it through)
+export function delegateTaskToAgent(vault: string | null, args: DelegateAgentArgs): boolean;
+
+// components/tasks/detail/useSectionCollapse.ts   (MODULE function, not a hook)
+function storageKey(vault: string | null): string;   // `dreamcontext:task-sections:${vault ?? ''}`
+// the exported HOOK reads useVault().vault and threads it into every read/write
+```
+
+## THE ATTENTION SOURCE — load-bearing for the whole goal
+- `agentSession.ts` ~:451 → `raiseAskAttention({ source: vault })`
+- `chatSession.ts` ~:589 → `raiseAskAttention({ source: vault, detail: askSummary(entry) })`
+`source` must be the VAULT NAME, not a tab title. A later wave keys a per-project throttle and
+the chip-active probe off exactly this value; if it is ever null or a title, the background
+chip never alerts and the headline feature silently dies.
+
+## THE URL BUILDER — one non-React caller
+T1 changed `agentFileUrl` to `agentFileUrl(vault, path, opts?)` (finding S11).
+`chatEntities.ts` ~:2189 has a MODULE function `rawUrl(path)`. Change it to
+`rawUrl(vault: string | null, path: string)` and thread the vault from every caller inside
+that file. Grep the file for `agentFileUrl` and `rawUrl` — fix every hit.
+
+## THE REACT CALL SITES
+- `AgentSurface.tsx`: `const { vault } = useVault()`. Pass it first into `createChatSession`
+  (~:431) and `createSession` (~:437); use it at `~:1042` in place of `getActiveVault()` for
+  `listenForChecklistSubmits`; pass it to `uploadAgentFile` (~:1696).
+- `chat/ChatViews.tsx` ~:99: `const { vault } = useVault()` instead of `getActiveVault()`.
+  Keep the existing "no vault → button disabled" behaviour EXACTLY — it is what stops a
+  checklist being written into the wrong project.
+- `chat/Composer.tsx` ~:257: `uploadAgentFile(vault, file, name)` from `useVault()`.
+- `AuthorTaskComposer.tsx` / `DelegateComposer.tsx`: pass `useVault().vault` into
+  `authorTaskWithAgent` / `delegateTaskToAgent`.
+
+## STATEMENT OF DONE — verify each yourself before reporting
+1. `grep -rn "getActiveVault" dashboard/src` returns hits ONLY in `dashboard/src/api/client.ts`.
+   (If a file you do NOT own still has one, report it — do not edit it.)
+2. `cd dashboard && npx tsc --noEmit` reports no error in any file you own.
+3. `npx tsc --noEmit` at the repo root is clean.
+4. `git status --porcelain` lists exactly your 13 files and nothing else.
+
+## HARD RULES — read twice
+- **Do NOT change any WebSocket lifecycle, and do NOT tie anything to visibility.** The WS URLs
+  already carry `?vault=`; you are only changing where that string comes from. A chat/terminal
+  WebSocket is never closed for any reason — that is a red line of this goal.
+- Do NOT touch `ensureOpen`, `fitAndResize`, the ResizeObserver, or the pane layout effects in
+  `AgentSurface.tsx`. **T8 owns those in Wave 2** and will conflict with you.
+- Do NOT add an unmount cleanup to `AgentSurface.tsx` — also T8's, Wave 2.
+- Do NOT touch the `mediaBoxes` cache in `chatEntities.ts` (~:2023-2071). **T12 owns it in
+  Wave 3.** You only change `rawUrl`/`agentFileUrl` in that file.
+- Do NOT move any `window` event to a bus. T11 owns that in Wave 3.
+- Do NOT delete `setActiveVault`/`getActiveVault` from `client.ts` — not your file, and they
+  survive until Faz 2 completes.
+- Do NOT edit the plan or any task doc. Do NOT commit, push, or switch branches.
+
+## REPORT BACK (max 25 lines)
+- the exact exported signatures you shipped,
+- confirmation that `raiseAskAttention` now receives the vault name at both call sites,
+- the 4 statement-of-done checks with their command output,
+- any `getActiveVault()` you found in a file you do not own.

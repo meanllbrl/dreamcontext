@@ -1,0 +1,37 @@
+DELTA for T19 — one field was added to `ProjectRollup` after a CRITICAL review finding. Your
+work stands; you have one compile break to close.
+
+## WHY THE FIELD EXISTS
+`ProjectRollup.live` is the chat BADGE count and excludes `kind === 'shell'` rows — correct,
+and your rendering of it is unchanged. But the CEILING rule was also gating eviction on
+`live === 0`, so a project whose only live thing was a running shell looked idle, got torn down
+into a cold chip, and had its PTY killed mid-process.
+
+T18 therefore added:
+```ts
+export interface ProjectRollup { worst; live; waiting; alive: number }
+```
+`alive` = sessions of ANY kind still holding a live PTY/WebSocket, shells INCLUDED. The ceiling
+now reads `alive`; `live` stays purely presentational.
+
+## YOUR CHANGE — compile only, no behaviour
+`dashboard/src/components/sleepy/AgentSurface.tsx:1907` has a hardcoded `ProjectRollup` literal
+that no longer satisfies the type. Add the `alive` value it should carry.
+
+**Do not compute it by hand.** If that literal is a fallback/empty rollup, use the same empty
+shape `rollupProject([])` produces (`alive: 0`). If it stands in for a real rollup, call
+`rollupProject` rather than hand-rolling a fourth number — hand-maintained duplicates of this
+struct are exactly how `live` and `alive` would drift apart again.
+
+**The badge does not change.** The number stays `live`, still omitted at 0; colour still comes
+from `worst`; the bounce still fires on `waiting` 0→>0 and you are still its only writer.
+`alive` is never rendered.
+
+## STATEMENT OF DONE
+1. `cd dashboard && npx tsc --noEmit` — zero errors in your four files. `WindowChrome.tsx` may
+   still error (T20 is being resumed concurrently) — name it, leave it.
+2. `npx vitest run tests/unit/agent-status-project-rollup.test.ts` — green.
+3. `git status --porcelain` — exactly the file(s) you touched.
+
+Report in under 8 lines: what that literal at :1907 is for, the value you gave `alive` and why,
+the three checks.

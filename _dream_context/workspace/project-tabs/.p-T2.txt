@@ -1,0 +1,87 @@
+ROLE CHANGE: you are no longer the planner. You are the IMPLEMENTER for task **T2** of the
+project-tabs dependency map in the plan you have already read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill via the Skill tool. Non-negotiable.
+
+You are on branch `feat/project-tabs`. **T1 has already landed** — `dashboard/src/api/client.ts`
+now exports `class ApiClient` and `dashboard/src/context/VaultContext.tsx` exports `useApi()`.
+Read both before you start; they are your frozen contract.
+
+This is the largest but most MECHANICAL task in the plan: 28 hooks, one line each. The bodies
+do not change. Resist every temptation to refactor anything else.
+
+## FILES YOU OWN — every `.ts` under `dashboard/src/hooks/` that imports `api/client`, EXCEPT the two exclusions
+`useAgentCapabilities.ts`, `useAutomations.ts`, `useBoard.ts`, `useBrainStatus.ts`,
+`useChangelog.ts`, `useConfig.ts`, `useConnections.ts`, `useCouncil.ts`, `useEmbeddingModel.ts`,
+`useFederation.ts`, `useGraph.ts`, `useGraphSettings.ts`, `useKnowledge.ts`, `useLab.ts`,
+`useLabPrefs.ts`, `useLinkedRepos.ts`, `useNodeContent.ts`, `useObjectives.ts`, `usePacks.ts`,
+`useRecall.ts`, `useRoadmapPrefs.ts`, `useSleep.ts`, `useSleepyChat.ts`, `useTasks.ts`,
+`useTaxonomy.ts`, `useTheses.ts`, `useVersionCheck.ts`, `useVersions.ts`
+
+**DO NOT TOUCH** (vault-agnostic — the singleton `api` is correct there, and touching them
+breaks the launcher window):
+- `dashboard/src/hooks/useLauncher.ts`
+- `dashboard/src/hooks/useServerHealth.ts`
+- `dashboard/src/hooks/usePersistedState.ts` (does not import api/client at all)
+
+Verify the list yourself first: `grep -rl "from '.*api/client'" dashboard/src/hooks` should
+give exactly 30 files — your 28 plus the two exclusions. If the count differs, STOP and report.
+
+## THE CHANGE, per file
+Replace the module import of `api` with a call inside the hook body:
+
+```ts
+// before
+import { api } from '../api/client';
+export function useThing() { … api.get<T>('/thing') … }
+
+// after
+import { useApi } from '../context/VaultContext';
+export function useThing() {
+  const api = useApi();
+  … api.get<T>('/thing') …          // every call site UNCHANGED
+}
+```
+
+Rules:
+- Every `api.get/post/put/patch/del` call site stays byte-identical. You are changing where
+  `api` comes from, nothing else.
+- A file may have SEVERAL exported hooks. Each one needs its own `const api = useApi()` — you
+  cannot hoist it to module scope, that is the entire point of the task.
+- `useApi()` is a hook: it must be called at the top level of a hook/component body, never
+  inside a callback, a condition, a loop, or a non-hook helper function. If a file has a
+  non-hook module function that calls `api`, STOP and report it — do not invent a fix.
+- **Two files need a dependency-array change** (this is the one place the body changes):
+  - `useRoadmapPrefs.ts` — `api.put('/roadmap-prefs', …)` sits inside `useCallback(…, [])`
+    (~line 95). Add `api` to that dependency array.
+  - `useLabPrefs.ts` — `api.put('/lab-prefs', …)` inside `useCallback(…, [])` (~line 106).
+    Add `api` to that dependency array.
+  `useApi()` returns a memoized client, so its identity is stable and this adds no churn.
+- Import path depth: hooks live at `dashboard/src/hooks/`, so it is `'../context/VaultContext'`.
+
+Note for your own understanding (do NOT act on it beyond the migration): `useVersionCheck.ts`
+IS in your list even though a constraint elsewhere called it vault-agnostic. It is not —
+`/api/version-check` reads `dirname(contextRoot)` and that project's opted-in packs. Its only
+consumer is `UpdateBadge`, which the launcher never renders. Finding S4 in the plan records
+this. Migrate it like the rest.
+
+## STATEMENT OF DONE — verify each yourself before reporting
+1. `grep -rn "from '.*api/client'" dashboard/src/hooks` returns ONLY `useLauncher.ts` and
+   `useServerHealth.ts`.
+2. `cd dashboard && npx tsc --noEmit` reports no error in any file you own.
+3. `npx tsc --noEmit` at the repo root is clean.
+4. `git status --porcelain` lists exactly your 28 files and nothing else.
+
+## HARD RULES
+- Touch ONLY your 28 files. Other implementers are editing `components/`, `pages/` and the
+  sleepy session modules AT THE SAME TIME as you — an edit outside your lane will be
+  overwritten or will overwrite theirs.
+- Do NOT edit the plan or any task doc. Do NOT commit, push, or switch branches.
+- Do NOT "improve" query keys, add vault to query keys, or change staleTime/refetchInterval.
+  Cache isolation comes from the per-instance QueryClient in a later wave, not from you.
+
+## REPORT BACK (max 20 lines)
+- the file count you actually changed,
+- the 4 statement-of-done checks with their command output,
+- any file where a non-hook module function called `api` (you stopped instead of fixing).

@@ -1,0 +1,124 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T12** (Wave 3, batch 1) of the project-tabs
+dependency map in the plan you have read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill. Non-negotiable.
+
+Waves 1-2 landed; `lib/scopedStorage.ts` exists with `scopedKey`, `readScopedRaw`,
+`writeScopedRaw`, `readScoped`, `writeScoped`, `ScopeOpts { keepLegacy?: boolean }`. Read it
+before you start. T10 and T16 run CONCURRENTLY on different files.
+
+You carry the single most dangerous item in this wave: a **permission default that currently
+leaks across projects**. An independent isolation review raised it as blocking.
+
+## FILES YOU OWN — touch NOTHING else
+- `dashboard/src/hooks/useSidebarCollapse.ts`
+- `dashboard/src/components/layout/Sidebar.tsx`
+- `dashboard/src/lib/brainSyncPrefs.ts`
+- `dashboard/src/components/sleepy/chat/chatEntities.ts`
+- `dashboard/src/lib/agentSettings.ts`
+- `dashboard/src/pages/SettingsPage.tsx`
+
+## 1. `chatPermissionMode` — SPLIT IT OUT OF THE GLOBAL BLOB (the dangerous one)
+`agentSettings.ts:69` holds `chatPermissionMode: 'auto' | 'bypass'`, and its own doc comment
+(`:64-68`) says `'bypass'` maps to `bypassPermissions`. `AgentSurface.tsx:425` reads it (via the
+ref at `:250-251`) to set `effectiveBypass` for EVERY chat session that instance spawns. It
+rides the app-global blob and propagates on `AGENT_SETTINGS_EVENT` on `window`.
+
+Today that cannot cross projects because each vault is its own JS realm. In ONE realm, flipping
+bypass while looking at project A silently rewrites project B's remembered default and every
+session B spawns afterwards — agent auto-approval turned on in a project the user never
+touched. Same class as `checklistStore.ts`'s header warning, applied to a permission gate.
+
+In `agentSettings.ts`:
+- REMOVE `chatPermissionMode` from `AgentSettings`, `DEFAULT_AGENT_SETTINGS`,
+  `coerceAgentSettings` and the server mirror. Every OTHER field stays app-global on its
+  existing path (`writeAgentSettings` → localStorage + `/launcher/agent-settings` +
+  `AGENT_SETTINGS_EVENT` on `window`) — do not disturb that.
+- ADD:
+```ts
+export type ChatPermissionMode = 'auto' | 'bypass';
+export const CHAT_PERMISSION_MODE_KEY = 'agent:settings:chatPermissionMode';
+export const CHAT_PERMISSION_MODE_EVENT = 'dc-chat-permission-mode';   // INSTANCE BUS, not window
+export function readChatPermissionMode(vault: string | null): ChatPermissionMode;
+export function writeChatPermissionMode(bus: EventTarget, vault: string | null, mode: ChatPermissionMode): void;
+```
+- `readChatPermissionMode` reads `readScopedRaw(vault, CHAT_PERMISSION_MODE_KEY)` and returns
+  `'bypass'` ONLY on an exact `'bypass'` match; absent, stale or malformed → `'auto'`. This
+  preserves the posture already documented at `:107-109` ("only an explicit 'bypass' opts into
+  the caution mode").
+- `writeChatPermissionMode` persists and then `emitInstance(bus, CHAT_PERMISSION_MODE_EVENT, mode)`.
+- **MIGRATION: deliberately DROP the legacy value. No `keepLegacy`, no copy.** This is the one
+  key where copying forward is the harm — a globally-set `'bypass'` would fan out to every
+  project at once. Every vault starts at `'auto'` and the user re-opts-in per project. A
+  one-time reset of a permission toggle is the correct trade; write that reasoning in a comment.
+
+In `SettingsPage.tsx` (~:253): stop routing `chatPermissionMode` through `writeAgentSettings`.
+The rest of the blob keeps its global path untouched.
+
+**`AgentSurface.tsx` is NOT yours** — T11 (this wave, next batch) switches its reads and its
+listener to the bus. Expect it to be briefly out of sync after you land; that is the batch order
+working. Do not touch it.
+
+## 2. `autoCheckpointOnOpen` — SCOPE IT, and use `keepLegacy`
+`brainSyncPrefs.ts` controls whether opening the dashboard auto-COMMITS uncommitted local edits.
+That is real git behaviour and it belongs per-repo.
+```ts
+export function readAutoCheckpointOnOpen(vault: string | null): boolean;
+export function writeAutoCheckpointOnOpen(vault: string | null, enabled: boolean): void;
+```
+**`keepLegacy: true` is MANDATORY here.** `:18-21` returns `getItem(KEY) !== '0'` — i.e. the
+unset default is ON. Under the plain copy-once-then-delete policy, a user who deliberately
+turned auto-checkpoint OFF would keep that intent for exactly ONE vault; every other vault would
+find no scoped key, fall back to ON, and silently start auto-committing their work. The general
+rule (already in `scopedStorage.ts`): copy-once-then-delete is only safe when the unset-fallback
+is the SAFE direction. It is not, here.
+`AUTO_CHECKPOINT_EVENT` is verified DEAD CODE — dispatched, zero `addEventListener` anywhere in
+`dashboard/src`. Leave it exactly as it is; do not move it to a bus.
+
+## 3. `githubSyncSeen` — SCOPE IT (`Sidebar.tsx` ~:86, ~:110, ~:146)
+Unlike `aboutSeen` next to it, this CTA's action (`brain enable`) is per-vault: dismissing it in
+a synced project must not hide it in an unsynced one. Use `readScopedRaw`/`writeScopedRaw`
+(it is a bare `'1'` flag, not JSON). **`aboutSeen` stays GLOBAL and untouched** — "I have read
+what this app is" lives in the user's head, not the project.
+
+## 4. `mediaBoxes` — scope the MAP and the LATCH, not just the key (`chatEntities.ts` ~:2023-2071)
+Both a brief and a review stopped at "scope the storage key". That is not enough:
+`loadMediaBoxes()` sets `mediaBoxesLoaded = true` on the FIRST instance to call it, so the
+second vault's key is never read; and the shared `mediaBoxes` Map means instance B's
+`rememberMediaBox` serialises instance A's entries into B's key.
+```ts
+export function knownMediaBox(vault: string | null, path: string): { w: number; h: number } | null;
+export function rememberMediaBox(vault: string | null, path: string, w: number, h: number): void;
+```
+backed by `Map<string, Map<string, Box>>` + a `Set<string>` of loaded vaults. Keep the
+LRU/eviction behaviour and the `MEDIA_BOX_MAX` bound PER VAULT. Thread `vault` from the callers
+inside this file (they already have it — T5 threaded `vault` into `rawUrl` here in Wave 1;
+follow that pattern). If a caller outside this file needs to change, **STOP and report it.**
+
+## 5. `useSidebarCollapse.ts` — key stays GLOBAL, state gets hoisted
+One rail width per window is correct, so the key does NOT get scoped. But the STATE must live
+in one place or N instances diverge on toggle. `WindowChrome` already calls this hook and
+passes `sidebarCollapsed`/`onToggleSidebar` down. T10 (concurrent, this batch) is deleting
+Shell's own call. Your job here is only to make sure the hook is safe to call from exactly one
+owner — leave the key, the media query and the `forced || userPref` semantics alone. If no
+change is genuinely needed, say so; do not invent one.
+
+## STANDING RULE
+Behavioural: **nothing in your files may assume one vault per window**, and no vault-bound call
+may sit on the singleton `api`. If satisfying that needs a file you do not own, **STOP and
+report it** — do not edit it.
+
+## STATEMENT OF DONE
+1. `grep -rn "chatPermissionMode" dashboard/src/lib/agentSettings.ts` — the field is gone from
+   the `AgentSettings` type/defaults/coerce; only the new accessors mention it.
+2. `cd dashboard && npx tsc --noEmit` — zero errors in your six files. Errors in
+   `AgentSurface.tsx` (T11, next batch this wave) are EXPECTED — name them.
+3. `npx vitest run tests/unit/agent-settings.test.ts tests/unit/agent-inline-media.test.ts tests/unit/chat-user-media.test.ts`
+   — green. Any test asserting the old shapes is YOURS to update; say which and why the
+   assertion still means the same thing.
+4. `npm run build` — exit 0.
+5. `git status --porcelain` — exactly your six files (+ any test from check 3).
+
+REPORT BACK (max 22 lines): the exported signatures, which keys you scoped vs left global and
+the one-line reason for each, the five checks, and anything you stopped on.

@@ -1,0 +1,38 @@
+DELTA for T12 — your six files are ACCEPTED, do not revisit them. Two things.
+
+## 1. Your deviation is ACCEPTED and you were right to make it
+Building the scoped key directly instead of going through `readScopedRaw` is correct.
+My brief contradicted itself: it said "deliberately DROP the legacy value, no keepLegacy, no
+copy" AND told you to read through a helper whose whole job is to migrate the bare key into the
+first vault that reads it. That would have taken a globally-set `'bypass'` and handed it to
+whichever project opened first — the exact fan-out the split exists to prevent. Your test
+catching it is the best outcome in this wave so far.
+
+I am NOT adding `noMigrate` to `ScopeOpts`. You are right that it is the tidier home, but
+nothing else needs it, and widening a Wave-1 contract that 19 tasks already coded against, to
+save one line in one function, is not worth the churn. Your inline construction plus its
+comment is the shipped answer. Leave it.
+
+## 2. YOUR LANE IS EXTENDED BY ONE FILE
+`dashboard/src/components/brain/BrainSyncControl.tsx` is now yours, for one line only.
+
+`:159` calls `readAutoCheckpointOnOpen()` with no argument against your new
+`readAutoCheckpointOnOpen(vault)`. I verified the blast radius myself:
+`grep -rn "readAutoCheckpointOnOpen\|writeAutoCheckpointOnOpen" dashboard/src` returns exactly
+two consumers — `SettingsPage.tsx` (already yours, already updated) and this one.
+
+Take `const { vault } = useVault()` at the top of the component body and pass it:
+`noCheckpoint: !readAutoCheckpointOnOpen(vault)`.
+
+Change NOTHING else in that file. Do not touch `ProjectInstance.tsx:189` or the five
+`AgentSurface.tsx` errors — those belong to T11, running concurrently right now.
+
+## STATEMENT OF DONE
+1. `grep -rn "readAutoCheckpointOnOpen(\|writeAutoCheckpointOnOpen(" dashboard/src` — every
+   call passes a vault.
+2. `cd dashboard && npx tsc --noEmit` — zero errors in your seven files. The only errors left
+   should be `AgentSurface.tsx` and `ProjectInstance.tsx` (T11, concurrent). Name them.
+3. `git status --porcelain` — your six files + `BrainSyncControl.tsx` + the two tests.
+
+Report in under 10 lines: the three checks, and confirm nothing else in `BrainSyncControl.tsx`
+changed.

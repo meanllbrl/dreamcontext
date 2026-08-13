@@ -1,0 +1,50 @@
+DELTA — the plan you read has been REVISED after four independent plan reviews. Re-read
+`_dream_context/workspace/project-tabs/plan-validated-v1.md` IN FULL and replace your memory
+of it. Everything below is now in that file; this list is only so you know what moved.
+
+Still read-only. Do not write or edit anything.
+
+WHAT CHANGED SINCE YOU LAST READ IT
+
+1. `rollupProject()` / `ProjectRollup` moved from Wave 4 to **Wave 1 (T18)** — `ProjectRollup`
+   is the type `OpenProject.rollup` (T7, Wave 2) declares against, so it must exist first.
+   Wave 1 batch 1 is now `[T1, T18]`.
+2. `OpenProject` gained `rollup: ProjectRollup | null`. The ceiling rule is now explicit:
+   an instance is evictable **only** when `rollup !== null && rollup.live === 0`. A
+   not-yet-published rollup (`null`) is **NEVER** evictable — treating null as idle would tear
+   down an instance with a live chat (HARD CONSTRAINT #1).
+3. **T20** (Wave 4, batch 1) now owns the rollup SINK in `WindowChrome.tsx` (the
+   `Record<vault, ProjectRollup>` state + the `onRollup` prop). **T19** (Wave 4, batch 2) owns
+   `ProjectInstance.tsx` and is the SOLE writer of `ProjectChip.bounceNonce`.
+   Wave 4 batches are now `[T20] → [T19]`.
+4. `subscribeAsk` was REMOVED from `lib/attention.ts` (T13). Two writers to one bounce is how a
+   chip flaps. `setChipActiveProbe` remains.
+5. Drag-a-chip-out-of-the-strip was CUT. Right-click "Open in New Window" is the only
+   multi-window escape hatch (T20).
+6. **`chatPermissionMode` is SPLIT OUT of the global `agent:settings:v1` blob** — it maps to
+   `bypassPermissions`, so on `window` it would leak agent auto-approval across projects. It
+   becomes a per-vault scoped key + `CHAT_PERMISSION_MODE_EVENT` on the INSTANCE BUS. T12 owns
+   the storage half (`lib/agentSettings.ts`, `pages/SettingsPage.tsx`), T11 the consumption
+   half (`AgentSurface.tsx`). The legacy global value is DROPPED, not copied forward.
+7. **The checklist submit now FAILS CLOSED.** `resolveLiveWindowForVault()` = registry ∩
+   `WebviewWindow.getAll()`. There is NO `vaultWindowLabel` fallback on that path — the payload
+   can carry a pasted secret. `findWindowForVault()` (registry-only) is for the non-secret
+   chip/focus decision ONLY.
+8. `lib/scopedStorage.ts` gained `ScopeOpts { keepLegacy?: boolean }`. `autoCheckpointOnOpen`
+   MUST migrate with `keepLegacy: true`, because its unset-fallback is ON (auto-commit) and
+   copy-once-then-delete would silently enable git auto-commit for every vault but the first.
+9. `AUTO_CHECKPOINT_EVENT` is DEAD CODE (dispatched, zero listeners). Leave it on `window`;
+   do not move it.
+10. Line-ref corrections: the delegate `accepted` mutation is `AgentSurface.tsx:916` (listener
+    registered `:918`); `dispose()` has FOUR call sites (`:492`, `:581`, `:598`, `:658`), none
+    an unmount cleanup; `checklistBridge.ts`'s doc block spans `:83-94` with the sentence to
+    rewrite at `:88-90`.
+11. Section 3 now carries a "Files deliberately touched by more than one task" table. Every
+    such file was audited to sit in DIFFERENT waves.
+
+AFTER RE-READING, reply with EXACTLY this and nothing else (max 12 lines):
+  PLAN RELOADED
+  WAVE1: <the task ids in Wave 1, in batch order>
+  WAVE4: <the task ids in Wave 4, in batch order>
+  CEILING: <one line: when is an instance evictable?>
+  CHECKLIST: <one line: what happens when the target window cannot be corroborated?>

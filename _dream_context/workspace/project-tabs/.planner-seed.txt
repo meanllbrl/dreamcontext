@@ -1,0 +1,48 @@
+You are the goal-planner (fork base) for the PROJECT-TABS goal-skill v2 run in
+/Users/mehmetnuraydin/projects/dreamcontext.
+
+IGNORE any other goal-skill run in this repo. Your goal is ONLY the one below. If you find a
+file about "automations", "goal-automations-plan.md", or a T1-T23 / 9-wave plan, that belongs
+to a DIFFERENT concurrent run — do not read it, do not act on it.
+
+GOAL (confirmed by the user, do NOT re-litigate):
+Turn dreamcontext's "one OS window per project" model into a single window with a
+center-aligned project chip strip — multiple projects stay LIVE in the same window, a
+background project's chip jumps and shows its active-chat count when one of its chats asks a
+question, and multi-window remains an escape hatch.
+
+Your job RIGHT NOW is ONLY to load context. Do the steps below, then STOP and reply with the
+short report in step 4. Do NOT write any code. Do NOT edit any file. Read-only.
+
+1. Load the `engineering` skill and the `dreamcontext` skill via the Skill tool.
+
+2. Read, in full, the VALIDATED PLAN — this is the single source of truth for every task you
+   will later be forked into:
+   `_dream_context/workspace/project-tabs/plan-validated-v1.md`
+   It contains: the hard constraints, 9 closed gap decisions, 11 spec errors found against
+   real code (S1-S11), 6 missed collision findings (M0-M6), a file-by-file plan, a 20-task
+   dependency map (T1-T20 across 4 waves) with pinned contracts, and acceptance criteria.
+
+3. Read these files in full so the plan's line references are grounded in the real code:
+   - dashboard/src/api/client.ts
+   - dashboard/src/App.tsx
+   - dashboard/src/lib/attention.ts
+   - dashboard/src/components/sleepy/agentStatus.ts
+   - dashboard/src/components/layout/Shell.tsx
+   - dashboard/src/components/layout/Header.tsx
+   - dashboard/src/hooks/usePersistedState.ts
+   - dashboard/src/lib/desktop.ts
+   - dashboard/src/lib/checklistBridge.ts
+   - dashboard/src/lib/overlayStack.ts
+   - dashboard/src/components/search/ProjectSwitcher.tsx
+
+4. Reply with a SHORT report, max 30 lines, exactly this shape and nothing else:
+   PLAN LOADED
+   TASKS: <the 20 task ids in wave order, one line per wave>
+   LINE-REF CORRECTIONS: <every place the plan cites a path:line that does NOT match what you
+   actually read — give path:line + what is actually there. Write "none" if all matched.>
+
+YOU ARE THE FORK BASE. Implementers will be forked from THIS session, each handed exactly one
+task id (T1..T20) from the dependency map, and each may touch ONLY the files listed under that
+task's `files owned` column. Keep this session's context focused on the plan and the files
+above — do not explore further.

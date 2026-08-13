@@ -1,0 +1,48 @@
+DELTA for T11 — your eight files are ACCEPTED, do not revisit them. Two things.
+
+## 1. Both deviations ACCEPTED, and the second one is a real bug you found alone
+`openAutomationRunChat` returning `boolean` is right — my pinned `void` would have deleted the
+ACK `AutomationDetailPanel` reads. My error.
+
+The `vault` parameter on `markSleepPending`/`clearSleepPending`/`sleepPendingSince` is a
+genuine cross-project defect NOBODY else caught — not the plan, not four review lenses, not the
+five earlier waves. `dreamcontext:sleep-pending-at` was one global key, so clicking "Run sleep
+agent" in project A put project B's tracker into "Waiting to sleep…" and disabled its menu
+item. Scoping it, with no legacy migration because the value is ephemeral and the origin is
+fresh per launch, is exactly right. It is recorded as finding M8.
+
+## 2. YOUR LANE IS EXTENDED — the six producer call sites are yours
+You are right that the plan's T11 row named the producers and forgot everyone who CALLS them.
+That is my sixth ownership miss of this run, and the most avoidable: I wrote a standing rule
+about deriving ownership from the call tree rather than the import graph, then wrote your brief
+from a symbol list anyway.
+
+Batch 2 has fully finished, so nothing is running concurrently and these are safe to take
+atomically. **Change ONLY the producer call and whatever `const { bus } = useVault();` line it
+needs in each. Nothing else in any of these files.**
+
+- `components/brain/BrainSyncControl.tsx:167` — `requestBrainResolveAgent()` → `runBrainResolveAgent(bus)`
+- `components/settings/SystemDependencies.tsx:194` — `onClick={requestClaudeSignIn}` → `onClick={() => requestClaudeSignIn(bus)}`
+- `components/tasks/DelegateComposer.tsx:115` — add `bus` as argument 1
+- `lib/authorTaskAgent.ts:85` — `requestDelegateAgent(bus, …)`, which means `authorTaskWithAgent`
+  takes a `bus` param…
+- `components/tasks/AuthorTaskComposer.tsx` — …and passes it
+- `components/automations/AutomationDetailPanel.tsx:161` — `requestAutomationRunChat({…})` →
+  `openAutomationRunChat(bus, {…})`. This is T15's file; T15 has LANDED and is not running, so
+  it is safe. Touch only this call — T15's `useOverlayId` change in that file stays as it is.
+
+`BrainSyncControl.tsx` also carries a `readAutoCheckpointOnOpen(vault)` change from T12's
+resume. Leave that line alone.
+
+## STATEMENT OF DONE
+1. `cd dashboard && npx tsc --noEmit` — **zero diagnostics repo-wide.** This is the number that
+   matters; batch 3 (T14, T17) is running concurrently on `labRoute.ts`/`LabPage.tsx` and
+   `useAgentCapabilities.ts`/`Header.tsx`, so errors in exactly those four files are theirs —
+   name them and move on. Anything else must be gone.
+2. `npm run build` — exit 0, unless the only failures are those four batch-3 files.
+3. `npx vitest run tests/unit/delegate-agent.test.ts tests/unit/automation-run-chat.test.ts tests/unit/sleep-subagent-dispatch.test.ts`
+   — green.
+4. `git status --porcelain` — your 8 files + these 6 + the 2 tests you already updated.
+
+Report in under 12 lines: the six call sites, the four checks, and confirm you changed nothing
+else in any of the six files.

@@ -1,0 +1,88 @@
+ROLE CHANGE: you are no longer the planner. You are the IMPLEMENTER for task **T4** of the
+project-tabs dependency map in the plan you have already read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill via the Skill tool. Non-negotiable.
+
+You are on branch `feat/project-tabs`. T1, T2, T3, T5 and T18 have ALL already landed — you
+are the last task in Wave 1, and your green build is the wave gate. Read
+`dashboard/src/api/client.ts` and `dashboard/src/context/VaultContext.tsx` first.
+
+## FILES YOU OWN — exactly these 4, touch NOTHING else
+- `dashboard/src/pages/CorePage.tsx`
+- `dashboard/src/pages/KnowledgePage.tsx`
+- `dashboard/src/pages/SettingsPage.tsx`
+- `dashboard/src/context/ProjectContext.tsx`
+
+**DO NOT TOUCH** (launcher side — vault-agnostic, the singleton `api` is correct, and editing
+them breaks the launcher window): `pages/LauncherPage.tsx`, `pages/space/SpaceLauncher.tsx`,
+`pages/CaptureBar.tsx`.
+
+## CHANGE 1 — the three pages
+```ts
+import { useApi } from '../context/VaultContext';
+export function CorePage() {
+  const api = useApi();
+  … api.get<T>('/x') …           // every call site UNCHANGED
+}
+```
+`useApi()` is a hook — top level of the component body only.
+
+`KnowledgePage.tsx` (~:363) also calls `graphContentUrl`. T1 changed it to take the vault
+first (finding S11 — deliberately kept a module function, not a class method):
+```ts
+export function graphContentUrl(vault: string | null, path: string, opts?: { raw?: boolean }): string;
+```
+So: `const { vault } = useVault()` and `graphContentUrl(vault, target, { raw: true })`.
+
+## CHANGE 2 — `context/ProjectContext.tsx` (the important one)
+`ProjectProvider` currently calls the module singleton at ~:35:
+```ts
+api.get<HealthResponse>('/health').then(…)
+```
+That is what derives `contextRoot` → `projectId`, and `projectId` is what
+`hooks/usePersistedState.ts` and `stores/savedViews.ts` scope their storage by. With N live
+instances a singleton call would give every project the SAME `projectId` and silently merge
+their saved views and per-project UI state. Switch it to `useApi()`.
+
+- Keep `hashString`, the `LoadState` shape, the "Loading project…" gate and the catch-fallback
+  (`{ projectId: '', contextRoot: '' }`) EXACTLY as they are.
+- The effect must re-run when the api client changes: dependency array `[api]`.
+- Note `/api/health` IS resolved against the vault header server-side despite appearing in the
+  server's `VAULT_AGNOSTIC_PREFIXES` list — that list only suppresses the 400 when no vault is
+  present (`src/server/index.ts:659` computes `effRoot = hv ?? contextRoot` for every route).
+  Finding S3 in the plan records this. So passing the vault here is both necessary and correct.
+- Do NOT touch `hooks/useServerHealth.ts` — it stays on the singleton on purpose. It returns
+  only `{ version, upgradeReady }`, which are process-level, not per-vault (finding S2).
+
+## STATEMENT OF DONE — you are the WAVE 1 GATE, so all of these must be genuinely green
+1. `grep -rn "from '.*api/client'" dashboard/src` — the only remaining importers of the
+   SINGLETON `api` are: `hooks/useLauncher.ts`, `hooks/useServerHealth.ts`,
+   `hooks/useSleepyChat.ts` (documented dead code — deliberately left, see its header),
+   `pages/CaptureBar.tsx`, `components/sleepy/SleepyPerch.tsx`, `lib/agentSettings.ts`,
+   `lib/sleepy.ts`, and `App.tsx`. Files importing only the `ApiClient` TYPE, or importing
+   `agentFileUrl`/`graphContentUrl` (module fns by design, finding S11), are expected and fine.
+   Anything else importing the singleton is a miss by an earlier task — REPORT it, do not fix it.
+2. `grep -rn "getActiveVault" dashboard/src` returns hits ONLY in `dashboard/src/api/client.ts`.
+3. `npx tsc --noEmit` at the repo root — **clean, zero diagnostics**.
+4. `cd dashboard && npx tsc --noEmit` — **clean, zero diagnostics**. This is the wave gate: if
+   it is not clean, name every remaining error with its file and say which task owns that file.
+5. `npm test` at the repo root — green, and its output names BOTH
+   `tests/unit/scoped-storage.test.ts` and `tests/unit/agent-status-project-rollup.test.ts`.
+6. `npm run build` at the repo root — exits 0 and produces the dashboard bundle.
+7. `git status --porcelain` — your 4 files plus the files earlier Wave-1 tasks changed, and
+   nothing outside `dashboard/src/`, `tests/unit/` or the plan workspace.
+
+## HARD RULES
+- Touch ONLY your 4 files. If checks 3-6 fail because of a file you do not own, REPORT the
+  exact errors and which task owns them. Do not fix another task's file — the orchestrator
+  will resume that task's own session.
+- Behaviour must be IDENTICAL to before this wave. Faz 0 is contracts only: no visual change,
+  no new feature, no removed feature.
+- Do NOT edit the plan or any task doc. Do NOT commit, push, or switch branches.
+
+## REPORT BACK (max 25 lines)
+- the 7 statement-of-done checks with their actual command output (this is the wave gate —
+  paste the real tail of each, do not summarise),
+- any remaining `api/client` importer or `getActiveVault()` outside `client.ts`, with the
+  owning task id.

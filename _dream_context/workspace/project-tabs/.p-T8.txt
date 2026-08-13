@@ -1,0 +1,114 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T8** (Wave 2) of the project-tabs dependency
+map in the plan you have read (`_dream_context/workspace/project-tabs/plan-validated-v1.md`).
+Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill via the Skill tool. Non-negotiable.
+
+**T8 is the RISK TASK of the whole goal.** It is the reason the plan has a Wave-2 empirical
+gate. Everything else can be re-done cheaply; getting this wrong kills a live conversation.
+
+Wave 1 has landed. T6 (ProjectInstance/App) and T7 (WindowChrome/chip strip) are running
+CONCURRENTLY on different files.
+
+## FILES YOU OWN — touch NOTHING else
+- `dashboard/src/components/sleepy/agentSession.ts`
+- `dashboard/src/components/sleepy/AgentSurface.tsx`
+
+**`chatSession.ts` is deliberately NOT yours and must not be touched** — see §4.
+
+## THE PROBLEM (verified against the real code by an independent reviewer)
+Three things drive `ensureOpen()`/`fitVisible()` in `AgentSurface.tsx` today:
+- `useLayoutEffect` keyed `[panes, expanded]` (~:1335-1368) — appends the container to its slot
+  then `s.ensureOpen()`, then a rAF that does `ensureOpen()+fitAndResize()` for the foreground
+- `useEffect` keyed `[expanded, fitVisible]` (~:1413-1417) — a rAF `fitVisible()`
+- a 150ms-debounced `ResizeObserver` on the host + slots (~:1430-1447), gated `if (!expanded) return`
+
+**None of them fires when the INSTANCE becomes visible.** `isActive` is in no dependency array.
+And in `agentSession.ts`, `ensureOpen()` (~:678-712) bails while
+`container.offsetParent === null` — permanently true under `display:none` — so a terminal
+opened while its project was a background chip never opens, and `fitAndResize()` (~:362-368)
+returns early while `!session.opened`, so the PTY keeps the server's default grid and the TUI
+renders at the wrong width.
+
+## 1. `agentSession.ts` — make the focus grab opt-out
+```ts
+ensureOpen: (opts?: { focus?: boolean }) => void;    // was () => void
+```
+- `function ensureOpen(opts: { focus?: boolean } = {})`, and inside `doOpen()` change the
+  unconditional `term.focus()` (~:700) to `if (opts.focus !== false) term.focus();`.
+- Default stays `true`, so every existing call site behaves exactly as today.
+- WHY: once a background instance can open a terminal, an unconditional `term.focus()` would
+  yank the caret out of whatever the user is typing in the FOREGROUND project.
+- Change nothing else in this file. In particular do not touch the WS URL, `fitAndResize`'s
+  early return, the flow-control acks, the settle/idle classifier, or `dispose()`.
+
+## 2. `AgentSurface.tsx` — re-drive on activation
+- `const { isActive } = useVault();`
+- Add ONE new effect, next to the existing `expanded` one:
+  ```ts
+  useEffect(() => {
+    if (!isActive) return;
+    const raf = requestAnimationFrame(() => fitVisible());
+    return () => cancelAnimationFrame(raf);
+  }, [isActive, fitVisible]);
+  ```
+  The rAF matters: a freshly-shown container only has a non-null `offsetParent` after the
+  browser has laid it out.
+- Pass the focus flag at the two existing drive points (~:1355 and ~:1365):
+  `s.ensureOpen({ focus: isActive })`.
+- Tighten the ResizeObserver gate (~:1431) to `if (!expanded || !isActive) return;` so a hidden
+  instance stops observing and cannot churn.
+
+## 3. `AgentSurface.tsx` — dispose on unmount (finding M2)
+Today NOTHING disposes sessions when this component unmounts: `dispose()` is reached only from
+`closeSessionById` (~:492), `resumeChatInTerminal` (~:581), `resumeChatSession` (~:598) and
+`openAgentInChat` (~:658). That is correct today because the surface outlives everything.
+
+It stops being correct the moment a `ProjectInstance` can be torn down — the ceiling rule
+evicts an idle instance into a "cold chip", and closing a chip unmounts one. Without a teardown
+that leaks the PTY, the WebSocket, the xterm, the `MutationObserver` and the per-session
+`AGENT_SETTINGS_EVENT` listener, and leaves an orphaned `claude` process on the machine.
+
+Add an unmount-only cleanup:
+```ts
+useEffect(() => () => {
+  sessions.current.forEach((s) => { try { s.dispose(); } catch { /* best-effort */ } });
+  sessions.current.clear();
+}, []);
+```
+Empty dep array — it must run ONLY on unmount, never on a re-render. `dispose()` is already
+individually try/caught internally, but wrap per-session anyway so one throw cannot abort the
+rest.
+
+## 4. DO NOT TOUCH `chatSession.ts` — this is a decision, not an oversight
+Its `ensureOpen` (~:500) is a documented no-op because a chat pane mounts through a React
+portal, and its `fitAndResize` is `transcriptRepin?.()`. A chat pane under `display:none` keeps
+its DOM and its scroll height, and the same activation `fitVisible()` re-pins it. Adding a
+chat-side `ensureOpen` "for symmetry" would be inventing work against a different code path.
+
+## RED LINES — violating any of these fails the goal
+- A chat/terminal WebSocket is NEVER closed for any reason, and `isActive` NEVER reaches one.
+  Your only job is when the terminal is OPENED and FITTED.
+- An instance with a live chat is never unmounted by anything you write. You are adding the
+  teardown that runs when someone ELSE unmounts it, not a reason to unmount.
+- Do not tie `refetchInterval` or any query to visibility — that is T6/T17's.
+
+## STANDING RULE (added after Wave 1)
+Your lane is behavioural, not a symbol list: **nothing in your two files may assume one vault
+per window.** If satisfying that needs a file you do not own, **STOP and report it**. In Wave 1
+stopping surfaced four real gaps; guessing would have caused four silent collisions.
+
+## STATEMENT OF DONE
+1. `cd dashboard && npx tsc --noEmit` — zero errors in your two files.
+2. `grep -n "isActive" dashboard/src/components/sleepy/agentSession.ts dashboard/src/components/sleepy/chatSession.ts`
+   — **zero matches.** This is a red-line check: visibility must not have reached the session engines.
+3. `grep -n "ensureOpen" dashboard/src/components/sleepy/AgentSurface.tsx` — every call passes
+   `{ focus: isActive }` except any you can justify.
+4. `npx vitest run tests/unit/agent-status.test.ts tests/unit/agent-background-shells.test.ts`
+   — green. If a test asserts the old `ensureOpen()` arity it is yours to update; say so.
+5. `git status --porcelain` — exactly your two files (+ any test from check 4).
+
+REPORT BACK (max 20 lines): the four changes, the five checks, and — importantly — say
+explicitly whether you found any OTHER place that would need to re-drive on visibility which
+this delta does not cover. You are the person closest to this code; that judgement is the most
+valuable thing in your report.

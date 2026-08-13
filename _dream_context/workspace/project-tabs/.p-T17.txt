@@ -1,0 +1,71 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T17** (Wave 3, batch 3) of the project-tabs
+dependency map in the plan you have read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill. Non-negotiable.
+
+Batches 1 and 2 have landed. T14 runs CONCURRENTLY on different files.
+
+## FILES YOU OWN — touch NOTHING else
+- `dashboard/src/hooks/useAgentCapabilities.ts`
+- `dashboard/src/components/layout/Header.tsx`
+
+## THE RULE THIS TASK ENFORCES
+**Page data stops in the background; the agent surface does not.**
+
+`lib/instanceQueryClient.ts` (Wave 2) already flips a background instance's QueryClient
+defaults to `refetchInterval: false` / `refetchOnWindowFocus: false`. That is right for tasks,
+knowledge, lab, sleep debt — a hidden project should not poll them.
+
+It is WRONG for the agent surface's own liveness polling. If a background project's
+goal-skill run stops being polled, its chip badge FREEZES — and a frozen badge is the exact
+opposite of this goal, whose entire point is that a background project can tell you it needs
+you. So those queries must override the instance default EXPLICITLY.
+
+## 1. `useAgentCapabilities.ts` — override the default where liveness depends on it
+`:70` polls `/agent/session-stats?claudeId=…` — per-conversation live state, which is what a
+goal-skill run's badge reads. Set `refetchInterval` explicitly on that query so it keeps
+polling regardless of `isActive`.
+
+Audit the other queries in this file yourself and decide each on the same test — "does a
+background project's chip go stale/wrong if this stops?":
+- `/agent/capabilities` (`:17`) — machine-level facts (node-pty present, claude CLI present).
+  These do not change while the app is open. Leave it on the default.
+- `/agent/model-config` (`:50`) — static config. Leave it.
+State your decision per query in the report; do not blanket-override.
+
+Pick an interval that is honest about cost: this now runs for EVERY open project, not one. If
+the existing cadence is 15s, keep 15s and say so; if you think a background instance can poll
+slower than a foreground one without the badge feeling dead, say what you chose and why. Do
+not invent a new mechanism to do it — a plain explicit `refetchInterval` is the whole change.
+
+## 2. `Header.tsx` — the manual refresh button
+Its `refreshAll` calls `queryClient.refetchQueries({ type: 'active' })`. In a background
+instance that is a button the user cannot see, and firing it would defeat the pause. Disable
+it when `!isActive` (`useVault()`), and make the disabled state honest — the existing
+`disabled` styling is fine, do not add a tooltip explaining tabs.
+
+Header is instance-level: `SleepDebtTracker`, the search pill, the rail toggle and
+`UpdateBadge` all stay exactly where they are. T7 already moved the window-level controls out.
+
+## RED LINES
+- `isActive` must NEVER reach a WebSocket, `agentSession.ts`, or `chatSession.ts`. You are
+  changing react-query cadence only.
+- Do not touch `lib/instanceQueryClient.ts` (T6's) or `ProjectInstance.tsx` (T11's). If the
+  right fix seems to live there, **STOP and report it.**
+
+## STANDING RULE
+Behavioural: **nothing in your files may assume one vault per window.** If satisfying that
+needs a file you do not own, STOP and report it.
+
+## STATEMENT OF DONE
+1. `cd dashboard && npx tsc --noEmit` — **zero diagnostics repo-wide** (batch 3 is the end of
+   Wave 3; if not clean, name every error and its owner).
+2. `grep -rn "isActive" dashboard/src/components/sleepy/agentSession.ts dashboard/src/components/sleepy/chatSession.ts`
+   — zero matches. Red-line check.
+3. `npm run build` — exit 0.
+4. `git status --porcelain` — exactly your two files.
+
+REPORT BACK (max 15 lines): which queries you overrode and which you left on the default with
+the one-line reason for each, the interval you chose and why, the four checks, and anything you
+stopped on.

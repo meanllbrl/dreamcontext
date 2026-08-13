@@ -1,0 +1,139 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T7** (Wave 2) of the project-tabs dependency
+map in the plan you have read (`_dream_context/workspace/project-tabs/plan-validated-v1.md`).
+Build it. Do not re-plan.
+
+FIRST: load BOTH the `engineering` skill AND the `design` skill via the Skill tool. This task
+is the one visible surface of the whole goal — it must look like it belongs in this app, not
+like a bolted-on tab bar.
+
+Wave 1 has landed. T6 (`ProjectInstance`/`App.tsx`) and T8 (xterm re-drive) run CONCURRENTLY
+on different files. After this wave the app shows exactly ONE chip and behaves as today.
+
+## FILES YOU OWN — touch NOTHING else
+- `dashboard/src/components/layout/WindowChrome.tsx`  (new)
+- `dashboard/src/components/layout/ProjectTabs.tsx`   (new)
+- `dashboard/src/components/layout/ProjectTabs.css`   (new)
+- `dashboard/src/components/layout/Header.tsx`        (strip window-level controls out)
+
+## 1. `WindowChrome.tsx` — the window-level shell
+```tsx
+export const MAX_LIVE_INSTANCES = 6;
+export interface OpenProject {
+  vault: string;
+  instanceId: string;
+  cold: boolean;
+  rollup: ProjectRollup | null;   // from agentStatus.ts; null = has not published yet
+}
+export interface ChromeApi {
+  open: OpenProject[];
+  activeVault: string;
+  addTab(vault: string): Promise<'added'|'focused-tab'|'focused-window'|'refused-ceiling'>;
+  activate(vault: string): void;
+  closeTab(vault: string): void;
+  detachToWindow(vault: string): Promise<void>;
+}
+export function WindowChrome({ initialVault }: { initialVault: string }): JSX.Element;
+export function useChrome(): ChromeApi;
+```
+It owns and renders:
+- the traffic-light inset (86px on macOS — the existing `tauri-overlay` class on `<html>` marks
+  that case; reuse whatever `Header.tsx` does today, do not invent a new probe),
+- `<ProjectTabs>` centred against that inset,
+- the RIGHT cluster: **zoom + theme toggle + `StaleServerBanner` + `UpgradeRelaunchBanner` ONLY.**
+  `SleepDebtTracker`, the manual refresh button and `UpdateBadge` are per-vault and STAY in the
+  instance Header — do not move them.
+- the hoisted sidebar-collapse state (one rail width for the window; pass `sidebarCollapsed` +
+  `onToggleSidebar` down to every `<ProjectInstance>`),
+- `<ProjectSwitcher />` — mounted ONCE here (T9 rewires it next; render it and move on),
+- `openProjects.map(p => <ProjectInstance key={p.instanceId} … isActive={p.vault === activeVault} />)`.
+
+State rules:
+- **NO PERSISTENCE.** On mount, `open` is exactly one entry: `initialVault`. Never read or write
+  a tab list to localStorage or the server. Quitting and relaunching must come back with one project.
+- `instanceId` is a stable per-tab string (`inst-1`, `inst-2`, …) from a counter. It must NOT be
+  reused after a close.
+- `addTab` order of checks — implement all four now, even though the window-registry parts land
+  in Wave 4 (leave a clearly-marked TODO calling out T20 for step 2):
+  1. already a chip here → `activate(vault)`, return `'focused-tab'`
+  2. (T20, Wave 4) open in ANOTHER window → focus it, return `'focused-window'`
+  3. at `MAX_LIVE_INSTANCES` → evict the OLDEST instance that is `rollup !== null && rollup.live === 0`
+     into `cold: true`; if none qualifies return `'refused-ceiling'`
+  4. otherwise append and activate, return `'added'`
+- **THE CEILING'S NULL CASE IS LOAD-BEARING.** `rollup === null` means "has not published yet",
+  NOT "idle". An instance with `rollup === null` is **NEVER evictable**. Treating null as idle
+  would tear down an instance holding a live chat — the goal's #1 red line. Nothing publishes a
+  rollup until Wave 4, so in THIS wave every instance is null and therefore nothing is evictable.
+  That is correct and intended; write the rule so it stays correct once T19 starts publishing.
+- `closeTab` removes the entry (which unmounts that `ProjectInstance`; T8 is adding the session
+  teardown that runs on unmount). Refuse to close the last chip — the window must always hold one.
+
+## 2. `ProjectTabs.tsx` + `.css` — the chip strip
+```tsx
+export interface ProjectChip {
+  vault: string; active: boolean; cold: boolean;
+  worst: SessionStatusKind; live: number; waiting: number; bounceNonce: number;
+}
+export function ProjectTabs(p: {
+  chips: ProjectChip[];
+  onActivate(v: string): void;
+  onClose(v: string): void;
+  onAdd(): void;
+  onDetach(v: string): void;
+}): JSX.Element;
+```
+Chip anatomy, in order: **status dot · project name · badge · ×**. A `+` sits at the end of the
+strip. The active chip is filled and outlined; the others are plain outline.
+
+In THIS wave `worst`/`live`/`waiting`/`bounceNonce` arrive as inert defaults (T19 feeds them in
+Wave 4) — render the dot and OMIT the badge entirely when `live === 0`. Build the visual states
+now so Wave 4 only has to supply data.
+
+**Rule 1 — freeze while the pointer is in the strip.** Centre-aligned means every add/close
+shifts every chip sideways, so a close puts the neighbouring chip under the cursor and invites
+a second accidental close. On `pointerenter`, snapshot the strip's current geometry and hold it
+(a leading spacer + fixed chip widths); a closed chip's slot stays EMPTY. Release and re-centre
+on `pointerleave`. This is the behaviour Chrome uses for tab widths, for the same reason.
+
+**Rule 2 — fall left when it no longer fits.** A `ResizeObserver` on the strip: while it fits
+between the traffic-light inset and the right cluster it stays centred; the moment it would
+touch the right cluster, switch to `justify-content: flex-start` + `overflow-x: auto`. A clipped
+centred strip reads as broken alignment.
+
+- Tauri drag: put `data-tauri-drag-region` on the strip's EMPTY area only, never on a chip or
+  the `+` (a drag region swallows clicks).
+- `+` calls `onAdd()`, which opens the ProjectSwitcher (T9 wires that; just call the prop).
+- Right-click a chip → "Open in New Window" → `onDetach(vault)`. There is deliberately **no**
+  drag-a-chip-out gesture; it was cut.
+- `prefers-reduced-motion`: no bounce/pulse, colour changes only.
+- Use existing design tokens for every colour, radius and spacing. Zero hardcoded hex.
+
+## 3. `Header.tsx` — remove what is now window-level
+- DELETE `readVaultLabel()` (~:34-41) and the `header-vault` node (~:148). The project's name
+  lives on its chip now.
+- MOVE to `WindowChrome`: `ZOOM_LEVELS`/`ZOOM_STORAGE_KEY`/`getStoredZoom`/`applyZoom` and the
+  zoom control (~:11-31, ~:90-100, ~:165-169), and the theme toggle (~:83-88, ~:170-180).
+- MOVE OUT the title-bar gestures (`startTitleBarDrag`, `toggleMaximizeWindow`) — the chrome is
+  the title bar now.
+- KEEP in the instance Header: the rail toggle, the search pill, `SleepDebtTracker`, the refresh
+  button, `UpdateBadge`.
+- `applyZoom` still writes `--zoom` on `<html>` and still dispatches `dreamcontext-zoom` on
+  `window` — zoom IS window-level and every instance's xterm must hear it. Do not move that
+  event to a bus.
+
+## STANDING RULE (added after Wave 1)
+Behavioural, not a symbol list: **nothing you write may assume one vault per window**, and no
+vault-bound call may sit on the singleton `api` in your files. If satisfying that needs a file
+you do not own — especially `ProjectInstance.tsx` (T6's, concurrent) — **STOP and report it.**
+Do not create or stub another task's file.
+
+## STATEMENT OF DONE
+1. `cd dashboard && npx tsc --noEmit` — zero errors in your four files. Errors in `App.tsx` /
+   `ProjectInstance.tsx` (T6, concurrent) are expected; name them.
+2. `npm run build` at the repo root — exit 0 (the CSS must actually compile).
+3. One chip renders, centred, with the project's name; the app looks and behaves as before.
+4. `grep -rn "localStorage" dashboard/src/components/layout/WindowChrome.tsx` — nothing that
+   stores a TAB LIST. (The zoom key you inherited is fine.)
+5. `git status --porcelain` — exactly your four files.
+
+REPORT BACK (max 25 lines): the exports you shipped, how you implemented Rules 1 and 2, the five
+checks, and anything you had to stop on.

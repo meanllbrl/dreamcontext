@@ -1,0 +1,140 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T6** (Wave 2) of the project-tabs dependency
+map in the plan you have read (`_dream_context/workspace/project-tabs/plan-validated-v1.md`).
+Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill via the Skill tool. Non-negotiable.
+
+Wave 1 (Faz 0) has fully landed: `ApiClient` takes a vault, `useApi()`/`useVault()` exist,
+`getActiveVault()` survives only as a deprecated no-caller in `api/client.ts`, and
+`rollupProject`/`ProjectRollup` exist in `agentStatus.ts`. Read
+`dashboard/src/context/VaultContext.tsx` and `dashboard/src/components/sleepy/agentStatus.ts`
+before you start.
+
+You are building the MOUNT SPINE. T7 (WindowChrome + the chip strip) and T8 (the xterm
+re-drive) are running CONCURRENTLY on different files. After this wave the app still shows
+exactly ONE chip and must behave identically to today.
+
+## FILES YOU OWN — touch NOTHING else
+- `dashboard/src/ProjectInstance.tsx`        (new)
+- `dashboard/src/lib/instanceQueryClient.ts` (new)
+- `dashboard/src/App.tsx`                    (rewrite of the vault branch only)
+
+## 1. `lib/instanceQueryClient.ts` (new)
+```ts
+export function createInstanceQueryClient(): QueryClient;
+export function setInstanceActive(qc: QueryClient, active: boolean): void;
+```
+- `createInstanceQueryClient()` must reproduce `App.tsx`'s CURRENT module-level `queryClient`
+  defaults **verbatim** (staleTime 5000, retry 1, refetchOnWindowFocus true, refetchInterval
+  15_000, refetchIntervalInBackground false, mutations retry 0). Copy the existing explanatory
+  comment across — it says why the interval exists.
+- `setInstanceActive(qc, active)` mutates the client's default options:
+  `refetchInterval: active ? 15_000 : false` and `refetchOnWindowFocus: active`.
+- At N=1 (the only chip is always active) this is behaviour-identical to today. That is the
+  point: the mechanism lands now, the behaviour change lands in Wave 3.
+- **RED LINE:** this touches PAGE-DATA polling only. It must never reach a WebSocket. Do not
+  import anything from the sleepy/session modules here.
+
+## 2. `ProjectInstance.tsx` (new)
+```tsx
+export interface ProjectInstanceProps {
+  vault: string;
+  instanceId: string;
+  isActive: boolean;
+  sidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
+  onRollup?: (vault: string, r: ProjectRollup) => void;   // unused this wave; T19 wires it
+}
+export function ProjectInstance(p: ProjectInstanceProps): JSX.Element;
+```
+Renders exactly this nesting — the order is load-bearing:
+```tsx
+<div className="project-instance" data-instance={instanceId} hidden={!isActive} inert={!isActive}>
+  <QueryClientProvider client={perInstanceClient}>
+    <VaultProvider vault={vault} instanceId={instanceId} isActive={isActive} bus={bus}>
+      <ProjectProvider>
+        <I18nProvider>
+          <Shell …>{(nav) => <>…PageRouter…, …AnnouncementsModal…</>}</Shell>
+          <AgentSurface />
+        </I18nProvider>
+      </ProjectProvider>
+    </VaultProvider>
+  </QueryClientProvider>
+</div>
+```
+- `perInstanceClient` = `useRef(createInstanceQueryClient()).current` — created ONCE per
+  instance, never re-created on render.
+- `bus` = `useRef(new EventTarget()).current`.
+- Call `setInstanceActive(perInstanceClient, isActive)` in an effect keyed on `isActive`.
+- **`ThemeProvider` is NOT here.** It is window-level and lives in the chrome (T7's).
+  `UpgradeRelaunchBanner`, `StaleServerBanner` and `ProjectSwitcher` are also NOT here.
+- `AgentSurface` stays mounted OUTSIDE `Shell`, exactly as it is in `App.tsx` today — its
+  PTY/scrollback surviving navigation depends on that.
+- The `AgentPageNavBridge` currently in `App.tsx` moves in a LATER wave (T11). For now keep it
+  working: leave it listening where it is, or move it verbatim into this file still listening
+  on `window`. Do NOT convert it to the instance bus — that is T11's, and doing it here would
+  collide.
+- `inert` is a real React 19 boolean prop; `@types/react` is ^19 so it typechecks. Together
+  with `hidden` it must make the subtree non-focusable and non-interactive — that is what
+  stops a hidden instance receiving keystrokes.
+- **CRITICAL — `hidden` alone is NOT enough, and this was flagged by T8 as a real landmine.**
+  The `hidden` attribute is implemented as a UA `display: none` rule, so ANY author CSS that
+  sets `display` on `.project-instance` silently defeats it and every instance renders on top
+  of the others. You MUST write an explicit rule and it must win:
+  ```css
+  .project-instance[hidden] { display: none !important; }
+  ```
+  Put it wherever you style `.project-instance` (a small co-located CSS file is fine — say in
+  your report where you put it). Do not rely on the attribute by itself, and do not give
+  `.project-instance` a `display: flex/grid/block` rule that could apply while hidden.
+  The whole hiding contract — xterm not refitting, keystrokes not landing, T8's `fitVisible`
+  guard — assumes the subtree genuinely computes to `display: none`.
+
+## 3. `App.tsx` — rewrite the VAULT branch only
+- DELETE the module-level `queryClient` (it moves into `createInstanceQueryClient`).
+- DELETE the module-level `initialVault` + `setActiveVault(initialVault)` bootstrap. `?vault=`
+  is still read at module scope, but it now names the FIRST CHIP, not the window. Do NOT call
+  `setActiveVault` at all any more.
+- KEEP the `captureMode` / `perchMode` / `checklistId` / launcher branches **byte-identical**.
+  The launcher branch keeps its own `QueryClientProvider` — give it its own client from
+  `createInstanceQueryClient()` (or a plain one); it must keep working exactly as today.
+- The vault branch becomes:
+  ```tsx
+  <ErrorBoundary>
+    <ThemeProvider>
+      <QueryClientProvider client={chromeClient}>
+        <WindowChrome initialVault={initialVault} />
+      </QueryClientProvider>
+    </ThemeProvider>
+  </ErrorBoundary>
+  ```
+  `WindowChrome` is T7's file, landing concurrently. Import it and render it with exactly that
+  one prop. If it does not exist yet when you typecheck, say so in your report — do NOT stub it
+  out with a placeholder implementation, and do NOT create the file.
+- Move `PageRouter`, `AgentPageNavBridge` and the `AnnouncementsModal` wiring into
+  `ProjectInstance.tsx` (they are per-project). `StaleServerBanner` moves to the CHROME — leave
+  its definition where T7 can take it, or export it; say in your report what you did.
+
+## STANDING RULE (added after Wave 1 — this cost us four resume rounds)
+Do not reason about your lane as a list of symbols. The rule is BEHAVIOURAL:
+**no vault-bound call may remain on the singleton `api` in the files you own**, and
+**nothing you write may assume a single vault per window**. If you find a file that needs to
+change to satisfy that and it is not in your list, **STOP and report it** — do not edit it.
+Another implementer owns it and will overwrite you. Four times in Wave 1 stopping is exactly
+what surfaced a real bug.
+
+## STATEMENT OF DONE
+1. `cd dashboard && npx tsc --noEmit` — zero errors in your three files. Errors in
+   `WindowChrome.tsx`/`ProjectTabs.tsx` (T7's, concurrent) or `AgentSurface.tsx` (T8's) are
+   expected; name them and their owner.
+2. The app still renders ONE project and behaves as before: no visual change, no new feature.
+3. `grep -n "setActiveVault" dashboard/src/App.tsx` — no matches.
+4. `git status --porcelain` — exactly your three files.
+
+## HARD RULES
+- Never unmount a live instance. Hiding is `hidden` + `inert`, nothing else.
+- `isActive` must never reach a WebSocket, a session factory, or `agentSession`/`chatSession`.
+- Do NOT commit, push, or switch branches. Do NOT edit the plan or any task doc.
+
+REPORT BACK (max 20 lines): the exact props/exports you shipped, the four checks, what you did
+with `StaleServerBanner`/`AgentPageNavBridge`, and anything you had to stop on.

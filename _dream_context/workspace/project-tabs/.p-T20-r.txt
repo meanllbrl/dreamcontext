@@ -1,0 +1,40 @@
+DELTA for T20 — a CRITICAL defect was found in final code review. The root cause is the
+contract I pinned, not your implementation. One line changes.
+
+## THE BUG
+Your ceiling rule is exactly what I specified: evict when `rollup !== null && rollup.live === 0`.
+But `ProjectRollup.live` deliberately EXCLUDES `kind === 'shell'` rows — it is the chat BADGE
+count, and a shell has no agent behind it.
+
+So a project whose only live thing is a running SHELL — a dev server, a build watch, a process
+the user is monitoring — reports `live: 0`, is picked by `oldestEvictable`, is `chill()`ed, and
+its PTY is killed mid-process by the unmount teardown. That is the failure this whole design
+exists to prevent, reached through `shell` instead of `agent`/`chat`. I reused a presentation
+count as a safety predicate.
+
+## YOUR CHANGE
+T18 has already shipped a new field (resume complete, tests green):
+```ts
+export interface ProjectRollup { worst; live; waiting; alive: number }
+```
+`alive` = sessions of ANY kind still holding a live PTY/WebSocket (`info.kind` is neither
+`'saved'` nor `'ended'`), **shells included**.
+
+In `components/layout/WindowChrome.tsx`, the ceiling must consult **`alive`, never `live`**:
+`rollup !== null && rollup.alive === 0`.
+
+Check EVERY place the ceiling reasons about idleness — `oldestEvictable` and anything else that
+decides whether a tab can be chilled. Leave a short comment saying `live` is a presentation
+count and must never gate a teardown, so this cannot regress.
+
+Everything else you shipped stands. Do not touch the rollup sink, the registry heartbeat,
+`addTab`'s other branches, or `desktop.ts`.
+
+## STATEMENT OF DONE
+1. `grep -n "rollup" dashboard/src/components/layout/WindowChrome.tsx` — no eviction path reads
+   `.live`; the ceiling reads `.alive`.
+2. `cd dashboard && npx tsc --noEmit` — zero errors in your files. `AgentSurface.tsx` may still
+   error (T19 is being resumed concurrently for a hardcoded rollup literal) — name it, leave it.
+3. `git status --porcelain` — exactly `WindowChrome.tsx`.
+
+Report in under 8 lines: the changed predicate(s), the three checks.

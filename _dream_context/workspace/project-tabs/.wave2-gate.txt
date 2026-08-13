@@ -1,0 +1,22 @@
+=== A2 DASHBOARD TSC ===
+CLEAN
+=== A6 BUILD ===
+CLI Cleaning output folder
+ESM Build start
+ESM dist/index.js 3.71 MB
+ESM ⚡️ Build success in 242ms
+=== A9 RED LINE: isActive in session engines ===
+ZERO MATCHES — red line holds
+=== A3 NPM TEST ===
+ ❯ listOnTimeout node:internal/timers:581:17
+ ❯ processTimers node:internal/timers:519:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
+ Test Files  1 failed | 385 passed | 2 skipped (388)
+      Tests  1 failed | 6766 passed | 1 skipped | 18 todo (6786)
+     Errors  1 error
+   Start at  00:35:01
+   Duration  242.68s (transform 11.12s, setup 0ms, collect 136.84s, tests 646.18s, environment 66ms, prepare 44.76s)
+

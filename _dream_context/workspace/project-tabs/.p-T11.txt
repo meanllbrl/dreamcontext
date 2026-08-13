@@ -1,0 +1,104 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T11** (Wave 3, batch 2) of the project-tabs
+dependency map in the plan you have read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill. Non-negotiable.
+
+Batch 1 (T10 Shell, T12 storage + permission split, T16 window registry) has LANDED — read
+`dashboard/src/context/VaultContext.tsx` (`emitInstance`, `useInstanceEvent`) and
+`dashboard/src/lib/agentSettings.ts` (T12's new `readChatPermissionMode` /
+`writeChatPermissionMode` / `CHAT_PERMISSION_MODE_EVENT`) before you start. T13 and T15 run
+CONCURRENTLY on different files.
+
+You carry finding **M0**, the largest single defect this whole refactor has to fix.
+
+## FILES YOU OWN — touch NOTHING else
+- `dashboard/src/components/sleepy/AgentSurface.tsx`
+- `dashboard/src/ProjectInstance.tsx`
+- `dashboard/src/components/layout/SleepDebtTracker.tsx`
+- `dashboard/src/lib/sleepAgent.ts`
+- `dashboard/src/lib/delegateAgent.ts`
+- `dashboard/src/lib/brainResolveAgent.ts`
+- `dashboard/src/lib/automationRunChat.ts`
+- `dashboard/src/lib/claudeAuth.ts`
+
+## THE PROBLEM (M0)
+A census of `window.dispatchEvent` found 13 distinct custom events. TEN of them are
+INSTANCE-level — meaningful to exactly one project — yet they are broadcast on `window`, so
+with N projects mounted in one realm EVERY listener fires. The worst is
+`dreamcontext-delegate-agent`: `lib/delegateAgent.ts:132-136` dispatches SYNCHRONOUSLY and then
+reads `payload.accepted` back, and `AgentSurface.tsx:916` is what sets it — so **the first
+listener to run claims the delegate**. A task handed to Claude would land in the wrong project
+while the right one reported success.
+
+## 1. MOVE THESE TO THE INSTANCE BUS
+Each producer gains a leading `bus: EventTarget` parameter; the React caller passes
+`useVault().bus`. Pinned signatures:
+```ts
+export function runSleepAgent(bus: EventTarget): void;                       // sleepAgent.ts:44
+export function markSleepPending(bus: EventTarget, …existing): void;         // sleepAgent.ts:68,74 (SLEEP_PENDING_EVENT)
+export function delegateTaskToAgent(bus: EventTarget, vault: string | null, args: DelegateAgentArgs): Promise<boolean>;
+export function runBrainResolveAgent(bus: EventTarget): void;                // brainResolveAgent.ts:36
+export function openAutomationRunChat(bus: EventTarget, detail: AutomationRunChatDetail): void;  // automationRunChat.ts:62
+export function requestClaudeSignIn(bus: EventTarget): void;                 // claudeAuth.ts:67
+```
+(`delegateTaskToAgent` already took `vault` from Wave 1 — the bus goes IN FRONT of it. Its
+`async`/`Promise<boolean>` shape from Wave 1 stays; the synchronous ACK lives in
+`requestDelegateAgent`, which keeps working because the dispatch is still synchronous.)
+
+Consumers in `AgentSurface.tsx` (`:571` sign-in, `:823` sleep, `:852` brain-resolve, `:918`
+delegate, `:1002` automation-run-chat, `:1613` navigate) switch from
+`window.addEventListener` to `useInstanceEvent`. `SleepDebtTracker.tsx` consumes
+`SLEEP_PENDING_EVENT` — switch it too.
+
+Also on the bus: **`dreamcontext-navigate`** (T10 already moved the PRODUCER in Shell.tsx this
+wave — you move `AgentSurface`'s consumer) and **`dreamcontext-agent-open-page`**
+(`AgentSurface.tsx:642` produces it; `AgentPageNavBridge`, which T6 moved verbatim into
+`ProjectInstance.tsx` with a `TODO(T11)`, consumes it — convert both).
+
+## 2. THESE STAY ON `window` — do not touch them
+- `dreamcontext-zoom` (`Header.tsx` → every instance's xterm SHOULD hear it)
+- `AGENT_SETTINGS_EVENT` (genuinely app-global; T12 removed the one field that wasn't)
+- `ANNOUNCEMENTS_READ_EVENT` (version-keyed, global)
+- `AUTO_CHECKPOINT_EVENT` — **verified DEAD CODE**, dispatched with zero listeners anywhere.
+  Leave it exactly as it is. Moving a no-op event is work with no behaviour attached.
+
+## 3. PERMISSION MODE — consume T12's new per-vault accessors
+`AgentSurface.tsx` at `:250-251`, `:425`, `:441`, `:620`, `:624`, `:2161` currently reads
+`agentSettings.chatPermissionMode`, which T12 has REMOVED from the blob. Switch to
+`readChatPermissionMode(vault)` and subscribe to `CHAT_PERMISSION_MODE_EVENT` **on
+`useVault().bus`**, never on `window`. `:624`'s `patchAgentSettings({chatPermissionMode})`
+becomes `writeChatPermissionMode(bus, vault, mode)`. The `AGENT_SETTINGS_EVENT` listener at
+`:308` stays for every remaining field.
+
+## 4. ONE-LINE FORWARD T10 STOPPED ON (do this, it is yours)
+T10 changed `Shell` to take `sidebarCollapsed` / `onToggleSidebar` as PROPS and deleted its own
+`useSidebarCollapse()`. `ProjectInstance.tsx` (~:151, ~:189) still destructures only
+`{ vault, instanceId, isActive }` and does not forward them. Destructure
+`{ vault, instanceId, isActive, sidebarCollapsed, onToggleSidebar }` and pass both to `<Shell>`.
+The props already arrive from `WindowChrome`; nothing above you needs to change.
+
+## STANDING RULE
+Behavioural: **nothing in your files may assume one vault per window.** If satisfying that
+needs a file you do not own, **STOP and report it** — do not edit it. In Wave 1 stopping
+surfaced four real gaps.
+
+## RED LINES
+- No WebSocket lifecycle change; `isActive` must not reach a session engine.
+- Do not touch `ensureOpen`/`fitVisible`/`fitAndResize`/the ResizeObserver or the unmount
+  teardown in `AgentSurface.tsx` — that is T8's Wave-2 work and it is finished.
+
+## STATEMENT OF DONE
+1. `grep -rn "window.dispatchEvent(new CustomEvent" dashboard/src` — ONLY `dreamcontext-zoom`,
+   `AGENT_SETTINGS_EVENT`, `ANNOUNCEMENTS_READ_EVENT`, `AUTO_CHECKPOINT_EVENT` remain.
+2. `grep -n "window.addEventListener" dashboard/src/components/sleepy/AgentSurface.tsx` — only
+   the three window-level events above.
+3. `cd dashboard && npx tsc --noEmit` — **zero diagnostics repo-wide**. You are the last big
+   consumer in this batch; if it is not clean, name every error and its owner.
+4. `npx vitest run tests/unit/delegate-agent.test.ts tests/unit/delegate-modes.test.ts tests/unit/sleep-subagent-dispatch.test.ts tests/unit/automation-run-chat.test.ts`
+   — green. Any test asserting the old signatures is YOURS to update; say which.
+5. `npm run build` — exit 0.
+6. `git status --porcelain` — exactly your eight files (+ any test from check 4).
+
+REPORT BACK (max 22 lines): the producer signatures you shipped, which events moved vs stayed
+and why, the six checks, and anything you stopped on.

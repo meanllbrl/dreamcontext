@@ -1,0 +1,25 @@
+=== A2 DASHBOARD TSC ===
+CLEAN
+=== A6 BUILD ===
+ESM Build start
+ESM dist/index.js 3.71 MB
+ESM ⚡️ Build success in 162ms
+=== A7 getActiveVault outside client.ts ===
+NONE
+=== A8 window custom events remaining ===
+dashboard/src/context/VaultContext.tsx -> …))`. */
+dashboard/src/components/layout/WindowChrome.tsx -> 'dreamcontext-zoom', { detail: zoom }));
+dashboard/src/hooks/useAnnouncements.ts -> ANNOUNCEMENTS_READ_EVENT));
+dashboard/src/lib/agentSettings.ts:131:  try { window.dispatchEvent(new CustomEvent<AgentSettings>(AGENT_SETTINGS_EVENT, { detail: cfg })); } catch { /* SSR/none */ }
+dashboard/src/lib/brainSyncPrefs.ts -> AUTO_CHECKPOINT_EVENT, { detail: enabled }));
+=== A9 RED LINE ===
+ZERO MATCHES
+=== A3 NPM TEST ===
+
+
+ Test Files  1 failed | 387 passed | 2 skipped (390)
+      Tests  1 failed | 6879 passed | 1 skipped | 18 todo (6899)
+     Errors  1 error
+   Start at  01:53:07
+   Duration  146.32s (transform 6.95s, setup 0ms, collect 68.69s, tests 358.16s, environment 44ms, prepare 19.94s)
+

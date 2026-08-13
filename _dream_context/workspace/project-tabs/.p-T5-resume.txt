@@ -1,0 +1,32 @@
+DELTA for T5 — your lane is extended by the orchestrator. Everything else you shipped is
+accepted; do not revisit it.
+
+You correctly stopped instead of editing a file you did not own. The dependency map had a gap:
+no task owned the test that asserts against the signatures you changed. That is now fixed —
+**`tests/unit/delegate-agent.test.ts` is yours.**
+
+## THE ONE THING TO DO
+`tests/unit/delegate-agent.test.ts` calls `preparePrompt` with a single argument at lines
+79, 85, 91, 99, 104 and 188. Update those call sites to the signature you shipped:
+`preparePrompt(vault: string | null, prompt: string)`.
+
+I verified the blast radius myself — `grep -rln` across `tests/` for `preparePrompt`,
+`mintPromptToken`, `uploadAgentFile`, `createSession`, `createChatSession`,
+`delegateTaskToAgent`, `authorTaskWithAgent`, `rawUrl`, `agentFileUrl`, `graphContentUrl`
+returns **exactly this one file**. There is nothing else to chase.
+
+Rules for the fix:
+- Pass a realistic vault string (e.g. `'scratch'`) where the test is exercising the happy
+  path, and keep whatever the test was actually asserting. Do NOT weaken an assertion to make
+  it pass — if a test now fails for a REAL reason rather than an arity reason, stop and say so.
+- The `desktop_only` and token-failure expectations must still be exercised. `mintPromptToken`
+  throws when there is no vault, so if a test depends on that path, pass `null` deliberately
+  and say in a comment that null is the "no vault pinned" case.
+- Do not touch any other test file, and do not touch your 13 implementation files again.
+
+## THEN VERIFY AND REPORT
+1. `npx vitest run tests/unit/delegate-agent.test.ts` — green, and say how many tests ran.
+2. `git status --porcelain` — your 13 files plus this one test file, nothing else of yours.
+
+Report in under 12 lines: the test result, and whether any failure was semantic rather than
+arity (that would be a real finding, not a mechanical fix).

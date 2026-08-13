@@ -1,0 +1,61 @@
+DELTA for T18 — a CRITICAL defect was found in final review, and the root cause is the
+contract I pinned, not your implementation. Your existing work stays; you are adding one field.
+
+## THE BUG
+`ProjectRollup.live` deliberately excludes `kind === 'shell'` rows — correct, because `live` is
+the chat BADGE count and a shell has no agent behind it. Your unit test pins that and it stays
+pinned.
+
+But the CEILING rule in `WindowChrome.tsx` also gates eviction on `rollup.live === 0`. So a
+project whose only live thing is a running SHELL — a dev server, a build watch, an interactive
+process the user is monitoring — reports `live: 0`, gets picked as "idle", is torn down into a
+cold chip, and its PTY is killed mid-process. That is the exact class of failure this entire
+design exists to prevent; it just escaped through `shell` instead of `agent`/`chat`.
+
+I reused a badge count for a life-or-death decision. The fix is to stop conflating them.
+
+## YOUR CHANGE — one new field, additive
+`dashboard/src/components/sleepy/agentStatus.ts`:
+```ts
+export interface ProjectRollup {
+  worst: SessionStatusKind;
+  live: number;    // UNCHANGED — the badge count: chats/agents only, shells excluded
+  waiting: number; // UNCHANGED
+  /** Eviction safety: how many sessions of ANY kind still hold a live PTY/WebSocket —
+   *  agent, chat AND shell. This is the ONLY field the ceiling rule may consult. `live` is a
+   *  presentation count and must never decide whether an instance can be torn down. */
+  alive: number;
+}
+```
+- `alive` counts a row when `info.kind` is neither `'saved'` nor `'ended'` — **regardless of
+  `kind`**, so shells are included. (`saved` is a restored roster row with no live session;
+  `ended` is a dead PTY. Everything else holds something real.)
+- `live` keeps its exact current definition. Do not touch it, and do not touch `worst` or
+  `waiting`.
+- Empty input → `{ worst: 'ended', live: 0, waiting: 0, alive: 0 }`.
+- Put the "why two counts" reasoning in the interface comment. The next person to read this
+  will otherwise assume one of them is redundant and delete it — which is precisely how this
+  bug would come back.
+
+## THE TEST — `tests/unit/agent-status-project-rollup.test.ts`
+Keep every existing assertion. ADD:
+1. a project whose ONLY row is a live `shell` → `live === 0` (badge stays quiet) **and**
+   `alive === 1` (the ceiling must not evict it). This is the regression lock for the exact
+   bug; name it so.
+2. `saved` and `ended` rows excluded from `alive` too.
+3. a mixed project (one live chat + one live shell) → `live === 1`, `alive === 2`.
+
+## HARD RULES
+- Touch ONLY `agentStatus.ts` and your test file. `WindowChrome.tsx` consumes the new field and
+  is T20's — it is being resumed right after you. Do NOT edit it.
+- ADD ONLY to `agentStatus.ts`: `deriveSessionStatus`, `rollupKind`, `orderRows`, `KIND_RANK`
+  and the existing `ProjectRollup` fields must be byte-identical.
+
+## STATEMENT OF DONE
+1. `npx vitest run tests/unit/agent-status-project-rollup.test.ts` — green, and say how many
+   tests now run.
+2. `cd dashboard && npx tsc --noEmit` — the ONLY new error may be `WindowChrome.tsx` if it does
+   not yet supply `alive`; name it and leave it for T20.
+3. `git status --porcelain` — exactly your two files.
+
+Report in under 10 lines: the shipped interface, the new test names, the three checks.

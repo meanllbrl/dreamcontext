@@ -1,0 +1,80 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T15** (Wave 3, batch 2) of the project-tabs
+dependency map in the plan you have read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill. Non-negotiable.
+
+T11 and T13 run CONCURRENTLY on different files.
+
+## FILES YOU OWN — touch NOTHING else
+- `dashboard/src/lib/overlayStack.ts`
+- `dashboard/src/lib/useOverlayId.ts`                              (new)
+- `dashboard/src/components/search/CommandPalette.tsx`
+- `dashboard/src/components/sleepy/ChatHistoryPicker.tsx`
+- `dashboard/src/components/layout/AnnouncementsModal.tsx`
+- `dashboard/src/components/lab/InsightDetailPanel.tsx`
+- `dashboard/src/components/automations/AutomationDetailPanel.tsx`
+
+## THE PROBLEM (finding M3)
+`lib/overlayStack.ts` is a module-global LIFO of open overlays so that Esc always closes the
+front-most one. `pushOverlay` DE-DUPES BY ID (`:14-16`). With N project instances in one realm,
+two instances that push the SAME literal id are the same entry — so instance A closing its
+palette pops instance B's, and Esc breaks in B.
+
+I audited all seven call sites myself. **Three are already safe and must NOT be touched** —
+their ids come from `useId()`, so they are unique per mount:
+- `components/lab/RangeControl.tsx:262`
+- `components/lab/funnel/FunnelOverviewPage.tsx:505`
+- `components/sleepy/SkillPickerPopover.tsx:40`
+
+**Five use LITERAL ids and collide** — these are your call sites:
+- `CommandPalette.tsx:210` → `'command-palette'`
+- `ChatHistoryPicker.tsx:181` → `'chat-history'`
+- `AnnouncementsModal.tsx:9` → `'announcements-modal'`
+- `InsightDetailPanel.tsx:80` → `'insight-detail-panel'`
+- `AutomationDetailPanel.tsx:214` → `'automation-detail-panel'`
+
+`ProjectSwitcher.tsx:153`'s literal `'project-switcher'` is FINE and off-limits — T9 made it a
+single mount inside `WindowChrome`, so it can never collide with itself.
+
+## THE FIX — deliberately minimal
+Do NOT change `pushOverlay`/`popOverlay`/`isTopOverlay`'s signatures. Changing them would force
+edits to the three `useId()` sites for no benefit. Instead:
+
+```ts
+// lib/overlayStack.ts — ADD ONE FUNCTION, everything else untouched
+export function popAllWithPrefix(prefix: string): void;
+
+// lib/useOverlayId.ts — NEW (keeps overlayStack framework-free)
+export function useOverlayId(local: string): string;   // `${instanceId}::${local}` from useVault()
+```
+`useOverlayId` is a hook (it reads `useVault()`), which is why it lives in its own file rather
+than inside the framework-free `overlayStack.ts`. Outside a `VaultProvider` `instanceId` is
+`''`, giving `'::command-palette'` — still unique, because a launcher window has exactly one of
+each.
+
+Then at each of the five sites: `const overlayId = useOverlayId('command-palette')` (etc.) at
+the top of the COMPONENT body, and pass that where the literal was. In `AnnouncementsModal.tsx`
+the literal is a module constant (`:9`) — move it inside the component.
+
+`popAllWithPrefix(prefix)` exists so a chip going background can drop its own overlays in one
+call. Nothing calls it yet — that is fine and intended; ship it with a doc comment saying who
+will (`WindowChrome`, when a chip is deactivated).
+
+## STANDING RULE
+Behavioural: **nothing in your files may assume one vault per window.** If satisfying that
+needs a file you do not own, **STOP and report it** — do not edit it. In particular
+`CommandPalette.tsx` was touched by T2 in Wave 1 for the recall call sites: change ONLY the
+overlay id there, nothing else.
+
+## STATEMENT OF DONE
+1. `grep -rn "pushOverlay(\|isTopOverlay(\|popOverlay(" dashboard/src` — every call at your five
+   sites passes a `useOverlayId(...)` value; the three `useId()` sites are UNCHANGED (diff them
+   to prove it).
+2. `cd dashboard && npx tsc --noEmit` — zero errors in your seven files. Errors in
+   `AgentSurface.tsx` (T11, concurrent) are expected; name them.
+3. `npm run build` — exit 0.
+4. `git status --porcelain` — exactly your seven files.
+
+REPORT BACK (max 15 lines): the exported signatures, confirmation that the three `useId()` sites
+are untouched, the four checks, and anything you stopped on.

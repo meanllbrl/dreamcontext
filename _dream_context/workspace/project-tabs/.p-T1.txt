@@ -1,0 +1,132 @@
+ROLE CHANGE: you are no longer the planner. You are the IMPLEMENTER for task **T1** of the
+project-tabs dependency map in the plan you have already read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill via the Skill tool. Non-negotiable.
+
+You are on branch `feat/project-tabs`. Every other task (T2-T20) is blocked on you — your
+exported signatures are the frozen contract 19 other implementers will code against, so get
+them exactly right and do not improvise a different shape.
+
+## FILES YOU OWN — touch NOTHING else, not one other file
+- `dashboard/src/api/client.ts`            (modify)
+- `dashboard/src/context/VaultContext.tsx` (new)
+- `dashboard/src/lib/scopedStorage.ts`     (new)
+- `tests/unit/scoped-storage.test.ts`      (new)
+
+## WHAT TO BUILD — the frozen contract
+
+### 1. `dashboard/src/api/client.ts`
+Turn `ApiClient` into an exported class taking the vault, and keep the URL builders as
+MODULE FUNCTIONS that take the vault (finding S11 — do NOT make them class methods; two
+non-React module callers, `chatEntities.ts:2189` `rawUrl` and `PageView.tsx` `resolveImage`,
+would otherwise have to thread a whole client through pure markdown helpers).
+
+```ts
+export class ApiClient {
+  constructor(private readonly vault: string | null) {}
+  // request() writes the X-Dreamcontext-Vault header from this.vault, NOT the module var
+  get<T>(path: string): Promise<T>;
+  post<T>(path: string, body: unknown): Promise<T>;
+  patch<T>(path: string, body: unknown): Promise<T>;
+  put<T>(path: string, body: unknown): Promise<T>;
+  del<T>(path: string): Promise<T>;
+}
+export const api = new ApiClient(null);
+export function agentFileUrl(vault: string | null, path: string, opts?: { raw?: boolean }): string;
+export function graphContentUrl(vault: string | null, path: string, opts?: { raw?: boolean }): string;
+/** @deprecated removed at the end of Faz 2 */ export function setActiveVault(v: string | null): void;
+/** @deprecated removed at the end of Faz 2 */ export function getActiveVault(): string | null;
+```
+- KEEP `RequestError` exactly as it is.
+- KEEP the module-level `activeVault` variable — the deprecated pair still reads/writes it.
+  It is deleted in a later wave, NOT by you.
+- The old module-function forms of `agentFileUrl`/`graphContentUrl` (no vault param) must be
+  GONE. Their call sites are fixed by T3/T4/T5, not by you — expect `tsc` to report errors in
+  those files after your change. That is correct and expected. Do not "fix" them.
+
+### 2. `dashboard/src/context/VaultContext.tsx` (new)
+```ts
+export interface VaultContextValue {
+  vault: string | null;
+  instanceId: string;   // stable per ProjectInstance, e.g. 'inst-1'
+  isActive: boolean;
+  bus: EventTarget;
+}
+export const DEFAULT_VAULT_CONTEXT: VaultContextValue;
+export function VaultProvider(p: VaultContextValue & { children: ReactNode }): JSX.Element;
+export function useVault(): VaultContextValue;
+export function useApi(): ApiClient;
+export function emitInstance<T>(bus: EventTarget, type: string, detail?: T): void;
+export function useInstanceEvent<T>(type: string, handler: (detail: T) => void): void;
+```
+LOAD-BEARING, do not weaken:
+- `DEFAULT_VAULT_CONTEXT = { vault: null, instanceId: '', isActive: true, bus: <a module-level
+  singleton EventTarget> }`. `useVault()` OUTSIDE any provider returns exactly this. That is
+  what keeps the launcher window, CaptureBar, SleepyPerch and the checklist window
+  byte-identical to today — `useApi()` there yields `new ApiClient(null)` ≡ today's `api`.
+- `isActive` defaults **true**, so nothing outside a provider ever believes it is hidden.
+- `useApi()` MUST be `useMemo(() => new ApiClient(vault), [vault])` — a stable identity, because
+  callers put it in `useCallback` dependency arrays.
+- `useInstanceEvent` subscribes to `useVault().bus`, and must clean up on unmount and
+  re-subscribe when the bus or type changes.
+
+### 3. `dashboard/src/lib/scopedStorage.ts` (new)
+```ts
+export const SCOPE_PREFIX = 'dreamcontext:';
+export function scopedKey(vault: string | null, key: string): string;
+export function readScopedRaw(vault: string | null, key: string): string | null;
+export function writeScopedRaw(vault: string | null, key: string, value: string): void;
+export function readScoped<T>(vault: string | null, key: string, fallback: T): T;
+export function writeScoped<T>(vault: string | null, key: string, value: T): void;
+export function removeScoped(vault: string | null, key: string): void;
+```
+Pinned semantics — a reviewer will check each of these:
+- `scopedKey(null, k) === k` — the LEGACY key VERBATIM, **not** `dreamcontext:k`. A null vault
+  means launcher/browser and must behave byte-identically to today.
+- `scopedKey(v, k) === `${SCOPE_PREFIX}${v}:${k}`` for a non-null vault.
+- Migration lives in the **raw** layer so one code path serves both the JSON keys and the
+  `'1'`/`'0'` string keys: on first read for a (vault, key) pair with a non-null vault, if the
+  scoped key is absent and the LEGACY key is present, copy legacy → scoped and then
+  `localStorage.removeItem(legacy)`.
+- Guard migration with a module-level `Set<string>` of already-migrated `vault + '|' + key`
+  pairs so it runs at most once per pair per page. Idempotent.
+- Deliberate, documented consequence (put it in a comment): the legacy value goes to whichever
+  project reads it FIRST, and the legacy key is then deleted, so a second vault reading the
+  same legacy key gets the fallback. Copy-without-delete would re-seed every future project
+  from a value that belonged to whatever project happened to be open last. This mirrors
+  `hooks/usePersistedState.ts:25-34`.
+- Every localStorage access wrapped in try/catch (private mode / quota) — never throw into a
+  render. Corrupt JSON falls back to `fallback`.
+
+### 4. `tests/unit/scoped-storage.test.ts` (new)
+Vitest, in `tests/unit/` — NOT under `dashboard/`. Root `vitest.config.ts` excludes the
+`dashboard/` DIRECTORY from its test glob but does NOT stop a test in `tests/` from importing
+dashboard source; 62 existing files already do this. Copy the import style of
+`tests/unit/agent-status.test.ts` exactly (note the `.js` extension on the specifier).
+Provide a localStorage stub implementing the real `Storage` interface.
+Cover: scoped-key shape for null and non-null vault; legacy→scoped migration copies AND
+deletes; a second vault reading the migrated legacy key gets the fallback; migration runs at
+most once; raw and JSON layers agree; corrupt JSON falls back.
+
+## STATEMENT OF DONE — all four must be true, verified by you, before you report
+1. `cd dashboard && npx tsc --noEmit` reports errors ONLY in files you do not own (the
+   call sites T2-T5 will fix). Zero errors inside your four files.
+2. `npx tsc --noEmit` at the repo root is clean.
+3. `npm test` at the repo root is green and its output names `tests/unit/scoped-storage.test.ts`.
+   **If `npm test` does NOT pick the file up, you — and only you — may amend
+   `vitest.config.ts`, and you must say so explicitly in your report with the reason.**
+4. `git status --porcelain` shows exactly your four files and nothing else.
+
+## HARD RULES
+- Touch ONLY your four files. If you believe another file must change, STOP and report it —
+  do not edit it. Another implementer owns it and will overwrite you.
+- Do NOT edit `_dream_context/workspace/project-tabs/plan-validated-v1.md` or any task doc.
+- Do NOT commit, do NOT push, do NOT switch branches.
+- Do NOT delete `setActiveVault`/`getActiveVault`.
+- Match the surrounding code's comment density and idiom — this codebase explains WHY.
+
+## REPORT BACK (max 25 lines)
+- the exact exported signatures you shipped (so the orchestrator can freeze them),
+- the result of each of the 4 statement-of-done checks with the command output,
+- anything you found that contradicts the plan.

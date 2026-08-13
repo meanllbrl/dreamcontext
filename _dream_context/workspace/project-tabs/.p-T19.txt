@@ -1,0 +1,75 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T19** (Wave 4, batch 2 — the LAST task of the
+build) of the project-tabs dependency map in the plan you have read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load BOTH the `engineering` skill AND the `design` skill. Non-negotiable — you are
+drawing the one thing the user actually looks at.
+
+T20 has landed: `WindowChrome` holds a `Record<vault, ProjectRollup>` sink and passes
+`onRollup` down to every `<ProjectInstance>`. `rollupProject(rows): ProjectRollup` has existed
+since Wave 1. Read both before you start. You run ALONE — nothing else is in flight.
+
+**You close the goal's headline sentence:** *a background project's chip jumps and shows its
+active-chat count when one of its chats asks a question.* Everything else built the road; you
+put the signal on it.
+
+## FILES YOU OWN — touch NOTHING else
+- `dashboard/src/components/sleepy/AgentSurface.tsx`
+- `dashboard/src/ProjectInstance.tsx`
+- `dashboard/src/components/layout/ProjectTabs.tsx`
+- `dashboard/src/components/layout/ProjectTabs.css`
+
+## 1. PUBLISH (`AgentSurface.tsx`)
+`~:1777-1787` already builds `dockRows: SessionRow[]` every render. Compute
+`rollupProject(dockRows)` and emit it on the instance bus as `'dc-project-rollup'`.
+
+**Do not emit per render.** `dockRows` is rebuilt on every render, so an unguarded emit would
+fire on every keystroke of streaming output. Keep the last published `{worst, live, waiting}`
+in a ref and emit only when one of the three actually differs. This is the same discipline T20
+applied on the receiving side; both ends matter.
+
+## 2. FORWARD (`ProjectInstance.tsx`)
+Subscribe with `useInstanceEvent<ProjectRollup>('dc-project-rollup', …)` and call
+`props.onRollup?.(vault, r)`. The prop and the sink are already in place — you are connecting
+two finished halves, not building either.
+
+## 3. DRAW (`ProjectTabs.tsx` + `.css`)
+`ProjectChip` already carries `worst`, `live`, `waiting`, `bounceNonce`. T7 built the visual
+states with inert defaults; you make them real.
+
+- **Badge NUMBER = `live`** — the count of chats/agents alive in that project. When `live === 0`
+  the badge is **not drawn at all** (no zero, no empty pill).
+- **Badge and dot COLOUR = `worst`.** `asking` → the error/red token, `working` → the accent
+  token, everything else neutral. Keep T7's mapping: an unpublished rollup rolls up as `ended`,
+  and painting `ended` red would make every quiet chip look alarming.
+- **BOUNCE.** One shot, when `waiting` crosses 0 → >0. **T19 is the SOLE writer of
+  `bounceNonce`** — `attention.ts` deliberately exports no subscriber for this (T13 cut it), so
+  there is exactly one source of truth and a chip can never double-bounce. Under
+  `prefers-reduced-motion`, the colour still changes and the animation does not run.
+- The active chip must stay visually distinct from a chip that is merely alarming — a red dot on
+  the chip you are already looking at should not read as "go here", it is already here.
+- Zero hardcoded colours. Design tokens only.
+
+## 4. WHAT NOT TO DO
+- Do not touch `ensureOpen`/`fitVisible`/`fitAndResize`/the ResizeObserver/the unmount teardown
+  in `AgentSurface.tsx` — T8's Wave-2 work, finished, and the empirical check of it is still
+  outstanding at Phase 6. Leave it exactly as it is.
+- Do not change `rollupProject` in `agentStatus.ts` — not your file, and its unit test pins its
+  semantics (`saved`/`ended`/`shell` excluded from `live`; `asking || attention` counted once).
+- Do not add a second bounce trigger anywhere.
+
+## STANDING RULE
+Behavioural: **nothing you write may assume one vault per window.** If satisfying that needs a
+file you do not own, **STOP and report it.**
+
+## STATEMENT OF DONE — you are the last build task, so this is the WAVE 4 GATE
+1. `cd dashboard && npx tsc --noEmit` — **zero diagnostics repo-wide.**
+2. `npm run build` — exit 0.
+3. `npx vitest run tests/unit/agent-status-project-rollup.test.ts tests/unit/agent-ask-attention.test.ts`
+   — green.
+4. `grep -n "bounceNonce" dashboard/src` — written in exactly ONE place.
+5. `git status --porcelain` — exactly your four files.
+
+REPORT BACK (max 20 lines): how you gated the publish so it does not fire per render, the
+colour/badge mapping as shipped, how the one-shot bounce is triggered and reset, the five
+checks, and anything you stopped on.

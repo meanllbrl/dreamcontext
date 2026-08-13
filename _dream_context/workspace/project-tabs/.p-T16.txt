@@ -1,0 +1,107 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T16** (Wave 3, batch 1) of the project-tabs
+dependency map in the plan you have read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill. Non-negotiable.
+
+**Read `dashboard/src/lib/checklistStore.ts`'s FILE HEADER before you write a line.** It
+records a real past defect: two projects that picked the same checklist id could read, edit and
+SUBMIT into each other's checklist — including a pasted API key. Your task is the one that
+decides whether this refactor reintroduces that class of bug. An independent isolation review
+raised it as a blocking finding; you are implementing the agreed fix.
+
+T10 and T12 run CONCURRENTLY on different files.
+
+## FILES YOU OWN — touch NOTHING else
+- `dashboard/src/lib/windowRegistry.ts`  (new)
+- `dashboard/src/lib/desktop.ts`
+- `dashboard/src/lib/checklistBridge.ts`
+
+**`lib/checklistStore.ts` is OFF LIMITS** (hard constraint #5) — it already carries the vault
+explicitly and its keys/labels are injective. You change the desktop-side TARGETING, not the store.
+
+## THE PROBLEM
+`vaultWindowLabel(name)` (`desktop.ts:312`) derives a Tauri window label from ONE vault name.
+That was fine when a window held one vault. Now a window holds N, so the label no longer
+identifies which window has a given vault. The only targeted bridge that breaks is the
+checklist submit (`checklistBridge.ts:71`). Everything else in the codebase that uses Tauri
+events is an app-wide broadcast (`sleepy:*`, JS and Rust) and is unaffected — verify that
+yourself with `grep -rn "emitTo\|listen(" dashboard/src` before you start.
+
+## 1. `lib/windowRegistry.ts` (new)
+```ts
+export const WINDOW_REGISTRY_KEY = 'dc.windows.v1';
+export const HEARTBEAT_MS = 5_000;
+export const STALE_MS = 15_000;
+export interface WindowRegistryEntry { label: string; vaults: string[]; ts: number }
+
+export function thisWindowLabel(): Promise<string>;   // Tauri getCurrentWindow().label, cached; '' off-desktop
+export function publishOpenVaults(vaults: string[]): void;   // upsert this window's row + ts, prune stale
+export function releaseWindow(): void;                       // beforeunload
+
+/** Registry lookup ONLY — may return a STALE label. Safe for "add a chip here or focus another
+ *  window?", whose worst case is a focus call at a dead label (caught and ignored). */
+export function findWindowForVault(vault: string): string | null;
+
+/** CORROBORATED lookup — the ONLY form allowed for a payload that can carry a secret.
+ *  On desktop, intersects the registry answer with the LIVE `WebviewWindow.getAll()` list and
+ *  returns null when the label is not actually alive. Off-desktop returns null.
+ *  Fails CLOSED by design: there is no optimistic fallback. */
+export async function resolveLiveWindowForVault(vault: string): Promise<string | null>;
+```
+- Cross-window transport is `localStorage` on the one shared origin — which is exactly the
+  property `checklistStore.ts`'s header establishes and relies on.
+- Rows older than `STALE_MS` are pruned by any reader, so a crashed window that never ran
+  `beforeunload` cannot haunt the registry.
+- **Why a heartbeat when `WebviewWindow.getAll()` exists** (already used at `desktop.ts:90-91`):
+  the registry must also work in the plain BROWSER dashboard, where `thisWindowLabel()` is `''`
+  and there is no Tauri window list at all. On desktop the heartbeat is belt-and-braces; in the
+  browser it is the only belt. Put that reasoning in the file — it is the first question a
+  reader will have.
+- Every `localStorage` access try/caught. A read-modify-write race between two windows must
+  degrade to a lost heartbeat (self-healing next tick), never to a thrown error or a corrupt blob.
+
+## 2. `lib/desktop.ts`
+- `openVaultWindow`, `openChecklistWindow`, `openLauncherHome`: UNCHANGED. `vaultWindowLabel`
+  stays and is still used to CREATE a vault window; its documented lossiness stays the
+  pre-existing window-reuse quirk it already is. Do not tighten it.
+- ADD: `export async function focusWindow(label: string): Promise<boolean>` — `getByLabel` then
+  `setFocus()`, resolving `false` on any miss/throw.
+- `goToProject` is NOT yours this wave (T20 changes its default in Wave 4). Leave it.
+
+## 3. `lib/checklistBridge.ts` — MAKE THE SUBMIT FAIL CLOSED
+`:71` currently does `emitTo(vaultWindowLabel(p.vault), CHECKLIST_SUBMIT_EVENT, p)`. Replace with:
+```ts
+const label = await resolveLiveWindowForVault(p.vault);
+if (!label) return false;              // the caller already renders its own failure strip
+await emitTo(label, CHECKLIST_SUBMIT_EVENT, p);
+```
+**There must be NO `?? vaultWindowLabel(p.vault)` fallback.** The registry is eventually
+consistent (5s heartbeat, 15s GC, unlocked read-modify-write), so a stale row can name the
+wrong window — and post-tabs the wrong window may host SEVERAL unrelated live projects, each
+with its own `listen(CHECKLIST_SUBMIT_EVENT)`. The plaintext payload would land in every one of
+their callbacks before the receiver's vault check rejected it. That check (`:107`) still runs
+and is still load-bearing for CLAIMING the submit, but it is the second line of defence, not
+the first. A submit that cannot be corroborated is not sent at all.
+
+Also rewrite the belt-and-braces sentence at `:88-90` (inside the `:83-94` doc block): the
+receiver-side `payload.vault !== vault` check is no longer a redundant guard against
+`vaultWindowLabel`'s lossy sanitizer — with N instances per window it is what picks the right
+INSTANCE out of several live listeners. Say that.
+
+## STANDING RULE
+Behavioural: **nothing in your files may assume one vault per window.** If satisfying that
+needs a file you do not own, **STOP and report it.**
+
+## STATEMENT OF DONE
+1. `grep -n "vaultWindowLabel" dashboard/src/lib/checklistBridge.ts` — no matches (it must not
+   appear on the submit path at all).
+2. `cd dashboard && npx tsc --noEmit` — zero errors in your three files.
+3. `npx vitest run tests/unit/checklist-store.test.ts tests/unit/checklist-markdown.test.ts tests/unit/checklist-deferred-close.test.ts`
+   — green. If a test exercises the submit path it is yours to update; say so.
+4. `npm run build` — exit 0.
+5. `git status --porcelain` — exactly your three files (+ any test from check 3).
+
+REPORT BACK (max 20 lines): the exported API you shipped, your `emitTo`/`listen` census, the
+five checks, and — importantly — say whether you found any OTHER targeted (non-broadcast) Tauri
+event that this change leaves mis-addressed.

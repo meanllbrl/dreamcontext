@@ -1,0 +1,65 @@
+DELTA for T2 — your 25 migrated files are ACCEPTED, do not revisit them. You were right to
+stop on the three module-scope cases instead of inventing a fix. I investigated each; here are
+the four decisions and your extended lane.
+
+## 1. `useBoard.ts` — FIX IN FILE (no external callers)
+I verified `putShared`/`putLocal` have zero callers outside this file. Give each an `api`
+parameter and pass it from the `useCallback`s inside `useBoardState()` that already call them:
+```ts
+function putShared(api: ApiClient, …existing params): Promise<…>
+function putLocal(api: ApiClient, …existing params): Promise<…>
+```
+Import the type: `import type { ApiClient } from '../api/client';`
+
+## 2. `useRecall.ts` + its two call sites — YOUR LANE IS EXTENDED
+`recallOnce` and `haikuRecallOnce` are exported plain functions, and I verified their only
+callers are two React components:
+- `dashboard/src/components/search/BrainSearch.tsx` (`:152`, `:157`)
+- `dashboard/src/components/search/CommandPalette.tsx` (`:156`, `:160`)
+
+**Both files are now yours for this change only.** Give both functions an `api` first
+parameter and have each component pass `useApi()`:
+```ts
+export async function recallOnce(api: ApiClient, query: string, types: string[], limit?: number, level?: number): Promise<RecallHit[]>
+export async function haikuRecallOnce(api: ApiClient, query: string, types: string[], level?: number): Promise<…>
+```
+Recall searches THIS project's brain, so it is unambiguously per-vault — leaving it on the
+singleton would make one project's ⌘K palette search whichever vault happened to be pinned.
+
+In `CommandPalette.tsx` touch ONLY the two recall call sites and whatever import/`useApi()`
+line they need. A later task (T15, Wave 3) owns that file for an unrelated overlay-id change;
+do not touch anything else in it.
+
+## 3. `useSleepyChat.ts` — LEAVE IT ON THE SINGLETON, and document why
+Do not migrate it. I checked both halves:
+- Its route DOES depend on the vault (`src/server/routes/sleepy-chat.ts` writes
+  `<contextRoot>/state/.sleepy-chat.json`), so it is NOT vault-agnostic, and
+- it has **zero consumers** anywhere in `dashboard/src` — `getChatHistory`, `resetChat`,
+  `startChat` and `useSleepyChat` are imported by nothing. It is dead code.
+
+Migrating dead code costs churn and buys nothing, but silently leaving a per-vault module on
+the singleton is a trap for whoever wires it up later. So: add a short file-header comment
+saying it is currently unreferenced, that `/api/sleepy/chat` resolves per-vault server-side,
+and that whoever wires it up must take an `ApiClient` (or vault) as a parameter rather than
+importing the singleton. Change no code in it.
+
+## 4. `useGraphSettings.ts` — you were right, fix it
+Good catch: it has the same `useCallback(…, [])` + `api.put` stale-closure pattern as
+`useRoadmapPrefs.ts` / `useLabPrefs.ts`, and my instruction listed only those two. Add `api`
+to its dependency array too. Re-scan the other 24 for the same shape while you are there and
+fix any you find — report each one you touch.
+
+## STATEMENT OF DONE
+1. `grep -rn "from '.*api/client'" dashboard/src/hooks` → exactly `useLauncher.ts`,
+   `useServerHealth.ts`, `useSleepyChat.ts` (the three documented exclusions) — plus any file
+   importing only the `ApiClient` TYPE, which is fine and expected.
+2. `cd dashboard && npx tsc --noEmit` → zero errors in `hooks/`, `BrainSearch.tsx`,
+   `CommandPalette.tsx`. Errors elsewhere belong to other lanes.
+3. `npx vitest run tests/unit/recall-nav.test.ts` if that file exercises recall — if any test
+   calls `recallOnce`/`haikuRecallOnce` directly, it is yours to update; say so.
+   First check: `grep -rn "recallOnce\|haikuRecallOnce" tests/`.
+4. `git status --porcelain -- dashboard/src` → your 25 + `useBoard.ts`, `useRecall.ts`,
+   `useGraphSettings.ts`, `useSleepyChat.ts`, `BrainSearch.tsx`, `CommandPalette.tsx`.
+
+Report in under 20 lines: what you changed per file, the 4 checks, and any further module-scope
+`api` caller you found that none of this covers.

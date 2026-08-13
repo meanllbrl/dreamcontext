@@ -1,0 +1,73 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T14** (Wave 3, batch 3) of the project-tabs
+dependency map in the plan you have read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill. Non-negotiable.
+
+Batches 1 and 2 have landed. T17 runs CONCURRENTLY on different files.
+
+## FILES YOU OWN — touch NOTHING else
+- `dashboard/src/components/lab/funnel/labRoute.ts`
+- `dashboard/src/pages/LabPage.tsx`
+
+## THE PROBLEM
+There is ONE URL per window, but now N projects live in it. `labRoute.ts` writes
+`history.pushState`/`replaceState` at `:50`, `:59`, `:66`. Today that is safe because one
+window means one project. With chips, a BACKGROUND project's Lab page rewriting the address bar
+would stamp its route over the project the user is actually looking at — and on the next chip
+switch the wrong route would be read back.
+
+Its `NAV_EVENT` (`:43`) is also on `window`, so every instance's `useLabRoute`/
+`useLabSearchParams` re-reads the one URL whenever ANY instance navigates.
+
+## 1. Only the ACTIVE instance may write history
+```ts
+export function setLabRouteWritable(on: boolean): void;
+export function flushBufferedRoute(): void;
+```
+- While NOT writable, `pushLabPath`, `replaceSearch` and `clearLabPath` must NOT touch
+  `window.history`. They record the intended path+search in a module-level buffer instead
+  (last-write-wins is fine — a background instance only needs its most recent route).
+- `flushBufferedRoute()` applies a buffered route to the real URL. It is called when a chip
+  becomes active, so returning to a project restores where you were.
+- Who calls `setLabRouteWritable`: `LabPage` on `isActive` change is the simplest correct
+  owner, since it is the only surface that routes. Do that, and say so. **Do not reach into
+  `WindowChrome.tsx` or `ProjectInstance.tsx`** — not your files; if you believe the toggle
+  belongs there, STOP and report it.
+- A background instance must still keep its OWN route in memory so its React state is coherent
+  — `useLabRoute` should read the buffer when not writable, and the live URL when it is.
+
+## 2. `NAV_EVENT` moves to the instance bus
+`:43`'s `window.dispatchEvent(new Event(NAV_EVENT))` becomes an emit on the instance bus, and
+`useLabRoute`/`useLabSearchParams` subscribe via `useInstanceEvent` instead of
+`window.addEventListener`. Note `popstate` is genuinely a WINDOW event and must STAY on
+`window` — the browser's back button belongs to the window. Only the active instance should
+act on it; use the same writable flag to decide.
+
+`labRoute.ts` is not React, so the bus has to arrive from the caller. `useLabRoute` and
+`useLabSearchParams` ARE hooks and can call `useVault()` themselves — do it there, and keep the
+non-hook exports (`pushLabPath`, `replaceSearch`, `clearLabPath`, `labPath`, `parseLabPath`,
+`currentDeepLink`) taking whatever they need as parameters rather than reaching for a global.
+
+## 3. `pages/LabPage.tsx`
+Its `dreamcontext-navigate` listener (`:41`) switches from `window.addEventListener` to
+`useInstanceEvent` — T10 already moved the PRODUCER to the bus in this wave, so this consumer
+is currently orphaned and must be reconnected.
+
+## STANDING RULE
+Behavioural: **nothing in your files may assume one vault per window.** If satisfying that
+needs a file you do not own, STOP and report it — do not edit it.
+
+## STATEMENT OF DONE
+1. `grep -n "window.history\|pushState\|replaceState" dashboard/src/components/lab/funnel/labRoute.ts`
+   — every one of them is behind the writable check.
+2. `grep -n "window.addEventListener" dashboard/src/components/lab/funnel/labRoute.ts dashboard/src/pages/LabPage.tsx`
+   — only `popstate` remains.
+3. `cd dashboard && npx tsc --noEmit` — **zero diagnostics repo-wide** (batch 3 ends Wave 3).
+4. `npx vitest run tests/unit/lab-funnel-columns.test.ts tests/unit/lab-render-registry.test.ts`
+   — green; update any test that exercises routing and say which.
+5. `npm run build` — exit 0.
+6. `git status --porcelain` — exactly your two files (+ any test).
+
+REPORT BACK (max 18 lines): the exported signatures, who owns the writable toggle and how a
+returning chip gets its route back, the six checks, and anything you stopped on.

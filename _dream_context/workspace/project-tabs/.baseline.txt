@@ -1,0 +1,33 @@
+=== ROOT TSC ===
+=== DASHBOARD TSC ===
+=== NPM TEST ===
+    500|     }
+    501| 
+    502|     it('sleep start --json carries automationOutputs with shared attac…
+       |     ^
+    503|       // Bootstrap: last_consolidated_at is null on a fresh brain, and…
+    504|       // documented "null -> consume nothing" rule means no output wri…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 1 unhandled error during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+Error: [vitest-worker]: Timeout calling "onTaskUpdate"
+ ❯ Object.onTimeoutError node_modules/vitest/dist/chunks/rpc.-pEldfrD.js:53:10
+ ❯ Timeout._onTimeout node_modules/vitest/dist/chunks/index.B521nVV-.js:59:62
+ ❯ listOnTimeout node:internal/timers:581:17
+ ❯ processTimers node:internal/timers:519:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
+ Test Files  1 failed | 380 passed | 2 skipped (383)
+      Tests  1 failed | 6644 passed | 1 skipped | 18 todo (6664)
+     Errors  1 error
+   Start at  21:31:42
+   Duration  263.06s (transform 18.51s, setup 0ms, collect 146.44s, tests 760.43s, environment 84ms, prepare 40.87s)
+

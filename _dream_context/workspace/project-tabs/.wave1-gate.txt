@@ -1,0 +1,47 @@
+=== A2 DASHBOARD TSC (the real gate) ===
+DASHBOARD_TSC=CLEAN
+
+=== A1 ROOT TSC (covers src/ only — theirs) ===
+src/lib/automations/registry.ts(295,3): error TS2741: Property 'flow' is missing in type '{ prompt: string; outputInstructions: string; model: string | null; effort: "high" | "medium" | "low" | "max" | "xhigh" | null; timeoutMinutes: number; outputDir: string | null; learning: boolean; review: "agent" | ... 1 more ... | "output"; }' but required in type 'ApprovalPayloadFields'.
+src/lib/automations/store.ts(203,3): error TS2741: Property 'flow' is missing in type '{ slug: string; id: string; title: string; enabled: boolean; schedule: Schedule | null; model: string | null; effort: "high" | "medium" | "low" | "max" | "xhigh" | null; timeoutMinutes: number; ... 10 more ...; body: string; }' but required in type 'AutomationManifest'.
+
+=== A7 getActiveVault outside client.ts ===
+NONE — clean
+
+=== singleton api importers remaining ===
+dashboard/src/components/sleepy/AgentSurface.tsx
+dashboard/src/components/sleepy/SleepyPerch.tsx
+dashboard/src/hooks/useLauncher.ts
+dashboard/src/hooks/useServerHealth.ts
+dashboard/src/hooks/useSleepyChat.ts
+dashboard/src/lib/agentPrompt.ts
+dashboard/src/lib/agentSettings.ts
+dashboard/src/lib/sleepy.ts
+dashboard/src/pages/CaptureBar.tsx
+
+=== A3 NPM TEST (quiet machine) ===
+    370|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯
+
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 1 unhandled error during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+Error: [vitest-worker]: Timeout calling "onTaskUpdate"
+ ❯ Object.onTimeoutError node_modules/vitest/dist/chunks/rpc.-pEldfrD.js:53:10
+ ❯ Timeout._onTimeout node_modules/vitest/dist/chunks/index.B521nVV-.js:59:62
+ ❯ listOnTimeout node:internal/timers:581:17
+ ❯ processTimers node:internal/timers:519:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
+ Test Files  4 failed | 381 passed | 2 skipped (387)
+      Tests  7 failed | 6698 passed | 1 skipped | 18 todo (6724)
+     Errors  1 error
+   Start at  22:40:56
+   Duration  161.45s (transform 9.98s, setup 0ms, collect 103.59s, tests 401.01s, environment 63ms, prepare 28.58s)
+

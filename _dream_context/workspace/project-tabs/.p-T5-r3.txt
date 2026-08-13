@@ -1,0 +1,43 @@
+DELTA for T5 — final piece of Wave 1. You were right to stop again; that is the fourth time a
+lane boundary caught something my map got wrong, and stopping is what made it visible.
+
+`revealPath` is the last vault-scoped call still on the singleton. `/api/agent/reveal` is NOT
+on `VAULT_AGNOSTIC_PREFIXES`, so it resolves per-vault server-side — on the singleton it would
+reveal a path in whichever vault the server was pinned to, i.e. potentially another project's
+file.
+
+## YOUR LANE IS EXTENDED — for this one change only
+In addition to your 14 files you now own, **solely to move `revealPath`'s call sites**:
+- `dashboard/src/components/sleepy/ChatPane.tsx` (`:1032`)
+- `dashboard/src/components/sleepy/chat/TranscriptItem.tsx` (`:68`, `:197`)
+- `dashboard/src/components/sleepy/chat/FileActions.tsx` (`:45`)
+
+This is safe: T3 finished and is not running, and no other implementer is active. Touch ONLY
+the `revealPath` call and whatever `useApi()`/`useVault()` line it needs in each of those three
+files. Change nothing else in them — T15 owns `TranscriptItem.tsx`'s neighbourhood in a later
+wave and will conflict if you drift.
+
+## THE CHANGE
+Give `revealPath` an `api: ApiClient` first parameter, matching how you threaded the other
+non-React helpers in `chatEntities.ts`:
+```ts
+export function revealPath(api: ApiClient, path: string, mode: …): Promise<…>
+```
+Then in each of the three call sites, take `const api = useApi()` at the top of the enclosing
+COMPONENT body (never inside the handler) and pass it.
+
+If any of those three call sites is itself inside a non-hook helper rather than a component,
+stop and tell me which — do not thread a client through a fourth layer without saying so.
+
+## STATEMENT OF DONE
+1. `grep -rn "revealPath" dashboard/src` — every call passes an api client.
+2. `grep -rn "^import { api\b\|[^.]\bapi\.\(get\|post\|put\|patch\|del\)" dashboard/src/components/sleepy/chat/chatEntities.ts`
+   — no singleton `api` call remains in that file.
+3. `cd dashboard && npx tsc --noEmit` — **zero diagnostics, whole dashboard.** Wave 1 is
+   finished when this is clean, so this is the number that matters.
+4. `npx vitest run tests/unit/delegate-agent.test.ts tests/unit/chat-reveal-path.test.ts` —
+   green. (`tests/unit/chat-reveal-path.test.ts` exists; if it calls `revealPath` directly it
+   is YOURS to update, same as `delegate-agent.test.ts` was.)
+5. `git status --porcelain` — your 14 + those three components + any test you had to update.
+
+Report in under 12 lines: the four checks, and whether `chat-reveal-path.test.ts` needed a change.

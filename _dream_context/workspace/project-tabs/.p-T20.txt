@@ -1,0 +1,84 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T20** (Wave 4, batch 1) of the project-tabs
+dependency map in the plan you have read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill. Non-negotiable.
+
+Waves 1-3 have landed. Read `dashboard/src/lib/windowRegistry.ts` (T16's) and
+`dashboard/src/components/sleepy/agentStatus.ts` (`ProjectRollup`, `rollupProject`) before you
+start. **You run alone in this batch** — T19 follows you and depends on what you ship.
+
+## FILES YOU OWN — touch NOTHING else
+- `dashboard/src/components/layout/WindowChrome.tsx`
+- `dashboard/src/lib/desktop.ts`
+
+## 1. THE ROLLUP SINK — this is what T19 plugs into
+`WindowChrome` becomes the one place that knows every project's live state.
+```ts
+const [rollups, setRollups] = useState<Record<string, ProjectRollup>>({});
+const onRollup = useCallback((vault: string, r: ProjectRollup) => { … }, []);
+```
+- Pass `onRollup` down to every `<ProjectInstance>` (the prop already exists on
+  `ProjectInstanceProps` — T6 declared it and nothing has filled it yet).
+- Populate `OpenProject.rollup` from that map. `null` until an instance publishes.
+- Setting state on every rollup would re-render the whole chrome on every keystroke-driven
+  status flip. Bail out when the three fields are unchanged — compare `worst`, `live` and
+  `waiting`, not object identity.
+
+**THE CEILING'S NULL CASE IS A RED LINE.** An instance is evictable ONLY when
+`rollup !== null && rollup.live === 0`. `rollup === null` means "has not published yet", NOT
+"idle" — treating it as idle would tear down an instance holding a live chat, which is the #1
+hard constraint of this goal. T7 wrote the rule; you are the one who makes `rollup` real, so
+re-read `addTab`'s ceiling branch and make sure it still reads correctly now that the field is
+actually populated.
+
+## 2. THE WINDOW REGISTRY
+- Heartbeat: `publishOpenVaults(open.map(p => p.vault))` every `HEARTBEAT_MS` AND on every
+  change to the open set. `releaseWindow()` on `beforeunload`.
+- Duplicate-open (gap 9) — `addTab`'s check order, all four steps live now:
+  1. already a chip here → `activate(vault)`, `'focused-tab'`
+  2. `findWindowForVault(vault)` returns a label that is not this window → `focusWindow(label)`,
+     `'focused-window'`. Use the REGISTRY-ONLY lookup here, not `resolveLiveWindowForVault` —
+     the cost of a stale hit is one `focusWindow` that resolves false, which you then fall
+     through from. (The corroborated form is only for the checklist payload; T16's file
+     documents why.)
+  3. ceiling → evict the oldest evictable instance to `cold: true`, else `'refused-ceiling'`
+  4. else append + activate → `'added'`
+- A cold chip clicked again must rebuild a live instance. Verify that path works now that
+  `rollup` exists — a rebuilt instance starts at `rollup: null` and must therefore be
+  non-evictable until it publishes.
+
+## 3. `lib/desktop.ts` — `goToProject` inverts its default
+`goToProject(name)` currently always opens/focuses a separate OS window. Its default becomes
+"add a chip in THIS window". `openVaultWindow` stays exactly as it is — it IS the escape hatch,
+and ⇧-click in the ProjectSwitcher (T9) already calls it directly.
+
+`desktop.ts` is not React and cannot reach `useChrome()`. Do NOT import chrome state into it.
+Give it a tiny registration seam instead — e.g. a module-level
+`setGoToProjectHandler(fn: ((vault: string) => Promise<void>) | null)` that `WindowChrome`
+registers on mount and clears on unmount, with `goToProject` falling back to `openVaultWindow`
+when nothing is registered. The launcher window registers nothing, so it keeps today's
+behaviour exactly. Say in your report what shape you chose.
+
+## 4. RIGHT-CLICK → "Open in New Window"
+`detachToWindow(vault)` = `openVaultWindow(vault)` then `closeTab(vault)`. `ProjectTabs`
+already renders the context-menu item and calls `onDetach` (T7). **There is deliberately NO
+drag-a-chip-out gesture** — it was cut on YAGNI; do not add one.
+Closing the last chip must still be refused: the window always holds at least one project.
+
+## STANDING RULE
+Behavioural: **nothing you write may assume one vault per window.** If satisfying that needs a
+file you do not own, **STOP and report it** — six times in this run stopping surfaced a real
+gap that my brief had missed.
+
+## STATEMENT OF DONE
+1. `cd dashboard && npx tsc --noEmit` — **zero diagnostics repo-wide.**
+2. `npm run build` — exit 0.
+3. `grep -n "rollup" dashboard/src/components/layout/WindowChrome.tsx` — the ceiling branch
+   reads `rollup !== null && rollup.live === 0`, never a bare `!rollup.live`.
+4. `npx vitest run tests/unit/agent-status-project-rollup.test.ts` — still green.
+5. `git status --porcelain` — exactly your two files.
+
+REPORT BACK (max 20 lines): the rollup-sink shape and how you avoided re-rendering on every
+publish, the `goToProject` seam you chose, the four `addTab` outcomes as implemented, the five
+checks, and anything you stopped on.

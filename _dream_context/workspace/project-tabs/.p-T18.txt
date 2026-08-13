@@ -1,0 +1,83 @@
+ROLE CHANGE: you are no longer the planner. You are the IMPLEMENTER for task **T18** of the
+project-tabs dependency map in the plan you have already read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill via the Skill tool. Non-negotiable.
+
+You are on branch `feat/project-tabs`. T18 moved into **Wave 1** because `ProjectRollup` is
+the type `OpenProject.rollup` (T7, Wave 2) declares against — Wave 2 cannot be typed until
+you ship it. T1 runs concurrently with you on entirely different files.
+
+## FILES YOU OWN — touch NOTHING else, not one other file
+- `dashboard/src/components/sleepy/agentStatus.ts`            (modify — ADD ONLY)
+- `tests/unit/agent-status-project-rollup.test.ts`            (new)
+
+## WHAT TO BUILD
+
+Add to `agentStatus.ts` (append near the existing `rollupKind`, keeping the file's voice —
+this file explains WHY, in prose, and yours must too):
+
+```ts
+export interface ProjectRollup {
+  /** Dot + badge colour: the worst-of across every session in this project. */
+  worst: SessionStatusKind;
+  /** The badge NUMBER — how many chats/agents in this project are actually alive. */
+  live: number;
+  /** Drives the chip's one-shot bounce: sessions blocked on the user or flagged since
+   *  you last looked. */
+  waiting: number;
+}
+export function rollupProject(rows: SessionRow[]): ProjectRollup;
+```
+
+Pinned rules — a reviewer will check each one, so do not improvise:
+- `worst` = **`rollupKind(rows)`**. REUSE the existing exported function (it is right there
+  at the bottom of this file). Do not re-derive the worst-of with a second reduce.
+- `live` counts a row only when BOTH hold:
+  - `row.kind !== 'shell'` — a shell is a plain terminal with no agent behind it (see the
+    `SessionRow.kind` doc comment in this file) and can never ask a question, so it is not
+    an "active chat";
+  - `row.info.kind` is neither `'saved'` nor `'ended'` — `saved` is a restored roster entry
+    with no live session (the dormant "Resume" row) and `ended` is a dead PTY. Neither is a
+    live chat.
+- `waiting` counts a row **once** when `row.info.kind === 'asking' || row.attention` — a row
+  that is both must not be counted twice.
+- Empty input → `{ worst: 'ended', live: 0, waiting: 0 }`, matching `rollupKind`'s documented
+  empty-input behaviour.
+- Pure and framework-free. No React, no imports beyond what the file already has.
+
+## THE TEST — `tests/unit/agent-status-project-rollup.test.ts`
+Vitest, in `tests/unit/` — **NOT** under `dashboard/`. Root `vitest.config.ts` excludes the
+`dashboard/` DIRECTORY from its test glob but does NOT stop a test in `tests/` from importing
+dashboard source; 62 existing files already do this. Copy the import style of the sibling
+`tests/unit/agent-status.test.ts` EXACTLY (note the `.js` extension on the specifier and how
+it builds `SessionRow` fixtures).
+
+Cover, at minimum:
+1. worst-of ordering across mixed rows (an `asking` row wins over `working`, which wins over
+   `ready`, etc. — drive it off `KIND_RANK`, don't hardcode a different order);
+2. `saved` rows excluded from `live`;
+3. `ended` rows excluded from `live`;
+4. `shell` rows excluded from `live` even when otherwise live;
+5. a row that is BOTH `asking` and `attention: true` counts once in `waiting`;
+6. empty input → `{ worst: 'ended', live: 0, waiting: 0 }`;
+7. a project of only dormant rows → `live: 0` (so the badge is not drawn).
+
+## STATEMENT OF DONE — verify each yourself before reporting
+1. `npx tsc --noEmit` at the repo root is clean.
+2. `cd dashboard && npx tsc --noEmit` reports no new error in `agentStatus.ts`.
+3. `npm test` at the repo root is green AND its output names
+   `tests/unit/agent-status-project-rollup.test.ts`.
+4. `git status --porcelain` shows exactly your two files and nothing else.
+
+## HARD RULES
+- Touch ONLY your two files. If you believe another file must change, STOP and report it.
+- **ADD ONLY** to `agentStatus.ts` — do not modify `deriveSessionStatus`, `rollupKind`,
+  `orderRows`, `KIND_RANK`, or any existing type. Another 19 tasks depend on them unchanged.
+- Do NOT edit the plan or any task doc. Do NOT commit, push, or switch branches.
+- Do NOT touch `vitest.config.ts` — T1 owns that decision if it ever needs making.
+
+## REPORT BACK (max 20 lines)
+- the exact exported signatures you shipped,
+- the 4 statement-of-done checks with their command output,
+- anything you found that contradicts the plan.

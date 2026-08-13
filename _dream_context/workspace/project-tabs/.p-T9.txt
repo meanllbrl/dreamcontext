@@ -1,0 +1,63 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T9** (Wave 2, final batch) of the project-tabs
+dependency map in the plan you have read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill via the Skill tool. Non-negotiable.
+
+T6, T7 and T8 have landed. Read `dashboard/src/components/layout/WindowChrome.tsx` first —
+`useChrome()` and `ChromeApi` are your contract.
+
+## FILES YOU OWN — exactly one
+- `dashboard/src/components/search/ProjectSwitcher.tsx`
+
+## WHAT CHANGES
+`ProjectSwitcher` is the ⌘P palette. Today it assumes one window per project: picking a project
+opens or focuses that project's OWN WINDOW, and ⌘1-9 jumps between windows. It is also mounted
+TWICE (launcher + vault branch of `App.tsx`); T7 now mounts it ONCE inside `WindowChrome`.
+
+1. **`currentVault()` (~:21) goes away.** It reads `?vault=` off the URL, which no longer
+   identifies anything — a window now holds N projects. Use `useChrome().activeVault`.
+   `inLauncher` becomes "there is no chrome" — `useChrome()` must degrade safely when the
+   switcher is rendered in the launcher window (no provider). If `useChrome()` cannot be called
+   outside a provider, read that from a nullable context and treat null as launcher mode.
+   Say in your report which shape you used.
+
+2. **`pick()` (~:72) — the default action inverts.** Default is now **add a chip in THIS
+   window**: `await chrome.addTab(v.name)`. Handle all four return values:
+   - `'added'` / `'focused-tab'` → close the palette, done
+   - `'focused-window'` → close the palette (another window took focus)
+   - `'refused-ceiling'` → do NOT close silently. Show the reason in the palette: every open
+     project has a live session, so a new tab would have to evict one. The user must learn why
+     nothing happened.
+   **⇧-click (and ⇧+Enter) keeps the OLD behaviour** — `openVaultWindow(v.name)`, a real second
+   OS window. That is the escape hatch and it must keep working.
+   In the launcher window (no chrome) the default stays `goToProject` exactly as today.
+
+3. **⌘1-9 (~:132-137) now walks THIS WINDOW'S CHIPS, not the vault registry.** Today it indexes
+   `openable` — every registered vault. That is the wrong list: chip order is not registry
+   order. Index `chrome.open` instead and call `chrome.activate(...)`. In the launcher window
+   keep today's `goToProject` behaviour.
+
+4. `goHome()` is unchanged. The Launcher row stays.
+
+5. The row list should show which projects are ALREADY CHIPS in this window (the existing
+   `psw-row--current` treatment is the obvious hook — extend it from "the one current vault" to
+   "any open chip", and keep marking the ACTIVE one distinctly). Keep it subtle; this is a hint,
+   not a new feature.
+
+## STANDING RULE (added after Wave 1)
+Behavioural, not a symbol list: **nothing you write may assume one vault per window.** If
+satisfying that needs a file you do not own, **STOP and report it** — do not edit it.
+
+## STATEMENT OF DONE
+1. `cd dashboard && npx tsc --noEmit` — **zero diagnostics, whole dashboard.** You are the last
+   task in Wave 2, so this is the wave gate; if it is not clean, name every error and its owner.
+2. `grep -n "URLSearchParams" dashboard/src/components/search/ProjectSwitcher.tsx` — no matches
+   (the URL no longer identifies the active project).
+3. `grep -rn "<ProjectSwitcher" dashboard/src` — exactly ONE mount, inside `WindowChrome.tsx`.
+   If there is still one in `App.tsx`, report it — T6 owns that file, not you.
+4. `npm run build` at the repo root — exit 0.
+5. `git status --porcelain` — exactly your one file.
+
+REPORT BACK (max 15 lines): how you handled `useChrome()` in launcher mode, what the four
+`addTab` outcomes do in the UI, the five checks, and anything you stopped on.

@@ -1,0 +1,18 @@
+=== A2 DASHBOARD TSC ===
+CLEAN
+=== A6 BUILD ===
+ESM Build start
+ESM dist/index.js 3.71 MB
+ESM ⚡️ Build success in 174ms
+=== A4/A5 the two new unit tests ===
+
+ Test Files  2 passed (2)
+      Tests  25 passed (25)
+   Start at  02:24:31
+   Duration  203ms (transform 69ms, setup 0ms, collect 60ms, tests 6ms, environment 0ms, prepare 114ms)
+
+=== bounceNonce single writer ===
+dashboard/src/components/layout/WindowChrome.tsx:469:    bounceNonce: 0,
+dashboard/src/components/layout/ProjectTabs.tsx:44:  bounceNonce?: number;
+=== A9 RED LINE ===
+ZERO MATCHES

@@ -1,0 +1,76 @@
+ROLE CHANGE: you are the IMPLEMENTER for task **T10** (Wave 3, batch 1) of the project-tabs
+dependency map in the plan you have read
+(`_dream_context/workspace/project-tabs/plan-validated-v1.md`). Build it. Do not re-plan.
+
+FIRST: load the `engineering` skill. Non-negotiable.
+
+Waves 1-2 landed: `useVault()`/`useApi()`/`emitInstance`/`useInstanceEvent` exist,
+`scopedStorage` exists, `ProjectInstance` mounts each project with `hidden`+`inert`, and
+`WindowChrome` owns the window. T12 and T16 run CONCURRENTLY on different files.
+
+**Wave 3 is the riskiest wave: it removes the last things that assume one vault per window.**
+
+## FILES YOU OWN — touch NOTHING else
+- `dashboard/src/components/layout/Shell.tsx`
+- `dashboard/src/styles/tokens.css`
+- `dashboard/src/components/sleepy/AgentTerminal.css`
+
+## 1. `data-sidebar` moves off `<html>` (Shell.tsx ~:77-79)
+Today Shell writes `document.documentElement.dataset.sidebar`. With N instances the last one
+to render wins and every project's content offset follows one rail. Write it on the INSTANCE
+wrapper instead — set `data-sidebar` on the nearest `.project-instance` ancestor (find it from
+a ref, e.g. `el.closest('.project-instance')`), not on `<html>`.
+Then in `tokens.css` (~:249-259) the selector `:root[data-sidebar="collapsed"]` becomes
+`.project-instance[data-sidebar="collapsed"]`. `AgentTerminal.css` (~:31, ~:44) keeps reading
+`--app-content-left` unchanged — it now inherits from the wrapper.
+**Keep the default:** `--app-content-left: var(--sidebar-width)` must still apply when no
+attribute is set, or a first paint before the effect runs will jump.
+
+## 2. Sidebar collapse becomes a PROP, not a local hook
+`ProjectInstance` already accepts `sidebarCollapsed` / `onToggleSidebar` from the chrome and
+passes them down (T6 wired the props; they are currently unused because Shell still runs its
+own `useSidebarCollapse()`). Change `Shell` to take them as props and DELETE its own
+`useSidebarCollapse()` call. The key stays window-global on purpose — one rail width per
+window — but the STATE must live in exactly one place or N instances diverge on toggle.
+`ProjectInstance.tsx` is NOT yours: if Shell's new props require a change there, **STOP and
+report it** — I will make that one-line forward myself.
+
+## 3. ⌘K is gated on `isActive` (~:63-72)
+`const { isActive } = useVault()`; first line of the keydown handler: `if (!isActive) return;`.
+A hidden instance must not open its palette when the user hits ⌘K in the foreground project.
+
+## 4. `dreamcontext-navigate` moves to the INSTANCE BUS (~:87)
+`window.dispatchEvent(new CustomEvent('dreamcontext-navigate', …))` becomes
+`emitInstance(bus, 'dreamcontext-navigate', { page })` with `bus` from `useVault()`.
+Its two consumers (`AgentSurface.tsx`, `pages/LabPage.tsx`) are T11's and T14's — they switch
+to `useInstanceEvent` in the SAME wave, later batches. Expect them to be briefly out of sync;
+that is the batch order working, not a bug. Do not touch either file.
+
+## 5. `activePage` becomes vault-scoped (~:8, ~:31, ~:89)
+`readStoredPage()` and the `navigate` writer use
+`readScoped/writeScoped(vault, 'dreamcontext.dashboard.activePage', …)` from
+`lib/scopedStorage.ts`. Which page you were last on is per-project navigation; on one global
+key, N instances are last-writer-wins on every navigate.
+- `readStoredPage` currently runs as a `useState` initializer at module/render time and has no
+  vault. Restructure so the vault is available (it is: `useVault()` inside the component). Keep
+  the precedence EXACTLY as it is today: `/lab/` deep-link → `?page=` → stored → `'tasks'`.
+- The `/lab/` deep-link read (~:16) applies to the FIRST instance only — there is one URL per
+  window. Gate it on `instanceId === 'inst-1'` (that is the id `WindowChrome` seeds first;
+  verify against `WindowChrome.tsx` rather than trusting me).
+
+## STANDING RULE
+Behavioural, not a symbol list: **nothing in your files may assume one vault per window.** If
+satisfying that needs a file you do not own, **STOP and report it** — do not edit it. In Wave 1
+stopping surfaced four real gaps; guessing would have caused four silent collisions.
+
+## STATEMENT OF DONE
+1. `cd dashboard && npx tsc --noEmit` — zero errors in your three files. Errors in `AgentSurface.tsx`
+   or `LabPage.tsx` (T11/T14, later batches this wave) are expected; name them and their owner.
+2. `grep -n "documentElement" dashboard/src/components/layout/Shell.tsx` — no matches.
+3. `grep -n "useSidebarCollapse" dashboard/src/components/layout/Shell.tsx` — no matches.
+4. `grep -rn "root\[data-sidebar" dashboard/src/styles/tokens.css` — no matches.
+5. `npm run build` — exit 0.
+6. `git status --porcelain` — exactly your three files.
+
+REPORT BACK (max 20 lines): the six checks, how you restructured `readStoredPage` to get the
+vault while preserving the precedence chain, and anything you stopped on.
