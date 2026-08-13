@@ -195,6 +195,10 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     '# everything else here is local machine/session state and must never sync.',
     '',
     'state/.secrets.json',
+    // Which task THIS session is on. Machine-local by nature, and load-bearing
+    // since `bookmark add` reads it as an implicit `--task`: a synced one would
+    // file a teammate's bookmarks against whatever task someone else had open.
+    'state/.active-task',
     'state/.sleep.json',
     'state/.sleep-history.json',
     'state/.agent-sessions.json',
@@ -255,6 +259,9 @@ export const FULL_REPO_LOCAL_GITIGNORE_ENTRIES = [
   // in the sync lock's case, cross-machine lock contention).
   '_dream_context/state/.brain-merge/',
   '_dream_context/state/.brain-local.json',
+  // Per-session pointer at the task in hand; `bookmark add` uses it as an
+  // implicit `--task`, so a synced one would misfile a teammate's bookmarks.
+  '_dream_context/state/.active-task',
   '_dream_context/state/.sleep.json',
   '_dream_context/state/.sleep-history.json',
   '_dream_context/state/.agent-sessions.json',

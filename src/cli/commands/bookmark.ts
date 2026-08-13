@@ -33,6 +33,16 @@ function advise(lines: string[]): void {
   for (const line of lines.slice(1)) console.error(chalk.dim(line));
 }
 
+/**
+ * Candidate list for a "did you mean" hint. Capped: a one-letter `--task a`
+ * prefix-matches most of a mature vault, and a 250-slug wall of text is not a
+ * suggestion.
+ */
+function preview(candidates: string[], max = 8): string {
+  const shown = candidates.slice(0, max).join(', ');
+  return candidates.length > max ? `${shown}, +${candidates.length - max} more` : shown;
+}
+
 /** Escape hatch for scripted/bulk callers that link bookmarks themselves. */
 function hintsEnabled(): boolean {
   return process.env.DREAMCONTEXT_BOOKMARK_HINT !== '0';
@@ -100,7 +110,7 @@ async function resolveTaskLink(root: string, flag?: string): Promise<ResolvedLin
       // than storing an imperfect one) and show what a repair would target.
       const warnings = [`--task "${raw}" matches no task — bookmark saved with that value as-is.`];
       if (res.kind === 'ambiguous') {
-        warnings.push(`  Did you mean: ${res.candidates.join(', ')}`);
+        warnings.push(`  Did you mean: ${preview(res.candidates)}`);
       } else {
         const { candidates, total } = await openTasks(backend);
         if (candidates.length > 0) {
@@ -226,11 +236,17 @@ export function registerBookmarkCommand(program: Command): void {
     .description('Point an existing bookmark at a task (repairs a missing --task)')
     .action(async (idInput: string, opts: { task: string }) => {
       const root = ensureContextRoot();
-      const state = readSleepState(root);
 
-      const match = resolveBookmarkId(state.bookmarks.map((b) => b.id), idInput);
+      const wanted = opts.task.trim();
+      if (!wanted) {
+        error('--task requires a task slug.', 'Run `dreamcontext tasks list` to see task slugs.');
+        return;
+      }
+
+      // Fail fast on a bad id before spending any task-backend I/O on it.
+      const match = resolveBookmarkId(readSleepState(root).bookmarks.map((b) => b.id), idInput);
       if (match.kind === 'ambiguous') {
-        error(`Ambiguous bookmark id "${idInput}".`, `Did you mean: ${match.candidates.join(', ')}`);
+        error(`Ambiguous bookmark id "${idInput}".`, `Did you mean: ${preview(match.candidates)}`);
         return;
       }
       if (match.kind === 'none') {
@@ -241,12 +257,11 @@ export function registerBookmarkCommand(program: Command): void {
       // Strict here, unlike `add`: a repair that writes another unverifiable
       // slug repairs nothing, and there is no in-flight bookmark to protect.
       const backend = getTaskBackend(root);
-      const wanted = opts.task.trim();
       let slug = wanted;
       if (!(await backend.get(wanted))) {
         const res = await backend.resolveSlug(wanted);
         if (res.kind === 'ambiguous') {
-          error(`Ambiguous task "${wanted}".`, `Did you mean: ${res.candidates.join(', ')}`);
+          error(`Ambiguous task "${wanted}".`, `Did you mean: ${preview(res.candidates)}`);
           return;
         }
         if (res.kind === 'none') {
@@ -256,7 +271,22 @@ export function registerBookmarkCommand(program: Command): void {
         slug = res.slug;
       }
 
-      const target = state.bookmarks.find((b) => b.id === match.id)!;
+      // ─── read-modify-write, with every await already behind us ───
+      // `.sleep.json` has no lock and several processes append to it (the Stop
+      // hook, a parallel session's `bookmark add`, `sleep done`). Reading it
+      // BEFORE the backend round-trip — which is a network call on the ClickUp
+      // / GitHub backends — and writing that stale snapshot back afterwards
+      // would silently drop whatever landed in between. So the state is read
+      // only once the slug is settled, and nothing awaits until it is written.
+      const state = readSleepState(root);
+      const target = state.bookmarks.find((b) => b.id === match.id);
+      if (!target) {
+        error(
+          `Bookmark ${match.id} is gone — a consolidation cleared it while this ran.`,
+          `Re-add it: dreamcontext bookmark add "…" -s 2 --task ${slug}`,
+        );
+        return;
+      }
       const previous = target.task_slug;
       target.task_slug = slug;
       writeSleepState(root, state);
