@@ -23,6 +23,8 @@
  *       was not remounted (the structural half of the red line: a remount is a killed PTY)
  *   M4  re-opening an already-open project focuses its chip instead of minting a second
  *       instance against the same vault (checklist B6, in-window half)
+ *   M5  ⌃Tab moves to the next chip and ⌃⇧Tab back to the previous one, by real keystroke,
+ *       without remounting either instance
  *
  * WHAT IT DELIBERATELY DOES NOT COVER — and why it is not silence:
  *   Anything that needs a REAL agent: a chat that keeps streaming across a switch (B2), a
@@ -138,7 +140,14 @@ try {
     // Checked HERE, before the reload, because the reload marks the announcement read and
     // there would be nothing left to dismiss — a check that passes by finding nothing to do
     // is the same green-for-no-reason this file added S6 to stop reporting.
+    // The modal is raised by an API round trip, so it can land AFTER the checks above have
+    // run. Sampling `count()` the instant we get here read that lateness as "no modal" — and
+    // then the scrim would arrive on its own schedule and swallow the `+` click that opens the
+    // second project, failing M1 with a message about chips. WAIT for it, bounded: an
+    // announcement that never comes is still a failure (the point of the check), it is just no
+    // longer a failure the harness manufactures by looking too early.
     const scrim = page.locator('.announcements-modal-scrim');
+    await scrim.first().waitFor({ state: 'attached', timeout: 15000 }).catch(() => {});
     const hadModal = await scrim.count();
     if (hadModal) {
       await page.keyboard.press('Escape');
@@ -166,8 +175,12 @@ try {
     const instanceIds = () => page.locator('.project-instance').evaluateAll(
       (els) => els.map((e) => e.getAttribute('data-instance')));
 
-    /** Every fresh vault raises its own "what's new" modal, including the second one. */
+    /** Every fresh vault raises its own "what's new" modal, including the second one — and it
+     *  arrives on the network's schedule, so give it a bounded chance to show up before
+     *  concluding there is nothing to dismiss. A scrim missed here is not a quiet skip: it
+     *  reappears later as a click that mysteriously times out against a chip. */
     const clearScrims = async () => {
+      await scrim.first().waitFor({ state: 'attached', timeout: 6000 }).catch(() => {});
       for (let i = 0; i < 4 && await scrim.count(); i += 1) {
         await page.keyboard.press('Escape');
         await page.waitForTimeout(400);
@@ -234,6 +247,25 @@ try {
     check('M4 re-opening an already-open project focuses its chip instead of duplicating it',
       dupNames.length === 2 && dupIds.length === 2 && (await activeChip())?.trim() === 'scratch-a',
       `chips=${JSON.stringify(dupNames)} instances=${dupIds.length}`);
+
+    // M5 — ⌃Tab walks the strip forward, ⌃⇧Tab back, and neither REMOUNTS anything. Driven
+    // as a real keystroke rather than asserted on the handler, because the whole risk of this
+    // shortcut is where it is listening: the chrome captures it above every mounted instance,
+    // and a listener registered one level too low would be dead the moment focus sat inside a
+    // project. The instance-id half is M3's red line again — a switch by key must hide, not
+    // tear down, or ⌃Tab through six projects would kill six PTYs.
+    const beforeCycle = await instanceIds();
+    const cycleStart = (await activeChip())?.trim();
+    await page.keyboard.press('Control+Tab');
+    await page.waitForTimeout(400);
+    const afterForward = (await activeChip())?.trim();
+    await page.keyboard.press('Control+Shift+Tab');
+    await page.waitForTimeout(400);
+    const afterBack = (await activeChip())?.trim();
+    check('M5 ⌃Tab / ⌃⇧Tab cycle the chip strip without remounting an instance',
+      afterForward !== undefined && afterForward !== cycleStart && afterBack === cycleStart
+        && JSON.stringify(beforeCycle) === JSON.stringify(await instanceIds()),
+      `${cycleStart} -⌃Tab-> ${afterForward} -⌃⇧Tab-> ${afterBack}; ids ${JSON.stringify(beforeCycle)} -> ${JSON.stringify(await instanceIds())}`);
 
     // S6 — judged LAST, so it covers every request both projects made: the boot, the reload,
     // the second project's whole page load and both switches. A wrong vault reaching the

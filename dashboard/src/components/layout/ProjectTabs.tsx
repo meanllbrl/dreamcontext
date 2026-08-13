@@ -115,6 +115,10 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
   // empty window, so the control is disabled rather than silently refusing on click.
   const canClose = chips.length > 1;
 
+  // ⌃Tab only means something once there is a second chip, and that is also the only moment
+  // it is worth naming in a tooltip — see the shortcut's own reasoning in `WindowChrome`.
+  const cycleHint = chips.length > 1 ? ' · ⌃Tab to switch' : '';
+
   /* ── Rule 2: publish whether the track has outgrown the strip ─────────────────────
      The CENTRING itself is pure CSS (`margin-inline: auto` on the track collapses to 0 the
      moment the content is wider than its scroll container, which left-aligns it at exactly
@@ -291,7 +295,7 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
                 type="button"
                 className="project-tab-main"
                 aria-current={chip.active ? 'true' : undefined}
-                title={chip.cold ? `${vault} — sleeping, click to reopen` : vault}
+                title={(chip.cold ? `${vault} — sleeping, click to reopen` : vault) + cycleHint}
                 // The dot and the badge are colour and a bare number; the label is where the
                 // same information is available to anyone not reading the pixels.
                 aria-label={describeChip(chip)}
