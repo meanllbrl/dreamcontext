@@ -24,6 +24,7 @@ import {
   writeRunSidecar,
 } from '../../src/lib/automations/store.js';
 import { approveAutomation } from '../../src/lib/automations/registry.js';
+import { writeTelegramConfigForSlug } from '../../src/lib/automations/telegram.js';
 import { queuedFire } from '../../src/lib/automations/queue.js';
 import { pendingQuestion } from '../../src/lib/automations/hitl.js';
 import {
@@ -558,6 +559,138 @@ describe('runAutomation — completion notifications', () => {
     // The dispatcher re-evaluates every 5 minutes and a blocked automation stays
     // due, so notifying here would be a notification every 5 minutes, forever.
     expect(notify).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Telegram result delivery. Before this existed, "connected" in the dashboard
+ * meant nothing for a run that never asks a question: the channel was wired
+ * only for HITL answers, so a connected automation's results silently never
+ * reached the phone — and the run itself, never told about the connection,
+ * would flatly deny having one when asked.
+ */
+describe('runAutomation — telegram result delivery', () => {
+  const connect = (slug: string, chatId = '7116832293') =>
+    writeTelegramConfigForSlug(slug, { botToken: 'bot-token', chatId, offset: 0 }, home);
+
+  const runToSuccess = async (slug: string, sendTelegram: (text: string) => Promise<void>) => {
+    const { child, emitClose, emitStdout } = makeFakeChild(5321);
+    const runPromise = runAutomation(contextRoot, slug, {
+      now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify: () => {}, sendTelegram,
+    });
+    emitStdout(CLAUDE_JSON_OK);
+    emitClose(0);
+    return runPromise;
+  };
+
+  it('delivers the result to a connected chat on success — title plus the run summary', async () => {
+    const manifest = createApproved('tg-on-ok');
+    connect(manifest.slug);
+    const sendTelegram = vi.fn(async () => {});
+    const outcome = await runToSuccess(manifest.slug, sendTelegram);
+    expect(outcome.status).toBe('ok');
+    expect(sendTelegram).toHaveBeenCalledTimes(1);
+    const [text] = sendTelegram.mock.calls[0];
+    expect(text).toContain(manifest.title);
+    expect(text).toContain('All good.'); // the same summary the macOS banner carries
+  });
+
+  it('delivers failures too, carrying the error', async () => {
+    const manifest = createApproved('tg-on-fail');
+    connect(manifest.slug);
+    const sendTelegram = vi.fn(async () => {});
+    const { child, emitClose, emitStdout } = makeFakeChild(5322);
+    const runPromise = runAutomation(contextRoot, manifest.slug, {
+      now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify: () => {}, sendTelegram,
+    });
+    emitStdout(JSON.stringify({ result: 'partial', is_error: true }));
+    emitClose(1);
+    expect((await runPromise).status).toBe('failed');
+    expect(sendTelegram).toHaveBeenCalledTimes(1);
+    expect(sendTelegram.mock.calls[0][0]).toContain('failed');
+  });
+
+  it('stays silent when the automation has no bot — the state every machine starts in', async () => {
+    const manifest = createApproved('tg-unconnected');
+    const sendTelegram = vi.fn(async () => {});
+    expect((await runToSuccess(manifest.slug, sendTelegram)).status).toBe('ok');
+    expect(sendTelegram).not.toHaveBeenCalled();
+  });
+
+  it('delivers even when notify: false — the bot is its own opt-in, not a rider on the macOS banner', async () => {
+    // `notify` governs the desktop banner. Connecting a bot to this specific
+    // automation is an explicit request for phone delivery, made precisely
+    // because the person is NOT at the Mac where the banner renders.
+    const manifest = createApproved('tg-notify-false', { notify: false });
+    connect(manifest.slug);
+    const sendTelegram = vi.fn(async () => {});
+    expect((await runToSuccess(manifest.slug, sendTelegram)).status).toBe('ok');
+    expect(sendTelegram).toHaveBeenCalledTimes(1);
+  });
+
+  it('never fires for a run that did not happen — a blocked automation stays silent every tick', async () => {
+    const manifest = createAutomation(contextRoot, {
+      slug: 'tg-blocked', title: 'Blocked', days: 'daily', at: '18:00', prompt: 'do the thing',
+    });
+    connect(manifest.slug);
+    const sendTelegram = vi.fn(async () => {});
+    const outcome = await runAutomation(contextRoot, manifest.slug, {
+      now: () => NOW, home, spawnImpl: vi.fn() as unknown as SpawnImpl, notify: () => {}, sendTelegram,
+    });
+    expect(outcome.status).toBe('blocked');
+    expect(sendTelegram).not.toHaveBeenCalled();
+  });
+
+  it('the run lock is STILL HELD while delivery is in flight — the overlap guard covers the send', async () => {
+    // Guards the `return await finalize(...)` shape: a bare `return finalize(...)`
+    // inside runAutomation's try lets the finally release the lock the moment
+    // finalize suspends at the send, reopening the same-slug overlap window.
+    // The setImmediate hop is what makes this discriminate — the buggy shape
+    // releases the lock synchronously, before any queued task runs.
+    const manifest = createApproved('tg-lock-held');
+    connect(manifest.slug);
+    let lockedDuringSend: boolean | null = null;
+    const outcome = await runToSuccess(manifest.slug, async () => {
+      await new Promise((resolve) => setImmediate(resolve));
+      lockedDuringSend = existsSync(lockPathFor(contextRoot, manifest.slug));
+    });
+    expect(outcome.status).toBe('ok');
+    expect(lockedDuringSend).toBe(true);
+  });
+
+  it('a failed delivery never fails the run', async () => {
+    const manifest = createApproved('tg-send-throws');
+    connect(manifest.slug);
+    const outcome = await runToSuccess(manifest.slug, async () => {
+      throw new Error('network down');
+    });
+    expect(outcome.status).toBe('ok');
+  });
+
+  it('the run is TOLD about the connection — and told the system does the sending', async () => {
+    const manifest = createApproved('tg-in-prompt');
+    connect(manifest.slug, '424242');
+    const spawnFn = vi.fn();
+    const { child, emitClose, emitStdout } = makeFakeChild(5323);
+    spawnFn.mockReturnValue(child);
+    const runPromise = runAutomation(contextRoot, manifest.slug, {
+      now: () => NOW, home, spawnImpl: spawnFn as unknown as SpawnImpl, notify: () => {}, sendTelegram: async () => {},
+    });
+    emitStdout(CLAUDE_JSON_OK);
+    emitClose(0);
+    await runPromise;
+    const args = spawnFn.mock.calls[0][1] as string[];
+    const prompt = args[args.indexOf('-p') + 1];
+    expect(prompt).toContain('chat 424242');
+    expect(prompt).toContain('delivery is automatic');
+    // The capability stays out of the prompt: the run knows the channel
+    // exists, never the credentials.
+    expect(prompt).not.toContain('bot-token');
+  });
+
+  it('an unconnected run gets no Telegram line at all', () => {
+    const manifest = createApproved('tg-no-line');
+    expect(composePrompt(manifest, projectRoot, NOW, '/x.md')).not.toContain('TELEGRAM:');
   });
 });
 

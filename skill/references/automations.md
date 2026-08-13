@@ -191,6 +191,8 @@ dreamcontext automations telegram test <slug>                            # post 
 dreamcontext automations telegram off <slug>                             # forget the token, stop the channel
 ```
 
+A connected bot carries the automation's **results**, not just its questions: when a run completes, the runner delivers the same headline the macOS banner shows (✅ success with the run's opening line, ❌ failure with the error, ✋ needs-your-verdict) to the authorized chat. This delivery is independent of the manifest's `notify` field — that governs the desktop banner, while connecting a bot is its own opt-in to phone delivery — and best-effort: a network blip never fails a run. The run itself is told the connection exists (chat id only, never credentials) so a resumed chat can answer "did this reach my Telegram?" truthfully; the sending is done by the runner, never by the session.
+
 Turning a channel off only stops Telegram from answering that automation's questions — the dashboard and `automations answer` still do.
 
 ## Session bindings: what a resume actually trusts

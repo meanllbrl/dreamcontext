@@ -13,6 +13,7 @@ import { backfillQuestionSession, createQuestion, pendingQuestion } from './hitl
 import { recordAutomationSession } from './session-registry.js';
 import { enqueueFire } from './queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
+import { fetchTransport, notifyTelegram, readTelegramConfigForSlug } from './telegram.js';
 import {
   clearRunSidecar,
   extractSection,
@@ -55,9 +56,28 @@ import {
  * never called from `runAutomation` or `tick`.
  */
 
+/** Telegram caps a message at 4096 chars; the result delivery is capped well
+ *  under that (same headroom reasoning as `TELEGRAM_BODY_MAX` in telegram.ts)
+ *  so the title line always survives. */
+const TELEGRAM_RESULT_MAX_CHARS = 3_000;
+
+/** Upper bound on how long a finished run will wait for its Telegram delivery
+ *  before letting go — the send is best-effort and the file lock is still held
+ *  while it runs. */
+const TELEGRAM_SEND_TIMEOUT_MS = 10_000;
+
 // ─── Preamble / prompt composition ──────────────────────────────────────────
 
-export function buildPreamble(m: AutomationManifest, projectRoot: string, fireAt: Date, outputPath: string): string {
+export function buildPreamble(
+  m: AutomationManifest,
+  projectRoot: string,
+  fireAt: Date,
+  outputPath: string,
+  /** The connected per-automation Telegram chat, when one exists on this
+   *  machine. Optional so the many callers (and tests) written before the
+   *  channel line existed keep working unchanged. */
+  telegramChatId?: string | null,
+): string {
   return (
     `You are scheduled dreamcontext automation "${m.title}" in ${projectRoot}. ` +
     'NO user available: never ask, finish autonomously. ' +
@@ -75,7 +95,19 @@ export function buildPreamble(m: AutomationManifest, projectRoot: string, fireAt
     'FIRST LINE: open the document with one plain sentence stating the actual RESULT ' +
     '(the numbers, the finding, what changed) — not "the job ran". That sentence becomes ' +
     'the desktop notification the user reads. Put a heading after it, never before it. ' +
-    'To send a different banner, add a `## Notification` section and it wins.'
+    'To send a different banner, add a `## Notification` section and it wins.' +
+    // Without this line, a run (or its resumed chat) that gets asked "why
+    // didn't this reach my Telegram?" concludes — correctly, from its own
+    // view — that no Telegram connection exists, and starts recommending the
+    // user wire up a different channel. The credentials stay machine-local
+    // and out of the prompt on purpose: the run is told the channel EXISTS
+    // and is system-operated, never handed the capability.
+    (telegramChatId
+      ? ` TELEGRAM: this automation is connected to Telegram (chat ${telegramChatId}). The system ` +
+        'itself delivers your opening result line to that chat when the run finishes, and any ' +
+        'question you ask a human is answerable from there. Do not claim Telegram is unconnected, ' +
+        'and do not try to message it yourself — you have no credentials; delivery is automatic.'
+      : '')
   );
 }
 
@@ -154,8 +186,11 @@ export function composePrompt(
   /** The walked `## Flow` graph. Optional so the many callers that have no graph
    *  (and every test written before flows existed) keep working unchanged. */
   flow?: FlowExecResult,
+  /** The connected per-automation Telegram chat, when one exists — see
+   *  `buildPreamble`. */
+  telegramChatId?: string | null,
 ): string {
-  const parts = [buildPreamble(m, projectRoot, fireAt, outputPath), '', m.prompt.trim()];
+  const parts = [buildPreamble(m, projectRoot, fireAt, outputPath, telegramChatId), '', m.prompt.trim()];
   // The graph goes BEFORE the approved prompt, deliberately, and it is the only
   // block that does. It describes the SHAPE of the job — which steps, in what
   // order, where the result goes — and the prompt then says what to actually do,
@@ -632,6 +667,10 @@ interface RunOptionsBase {
   killImpl?: KillImpl;
   log?: (line: string) => void;
   notify?: (title: string, body: string, sound?: string, openTarget?: string | null) => void;
+  /** Injectable so NO test in this repo can reach api.telegram.org (the same
+   *  contract `tick.ts` holds for polling). Defaults to the real per-slug
+   *  sender, which is a no-op when the automation has no bot configured. */
+  sendTelegram?: (text: string) => Promise<void>;
 }
 
 type RunHostOpts =
@@ -696,6 +735,36 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     ((t: string, b: string, s?: string, target?: string | null) => defaultNotify(t, b, opts.home, s, target));
   const fireAt = opts.fireAt ?? nowFn();
   const home = opts.home;
+  // The per-automation Telegram connection (D8), read ONCE per run. It feeds
+  // two places: the preamble's channel line (the run must know the connection
+  // exists, or a resumed chat asked "why didn't this reach my phone?" denies
+  // having one) and the completion delivery below. `opts.home` is threaded for
+  // the same reason as `notify`: a test that injects nothing must still never
+  // read the developer's real ~/.dreamcontext.
+  const telegramCfg = readTelegramConfigForSlug(slug, home ?? homedir());
+  const sendTelegramFn =
+    opts.sendTelegram ??
+    (async (text: string) => {
+      // Re-read at SEND time, not the run-start snapshot: a run can last an
+      // hour, and someone who ran `telegram off` mid-run has said "stop
+      // messaging me" — honoring the stale snapshot would send anyway. (The
+      // start-time `telegramCfg` still gates whether delivery is attempted at
+      // all and what the prompt says; this re-read only refuses a connection
+      // that has since been revoked, or picks up a re-pointed chat.)
+      const cfg = readTelegramConfigForSlug(slug, home ?? homedir());
+      if (!cfg) return;
+      // `fetchTransport` never rejects but also never times out, and this is
+      // awaited while the run's file lock is still held — a hung sendMessage
+      // must not keep a finished run open. The loser of the race is abandoned,
+      // not cancelled: one stray HTTP request beats a stuck runner.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, TELEGRAM_SEND_TIMEOUT_MS);
+        timer.unref?.();
+      });
+      await Promise.race([notifyTelegram(cfg, text, fetchTransport), deadline]);
+      clearTimeout(timer);
+    });
 
   // Step 1 — no manifest, no cache write (never manufacture brain-synced state
   // out of a typo'd slug).
@@ -718,7 +787,12 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   const projectRoot = dirname(contextRoot);
   const lockPath = lockPathFor(contextRoot, slug);
 
-  const finalize = (params: {
+  // ASYNC, AND EVERY CALL INSIDE THE try BELOW MUST BE `return await`ed, never
+  // bare-`return`ed: a bare `return finalize(...)` lets the `finally` release
+  // the file lock and clear the sidecar the moment finalize suspends at the
+  // Telegram await — reopening the same-slug overlap window for up to the
+  // send's 10s bound.
+  const finalize = async (params: {
     status: RunStatus;
     error: string | null;
     outputPath: string | null;
@@ -741,7 +815,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     /** The staged proposal, for the banner's click target. A macOS banner
      *  cannot carry buttons, so reading is the only thing it can offer. */
     reviewStagedPath?: string | null;
-  }): RunOutcome => {
+  }): Promise<RunOutcome> => {
     const event: RunEvent = {
       firedAt: fireAt.toISOString(),
       startedAt: params.startedAt.toISOString(),
@@ -815,6 +889,37 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         );
       }
     }
+    // The Telegram delivery — the reason "connected" in the dashboard means
+    // something for a run that never asks a question. Gated on `params.notify`
+    // (a run actually HAPPENED — the blocked/deferred/orphaned refusals must
+    // stay as silent here as they are on the desktop) but NOT on
+    // `manifest.notify`: that field governs the macOS banner, while connecting
+    // a bot to this specific automation is its own explicit opt-in to phone
+    // delivery, and the person who set it up is by definition not at the Mac.
+    // Best-effort like the banner: a network blip must never fail a run that
+    // already succeeded.
+    if (params.notify && telegramCfg) {
+      const text =
+        params.status === 'ok'
+          ? params.reviewCardId
+            ? `✋ ${manifest.title} — needs your verdict\n${params.summary ?? ''}`.trimEnd()
+            : `✅ ${manifest.title}\n${params.summary ?? (params.outputPath ? `→ ${basename(params.outputPath)}` : 'done')}`
+          : `❌ ${manifest.title} — ${params.status}\n${params.error ?? `the run ended ${params.status}`}`;
+      try {
+        // Cap by CODE POINT, not code unit: the summary and failure text are
+        // free-form model output, and a `String.slice` boundary can split a
+        // surrogate pair (an emoji in the title is enough), handing Telegram a
+        // lone surrogate at the cut.
+        const points = [...text];
+        await sendTelegramFn(
+          points.length <= TELEGRAM_RESULT_MAX_CHARS
+            ? text
+            : `${points.slice(0, TELEGRAM_RESULT_MAX_CHARS - 1).join('').trimEnd()}…`,
+        );
+      } catch (err) {
+        logFn(`automation "${slug}": telegram delivery failed (the run is unaffected): ${(err as Error).message}`);
+      }
+    }
     return {
       slug,
       status: params.status,
@@ -829,7 +934,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     };
   };
 
-  const shortCircuit = (status: RunStatus, error: string): RunOutcome => {
+  const shortCircuit = (status: RunStatus, error: string): Promise<RunOutcome> => {
     const n = nowFn();
     return finalize({
       status,
@@ -1044,7 +1149,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         nowISO: nowFn().toISOString(),
       });
       const n = nowFn();
-      return finalize({
+      return await finalize({
         status: 'awaiting-approval',
         error: `the manifest changed since it was approved — answer the question to let it run`,
         outputPath: null,
@@ -1090,7 +1195,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       useFlowOutput ? { ...manifest, outputDir: flow.reportTarget } : manifest,
       fireAt,
     );
-    const prompt = composePrompt(manifest, projectRoot, fireAt, outputPath, flow);
+    const prompt = composePrompt(manifest, projectRoot, fireAt, outputPath, flow, telegramCfg?.chatId ?? null);
 
     // Steps 7–12 — spawn (detached, own process group), wire the host, collect,
     // wait under the timeout half of the kill matrix, parse. All of it lives in
@@ -1159,7 +1264,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // failed. Given §1.1's whole premise, a stale/broken binary is the LIKELY
     // case here, not an edge case.
     if (!execution.spawned) {
-      return finalize({
+      return await finalize({
         status: 'failed',
         error: 'spawn failed — the claude binary could not be launched',
         outputPath: null,
@@ -1342,7 +1447,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       error = error ? `${note} | ${error}` : note;
     }
 
-    return finalize({
+    return await finalize({
       status,
       error,
       outputPath: finalOutputPath,
