@@ -1,7 +1,7 @@
 ---
 name: roadmap-board
 description: >-
-  AUTO-GENERATED objective board (7 objective(s), SLIPPING: make-it-a-business, hello-world-pr).
+  AUTO-GENERATED objective board (7 objective(s), SLIPPING: simplified-ux, make-it-a-business, hello-world-pr).
   Regenerate with `dreamcontext roadmap` — do not edit by hand.
 tags:
   - 'topic:roadmap'
@@ -59,7 +59,7 @@ date: '2026-08-13'
   - repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror (completed) · 0.20.0
   - untrack-legacy-tracked-task-mirrors-remote-backend (todo) · 0.19.0
 
-### 🟡 **simplified-ux** — Simplified UX · 38/42 done (90%) · target 2026-07-31 · forecast 2026-07-31 ✓ on track
+### 🟡 **simplified-ux** — Simplified UX · 39/43 done (91%) · target 2026-07-31 · forecast 2026-08-13 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
   - agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief (completed) · 0.21.0 · 2026-07-24 → …
   - agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions (completed) · 0.21.0 · 2026-07-23 → …
@@ -67,6 +67,7 @@ date: '2026-08-13'
   - agent-surface-polish-unified-chrome-composer-redesign-slash-menu-inline-images-reveal-endpoint (completed) · 0.21.0
   - announcements-become-screenshot-driven-landing-pages-instead-of-excalidraw-boards (completed) · 0.21.0
   - announcements-whats-new (completed) · 0.20.0 · 2026-07-18 → …
+  - approve-time-duplicate-run-warning-for-shared-automations (completed) · 2026-08-13 → 2026-08-13
   - author-a-task-via-a-claude-agent-from-the-new-task-button (completed) · 0.20.0
   - changelog-json-and-releases-json-initialized-as-key-object-but-cli-requires-a-bare-array (todo) · 0.21.0
   - chat-answers-become-interactive-inline-charts-fullscreen-boards-widget-pageviews-and-a-pinned-checklist-window (completed) · 0.21.0 · 2026-07-26 → …

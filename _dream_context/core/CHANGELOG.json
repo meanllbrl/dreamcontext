@@ -2,6 +2,40 @@
   {
     "date": "2026-08-13",
     "type": "fix",
+    "scope": "chat",
+    "description": "An AskUserQuestion tool call and the question control_request carrying its payload are two separate arrivals. In the gap the tool row is running, so turnHasVisibleProgress reads the turn as covered and the working indicator stays down — nothing on screen said a question was on its way. The degrade watchdog then fired at 4s, which a healthy-but-slow route overran routinely, so 'Continue in Terminal view' appeared for a question the pane rendered fine a beat later. useAskQuestionWatchdog now returns a two-phase AskRoutingState: 'preparing' past 600ms (WorkingIndicator's dots + elapsed pill, clocked from the tool's own startedAt so a re-render cannot restart it), and 'degraded' only past 30s — far enough out that the terminal escape hatch means a real CLI regression again. The 600ms floor keeps a question that routes promptly from flashing the pill on its way in. Affects Chat view only; Terminal view is unchanged.",
+    "breaking": false,
+    "summary": "A question being prepared reads as loading, not as a broken route",
+    "references": [
+      "commit:c0b02d7",
+      "file:dashboard/src/components/sleepy/ChatPane.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-13",
+    "type": "feat",
+    "scope": "automations",
+    "description": "Approval is machine-local and shared automations have no cross-machine coordination, so a second machine approving one runs it duplicated — the one accidental path to a duplicate bypassPermissions run. foreignRunEvidence() in session-registry.ts compares the brain-synced cache's run history against this machine's own session-binding store: a recent event whose session this machine never recorded is a run that happened on another machine. Private manifests return null (their cache never syncs); events older than the 90d binding TTL or that never spawned are unattributable and skipped; a planted __proto__ id reads as foreign via hasOwnProperty. Advisory only — never a block. Wired into all three approval surfaces: the CLI approve verb, the dashboard's approve screen (foreignRuns payload field + banner above the Approve button), and the in-session approval question text (chat, Telegram, automations answer).",
+    "breaking": false,
+    "summary": "Approving a shared automation warns when it already runs elsewhere",
+    "references": [
+      "commit:2bcc65c",
+      "file:src/lib/automations/session-registry.ts",
+      "file:dashboard/src/components/automations/AutomationDetailPanel.tsx",
+      "file:skill/references/automations.md",
+      "file:src/cli/commands/automations.ts",
+      "file:src/lib/automations/runner.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-13",
+    "type": "fix",
     "scope": "verify",
     "description": "The announcements modal is raised by an API round trip, but the harness sampled .announcements-modal-scrim the instant it got there. The modal landing AFTER the check read as \"no modal appeared\" (S7 FAIL) — and then the scrim would arrive on its own schedule and swallow the + click that opens the second project, failing M1 with a misleading \"chips=[scratch-a]\" message. The fix: wait bounded (15s for the first modal, 6s for subsequent ones) for the scrim to appear before concluding there's nothing to dismiss. A modal that genuinely never comes is still a failure (the point of the check), but the harness no longer manufactures a failure by looking too early. The generalizable lesson: an instant count() on anything raised by a network round trip is a race, and its failure surfaces later in an unrelated-looking check. scripts/verify/project-tabs.mjs now uses scrim.first().waitFor({ state: 'attached', timeout: N }) before every dismissal check. Both S7 and the second-project modal clear (used by M1) are fixed. Verified by three consecutive 13/13 harness runs.",
     "breaking": false,
