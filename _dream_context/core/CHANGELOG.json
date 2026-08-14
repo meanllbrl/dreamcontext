@@ -1,5 +1,58 @@
 [
   {
+    "date": "2026-08-14",
+    "type": "feat",
+    "scope": "chrome",
+    "description": "Replace the single rollup dot with counted bubbles per status. Sessions in the same state collapse into one bubble carrying their count, and a state with nothing draws nothing — three states means at most three bubbles whether the project holds two chats or twenty. rollupProject gains asking/working/idle as flat primitives partitioning live (locked by invariant tests); starting folds into working; saved/ended counted nowhere; shells excluded. The dot and live badge are gone; data-kind no longer colours anything (it meant 'working' on this strip and 'ready' on the chat tab strip 40px below — one hue, two opposite meanings). The loading ring is a ~24px conic gradient masked to its border, animated via a registered @property angle; under prefers-reduced-motion it stops rather than hides. Also fixes a pre-existing bug: handleRollup dropped alive, so shell open/close never reached chrome; sameRollup() now walks every key. Evidence: dashboard tsc clean, agent-status-project-rollup 10→19 tests, full suite 7061 passed/0 failed, verify:project-tabs 19/19 with four new bubble checks.",
+    "breaking": false,
+    "summary": "A project chip says how many chats it holds and how many are working",
+    "references": [
+      "commit:e0cd5cb",
+      "file:dashboard/src/components/layout/ProjectTabs.tsx",
+      "file:dashboard/src/components/layout/WindowChrome.tsx",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/components/sleepy/agentStatus.ts",
+      "task:one-window-holds-every-open-project-as-a-live-chip-strip"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-14",
+    "type": "docs",
+    "scope": "design",
+    "description": "Add three Excalidraw iterations showing the chip status evolution: v1 recoloured the single rollup dot and missed that one dot cannot say how many chats a project holds or how many are working; v2 offered per-session marks (pips, fractions, stacked bars) that scaled badly past a handful; v3 is what shipped — sessions in the same state collapse into one counted bubble. Kept because the third only makes sense against the first two rejections. Each board is generated (edit the .board.cjs and re-run, never the scene JSON directly); all three audit clean (overlaps=0 buriedText=0 longLines=0).",
+    "breaking": false,
+    "summary": "The design boards behind the chip status redesign",
+    "references": [
+      "commit:a3035f1",
+      "file:_dream_context/workspace/chip-status/chip-status.excalidraw.md",
+      "file:_dream_context/workspace/chip-status/chip-status-v2.excalidraw.md",
+      "file:_dream_context/workspace/chip-status/chip-status-v3.excalidraw.md"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-14",
+    "type": "feat",
+    "scope": "chrome",
+    "description": "Add ⌘Tab-style keyboard navigation to the project chip strip. Pressing ⌃Tab opens a preview cursor that moves with Tab/⌃⇧Tab/arrow keys; the switch fires when Control releases. The gesture is visible (scaled capsule on lifted surface, accent ring, fixed hint), and revival of cold projects is deferred until commit. Window blur commits the pick. The arrow keys are captured only while Control is down. Verified with dashboard tsc clean, npm run build, and verify:project-tabs 15/15 including new M6 (assert active unchanged mid-hold, preview moved, release commits) and M7 (Escape cancels).",
+    "breaking": false,
+    "summary": "⌃Tab picks along the chip strip while held, and switches on release",
+    "references": [
+      "commit:74f024c",
+      "file:dashboard/src/components/layout/ProjectTabs.css",
+      "file:dashboard/src/components/layout/WindowChrome.tsx",
+      "file:scripts/verify/project-tabs.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-13",
     "type": "fix",
     "scope": "chat",

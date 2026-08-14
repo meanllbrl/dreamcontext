@@ -1,22 +1,26 @@
 ---
-id: "feat_nLvaWOhX"
-type: "feature"
-name: "project-tabs-one-window-multi-vault"
-description: "Transform desktop from one OS window per project to one window with a chip strip where every open project stays live with per-instance isolation"
+id: feat_nLvaWOhX
+type: feature
+name: project-tabs-one-window-multi-vault
+description: >-
+  Transform desktop from one OS window per project to one window with a chip
+  strip where every open project stays live with per-instance isolation
 pinned: false
-date: "2026-08-10"
-status: "in_review"
-created: "2026-08-10"
-updated: "2026-08-13"
+date: '2026-08-10'
+status: in_review
+created: '2026-08-10'
+updated: '2026-08-14'
 released_version: null
 product: desktop
 tags:
-  - topic:desktop
+  - 'topic:desktop'
   - architecture
-  - layer:frontend
-  - topic:agents
+  - 'layer:frontend'
+  - 'topic:agents'
 related_tasks:
   - one-window-holds-every-open-project-as-a-live-chip-strip
+  - >-
+    a-project-chip-says-how-many-chats-it-holds-and-how-many-are-working-one-counted-bubble-per-status
 ---
 
 ## Why
@@ -37,6 +41,7 @@ related_tasks:
 - [x] As a user, I want the terminal to stay correctly fitted after switching projects so that TUI output isn't clipped or wrapped
 - [x] As a user, I want per-project isolation for settings and permissions so that enabling bypass mode in one project doesn't affect others
 - [x] As a user, I want the system to enforce a ceiling (6 live instances) and evict idle projects to cold chips so that the window doesn't degrade under load
+- [x] As a user, I want to see how many chats a project holds and how many are in each state (asking/working/idle) so that I know what each chip is doing at a glance
 - [ ] As a user, I want multi-window to remain an escape hatch (Shift-click to open in new window) so that I can spread projects across displays
 
 ## Acceptance Criteria
@@ -51,6 +56,7 @@ related_tasks:
 - [x] `grep -rn 'getActiveVault()' dashboard/src` matches ONLY inside `dashboard/src/api/client.ts` (module-global activeVault dead except deprecated pair)
 - [x] Only sanctioned `window.dispatchEvent` sites remain: dreamcontext-zoom, AGENT_SETTINGS_EVENT, ANNOUNCEMENTS_READ_EVENT, dead AUTO_CHECKPOINT_EVENT
 - [x] RED LINE: `grep -rn 'isActive' dashboard/src/components/sleepy/{agentSession.ts,chatSession.ts}` returns zero matches — WebSockets never tied to visibility
+- [x] NEW unit test `tests/unit/agent-status-project-rollup.test.ts` expanded 10→19 tests: bucket split (asking/working/idle partition `live`), starting-folds-into-working, attention-lands-in-asking, urgent-bucket-wins, saved/ended counted nowhere, shells excluded from all three, shell-bell regression lock, partition invariant (asking+working+idle===live)
 
 ### Runtime (6/9 proven at in_review, 3 unproven)
 - [x] Register two vaults, open both as chips: both render in centered strip, both instances live with their own data
@@ -62,9 +68,28 @@ related_tasks:
 - [ ] Open 7th tab: if any instance has `rollup.live === 0` oldest torn down to cold chip; if all busy tab refused with stated reason. Instance with no published rollup never evicted
 - [x] Add 3rd chip then close one with cursor over strip: adding re-centers; pointer inside strip freezes layout on close; leaving re-centers; overflow left-aligned + scrollable
 - [x] Quit and relaunch: exactly ONE project returns (launcher's ?vault=), no tab list persisted
+- [x] Status bubbles (verified): a project holding no chats draws no bubbles; three distinct non-transparent fills; equal heights across states and digit counts; loading ring animated by @property angle (Safari 16.4+)
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-08-14 - Status bubble redesign: counted marks per state, loading legibility
+
+**Owner report (2026-08-14):** "bana kaç chat var kaçı çalışıyoru vermiyor, loading olduğunu bile anlamıyorum doğru dürüst." The chip rolled N sessions into ONE dot + ONE live count, so composition was lost — nothing said how many were working, waiting, or loading.
+
+**Shipped solution:**
+- **Counted bubbles per state** — sessions in the SAME STATE collapse into ONE bubble carrying their count; a state with nothing in it draws nothing. Three states (asking/working/idle), so at most three bubbles whether the project holds 2 chats or 20. This is why the strip is handed counts rather than a list of sessions: one mark per session answers the same questions but does not fit in 150px.
+- **rollupProject partition** — `asking`/`working`/`idle` are FLAT primitives (not a nested object — AgentSurface publishes through a dependency array, and a fresh object identity would republish several times per second while a turn streams). Invariant-tested: `asking + working + idle === live`.
+- **Starting folds into working** — a session attaching its PTY is doing something, and a fourth bubble would spend a third of the row on a state lasting under a second.
+- **Saved/ended counted nowhere** — they are not live, not asking, not working, not idle.
+- **Shells excluded from all three** — so the counts PARTITION `live`. A shell ringing its bell moves `waiting` without moving a bubble (same as existing `live`/`alive` split).
+- **`waiting` vs `asking` NOT collapsed** — `waiting` counts every session kind so the chip still bounces for a finished build; `asking` is chat-only so the partition holds. Regression-locked.
+- **Color collision fixed** — the accent violet used to mean "working" on the project strip and "ready" on the chat tab strip 40px below it (one hue, two opposite meanings on one screen). Now the chip segment is neutral in every state and the bubbles name their own state, so the collision is gone by construction.
+- **Loading legibility rule** — an 8px dot changing opacity reads as flicker, not progress. A mark that TRAVELS (a ~24px ring) reads as running. The ring is a conic-gradient masked to its own border, animated via a registered `@property` angle (not a transform — a rotate would spin the stadium SHAPE at two-digit counts instead of running a mark around its edge). Under `prefers-reduced-motion` it STOPS rather than hides, so the state never lives in the animation alone. Ring inset (4px) kept under bubble gap (7px) so it cannot smear into its neighbour.
+- **Bubble height fixed at 16px** — pill grows sideways, so a count crossing 9 cannot nudge the chips beside it.
+- **`handleRollup` comparison bug fixed** — the inline three-field comparison became `sameRollup()` which walks every key. The old form silently dropped `alive`, so a shell opening or closing could not reach the chrome while the other three sat still.
+
+**Hover peek deferred:** showing which chat is in which state needs session TITLES at chip level (a new cross-instance channel on a bus that already warns about republish frequency). Design decision worth its own pass, not a rider on this one.
 
 ### 2026-08-13 - ⌃Tab cycling + harness race fix
 
@@ -99,7 +124,7 @@ related_tasks:
 ### Architecture
 - **ProjectInstance** (`dashboard/src/ProjectInstance.tsx`): one mounted React app per vault, each with its own `instanceQueryClient` (React Query cache isolation), `VaultContext`, scoped localStorage, and event bus.
 - **WindowChrome** (`dashboard/src/components/layout/WindowChrome.tsx`): the shell that owns the instance lifecycle, chip registry (`OpenProject[]`), ceiling enforcement (`MAX_LIVE_INSTANCES=6`), eviction (oldest `rollup.alive === 0`), window registry heartbeat, and ⌃Tab cycling (capture-phase listener on `window`, only claimed with ≥2 chips). Also publishes chrome slots via `ChromeSlotsProvider`.
-- **ProjectTabs** (`dashboard/src/components/layout/ProjectTabs.tsx` + `.css`): the center-aligned chip strip. Rule 1 (freeze): `pointerenter` snapshots leading gap + each chip's width, so a chip closed while frozen leaves a ghost and neighbors don't slide under cursor. Rule 2 (fall left): `margin-inline:auto` collapses to 0 when content exceeds container, so CSS and overflow flag can't disagree. Tooltip appends "· ⌃Tab to switch" when ≥2 chips.
+- **ProjectTabs** (`dashboard/src/components/layout/ProjectTabs.tsx` + `.css`): the center-aligned chip strip. Rule 1 (freeze): `pointerenter` snapshots leading gap + each chip's width, so a chip closed while frozen leaves a ghost and neighbors don't slide under cursor. Rule 2 (fall left): `margin-inline:auto` collapses to 0 when content exceeds container, so CSS and overflow flag can't disagree. Tooltip appends "· ⌃Tab to switch" when ≥2 chips. **Status bubbles** (2026-08-14): the old dot+badge is gone; now up to three counted bubbles (asking/working/idle) with fixed 16px height and horizontal growth, neutral chip segment (the accent violet collision is fixed by construction), and a ~24px loading ring animated via registered `@property` angle that stops (not hides) under `prefers-reduced-motion`.
 - **One-bar chrome refactor** (`dashboard/src/components/layout/chromeSlots.tsx`, `Header.tsx`): The window has ONE bar, but the collapse toggle, search pill, and sleep tracker belong to whichever PROJECT is on screen — they read that instance's query cache, bus, and palette state. The chrome publishes two mount points (`ChromeSlots: {left, right}`) and the active instance's `Header` portals its controls into them. Only the ACTIVE instance renders into the slots; a hidden instance renders nothing, because a portal escapes the `.project-instance` subtree and would ignore its `hidden`/`inert` shroud entirely. The `--header-height` double-rebase in `ProjectTabs.css` is GONE because there is only one bar again; the manual refresh button was dropped.
 - **Per-vault ApiClient** (`dashboard/src/api/client.ts`): was module-level singleton `api`, now a class. Module-global `api` survives for capture/perch windows (separate OS windows, legitimately single-vault). Migrated ~28 hooks + 12 components off `getActiveVault()`.
 
@@ -130,10 +155,10 @@ Ten events moved from `window` to instance bus: `navigate`, `agent-open-page`, `
 - **agentSession.ts** (`dashboard/src/components/sleepy/agentSession.ts`): `ensureOpen` gained `{focus?: boolean}`. New activation effect keyed `[isActive, fitVisible]` with rAF. RO gate tightened to `!expanded || !isActive`. Unmount-only teardown disposing `sessions.current`. `fitVisible()` early-returns on `!isActive` (M7 fix).
 
 ### ProjectRollup
-- **agentStatus.ts** (`dashboard/src/components/sleepy/agentStatus.ts`): `rollupProject(rows): ProjectRollup` → `{worst: SessionStatusKind; live: number; waiting: number; alive: number}`. `alive` counts rows where `info.kind ∉ {'saved','ended'}` (shells included); `live` excludes shells (chat badge count). Eviction gate reads `rollup.alive === 0`, never `live`.
+- **agentStatus.ts** (`dashboard/src/components/sleepy/agentStatus.ts`): `rollupProject(rows): ProjectRollup` → `{worst: SessionStatusKind; live: number; waiting: number; alive: number; asking: number; working: number; idle: number}` (2026-08-14 expanded). `alive` counts rows where `info.kind ∉ {'saved','ended'}` (shells included); `live` excludes shells (chat badge count). `asking`/`working`/`idle` are flat primitives (not nested — fresh object identity would republish on every render). Partition invariant: `asking + working + idle === live`. Starting folds into working; saved/ended counted nowhere; shells excluded from all three. Eviction gate reads `rollup.alive === 0`, never `live`.
 
 ### Verification
-- **scripts/verify/project-tabs.mjs**: runtime verification script (13/13 green against real server with isolated scratch HOME and `DREAMCONTEXT_DESKTOP=1`). Proven: vault window boots, one ProjectInstance mounts, chip renders, instance neither hidden nor inert, `.project-instance[hidden]` computes `display:none`, reload returns one project (S1-S7), two registered vaults open as two chips with both instances mounted, exactly one visible (M1-M4), **M5 (NEW)** — ⌃Tab/⌃⇧Tab cycle the chip strip by real keystroke without remounting instances. S7 and `clearScrims()` fixed for async modal race: both now wait bounded for the modal to appear (see Constraints & Decisions 2026-08-13).
+- **scripts/verify/project-tabs.mjs**: runtime verification script (19/19 green against real server with isolated scratch HOME and `DREAMCONTEXT_DESKTOP=1`). Proven: vault window boots, one ProjectInstance mounts, chip renders, instance neither hidden nor inert, `.project-instance[hidden]` computes `display:none`, reload returns one project (S1-S7), two registered vaults open as two chips with both instances mounted, exactly one visible (M1-M4), ⌃Tab/⌃⇧Tab cycle the chip strip by real keystroke without remounting instances (M5), **B1-B4 (NEW, 2026-08-14)** — a project holding no chats draws no bubbles, three distinct non-transparent fills, equal heights across states and digit counts, loading ring animated by registered `@property` angle. S7 and `clearScrims()` fixed for async modal race: both now wait bounded for the modal to appear (see Constraints & Decisions 2026-08-13).
 
 ### Wave-by-Wave Rollout
 20 tasks across 4 waves, dependency map mechanically audited (0 collisions). Wave 1 (contracts, behavior-neutral) → Wave 2 (instance shell, still one chip) → Wave 3 (global collisions, riskiest) → Wave 4 (badge + window bridge). Full plan: `_dream_context/workspace/project-tabs/plan-validated-v1.md` (838 lines).
@@ -146,6 +171,9 @@ Ten events moved from `window` to instance bus: `navigate`, `agent-open-page`, `
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-08-14 - Status bubble redesign (commit e0cd5cb)
+- Replaced one dot+badge with up to three counted bubbles (asking/working/idle). Sessions in the same state collapse into ONE bubble carrying their count; a state with nothing in it draws nothing. Fixed color collision (accent violet meant "working" on project strip but "ready" on chat tab 40px below — now neutral chip segment, bubbles name their state). Loading legibility: ~24px ring animated via registered `@property` angle (not a transform — wouldn't spin stadium shape), stops under `prefers-reduced-motion` instead of hiding. `rollupProject` expanded with `asking`/`working`/`idle` flat primitives (partition invariant: asking+working+idle===live). Starting folds into working; saved/ended counted nowhere; shells excluded from all three. Unit tests 10→19, verify:project-tabs 13→19 (B1-B4 bubble checks). `handleRollup` comparison bug fixed (walked every key instead of inline three-field check that dropped `alive`). Task: `a-project-chip-says-how-many-chats-it-holds-and-how-many-are-working-one-counted-bubble-per-status`.
 
 ### 2026-08-11 - Post-in_review hardening (session 26f43715, committed 480b4f3 + PR #291)
 - Fixed two real defects found by repeated review: (1) Escape stack broken in both directions across mounted-but-hidden projects — scope now captured at PUSH time, Escape answered per-scope; (2) eviction ceiling read `live` badge counter (excludes shells) — a project with only a running shell would have been evicted mid-process. Separate `alive` counter added, regression-locked. Smoke test upgraded from single-vault (could never catch cross-project bugs) to two-vault, 12/12. Commit split from concurrent automations work via `git apply --cached`, verified in isolated worktree. Status remains `in_review` — 3 runtime criteria still require live agent (B2, M-x1, B5/B6/B7).

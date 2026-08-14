@@ -7,12 +7,12 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-08-13'
+date: '2026-08-14'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-08-13 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-08-14 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### ⚪ **improve-recall-mechanism** — Improve Recall Mechanism · 4/6 done (67%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
@@ -59,8 +59,9 @@ date: '2026-08-13'
   - repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror (completed) · 0.20.0
   - untrack-legacy-tracked-task-mirrors-remote-backend (todo) · 0.19.0
 
-### 🟡 **simplified-ux** — Simplified UX · 39/43 done (91%) · target 2026-07-31 · forecast 2026-08-13 🔴 SLIPPING
+### 🟡 **simplified-ux** — Simplified UX · 40/44 done (91%) · target 2026-07-31 · forecast 2026-08-14 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
+  - a-project-chip-says-how-many-chats-it-holds-and-how-many-are-working-one-counted-bubble-per-status (completed) · 2026-08-14 → 2026-08-14
   - agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief (completed) · 0.21.0 · 2026-07-24 → …
   - agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions (completed) · 0.21.0 · 2026-07-23 → …
   - agent-composer-add-folder-picker-to-files-button (completed) · 0.18.0
