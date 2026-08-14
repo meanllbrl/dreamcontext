@@ -21,6 +21,12 @@ import './ProjectTabs.css';
 export interface ProjectChip {
   vault: string;
   active: boolean;
+  /**
+   * Where a ⌃Tab pick is currently POINTING — not where the user is. At most one chip carries
+   * it, and only while Control is physically held; releasing Control is what turns it into
+   * `active`. Two separate claims, drawn as two separate things (see the CSS).
+   */
+  preview: boolean;
   /** Torn down to free a slot at the instance ceiling; the chip stays, the instance is gone. */
   cold: boolean;
   /** Worst-of session state across the project — drives the dot and badge colour. */
@@ -117,7 +123,12 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
 
   // ⌃Tab only means something once there is a second chip, and that is also the only moment
   // it is worth naming in a tooltip — see the shortcut's own reasoning in `WindowChrome`.
-  const cycleHint = chips.length > 1 ? ' · ⌃Tab to switch' : '';
+  const cycleHint = chips.length > 1 ? ' · hold ⌃ and press Tab to switch' : '';
+
+  // A pick is in flight: Control is down and the cursor is sitting on one of these chips.
+  // Derived rather than passed, because a second prop saying the same thing as this field is
+  // a second source of truth for one state, and they drift.
+  const previewed = chips.find((c) => c.preview) ?? null;
 
   /* ── Rule 2: publish whether the track has outgrown the strip ─────────────────────
      The CENTRING itself is pure CSS (`margin-inline: auto` on the track collapses to 0 the
@@ -259,6 +270,7 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
       ref={hostRef}
       data-overflow={overflowing ? 'true' : 'false'}
       data-frozen={frozen ? 'true' : 'false'}
+      data-picking={previewed ? 'true' : 'false'}
       onPointerEnter={freeze}
       onPointerLeave={release}
     >
@@ -282,6 +294,7 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
               className="project-tab"
               data-vault={vault}
               data-active={chip.active ? 'true' : 'false'}
+              data-preview={chip.preview ? 'true' : 'false'}
               data-cold={chip.cold ? 'true' : 'false'}
               data-kind={chip.worst}
               data-bouncing={bouncing[vault] ? 'true' : 'false'}
@@ -336,6 +349,26 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
           </svg>
         </button>
       </div>
+
+      {/*
+        The held pick, in words, under the enlarged glass.
+
+        It is doing two jobs at once and both are load-bearing. Visually it teaches the half of
+        the gesture nothing on screen can show — that the switch happens on RELEASE, and that
+        the cursor also moves with the arrows — at the one moment the user is holding the key
+        and can act on it. For a screen reader it is the announcement: `role="status"` names
+        the project the pick is pointing at as the cursor moves, which the chip's own ring
+        (colour and a shadow) cannot say on its own.
+
+        Absolutely positioned so the strip's geometry — Rule 1's frozen widths, Rule 2's
+        centring — is identical whether or not a pick is in flight.
+      */}
+      {previewed && (
+        <div className="project-tabs-hint" role="status">
+          <span className="project-tabs-hint-name">{previewed.vault}</span>
+          <span className="project-tabs-hint-keys">release ⌃ · ←→ to move</span>
+        </div>
+      )}
 
       {menu && (
         <div

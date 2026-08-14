@@ -92,6 +92,22 @@
 }
 
 /*
+ * While a ⌃Tab pick is held, the bar's own controls step back so the strip reads as the
+ * foreground. Opacity only — nothing moves and nothing is disabled, because the mode lasts
+ * exactly as long as a thumb on a modifier key and any layout change here would make the
+ * whole bar twitch on every press.
+ */
+.window-chrome-left,
+.window-chrome-right {
+  transition: opacity var(--transition-fast);
+}
+
+.window-chrome-bar[data-picking='true'] .window-chrome-left,
+.window-chrome-bar[data-picking='true'] .window-chrome-right {
+  opacity: 0.4;
+}
+
+/*
  * Why a tab was refused (the 6-instance ceiling, closing the last chip, detaching it).
  * Transient and inline rather than a toast: it answers a click the user just made, so it
  * belongs next to the thing they clicked.
@@ -189,6 +205,7 @@
      the free space, and they are what centres this. */
   flex: 0 1 auto;
   min-width: 0;
+  position: relative;
   display: flex;
   align-items: center;
   overflow-x: auto;
@@ -227,6 +244,124 @@
     0 1px 2px color-mix(in oklab, var(--color-text) 8%, transparent);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
+  transform-origin: center center;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast),
+    background var(--transition-fast), border-color var(--transition-fast);
+}
+
+/* ────────────────────────── The held pick (⌃Tab, mid-gesture) ────────────────────────── */
+
+/*
+ * WHILE CONTROL IS DOWN, THE STRIP IS THE FOREGROUND.
+ *
+ * The gesture is a mode — the keyboard means something different for as long as the key is
+ * held — and a mode the user cannot see is a mode they cannot trust. Pressing ⌃Tab therefore
+ * does not just move a highlight: the glass grows, lifts off the bar on a real shadow, and
+ * turns opaque, while the rest of the bar dims behind it. That is the whole answer to "did it
+ * hear me?", available before anything has actually switched.
+ *
+ * It is also why the switch can safely wait for the release: the picked chip is legible the
+ * entire time, so committing on ⌃-up costs no feedback and saves every intermediate project
+ * from being mounted on the way past (see `WindowChrome`'s picker).
+ */
+.project-tabs[data-picking='true'] {
+  /* Over the right-hand controls, whose DOM order would otherwise paint them on top of the
+     lifted glass and clip its shadow. */
+  z-index: 2;
+}
+
+/*
+ * The enlargement needs to escape the 42px bar, which the scroll container would clip. When
+ * the strip has ALREADY outgrown its space (`data-overflow`), that container is doing real
+ * work — it is the scroller — so the scale is dropped there rather than half-applied inside a
+ * clip. The lift below still lands, so the mode is never invisible; it is only quieter in the
+ * one case where there was no room to grow into anyway.
+ */
+.project-tabs[data-picking='true']:not([data-overflow='true']) {
+  overflow: visible;
+}
+
+.project-tabs[data-picking='true']:not([data-overflow='true']) .project-tabs-track {
+  transform: scale(1.14);
+}
+
+.project-tabs[data-picking='true'] .project-tabs-track {
+  /* Opaque, not translucent: while the mode is up the strip stops belonging to the bar
+     behind it and becomes a thing in front of it. */
+  background: var(--color-bg-elevated);
+  border-color: color-mix(in oklab, var(--color-accent) 32%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--color-bg) 80%, transparent),
+    0 10px 28px color-mix(in oklab, var(--color-text) 20%, transparent),
+    0 2px 6px color-mix(in oklab, var(--color-text) 14%, transparent);
+}
+
+/* Everything that is not the cursor recedes — including the chip the user is standing in, so
+   the one place the eye lands is the one place ⌃-up would take them. */
+.project-tabs[data-picking='true'] .project-tab:not([data-preview='true']) {
+  opacity: 0.5;
+}
+
+/*
+ * THE CURSOR — where a released ⌃ would land.
+ *
+ * Deliberately NOT the same drawing as the active lens. The lens is a raised pane of brighter
+ * glass that says "you are here"; this is an accent ring that says "you would go here", and
+ * for the first press of ⌃Tab both are on the same chip — if they looked alike, the gesture's
+ * first frame would say nothing at all.
+ */
+.project-tab[data-preview='true'] {
+  opacity: 1;
+  background: color-mix(in oklab, var(--color-accent) 14%, var(--color-bg-elevated));
+  border-color: var(--color-accent);
+  box-shadow:
+    0 0 0 1px var(--color-accent),
+    0 1px 4px color-mix(in oklab, var(--color-accent) 30%, transparent);
+}
+
+.project-tab[data-preview='true'] .project-tab-main {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* A cold chip is dimmed to say "not mounted"; under the cursor it has to be readable. */
+.project-tab[data-preview='true'][data-cold='true'] {
+  opacity: 1;
+}
+
+/*
+ * The half of the gesture no chip can show: that the switch happens on RELEASE, and that the
+ * arrows move the cursor too. `position: fixed` rather than absolute so it is clipped by
+ * nothing — not the scroll container, not the bar — and stays centred on the window's own axis
+ * like the strip it belongs to. It renders only while a pick is in flight, so it never takes
+ * part in the strip's layout.
+ */
+.project-tabs-hint {
+  position: fixed;
+  top: calc(var(--header-height) + var(--space-2));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.project-tabs-hint-name {
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.project-tabs-hint-keys {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-2xs);
 }
 
 /*
@@ -555,6 +690,17 @@
   .project-tab[data-bouncing='true'],
   .project-tab[data-kind='working'] .project-tab-dot {
     animation: none;
+  }
+
+  /*
+   * The pick's enlargement STAYS — it is the state itself, not an embellishment, and the
+   * gesture would be unreadable without it. Only the animated ramp into it is dropped, here
+   * and on the bar's dimming.
+   */
+  .project-tabs-track,
+  .window-chrome-left,
+  .window-chrome-right {
+    transition: none;
   }
 
   .project-tab-main:active,

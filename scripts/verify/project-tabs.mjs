@@ -25,6 +25,9 @@
  *       instance against the same vault (checklist B6, in-window half)
  *   M5  ⌃Tab moves to the next chip and ⌃⇧Tab back to the previous one, by real keystroke,
  *       without remounting either instance
+ *   M6  a HELD ⌃Tab previews without switching — the cursor moves, the strip comes forward,
+ *       and the project changes only when Control is released
+ *   M7  Escape backs out of a held pick with the active project untouched
  *
  * WHAT IT DELIBERATELY DOES NOT COVER — and why it is not silence:
  *   Anything that needs a REAL agent: a chat that keeps streaming across a switch (B2), a
@@ -266,6 +269,48 @@ try {
       afterForward !== undefined && afterForward !== cycleStart && afterBack === cycleStart
         && JSON.stringify(beforeCycle) === JSON.stringify(await instanceIds()),
       `${cycleStart} -⌃Tab-> ${afterForward} -⌃⇧Tab-> ${afterBack}; ids ${JSON.stringify(beforeCycle)} -> ${JSON.stringify(await instanceIds())}`);
+
+    // M6 — the HOLD. ⌃Tab must not switch anything while Control is still down: it opens a
+    // cursor on the strip, the strip comes forward to say a mode is up, and the switch happens
+    // on the RELEASE. Driven by explicit down/up rather than `press('Control+Tab')` (which
+    // releases the modifier for you) because the whole claim is about what is true BETWEEN
+    // those two events. It matters beyond feel: a cold chip cycled past under the old
+    // press-to-switch shape was rebuilt — a whole project instance — just to be left again.
+    const holdStart = (await activeChip())?.trim();
+    await page.keyboard.down('Control');
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(300);
+    const held = await page.evaluate(() => ({
+      active: document.querySelector(".project-tab[data-active='true'] .project-tab-name")?.textContent?.trim(),
+      preview: document.querySelector(".project-tab[data-preview='true'] .project-tab-name")?.textContent?.trim(),
+      picking: document.querySelector('.project-tabs')?.getAttribute('data-picking'),
+      hint: !!document.querySelector('.project-tabs-hint'),
+      // The lift has to be a real computed transform, not just a class that was added.
+      scaled: getComputedStyle(document.querySelector('.project-tabs-track')).transform,
+    }));
+    await page.keyboard.up('Control');
+    await page.waitForTimeout(400);
+    const committed = (await activeChip())?.trim();
+    check('M6 ⌃Tab previews while Control is held and only switches on release',
+      held.active === holdStart && held.preview !== undefined && held.preview !== holdStart
+        && held.picking === 'true' && held.hint && held.scaled !== 'none'
+        && committed === held.preview,
+      `start=${holdStart} held(active=${held.active} preview=${held.preview} picking=${held.picking} hint=${held.hint} transform=${held.scaled}) -> released=${committed}`);
+
+    // M7 — Escape backs out of a held pick with nothing switched. A held gesture with no way
+    // out is a trap: the user is already committed the moment they press the first key.
+    const escStart = (await activeChip())?.trim();
+    await page.keyboard.down('Control');
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(200);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    const escPicking = await page.locator('.project-tabs').getAttribute('data-picking');
+    await page.keyboard.up('Control');
+    await page.waitForTimeout(400);
+    check('M7 Escape cancels a held pick and leaves the active project untouched',
+      escPicking === 'false' && (await activeChip())?.trim() === escStart,
+      `start=${escStart} picking-after-esc=${escPicking} active-after-release=${(await activeChip())?.trim()}`);
 
     // S6 — judged LAST, so it covers every request both projects made: the boot, the reload,
     // the second project's whole page load and both switches. A wrong vault reaching the

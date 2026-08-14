@@ -361,7 +361,26 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
   }, [mintInstanceId, notify, setActive, setOpen]);
 
   /**
-   * ⌃Tab / ⌃⇧Tab walks the chip strip, in strip order, wrapping at both ends.
+   * The vault the ⌃Tab picker is currently POINTING AT, or null when the picker is down.
+   * A preview, never a switch: nothing about the mounted instances changes while it is set.
+   */
+  const [preview, setPreviewState] = useState<string | null>(null);
+  const previewRef = useRef<string | null>(null);
+  const setPreview = useCallback((vault: string | null) => {
+    previewRef.current = vault;
+    setPreviewState(vault);
+  }, []);
+
+  /**
+   * ⌃Tab / ⌃⇧Tab walks the chip strip, in strip order, wrapping at both ends — as a HELD
+   * pick, the way ⌘Tab works everywhere else on this machine.
+   *
+   * The shape is the point. Pressing ⌃Tab does not switch project; it opens a cursor on the
+   * strip and moves it. Each further Tab (or ← / →) moves it again. The switch happens on the
+   * RELEASE of Control, once — so walking four chips to the right one costs one switch instead
+   * of four. That difference is not cosmetic here: a chip may be COLD, and switching to it
+   * rebuilds a whole project instance (and can be refused at the ceiling). Under the old
+   * press-to-switch shape, tabbing PAST a cold chip rebuilt it just to leave it again.
    *
    * NOT ⌘Tab, which is the combo the hand reaches for first: macOS gives it to the app
    * switcher before any web view is offered it, so it cannot be bound at all — `lib/sleepy.ts`
@@ -369,32 +388,115 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
    * equivalent every browser already uses for its own tabs.
    *
    * Listens on `window` in the CAPTURE phase, and that placement is the whole trick: a chip
-   * can be switched while a terminal pane holds focus, and without capturing above it the same
+   * can be picked while a terminal pane holds focus, and without capturing above it the same
    * keystroke would ALSO be written to the PTY. This is the second and last Ctrl chord the app
    * claims (`AgentSurface` has ⌃` for a new terminal) — every other one belongs to the shell.
+   * The arrow keys are captured ONLY while the picker is up, i.e. only while Control is
+   * physically held: outside that window they still belong entirely to whatever has focus.
    *
    * With a single chip the key is not claimed at all: there is nowhere to go, and swallowing a
    * keystroke to do nothing is worse than leaving it whatever meaning it already had.
-   *
-   * Cold chips are cycled INTO, like clicking one: reviving is what a chip in the strip means.
-   * At the ceiling with every other project busy that revival can be refused, and then the
-   * cycle sits still — the refusal says why, in the same notice a click would have raised.
    */
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab' || !e.ctrlKey || e.metaKey || e.altKey) return;
+    /** Move the cursor `delta` chips along, opening it at the ACTIVE chip on the first press. */
+    const step = (delta: number): boolean => {
       const current = openRef.current;
-      if (current.length < 2) return;
-      const index = current.findIndex((p) => p.vault === activeRef.current);
-      if (index === -1) return;
+      if (current.length < 2) return false;
+      const from = previewRef.current ?? activeRef.current;
+      const index = current.findIndex((p) => p.vault === from);
+      if (index === -1) return false;
+      setPreview(current[(index + delta + current.length) % current.length].vault);
+      return true;
+    };
+
+    /**
+     * Land on the picked chip and close the picker.
+     *
+     * Re-checks that the chip still EXISTS: the pick is held across an unbounded stretch of
+     * wall-clock (the user's thumb), and a project can close underneath it — a background
+     * window's registry claim, or the close button on a strip the pointer is also over.
+     * Cold chips are committed INTO, like clicking one: reviving is what a chip in the strip
+     * means. At the ceiling with every other project busy that revival can be refused, and
+     * then the pick lands nowhere — the refusal says why, in the notice a click would raise.
+     */
+    const commit = () => {
+      const target = previewRef.current;
+      setPreview(null);
+      if (target === null || target === activeRef.current) return;
+      if (!openRef.current.some((p) => p.vault === target)) return;
+      activate(target);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey || e.altKey) return;
+      if (e.key === 'Tab' && e.ctrlKey) {
+        if (!step(e.shiftKey ? -1 : 1)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      // Everything below is claimed ONLY while the picker is up.
+      if (previewRef.current === null) return;
+      switch (e.key) {
+        case 'ArrowRight':
+        case 'ArrowDown':
+          step(1);
+          break;
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          step(-1);
+          break;
+        // Commit without waiting for the release, for a hand that would rather press Enter.
+        case 'Enter':
+        case ' ':
+          commit();
+          break;
+        // Back out with nothing changed — the escape hatch a held gesture needs.
+        case 'Escape':
+          setPreview(null);
+          break;
+        default:
+          return;
+      }
       e.preventDefault();
       e.stopPropagation();
-      const step = e.shiftKey ? -1 : 1;
-      activate(current[(index + step + current.length) % current.length].vault);
     };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [activate]);
+
+    /**
+     * The release IS the switch.
+     *
+     * Fires on Control coming up, and — as a belt-and-braces second arm — on ANY key coming up
+     * once `ctrlKey` has gone false, which is what a swallowed or reordered modifier release
+     * looks like. Releasing Tab or Shift while Control is still down reports `ctrlKey: true`
+     * and is correctly ignored, so a ⌃⇧Tab walk survives letting go of Shift mid-way.
+     */
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (previewRef.current === null) return;
+      if (e.key !== 'Control' && e.ctrlKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      commit();
+    };
+
+    /**
+     * Losing the window mid-pick COMMITS rather than cancels. A blurred window never receives
+     * the keyup, so the alternative is a pick that silently evaporates — the user asked for a
+     * project, pressed the keys, and got nothing. Landing on the chip they were pointing at is
+     * both the recoverable outcome and the one they asked for.
+     */
+    const onBlur = () => {
+      if (previewRef.current !== null) commit();
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [activate, setPreview]);
 
   const addTab = useCallback(async (vault: string): Promise<AddTabResult> => {
     // 1. Already a chip in THIS window — the same project must never be open twice.
@@ -537,6 +639,9 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
   const chips = useMemo<ProjectChip[]>(() => open.map((p) => ({
     vault: p.vault,
     active: p.vault === activeVault,
+    // Where a released ⌃ would land. Independent of `active`, and on the SAME chip until the
+    // first ⌃Tab moves it — "you are here" and "you would go here" are two different claims.
+    preview: p.vault === preview,
     cold: p.cold,
     // Everything but `asking` and `working` renders neutral, so an unpublished rollup is
     // indistinguishable from a quiet project — which is exactly right.
@@ -547,7 +652,7 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
     // holds the state a bounce is derived FROM (`waiting` crossing 0→>0); T19 owns turning
     // that edge into a nonce, alongside the publisher that makes the edge happen at all.
     bounceNonce: 0,
-  })), [open, activeVault]);
+  })), [open, activeVault, preview]);
 
   const zoomIndex = ZOOM_LEVELS.indexOf(zoom);
   const changeZoom = (delta: -1 | 1) => {
@@ -589,6 +694,9 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
         */}
         <div
           className="window-chrome-bar"
+          // While a pick is held the strip comes forward and everything else in the bar steps
+          // back, so the gesture is legible as a mode rather than as a chip that changed hue.
+          data-picking={preview !== null ? 'true' : 'false'}
           onMouseDown={startTitleBarDrag}
           onDoubleClick={(e) => void toggleMaximizeWindow(e.target)}
         >
