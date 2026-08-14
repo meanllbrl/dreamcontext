@@ -23,10 +23,11 @@ date: '2026-08-14'
   - feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids (completed) · v0.14.0
   - feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag (completed) · v0.14.0
 
-### ⚪ **improve-sleep-quality** — Improve sleep quality · 7/9 done (78%) · target 2026-08-02 · forecast 2026-08-02 ✓ on track
+### ⚪ **improve-sleep-quality** — Improve sleep quality · 8/10 done (80%) · target 2026-08-02 · forecast 2026-08-02 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
   - automations-scheduled-headless-claude-jobs (completed) · BACKLOG
   - feat-sleep-semantic-dedup-nearest-neighbor-merge-instead-of-duplicate (completed) · 0.18.0
+  - fix-automations-every-run-binds-its-session-telegram-carries-the-report-and-a-bare-message-talks-to-the-latest-run (completed)
   - goal-skill-pack-headless-permission-flags-and-report-vs-work-gate (completed) · 0.20.0
   - improve-sleep-quality (completed) · 0.20.0 · 2026-07-18 → …
   - knowledge-move-cannot-relocate-a-board-directory-with-its-companion-files-across-context-folders (completed) · 0.20.0

@@ -1,6 +1,24 @@
 [
   {
     "date": "2026-08-14",
+    "type": "fix",
+    "scope": "automations",
+    "description": "Three fixes from the CalBuddy Telegram complaint (Turkish: bot 'sadece bitti diyor', no report, and replying got 'no session' despite completed runs). Root causes: (1) recordAutomationSession only ran inside the question-backfill loop in runner.ts — clean runs never bound their session machine-locally (the user's machine had NO ~/.dreamcontext/automations/ dir at all); (2) Telegram completion carried only the extractNotificationSummary one-liner, and the run's document opened with a meta line violating the FIRST LINE contract; (3) latestBoundSession existed but had zero callers — 'talk to the latest run' was designed but unwired. Fixes: every parsed run now binds (in runner.ts after backfillQuestionSession); Telegram ✅ message carries the published document (3000-char cap, review-gated docs excluded); new resumeWithMessage (verdict.ts) + handleTalkMessage (telegram.ts) let a bare Telegram message resume the latest bound session under the same trust chain as resumeWithAnswer (machine-local binding authority, run lock, sidecar, inbound message can never trigger a fresh run). spawnQuestionResume → spawnSessionResume (generalized). Evidence: 7 new tests, full suite 7068 green, build propagated to npm-linked global CLI. One-time manual backfill of calbuddy-funnel-watch's latest session binding.",
+    "breaking": false,
+    "summary": "Every run binds its session machine-locally, Telegram carries the full report, and a bare message talks to the latest run",
+    "references": [
+      "commit:6b7ba32",
+      "file:src/lib/automations/runner.ts",
+      "file:src/lib/automations/verdict.ts",
+      "file:src/lib/automations/telegram.ts",
+      "task:fix-automations-every-run-binds-its-session-telegram-carries-the-report-and-a-bare-message-talks-to-the-latest-run"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-14",
     "type": "feat",
     "scope": "chrome",
     "description": "Replace the single rollup dot with counted bubbles per status. Sessions in the same state collapse into one bubble carrying their count, and a state with nothing draws nothing — three states means at most three bubbles whether the project holds two chats or twenty. rollupProject gains asking/working/idle as flat primitives partitioning live (locked by invariant tests); starting folds into working; saved/ended counted nowhere; shells excluded. The dot and live badge are gone; data-kind no longer colours anything (it meant 'working' on this strip and 'ready' on the chat tab strip 40px below — one hue, two opposite meanings). The loading ring is a ~24px conic gradient masked to its border, animated via a registered @property angle; under prefers-reduced-motion it stops rather than hides. Also fixes a pre-existing bug: handleRollup dropped alive, so shell open/close never reached chrome; sameRollup() now walks every key. Evidence: dashboard tsc clean, agent-status-project-rollup 10→19 tests, full suite 7061 passed/0 failed, verify:project-tabs 19/19 with four new bubble checks.",
