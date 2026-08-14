@@ -312,6 +312,71 @@ try {
       escPicking === 'false' && (await activeChip())?.trim() === escStart,
       `start=${escStart} picking-after-esc=${escPicking} active-after-release=${(await activeChip())?.trim()}`);
 
+    // ─── STATUS BUBBLES ───────────────────────────────────────────────────────────
+    // The chip's bubbles say how many chats a project holds and how many are working. Only
+    // the ZERO case can be driven for real here — there is no Claude CLI in this harness, so
+    // no project ever holds a chat — and a check that only ever sees zero would pass just as
+    // happily against a chip that lost the ability to draw a bubble at all. So the drawing
+    // itself is proven against the real stylesheet on a synthetic chip, and the two halves
+    // are reported separately rather than blended into one green line.
+
+    // B1 — REAL: a project with no chats draws no bubbles. This is the state the strip spends
+    // most of its life in, and the one an always-on badge would have cluttered.
+    const quietBubbles = await page.locator('.project-tab-bubble').count();
+    check('B1 a project holding no chats draws no bubbles at all',
+      quietBubbles === 0, `found ${quietBubbles}`);
+
+    // B2 — the stylesheet actually resolves three DISTINCT bubble fills. A typo'd selector or
+    // a dropped token leaves the rule unmatched, and three identical transparent bubbles look
+    // fine in a screenshot while carrying no information whatsoever.
+    const bubbleStyles = await page.evaluate(() => {
+      const host = document.createElement('div');
+      host.className = 'project-tab';
+      host.innerHTML = ['asking', 'working', 'idle'].map((s) =>
+        `<span class="project-tab-bubble" data-state="${s}">`
+        + (s === 'working' ? '<span class="project-tab-bubble-ring"></span>' : '')
+        + '<span class="project-tab-bubble-n">2</span></span>').join('');
+      document.querySelector('.project-tabs-track')?.appendChild(host);
+      const read = (s) => {
+        const el = host.querySelector(`[data-state="${s}"]`);
+        const cs = getComputedStyle(el);
+        return { bg: cs.backgroundColor, h: el.getBoundingClientRect().height };
+      };
+      const ring = host.querySelector('.project-tab-bubble-ring');
+      const ringCs = getComputedStyle(ring);
+      const out = {
+        asking: read('asking'), working: read('working'), idle: read('idle'),
+        ringBox: ring.getBoundingClientRect().width,
+        ringAnim: ringCs.animationName,
+        // '' when @property never registered — the angle would then never interpolate and the
+        // ring would sit frozen at its initial position.
+        ringAngle: ringCs.getPropertyValue('--tab-ring-angle').trim(),
+      };
+      host.remove();
+      return out;
+    });
+    const fills = [bubbleStyles.asking.bg, bubbleStyles.working.bg, bubbleStyles.idle.bg];
+    const transparent = (c) => !c || c === 'rgba(0, 0, 0, 0)' || c === 'transparent';
+    check('B2 the three bubble states resolve to three distinct, non-transparent fills',
+      new Set(fills).size === 3 && !fills.some(transparent),
+      JSON.stringify(fills));
+
+    // B3 — the heights must MATCH across states, including the two-digit stadium: a strip
+    // whose row height moved when a count crossed 9 would nudge every chip beside it.
+    const heights = [bubbleStyles.asking.h, bubbleStyles.working.h, bubbleStyles.idle.h];
+    check('B3 every bubble is the same height regardless of state or digit count',
+      heights.every((h) => h > 0 && Math.abs(h - heights[0]) < 0.5), JSON.stringify(heights));
+
+    // B4 — the loading ring exists as a real box, is animated, and its angle is a registered
+    // custom property so the gradient genuinely turns. Without the registration the keyframe
+    // is a no-op and the ring silently becomes a static arc — the exact failure mode the ring
+    // replaced. NOTE: proven in Chromium here; the shipped app runs WKWebView, where the
+    // registration needs Safari 16.4+. That is stated, not claimed as tested.
+    check('B4 the working bubble carries a sized, animated ring with a registered angle',
+      bubbleStyles.ringBox > 0 && bubbleStyles.ringAnim === 'projectTabRing'
+        && bubbleStyles.ringAngle !== '',
+      `box=${bubbleStyles.ringBox} anim=${bubbleStyles.ringAnim} angle="${bubbleStyles.ringAngle}"`);
+
     // S6 — judged LAST, so it covers every request both projects made: the boot, the reload,
     // the second project's whole page load and both switches. A wrong vault reaching the
     // server shows up here as 400 and nowhere else — the UI paints either way.

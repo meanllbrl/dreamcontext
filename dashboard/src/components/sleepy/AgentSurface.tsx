@@ -2047,12 +2047,23 @@ export function AgentSurface() {
    * the ceiling rule cannot tolerate.
    */
   const rollup: ProjectRollup = rollupProject(dockRows);
-  const { worst: rollupWorst, live: rollupLive, waiting: rollupWaiting, alive: rollupAlive } = rollup;
+  const {
+    worst: rollupWorst, live: rollupLive, waiting: rollupWaiting, alive: rollupAlive,
+    asking: rollupAsking, working: rollupWorking, idle: rollupIdle,
+  } = rollup;
   useEffect(() => {
     emitInstance<ProjectRollup>(bus, PROJECT_ROLLUP_EVENT, {
       worst: rollupWorst, live: rollupLive, waiting: rollupWaiting, alive: rollupAlive,
+      asking: rollupAsking, working: rollupWorking, idle: rollupIdle,
     });
-  }, [bus, rollupWorst, rollupLive, rollupWaiting, rollupAlive]);
+  }, [
+    bus, rollupWorst, rollupLive, rollupWaiting, rollupAlive,
+    // The three bubble counts are in the array for the same reason `alive` is: they can move
+    // while every other field holds still. One chat finishing its turn as another starts one
+    // leaves worst/live/waiting/alive all unchanged and only shifts a count from `working` to
+    // `idle` and back — a chip whose bubbles never updated would be the visible symptom.
+    rollupAsking, rollupWorking, rollupIdle,
+  ]);
 
   // Rows for the corner dock that floats over the EXPANDED overlay — only the sessions the
   // user minimized out of the panes (in minimize order). Empty → no corner dock shown.

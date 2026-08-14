@@ -96,8 +96,10 @@ describe('rollupProject', () => {
     expect(r.waiting).toBe(1);
   });
 
-  it('empty input reads as { worst: "ended", live: 0, waiting: 0, alive: 0 }, matching rollupKind', () => {
-    expect(rollupProject([])).toEqual({ worst: 'ended', live: 0, waiting: 0, alive: 0 });
+  it('empty input reads as all-zero with worst "ended", matching rollupKind', () => {
+    expect(rollupProject([])).toEqual({
+      worst: 'ended', live: 0, waiting: 0, alive: 0, asking: 0, working: 0, idle: 0,
+    });
   });
 
   it('a project of only dormant (saved) rows has live: 0 and alive: 0 — no badge, safely evictable', () => {
@@ -105,5 +107,75 @@ describe('rollupProject', () => {
     expect(r.live).toBe(0);
     expect(r.alive).toBe(0);
     expect(r.worst).toBe('saved');
+  });
+});
+
+/*
+ * The chip's three status bubbles. These counts replaced a single dot-plus-badge that could
+ * only say HOW MANY chats a project held — never how many were working, how many were blocked
+ * on an answer, or that anything was loading. Each rule below is one of those questions, and
+ * the partition invariant at the end is what keeps the three of them honest together.
+ */
+describe('rollupProject — status bubble counts', () => {
+  it('splits live rows across the three buckets', () => {
+    const r = rollupProject([
+      row('a', 'asking'), row('b', 'working'), row('c', 'working'), row('d', 'ready'),
+    ]);
+    expect(r).toMatchObject({ asking: 1, working: 2, idle: 1 });
+  });
+
+  it('starting folds into working — a session attaching its PTY is a session doing something', () => {
+    const r = rollupProject([row('a', 'starting'), row('b', 'working')]);
+    expect(r.working).toBe(2);
+    expect(r.idle).toBe(0);
+  });
+
+  it('attention alone lands in asking, not idle — a chat that rang its bell wants you', () => {
+    const r = rollupProject([row('a', 'ready', { attention: true })]);
+    expect(r).toMatchObject({ asking: 1, working: 0, idle: 0 });
+  });
+
+  it('a WORKING row that also rang its bell counts as asking, once — the urgent bucket wins', () => {
+    const r = rollupProject([row('a', 'working', { attention: true })]);
+    expect(r).toMatchObject({ asking: 1, working: 0, idle: 0 });
+    expect(r.live).toBe(1);
+  });
+
+  it('saved and ended rows are counted in NO bucket — they are not chats you have', () => {
+    const r = rollupProject([row('a', 'saved'), row('b', 'ended'), row('c', 'ready')]);
+    expect(r).toMatchObject({ asking: 0, working: 0, idle: 1 });
+  });
+
+  it('shells are excluded from every bucket, so a lone dev-server terminal draws no bubble', () => {
+    const r = rollupProject([
+      row('a', 'working', { sessionKind: 'shell' }),
+      row('b', 'ready', { sessionKind: 'shell' }),
+    ]);
+    expect(r).toMatchObject({ asking: 0, working: 0, idle: 0, live: 0 });
+    expect(r.alive).toBe(2); // still holds real PTYs — the ceiling must not evict it
+  });
+
+  it('REGRESSION LOCK — a shell ringing its bell moves `waiting` (the bounce) but no bubble', () => {
+    // `waiting` and `asking` look redundant and are not: waiting counts every kind so the
+    // chip still jumps for a finished build, while the bubbles stay a chat-only partition of
+    // `live`. Collapsing the two would either stop the bounce or break the invariant below.
+    const r = rollupProject([row('a', 'ready', { sessionKind: 'shell', attention: true })]);
+    expect(r.waiting).toBe(1);
+    expect(r.asking).toBe(0);
+  });
+
+  it('INVARIANT — asking + working + idle === live, across every mix', () => {
+    const mixes: SessionRow[][] = [
+      [],
+      [row('a', 'ready')],
+      [row('a', 'asking'), row('b', 'working'), row('c', 'starting'), row('d', 'ready')],
+      [row('a', 'saved'), row('b', 'ended'), row('c', 'ready', { attention: true })],
+      [row('a', 'working', { sessionKind: 'shell' }), row('b', 'asking'), row('c', 'ready')],
+      [row('a', 'asking', { attention: true }), row('b', 'working', { attention: true })],
+    ];
+    for (const rows of mixes) {
+      const r = rollupProject(rows);
+      expect(r.asking + r.working + r.idle).toBe(r.live);
+    }
   });
 });

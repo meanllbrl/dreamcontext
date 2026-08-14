@@ -139,6 +139,31 @@ export interface ProjectRollup {
   /** Drives the chip's one-shot bounce: sessions blocked on the user or flagged since
    *  you last looked. */
   waiting: number;
+  /*
+   * ── The chip's status bubbles ────────────────────────────────────────────────────
+   *
+   * Three counts that PARTITION `live`: `asking + working + idle === live`, always. The chip
+   * draws one bubble per non-zero count, so a project with ten chats still shows at most
+   * three bubbles instead of ten dots — which is the whole point of counting them here rather
+   * than handing the strip a row of per-session states to render.
+   *
+   * FLAT, NOT A NESTED OBJECT, deliberately: `AgentSurface` publishes this rollup through a
+   * dependency array of primitives, and a `{ asking, working, idle }` object would get a new
+   * identity every render and republish several times a second while a turn streams.
+   */
+  /** Blocked on the user, or flagged since you last looked. The magenta bubble.
+   *  NOT the same as `waiting`: this one excludes shells, so the three counts still sum to
+   *  `live`. A shell that rings its bell moves `waiting` without moving a bubble — the same
+   *  split `live`/`alive` already makes, for the same reason. */
+  asking: number;
+  /** Mid-turn or still connecting. The green bubble, and the one that carries the ring.
+   *  `starting` folds in here on purpose: a session attaching its PTY is a session doing
+   *  something, and a fourth bubble for it would spend a third of the row on a state that
+   *  lasts under a second. */
+  working: number;
+  /** Open and idle. The grey bubble. `saved` and `ended` are NOT counted anywhere — a
+   *  restored roster entry with no session and a dead PTY are not chats you "have". */
+  idle: number;
   /** Eviction safety: how many sessions of ANY kind still hold a live PTY/WebSocket — agent,
    *  chat AND shell. This is the ONLY field the ceiling rule may consult; `live` must never
    *  decide whether an instance can be torn down. */
@@ -162,11 +187,23 @@ export function rollupProject(rows: SessionRow[]): ProjectRollup {
   let live = 0;
   let waiting = 0;
   let alive = 0;
+  let asking = 0;
+  let working = 0;
+  let idle = 0;
   for (const r of rows) {
     const holdsSession = r.info.kind !== 'saved' && r.info.kind !== 'ended';
-    if (holdsSession && r.kind !== 'shell') live++;
+    const wantsYou = r.info.kind === 'asking' || r.attention;
+    if (holdsSession && r.kind !== 'shell') {
+      live++;
+      // Exactly one bucket per counted row, in urgency order — a row that is both asking and
+      // attention-flagged is ONE chat wanting you, not two, and a working row that also rang
+      // its bell belongs in the bubble that gets answered first.
+      if (wantsYou) asking++;
+      else if (r.info.kind === 'working' || r.info.kind === 'starting') working++;
+      else idle++;
+    }
     if (holdsSession) alive++;
-    if (r.info.kind === 'asking' || r.attention) waiting++;
+    if (wantsYou) waiting++;
   }
-  return { worst: rollupKind(rows), live, waiting, alive };
+  return { worst: rollupKind(rows), live, waiting, alive, asking, working, idle };
 }

@@ -387,7 +387,6 @@
  * a border and a background here would now be a box drawn inside a box.
  */
 .project-tab {
-  --tab-kind-color: var(--color-text-tertiary); /* neutral: ready / starting / saved / ended */
   position: relative;
   flex: 0 0 auto;
   display: flex;
@@ -402,17 +401,17 @@
 }
 
 /*
- * Only the two states that mean "this project needs your eyes" take colour; everything else
- * is neutral. An idle project rolls up as `ended` (the calmest state, and what an empty row
- * set answers), so mapping `ended` to the error hue would paint every quiet chip red.
+ * NO `data-kind` COLOUR RULE LIVES HERE ANY MORE, on purpose.
+ *
+ * The chip used to take a hue from its worst-of state, and that hue was the accent violet for
+ * `working` — the same violet the chat tab strip 40px below it uses for `ready`. One colour,
+ * two opposite meanings, on one screen. The bubbles replaced it with counts that name their
+ * own state, so the segment itself is now neutral in every state and the collision is gone by
+ * construction rather than by picking a different pair of hues.
+ *
+ * `data-kind` stays on the element as a hook for tests and future affordances; nothing draws
+ * from it. Re-adding a colour here would rebuild the collision.
  */
-.project-tab[data-kind='asking'] {
-  --tab-kind-color: var(--color-error);
-}
-
-.project-tab[data-kind='working'] {
-  --tab-kind-color: var(--color-accent);
-}
 
 /* Hovering an inactive segment fogs the glass under it — a hint, not a selection. */
 .project-tab:hover:not([data-active='true']) {
@@ -449,10 +448,9 @@
   opacity: 0.55;
 }
 
-.project-tab[data-cold='true'] .project-tab-dot {
-  box-shadow: inset 0 0 0 1px var(--tab-kind-color);
-  background: transparent;
-}
+/* A cold chip's rollup is nulled on eviction, so it reports three zero counts and draws no
+   bubbles at all. The dimming above is what says "not mounted" — there is no state left to
+   hollow out a mark for. */
 
 .project-tab[data-cold='true']:hover {
   opacity: 1;
@@ -499,19 +497,6 @@
   transform: scale(0.98);
 }
 
-.project-tab-dot {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  background: var(--tab-kind-color);
-}
-
-/* The one state that is genuinely in motion gets a pulse; the rest hold still. */
-.project-tab[data-kind='working'] .project-tab-dot {
-  animation: projectTabDotPulse 1.6s ease-in-out infinite;
-}
-
 .project-tab-name {
   min-width: 0;
   max-width: 168px;
@@ -520,26 +505,117 @@
   text-overflow: ellipsis;
 }
 
+/* ─────────────────────────────── The status bubbles ─────────────────────────────── */
+
 /*
- * The live-conversation count. Omitted entirely at 0 (see ProjectTabs.tsx) — a "0" badge is
- * noise on a chip that has nothing going on.
+ * ONE BUBBLE PER STATUS, NOT PER SESSION — the rule the whole strip now rests on.
+ *
+ * The chip used to roll every session in a project into a single coloured dot plus a single
+ * count, which answered "how many chats" and nothing else: not how many were working, not how
+ * many were blocked on an answer, not whether anything was loading at all. Drawing one mark
+ * per session answers all three, but ten chats then means ten marks, and the strip is a
+ * 150px-wide place where that does not fit.
+ *
+ * So sessions in the same state collapse into one bubble carrying their COUNT. Three states,
+ * so at most three bubbles, whether the project holds two chats or twenty — and a state with
+ * nothing in it draws nothing, so a quiet project stays a bare name.
  */
-.project-tab-badge {
+.project-tab-bubbles {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
+  /* Wider than it looks like it needs to be: the working bubble's ring overflows its box by
+     the `inset` below, so anything tighter than that lets the ring cross into the bubble
+     beside it — which reads as one smeared mark rather than two counts. */
+  gap: 7px;
+}
+
+.project-tab-bubble {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
+  /* Square at one digit — a circle — and a stadium from two digits up. The HEIGHT is what
+     stays fixed: a strip whose row height jumped when a count crossed 9 would shift every
+     chip beside it. */
   min-width: 16px;
   height: 16px;
-  padding: 0 5px;
+  padding: 0 4px;
   border-radius: var(--radius-full);
-  background: var(--tab-kind-color);
-  color: var(--color-text-on-brand);
   /* Matches `.header-search-pill-kbd`'s 10px, scaled by app zoom like every other size. */
   font-size: calc(10px * var(--zoom));
   font-weight: var(--font-weight-bold);
   font-variant-numeric: tabular-nums;
   line-height: 1;
+}
+
+/* The number sits above the ring, which overflows the bubble's own box. */
+.project-tab-bubble-n {
+  position: relative;
+  z-index: 1;
+}
+
+/*
+ * Only `asking` is FILLED. Urgency here is carried by being the one solid mark in the strip,
+ * not by motion — the ring belongs to `working`, and a chip where two different things move
+ * at once tells you to look twice and says which neither time.
+ */
+.project-tab-bubble[data-state='asking'] {
+  background: var(--mood-waiting);
+  color: var(--color-text-on-brand);
+}
+
+.project-tab-bubble[data-state='working'] {
+  background: color-mix(in oklab, var(--color-success) 20%, var(--color-bg-elevated));
+  color: color-mix(in oklab, var(--color-success) 78%, var(--color-text));
+}
+
+.project-tab-bubble[data-state='idle'] {
+  background: color-mix(in oklab, var(--color-text) 9%, transparent);
+  color: var(--color-text-tertiary);
+}
+
+/*
+ * THE LOADING RING — the answer to "I can't even tell it's loading".
+ *
+ * A conic gradient masked to its own border, so it is a ring of any shape the bubble takes
+ * (circle at one digit, stadium at two) with no second drawing to keep in sync. It is ~26px
+ * across against the old 8px dot, and it TURNS: an 8px dot changing opacity reads as flicker,
+ * a mark travelling around a circle reads as progress.
+ *
+ * The angle is animated through a registered custom property, because a plain `rotate` would
+ * spin the stadium's SHAPE rather than run a mark around its edge. Where `@property` is not
+ * supported the gradient simply holds still at its initial angle — which is the same picture
+ * the reduced-motion rule below asks for, so the fallback is a state we already wanted rather
+ * than a broken one.
+ */
+@property --tab-ring-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.project-tab-bubble-ring {
+  position: absolute;
+  /* Kept under half the row's spare height (28px chip, 16px bubble) so the ring never touches
+     the segment's edge, and under `.project-tab-bubbles`'s gap so it never touches a sibling. */
+  inset: -4px;
+  border-radius: var(--radius-full);
+  padding: 2px;
+  background: conic-gradient(
+    from var(--tab-ring-angle),
+    var(--color-success) 0turn 0.62turn,
+    transparent 0.62turn 1turn
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: projectTabRing 1s linear infinite;
+}
+
+@keyframes projectTabRing {
+  to { --tab-ring-angle: 360deg; }
 }
 
 .project-tab-close {
@@ -600,11 +676,6 @@
   55% { transform: translateY(0); }
   75% { transform: translateY(-2px); }
   100% { transform: translateY(0); }
-}
-
-@keyframes projectTabDotPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
 }
 
 /* ─────────────────────────────── The `+` affordance ─────────────────────────────── */
@@ -683,12 +754,17 @@
 /* ───────────────────────────────── Reduced motion ───────────────────────────────── */
 
 /*
- * The bounce and the pulse are the only motion here, and both encode state that is ALSO
- * carried by colour and by the badge — so removing them loses nothing but the movement.
+ * The bounce and the loading ring are the only motion here, and both encode state that is
+ * ALSO carried without movement — so removing them loses nothing but the movement.
+ *
+ * The ring specifically STOPS RATHER THAN DISAPPEARS. Stopping leaves a static arc around the
+ * working bubble, which still says "this one is running" to someone who never sees it turn;
+ * hiding it would put that fact in the animation alone, which is the exact failure the
+ * pulsing dot had. The count inside the bubble is the third carrier and never moves at all.
  */
 @media (prefers-reduced-motion: reduce) {
   .project-tab[data-bouncing='true'],
-  .project-tab[data-kind='working'] .project-tab-dot {
+  .project-tab-bubble-ring {
     animation: none;
   }
 

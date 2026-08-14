@@ -188,6 +188,21 @@ function chill(open: OpenProject[], vault: string): OpenProject[] {
   return open.map((p) => (p.vault === vault ? { ...p, cold: true, rollup: null } : p));
 }
 
+/**
+ * Whether two rollups say the same thing — the re-render gate in `handleRollup`.
+ *
+ * EVERY field, listed once. An earlier form compared `worst`/`live`/`waiting` inline and
+ * silently dropped `alive`, so a shell opening or closing could not reach the chrome at all
+ * while the other three sat still — and `alive` is the one field the eviction rule reads. The
+ * status counts have the same hazard in a subtler shape: one chat going idle while another
+ * starts working leaves `worst`, `live` and `waiting` all unchanged, and only the bubbles
+ * move. Comparing the whole record means adding a field to `ProjectRollup` can't quietly
+ * reintroduce either bug.
+ */
+function sameRollup(a: ProjectRollup, b: ProjectRollup): boolean {
+  return (Object.keys(a) as (keyof ProjectRollup)[]).every((k) => a[k] === b[k]);
+}
+
 /* ──────────────────────────────────── the component ──────────────────────────────────── */
 
 export function WindowChrome({ initialVault }: { initialVault: string }) {
@@ -263,12 +278,12 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
    * freshly-rebuilt instance look evictable. Here the rollup goes away exactly when the tab
    * that owns it does: `closeTab` drops the record, `chill` and `activate` null the field.
    *
-   * Bails out BEFORE `setOpen` when the three fields are unchanged. A publisher re-emits on
+   * Bails out BEFORE `setOpen` when nothing in the rollup moved. A publisher re-emits on
    * every status flip its surface notices — keystroke-driven `working`↔`ready` churn included
    * — and re-rendering the whole chrome (every chip, every consumer of `useChrome`) for a
    * rollup that says the same thing is the difference between a strip that idles and one that
    * repaints under the user's hands. Object identity is no use as the test: each publish is a
-   * fresh object.
+   * fresh object, so the comparison is field-by-field in {@link sameRollup}.
    */
   const handleRollup = useCallback((vault: string, next: ProjectRollup) => {
     const current = openRef.current;
@@ -277,9 +292,7 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
     const tab = current[index];
     if (tab.cold) return;                // evicted; whatever it says is about a dead instance
     const prev = tab.rollup;
-    if (prev && prev.worst === next.worst && prev.live === next.live && prev.waiting === next.waiting) {
-      return;
-    }
+    if (prev && sameRollup(prev, next)) return;
     const updated = [...current];
     updated[index] = { ...tab, rollup: next };
     setOpen(updated);
@@ -643,11 +656,16 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
     // first ⌃Tab moves it — "you are here" and "you would go here" are two different claims.
     preview: p.vault === preview,
     cold: p.cold,
-    // Everything but `asking` and `working` renders neutral, so an unpublished rollup is
-    // indistinguishable from a quiet project — which is exactly right.
     worst: p.rollup?.worst ?? 'ended',
     live: p.rollup?.live ?? 0,
     waiting: p.rollup?.waiting ?? 0,
+    // An unpublished rollup — and a cold chip, whose rollup is nulled on eviction — reports
+    // three zeros, so the chip draws no bubbles at all. That is exactly right: a project with
+    // nothing mounted has no chats to count, and inventing a grey "0" for it would put a
+    // permanent mark on every quiet chip in the strip.
+    asking: p.rollup?.asking ?? 0,
+    working: p.rollup?.working ?? 0,
+    idle: p.rollup?.idle ?? 0,
     // TODO(T19): the bounce has exactly one writer, and it is not this memo. The sink above
     // holds the state a bounce is derived FROM (`waiting` crossing 0→>0); T19 owns turning
     // that edge into a nonce, alongside the publisher that makes the edge happen at all.

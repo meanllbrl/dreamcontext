@@ -17,7 +17,7 @@ import './ProjectTabs.css';
  * nothing else. `WindowChrome` owns which projects exist, which is active, and the ceiling.
  */
 
-/** One project's chip. `worst`/`live`/`waiting` come straight from `rollupProject()`. */
+/** One project's chip. Every count comes straight from `rollupProject()`. */
 export interface ProjectChip {
   vault: string;
   active: boolean;
@@ -29,15 +29,28 @@ export interface ProjectChip {
   preview: boolean;
   /** Torn down to free a slot at the instance ceiling; the chip stays, the instance is gone. */
   cold: boolean;
-  /** Worst-of session state across the project — drives the dot and badge colour. */
+  /** Worst-of session state across the project. Nothing on the chip is DRAWN from this any
+   *  more — the bubbles carry state now — but it is what `describeChip` says in words. */
   worst: SessionStatusKind;
-  /** Live conversations. The badge NUMBER; the badge is omitted entirely at 0. */
+  /** Live conversations, i.e. `asking + working + idle`. Read only as the "does this chip
+   *  have anything at all" test and in the spoken label; the bubbles show the breakdown. */
   live: number;
   /**
    * Sessions blocked on the user. Its own 0→>0 edge is the ONE bounce trigger, detected in
    * this component and nowhere else — see the bounce effect below.
    */
   waiting: number;
+  /*
+   * The three status bubbles, in the order they are drawn. A count of 0 draws NOTHING, so a
+   * project holding ten chats still spends at most three bubbles on saying so — that ceiling
+   * is the whole reason the strip is handed counts instead of a list of sessions.
+   */
+  /** Blocked on you, or flagged since you last looked. Magenta, filled, always leftmost. */
+  asking: number;
+  /** Mid-turn or connecting. Green, and the only bubble that carries the loading ring. */
+  working: number;
+  /** Open and idle. Grey and silent. */
+  idle: number;
   /**
    * ACCEPTED AND IGNORED — do not reach for this.
    *
@@ -90,21 +103,35 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
- * What the chip's dot and badge SAY, in words. WCAG's "never by colour alone" applies twice
- * over here: the dot's hue is the only visual carrier of `asking`, and the bounce that
- * accompanies it is removed outright under `prefers-reduced-motion`.
+ * The bubbles, in draw order: most urgent first, and the order never depends on the counts.
+ * A row that re-sorted itself as numbers moved would make the eye re-read the whole chip on
+ * every status flip, which is the opposite of what a glanceable strip is for.
+ */
+const BUBBLES = [
+  { state: 'asking', label: 'needs you' },
+  { state: 'working', label: 'working' },
+  { state: 'idle', label: 'idle' },
+] as const;
+
+/**
+ * What the chip's bubbles SAY, in words — the same three counts, spoken.
+ *
+ * WCAG's "never by colour alone" is why this exists at all: a bubble carries its meaning in
+ * its hue, and the ring that marks `working` is removed outright under `prefers-reduced-
+ * motion`. The number inside each bubble is a second visual channel, but only the label makes
+ * the mapping (magenta = needs you) available to anyone not reading the pixels.
  */
 function describeChip(chip: ProjectChip): string {
   const parts = [chip.vault];
   if (chip.cold) parts.push('sleeping, click to reopen');
-  if (chip.worst === 'asking') parts.push('needs you');
-  else {
-    if (chip.worst === 'working') parts.push('working');
-    // `waiting` with no question on screen: a backgrounded session finished or rang the bell.
-    // It is what makes the chip bounce, so it has to be readable as words too.
-    if (chip.waiting > 0) parts.push('wants a look');
+  for (const { state, label } of BUBBLES) {
+    const n = chip[state];
+    if (n > 0) parts.push(`${n} ${label}`);
   }
-  if (chip.live > 0) parts.push(`${chip.live} live`);
+  // `waiting` counts shells too, so it can be non-zero with every bubble at 0: a background
+  // terminal rang its bell. That is what makes the chip bounce, so it has to be sayable.
+  if (chip.waiting > 0 && chip.asking === 0) parts.push('wants a look');
+  if (chip.live === 0 && !chip.cold) parts.push('no chats');
   return parts.join(' — ');
 }
 
@@ -308,17 +335,37 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
                 type="button"
                 className="project-tab-main"
                 aria-current={chip.active ? 'true' : undefined}
-                title={(chip.cold ? `${vault} — sleeping, click to reopen` : vault) + cycleHint}
-                // The dot and the badge are colour and a bare number; the label is where the
-                // same information is available to anyone not reading the pixels.
+                title={(chip.cold ? `${vault} — sleeping, click to reopen` : describeChip(chip)) + cycleHint}
+                // The bubbles are colour and a bare number; the label is where the same
+                // information is available to anyone not reading the pixels.
                 aria-label={describeChip(chip)}
                 onClick={() => onActivate(vault)}
               >
-                <span className="project-tab-dot" aria-hidden="true" />
                 <span className="project-tab-name">{vault}</span>
-                {/* Omitted at 0: a "0" badge is noise on a project with nothing running. */}
+                {/*
+                  One bubble per non-empty status, never a "0". The zero case is the reason
+                  this is a filter and not three conditional spans: a quiet project draws no
+                  bubbles at all, so the strip stays silent when nothing is happening rather
+                  than carrying three permanent grey marks.
+                */}
                 {chip.live > 0 && (
-                  <span className="project-tab-badge" aria-hidden="true">{chip.live}</span>
+                  <span className="project-tab-bubbles" aria-hidden="true">
+                    {BUBBLES.filter(({ state }) => chip[state] > 0).map(({ state }) => (
+                      <span key={state} className="project-tab-bubble" data-state={state}>
+                        {/*
+                          An element rather than a ::after, so the ring can be positioned
+                          under the number while overflowing the bubble's box. It inherits
+                          the bubble's pill radius, which is what makes a two-digit count
+                          work: the bubble grows sideways into a stadium and the ring simply
+                          follows its shape instead of needing a second drawing.
+                        */}
+                        {state === 'working' && (
+                          <span className="project-tab-bubble-ring" aria-hidden="true" />
+                        )}
+                        <span className="project-tab-bubble-n">{chip[state]}</span>
+                      </span>
+                    ))}
+                  </span>
                 )}
               </button>
               <button
