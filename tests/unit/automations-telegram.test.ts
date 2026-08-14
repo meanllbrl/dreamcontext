@@ -360,22 +360,32 @@ describe('answering with free text', () => {
     expect(spy.mock.calls[0][1].id).toBe(first.id);
   });
 
-  it('says nothing is waiting when a session exists but no question is pending', async () => {
+  it('a bare message with no question open TALKS to the latest run and relays its reply', async () => {
     recordAutomationSession('digest', 'sess-1', home);
-    writeAutomationCache(contextRoot, 'digest', {
-      slug: 'digest', lastRunAt: NOW, lastFireAt: NOW, status: 'ok', durationMs: 10,
-      outputPath: null, error: null, exitCode: 0,
-      history: [{
-        firedAt: NOW, startedAt: NOW, finishedAt: NOW, status: 'ok', durationMs: 10,
-        outputPath: null, error: null, exitCode: 0, sessionId: 'sess-1', costUsd: null,
-        numTurns: null, permissionDenials: 0,
-      }],
+    const spy = vi.spyOn(verdict, 'resumeWithMessage').mockResolvedValue({
+      status: 'ok', error: null, result: 'The rail is healthy and 668 went live.',
+    });
+    const { transport, sent } = makeTransport([
+      { update_id: 1, message: { message_id: 7, text: 'summarize it for me?', chat: { id: CHAT } } },
+    ]);
+    await pollTelegram(contextRoot, home, transport);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1]).toBe('digest');
+    expect(spy.mock.calls[0][2]).toBe('summarize it for me?');
+    expect(sent().some((c) => String(c.payload.text).includes('The rail is healthy'))).toBe(true);
+  });
+
+  it('a talk refusal reaches the human verbatim, never a silent drop', async () => {
+    vi.spyOn(verdict, 'resumeWithMessage').mockResolvedValue({
+      status: 'refused',
+      error: 'this automation has no session to talk to yet — it has not completed a run on this machine',
+      result: null,
     });
     const { transport, sent } = makeTransport([
       { update_id: 1, message: { message_id: 7, text: 'hello?', chat: { id: CHAT } } },
     ]);
     await pollTelegram(contextRoot, home, transport);
-    expect(sent().some((c) => String(c.payload.text).includes('Nothing is waiting'))).toBe(true);
+    expect(sent().some((c) => String(c.payload.text).includes('no session to talk to yet'))).toBe(true);
   });
 
   it('a failed answer attempt says so plainly, rather than silently doing nothing', async () => {

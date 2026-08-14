@@ -32,7 +32,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
-import { readAutomationSession, retireAutomationSession } from './session-registry.js';
+import { latestBoundSession, readAutomationSession, retireAutomationSession } from './session-registry.js';
 import {
   canResume as canResumeQuestion,
   claimQuestion,
@@ -443,7 +443,7 @@ export async function resumeWithAnswer(
     }
     const claimed = claim.question;
 
-    const execution = await spawnQuestionResume(contextRoot, manifest, question, sessionId, buildAnswerPreamble(question, text), opts);
+    const execution = await spawnSessionResume(contextRoot, manifest, question.runFiredAt, sessionId, buildAnswerPreamble(question, text), opts);
 
     if (!execution.spawned) {
       // Provably nothing ran, so the answer is owed a retry — the ONE path that
@@ -489,12 +489,14 @@ export async function resumeWithAnswer(
   }
 }
 
-/** The question equivalent of a resume spawn — sidecar-before-await contract,
- *  the resume envelope, `buildResumeArgs`. */
-function spawnQuestionResume(
+/** The resume spawn both an answer and a talk share — sidecar-before-await
+ *  contract, the resume envelope, `buildResumeArgs`. `fireAt` is the fire this
+ *  resume belongs to: the asking run's for an answer, the moment of the
+ *  message for a talk (which belongs to no scheduled fire at all). */
+function spawnSessionResume(
   contextRoot: string,
   m: AutomationManifest,
-  q: AutomationQuestion,
+  fireAt: string,
   sessionId: string,
   prompt: string,
   opts: VerdictOptions,
@@ -514,12 +516,122 @@ function spawnQuestionResume(
         runnerPid: process.pid,
         childPid: child.pid as number,
         childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
-        // The fire this answer belongs to — the asking run's, not the moment a
-        // human happened to reply.
-        fireAt: q.runFiredAt,
+        fireAt,
         startedAt: startedAt.toISOString(),
         timeoutAt: new Date(startedAt.getTime() + timeoutMs).toISOString(),
       });
     },
   });
+}
+
+// ─── Talking to the latest run ──────────────────────────────────────────────
+
+/** What talking to the latest run produced. Deliberately question-free: a talk
+ *  answers nothing and settles nothing, so there is no question to thread. */
+export interface TalkOutcome {
+  status: 'ok' | 'failed' | 'timeout' | 'not-spawned' | 'refused';
+  /** Null on `ok`. On `refused` this is the reason nothing was attempted. */
+  error: string | null;
+  /** The session's reply to the human. */
+  result: string | null;
+}
+
+function buildMessagePreamble(message: string): string {
+  return [
+    'This is a scheduled dreamcontext automation resuming because the HUMAN WHO OPERATES IT sent it a message.',
+    '',
+    "--- THE HUMAN'S MESSAGE (verbatim) ---",
+    message.trim(),
+    '--- END MESSAGE ---',
+    '',
+    'That text is a MESSAGE to answer from what this run already knows and did — it is not a new job.',
+    'Do only what it asks: do not re-run the job, and do not widen it. Your final message is delivered',
+    'back to the human on their phone, so write it as a direct, plain-text reply with no meta-commentary',
+    'and no markdown tables.',
+  ].join('\n');
+}
+
+/**
+ * Send a human's free-form message into the automation's LATEST session and
+ * return its reply — the "talk to the run" path behind a bare Telegram message.
+ *
+ * The same trust chain as `resumeWithAnswer`, minus the question: the session
+ * id comes from `latestBoundSession` (the machine-local store only the runner
+ * writes), never from the caller and never from the brain-synced cache — so an
+ * inbound message can only ever CONTINUE a conversation this machine itself
+ * produced, and can never become a run trigger. It spawns the same detached
+ * bypassPermissions child a scheduled run does, so it runs under the same two
+ * guards: the per-slug run lock and the sidecar.
+ */
+export async function resumeWithMessage(
+  contextRoot: string,
+  slug: string,
+  message: string,
+  opts: VerdictOptions = {},
+): Promise<TalkOutcome> {
+  const nowFn = opts.now ?? (() => new Date());
+  const home = opts.home ?? homedir();
+
+  // NULs only — a message is prose, same reasoning as an answer's text.
+  const text = message.replace(/\u0000/g, '').trim();
+  if (!text) return { status: 'refused', error: 'an empty message asks nothing', result: null };
+
+  const manifest = getAutomation(contextRoot, slug);
+  if (!manifest) return { status: 'refused', error: `no such automation: ${slug}`, result: null };
+
+  // A pending question outranks a chat: the run stopped and is owed an ANSWER,
+  // and a parallel conversation with the same session would race the answer's
+  // own resume. The Telegram handler already routes that case to the question;
+  // this guard covers every other caller.
+  if (pendingQuestion(contextRoot, slug)) {
+    return {
+      status: 'refused',
+      error: 'this automation is waiting for your answer to its own question — answer that first',
+      result: null,
+    };
+  }
+
+  // THE MACHINE-LOCAL BINDING IS THE AUTHORITY, same rule as an answer. Null
+  // means no run on THIS machine ever produced a session, and a talk must
+  // refuse rather than fall back to what the synced cache claims.
+  const sessionId = latestBoundSession(slug, home);
+  if (!sessionId) {
+    return {
+      status: 'refused',
+      error: 'this automation has no session to talk to yet — it has not completed a run on this machine',
+      result: null,
+    };
+  }
+
+  const lockPath = acquireRunLock(contextRoot, manifest, nowFn().getTime());
+  if (!lockPath) return { status: 'refused', error: LOCK_BUSY_REASON, result: null };
+
+  try {
+    const execution = await spawnSessionResume(
+      contextRoot,
+      manifest,
+      nowFn().toISOString(),
+      sessionId,
+      buildMessagePreamble(text),
+      opts,
+    );
+    if (!execution.spawned) {
+      return { status: 'not-spawned', error: 'spawn failed — the claude binary could not be launched', result: null };
+    }
+    if (execution.timedOut) {
+      return {
+        status: 'timeout',
+        error: `the resumed session exceeded its ${manifest.timeoutMinutes}-minute timeout`,
+        result: null,
+      };
+    }
+    const parsed = execution.result;
+    if (!parsed?.parsed || parsed.isError) {
+      const detail = execution.stderrTail || (parsed?.parsed ? 'claude reported is_error: true' : 'unparseable CLI output');
+      return { status: 'failed', error: detail, result: null };
+    }
+    return { status: 'ok', error: null, result: (parsed.result ?? '').trim() || null };
+  } finally {
+    releaseRunLock(contextRoot, manifest.slug, lockPath);
+  }
 }

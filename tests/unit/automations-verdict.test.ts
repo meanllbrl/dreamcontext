@@ -45,7 +45,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
-import { proposeFromRun, resumeWithAnswer } from '../../src/lib/automations/verdict.js';
+import { proposeFromRun, resumeWithAnswer, resumeWithMessage } from '../../src/lib/automations/verdict.js';
 import { createAutomation, lockPathFor, readRunSidecar, writeRunSidecar } from '../../src/lib/automations/store.js';
 import { acquireFileLock, releaseFileLock } from '../../src/lib/file-lock.js';
 import { readAutomationSession, recordAutomationSession } from '../../src/lib/automations/session-registry.js';
@@ -426,5 +426,56 @@ describe('resumeWithAnswer — capability lifetime', () => {
     const { impl } = fakeSpawn('', { pid: undefined });
     await resumeWithAnswer(contextRoot, q, 'send', 'cli', { home, spawnImpl: impl, now: () => NOW });
     expect(readAutomationSession('digest', SESSION, home)).toBe(SESSION);
+  });
+});
+
+// ─── Talking to the latest run ───────────────────────────────────────────────
+
+describe('resumeWithMessage — talking to the latest run', () => {
+  it('resumes the LATEST bound session with the message and returns the reply', async () => {
+    makeAutomation({ review: 'off' });
+    recordAutomationSession('digest', 'sess-older00', home, NOW.getTime() - 60_000);
+    recordAutomationSession('digest', SESSION, home, NOW.getTime());
+    const { impl, calls } = fakeSpawn(claudeJson('Here is the summary you asked for.'));
+    const outcome = await resumeWithMessage(contextRoot, 'digest', 'summarize it?', { home, spawnImpl: impl, now: () => NOW });
+    expect(outcome.status).toBe('ok');
+    expect(outcome.result).toBe('Here is the summary you asked for.');
+    const args = calls[0];
+    expect(args[args.indexOf('--resume') + 1]).toBe(SESSION); // newest binding, not the older one
+    expect(args[args.indexOf('-p') + 1]).toContain('summarize it?');
+    expect(args).toContain('bypassPermissions');
+  });
+
+  it('refuses when no run on this machine ever bound a session — and never spawns', async () => {
+    // The machine-local binding is the authority: a synced cache full of other
+    // machines' session ids must not make this machine resume anything.
+    makeAutomation();
+    const { impl } = fakeSpawn(claudeJson('x'));
+    const outcome = await resumeWithMessage(contextRoot, 'digest', 'hello', { home, spawnImpl: impl, now: () => NOW });
+    expect(outcome.status).toBe('refused');
+    expect(outcome.error).toContain('no session to talk to yet');
+    expect(impl).not.toHaveBeenCalled();
+  });
+
+  it('refuses while a question is pending — the answer path owns that conversation', async () => {
+    makeAutomation();
+    makeQuestion();
+    const { impl } = fakeSpawn(claudeJson('x'));
+    const outcome = await resumeWithMessage(contextRoot, 'digest', 'hello', { home, spawnImpl: impl, now: () => NOW });
+    expect(outcome.status).toBe('refused');
+    expect(outcome.error).toContain('waiting for your answer');
+    expect(impl).not.toHaveBeenCalled();
+  });
+
+  it('refuses while the run lock is held — never two claude children on one automation', async () => {
+    makeAutomation();
+    recordAutomationSession('digest', SESSION, home, NOW.getTime());
+    const lockPath = lockPathFor(contextRoot, 'digest');
+    expect(acquireFileLock(lockPath, NOW.getTime(), 999_999)).toBe(true);
+    const { impl } = fakeSpawn(claudeJson('x'));
+    const outcome = await resumeWithMessage(contextRoot, 'digest', 'hello', { home, spawnImpl: impl, now: () => NOW });
+    releaseFileLock(lockPath);
+    expect(outcome.status).toBe('refused');
+    expect(impl).not.toHaveBeenCalled();
   });
 });

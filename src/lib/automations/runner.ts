@@ -809,6 +809,11 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     /** The run's own headline, for the notification body. Null on every path
      *  that produced no document to draw one from. */
     summary?: string | null;
+    /** The PUBLISHED document itself, for the Telegram delivery — the phone can
+     *  carry the whole report where the macOS banner can only carry a sentence.
+     *  Null on every path where nothing published (failure, awaiting-review —
+     *  a gated document must not leak to the phone past its own gate). */
+    document?: string | null;
     /** Set when this fire left a card open — changes what the banner says and
      *  where clicking it goes, since nothing published. */
     reviewCardId?: string | null;
@@ -903,7 +908,14 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         params.status === 'ok'
           ? params.reviewCardId
             ? `✋ ${manifest.title} — needs your verdict\n${params.summary ?? ''}`.trimEnd()
-            : `✅ ${manifest.title}\n${params.summary ?? (params.outputPath ? `→ ${basename(params.outputPath)}` : 'done')}`
+            : // The phone gets the DOCUMENT, not the banner sentence: a chat
+              // message has a 3 000-char budget where the banner has 240, and
+              // "your digest is ready" on a phone withholds the digest from the
+              // one surface the user is actually looking at. Falls back to the
+              // summary (then the filename) when nothing published a document.
+              `✅ ${manifest.title}\n${
+                params.document?.trim() || params.summary || (params.outputPath ? `→ ${basename(params.outputPath)}` : 'done')
+              }`
           : `❌ ${manifest.title} — ${params.status}\n${params.error ?? `the run ended ${params.status}`}`;
       try {
         // Cap by CODE POINT, not code unit: the summary and failure text are
@@ -1329,13 +1341,16 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // written with `sessionId: null` and is unresumable until now. Do this
         // BEFORE deciding what to publish: a question that never learns its
         // session is a proposal nobody can answer.
-        // The question store's half of the backfill, and the machine-local
-        // binding that a resume actually trusts. Only the runner may write it —
-        // it is the process that spawned the session, so it is the only thing
-        // that knows first-hand which session belongs to which slug.
-        for (const filled of backfillQuestionSession(contextRoot, slug, fireAt.toISOString(), claudeResult.sessionId)) {
-          recordAutomationSession(filled.slug, claudeResult.sessionId, home);
-        }
+        backfillQuestionSession(contextRoot, slug, fireAt.toISOString(), claudeResult.sessionId);
+        // The machine-local binding that a resume actually trusts, written for
+        // EVERY run that produced a session — not only one that asked a
+        // question. Talking to the latest run from Telegram and reopening a
+        // past run as a chat tab both resolve through this store, and a clean
+        // run that asked nothing is exactly the one a human wants to question
+        // afterwards. Only the runner may write it — it is the process that
+        // spawned the session, so it is the only thing that knows first-hand
+        // which session belongs to which slug.
+        recordAutomationSession(slug, claudeResult.sessionId, home);
 
         // Did this fire end with a human owing a verdict? Either the run asked
         // for one itself (`review: agent` → `automations propose`), or the
@@ -1465,6 +1480,10 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       // wrote — the document is already here, and a re-read would also report
       // nothing on the path where the write itself failed.
       summary: claudeResult?.result ? extractNotificationSummary(claudeResult.result) : null,
+      // Only what actually PUBLISHED travels to the phone: a gated (awaiting-
+      // review) or unwritten document stays out, same reasoning as the gate
+      // itself.
+      document: finalOutputPath && !reviewCardId ? claudeResult?.result ?? null : null,
       reviewCardId,
       reviewStagedPath,
       sessionId: claudeResult?.sessionId ?? null,

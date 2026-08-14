@@ -595,6 +595,28 @@ describe('runAutomation — telegram result delivery', () => {
     expect(text).toContain('All good.'); // the same summary the macOS banner carries
   });
 
+  it('the phone gets the DOCUMENT, not only the banner sentence', async () => {
+    // The banner is capped at a sentence; the chat message has a 3 000-char
+    // budget, and "your digest is ready" on a phone withholds the digest.
+    const manifest = createApproved('tg-document');
+    connect(manifest.slug);
+    const sendTelegram = vi.fn(async () => {});
+    const { child, emitClose, emitStdout } = makeFakeChild(5399);
+    const runPromise = runAutomation(contextRoot, manifest.slug, {
+      now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify: () => {}, sendTelegram,
+    });
+    emitStdout(JSON.stringify({
+      session_id: 'sess_doc', is_error: false, permission_denials: [], subtype: 'success',
+      result: 'Rail healthy, 668 went live.\n\n## Detail\n\nSpend rose $445 and every rate stayed flat.\n',
+    }));
+    emitClose(0);
+    expect((await runPromise).status).toBe('ok');
+    expect(sendTelegram).toHaveBeenCalledTimes(1);
+    const [text] = sendTelegram.mock.calls[0];
+    expect(text).toContain('Rail healthy, 668 went live.');
+    expect(text).toContain('Spend rose $445'); // detail past the first paragraph travels too
+  });
+
   it('delivers failures too, carrying the error', async () => {
     const manifest = createApproved('tg-on-fail');
     connect(manifest.slug);
@@ -1291,6 +1313,18 @@ describe('a hitl node in the graph is a real branch, not prose', () => {
     giveFlow('digest', [{ id: 'ask', kind: 'hitl', label: 'Send?' }]);
     const { impl } = capturingSpawn(CLAUDE_JSON_OK);
     await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(readAutomationSession('digest', 'sess_abc123', home)).toBe('sess_abc123');
+  });
+
+  it('binds the session of a clean run that asked NOTHING — talking to the latest run depends on it', async () => {
+    // The regression that surfaced as Telegram's "no session to talk to yet"
+    // on a machine full of completed runs: the binding write lived inside the
+    // question backfill, so only a run that asked a question ever got one.
+    createApproved('digest');
+    const { impl } = capturingSpawn(CLAUDE_JSON_OK);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(outcome.status).toBe('ok');
+    expect(pendingQuestion(contextRoot, 'digest')).toBeNull();
     expect(readAutomationSession('digest', 'sess_abc123', home)).toBe('sess_abc123');
   });
 

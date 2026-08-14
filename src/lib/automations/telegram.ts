@@ -45,10 +45,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { isSafeAutomationSlug, listAutomations, readAutomationCache } from './store.js';
-import { resumeWithAnswer } from './verdict.js';
+import { resumeWithAnswer, resumeWithMessage } from './verdict.js';
 import { allPendingQuestions, pendingQuestion, setChannelRef } from './hitl.js';
-import { resolveRunSession } from './session.js';
-import { readAutomationSession } from './session-registry.js';
 import { AutomationError, type AutomationQuestion } from './types.js';
 
 // ─── Machine-local config ───────────────────────────────────────────────────
@@ -449,33 +447,42 @@ function scopedPendingQuestions(contextRoot: string, slugs: string[]): Automatio
 }
 
 /**
- * D-E — is there a session this automation's bot could even talk to?
+ * D-E — a bare message with no question open TALKS to the latest run.
  *
- * A pure READ, used only to phrase a refusal — it never resumes anything and
- * never spawns. Resolves through the exact chain `resumeWithAnswer` itself
- * trusts: the most recent run that produced a session
- * (`resolveRunSession`, session.ts), re-verified against the MACHINE-LOCAL
- * binding (`readAutomationSession`, never the cache's own claim — the cache
- * is brain-synced and therefore teammate-writable). A `null` here is a plain
- * refusal, never a fallback to what the cache claims and never a trigger to
- * spawn a fresh session — an inbound Telegram message must never become a
- * run trigger.
+ * Only a single-slug (per-automation) bot has a referent for "the latest run";
+ * the legacy multi-slug fallback refuses, because guessing which automation the
+ * human meant is worse than saying so. The resolution and every refusal live in
+ * `resumeWithMessage`: the session id comes from the MACHINE-LOCAL binding
+ * store (never the brain-synced cache's own claim), and a missing binding is a
+ * plain refusal, never a trigger to spawn a fresh session — an inbound
+ * Telegram message must never become a run trigger.
  */
-function hasResumableSession(contextRoot: string, slug: string, home: string): boolean {
-  const resolved = resolveRunSession(readAutomationCache(contextRoot, slug));
-  if (!resolved?.sessionId) return false;
-  return readAutomationSession(slug, resolved.sessionId, home) !== null;
-}
-
-/** What to say when nothing is pending for a bare (non-reply) message. For a
- *  single-slug (per-automation) bot this can be made precise via D-E's
- *  resolution; for the legacy multi-slug fallback "latest session" has no
- *  single referent, so it stays generic. */
-function refuseNoQuestion(contextRoot: string, slugs: string[], home: string): string {
-  if (slugs.length === 1 && !hasResumableSession(contextRoot, slugs[0], home)) {
-    return 'This automation has no session to talk to yet — it has not completed a run on this machine.';
+async function handleTalkMessage(
+  contextRoot: string,
+  slugs: string[],
+  cfg: TelegramConfig,
+  text: string,
+  transport: TelegramTransport,
+  home: string,
+): Promise<void> {
+  if (slugs.length !== 1) {
+    await notifyTelegram(cfg, 'Nothing is waiting for an answer right now.', transport);
+    return;
   }
-  return 'Nothing is waiting for an answer right now.';
+  const outcome = await resumeWithMessage(contextRoot, slugs[0], text, { home });
+  if (outcome.status !== 'ok') {
+    await notifyTelegram(cfg, `⚠️ ${outcome.error ?? 'the run could not be reached'}`, transport);
+    return;
+  }
+  const reply = outcome.result || 'The run finished without saying anything.';
+  // Cap by CODE POINT (the reply is free-form model output and a slice can
+  // split a surrogate pair), same as the completion delivery in runner.ts.
+  const points = [...reply];
+  await notifyTelegram(
+    cfg,
+    points.length <= TELEGRAM_BODY_MAX ? reply : `${points.slice(0, TELEGRAM_BODY_MAX - 1).join('').trimEnd()}…`,
+    transport,
+  );
 }
 
 /** Resume the session that asked, act on the outcome, and tell the human what
@@ -562,7 +569,9 @@ async function handleAnswerMessage(
   } else if (open.length === 1) {
     question = open[0];
   } else if (open.length === 0) {
-    await notifyTelegram(cfg, refuseNoQuestion(contextRoot, slugs, home), transport);
+    // Nothing pending ⇒ this is not an answer at all — it is the human
+    // starting a conversation with the run. D-E resolves (or refuses) it.
+    await handleTalkMessage(contextRoot, slugs, cfg, text, transport, home);
     return;
   } else {
     await notifyTelegram(
