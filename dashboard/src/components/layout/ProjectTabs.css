@@ -92,7 +92,7 @@
 }
 
 /*
- * While a ⌃Tab pick is held, the bar's own controls step back so the strip reads as the
+ * While a ⌥Tab pick is held, the bar's own controls step back so the strip reads as the
  * foreground. Opacity only — nothing moves and nothing is disabled, because the mode lasts
  * exactly as long as a thumb on a modifier key and any layout change here would make the
  * whole bar twitch on every press.
@@ -249,19 +249,19 @@
     background var(--transition-fast), border-color var(--transition-fast);
 }
 
-/* ────────────────────────── The held pick (⌃Tab, mid-gesture) ────────────────────────── */
+/* ────────────────────────── The held pick (⌥Tab, mid-gesture) ────────────────────────── */
 
 /*
  * WHILE CONTROL IS DOWN, THE STRIP IS THE FOREGROUND.
  *
  * The gesture is a mode — the keyboard means something different for as long as the key is
- * held — and a mode the user cannot see is a mode they cannot trust. Pressing ⌃Tab therefore
+ * held — and a mode the user cannot see is a mode they cannot trust. Pressing ⌥Tab therefore
  * does not just move a highlight: the glass grows, lifts off the bar on a real shadow, and
  * turns opaque, while the rest of the bar dims behind it. That is the whole answer to "did it
  * hear me?", available before anything has actually switched.
  *
  * It is also why the switch can safely wait for the release: the picked chip is legible the
- * entire time, so committing on ⌃-up costs no feedback and saves every intermediate project
+ * entire time, so committing on ⌥-up costs no feedback and saves every intermediate project
  * from being mounted on the way past (see `WindowChrome`'s picker).
  */
 .project-tabs[data-picking='true'] {
@@ -297,17 +297,17 @@
 }
 
 /* Everything that is not the cursor recedes — including the chip the user is standing in, so
-   the one place the eye lands is the one place ⌃-up would take them. */
+   the one place the eye lands is the one place ⌥-up would take them. */
 .project-tabs[data-picking='true'] .project-tab:not([data-preview='true']) {
   opacity: 0.5;
 }
 
 /*
- * THE CURSOR — where a released ⌃ would land.
+ * THE CURSOR — where a released ⌥ would land.
  *
  * Deliberately NOT the same drawing as the active lens. The lens is a raised pane of brighter
  * glass that says "you are here"; this is an accent ring that says "you would go here", and
- * for the first press of ⌃Tab both are on the same chip — if they looked alike, the gesture's
+ * for the first press of ⌥Tab both are on the same chip — if they looked alike, the gesture's
  * first frame would say nothing at all.
  */
 .project-tab[data-preview='true'] {

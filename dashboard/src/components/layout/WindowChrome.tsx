@@ -374,7 +374,7 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
   }, [mintInstanceId, notify, setActive, setOpen]);
 
   /**
-   * The vault the ⌃Tab picker is currently POINTING AT, or null when the picker is down.
+   * The vault the ⌥Tab picker is currently POINTING AT, or null when the picker is down.
    * A preview, never a switch: nothing about the mounted instances changes while it is set.
    */
   const [preview, setPreviewState] = useState<string | null>(null);
@@ -385,27 +385,31 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
   }, []);
 
   /**
-   * ⌃Tab / ⌃⇧Tab walks the chip strip, in strip order, wrapping at both ends — as a HELD
+   * ⌥Tab / ⌥⇧Tab walks the chip strip, in strip order, wrapping at both ends — as a HELD
    * pick, the way ⌘Tab works everywhere else on this machine.
    *
-   * The shape is the point. Pressing ⌃Tab does not switch project; it opens a cursor on the
+   * The shape is the point. Pressing ⌥Tab does not switch project; it opens a cursor on the
    * strip and moves it. Each further Tab (or ← / →) moves it again. The switch happens on the
-   * RELEASE of Control, once — so walking four chips to the right one costs one switch instead
+   * RELEASE of Option, once — so walking four chips to the right one costs one switch instead
    * of four. That difference is not cosmetic here: a chip may be COLD, and switching to it
    * rebuilds a whole project instance (and can be refused at the ceiling). Under the old
    * press-to-switch shape, tabbing PAST a cold chip rebuilt it just to leave it again.
    *
    * NOT ⌘Tab, which is the combo the hand reaches for first: macOS gives it to the app
    * switcher before any web view is offered it, so it cannot be bound at all — `lib/sleepy.ts`
-   * refuses it in `RESERVED_HOTKEYS` for exactly this reason. ⌃Tab is the in-window
-   * equivalent every browser already uses for its own tabs.
+   * refuses it in `RESERVED_HOTKEYS` for exactly this reason.
+   *
+   * Option rather than Control (which this was until 2026-08-14), because Control chords are
+   * the SHELL's: ⌃C, ⌃D, ⌃W, ⌃A and the rest have to reach the PTY intact, and a window-level
+   * capture that eats one is a bug the terminal can never explain. Claiming Option instead
+   * leaves ⌃Tab to whatever has focus and costs nothing — macOS binds ⌥Tab to nothing, and the
+   * app's only other Option chord is ⌥⌫ inside the terminal, which is not a Tab.
    *
    * Listens on `window` in the CAPTURE phase, and that placement is the whole trick: a chip
    * can be picked while a terminal pane holds focus, and without capturing above it the same
-   * keystroke would ALSO be written to the PTY. This is the second and last Ctrl chord the app
-   * claims (`AgentSurface` has ⌃` for a new terminal) — every other one belongs to the shell.
-   * The arrow keys are captured ONLY while the picker is up, i.e. only while Control is
-   * physically held: outside that window they still belong entirely to whatever has focus.
+   * keystroke would ALSO be written to the PTY. The arrow keys are captured ONLY while the
+   * picker is up, i.e. only while Option is physically held: outside that window they still
+   * belong entirely to whatever has focus.
    *
    * With a single chip the key is not claimed at all: there is nowhere to go, and swallowing a
    * keystroke to do nothing is worse than leaving it whatever meaning it already had.
@@ -441,8 +445,8 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.metaKey || e.altKey) return;
-      if (e.key === 'Tab' && e.ctrlKey) {
+      if (e.metaKey || e.ctrlKey) return;
+      if (e.key === 'Tab' && e.altKey) {
         if (!step(e.shiftKey ? -1 : 1)) return;
         e.preventDefault();
         e.stopPropagation();
@@ -478,14 +482,15 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
     /**
      * The release IS the switch.
      *
-     * Fires on Control coming up, and — as a belt-and-braces second arm — on ANY key coming up
-     * once `ctrlKey` has gone false, which is what a swallowed or reordered modifier release
-     * looks like. Releasing Tab or Shift while Control is still down reports `ctrlKey: true`
-     * and is correctly ignored, so a ⌃⇧Tab walk survives letting go of Shift mid-way.
+     * Fires on Option coming up (macOS reports it as `Alt`), and — as a belt-and-braces second
+     * arm — on ANY key coming up once `altKey` has gone false, which is what a swallowed or
+     * reordered modifier release looks like. Releasing Tab or Shift while Option is still down
+     * reports `altKey: true` and is correctly ignored, so a ⌥⇧Tab walk survives letting go of
+     * Shift mid-way.
      */
     const onKeyUp = (e: KeyboardEvent) => {
       if (previewRef.current === null) return;
-      if (e.key !== 'Control' && e.ctrlKey) return;
+      if (e.key !== 'Alt' && e.altKey) return;
       e.preventDefault();
       e.stopPropagation();
       commit();
@@ -652,8 +657,8 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
   const chips = useMemo<ProjectChip[]>(() => open.map((p) => ({
     vault: p.vault,
     active: p.vault === activeVault,
-    // Where a released ⌃ would land. Independent of `active`, and on the SAME chip until the
-    // first ⌃Tab moves it — "you are here" and "you would go here" are two different claims.
+    // Where a released ⌥ would land. Independent of `active`, and on the SAME chip until the
+    // first ⌥Tab moves it — "you are here" and "you would go here" are two different claims.
     preview: p.vault === preview,
     cold: p.cold,
     worst: p.rollup?.worst ?? 'ended',

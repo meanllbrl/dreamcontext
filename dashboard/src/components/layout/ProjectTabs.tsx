@@ -22,7 +22,7 @@ export interface ProjectChip {
   vault: string;
   active: boolean;
   /**
-   * Where a ⌃Tab pick is currently POINTING — not where the user is. At most one chip carries
+   * Where a ⌥Tab pick is currently POINTING — not where the user is. At most one chip carries
    * it, and only while Control is physically held; releasing Control is what turns it into
    * `active`. Two separate claims, drawn as two separate things (see the CSS).
    */
@@ -148,9 +148,9 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
   // empty window, so the control is disabled rather than silently refusing on click.
   const canClose = chips.length > 1;
 
-  // ⌃Tab only means something once there is a second chip, and that is also the only moment
+  // ⌥Tab only means something once there is a second chip, and that is also the only moment
   // it is worth naming in a tooltip — see the shortcut's own reasoning in `WindowChrome`.
-  const cycleHint = chips.length > 1 ? ' · hold ⌃ and press Tab to switch' : '';
+  const cycleHint = chips.length > 1 ? ' · hold ⌥ and press Tab to switch' : '';
 
   // A pick is in flight: Control is down and the cursor is sitting on one of these chips.
   // Derived rather than passed, because a second prop saying the same thing as this field is
@@ -413,7 +413,7 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
       {previewed && (
         <div className="project-tabs-hint" role="status">
           <span className="project-tabs-hint-name">{previewed.vault}</span>
-          <span className="project-tabs-hint-keys">release ⌃ · ←→ to move</span>
+          <span className="project-tabs-hint-keys">release ⌥ · ←→ to move</span>
         </div>
       )}
 
