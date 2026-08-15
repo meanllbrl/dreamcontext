@@ -7,8 +7,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
-  deriveSessionStatus, rollupProject, KIND_RANK,
+  deriveSessionStatus, rollupProject, KIND_RANK, BUCKET_BY_KIND, wantsALook,
   type SessionRow, type SessionStatusKind,
 } from '../../dashboard/src/components/sleepy/agentStatus.js';
 
@@ -98,7 +100,7 @@ describe('rollupProject', () => {
 
   it('empty input reads as all-zero with worst "ended", matching rollupKind', () => {
     expect(rollupProject([])).toEqual({
-      worst: 'ended', live: 0, waiting: 0, alive: 0, asking: 0, working: 0, idle: 0,
+      worst: 'ended', live: 0, waiting: 0, alive: 0, asking: 0, working: 0, idle: 0, flagged: 0,
     });
   });
 
@@ -130,15 +132,58 @@ describe('rollupProject — status bubble counts', () => {
     expect(r.idle).toBe(0);
   });
 
-  it('attention alone lands in asking, not idle — a chat that rang its bell wants you', () => {
+  /*
+   * ── The bug these two used to lock IN ────────────────────────────────────────────────
+   *
+   * They previously asserted that `attention` moved a row into the `asking` bucket, on the
+   * reading that a chat which rang its bell "wants you". It does — but `attention` is STICKY
+   * until the user actually looks at that session, while the bucket is what paints the chip's
+   * colour from one second to the next. So a chat that finished a turn unseen went magenta and
+   * STAYED magenta: through the next prompt, through the whole next turn, until it was clicked.
+   * The user's report was exactly that shape — "the ones that aren't asking anything but are
+   * working show pink, and it doesn't update when they start working" — with the dock tile
+   * three inches below simultaneously, correctly, reading WORKING.
+   *
+   * The fix is that `attention` no longer votes on the bucket at all: it is counted beside it,
+   * in `flagged`, which is the same predicate (`wantsALook`) the dock tile draws its badge dot
+   * from. The two assertions below are the inverted form of the two that used to be here.
+   */
+  it('attention does NOT move an idle row into asking — it stays idle and raises `flagged`', () => {
     const r = rollupProject([row('a', 'ready', { attention: true })]);
-    expect(r).toMatchObject({ asking: 1, working: 0, idle: 0 });
+    expect(r).toMatchObject({ asking: 0, working: 0, idle: 1, flagged: 1 });
   });
 
-  it('a WORKING row that also rang its bell counts as asking, once — the urgent bucket wins', () => {
+  it('REGRESSION LOCK — a WORKING row that rang its bell counts as WORKING, with the dot beside it', () => {
+    // The reported bug, in one row: this chat is mid-turn. The chip must say so (green bubble,
+    // which is what carries the loading ring) and must not claim it is blocked on the user.
     const r = rollupProject([row('a', 'working', { attention: true })]);
-    expect(r).toMatchObject({ asking: 1, working: 0, idle: 0 });
+    expect(r).toMatchObject({ asking: 0, working: 1, idle: 0, flagged: 1 });
     expect(r.live).toBe(1);
+  });
+
+  it('REGRESSION LOCK — the full ready→working transition of an unseen chat moves the bubble', () => {
+    // The second half of the report ("it doesn't update once it starts working"). The flag is
+    // sticky across the transition ON PURPOSE — nothing has been seen yet — so the ONLY thing
+    // that may hold still here is `flagged`. Asserted as a real before/after, because the old
+    // behaviour's signature was two identical rollups.
+    const before = rollupProject([row('a', 'ready', { attention: true })]);
+    const after = rollupProject([row('a', 'working', { attention: true })]);
+    expect(before).toMatchObject({ idle: 1, working: 0 });
+    expect(after).toMatchObject({ idle: 0, working: 1 });
+    expect(after.flagged).toBe(before.flagged);
+    expect(after.worst).toBe('working');
+  });
+
+  it('an ASKING row raises no dot — one interruption is drawn once', () => {
+    // `wantsALook` excludes asking, so the magenta bubble and the magenta dot can never both
+    // fire for the same session. `waiting` still counts it: the chip must still bounce.
+    const r = rollupProject([row('a', 'asking', { attention: true })]);
+    expect(r).toMatchObject({ asking: 1, flagged: 0, waiting: 1 });
+  });
+
+  it('a flagged SHELL raises no dot — the dot counts chats, like every other bubble', () => {
+    const r = rollupProject([row('a', 'ready', { sessionKind: 'shell', attention: true })]);
+    expect(r).toMatchObject({ flagged: 0, live: 0, waiting: 1 });
   });
 
   it('saved and ended rows are counted in NO bucket — they are not chats you have', () => {
@@ -176,6 +221,65 @@ describe('rollupProject — status bubble counts', () => {
     for (const rows of mixes) {
       const r = rollupProject(rows);
       expect(r.asking + r.working + r.idle).toBe(r.live);
+      // The dot is NOT a fourth member of the partition — it overlaps them. What bounds it is
+      // that it can only ever mark chats the partition already counted.
+      expect(r.flagged).toBeLessThanOrEqual(r.live);
     }
+  });
+});
+
+/*
+ * ── The atomic layer ────────────────────────────────────────────────────────────────────
+ *
+ * `rollupProject` used to answer "does this row hold a session?" and "which bubble is it?" in
+ * two separately-written places, and the second one drifted from the first. Both now come from
+ * one table, and the "have you seen this?" flag from one predicate shared with the dock. These
+ * tests are about those two pieces rather than about any one rollup result.
+ */
+describe('BUCKET_BY_KIND — the one status → bubble table', () => {
+  it('maps every SessionStatusKind, including the two that hold no session', () => {
+    // Read off KIND_RANK rather than re-listing the union by hand: that record is the other
+    // exhaustive-by-construction map of the same type, so a seventh kind lands here as a
+    // failure instead of as a row that silently stops being counted.
+    for (const kind of Object.keys(KIND_RANK) as SessionStatusKind[]) {
+      expect(BUCKET_BY_KIND, `kind "${kind}" has no bucket entry`).toHaveProperty(kind);
+    }
+    expect(BUCKET_BY_KIND).toEqual({
+      asking: 'asking', working: 'working', starting: 'working',
+      ready: 'idle', saved: null, ended: null,
+    });
+  });
+
+  it('the `null` entries are exactly the kinds excluded from live/alive', () => {
+    // `alive` is the ceiling rule's input, and the table is now what decides it — so the two
+    // must agree by construction, not by two hand-written kind lists.
+    for (const kind of Object.keys(KIND_RANK) as SessionStatusKind[]) {
+      const r = rollupProject([row('a', kind)]);
+      expect(r.alive, `alive for kind "${kind}"`).toBe(BUCKET_BY_KIND[kind] === null ? 0 : 1);
+    }
+  });
+});
+
+describe('wantsALook — the unseen flag, shared by the dock tile and the chip dot', () => {
+  it('is true only for an unseen row that is not already asking', () => {
+    expect(wantsALook(row('a', 'ready', { attention: true }))).toBe(true);
+    expect(wantsALook(row('a', 'working', { attention: true }))).toBe(true);
+    expect(wantsALook(row('a', 'asking', { attention: true }))).toBe(false);
+    expect(wantsALook(row('a', 'working'))).toBe(false);
+  });
+
+  it('PARITY — AgentDock draws its badge from this exact call, not its own copy of the rule', () => {
+    // No jsdom in this suite (see automations-card-status-parity.test.ts for the same
+    // constraint), so the honest check is a source scan: the tile's badge and the chip's
+    // `flagged` count must go through one function. The inline `row.attention && kind !==
+    // 'asking'` this replaced is precisely the duplicate that drifted from the rollup.
+    const dock = readFileSync(
+      fileURLToPath(new URL('../../dashboard/src/components/sleepy/AgentDock.tsx', import.meta.url)),
+      'utf8',
+    );
+    expect(dock).toMatch(/\{wantsALook\(row\)\s*&&\s*<span className="agent-dock-chip-badge"/);
+    expect(dock).toMatch(/import \{[^}]*wantsALook[^}]*\} from '\.\/agentStatus'/);
+    // And no hand-rolled second copy of the predicate anywhere in the file.
+    expect(dock).not.toMatch(/attention\s*&&\s*row\.info\.kind\s*!==\s*'asking'/);
   });
 });

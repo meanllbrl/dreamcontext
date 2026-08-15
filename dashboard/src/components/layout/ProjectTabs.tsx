@@ -45,12 +45,19 @@ export interface ProjectChip {
    * project holding ten chats still spends at most three bubbles on saying so — that ceiling
    * is the whole reason the strip is handed counts instead of a list of sessions.
    */
-  /** Blocked on you, or flagged since you last looked. Magenta, filled, always leftmost. */
+  /** Blocked on you RIGHT NOW — a question, a permission prompt, a plan. Magenta, filled,
+   *  always leftmost. Strictly the live status: a chat that merely finished something unseen
+   *  is `flagged` below, and drawing it here is what once left a working chat sitting magenta
+   *  until it was clicked. */
   asking: number;
   /** Mid-turn or connecting. Green, and the only bubble that carries the loading ring. */
   working: number;
   /** Open and idle. Grey and silent. */
   idle: number;
+  /** Live chats with something you have not seen yet. NOT a fourth bubble — one small dot
+   *  after the three, exactly like the dock tile's badge, because it rides ALONGSIDE a chat's
+   *  live state rather than replacing it (a chat can be working and unseen at once). */
+  flagged: number;
   /**
    * ACCEPTED AND IGNORED — do not reach for this.
    *
@@ -128,9 +135,14 @@ function describeChip(chip: ProjectChip): string {
     const n = chip[state];
     if (n > 0) parts.push(`${n} ${label}`);
   }
-  // `waiting` counts shells too, so it can be non-zero with every bubble at 0: a background
-  // terminal rang its bell. That is what makes the chip bounce, so it has to be sayable.
-  if (chip.waiting > 0 && chip.asking === 0) parts.push('wants a look');
+  // The dot, in words. Said separately from the bubbles because it is a separate fact: "2
+  // working" and "1 of them finished something you haven't seen" are both true at once, and
+  // the count above deliberately no longer swallows the second one.
+  if (chip.flagged > 0) parts.push(`${chip.flagged} unseen`);
+  // `waiting` counts shells too, so it can be non-zero with every bubble AND the dot at 0: a
+  // background terminal rang its bell. That is what makes the chip bounce, so it has to be
+  // sayable — but only when nothing more specific already said it.
+  else if (chip.waiting > 0 && chip.asking === 0) parts.push('wants a look');
   if (chip.live === 0 && !chip.cold) parts.push('no chats');
   return parts.join(' — ');
 }
@@ -204,18 +216,36 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
 
   const release = useCallback(() => setFrozen(null), []);
 
-  /* ── One-shot bounce: a background project just started waiting on an answer ──────
-     The EDGE, not the level. A chip sitting at `waiting: 2` across a re-render has not asked
-     a second question, and re-running the animation every time the strip re-renders reads as
-     a chip that never settles — so the previous count is held per vault and only a genuine
-     0→>0 crossing fires. This is the single place in the app that decides a chip bounces:
-     `attention.ts` deliberately exposes no subscriber to bounce off (it already raises the
-     chime, banner and Dock bounce for the same question), and one edge with two detectors is
-     how a chip ends up jumping twice for one interruption.
+  /* ── Two motions, one rule: match the MOTION to the shape of the event ────────────
+     A moment gets a one-shot, a STATE gets a repeating one. Both live here, and a chip is
+     never doing both — the split is what keeps the strip from looking like it is twitching at
+     random.
 
-     Three chips never fire, each for its own reason:
-      · the ACTIVE one — the question is already on screen in front of the user; motion that
-        says "come here" is wrong for the place they already are;
+     · A QUESTION IS PENDING (`asking > 0`) → the chip nudges every 2.4s for as long as it is
+       true, and stops the instant the question is answered. A pending question is not an
+       event that happened, it is a condition that PERSISTS: a one-shot bounce fired at the
+       moment it arrived is over in half a second, and a user who was looking elsewhere then
+       has nothing left to find. This is the same shake, on the same 2.4s beat, that the dock
+       anchor already runs for the same signal (`agentChipNudge`), because one signal drawn
+       two different ways sends you looking for a difference that isn't there.
+
+       Driven off the LIVE `asking` count, so it can never latch: it is derived from the
+       session's real status, not from a sticky flag, which is exactly the distinction that
+       once left these chips stuck magenta.
+
+     · ANYTHING ELSE WORTH A LOOK (`waiting` crossing 0→>0 with no question) → one bounce.
+       A background build ringing its bell, a chat finishing unseen: real, but over. The EDGE,
+       not the level — a chip sitting at `waiting: 2` across a re-render has not asked a second
+       question, so the previous count is held per vault and only a genuine crossing fires.
+       This is the single place in the app that decides a chip bounces: `attention.ts`
+       deliberately exposes no subscriber to bounce off (it already raises the chime, banner
+       and Dock bounce for the same question), and one edge with two detectors is how a chip
+       ends up jumping twice for one interruption.
+
+     The bounce additionally skips three chips, each for its own reason:
+      · the ACTIVE one — whatever it is announcing is already on screen in front of the user;
+        motion that says "come here" is wrong for the place they already are. (The QUESTION
+        nudge deliberately does NOT make this exception — see the render below.)
       · one seen for the FIRST time — opening a project that happens to be mid-question is
         the user's own click, not an interruption;
       · any chip, when the user asked for reduced motion. Read at fire time rather than at
@@ -225,17 +255,28 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
         ever coming to clear it). */
   useEffect(() => {
     const started: string[] = [];
+    const asking: string[] = [];
     const next: Record<string, number> = {};
     for (const chip of chips) {
       const seen = seenWaitingRef.current[chip.vault];
+      // Recorded even for an asking chip, so that answering the question and THEN ringing a
+      // bell later still reads as a fresh 0→>0 crossing rather than a level that never reset.
       next[chip.vault] = chip.waiting;
+      if (chip.asking > 0) { asking.push(chip.vault); continue; }
       if (seen === 0 && chip.waiting > 0 && !chip.active) started.push(chip.vault);
     }
     seenWaitingRef.current = next; // drops vaults whose chip is gone
-    if (started.length === 0 || prefersReducedMotion()) return;
+    const canBounce = started.length > 0 && !prefersReducedMotion();
+    if (!canBounce && asking.length === 0) return;
     setBouncing((prev) => {
-      const merged = { ...prev };
-      for (const vault of started) merged[vault] = true;
+      let merged = prev;
+      const own = () => { if (merged === prev) merged = { ...prev }; return merged; };
+      // HAND OVER, don't stack: a bounce already in flight when the question lands would fight
+      // the nudge for the same `animation` property, and the loser is decided by stylesheet
+      // order rather than by intent. Clearing the flag here makes the two mutually exclusive
+      // in the markup, so the CSS never has to arbitrate.
+      for (const vault of asking) if (merged[vault]) delete own()[vault];
+      if (canBounce) for (const vault of started) own()[vault] = true;
       return merged;
     });
   }, [chips]);
@@ -324,6 +365,16 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
               data-preview={chip.preview ? 'true' : 'false'}
               data-cold={chip.cold ? 'true' : 'false'}
               data-kind={chip.worst}
+              /*
+                A question is pending in this project — the repeating nudge (see the effect
+                above). Set on EVERY such chip, the active one included, which is the one place
+                this deliberately parts company with the bounce: a project can hold several
+                chats, so "you are looking at this project" does not mean you are looking at
+                the chat that is blocked — it may be behind another pane, or the whole agent
+                surface may be collapsed to the corner dock. The dock anchor shakes regardless
+                of focus for exactly this reason, and the chip is the same claim one level up.
+              */
+              data-asking={chip.asking > 0 ? 'true' : undefined}
               data-bouncing={bouncing[vault] ? 'true' : 'false'}
               style={width !== undefined ? { width } : undefined}
               // Animation events bubble, so name-check it: any finite animation added to a
@@ -365,6 +416,14 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
                         <span className="project-tab-bubble-n">{chip[state]}</span>
                       </span>
                     ))}
+                    {/*
+                      The unseen dot, AFTER the three counts and outside the partition. It is
+                      the dock tile's badge at strip scale: a chat that finished while you were
+                      elsewhere keeps its real colour (green if it went straight back to work,
+                      grey if it is idle) and grows this beside it, instead of the whole bubble
+                      turning magenta and staying there until clicked.
+                    */}
+                    {chip.flagged > 0 && <span className="project-tab-flag" />}
                   </span>
                 )}
               </button>

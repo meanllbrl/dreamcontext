@@ -671,6 +671,8 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
     asking: p.rollup?.asking ?? 0,
     working: p.rollup?.working ?? 0,
     idle: p.rollup?.idle ?? 0,
+    // Rides alongside the three, never inside them: a chat can be working AND unseen.
+    flagged: p.rollup?.flagged ?? 0,
     // TODO(T19): the bounce has exactly one writer, and it is not this memo. The sink above
     // holds the state a bounce is derived FROM (`waiting` crossing 0→>0); T19 owns turning
     // that edge into a nonce, alongside the publisher that makes the edge happen at all.

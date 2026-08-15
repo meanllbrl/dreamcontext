@@ -209,7 +209,32 @@
   display: flex;
   align-items: center;
   overflow-x: auto;
+  /*
+   * NOT A CHOICE — a consequence. A scrollable axis forces the other one out of `visible`
+   * (CSS Overflow 3 §3: `visible` computes to `auto` when its companion is not `visible`), so
+   * the strip is a clip box on the vertical axis whether it wants to be or not.
+   *
+   * Which matters because a chip JUMPS (see the Dock bounce below) and the capsule's own
+   * padding leaves it only 5px of headroom before this clips it. The padding/margin pair under
+   * this rule is what buys the room back.
+   */
   overflow-y: hidden;
+  /*
+   * HEADROOM FOR THE JUMP, AT NO LAYOUT COST.
+   *
+   * The padding grows the clip box upward; the equal negative margin gives back exactly what
+   * the padding took, so this element's MARGIN box — the only box the centring above measures
+   * — is the same 38px it was. Purely vertical, so Rule 1's frozen widths and Rule 2's overflow
+   * observer (both horizontal) cannot see it at all.
+   *
+   * 5px, matched to the jump's own 6px minus the 5px of capsule padding the chip already has
+   * above it: enough that the apex clears the clip, and no more. The real ceiling is the 42px
+   * bar itself, which on a Tauri overlay window IS the top of the screen — a chip that rose far
+   * enough to poke past it would be clipped by the window, and that reads as broken rather than
+   * as bouncing.
+   */
+  padding-block: 5px;
+  margin-block: -5px;
   /* A 42px bar has no room for a scrollbar; the edge fades below are the affordance. */
   scrollbar-width: none;
 }
@@ -618,6 +643,35 @@
   to { --tab-ring-angle: 360deg; }
 }
 
+/*
+ * ───────────────────────── The unseen dot (not a fourth bubble) ─────────────────────────
+ *
+ * "A chat here finished something while you were looking somewhere else." Deliberately a bare
+ * dot rather than a counted bubble, because it is not a member of the asking/working/idle
+ * partition — it rides ALONGSIDE one of them. A chat that finished unseen and immediately
+ * started a new turn is green-with-a-ring AND dotted, which is two true facts drawn as two
+ * marks; the strip used to answer that case by turning the whole bubble magenta and leaving it
+ * there until the chat was clicked.
+ *
+ * The same 8px magenta the dock tile's badge uses (`.agent-dock-chip-badge`) — the tile three
+ * inches below is the same signal about the same session, and two different-looking marks for
+ * one fact is what sends you looking for a difference that isn't there.
+ */
+.project-tab-flag {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--mood-waiting);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--mood-waiting) 85%, transparent);
+  animation: projectTabFlagPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes projectTabFlagPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.25); opacity: 0.7; }
+}
+
 .project-tab-close {
   flex: 0 0 auto;
   display: flex;
@@ -675,6 +729,59 @@
   30% { transform: translateY(-5px); }
   55% { transform: translateY(0); }
   75% { transform: translateY(-2px); }
+  100% { transform: translateY(0); }
+}
+
+/*
+ * ─────────── A QUESTION IS PENDING — the Dock bounce ───────────
+ *
+ * Declared AFTER the one-shot on purpose. The two carry the same specificity, so source order
+ * is what decides if both attributes are ever on one chip at once — and a pending question is
+ * the one that must win. (The component already makes them mutually exclusive; this is the belt
+ * to that pair of braces, not the mechanism.)
+ *
+ * THE MOTION IS QUOTED, NOT INVENTED. On this platform a horizontal shake already means
+ * something, and it isn't this: it is the login window refusing a password — rejection, "no".
+ * The gesture for "an app needs you" is the Dock's, and it is the one every Mac user has been
+ * reading for twenty years without being taught. A strip of projects IS a dock of projects, so
+ * a project holding a blocked agent bounces the way a Dock icon does with `Jump until opened`.
+ *
+ * What makes that motion recognisable is not its height — the amplitude here is bounded by the
+ * bar (see the headroom note above) — but its PHYSICS, which is what these keyframes carry:
+ *   · purely vertical. No rotation, no sideways travel, nothing that reads as a wobble;
+ *   · thrown, not eased. Fast off the floor and decelerating (easeOutQuad, the position curve
+ *     of something under constant gravity), a brief HANG at the apex, then accelerating back
+ *     down (easeInQuad, the same curve mirrored);
+ *   · a dead landing. No rubber overshoot at the bottom — the chip stops the instant it
+ *     arrives, which is what separates a falling object from a spring;
+ *   · once every 1.6s: ~0.6s of travel, then a full second of stillness. The Dock's own beat is
+ *     near a second flat, and this is as close as a control the user reads all day can sit
+ *     without becoming a vibration they learn to tune out — the one thing an alarm may not
+ *     become.
+ */
+.project-tab[data-asking='true'] {
+  animation: projectTabDockBounce 1.6s infinite;
+}
+
+/* Pointing at it means it has been seen — the same courtesy the dock anchor extends, and it
+   also stops the target moving under a cursor that is on its way to click it. */
+.project-tab[data-asking='true']:hover {
+  animation: none;
+}
+
+/*
+ * The timing functions live ON the keyframes, not on the animation, because the two halves of
+ * a throw are not the same curve: a single `ease-in-out` across the whole thing would rise and
+ * fall symmetrically, which is a pendulum. Gravity is asymmetric — that asymmetry IS the read.
+ */
+@keyframes projectTabDockBounce {
+  /* launch — fast, then decelerating into the apex (easeOutQuad) */
+  0%  { transform: translateY(0); animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94); }
+  /* the hang: weightless for a beat at the top, which is what sells it as thrown */
+  18% { transform: translateY(-6px); animation-timing-function: linear; }
+  22% { transform: translateY(-6px); animation-timing-function: cubic-bezier(0.55, 0.085, 0.68, 0.53); }
+  /* the fall — accelerating, and it STOPS on contact */
+  40% { transform: translateY(0); }
   100% { transform: translateY(0); }
 }
 
@@ -763,8 +870,16 @@
  * pulsing dot had. The count inside the bubble is the third carrier and never moves at all.
  */
 @media (prefers-reduced-motion: reduce) {
+  /* The dot joins them for the same reason and keeps the same treatment: it stops pulsing and
+     STAYS drawn, so the fact it carries is still on screen without the movement.
+
+     The question nudge goes too, and loses the least of any of them: the chip still draws the
+     filled magenta bubble, which is the strip's loudest mark and is the reason the shake was
+     only ever an amplifier. */
   .project-tab[data-bouncing='true'],
-  .project-tab-bubble-ring {
+  .project-tab[data-asking='true'],
+  .project-tab-bubble-ring,
+  .project-tab-flag {
     animation: none;
   }
 

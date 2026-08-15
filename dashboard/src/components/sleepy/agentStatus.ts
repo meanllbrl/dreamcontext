@@ -116,6 +116,52 @@ export function orderRows(rows: SessionRow[]): SessionRow[] {
 }
 
 /**
+ * The one table that says which chip bubble a session's LIVE STATUS is counted in — and,
+ * by the same entry, whether it holds a session at all (`null` = it does not).
+ *
+ * ATOMIC ON PURPOSE. `rollupProject` used to re-derive this three separate times — once for
+ * `holdsSession`, once for `live`, once for the bucket `if/else` chain — and the bucket chain
+ * was the one that drifted: it tested `attention` FIRST, so a chat that had merely finished a
+ * turn while you weren't looking was counted as `asking` for as long as the flag lasted, and a
+ * chat that then STARTED WORKING AGAIN stayed in the magenta bucket because the sticky flag
+ * still won. The chip said "needs you" about a session the dock, three inches below, was
+ * correctly drawing as `working` — one status, two answers.
+ *
+ * A `Record` over `SessionStatusKind` rather than a `switch` so a seventh kind added to the
+ * union is a COMPILE error here instead of a session that silently lands in no bucket and
+ * quietly stops being counted.
+ */
+export type StatusBucket = 'asking' | 'working' | 'idle';
+
+export const BUCKET_BY_KIND: Record<SessionStatusKind, StatusBucket | null> = {
+  /** Genuinely blocked on the user: a permission prompt, a question, a plan to approve. */
+  asking: 'asking',
+  /** Mid-turn, and `starting` with it — attaching a PTY is a session doing something. */
+  working: 'working',
+  starting: 'working',
+  /** Open, connected, waiting for a new prompt. */
+  ready: 'idle',
+  /** Not a conversation you have: a restored roster entry with no session, and a dead PTY. */
+  saved: null,
+  ended: null,
+};
+
+/**
+ * "Something happened here you have not seen yet" — the SECOND, independent channel, and the
+ * exact condition the dock tile draws its badge dot from (`AgentDock`) so the two surfaces
+ * cannot disagree about it.
+ *
+ * It is deliberately NOT a status. `attention` is sticky until the user looks at the session,
+ * while `info.kind` tracks the live turn from one second to the next; folding a sticky flag
+ * into a live status is what froze the chip's colour. Excludes `asking` because a session
+ * blocked on a question already says so in the loudest way the strip has — badging it a second
+ * time is one interruption drawn twice.
+ */
+export function wantsALook(row: SessionRow): boolean {
+  return row.attention && row.info.kind !== 'asking';
+}
+
+/**
  * One project's worth of session rows, rolled up into what the chip strip needs to draw a
  * single chip: a colour, a live-count badge, and whether it should bounce. This is the
  * project-level counterpart to the collapsed dock's `rollupKind` — same worst-of urgency
@@ -151,9 +197,15 @@ export interface ProjectRollup {
    * dependency array of primitives, and a `{ asking, working, idle }` object would get a new
    * identity every render and republish several times a second while a turn streams.
    */
-  /** Blocked on the user, or flagged since you last looked. The magenta bubble.
-   *  NOT the same as `waiting`: this one excludes shells, so the three counts still sum to
-   *  `live`. A shell that rings its bell moves `waiting` without moving a bubble — the same
+  /** Blocked on the user RIGHT NOW — a permission prompt, a question, a plan. The magenta
+   *  bubble, and strictly `info.kind === 'asking'`.
+   *
+   *  NOT "anything that wants you": a chat that merely finished a turn unseen is `flagged`
+   *  below, never this. Folding the two was the bug that made a WORKING chat sit magenta on
+   *  the strip while the dock drew it green — see `BUCKET_BY_KIND`.
+   *
+   *  Also not the same as `waiting`: this one excludes shells, so the three counts still sum
+   *  to `live`. A shell that rings its bell moves `waiting` without moving a bubble — the same
    *  split `live`/`alive` already makes, for the same reason. */
   asking: number;
   /** Mid-turn or still connecting. The green bubble, and the one that carries the ring.
@@ -164,6 +216,16 @@ export interface ProjectRollup {
   /** Open and idle. The grey bubble. `saved` and `ended` are NOT counted anywhere — a
    *  restored roster entry with no session and a dead PTY are not chats you "have". */
   idle: number;
+  /**
+   * Live chats carrying an unseen "something happened" flag ({@link wantsALook}) — drawn as
+   * ONE small dot beside the bubbles, exactly like the dock tile's badge.
+   *
+   * ORTHOGONAL TO THE THREE COUNTS ABOVE, and that is the whole point: it rides ALONGSIDE a
+   * row's live bucket instead of replacing it, so a chat that finished unseen and then started
+   * a new turn shows green-working AND the dot, which is both true things at once. Counting it
+   * as a fourth bucket would put it back in the partition and re-break the invariant.
+   */
+  flagged: number;
   /** Eviction safety: how many sessions of ANY kind still hold a live PTY/WebSocket — agent,
    *  chat AND shell. This is the ONLY field the ceiling rule may consult; `live` must never
    *  decide whether an instance can be torn down. */
@@ -182,28 +244,35 @@ export interface ProjectRollup {
  * `ended` exclusion but WITHOUT the shell exclusion — a shell still holds a real PTY/
  * WebSocket the ceiling rule must not tear down. `waiting` counts a row once even when it
  * is both `asking` and flagged for `attention` — one row, one interruption.
+ *
+ * Every "is this row live, and which bubble is it?" question is answered by ONE lookup in
+ * {@link BUCKET_BY_KIND}, and the unseen-since-you-looked flag by ONE call to
+ * {@link wantsALook} — the same call the dock tile makes. Nothing in this function re-states
+ * the status taxonomy in its own words, because the two times it did, they drifted.
  */
 export function rollupProject(rows: SessionRow[]): ProjectRollup {
   let live = 0;
   let waiting = 0;
   let alive = 0;
-  let asking = 0;
-  let working = 0;
-  let idle = 0;
+  let flagged = 0;
+  const bucket: Record<StatusBucket, number> = { asking: 0, working: 0, idle: 0 };
   for (const r of rows) {
-    const holdsSession = r.info.kind !== 'saved' && r.info.kind !== 'ended';
-    const wantsYou = r.info.kind === 'asking' || r.attention;
-    if (holdsSession && r.kind !== 'shell') {
+    // ONE read of the status, for all three decisions it drives — `null` means the row holds
+    // no session at all, which is the same question `holdsSession` used to answer separately.
+    const b = BUCKET_BY_KIND[r.info.kind];
+    if (b && r.kind !== 'shell') {
       live++;
-      // Exactly one bucket per counted row, in urgency order — a row that is both asking and
-      // attention-flagged is ONE chat wanting you, not two, and a working row that also rang
-      // its bell belongs in the bubble that gets answered first.
-      if (wantsYou) asking++;
-      else if (r.info.kind === 'working' || r.info.kind === 'starting') working++;
-      else idle++;
+      // The bucket comes from the LIVE STATUS ALONE. `attention` gets no vote here — it is a
+      // separate, sticky "you haven't seen this" fact, counted in `flagged` beside the bucket
+      // rather than on top of it, so a chat that finished unseen and then started working
+      // again turns green the moment it does.
+      bucket[b]++;
+      if (wantsALook(r)) flagged++;
     }
-    if (holdsSession) alive++;
-    if (wantsYou) waiting++;
+    if (b) alive++;
+    // `waiting` keeps the union — it is the bounce trigger, and a background SHELL that rings
+    // its bell (a build finishing) is worth a jump even though it draws no bubble.
+    if (r.info.kind === 'asking' || r.attention) waiting++;
   }
-  return { worst: rollupKind(rows), live, waiting, alive, asking, working, idle };
+  return { worst: rollupKind(rows), live, waiting, alive, flagged, ...bucket };
 }

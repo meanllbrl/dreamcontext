@@ -377,6 +377,35 @@ try {
         && bubbleStyles.ringAngle !== '',
       `box=${bubbleStyles.ringBox} anim=${bubbleStyles.ringAnim} angle="${bubbleStyles.ringAngle}"`);
 
+    /* B5 — THE JUMP FITS IN THE REAL BAR.
+       A project holding a blocked agent bounces like a Dock icon, and the amplitude is bounded
+       by two clip boxes the component-level harness (project-chip-status.mjs) cannot see: the
+       strip's own (it scrolls horizontally, which forces the vertical axis out of `visible`)
+       and the 42px title bar, which on a Tauri overlay window is the top of the screen. Both
+       are geometry, so both can be measured here WITHOUT a live agent to ask a question —
+       the chip's resting rect minus the jump height is the apex, whether or not one is
+       running. A regression here is invisible until someone happens to be watching a chip
+       mid-jump, which is precisely when it matters. */
+    const jumpFit = await page.evaluate(() => {
+      const chip = document.querySelector('.project-tab');
+      const strip = document.querySelector('.project-tabs');
+      const bar = document.querySelector('.window-chrome-bar');
+      if (!chip || !strip || !bar) return null;
+      // Read the amplitude out of the stylesheet instead of restating it here, so the two can
+      // never drift: whatever the keyframes say the apex is, that is what gets checked.
+      const rise = Math.max(...[...document.styleSheets]
+        .flatMap((s) => { try { return [...s.cssRules]; } catch { return []; } })
+        .filter((r) => r.type === CSSRule.KEYFRAMES_RULE && r.name === 'projectTabDockBounce')
+        .flatMap((r) => [...r.cssRules])
+        .map((k) => parseFloat((k.style.transform.match(/-?[\d.]+(?=px)/) || [0])[0]))
+        .map(Math.abs));
+      const c = chip.getBoundingClientRect();
+      return { rise, apexTop: c.top - rise, stripTop: strip.getBoundingClientRect().top, barTop: bar.getBoundingClientRect().top };
+    });
+    check('B5 the ask-bounce apex is clipped by neither the strip nor the 42px bar',
+      !!jumpFit && jumpFit.rise > 0 && jumpFit.apexTop >= jumpFit.stripTop && jumpFit.apexTop >= jumpFit.barTop,
+      jumpFit ? `rise=${jumpFit.rise}px apex=${jumpFit.apexTop.toFixed(1)} strip=${jumpFit.stripTop.toFixed(1)} bar=${jumpFit.barTop.toFixed(1)}` : 'nodes not found');
+
     // S6 — judged LAST, so it covers every request both projects made: the boot, the reload,
     // the second project's whole page load and both switches. A wrong vault reaching the
     // server shows up here as 400 and nowhere else — the UI paints either way.

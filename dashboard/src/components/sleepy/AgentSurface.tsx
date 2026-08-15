@@ -2049,12 +2049,12 @@ export function AgentSurface() {
   const rollup: ProjectRollup = rollupProject(dockRows);
   const {
     worst: rollupWorst, live: rollupLive, waiting: rollupWaiting, alive: rollupAlive,
-    asking: rollupAsking, working: rollupWorking, idle: rollupIdle,
+    asking: rollupAsking, working: rollupWorking, idle: rollupIdle, flagged: rollupFlagged,
   } = rollup;
   useEffect(() => {
     emitInstance<ProjectRollup>(bus, PROJECT_ROLLUP_EVENT, {
       worst: rollupWorst, live: rollupLive, waiting: rollupWaiting, alive: rollupAlive,
-      asking: rollupAsking, working: rollupWorking, idle: rollupIdle,
+      asking: rollupAsking, working: rollupWorking, idle: rollupIdle, flagged: rollupFlagged,
     });
   }, [
     bus, rollupWorst, rollupLive, rollupWaiting, rollupAlive,
@@ -2063,6 +2063,10 @@ export function AgentSurface() {
     // leaves worst/live/waiting/alive all unchanged and only shifts a count from `working` to
     // `idle` and back — a chip whose bubbles never updated would be the visible symptom.
     rollupAsking, rollupWorking, rollupIdle,
+    // `flagged` moves on its own too — focusing a session clears its attention flag without
+    // touching its live status, so every other field here can sit still while the chip's dot
+    // needs to go out.
+    rollupFlagged,
   ]);
 
   // Rows for the corner dock that floats over the EXPANDED overlay — only the sessions the

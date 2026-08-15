@@ -47,6 +47,7 @@
     "verify:hypotheses": "node scripts/verify/hypotheses-ui.mjs",
     "verify:lab-board": "node scripts/verify/lab-board.mjs",
     "verify:project-tabs": "node scripts/verify/project-tabs.mjs",
+    "verify:project-chip-status": "node scripts/verify/project-chip-status.mjs",
     "verify:automations": "node scripts/verify/automations.mjs"
   },
   "keywords": [
