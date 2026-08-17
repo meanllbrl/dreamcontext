@@ -32,7 +32,7 @@ Every command and flag, grouped. All commands are prefixed with `dreamcontext`. 
 
 For agents (and scripts), `doctor --json` replaces the human output with one JSON report: `{ version: 1, summary: { ok, warn, error }, checks: [...] }` (plus a `heal` block when combined with `--heal-links`). Every check carries a stable **`code`** (`doctor/<slug>` — route and dedupe on it; messages may be reworded, codes may not). Annotated checks add **`subject`** (what is broken — file, entity, field), **`evidence`** (measured proof — chars counted, the matched placeholder, the failing parse error), and **`supportedFixes`** (concrete repairs to pick from; when a deterministic healer exists its exact command is listed, e.g. `dreamcontext doctor --heal-links` on `doctor/link-drift-healable`). Checks not yet hand-annotated still get a derived `code` and their message — annotation coverage grows incrementally. Exit codes match the human run: `0` clean, `1` when any `error` is present.
 
-**Repair protocol** (see `knowledge/patterns/diagnostic-repair-loop.md` in this brain): repair only the diagnosed `subject`, choosing from `supportedFixes`; **one diagnosed repair per round**, then re-run; continue while the error count reaches a new minimum; if two consecutive rounds don't improve it, stop and report the unresolved diagnostics truthfully — never weaken a check to pass it.
+**Repair protocol** (the *diagnostic-repair-loop* pattern): repair only the diagnosed `subject`, choosing from `supportedFixes`; **one diagnosed repair per round**, then re-run; continue while the error count reaches a new minimum; if two consecutive rounds don't improve it, stop and report the unresolved diagnostics truthfully — never weaken a check to pass it.
 
 ---
 
