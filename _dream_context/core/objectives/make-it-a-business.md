@@ -7,13 +7,12 @@ depends_on:
   - improve-sleep-quality
   - simplified-ux
   - make-dreamcontext-team-ready
-  - include-codex-opencode-support
 feature: null
 impact: 5
 effort: 4
 status: null
 created_at: '2026-07-04'
-updated_at: '2026-07-27'
+updated_at: '2026-08-17'
 metric:
   label: MRR
   unit: $

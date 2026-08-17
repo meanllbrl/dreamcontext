@@ -65,7 +65,7 @@ evidence:
   - date: '2026-07-25'
     cycle: 2
     source: task
-    ref: feat-embedding-beta-rollout-opt-in-flag-doctor-gitignore-docs
+    ref: finish-the-hybrid-recall-rollout-doctor-check-user-docs-npm-files-audit
     verdict: supports
     note: >-
       Beta rollout task (the thesis's related_tasks link) updated 2026-07-22
@@ -79,7 +79,7 @@ insights: []
 objectives:
   - improve-recall-mechanism
 related_tasks:
-  - feat-embedding-beta-rollout-opt-in-flag-doctor-gitignore-docs
+  - finish-the-hybrid-recall-rollout-doctor-check-user-docs-npm-files-audit
 related_workflows: []
 blocked_on_instrumentation: false
 blocked_metric: null

@@ -6,14 +6,13 @@ depends_on:
   - improve-recall-mechanism
   - improve-sleep-quality
   - simplified-ux
-  - include-codex-opencode-support
   - make-it-a-business
 feature: null
 impact: 4
 effort: 4
 status: null
 created_at: '2026-07-04'
-updated_at: '2026-07-04'
+updated_at: '2026-08-17'
 ---
 ## Why
 

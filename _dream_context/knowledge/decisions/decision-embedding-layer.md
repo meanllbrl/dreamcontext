@@ -162,7 +162,7 @@ The "epic" is **this document**. The umbrella/organizing view lives in knowledge
 3. ✅ `feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag` — SHIPPED v0.14.0 (`src/lib/embeddings/hybrid.ts`; shipped fusion is the ADAPTIVE switch, not plain RRF — plain RRF was measured and killed).
 4. ✅ `feat-embedding-ab-eval-harness-bm25-vs-hybrid-vs-dense-on-frozen-gold-set` — SHIPPED v0.14.0 (`scripts/embed-ab.ts` + `evaluateSearch` in `eval/harness.ts`; verdict in `eval/RESULTS.md`).
 5. `feat-sleep-semantic-dedup-nearest-neighbor-merge-instead-of-duplicate` — second consumer (cache engine now available; still todo).
-6. `feat-embedding-beta-rollout-opt-in-flag-doctor-gitignore-docs` — partially SHIPPED v0.14.0/v0.14.1 (flag + gitignore + fallback shipped v0.14.0; dashboard control shipped v0.14.1); remaining: doctor check, user docs expansion, npm files audit.
+6. `finish-the-hybrid-recall-rollout-doctor-check-user-docs-npm-files-audit` — partially SHIPPED v0.14.0/v0.14.1 (flag + gitignore + fallback shipped v0.14.0; dashboard control shipped v0.14.1); remaining: doctor check, user docs expansion, npm files audit.
 
 **Dependency graph:** `1 → 2 → {3 → 4, 5}`; `6` needs `{3, 4}`.
 

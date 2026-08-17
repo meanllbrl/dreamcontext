@@ -52,12 +52,12 @@ Because `state/` is gitignored, none of that is committed anywhere. **A merge ca
 
 ## After the resolver fix
 
-Task: `[[resolve-the-context-root-from-the-main-worktree-so-git-worktrees-share-one-brain]]`. Once a linked worktree resolves to the main worktree's brain, rules 1–4 stop being a discipline and become the default. Two consequences to expect rather than to debug:
+Task: `[[git-worktrees-split-the-brain-resolve-the-context-root-from-the-main-worktree]]`. Once a linked worktree resolves to the main worktree's brain, rules 1–4 stop being a discipline and become the default. Two consequences to expect rather than to debug:
 
 - Brain writes from a worktree session land in the **main working tree**, not on the branch — so main's checkout shows uncommitted `core/` + `knowledge/` changes while you are on a branch elsewhere. That is correct, and it removes the `CHANGELOG.json` / `2.memory.md` LIFO merge-conflict class entirely.
 - `sleep start`'s lock is path-derived (`<contextRoot>/state/.sleep.start.lock`). Two brains today means two lock files and no mutual exclusion; one brain means the lock finally engages.
 
 ## Related
 
-- `[[document-or-automate-dashboard-deps-provision-for-fresh-worktrees]]` — different problem (a fresh worktree needs its own `dashboard/` npm install), same blast zone: worktrees are second-class here.
+- `[[a-fresh-worktree-needs-two-npm-installs-automate-or-document-the-dashboard-deps]]` — different problem (a fresh worktree needs its own `dashboard/` npm install), same blast zone: worktrees are second-class here.
 - `../.dc-base-<sha>` worktrees are the deliberate exception — `tests/unit/snapshot-byte-identity.test.ts` regenerates its golden from a detached base-SHA worktree and `chdir()`s into a *nested* fixture vault. The resolver fix is scoped to a worktree's ROOT-level brain precisely so that keeps working.

@@ -36,7 +36,7 @@ pull, merge, review — without forcing the brain to live inside the code repo, 
 without giving up dreamcontext's local-first identity (the brain is still plain
 markdown/JSON files on disk; git is the sync transport, not a new database).
 
-This is a distinct concept from the parked `feat-web-hosted-dreamcontext-com`
+This is a distinct concept from the parked `hosted-dreamcontext-com…`
 task/idea: that one is a **hosted website** that reads an existing code repo's
 `_dream_context/` via the GitHub API for browser viewing (no local git repo for the
 brain). This feature is the opposite direction — the brain becomes **its own git
@@ -148,7 +148,7 @@ existing local dashboard. The two could coexist later but ship independently.
   `[[decisions/decision-github-task-backend]]`) and is the base P3's issue-sync
   onboarding builds on.
 - **[2026-07-04]** **This is NOT the parked hosted-website concept.** The
-  `feat-web-hosted-dreamcontext-com…` task describes a browser-hosted viewer that
+  `hosted-dreamcontext-com…` task describes a browser-hosted viewer that
   reads a code repo's `_dream_context/` over the GitHub API with no local git repo
   for the brain. This feature makes the brain itself a git-synced artifact used by
   the existing local CLI/dashboard/desktop app. They are compatible future
@@ -198,7 +198,7 @@ existing local dashboard. The two could coexist later but ship independently.
 - Related task: expect a task (created by `sleep-tasks` this same cycle) to carry
   the working implementation plan — link it here via `related_tasks` once it
   exists.
-- Related but distinct: `_dream_context/state/feat-web-hosted-dreamcontext-com-github-oauth-collaboration-layer-over-the-brain.md`
+- Related but distinct: `_dream_context/state/hosted-dreamcontext-com-a-github-oauth-collaboration-layer-over-the-brain.md`
   (parked, hosted-website direction — see Constraints & Decisions above for why
   these are separate).
 

@@ -66,7 +66,7 @@ Grounded in the current architecture (verified 2026-07-04):
 - **Cheapest MVP path:** a private **`.ics` feed URL** (Google/Outlook/Apple all expose one) avoids OAuth entirely for v1: HTTP GET + ICS parse → inject. OAuth (Google Calendar API) is additive on top and is what unlocks the *write*/action surface (create event, invite).
 - **Cross-link surface:** task `due_date` and objective `start_date`/`target_date` are already in frontmatter; `dreamcontext roadmap --json` already computes a dated forecast. These are the natural bridge points for pushing brain artifacts out to the calendar.
 - **Dashboard:** the React dashboard + Node server (see knowledge `desktop-beta-tauri-multivault`) is the surface for the calendar view; a new page + a server route reading the calendar backend.
-- **Auth precedent:** see task `feat-web-hosted-dreamcontext-com-github-oauth-collaboration-layer` for the OAuth pattern already being designed in the project.
+- **Auth precedent:** see task `hosted-dreamcontext-com-a-github-oauth-collaboration-layer-over-the-brain` for the OAuth pattern already being designed in the project.
 
 ## Notes
 

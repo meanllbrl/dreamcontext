@@ -2,14 +2,14 @@
 id: know_7dSXMSGM
 name: codex-cli-integration-feasibility
 description: >-
-  Codex CLI 0.139 platform audit (2026-08-01): it now ships all 7 hooks
-  dreamcontext uses with a near-identical wire contract, plus subagents,
-  SKILL.md skills, app-server JSON-RPC and a session index — revising the
-  integration cost from 'blocked on missing primitives' to a config-emitter job.
-  Not greenfield — commit 58f5910 (2026-07-07) removed a working multi-platform
-  installer plus a full .codex/agents TOML roster, so that is the revert base.
-  Hook-trust re-approval and the ~/.dreamcontext sandbox boundary are the real
-  remaining risks
+  RETIRED DIRECTION (2026-08-17) — kept as the costing record, not a plan. Codex
+  CLI 0.139 platform audit (2026-08-01): it ships all 7 hooks dreamcontext uses
+  with a near-identical wire contract, plus subagents, SKILL.md skills,
+  app-server JSON-RPC and a session index, so the integration cost is a
+  config-emitter job, not a rewrite. The owner retired the
+  include-codex-opencode-support objective anyway: Claude Code only is a SCOPE
+  decision, and cheap-to-build is not a reason to build. Read this only if that
+  decision is revisited
 tags:
   - 'topic:agents'
   - 'domain:infrastructure'
@@ -21,7 +21,18 @@ date: '2026-08-01'
 
 # Codex CLI Integration Feasibility
 
-Platform audit run 2026-08-01 against **`codex-cli 0.139.0`** installed locally (npm latest at audit time: `0.146.0`), verified from the shipped binary + `~/.codex` state + official docs. Supersedes the soul's standing line "Supports Claude Code only; Codex CLI deprecated" as a *capability* claim — that line reflected a Codex that no longer exists.
+> **RETIRED DIRECTION — 2026-08-17. This is a costing record, not a plan.**
+>
+> The owner retired the `include-codex-opencode-support` objective and closed its only task. **`Supports Claude Code only; Codex CLI deprecated` is the standing decision** and this file does not override it.
+>
+> Read the distinction carefully, because this document was written to argue the opposite of what was decided, and both things are true:
+>
+> - **Capability**: cheap. Everything below still holds — Codex 0.139 ships the hooks and subagents whose absence once made support structurally expensive, so the build is a config-emitter job, not a rewrite.
+> - **Scope**: out. Cheap-to-build was never the question. The owner's call is that supporting a second host is not what this product spends its attention on, whatever it costs.
+>
+> Nothing here is a live commitment. If the scope decision is ever revisited, start from this audit — but re-verify first: it is dated 2026-08-01 against a surface that moves weekly, and "Recommended next step" below describes a spike nobody is running.
+
+Platform audit run 2026-08-01 against **`codex-cli 0.139.0`** installed locally (npm latest at audit time: `0.146.0`), verified from the shipped binary + `~/.codex` state + official docs.
 
 **This surface moves weekly. Re-verify before acting on any specific key name below.**
 
@@ -150,6 +161,8 @@ Separately, `~/.codex/config.toml` carries trusted hook hashes for `<repo>/.code
 **Consequence for cost:** this is not greenfield. The base is `git show 58f5910` (revert or cherry-pick the platform layer), then bring it forward to the Codex surface as it exists now — which since July gained the hook system, the skills system, and the current agent-TOML schema. That is the actual work.
 
 ## Recommended next step
+
+**Superseded 2026-08-17 — nobody is running this.** The objective it fed was retired; the steps stay only as the shape the work would take if the scope decision reverses.
 
 A one-day spike answers everything still open:
 

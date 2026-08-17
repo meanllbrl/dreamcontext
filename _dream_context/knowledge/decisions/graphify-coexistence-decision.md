@@ -7,6 +7,12 @@ pinned: false
 date: "2026-06-10"
 ---
 
+> **RETIRED — 2026-08-17. Nothing below was ever built.**
+>
+> The task carrying this decision was deleted as stale in the backlog grooming pass: filed 2026-06-10, never picked up, zero code in the tree, no objective, and dependent on a third-party tool outside our control. `hasCodeGraph()`, the snapshot nudge, the explore-agent routing hint and the doctor info line **do not exist** — read the sections below as a design that was chosen and then dropped, not as behaviour to expect.
+>
+> What survives is the reasoning, which is still load-bearing and applies to any future code-graph tool: **detect, never build; route, never merge.** The "Explicit Out of Scope" section in particular is the durable part — mixing structurally dense graph nodes into the BM25 corpus would hub-hijack topical queries (the mem0 lesson), and that stays true no matter which graph tool asks next.
+
 ## Why This Exists
 
 In session 5517892f, the question arose: should dreamcontext integrate with code-graph tools (graphify and similar) that build structural call-graph / symbol-graph indexes of a codebase? The mem0 lesson applies here — mixing a structural graph corpus into BM25 recall risks hub-doc hijacking (a single highly-connected graph node would dominate every query). This file captures the coexistence decision and its explicit scope boundaries.

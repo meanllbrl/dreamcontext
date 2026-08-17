@@ -2,6 +2,34 @@
   {
     "date": "2026-08-17",
     "type": "feat",
+    "scope": "skill",
+    "description": "Two silent gates, both closed. Measured failure (memoryos, 2026-08-03/04): asked in Turkish for a recurring error-rate digest, the agent hand-rolled a launchd plist + shell wrapper + osascript notifier and ran it for two days, entirely outside the automations subsystem. SKILL.md already forbade exactly that, in bold, twice — but that text sits behind a gate the request never opened.\n\nGate 1, the skill description. It is the only thing an agent reads when deciding whether to load the skill, and it never contained 'automation', 'trigger', or any scheduling word. It now names automations (scheduled, unattended recurring jobs) and triggers in the activation clause AND the capability list, adds automation + trigger to the reserved-entity-noun sentence (so they are reserved in any language, like insight/objective/task/feature/knowledge already were), and carries an explicit scheduling clause with the anti-cron rule: work that should repeat with nobody asking is an automation here, never a hand-rolled cron/launchd job or external scheduler. 994 chars, under the 1024 ceiling.\n\nGate 2, the snapshot. The '## Automations' section previously rendered only when there was operational state to report, so a vault with no automations — precisely the vault whose user is asking for the feature for the first time — never learned the subsystem exists. Recall cannot bootstrap that either: zero automations, zero hits. The section now always renders, one line minimum, in three states: the existing per-run/blocked/orphaned/pending detail; a bare count when automations are configured but quiet (a weekly job on the six days it does not fire must not be reported as 'none'); and a zero state naming 'dreamcontext automations create <slug>' plus the anti-cron rule. buildAutomationsSnapshot gained 'total' to tell 'nothing to report' apart from 'nothing exists' — lines alone cannot. Both snapshot goldens regenerated under the diff gate: exactly four added lines each, nothing else moved.\n\nMeasured, not asserted. 12 headless runs, fresh context, skill listing + snapshot only, the original request in English and Turkish: before, 0/4 reached automations — all four routed to an external scheduler (cron, a cloud-agent routine), reproducing the original failure exactly. After, 4/4 reach 'dreamcontext automations create'. Ablation: either gate alone is sufficient (2/2 each), so the two are redundant on purpose rather than one carrying the other.\n\nAdjacent, from the same task's notes: 'automations install --check' reported 'wrapper: present, STALE' as a bare status word with no verdict and no repair hint, on a dispatcher that was ticking fine — unlike the notifier line right below it, which tells you what to do. It now says both halves: STALE is not broken (a tick re-resolves the CLI on its own) and re-running 'automations install' is how it stops being stale.",
+    "breaking": false,
+    "summary": "Automations are discoverable now: the skill's activation gate names scheduling and the snapshot's Automations section always renders — measured 0/4 → 4/4 on the request that failed.",
+    "references": [
+      "task:automations-are-undiscoverable-the-skill-description-omits-scheduling-entirely-and-the-snapshot-has-no-automations-channel",
+      "file:skill/SKILL.md",
+      "file:src/cli/commands/snapshot.ts",
+      "file:src/lib/automations/snapshot.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-17",
+    "type": "chore",
+    "scope": "pm",
+    "description": "Backlog grooming for 0.24.2. The backlog had drifted into a state where version numbers meant nothing: of 35 open tasks, 10 carried no version at all and 17 were pinned to versions that had already shipped or been superseded (0.19.0, 0.21.0, 0.23.0, and two spellings of 0.24.0), so nothing in the record could answer 'what is next'. Every open task now sits on exactly one live version.\n\nClosed one task that reality had already delivered: switching-projects-costs-a-new-window was satisfied in full by v0.24.0's one-window chip strip, verified against all four of its acceptance criteria rather than assumed from the release notes.\n\nCorrected the release record while grooming it: 0.24.1 was still recorded as status planning with an empty date even though npm dist-tags already served it as latest (published 2026-08-17T12:07:19Z). Flipped to released. Its git tag is still missing from the remote — v0.24.0 is there, v0.24.1 is not — which is the same shape as the 0.12.0 incident the 0.24.0 entry warns about, left for the owner to cut.\n\n0.24.2 opened as a patch with 10 items, chosen on one rule: it silently gives a wrong answer. The three that can destroy something are the test suite writing into the repo's own brain, GitHub sync pull stripping the local-only objectives field, and doctor passing a CHANGELOG.json whose shape the CLI cannot read. Every 0.24.2 item was re-verified as still live in the tree at 84461fc — file and line recorded on each task — rather than carried forward on the strength of its filing; that pass also narrowed two of them, since the snapshot half of the automations-discoverability task and option (a) of the JSON-array task turned out to be already done.\n\n0.25.0 opened as the parking lot for the 15 items that need design, a decision, or a surface. 9 stay in BACKLOG.",
+    "breaking": false,
+    "summary": "Backlog groomed for 0.24.2: 1 task closed as already delivered, 0.24.1's record corrected to released, and all 34 open tasks moved off dead version numbers onto 0.24.2 / 0.25.0 / BACKLOG.",
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-17",
+    "type": "feat",
     "scope": "doctor",
     "description": "doctor --json emits a machine-readable diagnostic report: every check carries a stable code (doctor/<slug>), annotated checks add subject (what is broken), evidence (measured proof), and supportedFixes (repairs a consumer picks from — e.g. doctor --heal-links on link drift). Wired into curator-verifier / initializer-verifier / curator-worker / goal-validator contracts and cli-reference; repair protocol documented in knowledge/patterns/diagnostic-repair-loop.md. Plus 4 patterns harvested from the archify review: diagnostic-repair-loop, freeze-and-receipt-delivery, canonical-form-delta, git-pinned-evidence.",
     "breaking": false,
