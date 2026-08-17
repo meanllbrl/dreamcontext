@@ -83,7 +83,8 @@
     "sharp": "^0.34.5",
     "tsup": "^8.4.0",
     "typescript": "^5.7.3",
-    "vitest": "^3.0.6"
+    "vite-node": "^6.0.0",
+    "vitest": "^4.1.10"
   },
   "optionalDependencies": {
     "@huggingface/transformers": "^4.2.0",
