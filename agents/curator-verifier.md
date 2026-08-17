@@ -47,7 +47,10 @@ Run the **real checks** and return a verdict with evidence. Do not reason about 
 
 **The checklist (each is an actual command):**
 
-1. **Structure valid.** `dreamcontext doctor` runs clean — zero errors.
+1. **Structure valid.** `dreamcontext doctor --json` reports `summary.error: 0`. Quote the
+   `code` + `evidence` of any failing check in your report — the diagnostic IS the proof, no
+   prose paraphrase needed. Warnings with a `supportedFixes` entry are routable work: name them
+   so the orchestrator can hand the exact fix to a worker.
 2. **Knowledge index coherent.** `dreamcontext knowledge index` lists every file with a
    description + tags; no orphaned/empty entries; moved files round-trip (no dangling slugs).
 3. **Zero duplicate-topic knowledge.** No two knowledge files cover the same subject. Spot-check

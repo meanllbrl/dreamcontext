@@ -71,6 +71,10 @@ Each row in your batch is `source → ACTION → target`. Execute it with the ri
   out for a one-line wording fix you can make with Edit.
 - **Reality-based status only.** Don't reflexively bump every task to completed — bump only what
   the plan says is demonstrably done, with the cited evidence.
+- **Repair from the diagnosis, not from a guess.** When your assignment includes a doctor
+  finding, run `dreamcontext doctor --json` and repair the diagnosed `subject` by picking from
+  its `supportedFixes` — one diagnosed repair, re-run, confirm the `code` cleared. If the error
+  count stops improving after two rounds, stop and report the unresolved diagnostic truthfully.
 
 ## Output
 
