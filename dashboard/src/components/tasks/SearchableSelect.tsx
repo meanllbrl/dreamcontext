@@ -18,6 +18,13 @@ interface SearchableSelectProps {
   /** Offer "use the typed text" when it matches no option. */
   allowCustom?: boolean;
   clearLabel?: string;
+  /**
+   * Drop the "clear" row. For an ADD control (pick a tag, then the list resets)
+   * there is nothing to clear, and the row reads as a selectable value.
+   */
+  hideClear?: boolean;
+  /** Label on the closed trigger when it is an add control rather than a value. */
+  triggerLabel?: string;
 }
 
 /** Diacritic/Turkish-insensitive fold so "meh" matches "Mehmet Nuraydın". */
@@ -42,6 +49,8 @@ export function SearchableSelect({
   onChange,
   allowCustom = false,
   clearLabel = 'None',
+  hideClear = false,
+  triggerLabel,
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -85,7 +94,7 @@ export function SearchableSelect({
         onClick={() => { setOpen(o => !o); setQuery(''); }}
       >
         <span className={current || value ? 'ss-value' : 'ss-placeholder'}>
-          {current?.label ?? value ?? placeholder}
+          {triggerLabel ?? current?.label ?? value ?? placeholder}
         </span>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="ss-chevron">
           <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
@@ -108,9 +117,11 @@ export function SearchableSelect({
             }}
           />
           <div className="ss-list">
-            <button type="button" className="ss-item ss-item--clear" onClick={() => pick(null)}>
-              {clearLabel}
-            </button>
+            {!hideClear && (
+              <button type="button" className="ss-item ss-item--clear" onClick={() => pick(null)}>
+                {clearLabel}
+              </button>
+            )}
             {filtered.map(o => (
               <button
                 type="button"

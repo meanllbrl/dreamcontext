@@ -9,6 +9,7 @@ import type { Task, RiceFields, RiceInput } from '../../hooks/useTasks';
 import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers, useFeatureOptions, useSyncStatus, useTaskOverrides } from '../../hooks/useTasks';
 import { useObjectives } from '../../hooks/useObjectives';
 import { confirmAction } from '../../lib/desktop';
+import { useTaxonomy } from '../../hooks/useTaxonomy';
 import { SearchableSelect } from './SearchableSelect';
 import { TaskCustomFields } from './TaskCustomFields';
 import { AddCustomFieldForm } from './AddCustomFieldForm';
@@ -435,6 +436,7 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const remoteBacked = syncStatus === undefined ? true : syncStatus.backend !== 'local';
   const { data: featureOptions } = useFeatureOptions();
   const { data: customFieldDefs } = useTaskOverrides();
+  const { data: taxonomy } = useTaxonomy();
   const { data: versions } = usePlanningVersions();
   const { data: objectives = [] } = useObjectives();
   const [changelogEntry, setChangelogEntry] = useState('');
@@ -609,13 +611,50 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
     );
   };
 
-  const handleAddTag = () => {
-    const tag = newTag.trim();
+  const handleAddTag = (raw?: string) => {
+    const tag = (raw ?? newTag).trim();
     if (!tag) return;
     if (!task.tags.some(x => x.toLowerCase() === tag.toLowerCase())) {
       handleTagsChange([...task.tags, tag]);
     }
     setNewTag('');
+  };
+
+  /**
+   * Every tag the vault already knows, most-used first, minus the ones this
+   * task already carries. Typing something new is still allowed (`allowCustom`)
+   * — the point of the list is that you stop INVENTING a second spelling of a
+   * tag that exists, which is how `decisions` and `decision` both ended up in
+   * the vocabulary.
+   */
+  const tagOptions = useMemo(() => {
+    const usage = taxonomy?.usage ?? {};
+    const vocab = taxonomy?.vocabulary;
+    const known = new Set<string>([
+      ...Object.keys(usage),
+      ...(vocab ? Object.values(vocab.facetTags).flat() : []),
+      ...(vocab?.bareTags ?? []),
+    ]);
+    const mine = new Set(task.tags.map(t => t.toLowerCase()));
+    return [...known]
+      .filter(t => t && !mine.has(t.toLowerCase()))
+      .sort((a, b) => (usage[b] ?? 0) - (usage[a] ?? 0) || a.localeCompare(b))
+      .map(t => ({
+        value: t,
+        label: t,
+        hint: usage[t] ? `${usage[t]}` : undefined,
+      }));
+  }, [taxonomy, task.tags]);
+
+  /**
+   * Send to backlog in one click. Only the tag is written: the backend's
+   * backlog rule ("not planned" ⇒ no dates) clears the start and due date
+   * itself, so every surface stays consistent and this button cannot invent a
+   * second, drifting version of that rule.
+   */
+  const sendToBacklog = () => {
+    if (isBacklog) return;
+    handleTagsChange([...task.tags, 'backlog']);
   };
 
   const handleAddChangelog = (e: React.FormEvent) => {
@@ -1226,22 +1265,30 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                     </button>
                   </span>
                 ))}
-                <input
-                  className="task-tag-input"
-                  value={newTag}
-                  placeholder="+ tag"
-                  aria-label="Add tag"
-                  onChange={e => setNewTag(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddTag();
-                    }
-                  }}
-                  onBlur={handleAddTag}
-                />
+                <div className="task-tag-picker">
+                  <SearchableSelect
+                    value={null}
+                    options={tagOptions}
+                    onChange={v => { if (v) handleAddTag(v); }}
+                    allowCustom
+                    hideClear
+                    triggerLabel="+ tag"
+                    searchPlaceholder="Search or create…"
+                  />
+                </div>
               </div>
             </TaskField>
+
+            {/* One click for the state the owner actually uses. Writing only the
+                tag keeps the backend's "backlog ⇒ undated" rule the single
+                definition of what backlog means. */}
+            {!isBacklog && (
+              <TaskField label="Backlog">
+                <button type="button" className="prop-backlog-send" onClick={sendToBacklog}>
+                  Send to backlog
+                </button>
+              </TaskField>
+            )}
 
             <TaskField label="Version" htmlFor="tf-version">
               <select
