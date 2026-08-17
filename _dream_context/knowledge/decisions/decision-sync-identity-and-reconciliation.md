@@ -97,6 +97,7 @@ When someone reports "task assigned in ClickUp/GitHub UI is not reflected locall
 - Issue #78: https://github.com/meanllbrl/dreamcontext/issues/78
 - PR #79: https://github.com/meanllbrl/dreamcontext/pull/79 (fix/77-rename-sync-dcid branch)
 - Related feature: `core/features/task-management.md`
+- Related pattern: [[canonical-form-delta]] — the general shape behind structural (not textual) reconciliation: canonicalize both sides, then diff/merge meaning
 - Provider-generic sync engine: `src/lib/task-backend/sync-state.ts`, `merge.ts`, `api-adapter.ts`
 
 ## Last Verified

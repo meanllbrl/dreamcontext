@@ -1,5 +1,21 @@
 [
   {
+    "date": "2026-08-17",
+    "type": "feat",
+    "scope": "doctor",
+    "description": "doctor --json emits a machine-readable diagnostic report: every check carries a stable code (doctor/<slug>), annotated checks add subject (what is broken), evidence (measured proof), and supportedFixes (repairs a consumer picks from — e.g. doctor --heal-links on link drift). Wired into curator-verifier / initializer-verifier / curator-worker / goal-validator contracts and cli-reference; repair protocol documented in knowledge/patterns/diagnostic-repair-loop.md. Plus 4 patterns harvested from the archify review: diagnostic-repair-loop, freeze-and-receipt-delivery, canonical-form-delta, git-pinned-evidence.",
+    "breaking": false,
+    "summary": "doctor --json: stable codes + subject/evidence/supportedFixes per check; 4 archify-harvest patterns",
+    "references": [
+      "task:feat-doctor-machine-readable-diagnostics-json-supportedfixes",
+      "knowledge:diagnostic-repair-loop",
+      "file:src/cli/commands/doctor.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-14",
     "type": "fix",
     "scope": "automations",
