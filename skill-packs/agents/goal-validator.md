@@ -48,6 +48,9 @@ Execute the **validation method recorded in the task** and return a verdict with
 - **Manual checklist**: walk each checklist item, perform the observable check, and report
   per-item PASS/FAIL with what you observed.
 - **Build**: if the criteria require it, run the build and report.
+- **Brain structure** (when the goal touched `_dream_context/`): run
+  `dreamcontext doctor --json` and cite failing checks by their `code` + `evidence` —
+  the machine-readable diagnostic is stronger evidence than paraphrased prose.
 
 ## Iron rules
 

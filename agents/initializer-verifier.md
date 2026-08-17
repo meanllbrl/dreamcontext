@@ -50,7 +50,9 @@ Run the **real checks** and return a verdict with evidence. Do not reason about 
    ```
    Honest, specific `To be defined: <what + who>` notes are acceptable; leftover `{{TOKEN}}`
    stubs or "(add your principles here)" template prose are a **FAIL**.
-2. **Structure valid.** `dreamcontext doctor` runs clean (no errors).
+2. **Structure valid.** `dreamcontext doctor --json` reports `summary.error: 0`. Quote the
+   `code` + `evidence` of any failing check — the diagnostic IS the evidence (e.g.
+   `doctor/placeholder-content` names the file and the matched placeholder for you).
 3. **Recall works.** `dreamcontext memory recall "<a seed query from the project's own domain>"`
    returns real hits across knowledge/features/tasks — not an empty corpus.
 4. **Index built.** The knowledge index lists the ingested files with descriptions/tags.

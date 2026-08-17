@@ -77,7 +77,10 @@ that "smells wrong" without a clearer symptom above.
 reports issues; `dreamcontext doctor --heal-links` additionally applies the
 deterministic task↔feature link fixes (adopt back-refs, drop ghost/foreign
 `related_tasks` entries, canonicalize slugs). Read the report before repairing anything
-by hand.
+by hand. Agents repairing programmatically should run `dreamcontext doctor --json`
+instead: every check carries a stable `code`, plus `subject`/`evidence`/`supportedFixes`
+where annotated — repair by picking a supported fix (one per round, re-run between
+rounds), not by guessing. Contract → [cli-reference.md](cli-reference.md).
 
 ## The snapshot arrived as a 2KB preview / the brain looks empty
 

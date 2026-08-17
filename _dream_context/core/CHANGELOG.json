@@ -2,6 +2,22 @@
   {
     "date": "2026-08-17",
     "type": "feat",
+    "scope": "doctor",
+    "description": "doctor --json emits a machine-readable diagnostic report: every check carries a stable code (doctor/<slug>), annotated checks add subject (what is broken), evidence (measured proof), and supportedFixes (repairs a consumer picks from — e.g. doctor --heal-links on link drift). Wired into curator-verifier / initializer-verifier / curator-worker / goal-validator contracts and cli-reference; repair protocol documented in knowledge/patterns/diagnostic-repair-loop.md. Plus 4 patterns harvested from the archify review: diagnostic-repair-loop, freeze-and-receipt-delivery, canonical-form-delta, git-pinned-evidence.",
+    "breaking": false,
+    "summary": "doctor --json: stable codes + subject/evidence/supportedFixes per check; 4 archify-harvest patterns",
+    "references": [
+      "task:feat-doctor-machine-readable-diagnostics-json-supportedfixes",
+      "knowledge:diagnostic-repair-loop",
+      "file:src/cli/commands/doctor.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-17",
+    "type": "feat",
     "scope": "tasks",
     "description": "Backlog is a TAG, not a status, so it never appeared anywhere a status does: the only way to shelve a task was to type 'backlog' into a free-text box. Both halves of that were a problem. 'Send to backlog' is now a row in the card's context menu and a button in the detail panel, hidden once the task is already there rather than shown as a no-op. It writes ONLY the tag: the backend already owns the rule that backlog means undated, so letting it clear the dates keeps one definition of backlog instead of a second one drifting in the UI — the runtime check asserts exactly that, seeding a DATED task and proving both dates came back null. Tags are now picked from a searchable list of what the vault already uses, most-used first with the usage count as a hint, and typing something unknown still creates it. Hand-typing is how this vault ended up carrying both 'decisions' and 'decision' in its vocabulary, which the 2026-08-13 consolidation had to report as live near-duplicates. The picker reuses SearchableSelect, so the Turkish-insensitive fold comes with it; that component gains two optional props (hideClear, triggerLabel) because an ADD control has nothing to clear. Proven end to end against the real server on an isolated scratch vault: 9/9 via npm run verify:task-backlog.",
     "breaking": false,

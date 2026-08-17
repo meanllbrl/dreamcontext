@@ -1,0 +1,50 @@
+{
+  "out": "/Users/mehmetnuraydin/projects/dreamcontext/_dream_context/knowledge/patterns/doctor-json-before-after/doctor-json-before-after.excalidraw.md",
+  "name": "doctor-json-before-after",
+  "description": "Önce/sonra karşılaştırması: doctor'ın eski insan-okur prose çıktısı ajanı yorum + tahminle onarıma zorluyordu; yeni doctor --json teşhis sözleşmesi (code, subject, evidence, supportedFixes) ajana neyin bozuk olduğunu, kanıtını ve seçilecek onarımları yapılandırılmış veriyor. Onarım protokolü: tur başına tek teşhisli onarım, hata sayısı iyileşmeyince dürüst durma. Tüketiciler: curator-verifier, initializer-verifier, curator-worker, goal-validator. Kaynak: archify incelemesi 2026-08-17, diagnostic-repair-loop pattern'i.",
+  "tags": ["excalidraw", "kind:pattern", "topic:cli", "domain:quality"],
+  "background": "#ffffff",
+  "elements": [
+    { "type": "sectionTitle", "x": 60, "y": 40, "text": "doctor: ÖNCE → SONRA — tahmin yerine teşhis", "fontSize": 38 },
+
+    { "type": "row", "x": 60, "y": 130, "gap": 110, "items": [
+
+      { "type": "stack", "gap": 22, "items": [
+        { "type": "sectionTitle", "text": "ÖNCE — prose okur, tahmin eder", "fontSize": 25 },
+        { "type": "card", "w": 400, "h": 54, "text": "dreamcontext doctor", "color": "gray", "fontSize": 18 },
+        { "type": "card", "w": 400, "h": 96, "text": "⚠ core/2.memory.md: 4,725 chars / 37 lines — over the 4,000-char ceiling. The SessionStart snapshot pays this every session; extract detail...", "color": "yellow", "fontSize": 13 },
+        { "type": "card", "w": 400, "h": 62, "text": "Ajan bu METNİ yorumluyor: ne bozuk? kanıt ne? ne yapmalı?", "color": "yellow", "fontSize": 15 },
+        { "type": "card", "w": 400, "h": 62, "text": "Makul görüneni değiştir → tekrar dene → sürüklen (tahmin döngüsü)", "color": "red", "fontSize": 15 },
+        { "type": "card", "w": 400, "h": 78, "text": "Sonuç: token israfı, yanlış onarım riski, verifier raporunda kanıt yerine yorum", "color": "red", "fontSize": 15 }
+      ]},
+
+      { "type": "stack", "gap": 22, "items": [
+        { "type": "sectionTitle", "text": "SONRA — teşhisi okur, listeden seçer", "fontSize": 25 },
+        { "type": "card", "w": 470, "h": 54, "text": "dreamcontext doctor --json", "color": "blue", "fontSize": 18 },
+        { "type": "table",
+          "headers": ["alan", "değer"],
+          "rows": [
+            ["code", "doctor/core-file-ceiling"],
+            ["subject", "core/2.memory.md"],
+            ["evidence", "chars: 4725 > tavan: 4000"],
+            ["supportedFixes", "detayı knowledge/'a çıkar, özet bırak"]
+          ]
+        },
+        { "type": "card", "w": 470, "h": 62, "text": "Ajan onarımı supportedFixes LİSTESİNDEN seçiyor — tahmin yok", "color": "green", "fontSize": 15 },
+        { "type": "card", "w": 470, "h": 62, "text": "Protokol: tur başına 1 onarım → tekrar koş → hata sayısı düşmüyorsa DUR", "color": "mint", "fontSize": 15 },
+        { "type": "card", "w": 470, "h": 78, "text": "Sonuç: hedefli onarım, raporda alıntılanabilir code + evidence, dürüst durma", "color": "green", "fontSize": 15 }
+      ]}
+    ]},
+
+    { "type": "stack", "x": 60, "y": 720, "gap": 16, "items": [
+      { "type": "sectionTitle", "text": "Bunu kim kullanıyor?", "fontSize": 24 },
+      { "type": "row", "gap": 16, "items": [
+        { "type": "chip", "text": "curator-verifier", "color": "blue" },
+        { "type": "chip", "text": "initializer-verifier", "color": "blue" },
+        { "type": "chip", "text": "curator-worker", "color": "purple" },
+        { "type": "chip", "text": "goal-validator", "color": "purple" }
+      ]},
+      { "type": "callout", "w": 980, "title": "Bonus", "text": "Aynı PR ile 4 yeni pattern knowledge/patterns'a girdi: diagnostic-repair-loop (bu sözleşmenin kendisi), freeze-and-receipt-delivery, canonical-form-delta, git-pinned-evidence. Kaynak: archify incelemesi (2026-08-17). Bayrağı kullanmayan için hiçbir şey değişmedi — insan çıktısı ve exit kodları aynı." }
+    ]}
+  ]
+}

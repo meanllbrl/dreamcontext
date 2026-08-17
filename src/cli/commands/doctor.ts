@@ -53,6 +53,39 @@ export interface CheckResult {
   name: string;
   status: 'ok' | 'warn' | 'error';
   message: string;
+  /** Stable diagnostic slug (e.g. `doctor/core-file-ceiling`). Derived from `name` when unset. */
+  code?: string;
+  /** What is broken — file, entity, field. */
+  subject?: Record<string, unknown>;
+  /** Measured proof — bytes, counts, matched text, unresolved refs. */
+  evidence?: Record<string, unknown>;
+  /** Concrete repairs to choose from. A consumer repairs by picking one, not by guessing. */
+  supportedFixes?: string[];
+}
+
+export interface DoctorReport {
+  version: 1;
+  summary: { ok: number; warn: number; error: number };
+  checks: Array<CheckResult & { code: string }>;
+}
+
+/** Fallback so every reported check carries a stable code even before it is hand-annotated. */
+export function deriveCode(name: string): string {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return `doctor/${slug || 'check'}`;
+}
+
+export function buildDoctorReport(results: CheckResult[]): DoctorReport {
+  const checks = results.map((r) => ({ ...r, code: r.code ?? deriveCode(r.name) }));
+  return {
+    version: 1,
+    summary: {
+      ok: checks.filter((r) => r.status === 'ok').length,
+      warn: checks.filter((r) => r.status === 'warn').length,
+      error: checks.filter((r) => r.status === 'error').length,
+    },
+    checks,
+  };
 }
 
 function checkFile(root: string, relPath: string, label: string, required: boolean): CheckResult {
@@ -62,6 +95,11 @@ function checkFile(root: string, relPath: string, label: string, required: boole
       name: label,
       status: required ? 'error' : 'warn',
       message: required ? `Missing: ${relPath}` : `Optional file not found: ${relPath}`,
+      code: 'doctor/missing-file',
+      subject: { file: relPath },
+      supportedFixes: required
+        ? [`create ${relPath} with real content`, 'run `dreamcontext init` if the whole scaffold is missing']
+        : undefined,
     };
   }
 
@@ -71,6 +109,9 @@ function checkFile(root: string, relPath: string, label: string, required: boole
       name: label,
       status: 'warn',
       message: `Empty file: ${relPath}`,
+      code: 'doctor/empty-file',
+      subject: { file: relPath },
+      supportedFixes: [`write real content into ${relPath} — an empty file is worse than none`],
     };
   }
 
@@ -80,11 +121,19 @@ function checkFile(root: string, relPath: string, label: string, required: boole
   if (relPath.endsWith('.md')) {
     const content = readFileSync(fullPath, 'utf-8');
     const stripped = stripDocumentedMentions(content);
-    if (stripped.includes('(Add your') || stripped.includes('{{') || stripped.includes('(To be defined)')) {
+    const markers = ['(Add your', '{{', '(To be defined)'].filter((m) => stripped.includes(m));
+    if (markers.length > 0) {
       return {
         name: label,
         status: 'warn',
         message: `Contains placeholder content: ${relPath}`,
+        code: 'doctor/placeholder-content',
+        subject: { file: relPath },
+        evidence: { placeholders: markers },
+        supportedFixes: [
+          `replace the placeholder text in ${relPath} with real project content`,
+          'delete the templated section if there is nothing real to say',
+        ],
       };
     }
   }
@@ -95,22 +144,38 @@ function checkFile(root: string, relPath: string, label: string, required: boole
 function checkJson(root: string, relPath: string, label: string): CheckResult {
   const fullPath = join(root, relPath);
   if (!existsSync(fullPath)) {
-    return { name: label, status: 'error', message: `Missing: ${relPath}` };
+    return {
+      name: label, status: 'error', message: `Missing: ${relPath}`,
+      code: 'doctor/missing-file',
+      subject: { file: relPath },
+      supportedFixes: [`create ${relPath}`, 'run `dreamcontext init` if the whole scaffold is missing'],
+    };
   }
 
   try {
     const content = readFileSync(fullPath, 'utf-8');
     JSON.parse(content);
     return { name: label, status: 'ok', message: relPath };
-  } catch {
-    return { name: label, status: 'error', message: `Malformed JSON: ${relPath}` };
+  } catch (err) {
+    return {
+      name: label, status: 'error', message: `Malformed JSON: ${relPath}`,
+      code: 'doctor/malformed-json',
+      subject: { file: relPath },
+      evidence: { parseError: err instanceof Error ? err.message : String(err) },
+      supportedFixes: [`repair the JSON syntax in ${relPath} at the position named by the parse error`],
+    };
   }
 }
 
 function checkDirectory(root: string, relPath: string, label: string): CheckResult {
   const fullPath = join(root, relPath);
   if (!existsSync(fullPath)) {
-    return { name: label, status: 'error', message: `Missing directory: ${relPath}` };
+    return {
+      name: label, status: 'error', message: `Missing directory: ${relPath}`,
+      code: 'doctor/missing-directory',
+      subject: { directory: relPath },
+      supportedFixes: ['run `dreamcontext init` to scaffold the missing directories'],
+    };
   }
   return { name: label, status: 'ok', message: relPath };
 }
@@ -305,10 +370,19 @@ function checkObjectives(root: string): CheckResult[] {
 
   for (const o of objectives) {
     if (!isSafeObjectiveSlug(o.slug)) {
-      results.push({ name: 'Objectives', status: 'warn', message: `Objective slug not kebab-case: ${o.slug}` });
+      results.push({
+        name: 'Objectives', status: 'warn', message: `Objective slug not kebab-case: ${o.slug}`,
+        code: 'doctor/objective-slug', subject: { objective: o.slug },
+        supportedFixes: ['rename the objective file to a kebab-case slug'],
+      });
     }
     if (o.target_date !== null && !isCalendarDate(o.target_date)) {
-      results.push({ name: 'Objectives', status: 'warn', message: `Objective ${o.slug}: invalid target_date "${o.target_date}"` });
+      results.push({
+        name: 'Objectives', status: 'warn', message: `Objective ${o.slug}: invalid target_date "${o.target_date}"`,
+        code: 'doctor/objective-target-date', subject: { objective: o.slug, field: 'target_date' },
+        evidence: { target_date: o.target_date },
+        supportedFixes: ['set target_date to a YYYY-MM-DD calendar date or null'],
+      });
     }
     // A raw status string outside the enum reads back as null; catch hand-edits.
     const raw = readFileSync(o.path, 'utf-8');
@@ -318,6 +392,10 @@ function checkObjectives(root: string): CheckResult[] {
         name: 'Objectives',
         status: 'warn',
         message: `Objective ${o.slug}: status "${m[1]}" is not one of ${OBJECTIVE_STATUSES.join('|')} — treated as computed`,
+        code: 'doctor/objective-status-enum',
+        subject: { objective: o.slug, field: 'status' },
+        evidence: { status: m[1], allowed: OBJECTIVE_STATUSES },
+        supportedFixes: [`set status to one of ${OBJECTIVE_STATUSES.join('|')}, or null to keep it computed`],
       });
     }
     // A `metric:` block that parses to null (missing label, non-numeric target, or
@@ -328,6 +406,9 @@ function checkObjectives(root: string): CheckResult[] {
         name: 'Objectives',
         status: 'warn',
         message: `Objective ${o.slug}: metric block is malformed (needs a label + numeric target ≠ baseline) — ignored, progress falls back to tasks`,
+        code: 'doctor/objective-metric-malformed',
+        subject: { objective: o.slug, field: 'metric' },
+        supportedFixes: ['give the metric block a label and a numeric target different from the baseline', 'remove the metric block to let progress fall back to tasks'],
       });
     }
   }
@@ -753,6 +834,16 @@ export function checkCoreFileSizes(root: string): CheckResult[] {
       message:
         `${a.relPath}: ${withThousands(a.chars)} chars / ${withThousands(a.lines)} lines — over the `
         + `${exceeded.join(' and ')} ceiling. ${cost}`,
+      code: 'doctor/core-file-ceiling',
+      subject: { file: a.relPath },
+      evidence: {
+        chars: a.chars,
+        lines: a.lines,
+        charCeiling: CORE_FILE_CHAR_CEILING,
+        lineCeiling: CORE_FILE_LINE_CEILING,
+        alwaysLoaded: a.alwaysLoaded,
+      },
+      supportedFixes: [`extract detail from ${a.relPath} to knowledge/ and keep a summary + reference`],
     };
   });
 }
@@ -811,6 +902,14 @@ export function checkSnapshotSize(root: string): CheckResult[] {
         + 'constitution. '
         + 'Otherwise check overrides/task.md and state/.sleep.json (contextual reminders, automations) '
         + 'for an oversized block.',
+      code: 'doctor/snapshot-never-evict-overflow',
+      subject: { tier: 'never-evict', sections: Object.keys(NEVER_EVICT_SECTIONS) },
+      evidence: { neverEvictChars, harnessLimit: HARNESS_PERSIST_CHAR_LIMIT },
+      supportedFixes: [
+        'slim core/0.soul.md — move conditional "when X, do Y" rules into knowledge/patterns',
+        'slim people/<active>.md — move anything not about the person out of the constitution',
+        'check overrides/task.md and state/.sleep.json for an oversized block',
+      ],
     }];
   }
 
@@ -827,7 +926,14 @@ export function checkSnapshotSize(root: string): CheckResult[] {
         + `file and injects only a ${withThousands(HARNESS_PREVIEW_CHARS)}-char blind preview, so the agent `
         + `starts near-blind. Never-evict tier: ${withThousands(neverEvictChars)} chars. Trim the core `
         + 'files flagged above — extract detail to knowledge/.';
-    return [{ name: NAME, status: 'warn', message }];
+    return [{
+      name: NAME, status: 'warn', message,
+      code: 'doctor/snapshot-over-harness-limit',
+      evidence: { chars, harnessLimit: HARNESS_PERSIST_CHAR_LIMIT, neverEvictChars, ladderOff },
+      supportedFixes: ladderOff
+        ? ['unset DREAMCONTEXT_SNAPSHOT_BUDGET to restore the budgeted render']
+        : ['trim the core files flagged by doctor/core-file-ceiling — extract detail to knowledge/'],
+    }];
   }
 
   if (chars > budgetChars) {
@@ -839,7 +945,11 @@ export function checkSnapshotSize(root: string): CheckResult[] {
         + `${withThousands(budgetChars)}-char target (${withThousands(budgetTokens)} tok x 4), so sections `
         + `are already demoting, though it still lands inline under the `
         + `${withThousands(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit.`;
-    return [{ name: NAME, status: 'warn', message }];
+    return [{
+      name: NAME, status: 'warn', message,
+      code: 'doctor/snapshot-over-budget',
+      evidence: { chars, budgetChars, harnessLimit: HARNESS_PERSIST_CHAR_LIMIT, ladderOff },
+    }];
   }
 
   return [{
@@ -923,7 +1033,7 @@ function checkTaskFeatureLinks(root: string): CheckResult[] {
     }];
   }
   const warnAll = (messages: string[]) => {
-    for (const message of messages) results.push({ name: 'Task↔feature links', status: 'warn', message });
+    for (const message of messages) results.push({ name: 'Task↔feature links', status: 'warn', message, code: 'doctor/link-drift' });
   };
   warnAll(audit.ghostFeatureRefs.map((g) => g.candidates
     ? `task '${g.task}' → related_feature '${g.feature}' is ambiguous across ${g.candidates.length} features (${g.candidates.join(', ')}) — qualify it: dreamcontext tasks feature ${g.task} <folder/slug>`
@@ -939,7 +1049,13 @@ function checkTaskFeatureLinks(root: string): CheckResult[] {
   } else {
     const healable = results.length - audit.ghostFeatureRefs.length - audit.conflictingClaims.length;
     if (healable > 0) {
-      results.push({ name: 'Task↔feature links', status: 'warn', message: `${healable} of the above are deterministic — fix them all: dreamcontext doctor --heal-links` });
+      results.push({
+        name: 'Task↔feature links', status: 'warn',
+        message: `${healable} of the above are deterministic — fix them all: dreamcontext doctor --heal-links`,
+        code: 'doctor/link-drift-healable',
+        evidence: { healable },
+        supportedFixes: ['dreamcontext doctor --heal-links'],
+      });
     }
   }
   return results;
@@ -950,29 +1066,46 @@ export function registerDoctorCommand(program: Command): void {
     .command('doctor')
     .description('Validate _dream_context/ structure and report issues')
     .option('--heal-links', 'Apply the deterministic task↔feature link fixes (adopt back-refs, drop ghost/foreign related_tasks entries, canonicalize slugs) before running the checks')
-    .action((opts: { healLinks?: boolean }) => {
+    .option('--json', 'Emit a machine-readable diagnostic report: every check carries a stable code, plus subject/evidence/supportedFixes where annotated')
+    .action((opts: { healLinks?: boolean; json?: boolean }) => {
       const root = resolveContextRoot();
       if (!root) {
-        console.log(chalk.red('✗') + ' _dream_context/ not found. Run `dreamcontext init` to create it.');
+        if (opts.json) {
+          console.log(JSON.stringify({ version: 1, error: '_dream_context/ not found — run `dreamcontext init` to create it' }, null, 2));
+        } else {
+          console.log(chalk.red('✗') + ' _dream_context/ not found. Run `dreamcontext init` to create it.');
+        }
         process.exit(1);
       }
 
-      console.log(header('Doctor'));
+      if (!opts.json) console.log(header('Doctor'));
 
+      let heal: Record<string, unknown> | undefined;
       if (opts.healLinks) {
         const report = reconcileFeatureLinks(root);
         const fixed =
           report.adopted.length + report.canonicalized.length + report.membershipsAdded.length
           + report.ghostTaskRefsDropped.length + report.foreignClaimsDropped.length;
-        console.log(chalk.bold('  Link heal'));
-        for (const a of report.adopted) console.log(chalk.green('  ✓') + ` ${a.task} → related_feature: ${a.feature} (adopted from the feature's related_tasks)`);
-        for (const c of report.canonicalized) console.log(chalk.green('  ✓') + ` ${c.task}: related_feature '${c.from}' → '${c.to}' (canonical slug)`);
-        for (const m of report.membershipsAdded) console.log(chalk.green('  ✓') + ` ${m.feature}: related_tasks += ${m.task}`);
-        for (const g of report.ghostTaskRefsDropped) console.log(chalk.green('  ✓') + ` ${g.feature}: dropped ghost task '${g.task}' from related_tasks`);
-        for (const f of report.foreignClaimsDropped) console.log(chalk.green('  ✓') + ` ${f.feature}: dropped '${f.task}' (belongs to ${f.actual})`);
-        for (const u of report.unresolved) console.log(chalk.yellow('  ⚠') + ` ${u}`);
-        if (fixed === 0 && report.unresolved.length === 0) console.log(chalk.dim('  nothing to heal — links already consistent'));
-        console.log();
+        if (opts.json) {
+          heal = {
+            adopted: report.adopted.length,
+            canonicalized: report.canonicalized.length,
+            membershipsAdded: report.membershipsAdded.length,
+            ghostTaskRefsDropped: report.ghostTaskRefsDropped.length,
+            foreignClaimsDropped: report.foreignClaimsDropped.length,
+            unresolved: report.unresolved,
+          };
+        } else {
+          console.log(chalk.bold('  Link heal'));
+          for (const a of report.adopted) console.log(chalk.green('  ✓') + ` ${a.task} → related_feature: ${a.feature} (adopted from the feature's related_tasks)`);
+          for (const c of report.canonicalized) console.log(chalk.green('  ✓') + ` ${c.task}: related_feature '${c.from}' → '${c.to}' (canonical slug)`);
+          for (const m of report.membershipsAdded) console.log(chalk.green('  ✓') + ` ${m.feature}: related_tasks += ${m.task}`);
+          for (const g of report.ghostTaskRefsDropped) console.log(chalk.green('  ✓') + ` ${g.feature}: dropped ghost task '${g.task}' from related_tasks`);
+          for (const f of report.foreignClaimsDropped) console.log(chalk.green('  ✓') + ` ${f.feature}: dropped '${f.task}' (belongs to ${f.actual})`);
+          for (const u of report.unresolved) console.log(chalk.yellow('  ⚠') + ` ${u}`);
+          if (fixed === 0 && report.unresolved.length === 0) console.log(chalk.dim('  nothing to heal — links already consistent'));
+          console.log();
+        }
       }
 
       const results: CheckResult[] = [
@@ -1016,6 +1149,9 @@ export function registerDoctorCommand(program: Command): void {
               name: 'Taxonomy vocabulary',
               status: 'warn' as const,
               message: 'core/taxonomy.json not found — run `dreamcontext taxonomy init` to scaffold it',
+              code: 'doctor/taxonomy-missing',
+              subject: { file: 'core/taxonomy.json' },
+              supportedFixes: ['dreamcontext taxonomy init'],
             }]
           : [checkJson(root, 'core/taxonomy.json', 'Taxonomy vocabulary')]),
 
@@ -1042,6 +1178,14 @@ export function registerDoctorCommand(program: Command): void {
         } catch {
           // Already caught by checkJson above
         }
+      }
+
+      if (opts.json) {
+        const report: DoctorReport & { heal?: Record<string, unknown> } = buildDoctorReport(results);
+        if (heal) report.heal = heal;
+        console.log(JSON.stringify(report, null, 2));
+        if (report.summary.error > 0) process.exit(1);
+        return;
       }
 
       const icons = { ok: chalk.green('✓'), warn: chalk.yellow('⚠'), error: chalk.red('✗') };
