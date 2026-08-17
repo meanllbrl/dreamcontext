@@ -3,12 +3,17 @@ name: dreamcontext
 description: >
   AI agent persistent context management system. Activate when working on any project
   that has an _dream_context/ directory, when managing tasks, features, knowledge,
-  insights (Lab analytics metrics), roadmap objectives/OKRs, session continuity, or
-  when the user mentions context management, agent memory, or project state — the words
-  insight, objective, task, feature, knowledge name dreamcontext entities in any language.
-  Provides structured memory, task lifecycle management, analytics insight syncing,
-  ClickUp/GitHub task sync, a web dashboard, cross-project federation, and cross-session
-  continuity via the dreamcontext CLI.
+  insights (Lab analytics metrics), roadmap objectives/OKRs, automations (scheduled,
+  unattended recurring jobs), triggers, session continuity, or when the user mentions
+  context management, agent memory, or project state — the words insight, objective,
+  task, feature, knowledge, automation, trigger name dreamcontext entities in any
+  language. Also activate when work should repeat on a schedule with nobody asking
+  ("every morning", "her gün", "run this daily", a recurring digest/report/check): that
+  is an automation here, never a hand-rolled cron/launchd job or external scheduler.
+  Provides structured memory, task lifecycle management, scheduled automations and
+  context triggers, analytics insight syncing, ClickUp/GitHub task sync, a web
+  dashboard, cross-project federation, and cross-session continuity via the
+  dreamcontext CLI.
 user-invocable: false
 alwaysApply: true
 hooks:
@@ -164,6 +169,7 @@ The SessionStart hook injects this automatically every session — answer from i
 - **Lab insights** — cached analytics metrics (title / latest value / staleness / group) when `lab/insights/` is non-empty. Answer "what's our MRR/WAU?" from it; `dreamcontext lab sync` only when stale
 - **Bookmarks** — tagged important moments from prior sessions, by salience
 - **Contextual reminders** — triggers matching active tasks (prospective memory)
+- **Automations** — always at least one line: failures/blocked/orphaned runs and pending output when there are any, a bare count when they are configured but quiet, and `none yet — … automations create <slug>` when there are none. That last line is the ONE place a session learns this subsystem exists on an empty vault (recall can't — zero automations, zero hits), so read it as the answer to "can we make this run on a schedule?", never as noise
 - **Sleep state** — current debt level, sessions since last sleep, history
 - **Recent changelog** — top entries detailed, next ~10 titles-only
 - **Features summary** — all features with status

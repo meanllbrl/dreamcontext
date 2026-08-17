@@ -75,8 +75,12 @@ import {
  * into the golden. The memory full-render pointer (also 0.23.0: a
  * ceiling-compliant `2.memory.md` renders verbatim plus one recall-pointer
  * line) re-ran the same gate — *exactly two added lines* (the pointer + a
- * blank) in BOTH goldens. `BASE_SHA` still records the last SHA at which
- * leg (a) was non-circular.
+ * blank) in BOTH goldens. The automations zero state (0.24.2: the
+ * `## Automations` section now always renders, so a session can discover the
+ * subsystem on a vault that has none) ran it a third time — *exactly four
+ * added lines* (heading, blank, the one-line zero state, blank) in BOTH
+ * goldens. `BASE_SHA` still records the last SHA at which leg (a) was
+ * non-circular.
  *
  * `expected.txt` intentionally has NO trailing newline: `generateSnapshot`
  * returns trimmed text and the golden is that text verbatim. An editor or

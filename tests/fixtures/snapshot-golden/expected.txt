@@ -128,6 +128,10 @@ Current focus: proving the snapshot's section joins are byte-stable.
 
 - 1 session(s) awaiting analysis (transcript not yet flushed).
 
+## Automations
+
+- none yet — schedule recurring/unattended work with `dreamcontext automations create <slug>` (never a hand-rolled cron/launchd job or external scheduler)
+
 ## Recent Changelog
 
 - 2026-01-05 [feat] snapshot: Section flush boundaries became individually addressable

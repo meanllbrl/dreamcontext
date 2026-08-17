@@ -81,6 +81,8 @@ The limits are deliberate:
 - **A manifest is `★★` while enabled, `★` while disabled**, so `--level 2` skips paused jobs and run logs.
 - **Automations never cross a vault boundary.** Manifests are gitignored machine-local state, `shared` defaults false, and a manifest body IS the prompt a `bypassPermissions` session runs — so cross-vault recall and federation digests both exclude them, while your own vault's recall treats them as first-class.
 
+**Recall cannot bootstrap discovery, and the snapshot is what covers that.** A vault with zero automations returns zero automation hits, so on exactly the vault where somebody is asking for the feature for the first time, recall is silent. That is why the session snapshot's `## Automations` section always renders at least one line — the zero state (`none yet — schedule recurring/unattended work with \`dreamcontext automations create <slug>\``) included. It is a discovery channel, not a status report, and it is what makes "can we make this run every morning?" answerable without the user naming the subsystem first.
+
 ---
 
 ## The capture protocol

@@ -121,9 +121,10 @@ describe('clean brain', () => {
     expect(renderAutomationsSection(contextRoot, { now: NOW, home })).toEqual([]);
   });
 
-  it('buildAutomationsSnapshot returns empty lines and all-false flags', () => {
+  it('buildAutomationsSnapshot returns empty lines, a zero total and all-false flags', () => {
     expect(buildAutomationsSnapshot(contextRoot, { now: NOW, home })).toEqual({
       lines: [],
+      total: 0,
       hasBlocked: false,
       hasFailure: false,
       hasOrphan: false,
@@ -180,6 +181,18 @@ describe('blocked pending approval', () => {
     const m = makeAutomation('eod-digest');
     approveAutomation(projectRoot, m, NOW, home);
     expect(renderAutomationsSection(contextRoot, { now: NOW, home })).toEqual([]);
+  });
+
+  it('still counts that quiet automation in `total` — "nothing to report" is not "nothing exists"', () => {
+    // The distinction the snapshot's zero state is built on: a vault with no
+    // automations and a vault whose automations are simply quiet both render
+    // zero lines, so `lines` alone cannot tell them apart and "none" would be
+    // a lie over the second one.
+    const m = makeAutomation('weekly-report');
+    approveAutomation(projectRoot, m, NOW, home);
+    const snap = buildAutomationsSnapshot(contextRoot, { now: NOW, home });
+    expect(snap.lines).toEqual([]);
+    expect(snap.total).toBe(1);
   });
 
   it('a manifest edited after approval (manifest-changed) is surfaced the same way, still naming approve', () => {

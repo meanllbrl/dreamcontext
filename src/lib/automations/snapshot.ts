@@ -37,12 +37,25 @@ import { pendingOutputsSince } from './consumption.js';
  *
  * PLAIN TEXT ONLY — no chalk/ANSI/prompts. This feeds the SessionStart hook
  * programmatically, not a human terminal. Returns `[]` when there is nothing
- * to say, so a clean brain's snapshot stays byte-identical — the mechanical
- * enforcement of "ships fully disabled".
+ * to REPORT — no run, no block, no orphan, no pending output. "Nothing to
+ * report" is not the same as "nothing exists", which is why `total` is
+ * reported alongside: the snapshot's one-line zero state (`src/cli/commands/
+ * snapshot.ts`) is a DISCOVERY channel, not a state report, and it is the
+ * caller that owns it. Nothing here installs, approves, or runs anything —
+ * "ships fully disabled" is a property of the runner, not of whether an agent
+ * is allowed to learn the subsystem exists.
  */
 
 export interface AutomationsSnapshot {
   lines: string[];
+  /** How many automation manifests this vault holds, regardless of whether any
+   *  of them produced a line above. The DISCOVERY signal, and the one thing
+   *  `lines` cannot express: `lines` is empty both on a vault with no
+   *  automations at all AND on a vault whose automations are simply quiet
+   *  (approved, enabled, nothing fired inside the window). The snapshot's
+   *  zero state has to tell those two apart — printing "none" over a
+   *  configured-but-quiet vault would be a lie. */
+  total: number;
   hasBlocked: boolean;
   hasFailure: boolean;
   hasOrphan: boolean;
@@ -133,8 +146,10 @@ export function buildAutomationsSnapshot(
   const orphanLines: string[] = [];
   const okRuns = new Map<string, number>();
   let hasFailure = false;
+  let total = 0;
 
   for (const manifest of listAutomations(contextRoot)) {
+    total += 1;
     // ─── Last-24h runs / failures (cache history within the window) ────────
     const cache = readAutomationCache(contextRoot, manifest.slug);
     if (cache) {
@@ -224,6 +239,7 @@ export function buildAutomationsSnapshot(
     // merely informational: it is the only line here that names something the
     // reader has to DO before that automation works again.
     lines: [...recentLines, ...reviewLines, ...blockedLines, ...orphanLines, ...pendingLines, ...okLines],
+    total,
     hasBlocked: blockedLines.length > 0,
     hasFailure,
     hasOrphan: orphanLines.length > 0,
@@ -233,11 +249,13 @@ export function buildAutomationsSnapshot(
 }
 
 /**
- * Plain-text lines for the session snapshot's `## Automations` section.
- * `[]` when there is nothing to say. The caller (`src/cli/commands/snapshot.ts`,
- * a later task) is responsible for the `## Automations` heading and for
- * deciding demotion/eviction under budget — this function only ever returns
- * the body bullets.
+ * Plain-text STATE lines for the session snapshot's `## Automations` section.
+ * `[]` when there is nothing to report. The caller (`src/cli/commands/
+ * snapshot.ts`) is responsible for the `## Automations` heading, for the
+ * zero/quiet-state discovery line it renders when this returns `[]` (which is
+ * why it calls `buildAutomationsSnapshot` for `total` rather than this
+ * wrapper), and for deciding demotion/eviction under budget — this function
+ * only ever returns the body bullets.
  *
  * Deliberately does NOT render a heartbeat/staleness warning: a healthy tick
  * can legitimately run for hours (multiple same-fire-time automations, each

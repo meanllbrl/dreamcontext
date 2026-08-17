@@ -485,6 +485,17 @@ function printInstallCheck(check: InstallCheck): void {
   console.log(`  mismatch: ${check.mismatch ? chalk.red('true') : 'false'}`);
   console.log(`  wrapper: ${check.wrapperPresent ? (check.wrapperCurrent ? 'present, current' : chalk.red('present, STALE')) : chalk.dim('absent')}`);
   console.log(`  plist: ${check.plistPresent ? (check.plistCurrent ? 'present, current' : chalk.red('present, STALE')) : chalk.dim('absent')}`);
+  // STALE on its own is a status word with no verdict and no way out — the
+  // notifier block below tells you what to do about its own staleness, and
+  // this one did not, which reads as a fault on a dispatcher that is in fact
+  // ticking fine. Say both halves: stale here is not broken (the wrapper
+  // re-resolves the CLI by itself when the saved path stops working — see
+  // `resolveDispatcherTarget`'s fallback), and reinstalling is how the files
+  // stop being stale.
+  if ((check.wrapperPresent && !check.wrapperCurrent) || (check.plistPresent && !check.plistCurrent)) {
+    console.log(chalk.dim('    STALE is not broken — a tick still re-resolves the CLI on its own;'));
+    console.log(chalk.dim('    re-run `dreamcontext automations install` to regenerate from the current target.'));
+  }
   console.log(`  bootstrapped: ${check.bootstrapped}`);
   console.log(`  log: ${check.logPath} (${check.logSizeBytes} bytes)`);
 

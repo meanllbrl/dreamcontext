@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { readFrontmatter, writeFrontmatter } from '../../src/lib/frontmatter.js';
 import { writePeople } from '../../src/lib/people-store.js';
+import { createAutomation } from '../../src/lib/automations/store.js';
+import { approveAutomation } from '../../src/lib/automations/registry.js';
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `ac-snap-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -20,10 +22,14 @@ function scaffold(root: string) {
   return ctx;
 }
 
-function runSnapshot(cwd: string): string {
+function runSnapshot(cwd: string, env: NodeJS.ProcessEnv = {}): string {
   const cliPath = join(__dirname, '..', '..', 'dist', 'index.js');
   try {
-    return execSync(`node ${cliPath} snapshot`, { cwd, encoding: 'utf-8' });
+    return execSync(`node ${cliPath} snapshot`, {
+      cwd,
+      encoding: 'utf-8',
+      env: { ...process.env, ...env },
+    });
   } catch (e: any) {
     return e.stdout ?? '';
   }
@@ -500,23 +506,63 @@ describe('snapshot (integration)', () => {
       return ctx;
     }
 
-    it('does not add an "## Automations" heading for a clean brain (no automations/ dir at all)', () => {
+    it('carries a ONE-LINE zero state for a clean brain (no automations/ dir at all), naming `automations create`', () => {
+      // The discovery channel. Without it a session cannot learn the subsystem
+      // exists: recall returns nothing on a vault with zero automations, so an
+      // empty vault is precisely the vault that most needs to be told. One
+      // line, and it carries the anti-cron rule at the point of discovery.
       scaffoldRich(tmpDir);
       const output = runSnapshot(tmpDir);
-      expect(output).not.toContain('## Automations');
+      expect(output).toContain('## Automations');
+      expect(output).toContain('dreamcontext automations create <slug>');
+      expect(output).toContain('never a hand-rolled cron/launchd job');
+
+      const body = output.split('## Automations')[1].split('\n## ')[0];
+      expect(body.split('\n').filter((l) => l.trim().startsWith('- '))).toHaveLength(1);
     });
 
-    it('is byte-identical whether or not an EMPTY automations/ directory exists — the mechanical "ships fully disabled" proof', () => {
+    it('is byte-identical whether or not an EMPTY automations/ directory exists', () => {
       const ctx = scaffoldRich(tmpDir);
       const before = runSnapshot(tmpDir);
 
       // Presence of the (empty) directory alone — no manifest, no cache, no
-      // registry entry — must not change a single byte of the snapshot.
+      // registry entry — must not change a single byte of the snapshot. The
+      // zero-state line is the SAME line either way: it reports what exists,
+      // and an empty directory is still nothing.
       mkdirSync(join(ctx, 'automations'), { recursive: true });
       const after = runSnapshot(tmpDir);
 
       expect(after).toBe(before);
-      expect(after).not.toContain('## Automations');
+      expect(after).toContain('dreamcontext automations create <slug>');
+    });
+
+    it('reports a configured-but-quiet automation by count instead of claiming "none"', () => {
+      // A weekly job on one of the six days it does not fire: nothing to
+      // report, but printing the zero state over it would be false — and the
+      // agent would lose the one signal that this vault already automates.
+      //
+      // HOME is redirected to a scratch dir so the approval is written to a
+      // throwaway registry, never the real `~/.dreamcontext/automations.json`
+      // (`node:os`'s homedir() reads $HOME on POSIX). The manifest is approved
+      // under the vault's REAL path because macOS's tmpdir is a symlink and
+      // the CLI resolves it before looking the project up.
+      const ctx = scaffoldRich(tmpDir);
+      const fakeHome = join(tmpDir, 'fake-home');
+      mkdirSync(fakeHome, { recursive: true });
+      const manifest = createAutomation(ctx, {
+        slug: 'weekly-report',
+        title: 'Weekly Report',
+        days: 'mon',
+        at: '09:00',
+        prompt: 'Summarize the week.',
+      });
+      approveAutomation(realpathSync(tmpDir), manifest, new Date(), fakeHome);
+
+      const output = runSnapshot(tmpDir, { HOME: fakeHome });
+      expect(output).toContain('## Automations');
+      expect(output).toContain('1 configured, nothing to report in the last 24h');
+      expect(output).not.toContain('none yet');
+      expect(output).not.toContain('blocked pending approval');
     });
 
     it('surfaces a blocked-pending-approval automation with the exact approve command, and nothing for a clean brain otherwise', () => {

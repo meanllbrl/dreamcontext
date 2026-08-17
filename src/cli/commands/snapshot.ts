@@ -32,7 +32,7 @@ import { listTheses } from '../../lib/theses/store.js';
 import type { ThesisManifest } from '../../lib/theses/types.js';
 import { readPeerSummaryCache } from '../../lib/federation-peer-summary.js';
 import { resolveLinkedRepos } from '../../lib/linked-repos.js';
-import { renderAutomationsSection } from '../../lib/automations/snapshot.js';
+import { buildAutomationsSnapshot } from '../../lib/automations/snapshot.js';
 import {
   applyBudget, resolveBudget, demoteMemoryBlock, demoteTaskList, renderOverBudgetBanner,
   HARNESS_PERSIST_CHAR_LIMIT,
@@ -1716,13 +1716,37 @@ export function measureSnapshot(
     parts.push('');
   }
 
-  // 5.9 Automations — blocked/failed/orphaned state, surfaced only when there
-  // is something to say (renderAutomationsSection returns [] on a clean brain,
-  // keeping this section's presence mechanically tied to "ships fully disabled").
-  const automationLines = renderAutomationsSection(root);
-  if (automationLines.length > 0) {
-    parts.push('## Automations\n', ...automationLines, '');
+  // 5.9 Automations — blocked/failed/orphaned/pending state when there is any,
+  // and ALWAYS at least one line otherwise. The zero state is not decoration:
+  // the section is the only place a session learns this subsystem exists at
+  // all. Measured failure (memoryos, 2026-08-03): asked for a recurring digest,
+  // the agent hand-rolled a launchd plist + shell wrapper because neither the
+  // snapshot nor the skill's activation gate ever mentioned automations, and
+  // the skill's own "never a hand-rolled cron job" rule sat unread behind a
+  // gate the request never opened. Recall cannot bootstrap the discovery
+  // either — a vault with zero automations returns zero automation hits.
+  //
+  // Three states, one line minimum, because "no lines" is ambiguous on its
+  // own: a vault with NO automations and a vault whose automations are simply
+  // quiet both render `[]`, and saying "none" over the latter would be false.
+  // Naming a configured-but-quiet count is also what keeps a weekly job
+  // visible on the six days it does not fire.
+  const automations = buildAutomationsSnapshot(root);
+  parts.push('## Automations\n');
+  if (automations.lines.length > 0) {
+    parts.push(...automations.lines);
+  } else if (automations.total === 0) {
+    parts.push(
+      '- none yet — schedule recurring/unattended work with `dreamcontext automations create <slug>` '
+      + '(never a hand-rolled cron/launchd job or external scheduler)',
+    );
+  } else {
+    parts.push(
+      `- ${automations.total} configured, nothing to report in the last 24h — `
+      + '`dreamcontext automations list`',
+    );
   }
+  parts.push('');
   flushPinned('awareness');
 
   // 6. Sleep State — DEPRECATED in snapshot (v0.4.0+).
