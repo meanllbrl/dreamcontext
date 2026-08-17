@@ -12,7 +12,7 @@ pinned: false
 date: '2026-07-26'
 status: in_review
 created: '2026-07-26'
-updated: '2026-08-14'
+updated: '2026-08-17'
 released_version: v0.22.0
 tags:
   - 'topic:agents'
@@ -30,9 +30,6 @@ related_tasks:
     automations-hitl-a-run-can-stop-and-ask-and-the-verdict-comes-back-from-wherever-you-are
   - >-
     automations-redesign-the-flow-graph-is-the-manifest-the-run-asks-in-chat-and-the-queue-never-loses-a-fire
-  - approve-time-duplicate-run-warning-for-shared-automations
-  - >-
-    fix-automations-every-run-binds-its-session-telegram-carries-the-report-and-a-bare-message-talks-to-the-latest-run
 ---
 
 ## Why
