@@ -15,6 +15,7 @@ import { listInsights, isSafeInsightSlug, getInsight, readCache } from '../../li
 import { parseFunnelSet, FUNNEL_HISTORY_MAX } from '../../lib/lab/funnel.js';
 import { RENDERS } from '../../lib/lab/types.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
+import { inspectJsonArray } from '../../lib/json-file.js';
 import { readSetupConfig, isLearningEnabled } from '../../lib/setup-config.js';
 import { hasPeopleLayout, listPeople, personFilePath } from '../../lib/people-store.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
@@ -141,7 +142,25 @@ function checkFile(root: string, relPath: string, label: string, required: boole
   return { name: label, status: 'ok', message: relPath };
 }
 
-function checkJson(root: string, relPath: string, label: string): CheckResult {
+/**
+ * Validate a JSON data file: it parses, AND its top-level shape is the one the
+ * readers require.
+ *
+ * Parsing alone is not enough. `core/CHANGELOG.json` and `core/RELEASES.json`
+ * are read by `readJsonArray()`, which needs a **bare array** — a vault
+ * scaffolded by hand as `{"entries": []}` / `{"releases": []}` parses fine,
+ * so a parse-only check reported OK while `core releases add` failed loudly
+ * and the snapshot's recent-changelog section came back empty in silence.
+ * `expect` closes that gap; the recoverable wrapper shape is a `warn` (readers
+ * unwrap it, the next write normalises it) and an unreadable shape is an
+ * `error`.
+ */
+export function checkJson(
+  root: string,
+  relPath: string,
+  label: string,
+  expect: 'array' | 'object',
+): CheckResult {
   const fullPath = join(root, relPath);
   if (!existsSync(fullPath)) {
     return {
@@ -152,10 +171,9 @@ function checkJson(root: string, relPath: string, label: string): CheckResult {
     };
   }
 
+  let parsed: unknown;
   try {
-    const content = readFileSync(fullPath, 'utf-8');
-    JSON.parse(content);
-    return { name: label, status: 'ok', message: relPath };
+    parsed = JSON.parse(readFileSync(fullPath, 'utf-8'));
   } catch (err) {
     return {
       name: label, status: 'error', message: `Malformed JSON: ${relPath}`,
@@ -165,6 +183,57 @@ function checkJson(root: string, relPath: string, label: string): CheckResult {
       supportedFixes: [`repair the JSON syntax in ${relPath} at the position named by the parse error`],
     };
   }
+
+  if (expect === 'array') {
+    const shape = inspectJsonArray(parsed);
+    if (shape.kind === 'wrapped') {
+      return {
+        name: label, status: 'warn',
+        message:
+          `Wrapped JSON array: ${relPath} holds {"${shape.wrapperKey}": [...]}, not a bare array `
+          + '— readers unwrap it and the next write normalises the file, but fix it to be sure',
+        code: 'doctor/json-wrapped-array',
+        subject: { file: relPath, expected: 'array' },
+        evidence: {
+          wrapperKey: shape.wrapperKey,
+          topLevelKeys: Object.keys(parsed as Record<string, unknown>),
+          items: shape.array.length,
+        },
+        supportedFixes: [
+          `rewrite ${relPath} as the bare array under its "${shape.wrapperKey}" key, dropping the wrapper object`,
+          `write to it once (e.g. \`dreamcontext core changelog add …\`) — the write normalises ${relPath} in place`,
+        ],
+      };
+    }
+    if (shape.kind === 'invalid') {
+      return {
+        name: label, status: 'error',
+        message: `Expected a JSON array in ${relPath}, got ${shape.actual}`,
+        code: 'doctor/json-not-array',
+        subject: { file: relPath, expected: 'array' },
+        evidence: { actual: shape.actual },
+        supportedFixes: [
+          `rewrite ${relPath} as a bare JSON array ([...]) holding the entries it should have`,
+          `reset it to \`[]\` if it holds nothing worth keeping`,
+        ],
+      };
+    }
+    return { name: label, status: 'ok', message: relPath };
+  }
+
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    const actual = parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed;
+    return {
+      name: label, status: 'error',
+      message: `Expected a JSON object in ${relPath}, got ${actual}`,
+      code: 'doctor/json-not-object',
+      subject: { file: relPath, expected: 'object' },
+      evidence: { actual },
+      supportedFixes: [`rewrite ${relPath} as a JSON object ({...})`],
+    };
+  }
+
+  return { name: label, status: 'ok', message: relPath };
 }
 
 function checkDirectory(root: string, relPath: string, label: string): CheckResult {
@@ -1124,8 +1193,8 @@ export function registerDoctorCommand(program: Command): void {
         checkFile(root, 'core/2.memory.md', 'Memory file', true),
 
         // JSON files
-        checkJson(root, 'core/CHANGELOG.json', 'Changelog'),
-        checkJson(root, 'core/RELEASES.json', 'Releases'),
+        checkJson(root, 'core/CHANGELOG.json', 'Changelog', 'array'),
+        checkJson(root, 'core/RELEASES.json', 'Releases', 'array'),
 
         // Optional extended core files
         checkFile(root, 'core/3.style_guide_and_branding.md', 'Style guide', false),
@@ -1153,14 +1222,14 @@ export function registerDoctorCommand(program: Command): void {
               subject: { file: 'core/taxonomy.json' },
               supportedFixes: ['dreamcontext taxonomy init'],
             }]
-          : [checkJson(root, 'core/taxonomy.json', 'Taxonomy vocabulary')]),
+          : [checkJson(root, 'core/taxonomy.json', 'Taxonomy vocabulary', 'object')]),
 
         // Sleep state (optional — created on first Stop hook)
         ...(existsSync(join(root, 'state', '.sleep.json'))
-          ? [checkJson(root, 'state/.sleep.json', 'Sleep state')]
+          ? [checkJson(root, 'state/.sleep.json', 'Sleep state', 'object')]
           : []),
         ...(existsSync(join(root, 'state', '.platforms.json'))
-          ? [checkJson(root, 'state/.platforms.json', 'Platform defaults')]
+          ? [checkJson(root, 'state/.platforms.json', 'Platform defaults', 'object')]
           : []),
       ];
 

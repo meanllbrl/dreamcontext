@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, basename, dirname, relative } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
+import { readJsonArray } from './json-file.js';
 import { expandQueryTerms } from './recall-synonyms.js';
 import { loadDigestDocs } from './session-digest.js';
 import { tagIndexValue } from './taxonomy.js';
@@ -535,9 +536,11 @@ function loadChangelogEntries(contextRoot: string): CorpusDoc[] {
   if (!existsSync(path)) return [];
   let entries: Array<Record<string, unknown>> = [];
   try {
-    const raw = readFileSync(path, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) entries = parsed;
+    // Via readJsonArray, so a vault whose CHANGELOG.json was scaffolded as
+    // `{"entries": [...]}` still indexes. This loader used to drop such a file
+    // to zero docs in silence — `memory recall --types changelog` answered "no
+    // hits" on a full changelog, with nothing surfaced to say why.
+    entries = readJsonArray<Record<string, unknown>>(path);
   } catch {
     return [];
   }

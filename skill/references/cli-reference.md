@@ -34,6 +34,8 @@ For agents (and scripts), `doctor --json` replaces the human output with one JSO
 
 **Repair protocol** (the *diagnostic-repair-loop* pattern): repair only the diagnosed `subject`, choosing from `supportedFixes`; **one diagnosed repair per round**, then re-run; continue while the error count reaches a new minimum; if two consecutive rounds don't improve it, stop and report the unresolved diagnostics truthfully — never weaken a check to pass it.
 
+**JSON data files are checked for shape, not just parseability.** `core/CHANGELOG.json` and `core/RELEASES.json` must be a **bare array**; `core/taxonomy.json`, `state/.sleep.json` and `state/.platforms.json` must be an **object**. A file that parses but holds the wrong top-level shape used to report `ok` — which is how a vault hand-scaffolded as `{"entries": []}` / `{"releases": []}` could fail `core releases add` loudly while the snapshot's recent-changelog section and `memory recall --types changelog` came back empty *silently*. Three codes now cover it: `doctor/json-wrapped-array` (**warn** — the array is wrapped in an object; readers unwrap it and the next write normalises the file, so nothing is lost), `doctor/json-not-array` and `doctor/json-not-object` (**error** — no reader can recover the shape). Today's `init` writes `[]` for both files, so these only ever fire on a vault created some other way.
+
 ---
 
 ## People — who works in this vault

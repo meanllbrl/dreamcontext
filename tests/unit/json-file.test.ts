@@ -9,6 +9,7 @@ import {
   insertToJsonArray,
   readJsonObject,
   writeJsonObject,
+  inspectJsonArray,
 } from '../../src/lib/json-file.js';
 
 function makeTmpDir(): string {
@@ -46,6 +47,53 @@ describe('json-file', () => {
       const file = join(tmpDir, 'obj.json');
       writeFileSync(file, '{"key": "value"}');
       expect(() => readJsonArray(file)).toThrow('Expected JSON array');
+    });
+
+    // A vault scaffolded by hand (or by pre-0.9 tooling) wrapped these files in
+    // an object. Reading through the wrapper is what stops that from failing
+    // loudly for RELEASES.json and SILENTLY for CHANGELOG.json.
+    it('reads through the {"entries": [...]} wrapper (CHANGELOG.json shape)', () => {
+      const file = join(tmpDir, 'changelog.json');
+      writeFileSync(file, '{"entries": [{"id": 1}, {"id": 2}]}');
+      expect(readJsonArray(file)).toEqual([{ id: 1 }, { id: 2 }]);
+    });
+
+    it('reads through the {"releases": []} wrapper (RELEASES.json shape)', () => {
+      const file = join(tmpDir, 'releases.json');
+      writeFileSync(file, '{"releases": []}');
+      expect(readJsonArray(file)).toEqual([]);
+    });
+
+    it('prefers the known wrapper key over other keys in the object', () => {
+      const file = join(tmpDir, 'wrapped-meta.json');
+      writeFileSync(file, '{"version": 1, "entries": [{"id": 1}], "notes": ["x"]}');
+      expect(readJsonArray(file)).toEqual([{ id: 1 }]);
+    });
+
+    it('reads through a single-key wrapper under any key name', () => {
+      const file = join(tmpDir, 'history.json');
+      writeFileSync(file, '{"history": [{"id": 7}]}');
+      expect(readJsonArray(file)).toEqual([{ id: 7 }]);
+    });
+
+    it('still throws on a multi-key object with no known wrapper key', () => {
+      const file = join(tmpDir, 'ambiguous.json');
+      writeFileSync(file, '{"history": [1], "archive": [2]}');
+      expect(() => readJsonArray(file)).toThrow('Expected JSON array');
+    });
+
+    it('does not read an inherited key as a wrapper', () => {
+      const file = join(tmpDir, 'proto.json');
+      // `constructor` and `toString` live on Object.prototype; neither may
+      // satisfy the wrapper lookup, and neither is an own array.
+      writeFileSync(file, '{"a": 1, "b": 2}');
+      expect(() => readJsonArray(file)).toThrow('Expected JSON array');
+    });
+
+    it('names the shape and the repair in the error message', () => {
+      const file = join(tmpDir, 'num.json');
+      writeFileSync(file, '42');
+      expect(() => readJsonArray(file)).toThrow(/got number.*bare JSON array/s);
     });
 
     it('throws on non-array JSON (string)', () => {
@@ -125,6 +173,43 @@ describe('json-file', () => {
       insertToJsonArray(file, { id: 2 });
       insertToJsonArray(file, { id: 3 });
       expect(readJsonArray(file)).toEqual([{ id: 3 }, { id: 2 }, { id: 1 }]);
+    });
+
+    // The self-heal: a wrongly-scaffolded file is normalised to a bare array by
+    // the first write through it, losing nothing that was inside the wrapper.
+    it('normalises a wrapper object to a bare array on write, preserving entries', () => {
+      const file = join(tmpDir, 'wrapped.json');
+      writeFileSync(file, '{"entries": [{"id": 1}]}');
+      insertToJsonArray(file, { id: 2 });
+
+      const raw = readFileSync(file, 'utf-8');
+      expect(raw.trimStart().startsWith('[')).toBe(true);
+      expect(JSON.parse(raw)).toEqual([{ id: 2 }, { id: 1 }]);
+    });
+  });
+
+  describe('inspectJsonArray', () => {
+    it('classifies a bare array', () => {
+      expect(inspectJsonArray([1, 2])).toEqual({ kind: 'array', array: [1, 2] });
+    });
+
+    it('classifies a wrapper object, naming the key it unwrapped', () => {
+      expect(inspectJsonArray({ releases: [{ v: 1 }] })).toEqual({
+        kind: 'wrapped', array: [{ v: 1 }], wrapperKey: 'releases',
+      });
+    });
+
+    it('classifies unreadable shapes with the actual type', () => {
+      expect(inspectJsonArray(null)).toEqual({ kind: 'invalid', actual: 'null' });
+      expect(inspectJsonArray('hi')).toEqual({ kind: 'invalid', actual: 'string' });
+      expect(inspectJsonArray(42)).toEqual({ kind: 'invalid', actual: 'number' });
+      expect(inspectJsonArray({ a: 1 })).toEqual({ kind: 'invalid', actual: 'object' });
+    });
+
+    it('does not treat an inherited key as a wrapper', () => {
+      const inherited = Object.create({ entries: [{ id: 1 }] }) as Record<string, unknown>;
+      inherited.other = 1;
+      expect(inspectJsonArray(inherited)).toEqual({ kind: 'invalid', actual: 'object' });
     });
   });
 

@@ -11,6 +11,7 @@ import {
 import { unionTaskMap, type TaskMapEntry } from '../task-backend/sync-state.js';
 import { TASKS_MAP_REL } from '../task-backend/paths.js';
 import { PEOPLE_JSON_REL, PEOPLE_SCHEMA_VERSION } from '../people-store.js';
+import { inspectJsonArray } from '../json-file.js';
 import { addPath, readOursTheirsBase } from './git.js';
 
 /**
@@ -55,8 +56,12 @@ export function classifyPath(relPath: string): MergeClass {
 
 function parseJsonArray(content: string): Record<string, unknown>[] {
   try {
-    const parsed = JSON.parse(content || '[]');
-    return Array.isArray(parsed) ? (parsed as Record<string, unknown>[]) : [];
+    // Reads through a wrapper object too. A side whose CHANGELOG.json/
+    // RELEASES.json was scaffolded as `{"entries": []}` would otherwise parse
+    // to `[]` here and be UNIONED AWAY — a silent merge that drops that
+    // machine's whole history rather than failing.
+    const shape = inspectJsonArray(JSON.parse(content || '[]'));
+    return shape.kind === 'invalid' ? [] : (shape.array as Record<string, unknown>[]);
   } catch {
     return [];
   }
