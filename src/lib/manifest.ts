@@ -65,11 +65,42 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 let cachedVersion: string | null = null;
 
+/** A stamp must look like a real semver core before we trust it as a version. */
+const SEMVER_CORE = /^\d+\.\d+\.\d+(?:[-+].*)?$/;
+
+/**
+ * The version tsup stamped into this bundle at build time (see `define` in
+ * tsup.config.ts, which substitutes the literal for this exact expression).
+ *
+ * Empty when running straight from src/ (tsx/vitest) — which needs no stamp,
+ * because the repo-root package.json is always reachable from src/lib/.
+ */
+function stampedVersion(): string {
+  const stamped = process.env.DREAMCONTEXT_BUILD_VERSION;
+  return typeof stamped === 'string' && SEMVER_CORE.test(stamped) ? stamped : '';
+}
+
 /**
  * Read the dreamcontext package.json version from disk RIGHT NOW — no cache.
- * Returns '0.0.0' when no valid package.json is found (e.g. mid-upgrade, when
- * npm has the directory in a transient state) so callers can treat that as
- * "unknown" rather than a real version change.
+ *
+ * Disk FIRST, on purpose: the on-disk package.json is the only thing that
+ * changes under a long-lived process when npm swaps the package out from under
+ * it, and the drift/upgrade-ready watches in server/lifecycle.ts exist to notice
+ * exactly that. A build-time stamp would be frozen at launch and could never
+ * report an upgrade.
+ *
+ * When NO package.json is reachable, fall back to the build-time stamp rather
+ * than the '0.0.0' sentinel. That is the Tauri .app case: it ships
+ * `Contents/Resources/dist/index.js` with no package.json at any candidate path,
+ * so every probe below misses. Stamping '0.0.0' there was not merely cosmetic —
+ * '0.0.0' sorts below every migration version, so `pendingMigrations` and
+ * `unfinishedAgentTasks` silently returned nothing and NO migration could fire
+ * through the bundled CLI (the first-run-before-npm-install fallback path in
+ * `resolve_cli`), and every manifest it wrote was stamped 0.0.0.
+ *
+ * '0.0.0' survives as the last resort and still means "unknown": an unstamped
+ * build with no package.json in sight. Callers that treat it as "no signal"
+ * (the lifecycle watches, setup-drift's fail-safe) stay correct.
  */
 export function readDreamcontextVersionFromDisk(): string {
   const candidates = [
@@ -91,7 +122,7 @@ export function readDreamcontextVersionFromDisk(): string {
     }
   }
 
-  return '0.0.0';
+  return stampedVersion() || '0.0.0';
 }
 
 /**

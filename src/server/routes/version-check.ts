@@ -32,7 +32,10 @@ export async function handleVersionCheckGet(
     // the user had ALREADY installed — until they fully relaunched the app.
     // Reading fresh lets the badge self-clear on the next poll once the on-disk
     // package is upgraded. Fall back to the cached value if the fresh read is
-    // momentarily unavailable (npm mid-swap returns the '0.0.0' sentinel).
+    // momentarily unavailable — the '0.0.0' sentinel. A built CLI now falls back
+    // to its own build-time stamp first (so the .app bundle, which has no
+    // package.json to read, reports its real version), which leaves this guard
+    // for the unstamped case only. Kept: '0.0.0' still means "no signal".
     const freshCli = readDreamcontextVersionFromDisk();
     const installedCli = freshCli === '0.0.0' ? dreamcontextVersion() : freshCli;
     // Scope the pack universe to what THIS project opted into (config.packs),

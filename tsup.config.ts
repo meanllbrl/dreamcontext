@@ -1,5 +1,37 @@
 import { defineConfig } from 'tsup';
-import { chmodSync, cpSync, existsSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+/**
+ * The version to stamp INTO the bundle, read from package.json at build time.
+ *
+ * `readDreamcontextVersionFromDisk()` finds the version by probing for a
+ * package.json relative to the running file. That resolves for an npm install
+ * (`node_modules/dreamcontext/dist/index.js` → `../package.json`) but NOT for
+ * the Tauri .app, which ships `Contents/Resources/dist/index.js` with no
+ * package.json at ANY candidate path — so every probe missed and the lookup
+ * fell through to the '0.0.0' sentinel. '0.0.0' sorts below every migration
+ * version, so `pendingMigrations` / `unfinishedAgentTasks` returned nothing and
+ * no migration could ever fire through the bundled CLI — which is exactly the
+ * first-run-before-npm-install path `resolve_cli` falls back to.
+ *
+ * A stamp is the artifact's own identity, so it can never be missing.
+ *
+ * Deliberately NOT solved by copying a package.json into dist/: that would make
+ * Node resolve dist/ as its own package (needing `"type": "module"` just to
+ * keep the ESM output ESM), and it would make agent-terminal.ts's
+ * `cliPackageRoot()` treat the signed, read-only .app bundle as a valid
+ * `npm install node-pty` target.
+ */
+function versionToStamp(): string {
+  const pkgPath = resolve(process.cwd(), 'package.json');
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+  if (pkg.name !== 'dreamcontext' || typeof pkg.version !== 'string') {
+    // Fail the BUILD rather than ship an artifact that can't name itself.
+    throw new Error(`tsup: ${pkgPath} is not the dreamcontext package — cannot stamp a build version.`);
+  }
+  return pkg.version;
+}
 
 export default defineConfig({
   entry: ['src/cli/index.ts'],
@@ -7,6 +39,14 @@ export default defineConfig({
   target: 'node18',
   clean: true,
   splitting: false,
+  // esbuild substitutes this expression with the literal version, so the
+  // built dist/index.js carries its own version with no disk lookup. Read by
+  // `readDreamcontextVersionFromDisk()` as the fallback when no package.json is
+  // reachable. Running from src/ (tsx/vitest) has no stamp — and needs none,
+  // since the repo-root package.json is always two levels up from src/lib/.
+  define: {
+    'process.env.DREAMCONTEXT_BUILD_VERSION': JSON.stringify(versionToStamp()),
+  },
   banner: {
     // Shebang + a createRequire shim: bundled CJS deps (commander, gray-matter…)
     // call require() for node builtins; ESM output has no require, so provide one.
