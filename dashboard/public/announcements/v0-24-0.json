@@ -141,6 +141,14 @@
         {
           "title": "Council reports stop mid-sentence less often",
           "text": "A debate's sections were being cut at the first literal \"z\" instead of the next heading, with a broken escape underneath it. Both are fixed."
+        },
+        {
+          "title": "Buttons that asked you first now actually ask",
+          "text": "In the app, every button that wanted a confirmation — deleting a task, a version or an objective, a hard sync, turning the scheduler off, removing a project from the launcher — quietly did nothing. The webview has no confirmation dialog of its own and answered “no” on your behalf, with no way to tell. They now open a real macOS sheet, and a question that cannot be shown still counts as no."
+        },
+        {
+          "title": "A funnel opens on its numbers",
+          "text": "The step table on a funnel’s detail page is open by default. The lane shows the shape; the table is what you came for."
         }
       ]
     },
