@@ -1,5 +1,19 @@
 [
   {
+    "id": "rel_I0Y_Y1Bg",
+    "version": "0.24.1",
+    "date": "",
+    "summary": "A patch that carries the two things that landed on main after v0.24.0 was published, one of which users cannot get otherwise. FIRST, THE USER-FACING ONE: backlog is a tag rather than a status, so shelving a task meant typing 'backlog' into a free-text box. It is now one click — a row on the card's context menu and a button in the detail panel — and it writes only the tag, letting the backend's 'backlog means undated' rule clear the dates so there is one definition of backlog instead of a second drifting copy in the UI. Alongside it, tags are picked from a searchable list of what the vault already uses, most-used first with counts, with an unknown one still creatable; hand-typing tags is how this vault ended up carrying both 'decisions' and 'decision' as live near-duplicates. SECOND, THE ONE NOBODY SEES BUT EVERYONE NEEDED: CI on main had been red for six consecutive runs on a run where every test passed, failing on a lost vitest reporter RPC, which meant v0.24.0 shipped against a gate that could no longer fail. vitest 4.1.10 removes it; four other candidate fixes were tested and all four were dead ends, recorded on the task. No product code changed for that one — it is a devDependency swap plus vite-node becoming explicit, because vitest 4 no longer ships it and two file-lock concurrency tests spawn it to run real TypeScript in a separate OS process.",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [
+      "send-to-backlog-is-one-click-and-tags-are-picked-from-what-the-vault-already-uses",
+      "full-suite-runs-intermittently-fail-on-a-vitest-reporter-rpc-timeout-under-load"
+    ],
+    "changelog": []
+  },
+  {
     "id": "rel_4BMj2tR7",
     "version": "0.24.0",
     "date": "2026-08-17",
