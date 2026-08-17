@@ -4,6 +4,7 @@ import {
   useVersions, useActiveVersion, useSetActiveVersion, useCompleteVersion, useCreateVersion,
   useRenameVersion, useDeleteVersion,
 } from '../../hooks/useVersions';
+import { confirmAction } from '../../lib/desktop';
 
 interface VersionsPopoverProps {
   tasks: Task[];
@@ -77,13 +78,19 @@ export function VersionsPopover({ tasks, style }: VersionsPopoverProps) {
     cancelEdit();
   };
 
-  const onDelete = (r: Row) => {
+  const onDelete = async (r: Row) => {
     if (busy) return;
     const taskNote = r.count > 0
       ? ` ${r.count} task${r.count === 1 ? '' : 's'} pointing at it will have their version cleared (the tasks are kept).`
       : '';
     const regNote = r.exists ? 'This removes the version entry.' : 'This is an unregistered version (no release entry).';
-    if (!window.confirm(`Delete version "${r.version}"? ${regNote}${taskNote}`)) return;
+    const ok = await confirmAction({
+      title: `Delete version “${r.version}”?`,
+      body: `${regNote}${taskNote}`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     del.mutate(r.version);
   };
 

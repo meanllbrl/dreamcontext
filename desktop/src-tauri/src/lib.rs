@@ -39,8 +39,11 @@ use tauri_nspanel::{
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::{msg_send, ClassType};
-use objc2_app_kit::{NSModalResponse, NSModalResponseOK, NSOpenPanel, NSWindow};
-use objc2_foundation::{NSArray, NSURL};
+use objc2_app_kit::{
+    NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSModalResponse, NSModalResponseOK,
+    NSOpenPanel, NSWindow,
+};
+use objc2_foundation::{NSArray, NSString, NSURL};
 
 // ─── CoreGraphics FFI (cursor position for notch hover-to-open) ───────────────
 
@@ -133,7 +136,9 @@ pub fn run() {
         // The native file/folder picker is OUR command (`pick_paths`), not
         // tauri-plugin-dialog. The plugin's rfd backend aborts the whole app when
         // AppKit returns a nil open panel — see the `pick_paths` doc comment.
-        .invoke_handler(tauri::generate_handler![pick_paths])
+        // `confirm_dialog` is here for the same reason: WKWebView has no
+        // `window.confirm`, so a native sheet is the only working confirmation.
+        .invoke_handler(tauri::generate_handler![pick_paths, confirm_dialog])
         // Native OS clipboard so the dashboard can write UTF-8 without the WKWebView JS
         // clipboard mangling non-ASCII as Mac Roman (issue #171). Used by the in-app agent
         // terminal's copy path via @tauri-apps/plugin-clipboard-manager on the loopback origin.
@@ -258,6 +263,13 @@ fn open_panel() -> Option<Retained<NSOpenPanel>> {
     unsafe { msg_send![NSOpenPanel::class(), openPanel] }
 }
 
+/// A fresh `NSAlert`, typed as `Option` for the same reason `open_panel` is:
+/// AppKit constructors are bound as non-null, and a nil here would abort the
+/// whole app under `panic = "abort"` rather than fail the one dialog.
+fn new_alert() -> Option<Retained<NSAlert>> {
+    unsafe { msg_send![NSAlert::class(), new] }
+}
+
 /// The panel's selected URLs as absolute paths. `-URLs` carries the same non-null
 /// typing as `openPanel`, so it gets the same guard rather than a second abort.
 fn panel_paths(panel: &NSOpenPanel) -> Vec<String> {
@@ -331,6 +343,89 @@ async fn pick_paths(
     rx.recv()
         .await
         .unwrap_or_else(|| Err("The file picker closed without an answer.".to_string()))
+}
+
+/// Present a native confirmation sheet and resolve to what the user chose.
+///
+/// WHY THIS EXISTS: `window.confirm()` does not work in this app AT ALL, and it
+/// fails silently. wry's `WKUIDelegate` implements exactly three methods — the
+/// file-upload panel, the media-capture prompt, and `window.open` — and none of
+/// the JavaScript panel methods. WebKit's contract is that a delegate without
+/// `runJavaScriptConfirmPanelWithMessage:` shows NO dialog and returns `false`,
+/// so every `if (!window.confirm(…)) return;` in the dashboard is a dead button
+/// in the desktop app while working perfectly in a browser tab. Tauri injects no
+/// shim either. Same class as the missing `Notification` (polyfilled by the
+/// notification plugin) and the clipboard that re-decodes UTF-8 as Mac Roman: a
+/// web API this webview simply does not have, which has to be supplied natively.
+///
+/// Presented as a SHEET on the invoking window, like `pick_paths`, so it never
+/// blocks the main thread the way `runModal` would, and so it hangs off the
+/// window that actually asked rather than a guessed "main" one.
+///
+/// The first button added is the default and returns `NSAlertFirstButtonReturn`,
+/// so `confirm` is added before `cancel`. Cancelling — by button, by Escape, or
+/// because the sheet could not be presented — is `false`: a confirmation that
+/// cannot be shown must never read as consent.
+#[tauri::command]
+async fn confirm_dialog(
+    window: tauri::WebviewWindow,
+    title: String,
+    body: Option<String>,
+    confirm_label: Option<String>,
+    cancel_label: Option<String>,
+    destructive: Option<bool>,
+) -> Result<bool, String> {
+    let (tx, mut rx) = tauri::async_runtime::channel::<Result<bool, String>>(1);
+
+    let app = window.app_handle().clone();
+    app.run_on_main_thread(move || {
+        let Some(alert) = new_alert() else {
+            let _ = tx.try_send(Err("Could not present the confirmation.".to_string()));
+            return;
+        };
+        alert.setMessageText(&NSString::from_str(&title));
+        if let Some(text) = body.as_deref().filter(|t| !t.is_empty()) {
+            alert.setInformativeText(&NSString::from_str(text));
+        }
+        alert.setAlertStyle(if destructive.unwrap_or(false) {
+            NSAlertStyle::Critical
+        } else {
+            NSAlertStyle::Warning
+        });
+        alert.addButtonWithTitle(&NSString::from_str(
+            confirm_label.as_deref().unwrap_or("OK"),
+        ));
+        alert.addButtonWithTitle(&NSString::from_str(
+            cancel_label.as_deref().unwrap_or("Cancel"),
+        ));
+
+        // Cloned because the no-window fallback below answers on the same
+        // channel, and the block has to own its sender.
+        let block_tx = tx.clone();
+        let handler = RcBlock::new(move |response: NSModalResponse| {
+            let _ = block_tx.try_send(Ok(response == NSAlertFirstButtonReturn));
+        });
+
+        // SAFETY: `ns_window` hands back this window's live NSWindow, and we are
+        // on the main thread, so borrowing it for the call is sound.
+        match window.ns_window() {
+            Ok(ptr) if !ptr.is_null() => {
+                let parent: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+                alert.beginSheetModalForWindow_completionHandler(parent, Some(&handler));
+            }
+            // No host window to hang a sheet on. `runModal` is app-modal and
+            // blocking, but we are already on the main thread with nothing to
+            // return to, and a swallowed click is worse than a modal one.
+            _ => {
+                let _ = tx.try_send(Ok(alert.runModal() == NSAlertFirstButtonReturn));
+            }
+        }
+    })
+    .map_err(|e| format!("Could not reach the main thread to confirm: {e}"))?;
+
+    rx.recv()
+        .await
+        .unwrap_or_else(|| Err("The confirmation closed without an answer.".to_string()))
 }
 
 // ─── Resolution helpers ────────────────────────────────────────────────────

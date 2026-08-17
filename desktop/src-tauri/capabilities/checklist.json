@@ -16,6 +16,7 @@
     "core:event:allow-emit-to",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
-    "allow-pick-paths"
+    "allow-pick-paths",
+    "allow-confirm-dialog"
   ]
 }

@@ -8,7 +8,7 @@ import {
   type VaultStatus,
 } from '../hooks/useLauncher';
 import { useTeamUpdates, useTeamFetch } from '../hooks/useBrainStatus';
-import { openVaultWindow, startTitleBarDrag, toggleMaximizeWindow } from '../lib/desktop';
+import { confirmAction, openVaultWindow, startTitleBarDrag, toggleMaximizeWindow } from '../lib/desktop';
 import { VaultDot } from '../components/layout/VaultDot';
 import { VaultSyncChip } from '../components/brain/VaultSyncChip';
 import { OnboardingWizard } from './OnboardingWizard';
@@ -103,11 +103,14 @@ export function LauncherPage() {
     });
   }
 
-  function handleRemove(v: VaultStatus) {
-    const msg = v.exists
-      ? `Remove “${v.name}” from the launcher? (the folder stays on disk)`
-      : `“${v.name}” folder is gone. Remove it from the launcher?`;
-    if (!window.confirm(msg)) return;
+  async function handleRemove(v: VaultStatus) {
+    const ok = await confirmAction({
+      title: `Remove “${v.name}” from the launcher?`,
+      body: v.exists ? 'The folder stays on disk.' : 'Its folder is gone from disk.',
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
     setActionError(null);
     unregister.mutate(v.name, {
       onError: (err) => setActionError(err instanceof Error ? err.message : String(err)),

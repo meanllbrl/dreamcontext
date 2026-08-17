@@ -5,6 +5,7 @@ import type { Forecast } from './roadmap-forecast';
 import { fmtShort } from './roadmap-forecast';
 import { useUpdateObjective, useAddDependency, useRemoveDependency, useDeleteObjective, type ObjectiveMetric, type UpdateObjectivePatch } from '../../hooks/useObjectives';
 import { useLabInsights, useUpdateBinding } from '../../hooks/useLab';
+import { confirmAction } from '../../lib/desktop';
 import { DateRangePicker } from './DateRangePicker';
 import { DependencyPicker } from './DependencyPicker';
 import { InsightPicker } from './InsightPicker';
@@ -79,8 +80,14 @@ export function ObjectiveDetailPanel({
     else setTitle(item.title);
   };
   const setStatus = (s: RoadmapItem['status'] | null) => { setStatusOpen(false); patch({ status: s }); };
-  const handleDelete = () => {
-    if (!window.confirm(`Delete objective “${item.title}”?\n\nThis removes it from the roadmap and clears it from any dependent objectives and any tasks assigned to it. This cannot be undone.`)) return;
+  const handleDelete = async () => {
+    const ok = await confirmAction({
+      title: `Delete objective “${item.title}”?`,
+      body: 'This removes it from the roadmap and clears it from any dependent objectives and any tasks assigned to it. This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     deleteObjective.mutate(item.slug, {
       onSuccess: (res) => {
         onClose();

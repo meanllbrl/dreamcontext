@@ -4,6 +4,7 @@ import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers } from '../../ho
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
 import { useVersions, useActiveVersion } from '../../hooks/useVersions';
 import { useBoardState } from '../../hooks/useBoard';
+import { confirmAction } from '../../lib/desktop';
 import {
   type Dim, type SaveScope,
   PRIO_ORDER, STATUS_META, STATUS_ORDER,
@@ -179,9 +180,15 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     if (task.priority !== priority) { updateTask.mutate({ slug: task.slug, updates: { priority } as Partial<Task> }); flash(`Priority → ${levelLabel(priority)}`); }
     setCtxMenu(null);
   }, [updateTask, flash]);
-  const ctxDelete = useCallback((task: Task) => {
+  const ctxDelete = useCallback(async (task: Task) => {
     setCtxMenu(null);
-    if (typeof window !== 'undefined' && !window.confirm(`Delete “${task.name || task.slug}”? This cannot be undone.`)) return;
+    const ok = await confirmAction({
+      title: `Delete “${task.name || task.slug}”?`,
+      body: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     deleteTask.mutate(task.slug, { onSuccess: () => flash('Task deleted'), onError: () => flash('Delete failed') });
     if (selectedSlug === task.slug) setSelectedSlug(null);
   }, [deleteTask, flash, selectedSlug]);

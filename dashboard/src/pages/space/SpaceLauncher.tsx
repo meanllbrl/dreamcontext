@@ -9,7 +9,7 @@ import {
   type VaultStatus,
 } from '../../hooks/useLauncher';
 import { useTeamUpdates } from '../../hooks/useBrainStatus';
-import { openVaultWindow } from '../../lib/desktop';
+import { confirmAction, openVaultWindow } from '../../lib/desktop';
 import { BrandMark } from '../../components/brand/BrandMark';
 import { layoutSpace, bodyPoint, type SpaceBody } from './spaceLayout';
 import './SpaceLauncher.css';
@@ -356,11 +356,14 @@ export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherPro
     });
   }
 
-  function handleRemove(v: VaultStatus) {
-    const msg = v.exists
-      ? `Remove “${v.name}” from the launcher? (the folder stays on disk)`
-      : `“${v.name}” folder is gone. Remove it from the launcher?`;
-    if (!window.confirm(msg)) return;
+  async function handleRemove(v: VaultStatus) {
+    const ok = await confirmAction({
+      title: `Remove “${v.name}” from the launcher?`,
+      body: v.exists ? 'The folder stays on disk.' : 'Its folder is gone from disk.',
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
     onError(null);
     setFocus(null);
     unregister.mutate(v.name, {

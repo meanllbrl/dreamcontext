@@ -8,6 +8,7 @@ import panzoom from 'panzoom';
 import type { Task, RiceFields, RiceInput } from '../../hooks/useTasks';
 import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers, useFeatureOptions, useSyncStatus, useTaskOverrides } from '../../hooks/useTasks';
 import { useObjectives } from '../../hooks/useObjectives';
+import { confirmAction } from '../../lib/desktop';
 import { SearchableSelect } from './SearchableSelect';
 import { TaskCustomFields } from './TaskCustomFields';
 import { AddCustomFieldForm } from './AddCustomFieldForm';
@@ -559,8 +560,14 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   };
   const removeObjective = (slug: string) => setTaskObjectives(taskObjectives.filter(s => s !== slug));
 
-  const handleDelete = () => {
-    if (!window.confirm(`Delete task "${task.name}"? This propagates to the remote backend on sync.`)) return;
+  const handleDelete = async () => {
+    const ok = await confirmAction({
+      title: `Delete task “${task.name}”?`,
+      body: 'This propagates to the remote backend on sync.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     deleteTask.mutate(task.slug, {
       onError: onMutationError,
       onSuccess: () => onClose?.(),
