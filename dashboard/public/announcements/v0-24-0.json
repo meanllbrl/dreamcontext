@@ -1,0 +1,164 @@
+{
+  "hero": {
+    "eyebrow": "v0.24.0  ·  17 August 2026",
+    "headline": "Every project you have open, awake in one window",
+    "sub": "The desktop app stops being one window per project. Everything you have open lives in a single strip at the top, every one of them still running, and each chip tells you what its agent is doing without you going to look.",
+    "shot": {
+      "src": "shots/v0-24-0/chip-strip.png",
+      "alt": "The desktop app with four projects open as chips across the top of one window — dreamcontext, Genevous, Tilki and kader-matematik — the last one active and showing its task board underneath, while the other three carry live session counts and unseen-activity dots",
+      "caption": "Four projects, one window, none of them asleep."
+    }
+  },
+  "blocks": [
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "Nothing is really in the background",
+      "body": "A chip is not a bookmark to a project you left. Every open project keeps running — its chat keeps streaming, its terminal keeps its scrollback — because a project going out of view is never allowed to touch its connection. The number on a chip is how many live chats that project is holding, and the dot next to it means something happened there you haven't seen yet.",
+      "shot": {
+        "src": "shots/v0-24-0/chip-status.png",
+        "alt": "A close crop of the chip strip: dreamcontext with a count of 1 and a magenta unseen dot, Genevous with 2 and a dot, Tilki with 6 and no dot, and kader-matematik active with a close button",
+        "caption": "Six live chats in Tilki, two of them unread in Genevous.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "points",
+      "title": "And it says which kind of busy",
+      "items": [
+        {
+          "title": "Working, not waiting",
+          "text": "A chat mid-turn draws a green bubble with a progress ring. Before this release a project that had merely rung its bell once went magenta and stayed magenta for the whole of its next turn, so \"needs you\" and \"getting on with it\" looked identical."
+        },
+        {
+          "title": "Blocked gets loud",
+          "text": "A project actually waiting on an answer bounces, the way an app bounces in the Dock, and fires a real notification even when the window is already focused — because the window being focused says nothing about which project you are looking at."
+        },
+        {
+          "title": "Unseen is its own mark",
+          "text": "Something you haven't looked at yet is a separate dot rather than a colour change, so it can sit next to \"working\" without overwriting it."
+        },
+        {
+          "title": "Quiet stays quiet",
+          "text": "A project with no live chats draws nothing at all. The strip only spends your attention when something has actually happened."
+        }
+      ]
+    },
+    {
+      "kind": "points",
+      "title": "Switching costs one keystroke",
+      "items": [
+        {
+          "title": "Hold ⌥, press Tab",
+          "text": "Walk the strip while you hold Option and land when you let go — a preview you can back out of with Escape, not a jump you have to undo."
+        },
+        {
+          "title": "Control belongs to the terminal",
+          "text": "The picker used to be on ⌃Tab, which sat on top of the chords a shell needs. ⌃C, ⌃D and ⌃W now reach the session you are typing in, every time."
+        },
+        {
+          "title": "One window is a default, not a cage",
+          "text": "⇧-click a project to send it to its own window anyway, for the second display."
+        },
+        {
+          "title": "Six stay hot",
+          "text": "Beyond six live projects the idle ones evict to cold chips and reopen on click, so the window does not get slower the longer you work."
+        }
+      ]
+    },
+    {
+      "kind": "terminal",
+      "title": "An automation now has a shape you can read",
+      "lines": [
+        "$ dreamcontext automations flow social-media-manager",
+        "  ◆ Flow: social-media-manager",
+        "  ────────────────────────────",
+        "  derived — this manifest has no ## Flow block; this is what its",
+        "  schedule/prompt/review mode imply.",
+        "  4 node(s), 3 edge(s)",
+        "",
+        "  ⏱ trigger — Fires: every day at 09:30",
+        "  ◆ run     — Step: Social Media Manager — Günlük Organik Döngü",
+        "  ✋ ask     — Asks: Approve the document?",
+        "  ▤ report  — Reports to: automations/output/social-media-manager/",
+        "",
+        "  edges:",
+        "    trigger → run",
+        "    run → ask",
+        "    ask → report",
+        "",
+        "✓   no problems found."
+      ]
+    },
+    {
+      "kind": "points",
+      "title": "…and it asks you where you already are",
+      "items": [
+        {
+          "title": "A ## Flow block is the manifest",
+          "text": "Write the shape into the job and the app draws it as the job's main screen instead of a wall of prose. Don't write one and it is derived from the schedule and the prompt, as above. It describes the run; it never gets to command it."
+        },
+        {
+          "title": "The question lands in the chat",
+          "text": "A run that stops for a human asks in the conversation you are already having, and its card takes over the composer while it is open — so nobody can tell a session running with bypassed permissions to \"just go ahead\" while the question is still unanswered."
+        },
+        {
+          "title": "Consent has to be consent",
+          "text": "Trusting a changed job takes an explicit approve or reject in every channel. Free text is refused, because someone typing \"no, this looks wrong\" must never be read as yes."
+        },
+        {
+          "title": "The result reaches your phone",
+          "text": "Connect a Telegram bot per automation and a finished run delivers its own headline, failure reason, or request for a verdict. One bot per job, so a leaked token cannot answer a different job's question."
+        }
+      ]
+    },
+    {
+      "kind": "shot",
+      "title": "The learning board reads like a board",
+      "body": "Hypotheses lead with the counts that matter — open, validated, invalidated, waiting on instrumentation — and each claim carries its confidence and how long since it was last re-tested, rather than making you open it to find out.",
+      "shot": {
+        "src": "shots/v0-24-0/hypotheses.png",
+        "alt": "The redesigned Hypotheses page: a header row counting open, validated, invalidated, awaiting-instrumentation and unread, filters for status, kind and objective, a list/board toggle, and a validated claim about hybrid recall sitting at 88% confidence",
+        "caption": "Last learning cycle, and how sure it is, above the fold."
+      }
+    },
+    {
+      "kind": "points",
+      "title": "Also in this version",
+      "items": [
+        {
+          "title": "Dates behave like dates",
+          "text": "Moving a task's start reschedules its due date instead of erroring at you, finishing one stamps the day it actually ended, and a date the system writes is validated exactly like one you type."
+        },
+        {
+          "title": "Sleep debt can reach zero",
+          "text": "Work that consolidation had already folded in was being booked again at the next stop, so the number could never come down all the way. It can now."
+        },
+        {
+          "title": "PDFs open in the app",
+          "text": "A PDF the agent hands you opens full-window with scroll and search, and every file panel offers to open it on your computer or reveal it in Finder."
+        },
+        {
+          "title": "Council reports stop mid-sentence less often",
+          "text": "A debate's sections were being cut at the first literal \"z\" instead of the next heading, with a broken escape underneath it. Both are fixed."
+        },
+        {
+          "title": "Buttons that asked you first now actually ask",
+          "text": "In the app, every button that wanted a confirmation — deleting a task, a version or an objective, a hard sync, turning the scheduler off, removing a project from the launcher — quietly did nothing. The webview has no confirmation dialog of its own and answered “no” on your behalf, with no way to tell. They now open a real macOS sheet, and a question that cannot be shown still counts as no."
+        },
+        {
+          "title": "A funnel opens on its numbers",
+          "text": "The step table on a funnel’s detail page is open by default. The lane shows the shape; the table is what you came for."
+        }
+      ]
+    },
+    {
+      "kind": "note",
+      "text": "The desktop app is still a macOS beta and is not Apple-notarized, so a first launch may need right-click → Open. The chip strip's structure, its keyboard picking and its status marks are covered by automated runtime checks; the parts that need a real terminal and a live agent — a chat that keeps streaming across a switch, the notification that fires from a background project — were verified by hand, and are honestly still listed as such."
+    }
+  ],
+  "closer": {
+    "title": "Upgrade, then open a second project",
+    "body": "dreamcontext upgrade, then dreamcontext update in each project. Open the app, click + in the strip, and pick another vault."
+  }
+}

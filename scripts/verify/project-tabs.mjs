@@ -23,10 +23,10 @@
  *       was not remounted (the structural half of the red line: a remount is a killed PTY)
  *   M4  re-opening an already-open project focuses its chip instead of minting a second
  *       instance against the same vault (checklist B6, in-window half)
- *   M5  ⌃Tab moves to the next chip and ⌃⇧Tab back to the previous one, by real keystroke,
+ *   M5  ⌥Tab moves to the next chip and ⌥⇧Tab back to the previous one, by real keystroke,
  *       without remounting either instance
- *   M6  a HELD ⌃Tab previews without switching — the cursor moves, the strip comes forward,
- *       and the project changes only when Control is released
+ *   M6  a HELD ⌥Tab previews without switching — the cursor moves, the strip comes forward,
+ *       and the project changes only when Option is released
  *   M7  Escape backs out of a held pick with the active project untouched
  *
  * WHAT IT DELIBERATELY DOES NOT COVER — and why it is not silence:
@@ -251,33 +251,33 @@ try {
       dupNames.length === 2 && dupIds.length === 2 && (await activeChip())?.trim() === 'scratch-a',
       `chips=${JSON.stringify(dupNames)} instances=${dupIds.length}`);
 
-    // M5 — ⌃Tab walks the strip forward, ⌃⇧Tab back, and neither REMOUNTS anything. Driven
+    // M5 — ⌥Tab walks the strip forward, ⌥⇧Tab back, and neither REMOUNTS anything. Driven
     // as a real keystroke rather than asserted on the handler, because the whole risk of this
     // shortcut is where it is listening: the chrome captures it above every mounted instance,
     // and a listener registered one level too low would be dead the moment focus sat inside a
     // project. The instance-id half is M3's red line again — a switch by key must hide, not
-    // tear down, or ⌃Tab through six projects would kill six PTYs.
+    // tear down, or ⌥Tab through six projects would kill six PTYs.
     const beforeCycle = await instanceIds();
     const cycleStart = (await activeChip())?.trim();
-    await page.keyboard.press('Control+Tab');
+    await page.keyboard.press('Alt+Tab');
     await page.waitForTimeout(400);
     const afterForward = (await activeChip())?.trim();
-    await page.keyboard.press('Control+Shift+Tab');
+    await page.keyboard.press('Alt+Shift+Tab');
     await page.waitForTimeout(400);
     const afterBack = (await activeChip())?.trim();
-    check('M5 ⌃Tab / ⌃⇧Tab cycle the chip strip without remounting an instance',
+    check('M5 ⌥Tab / ⌥⇧Tab cycle the chip strip without remounting an instance',
       afterForward !== undefined && afterForward !== cycleStart && afterBack === cycleStart
         && JSON.stringify(beforeCycle) === JSON.stringify(await instanceIds()),
-      `${cycleStart} -⌃Tab-> ${afterForward} -⌃⇧Tab-> ${afterBack}; ids ${JSON.stringify(beforeCycle)} -> ${JSON.stringify(await instanceIds())}`);
+      `${cycleStart} -⌥Tab-> ${afterForward} -⌥⇧Tab-> ${afterBack}; ids ${JSON.stringify(beforeCycle)} -> ${JSON.stringify(await instanceIds())}`);
 
-    // M6 — the HOLD. ⌃Tab must not switch anything while Control is still down: it opens a
+    // M6 — the HOLD. ⌥Tab must not switch anything while Option is still down: it opens a
     // cursor on the strip, the strip comes forward to say a mode is up, and the switch happens
-    // on the RELEASE. Driven by explicit down/up rather than `press('Control+Tab')` (which
+    // on the RELEASE. Driven by explicit down/up rather than `press('Alt+Tab')` (which
     // releases the modifier for you) because the whole claim is about what is true BETWEEN
     // those two events. It matters beyond feel: a cold chip cycled past under the old
     // press-to-switch shape was rebuilt — a whole project instance — just to be left again.
     const holdStart = (await activeChip())?.trim();
-    await page.keyboard.down('Control');
+    await page.keyboard.down('Alt');
     await page.keyboard.press('Tab');
     await page.waitForTimeout(300);
     const held = await page.evaluate(() => ({
@@ -288,10 +288,10 @@ try {
       // The lift has to be a real computed transform, not just a class that was added.
       scaled: getComputedStyle(document.querySelector('.project-tabs-track')).transform,
     }));
-    await page.keyboard.up('Control');
+    await page.keyboard.up('Alt');
     await page.waitForTimeout(400);
     const committed = (await activeChip())?.trim();
-    check('M6 ⌃Tab previews while Control is held and only switches on release',
+    check('M6 ⌥Tab previews while Option is held and only switches on release',
       held.active === holdStart && held.preview !== undefined && held.preview !== holdStart
         && held.picking === 'true' && held.hint && held.scaled !== 'none'
         && committed === held.preview,
@@ -300,13 +300,13 @@ try {
     // M7 — Escape backs out of a held pick with nothing switched. A held gesture with no way
     // out is a trap: the user is already committed the moment they press the first key.
     const escStart = (await activeChip())?.trim();
-    await page.keyboard.down('Control');
+    await page.keyboard.down('Alt');
     await page.keyboard.press('Tab');
     await page.waitForTimeout(200);
     await page.keyboard.press('Escape');
     await page.waitForTimeout(200);
     const escPicking = await page.locator('.project-tabs').getAttribute('data-picking');
-    await page.keyboard.up('Control');
+    await page.keyboard.up('Alt');
     await page.waitForTimeout(400);
     check('M7 Escape cancels a held pick and leaves the active project untouched',
       escPicking === 'false' && (await activeChip())?.trim() === escStart,
@@ -376,6 +376,35 @@ try {
       bubbleStyles.ringBox > 0 && bubbleStyles.ringAnim === 'projectTabRing'
         && bubbleStyles.ringAngle !== '',
       `box=${bubbleStyles.ringBox} anim=${bubbleStyles.ringAnim} angle="${bubbleStyles.ringAngle}"`);
+
+    /* B5 — THE JUMP FITS IN THE REAL BAR.
+       A project holding a blocked agent bounces like a Dock icon, and the amplitude is bounded
+       by two clip boxes the component-level harness (project-chip-status.mjs) cannot see: the
+       strip's own (it scrolls horizontally, which forces the vertical axis out of `visible`)
+       and the 42px title bar, which on a Tauri overlay window is the top of the screen. Both
+       are geometry, so both can be measured here WITHOUT a live agent to ask a question —
+       the chip's resting rect minus the jump height is the apex, whether or not one is
+       running. A regression here is invisible until someone happens to be watching a chip
+       mid-jump, which is precisely when it matters. */
+    const jumpFit = await page.evaluate(() => {
+      const chip = document.querySelector('.project-tab');
+      const strip = document.querySelector('.project-tabs');
+      const bar = document.querySelector('.window-chrome-bar');
+      if (!chip || !strip || !bar) return null;
+      // Read the amplitude out of the stylesheet instead of restating it here, so the two can
+      // never drift: whatever the keyframes say the apex is, that is what gets checked.
+      const rise = Math.max(...[...document.styleSheets]
+        .flatMap((s) => { try { return [...s.cssRules]; } catch { return []; } })
+        .filter((r) => r.type === CSSRule.KEYFRAMES_RULE && r.name === 'projectTabDockBounce')
+        .flatMap((r) => [...r.cssRules])
+        .map((k) => parseFloat((k.style.transform.match(/-?[\d.]+(?=px)/) || [0])[0]))
+        .map(Math.abs));
+      const c = chip.getBoundingClientRect();
+      return { rise, apexTop: c.top - rise, stripTop: strip.getBoundingClientRect().top, barTop: bar.getBoundingClientRect().top };
+    });
+    check('B5 the ask-bounce apex is clipped by neither the strip nor the 42px bar',
+      !!jumpFit && jumpFit.rise > 0 && jumpFit.apexTop >= jumpFit.stripTop && jumpFit.apexTop >= jumpFit.barTop,
+      jumpFit ? `rise=${jumpFit.rise}px apex=${jumpFit.apexTop.toFixed(1)} strip=${jumpFit.stripTop.toFixed(1)} bar=${jumpFit.barTop.toFixed(1)}` : 'nodes not found');
 
     // S6 — judged LAST, so it covers every request both projects made: the boot, the reload,
     // the second project's whole page load and both switches. A wrong vault reaching the

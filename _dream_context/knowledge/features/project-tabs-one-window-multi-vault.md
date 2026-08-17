@@ -9,7 +9,7 @@ pinned: false
 date: '2026-08-10'
 status: in_review
 created: '2026-08-10'
-updated: '2026-08-14'
+updated: '2026-08-17'
 released_version: null
 product: desktop
 tags:
@@ -19,8 +19,6 @@ tags:
   - 'topic:agents'
 related_tasks:
   - one-window-holds-every-open-project-as-a-live-chip-strip
-  - >-
-    a-project-chip-says-how-many-chats-it-holds-and-how-many-are-working-one-counted-bubble-per-status
 ---
 
 ## Why
@@ -73,6 +71,31 @@ related_tasks:
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+### 2026-08-15 - Atomic bucket table + blocked-project bounce
+
+**Root cause identified (two user complaints, one source):** `rollupProject()` bucketed sessions by testing `attention` (a sticky "you haven't seen this" flag) BEFORE `kind` (the live status). A chat that finished a turn unseen went magenta and stayed there through the whole of its next turn — it was working, but the chip said "needs you" because the sticky flag won.
+
+**Shipped fix:**
+- **BUCKET_BY_KIND is now the single atomic table** — a `Record<SessionStatusKind, StatusBucket | null>` that maps every status to its bubble in ONE lookup. Adding a seventh status kind is a compile error instead of a session that silently lands in no bucket. Its `null` entries (`saved`, `ended`) also decide `live`/`alive` — three hand-written rules collapsed into one lookup.
+- **wantsALook() is the unseen predicate** — called by BOTH the dock tile's badge and the rollup, so the two surfaces cannot disagree. Buckets come from the live status alone; `attention` rides alongside in a new `ProjectRollup.flagged` field and draws its own dot.
+- **Blocked projects now bounce** — a project holding a blocked agent (asking) jumps like a Dock icon. The gesture is quoted, not invented: on this platform a horizontal shake means "no" (login window refusing a password), while the Dock's vertical bounce is the idiom for "this app needs you". A strip of projects IS a dock of projects. Physics: purely vertical, thrown (easeOutQuad up, hang, easeInQuad down), dead landing, 1.6s beat. Driven off the live `asking` count, so it starts with the question and stops when answered; it cannot latch. The one-shot bounce stays for bell/unseen-finish — a moment gets a one-shot, a state gets a repeat — and the two are mutually exclusive in the component.
+- **Amplitude geometry documented** — `.project-tabs` scrolls horizontally, so CSS Overflow 3 forces the other axis out of `visible`, clipping exactly the axis the chip travels. `padding-block: 5px` + `margin-block: -5px` buys headroom without moving the margin box. 6px ceiling: apex sits 0.5px inside the 42px bar, which on a Tauri overlay IS the screen top.
+
+**Evidence:**
+- 3 regression locks, each proven to FAIL against the old rule before revert
+- Source-parity test pinning AgentDock's badge to `wantsALook` (no jsdom in this suite)
+- NEW `scripts/verify/project-chip-status.mjs` (28/28, 430 lines): drives real ProjectTabs + real rollupProject in Chromium, asserts computed colours, seeks the animation through Web Animations API to measure a real 6.00px rise, drives the bounce→jump handover as an actual transition
+- NEW B5 in `verify:project-tabs` (20/20) reads amplitude out of keyframes rule, proves apex clears both strip's clip box and the real 42px bar
+- Unit tests `agent-status-project-rollup.test.ts` expanded 181→285 lines
+- Full suite 7075 passed, dashboard tsc clean
+
+### 2026-08-14 - The pick moved from ⌃Tab to ⌥Tab
+
+- **⌥Tab / ⌥⇧Tab now walks the chip strip; Control is given back to the shell.** User request, and the rationale outlives the preference: Control chords belong to the PTY. ⌃C, ⌃D, ⌃W, ⌃A and the rest have to arrive intact, and a `window`-level capture-phase listener that eats one is a bug the terminal can never explain to the user. Claiming Option instead costs nothing — macOS binds ⌥Tab to nothing, and the app's only other Option chord is ⌥⌫ (delete-word, inside the terminal), which is not a Tab. ⌘Tab remains impossible for the reason recorded on 2026-08-13.
+- **The gesture's SHAPE is unchanged** — still a held pick, not a press-to-switch: the first ⌥Tab opens a cursor, each further Tab (or ← / →) moves it, and the switch happens once on the RELEASE of Option. Everything the hold bought (never rebuilding a cold instance you only tabbed past) is intact.
+- **Three handler edits, all in `WindowChrome.tsx`** — the keydown guard flipped from `metaKey || altKey` to `metaKey || ctrlKey` (Option must now be ALLOWED through, and the guard is what would otherwise swallow the arrow keys mid-pick, since they carry `altKey: true` while Option is held); the chord test became `key === 'Tab' && altKey`; and the keyup arm became `key !== 'Alt' && altKey` — macOS reports the Option key as `Alt`.
+- **Proven by real keystroke, not by reading the handler** — `npm run verify:project-tabs` 19/19, with M5 (⌥Tab / ⌥⇧Tab cycle, no remount) and M6 (preview while held, commit on release) green against a real Chromium. This was the check worth running rather than reasoning about: whether macOS delivers ⌥Tab to a web view as `key: 'Tab'` at all is an empirical question, and the answer is yes.
+
 ### 2026-08-14 - Status bubble redesign: counted marks per state, loading legibility
 
 **Owner report (2026-08-14):** "bana kaç chat var kaçı çalışıyoru vermiyor, loading olduğunu bile anlamıyorum doğru dürüst." The chip rolled N sessions into ONE dot + ONE live count, so composition was lost — nothing said how many were working, waiting, or loading.
@@ -123,8 +146,8 @@ related_tasks:
 
 ### Architecture
 - **ProjectInstance** (`dashboard/src/ProjectInstance.tsx`): one mounted React app per vault, each with its own `instanceQueryClient` (React Query cache isolation), `VaultContext`, scoped localStorage, and event bus.
-- **WindowChrome** (`dashboard/src/components/layout/WindowChrome.tsx`): the shell that owns the instance lifecycle, chip registry (`OpenProject[]`), ceiling enforcement (`MAX_LIVE_INSTANCES=6`), eviction (oldest `rollup.alive === 0`), window registry heartbeat, and ⌃Tab cycling (capture-phase listener on `window`, only claimed with ≥2 chips). Also publishes chrome slots via `ChromeSlotsProvider`.
-- **ProjectTabs** (`dashboard/src/components/layout/ProjectTabs.tsx` + `.css`): the center-aligned chip strip. Rule 1 (freeze): `pointerenter` snapshots leading gap + each chip's width, so a chip closed while frozen leaves a ghost and neighbors don't slide under cursor. Rule 2 (fall left): `margin-inline:auto` collapses to 0 when content exceeds container, so CSS and overflow flag can't disagree. Tooltip appends "· ⌃Tab to switch" when ≥2 chips. **Status bubbles** (2026-08-14): the old dot+badge is gone; now up to three counted bubbles (asking/working/idle) with fixed 16px height and horizontal growth, neutral chip segment (the accent violet collision is fixed by construction), and a ~24px loading ring animated via registered `@property` angle that stops (not hides) under `prefers-reduced-motion`.
+- **WindowChrome** (`dashboard/src/components/layout/WindowChrome.tsx`): the shell that owns the instance lifecycle, chip registry (`OpenProject[]`), ceiling enforcement (`MAX_LIVE_INSTANCES=6`), eviction (oldest `rollup.alive === 0`), window registry heartbeat, and ⌥Tab cycling (capture-phase listener on `window`, only claimed with ≥2 chips). Also publishes chrome slots via `ChromeSlotsProvider`.
+- **ProjectTabs** (`dashboard/src/components/layout/ProjectTabs.tsx` + `.css`): the center-aligned chip strip. Rule 1 (freeze): `pointerenter` snapshots leading gap + each chip's width, so a chip closed while frozen leaves a ghost and neighbors don't slide under cursor. Rule 2 (fall left): `margin-inline:auto` collapses to 0 when content exceeds container, so CSS and overflow flag can't disagree. Tooltip appends "· hold ⌥ and press Tab to switch" when ≥2 chips. **Status bubbles** (2026-08-14): the old dot+badge is gone; now up to three counted bubbles (asking/working/idle) with fixed 16px height and horizontal growth, neutral chip segment (the accent violet collision is fixed by construction), and a ~24px loading ring animated via registered `@property` angle that stops (not hides) under `prefers-reduced-motion`. **Bounce animation** (2026-08-15): `data-asking='true'` drives `projectTabDockBounce` (1.6s infinite) — purely vertical, thrown (separate easing per half: easeOutQuad up, easeInQuad down), dead landing. Headroom: `padding-block: 5px` + `margin-block: -5px` buys clip clearance at no layout cost. Stops on hover (same courtesy the Dock extends). One-shot bounce (`projectTabBounce`) stays for bell/unseen-finish; the two are mutually exclusive.
 - **One-bar chrome refactor** (`dashboard/src/components/layout/chromeSlots.tsx`, `Header.tsx`): The window has ONE bar, but the collapse toggle, search pill, and sleep tracker belong to whichever PROJECT is on screen — they read that instance's query cache, bus, and palette state. The chrome publishes two mount points (`ChromeSlots: {left, right}`) and the active instance's `Header` portals its controls into them. Only the ACTIVE instance renders into the slots; a hidden instance renders nothing, because a portal escapes the `.project-instance` subtree and would ignore its `hidden`/`inert` shroud entirely. The `--header-height` double-rebase in `ProjectTabs.css` is GONE because there is only one bar again; the manual refresh button was dropped.
 - **Per-vault ApiClient** (`dashboard/src/api/client.ts`): was module-level singleton `api`, now a class. Module-global `api` survives for capture/perch windows (separate OS windows, legitimately single-vault). Migrated ~28 hooks + 12 components off `getActiveVault()`.
 
@@ -155,10 +178,11 @@ Ten events moved from `window` to instance bus: `navigate`, `agent-open-page`, `
 - **agentSession.ts** (`dashboard/src/components/sleepy/agentSession.ts`): `ensureOpen` gained `{focus?: boolean}`. New activation effect keyed `[isActive, fitVisible]` with rAF. RO gate tightened to `!expanded || !isActive`. Unmount-only teardown disposing `sessions.current`. `fitVisible()` early-returns on `!isActive` (M7 fix).
 
 ### ProjectRollup
-- **agentStatus.ts** (`dashboard/src/components/sleepy/agentStatus.ts`): `rollupProject(rows): ProjectRollup` → `{worst: SessionStatusKind; live: number; waiting: number; alive: number; asking: number; working: number; idle: number}` (2026-08-14 expanded). `alive` counts rows where `info.kind ∉ {'saved','ended'}` (shells included); `live` excludes shells (chat badge count). `asking`/`working`/`idle` are flat primitives (not nested — fresh object identity would republish on every render). Partition invariant: `asking + working + idle === live`. Starting folds into working; saved/ended counted nowhere; shells excluded from all three. Eviction gate reads `rollup.alive === 0`, never `live`.
+- **agentStatus.ts** (`dashboard/src/components/sleepy/agentStatus.ts`): `rollupProject(rows): ProjectRollup` → `{worst: SessionStatusKind; live: number; waiting: number; alive: number; asking: number; working: number; idle: number; flagged: number}` (2026-08-15 atomic). **BUCKET_BY_KIND** is the single status→bubble table (a `Record` over `SessionStatusKind`, so a seventh kind is a compile error). **wantsALook(row)** is the unseen predicate, called by both the dock tile and the rollup. Buckets come from live status alone; `attention` rides in `flagged` (one small dot after the bubbles). `alive` counts rows where `info.kind ∉ {'saved','ended'}` (shells included); `live` excludes shells (chat badge count). `asking`/`working`/`idle` are flat primitives (not nested — fresh object identity would republish on every render). Partition invariant: `asking + working + idle === live`. Starting folds into working; saved/ended counted nowhere; shells excluded from all three. Eviction gate reads `rollup.alive === 0`, never `live`.
 
 ### Verification
-- **scripts/verify/project-tabs.mjs**: runtime verification script (19/19 green against real server with isolated scratch HOME and `DREAMCONTEXT_DESKTOP=1`). Proven: vault window boots, one ProjectInstance mounts, chip renders, instance neither hidden nor inert, `.project-instance[hidden]` computes `display:none`, reload returns one project (S1-S7), two registered vaults open as two chips with both instances mounted, exactly one visible (M1-M4), ⌃Tab/⌃⇧Tab cycle the chip strip by real keystroke without remounting instances (M5), **B1-B4 (NEW, 2026-08-14)** — a project holding no chats draws no bubbles, three distinct non-transparent fills, equal heights across states and digit counts, loading ring animated by registered `@property` angle. S7 and `clearScrims()` fixed for async modal race: both now wait bounded for the modal to appear (see Constraints & Decisions 2026-08-13).
+- **scripts/verify/project-tabs.mjs**: runtime verification script (20/20 green against real server with isolated scratch HOME and `DREAMCONTEXT_DESKTOP=1`). Proven: vault window boots, one ProjectInstance mounts, chip renders, instance neither hidden nor inert, `.project-instance[hidden]` computes `display:none`, reload returns one project (S1-S7), two registered vaults open as two chips with both instances mounted, exactly one visible (M1-M4), ⌥Tab/⌥⇧Tab cycle the chip strip by real keystroke without remounting instances (M5), a HELD ⌥Tab previews and commits only on release (M6), Escape cancels a held pick (M7), **B1-B4 (2026-08-14)** — a project holding no chats draws no bubbles, three distinct non-transparent fills, equal heights across states and digit counts, loading ring animated by registered `@property` angle. **B5 (2026-08-15)** — reads amplitude out of keyframes rule, proves apex clears both strip's clip box and the real 42px bar. S7 and `clearScrims()` fixed for async modal race: both now wait bounded for the modal to appear.
+- **scripts/verify/project-chip-status.mjs** (NEW, 2026-08-15): 28/28 green, 430 lines. Drives the real ProjectTabs component + real rollupProject function in Chromium. Asserts computed colours, seeks the animation through Web Animations API to measure a real 6.00px rise, and drives the bounce→jump handover as an actual transition.
 
 ### Wave-by-Wave Rollout
 20 tasks across 4 waves, dependency map mechanically audited (0 collisions). Wave 1 (contracts, behavior-neutral) → Wave 2 (instance shell, still one chip) → Wave 3 (global collisions, riskiest) → Wave 4 (badge + window bridge). Full plan: `_dream_context/workspace/project-tabs/plan-validated-v1.md` (838 lines).
@@ -171,6 +195,9 @@ Ten events moved from `window` to instance bus: `navigate`, `agent-open-page`, `
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-08-15 - Atomic bucket table + blocked-project bounce (commit 2292602)
+- Fixed the rollupProject bucket bug: `attention` (sticky flag) tested BEFORE `kind` (live status) made a working chat sit magenta until clicked. BUCKET_BY_KIND is now a single atomic `Record<SessionStatusKind, StatusBucket | null>` — one lookup answers "which bucket?", and a seventh kind is a compile error. wantsALook() is the unseen predicate, called by both dock and rollup. `attention` rides in new `ProjectRollup.flagged` field (one dot after bubbles). A project holding a blocked agent (asking) now bounces like a Dock icon: vertical, thrown (easeOutQuad/easeInQuad), dead landing, 1.6s beat, stops on hover. Headroom: `padding-block: 5px` + `margin-block: -5px`. One-shot bounce stays for bell/unseen-finish; the two are mutually exclusive. NEW `scripts/verify/project-chip-status.mjs` (28/28, 430 lines) drives real component in Chromium, measures 6.00px rise via Web Animations API. Unit tests `agent-status-project-rollup.test.ts` 181→285 lines. Full suite 7075 passed. Task: `one-window-holds-every-open-project-as-a-live-chip-strip`.
 
 ### 2026-08-14 - Status bubble redesign (commit e0cd5cb)
 - Replaced one dot+badge with up to three counted bubbles (asking/working/idle). Sessions in the same state collapse into ONE bubble carrying their count; a state with nothing in it draws nothing. Fixed color collision (accent violet meant "working" on project strip but "ready" on chat tab 40px below — now neutral chip segment, bubbles name their state). Loading legibility: ~24px ring animated via registered `@property` angle (not a transform — wouldn't spin stadium shape), stops under `prefers-reduced-motion` instead of hiding. `rollupProject` expanded with `asking`/`working`/`idle` flat primitives (partition invariant: asking+working+idle===live). Starting folds into working; saved/ended counted nowhere; shells excluded from all three. Unit tests 10→19, verify:project-tabs 13→19 (B1-B4 bubble checks). `handleRollup` comparison bug fixed (walked every key instead of inline three-field check that dropped `alive`). Task: `a-project-chip-says-how-many-chats-it-holds-and-how-many-are-working-one-counted-bubble-per-status`.

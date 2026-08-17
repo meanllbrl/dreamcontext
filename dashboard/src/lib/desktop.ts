@@ -229,6 +229,62 @@ export function pickerError(): string | null {
   return lastPickerError;
 }
 
+export interface ConfirmOptions {
+  /** The question, as the sheet's bold first line. */
+  title: string;
+  /** The consequence, in smaller type under it. Optional but usually the point. */
+  body?: string;
+  /** Label for the affirmative button (default "OK"). It is the DEFAULT button. */
+  confirmLabel?: string;
+  /** Label for the negative button (default "Cancel"). */
+  cancelLabel?: string;
+  /** Draw it as a critical alert — for deletes and anything unrecoverable. */
+  destructive?: boolean;
+}
+
+/**
+ * Ask the user to confirm, and resolve to whether they did.
+ *
+ * ALWAYS USE THIS INSTEAD OF `window.confirm` in dashboard code. `window.confirm`
+ * is not merely discouraged here, it is BROKEN in the desktop app and broken
+ * silently: wry's `WKUIDelegate` implements none of WebKit's JavaScript panel
+ * methods, and WebKit's documented behaviour for a delegate that doesn't is to
+ * show no dialog and return `false`. So `if (!window.confirm(…)) return;` inside
+ * the app is an unconditional early return — the button does nothing, with no
+ * error anywhere. In a browser tab the identical code works, which is exactly
+ * why it survived so long.
+ *
+ * Inside the app this calls the shell's native `confirm_dialog` sheet; in a
+ * browser it falls back to `window.confirm`, which works there.
+ *
+ * An older app shell has no `confirm_dialog` command (the CLI-served dashboard
+ * updates independently of the installed `.app`), so `invoke` rejects. That
+ * falls back to `window.confirm` too, which returns false there — the button
+ * stays inert exactly as it is today rather than silently doing the destructive
+ * thing. A confirmation that cannot be shown must never read as consent.
+ */
+export async function confirmAction(opts: ConfirmOptions): Promise<boolean> {
+  const { title, body, confirmLabel, cancelLabel, destructive } = opts;
+  if (isDesktop()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<boolean>('confirm_dialog', {
+        title,
+        body,
+        confirmLabel,
+        cancelLabel,
+        destructive,
+      });
+    } catch (err) {
+      console.error('[confirm] native confirmation failed:', err);
+      // Falls through to window.confirm — inert in this webview, but never a
+      // silent yes.
+    }
+  }
+  const text = body ? `${title}\n\n${body}` : title;
+  return window.confirm(text);
+}
+
 /** Run a picker, recording — never throwing — a failure to present the panel. */
 async function pickSafely(directory: boolean, multiple: boolean): Promise<string[]> {
   try {

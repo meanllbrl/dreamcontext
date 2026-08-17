@@ -2,6 +2,7 @@ import { useEffect, useRef, type CSSProperties, type KeyboardEvent } from 'react
 import { useQueryClient } from '@tanstack/react-query';
 import type { SyncJob, SyncStatus } from '../../hooks/useTasks';
 import { useStartSyncJob, useSyncJob, useSyncStatus } from '../../hooks/useTasks';
+import { confirmAction } from '../../lib/desktop';
 
 /**
  * Cloud-sync toolbar controls, extracted from BoardToolbar (which was over the
@@ -27,11 +28,17 @@ export function useCloudSync(flash: (msg: string) => void): CloudSync {
   const cloudEnabled = !!syncStatus && syncStatus.backend !== 'local';
   const syncing = syncJob?.status === 'running' || startSyncJob.isPending;
 
-  const runSync = (hard = false) => {
+  const runSync = async (hard = false) => {
     if (syncing) return;
-    if (hard && !window.confirm(
-      `Hard refresh from ${syncStatus?.backend}?\n\nLocal task mirrors are backed up and the whole board is re-pulled from the remote (the source of truth). Local-only edits that never synced will not come back from the remote.`,
-    )) return;
+    if (hard) {
+      const ok = await confirmAction({
+        title: `Hard refresh from ${syncStatus?.backend}?`,
+        body: 'Local task mirrors are backed up and the whole board is re-pulled from the remote (the source of truth). Local-only edits that never synced will not come back from the remote.',
+        confirmLabel: 'Hard refresh',
+        destructive: true,
+      });
+      if (!ok) return;
+    }
     startSyncJob.mutate({ hard }, {
       onError: () => flash('Sync could not start — check your connection'),
     });

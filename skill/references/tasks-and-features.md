@@ -82,7 +82,7 @@ dreamcontext tasks create <name> --start 2026-06-25 --due 2026-07-01
 ```
 - `start` is always **on or before** `due`. Moving the **start** past the due date doesn't fail — the due date is pushed out by just enough to preserve the window's length (a 5-day job that starts late is still a 5-day job). Moving the **due** end before the start is still rejected, since that's a direct contradiction.
 - Status transitions record real-world timing: the first `in_progress` stamps `start_date` (and reschedules a due date it would have invalidated), `completed` stamps `due_date` with the actual end date. Completing a task that never had a start means it went not-started → done in one move, so it gets today at **both** ends (and loses its `backlog` tag, since it is now dated).
-- Setting either date on a `backlog`-tagged task **removes the `backlog` tag** (a dated task is planned, not backlog).
+- Setting either date on a `backlog`-tagged task **removes the `backlog` tag** (a dated task is planned, not backlog). The rule runs the other way too: adding the tag clears both dates. That direction is enforced in the BACKEND, so every surface inherits it — the dashboard's "Send to backlog" writes only the tag and lets the backend undate the task, rather than keeping a second copy of the rule in the UI.
 - Both dates render in the dashboard timeline (Gantt) and calendar views.
 
 `urgency` (critical/high/medium/low) is the second Eisenhower axis (priority × urgency) for the dashboard matrix.

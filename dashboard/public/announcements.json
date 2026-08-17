@@ -1,5 +1,19 @@
 [
   {
+    "id": "v0-24-0",
+    "date": "2026-08-17",
+    "version": "0.24.0",
+    "title": "Every project you have open, awake in one window",
+    "summary": "The desktop app stops being one window per project. Everything you have open lives in a single chip strip, every one of them still running, and each chip says what its agent is doing — working, blocked and waiting on you, or something you haven't seen yet — so a question from a project you aren't looking at reaches you instead of sitting there. Picking a project moved to ⌥Tab so Control chords stay with the terminal. Automations gained a shape you can read, ask their questions in the conversation you are already having, and can deliver a finished run's result to your phone.",
+    "tags": [
+      "desktop",
+      "agent",
+      "automations",
+      "hypotheses"
+    ],
+    "story": "v0-24-0.json"
+  },
+  {
     "id": "v0-23-1",
     "date": "2026-08-02",
     "version": "0.23.1",

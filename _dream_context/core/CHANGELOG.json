@@ -16,6 +16,72 @@
     ]
   },
   {
+    "date": "2026-08-17",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Backlog is a TAG, not a status, so it never appeared anywhere a status does: the only way to shelve a task was to type 'backlog' into a free-text box. Both halves of that were a problem. 'Send to backlog' is now a row in the card's context menu and a button in the detail panel, hidden once the task is already there rather than shown as a no-op. It writes ONLY the tag: the backend already owns the rule that backlog means undated, so letting it clear the dates keeps one definition of backlog instead of a second one drifting in the UI — the runtime check asserts exactly that, seeding a DATED task and proving both dates came back null. Tags are now picked from a searchable list of what the vault already uses, most-used first with the usage count as a hint, and typing something unknown still creates it. Hand-typing is how this vault ended up carrying both 'decisions' and 'decision' in its vocabulary, which the 2026-08-13 consolidation had to report as live near-duplicates. The picker reuses SearchableSelect, so the Turkish-insensitive fold comes with it; that component gains two optional props (hideClear, triggerLabel) because an ADD control has nothing to clear. Proven end to end against the real server on an isolated scratch vault: 9/9 via npm run verify:task-backlog.",
+    "breaking": false,
+    "summary": "Send to backlog is one click, and tags are picked from what the vault already uses",
+    "references": [
+      "commit:b5c74a2",
+      "file:dashboard/src/components/tasks/TaskDetailPanel.tsx",
+      "file:scripts/verify/task-backlog-and-tags.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-17",
+    "type": "fix",
+    "scope": "test",
+    "description": "main had been red for six consecutive CI runs on a run where every test passed: 399 files and 7044 tests green, then 'Errors 1' and exit 1 on [vitest-worker]: Timeout calling \"onTaskUpdate\". A gate that is always red cannot fail, so it had stopped gating — v0.24.0 was published against it. Four candidates were tested and all four are dead, recorded so nobody pays for them twice: a low-chatter reporter (--reporter=dot) still produced the error, so main's rendering was never the bottleneck; the RPC timeout cannot be raised, because birpc reads a hardcoded DEFAULT_TIMEOUT of 6e4 with no vitest config path to it; moving the three CPU-bound files to their own job does nothing, since the suite fails WITHOUT them (396 files in 80 seconds, still one error) and those three run clean alone; and the pool/fork-cap mitigation already in vitest.config.ts, which that file's own comment credited with fixing this, never did. The 80-second run is what settles it: a 60-second timeout firing inside it means an onTaskUpdate whose reply never arrived at all, which is a lost RPC inside vitest 3.2.4 rather than anything this repo could tune. vitest 4.1.10 removes it — five consecutive local runs and a CI=1 run all exit 0 at 7079 passed, and it is marginally faster (179/180/192/179s versus 183/198/200s). Cost: one explicit dependency. vitest 4 no longer ships vite-node, and two tests spawn it to run the REAL TypeScript store in a separate OS process (the federation-inbox and people-store file-lock concurrency proofs), so vite-node becomes a direct devDependency and both tests keep proving what they were written to prove instead of being weakened to suit the runner.",
+    "breaking": false,
+    "summary": "vitest 4 removes the reporter-RPC timeout that had kept main red for six runs",
+    "references": [
+      "commit:f83afd7",
+      "task:full-suite-runs-intermittently-fail-on-a-vitest-reporter-rpc-timeout-under-load"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-17",
+    "type": "fix",
+    "scope": "chrome",
+    "description": "Fix two chip-strip bugs with one root cause: rollupProject bucketed on attention BEFORE the working check, so a chat that finished unseen went magenta and stayed there through its next turn (sticky attention masked the live status). Solution: made atomic. BUCKET_BY_KIND is now the single status→bubble table (a Record over SessionStatusKind, so a seventh kind is a compile error), its null entries decide live/alive (three hand-written rules → one lookup), and buckets derive from live status alone. Attention rides in a new ProjectRollup.flagged and draws its own dot — exact parity with AgentDock, which already worked. Also: a project holding a BLOCKED agent now bounces vertically like a Dock icon (the platform idiom for 'this app needs you'). Physics: purely vertical, thrown (easeOutQuad up, hang, easeInQuad down — separate timing per half), dead landing, 1.6s beat. Driven off the live asking count (starts with the question, stops when answered; cannot latch). The one-shot bounce (bell/unseen-finish) stays; the two are mutually exclusive so CSS never arbitrates. Amplitude 6px solves a geometry problem: .project-tabs scrolls horizontally, so CSS Overflow 3 forces the other axis out of visible and clips exactly the axis the chip travels; padding-block 5px + margin-block -5px buys back the headroom without moving the margin box. Verified: 3 regression locks (each proven to FAIL against the old rule), source-parity test (AgentDock badge → wantsALook), verify:project-chip-status 28/28 (drives real ProjectTabs+rollupProject in Chromium, asserts colours, seeks animation to measure 6.00px rise, drives bounce→jump handover), verify:project-tabs B5 20/20 (reads amplitude from keyframes, proves apex clears both clip box and the 42px bar). Full suite 7075 passed.",
+    "breaking": false,
+    "summary": "Chip strip reads a session's live status, and a blocked project bounces",
+    "references": [
+      "commit:2292602",
+      "file:dashboard/src/components/sleepy/agentStatus.ts",
+      "file:dashboard/src/components/layout/ProjectTabs.tsx",
+      "file:scripts/verify/project-chip-status.mjs",
+      "task:one-window-holds-every-open-project-as-a-live-chip-strip"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-17",
+    "type": "feat",
+    "scope": "chrome",
+    "description": "Replace ⌃Tab project navigation with ⌥Tab/⌥⇧Tab. Control chords belong to the PTY — ⌃C, ⌃D, ⌃W, ⌃A must arrive intact at the shell, and a window-level listener eating one is a bug the terminal cannot explain. Option costs nothing (macOS binds it to nothing; the app's only Option chord is ⌥⌫ delete-word inside the terminal). The gesture's shape is unchanged: first press opens a cursor on the strip, each Tab/arrow moves it, and the switch lands on release — everything the hold bought still holds. Three edits in WindowChrome: keydown guard flips from metaKey||altKey to metaKey||ctrlKey (Option must get through), chord test becomes key==='Tab'&&altKey, keyup arm becomes key!=='Alt'&&altKey (macOS reports Option as Alt). Verified by scripts/verify/project-tabs.mjs driving real Option keystrokes in Chromium (19/19 green, M5 cycles without remounting, M6 previews while held and commits on release).",
+    "breaking": false,
+    "summary": "Project picker is ⌥Tab now; Control returns to the terminal",
+    "references": [
+      "commit:82082cc",
+      "file:dashboard/src/components/layout/WindowChrome.tsx",
+      "file:scripts/verify/project-tabs.mjs",
+      "feature:project-tabs-one-window-multi-vault"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-14",
     "type": "fix",
     "scope": "automations",

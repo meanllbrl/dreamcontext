@@ -21,15 +21,24 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     exclude: ['node_modules', 'dist', 'e2e', 'dashboard'],
-    // The suite has a few CPU-bound files (recall-capture-stress, recall-eval,
-    // sleep-quality-eval) that run for tens of seconds. Under the default thread
-    // pool on a contended CI runner, several of them oversubscribe the vCPUs and
-    // starve the worker→main reporter RPC, which surfaces as a spurious
-    // "Timeout calling onTaskUpdate" unhandled error that fails the run even
-    // though every test passed. The `forks` pool uses process IPC (serviced by
-    // libuv, not the blocked JS event loop) and is resistant to that starvation;
-    // teardownTimeout adds margin. On CI we also cap concurrency so the heavy
-    // files don't oversubscribe the runner — local dev keeps full parallelism.
+    // `forks` (process IPC rather than worker threads) and the teardown margin
+    // date from the v0.11.0 CI-red episode and are kept because they are cheap
+    // and the suite is process-heavy either way.
+    //
+    // They were ALSO documented here as the mitigation for the spurious
+    // "Timeout calling onTaskUpdate" unhandled error — a run where every test
+    // passed still exited 1. That framing was wrong, and the record is corrected
+    // rather than left to mislead the next person: on vitest 3.2.4 the failure
+    // survived this pool, survived the CI fork cap, survived a low-chatter
+    // reporter, and survived removing all three CPU-bound files (396 files in
+    // 80s, still one error). birpc's timeout is a hardcoded 60s with no vitest
+    // config knob, and in an 80s run that means an `onTaskUpdate` whose reply
+    // never arrived at all — a lost RPC in vitest itself, not starvation and not
+    // anything this repo could tune. Upgrading to vitest 4 removed it outright.
+    //
+    // The CI fork cap is therefore no longer load-bearing for that bug. It stays
+    // for now because a 2-vCPU runner has little to gain from more forks, but it
+    // is safe to revisit.
     pool: 'forks',
     teardownTimeout: 60_000,
     ...(isCI ? { poolOptions: { forks: { minForks: 1, maxForks: 2 } } } : {}),

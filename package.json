@@ -1,6 +1,6 @@
 {
   "name": "dreamcontext",
-  "version": "0.23.1",
+  "version": "0.24.1",
   "description": "dreamcontext — the persistent brain for your AI agents. Remembers what you built, knows how your project works.",
   "type": "module",
   "bin": {
@@ -47,7 +47,10 @@
     "verify:hypotheses": "node scripts/verify/hypotheses-ui.mjs",
     "verify:lab-board": "node scripts/verify/lab-board.mjs",
     "verify:project-tabs": "node scripts/verify/project-tabs.mjs",
-    "verify:automations": "node scripts/verify/automations.mjs"
+    "verify:project-chip-status": "node scripts/verify/project-chip-status.mjs",
+    "verify:automations": "node scripts/verify/automations.mjs",
+    "verify:task-delete": "node scripts/verify/task-delete-confirm.mjs",
+    "verify:task-backlog": "node scripts/verify/task-backlog-and-tags.mjs"
   },
   "keywords": [
     "ai",
@@ -81,7 +84,8 @@
     "sharp": "^0.34.5",
     "tsup": "^8.4.0",
     "typescript": "^5.7.3",
-    "vitest": "^3.0.6"
+    "vite-node": "^6.0.0",
+    "vitest": "^4.1.10"
   },
   "optionalDependencies": {
     "@huggingface/transformers": "^4.2.0",

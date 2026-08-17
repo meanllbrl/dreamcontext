@@ -4,6 +4,7 @@ import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers } from '../../ho
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
 import { useVersions, useActiveVersion } from '../../hooks/useVersions';
 import { useBoardState } from '../../hooks/useBoard';
+import { confirmAction } from '../../lib/desktop';
 import {
   type Dim, type SaveScope,
   PRIO_ORDER, STATUS_META, STATUS_ORDER,
@@ -179,9 +180,26 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     if (task.priority !== priority) { updateTask.mutate({ slug: task.slug, updates: { priority } as Partial<Task> }); flash(`Priority → ${levelLabel(priority)}`); }
     setCtxMenu(null);
   }, [updateTask, flash]);
-  const ctxDelete = useCallback((task: Task) => {
+  // Writes ONLY the tag: the backend's "backlog ⇒ undated" rule clears the
+  // dates itself, so this button cannot drift into a second definition of what
+  // backlog means.
+  const ctxSendToBacklog = useCallback((task: Task) => {
     setCtxMenu(null);
-    if (typeof window !== 'undefined' && !window.confirm(`Delete “${task.name || task.slug}”? This cannot be undone.`)) return;
+    if (task.tags.some((t) => t.toLowerCase() === 'backlog')) return;
+    updateTask.mutate(
+      { slug: task.slug, updates: { tags: [...task.tags, 'backlog'] } as Partial<Task> },
+      { onSuccess: () => flash('Sent to backlog'), onError: () => flash('Could not send to backlog') },
+    );
+  }, [updateTask, flash]);
+  const ctxDelete = useCallback(async (task: Task) => {
+    setCtxMenu(null);
+    const ok = await confirmAction({
+      title: `Delete “${task.name || task.slug}”?`,
+      body: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     deleteTask.mutate(task.slug, { onSuccess: () => flash('Task deleted'), onError: () => flash('Delete failed') });
     if (selectedSlug === task.slug) setSelectedSlug(null);
   }, [deleteTask, flash, selectedSlug]);
@@ -348,6 +366,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
           agentReady={agentReady}
           onClose={() => setCtxMenu(null)}
           onOpen={(t) => { setSelectedSlug(t.slug); setCtxMenu(null); }}
+          onSendToBacklog={ctxSendToBacklog}
           onDelegate={ctxDelegate}
           onSetStatus={ctxSetStatus}
           onSetPriority={ctxSetPriority}
@@ -383,7 +402,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
 }
 
 interface CtxMenuState { x: number; y: number; task: Task }
-function TaskContextMenu({ menu, agentReady, onClose, onOpen, onDelegate, onSetStatus, onSetPriority, onDelete }: {
+function TaskContextMenu({ menu, agentReady, onClose, onOpen, onDelegate, onSetStatus, onSetPriority, onSendToBacklog, onDelete }: {
   menu: CtxMenuState;
   agentReady?: boolean;
   onClose: () => void;
@@ -391,6 +410,7 @@ function TaskContextMenu({ menu, agentReady, onClose, onOpen, onDelegate, onSetS
   onDelegate: (t: Task) => void;
   onSetStatus: (t: Task, status: string) => void;
   onSetPriority: (t: Task, priority: string) => void;
+  onSendToBacklog: (t: Task) => void;
   onDelete: (t: Task) => void;
 }) {
   const { task } = menu;
@@ -484,6 +504,16 @@ function TaskContextMenu({ menu, agentReady, onClose, onOpen, onDelegate, onSetS
             </div>
           )}
         </div>
+
+        {/* Backlog is a TAG, not a status, so it never appeared in this menu and
+            had to be typed by hand. One row writes it. Hidden once the task is
+            already there rather than shown as a no-op. */}
+        {!task.tags.some((t) => t.toLowerCase() === 'backlog') && (
+          <div className="bd-row" onClick={() => onSendToBacklog(task)} style={row}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M3 7h18M3 12h18M3 17h18" /></svg>
+            <span style={{ flex: 1 }}>Send to backlog</span>
+          </div>
+        )}
 
         <div style={{ height: 1, background: 'var(--color-border)', margin: '5px 4px' }} />
         <div className="bd-row bd-danger" onClick={() => onDelete(task)} style={{ ...row, color: 'var(--color-text-secondary)' }}>

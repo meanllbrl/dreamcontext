@@ -1,4 +1,5 @@
 import { useAutomationDispatcher, useInstallDispatcher, useUninstallDispatcher } from '../../hooks/useAutomations';
+import { confirmAction } from '../../lib/desktop';
 import './AutomationsDispatcherBar.css';
 
 /**
@@ -63,11 +64,14 @@ export function AutomationsDispatcherBar({ onToast }: { onToast?: (msg: string) 
     });
   };
 
-  const doUninstall = () => {
-    if (typeof window !== 'undefined' && !window.confirm(
-      'Turn the scheduler off?\n\nNothing will run on a schedule until you turn it back on. '
-      + 'Your automations, their approvals and their run history are all kept.',
-    )) return;
+  const doUninstall = async () => {
+    const ok = await confirmAction({
+      title: 'Turn the scheduler off?',
+      body: 'Nothing will run on a schedule until you turn it back on. '
+        + 'Your automations, their approvals and their run history are all kept.',
+      confirmLabel: 'Turn off',
+    });
+    if (!ok) return;
     uninstall.mutate(undefined, {
       onSuccess: () => onToast?.('Scheduler off — nothing will fire on a schedule.'),
       onError: (err) => onToast?.(`Could not turn the scheduler off — ${(err as Error).message}`),

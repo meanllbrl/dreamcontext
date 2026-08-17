@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { SleepyMascot } from './SleepyMascot';
 import { GoalDockBadge } from './GoalLivePanel';
 import { CouncilDockBadge } from './CouncilLivePanel';
-import { orderRows, rollupKind, type SessionRow } from './agentStatus';
+import { orderRows, rollupKind, wantsALook, type SessionRow } from './agentStatus';
 
 /**
  * The bottom-right session dock — shown when the full overlay is closed and ≥1 session
@@ -109,7 +109,10 @@ export function AgentDock({ rows, focusedId, onOpen, onClose, className }: {
                     </>
                   )}
                 </span>
-                {row.attention && row.info.kind !== 'asking' && <span className="agent-dock-chip-badge" aria-label="Waiting for you" />}
+                {/* The same predicate the project chip's dot is counted from (`flagged` in
+                    rollupProject) — one function, so the tile and the strip above it can never
+                    disagree about whether this session has something unseen. */}
+                {wantsALook(row) && <span className="agent-dock-chip-badge" aria-label="Waiting for you" />}
                 <button
                   type="button"
                   className="agent-dock-chip-close"

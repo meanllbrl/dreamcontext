@@ -49,7 +49,10 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
   const [params, updateParams] = useLabSearchParams();
   const view = useMemo(() => readViewState(params), [params]);
   const [anchor, setAnchor] = useState<string | null>(null);
-  const [showTable, setShowTable] = useState(false);
+  // Open by default: the lane encodes the shape, the table carries the actual
+  // numbers, and someone who opened one funnel's detail page came for the
+  // numbers. Still collapsible — "Hide table" is one click away.
+  const [showTable, setShowTable] = useState(true);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [narrow, setNarrow] = useState(false);
 
