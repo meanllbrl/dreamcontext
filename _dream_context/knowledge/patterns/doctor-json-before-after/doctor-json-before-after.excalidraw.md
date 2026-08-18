@@ -1,16 +1,19 @@
 ---
-
 name: doctor-json-before-after
 description: >-
-  Önce/sonra karşılaştırması: doctor'ın eski insan-okur prose çıktısı ajanı yorum + tahminle
-  onarıma zorluyordu; yeni doctor --json teşhis sözleşmesi (code, subject, evidence,
-  supportedFixes) ajana neyin bozuk olduğunu, kanıtını ve seçilecek onarımları yapılandırılmış
-  veriyor. Onarım protokolü: tur başına tek teşhisli onarım, hata sayısı iyileşmeyince dürüst
-  durma. Tüketiciler: curator-verifier, initializer-verifier, curator-worker, goal-validator.
+  Önce/sonra karşılaştırması: doctor'ın eski insan-okur prose çıktısı ajanı
+  yorum + tahminle onarıma zorluyordu; yeni doctor --json teşhis sözleşmesi
+  (code, subject, evidence, supportedFixes) ajana neyin bozuk olduğunu, kanıtını
+  ve seçilecek onarımları yapılandırılmış veriyor. Onarım protokolü: tur başına
+  tek teşhisli onarım, hata sayısı iyileşmeyince dürüst durma. Tüketiciler:
+  curator-verifier, initializer-verifier, curator-worker, goal-validator.
   Kaynak: archify incelemesi 2026-08-17, diagnostic-repair-loop pattern'i.
-tags: [excalidraw, kind:pattern, topic:cli, domain:quality]
+tags:
+  - 'topic:excalidraw'
+  - 'kind:pattern'
+  - 'topic:cli'
+  - 'domain:quality'
 excalidraw-plugin: parsed
-
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
