@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+<link rel="stylesheet" href="./composer.css" />
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; }
+  a { color: #9d8cff; }
+  a:hover { color: #b6a9ff; }
+</style>
+</helmet>
+<div data-theme="{{ theme }}" class="pin-pane">
+  <div class="{{ shelfClass }}">
+    <div class="{{ shellClass }}">
+      <sc-if value="{{ popoverOpen }}" hint-placeholder-val="{{ false }}">
+        <div class="pin-pop" role="dialog" aria-label="Run progress">
+          <div class="pin-pop-head">
+            <span class="pin-title">Run progress</span>
+            <span class="pin-count">7/11 · 64%</span>
+            <button type="button" class="pin-x" aria-label="Close" onClick="{{ toggleProgress }}">×</button>
+          </div>
+          <div class="pin-poplist">
+            <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">read the capability allowlist</span><span class="pin-task-meta">4s</span></div>
+            <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">map <span class="pin-task-path">src-tauri/capabilities/dev.json</span></span><span class="pin-task-meta">11s</span></div>
+            <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">dedupe the dev proxy entry</span><span class="pin-task-meta">6s</span></div>
+            <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">patch <span class="pin-task-path">vite.config.ts</span></span><span class="pin-task-meta">9s</span></div>
+            <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">patch <span class="pin-task-path">dev.json</span></span><span class="pin-task-meta">5s</span></div>
+            <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">regenerate capability types</span><span class="pin-task-meta">21s</span></div>
+            <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">restart the dev server</span><span class="pin-task-meta">8s</span></div>
+            <div class="pin-task is-now"><span class="pin-task-glyph" aria-hidden="true">●</span><span class="pin-task-name">loopback url exception</span><span class="pin-task-meta">running 34s</span></div>
+            <div class="pin-task"><span class="pin-task-glyph" aria-hidden="true">○</span><span class="pin-task-name">route the port pin through one source</span><span class="pin-task-meta">queued</span></div>
+            <div class="pin-task"><span class="pin-task-glyph" aria-hidden="true">○</span><span class="pin-task-name">smoke test <span class="pin-task-path">tauri dev</span></span><span class="pin-task-meta">queued</span></div>
+            <div class="pin-task"><span class="pin-task-glyph" aria-hidden="true">○</span><span class="pin-task-name">note it in the 0.25.0 changelog</span><span class="pin-task-meta">queued</span></div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ unfolded }}" hint-placeholder-val="{{ false }}">
+        <div class="pin-fold">
+          <span class="pin-chip">PR #218<span class="pin-chip-x">×</span></span>
+          <span class="pin-chip">node 22.3.0<span class="pin-chip-x">×</span></span>
+          <span class="pin-chip">db local<span class="pin-chip-x">×</span></span>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ showOpen }}" hint-placeholder-val="{{ false }}">
+        <div class="pin-open">
+          <div class="pin-row">
+            <button type="button" class="pin-lede" onClick="{{ toggleLede }}">
+              <span class="pin-caret" aria-hidden="true">▾</span>
+              <span class="pin-title">Session summary</span>
+              <span class="pin-dot" aria-hidden="true">·</span>
+              <span class="pin-ledetext">16 tasks deleted, 0.24.2 folded into 0.25.0</span>
+            </button>
+            <button type="button" class="pin-x" aria-label="Unpin session summary">×</button>
+          </div>
+          <div class="pin-body">16 tasks deleted after the placement review: everything under the right-rail branch, plus the four spikes on the tab-bar strip. 0.24.2 folded into 0.25.0 — the shelf ships in one release, not two. Placement A chosen: the shelf docks to the composer, grows upward, and never reacts to scroll. Remaining open question is the ceiling behaviour once three long pins exist at once; current answer is demotion, oldest first.</div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ showLede }}" hint-placeholder-val="{{ false }}">
+        <div class="pin-row">
+          <button type="button" class="pin-lede" onClick="{{ toggleLede }}">
+            <span class="pin-caret" aria-hidden="true">▸</span>
+            <span class="pin-title">Session summary</span>
+            <span class="pin-dot" aria-hidden="true">·</span>
+            <sc-if value="{{ clamped }}" hint-placeholder-val="{{ true }}">
+              <span class="pin-ledetext">16 tasks deleted, 0.24.2 folded into 0.25.0, placement A chosen, ceiling behaviour still open, demotion oldest-first agreed with the team</span>
+            </sc-if>
+            <sc-if value="{{ authored }}" hint-placeholder-val="{{ false }}">
+              <span class="pin-ledetext">16 tasks deleted, 0.25.0 ships the shelf.</span>
+            </sc-if>
+            <sc-if value="{{ clamped }}" hint-placeholder-val="{{ true }}">
+              <span class="pin-clamp" title="Clamped by the shelf — the author wrote no lede">…</span>
+            </sc-if>
+            <span class="pin-open-hint" aria-hidden="true">⌄</span>
+          </button>
+          <button type="button" class="pin-x" aria-label="Unpin session summary">×</button>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ showProgress }}" hint-placeholder-val="{{ false }}">
+        <div class="{{ progressClass }}">
+          <div class="pin-row">
+            <button type="button" class="pin-lede" aria-expanded="{{ progressOpen }}" onClick="{{ toggleProgress }}">
+              <span class="pin-caret" aria-hidden="true">{{ progressCaret }}</span>
+              <span class="pin-pct">64%</span>
+              <span class="pin-count">7/11</span>
+              <span class="pin-dot" aria-hidden="true">·</span>
+              <span class="pin-now"><span class="pin-now-key">now: </span>loopback url exception</span>
+            </button>
+            <button type="button" class="pin-x" aria-label="Unpin run progress">×</button>
+            <span class="pin-track" aria-hidden="true"><span class="pin-track-fill" style="width: 64%"></span></span>
+          </div>
+          <sc-if value="{{ inlineOpen }}" hint-placeholder-val="{{ false }}">
+            <div class="pin-body">
+              <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">read the capability allowlist</span><span class="pin-task-meta">4s</span></div>
+              <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">map <span class="pin-task-path">src-tauri/capabilities/dev.json</span></span><span class="pin-task-meta">11s</span></div>
+              <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">dedupe the dev proxy entry</span><span class="pin-task-meta">6s</span></div>
+              <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">patch <span class="pin-task-path">vite.config.ts</span></span><span class="pin-task-meta">9s</span></div>
+              <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">patch <span class="pin-task-path">dev.json</span></span><span class="pin-task-meta">5s</span></div>
+              <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">regenerate capability types</span><span class="pin-task-meta">21s</span></div>
+              <div class="pin-task is-done"><span class="pin-task-glyph" aria-hidden="true">✓</span><span class="pin-task-name">restart the dev server</span><span class="pin-task-meta">8s</span></div>
+              <div class="pin-task is-now"><span class="pin-task-glyph" aria-hidden="true">●</span><span class="pin-task-name">loopback url exception</span><span class="pin-task-meta">running 34s</span></div>
+              <div class="pin-task"><span class="pin-task-glyph" aria-hidden="true">○</span><span class="pin-task-name">route the port pin through one source</span><span class="pin-task-meta">queued</span></div>
+              <div class="pin-task"><span class="pin-task-glyph" aria-hidden="true">○</span><span class="pin-task-name">smoke test <span class="pin-task-path">tauri dev</span></span><span class="pin-task-meta">queued</span></div>
+              <div class="pin-task"><span class="pin-task-glyph" aria-hidden="true">○</span><span class="pin-task-name">note it in the 0.25.0 changelog</span><span class="pin-task-meta">queued</span></div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <div class="pin-tags">
+        <span class="pin-chip">
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden="true">
+            <path d="M3.5 3v6M3.5 6.5h3a2 2 0 0 0 2-2V3"></path>
+            <circle cx="3.5" cy="2" r="1.05"></circle>
+            <circle cx="8.5" cy="2" r="1.05"></circle>
+            <circle cx="3.5" cy="10" r="1.05"></circle>
+          </svg>
+          feat/pin-surface<span class="pin-chip-x">×</span>
+        </span>
+        <sc-if value="{{ wide }}" hint-placeholder-val="{{ true }}">
+          <span class="pin-chip is-marker" title="Linked git worktree">worktree</span>
+        </sc-if>
+        <sc-if value="{{ narrow }}" hint-placeholder-val="{{ false }}">
+          <span class="pin-chip is-marker" title="Linked git worktree" aria-label="Linked git worktree">
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" aria-hidden="true">
+              <rect x="1.4" y="1.4" width="5.6" height="5.6" rx="1.4"></rect>
+              <path d="M4.6 10.6h4a2 2 0 0 0 2-2v-4"></path>
+            </svg>
+          </span>
+        </sc-if>
+        <button type="button" class="pin-chip is-link" title="Open http://localhost:5173">:5173 ↗</button>
+        <sc-if value="{{ showDemoted }}" hint-placeholder-val="{{ false }}">
+          <button type="button" class="pin-chip is-demoted" title="Demoted to a tag — click to re-open">
+            <span class="pin-caret" aria-hidden="true">⌃</span>Session summary
+          </button>
+        </sc-if>
+        <sc-if value="{{ showMore }}" hint-placeholder-val="{{ false }}">
+          <button type="button" class="pin-chip is-more" aria-expanded="{{ unfolded }}" onClick="{{ toggleFold }}">{{ moreLabel }}</button>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+
+  <div class="pin-dock">
+    <div class="{{ composerClass }}">
+      <div class="chat-cmp-handle" role="separator" aria-orientation="horizontal">
+        <div class="chat-cmp-grip"></div>
+      </div>
+      <div class="chat-cmp-body">
+        <div class="chat-cmp-inputrow">
+          <div style="padding: 2px 0 6px; font-size: 14px; line-height: 1.5; color: var(--color-text-tertiary);">Message Claude…</div>
+        </div>
+      </div>
+      <div class="chat-cmp-toolbar">
+        <button type="button" class="chat-cmp-modeltrigger">
+          <span class="chat-cmp-modeltrigger-model">Basic</span>
+          <span class="chat-cmp-modeltrigger-effort">auto</span>
+          <span class="chat-cmp-caret" aria-hidden="true">▾</span>
+        </button>
+        <button type="button" class="chat-cmp-iconbtn" aria-label="Attach">
+          <svg width="14" height="14" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+            <path d="M6 1.5v9M1.5 6h9"></path>
+          </svg>
+        </button>
+        <div class="chat-cmp-spacer"></div>
+        <div class="chat-cmp-right">
+          <button type="button" class="chat-cmp-usagebtn" aria-label="Session usage">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle class="chat-cmp-usagering-track" cx="8" cy="8" r="6.5" strokeWidth="2"></circle>
+              <circle class="chat-cmp-usagering-fill" cx="8" cy="8" r="6.5" strokeWidth="2" strokeLinecap="round" transform="rotate(-90 8 8)" strokeDasharray="8.58 40.84"></circle>
+            </svg>
+          </button>
+          <button type="button" class="chat-cmp-modeltrigger">
+            <span class="chat-cmp-modeltrigger-model">Opus</span>
+            <span class="chat-cmp-modeltrigger-effort">Xhigh</span>
+            <span class="chat-cmp-caret" aria-hidden="true">▾</span>
+          </button>
+          <button type="button" class="chat-cmp-send" aria-label="Send">↑</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:740,&quot;height&quot;:220},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dark&quot;,&quot;light&quot;],&quot;default&quot;:&quot;dark&quot;,&quot;tsType&quot;:&quot;\&quot;dark\&quot; | \&quot;light\&quot;&quot;},&quot;mode&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;rest&quot;,&quot;active&quot;,&quot;lede&quot;,&quot;open&quot;,&quot;overflow&quot;,&quot;demote&quot;,&quot;authored&quot;],&quot;default&quot;:&quot;rest&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;narrow&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;},&quot;unfolded&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;},&quot;progressOpen&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;},&quot;detail&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;inplace&quot;,&quot;popover&quot;],&quot;default&quot;:&quot;inplace&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  state = { mode: null, unfolded: null };
+
+  mode() { return this.state.mode ?? this.props.mode ?? "rest"; }
+
+  renderVals() {
+    const mode = this.mode();
+    const narrow = !!this.props.narrow;
+    const showProgress = mode === "active" || mode === "demote";
+    const progressOpen = showProgress && (this.state.progressOpen ?? !!this.props.progressOpen);
+    const showLede = mode === "lede" || mode === "authored";
+    const showOpen = mode === "open";
+    const showMore = mode === "overflow";
+    const unfolded = showMore && (this.state.unfolded ?? !!this.props.unfolded);
+    const hasRows = showProgress || showLede || showOpen || unfolded;
+    return {
+      theme: this.props.theme ?? "dark",
+      narrow, wide: !narrow,
+      shelfClass: "pin-shelf" + (narrow ? " is-narrow" : ""),
+      shellClass: "pin-shell" + (hasRows ? " has-rows" : ""),
+      composerClass: "chat-cmp-card pin-composer" + (hasRows ? " is-shelved" : ""),
+      showProgress, showLede, showOpen, showMore, unfolded, progressOpen,
+      popoverOpen: progressOpen && (this.props.detail ?? "inplace") === "popover",
+      inlineOpen: progressOpen && (this.props.detail ?? "inplace") !== "popover",
+      progressClass: progressOpen && (this.props.detail ?? "inplace") !== "popover" ? "pin-open" : "",
+      progressCaret: progressOpen ? "▾" : "▸",
+      toggleProgress: () => this.setState({ progressOpen: !progressOpen }),
+      showDemoted: mode === "demote",
+      clamped: mode !== "authored",
+      authored: mode === "authored",
+      moreLabel: unfolded ? "−3" : "+3",
+      toggleFold: () => this.setState(s => ({ unfolded: !(s.unfolded ?? !!this.props.unfolded) })),
+      toggleLede: () => this.setState({ mode: this.mode() === "open" ? "lede" : "open" }),
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,5 +1,126 @@
 [
   {
+    "date": "2026-08-23",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Add AgentTabs' own right-click menu — a head naming the tab, Rename (the inline editor that double-click already opened, undiscoverable until now), and an Auto-rename tabs switch bound to agentSettings.autoTitle. It PORTALS to <body> for two independently fatal reasons: .agent-pane-tabbar is an overflow-x scroller, and .agent-surface's `contain: layout paint` makes it the containing block even for position:fixed — the same trap that keeps AgentDock a sibling of the surface. Placed at the pointer, clamped to the viewport, flipped above the cursor near the bottom edge; a keyboard-raised menu (Menu key, 0,0 coords) anchors under the tab and takes focus while a pointer-raised one deliberately does not, so dismissing it leaves the pane typing-ready. The switch writes through patchAgentSettings({ autoTitle }) rather than a whole-object writeAgentSettings, because AgentSurface's agentSettings can still be the pre-hydrate localStorage seed and spreading it back would revert unrelated preferences. Two consequences handled rather than discovered later: AgentSurface's window-level Esc handler now yields to .agent-tab-menu by DOM presence (it fires before the menu's own document handler and would otherwise collapse the surface), and SettingsPage subscribes to AGENT_SETTINGS_EVENT since it is no longer the only editor of that blob. Verified end to end by scripts/verify/agent-tab-menu.mjs (new, real server + bundle + Chromium, 11/11); auto-titling itself is explicitly NOT covered, since it needs a live Haiku call. Suite 7170 green, tsc and build clean.",
+    "breaking": false,
+    "summary": "An agent tab answers a right-click: Rename, plus the Auto-rename switch that used to live three panels away in Settings",
+    "references": [
+      "commit:816f29f",
+      "file:dashboard/src/components/sleepy/AgentTabs.tsx",
+      "file:dashboard/src/pages/SettingsPage.tsx",
+      "file:scripts/verify/agent-tab-menu.mjs",
+      "task:agent-tab-right-click-menu-rename-the-auto-rename-switch-from-settings"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-23",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Fix the chat bridge's teardown, which only UNTRACKED its `claude -p --input-format stream-json` child on socket close while the child waited on stdin forever — so every closed chat tab stranded a live ~200-400MB process (observed: dozens of days-old 2.1.220 processes, ~10GB RSS, each idling at 3-4% CPU). The terminal route has always killed its PTY on socket close; src/server/routes/agent-chat.ts now ends the same way but gracefully: stdin EOF lets an idle child exit on its own within seconds (verified against CLI 2.1.220) and lets a mid-turn child finish and transcript its turn first, with a 5-minute SIGTERM then SIGKILL backstop for a wedged one. The child stays trackChild-tracked until it actually exits, so a server shutdown reaps drainers too. Pinned by tests/unit/agent-chat-close-reap.test.ts (new, 107 lines).",
+    "breaking": false,
+    "summary": "Closing a chat tab now reaps its claude child — no more immortal ~300MB processes stranded per closed tab",
+    "references": [
+      "commit:d7738ba",
+      "file:src/server/routes/agent-chat.ts",
+      "file:tests/unit/agent-chat-close-reap.test.ts",
+      "task:closing-a-chat-tab-leaves-its-claude-process-alive-so-ram-piles-up"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-22",
+    "type": "fix",
+    "scope": "cli",
+    "description": "UNCOMMITTED. src/cli/commands/update.ts previously fell out on a bare return when no platforms were found, exiting 0 with 'No installed platforms found. Run dreamcontext install-skill first.' A silent success on a no-op is indistinguishable from a real update in scripts. The no-platforms bail now sets process.exitCode = 1; message unchanged. Same contract applied to the action's catch-all (a throw mid-refresh is non-zero too). A deliberate Ctrl-C stays 0 — TTY-only, so no script can observe it. Callers audited: src/server/routes/launcher.ts POST /api/launcher/update already caught failures, so a non-zero exit on an otherwise-current vault now reports update_failed rather than ok: true. src/cli/commands/upgrade.ts per-project fan-out already caught failures, so a platform-less vault stops counting toward 'Refreshed N/N' with summary 'update exited 1 — see its output above' rather than execFileSync's opaque string. Pinned by tests/integration/update-exit-code.test.ts spawning the real built CLI (isolated HOME, stdin ignored so no run is a TTY) and asserting both directions: platform-less vault → exit 1 with the actionable message; installed vault → still exit 0. Exit-code contract written into skill/references/cli-reference.md and skill/SKILL.md. Full suite 7125 green.",
+    "breaking": false,
+    "summary": "update exits 1 when no platform is installed, so scripts can distinguish success from no-op",
+    "references": [
+      "file:src/cli/commands/update.ts",
+      "file:src/cli/commands/upgrade.ts",
+      "file:src/server/routes/launcher.ts",
+      "task:update-exits-0-when-no-platform-is-installed-so-scripts-read-the-no-op-as-success"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-22",
+    "type": "feat",
+    "scope": "sync",
+    "description": "UNCOMMITTED. Six hardening layers for the task-sync pull path, addressing the 2026-07-27 incident where objectives field was silently stripped from 72 tasks. (1) Local-only fields can no longer be dropped: src/lib/task-backend/local-only.ts defines REMOTE_MAPPED_TASK_FIELDS as a closed set; everything else is local-only by complement, so an unknown frontmatter key fails safe. preserveLocalOnlyFields runs in both pull merge paths and names anything it rescued in the sync report. Local-only = objectives, rice, parent_task, related_feature, description, id, created_at; NOT local-only = start_date/due_date and tags. On ClickUp, description/related_feature/rice/urgency become remote-owned only when the list binds a matching field. (2) A vanished mirror is rebuilt, not reset: the create branch also fires for tasks that already exist (a .tasks-map.json re-slug). It now merges the ledger's base_snapshot local-only fields back in and warns REBUILT — this was the one path that genuinely lost data in current code. (3) Recovery is designed: every pull copies mirrors it overwrites/deletes to state/.pre-pull-<stamp>/ (newest 5, gitignored), and SyncReport.mirrorBackupDir is printed. (4) Poison-pill watermark: noteUnapplied / enforceUnappliedFloor in sync-state.ts cap the watermark strictly below the oldest item a run failed to ingest, clamping forward advances and retreating one already written past a failure found later. (5) ClickUp tag retry: the per-tag loop tolerates failure (404 on a remove = already applied); a genuine failure keeps the previous tag set in the new base snapshot (no duplicate changelog comments), leaves pendingPush, and re-queues after the dequeue. GitHub has no per-tag loop (one PATCH carries the whole label set), so AC6 is ClickUp-only. (6) Detection: doctor/objective-links-vanished (src/lib/roadmap-link-audit.ts) diffs the committed board.md against live task frontmatter, deliberately narrow (only when an objective's entire link set vanished while its tasks live on). Verified no false positive on this repo. Tests: sync-local-only-fields 20, sync-watermark-poison-pill 7, clickup-tag-retry 3, roadmap-link-audit 10, +2 in clickup-pull. Full suite 7165 green.",
+    "breaking": false,
+    "summary": "Task sync pull can no longer lose data: local-only field guards, vanished-mirror rebuild, pre-pull backups, watermark poison-pill, per-tag retry",
+    "references": [
+      "file:src/lib/task-backend/local-only.ts",
+      "file:src/lib/task-backend/sync-state.ts",
+      "file:src/lib/roadmap-link-audit.ts",
+      "task:task-sync-pull-loses-data-silently-objectives-wiped-watermark-skips-failed-tasks"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-22",
+    "type": "docs",
+    "scope": "brain",
+    "description": "Session consolidation covering roadmap board reflow, objective cleanup (retires the codex/opencode support objective and its task, with both the objective deleted and the GitHub issue closed as not_planned via push-only sync), feature-file reconciliation across brain-repo-sync / calendar-integration / task-management, and two knowledge decisions brought current. codex-cli-integration-feasibility.md had an opening sentence claiming to supersede soul's 'Supports Claude Code only' line as a capability assertion, which contradicted the user's explicit decision not to pursue it — reframed as Capability: cheap / Scope: out-of-scope, with the recommended-next-step marked superseded since no one is running that spike. graphify-coexistence-decision.md described hasCodeGraph, snapshot nudge, and doctor line as if they shipped, when they never did and the task was deleted — retired note added, with the durable lesson (don't mix graph nodes into the BM25 corpus — the mem0 lesson) preserved separately. This session also authored the CHANGELOG and RELEASES entries for all the work that landed since the previous sleep.",
+    "breaking": false,
+    "summary": "Roadmap/objectives reconciliation: retired include-codex-opencode-support, corrected two decision files whose recommended-next-step was superseded",
+    "references": [
+      "commit:5459ff1",
+      "file:_dream_context/knowledge/codex-cli-integration-feasibility.md",
+      "file:_dream_context/knowledge/decisions/graphify-coexistence-decision.md",
+      "task:re-add-codex-and-opencode-support-port-the-removed-platform-layer-to-the-current-spec"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-22",
+    "type": "fix",
+    "scope": "json",
+    "description": "A vault scaffolded as {entries: []} or {releases: []} broke two ways. Loudly: core releases add threw 'Expected JSON array, got object'. Silently and worse: memory recall --types changelog and the snapshot's recent-changelog section returned nothing on a full changelog with no error surfaced — the vault looked healthy while its history was invisible. readJsonArray now classifies via inspectJsonArray and reads THROUGH a wrapper (a known key entries/releases or any single-key object whose only value is an array, hasOwnProperty gated). Unreadable shapes still throw, now naming the repair. Self-heal falls out of the write path: insertToJsonArray reads through then writes a bare array, so the first write normalizes in place. Two readers had inline Array.isArray parses and never called the helper: recall.ts loadChangelogEntries (the silent half) and git-sync/semantic-merge.ts parseJsonArray (worse — a wrapper-shaped side parses to [] and is UNIONED AWAY, silently deleting that machine's whole changelog on a team sync). Both now route through inspectJsonArray. doctor validates SHAPE, not just parseability: checkJson takes the expected shape per call site (array for CHANGELOG/RELEASES, object for taxonomy/.sleep/.platforms) and emits doctor/json-wrapped-array (warn, recoverable), doctor/json-not-array, doctor/json-not-object (error), each carrying code/subject/evidence/supportedFixes. Verified by driving the real CLI against a scratch vault with the reported shape: before, releases add threw, recall found 0 docs, doctor OK; after, releases add succeeds, recall finds 2 docs, snapshot renders both, doctor warns with wrapperKey + counts, one changelog add normalizes with all entries intact.",
+    "breaking": false,
+    "summary": "CHANGELOG/RELEASES tolerate wrapper objects, and doctor validates shape — a hand-scaffolded vault no longer loses its history silently",
+    "references": [
+      "commit:6d60f17",
+      "file:src/lib/json-file.ts",
+      "file:src/cli/commands/doctor.ts",
+      "file:src/lib/recall.ts",
+      "task:changelog-json-and-releases-json-initialized-as-key-object-but-cli-requires-a-bare-array"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-22",
+    "type": "fix",
+    "scope": "cli",
+    "description": "The Tauri .app ships the CLI as Contents/Resources/dist/index.js with no package.json at any probed path, so readDreamcontextVersionFromDisk() fell through to '0.0.0'. That broke migrations (0.0.0 sorts below every migration version, so pendingMigrations returned nothing), drift detection (resolveDriftState fail-safes it to 'current'), and manifest stamps (every file the bundle wrote carried setupVersion 0.0.0). tsup now substitutes process.env.DREAMCONTEXT_BUILD_VERSION via esbuild define, sourced from package.json version at build time, and the build throws rather than emit an artifact that cannot name itself. The disk probe still runs first and still wins — load-bearing for version-drift watchers, which notice an npm swap only because the version is re-read from disk. Verified against the real .app layout: --version prints the real version, migrations pending on a ledger with an unfinished agentTask now prints it, and drift directive fires at setupVersion 0.20.0. Deliberately not a package.json shipped into dist/: Node would resolve dist/ as its own package (needing type:module just to keep ESM output ESM), and cliPackageRoot would aim npm install node-pty at the signed, read-only .app.",
+    "breaking": false,
+    "summary": "Bundled CLI stamps its version at build time — migrations and drift detection now work on the .app's first run",
+    "references": [
+      "commit:c32e55d",
+      "file:tsup.config.ts",
+      "file:src/lib/manifest.ts",
+      "task:app-bundled-cli-reports-0-0-0-so-version-gated-migrations-never-fire-on-its-fallback-path"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-17",
     "type": "feat",
     "scope": "skill",

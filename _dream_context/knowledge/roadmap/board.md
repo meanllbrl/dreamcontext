@@ -7,12 +7,12 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-08-17'
+date: '2026-08-22'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-08-17 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-08-22 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### ⚪ **improve-recall-mechanism** — Improve Recall Mechanism · 7/11 done (64%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
@@ -50,7 +50,7 @@ date: '2026-08-17'
   - sleep-runs-itself-in-the-background-when-debt-is-high-instead-of-nagging (todo) · 0.25.0
   - soul-becomes-constitution-only-and-always-loads-verbatim-while-conditionals-move-to-keyword-prioritized-patterns-across-the-whole-system (completed) · 0.23.0 · 2026-07-28 → …
 
-### ⚪ **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 17/18 done (94%) · target 2026-07-12 · forecast 2026-08-17 🔴 SLIPPING
+### 🟡 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 17/19 done (89%) · target 2026-07-12 · forecast 2026-08-17 🔴 SLIPPING
   Unblocks: make-it-a-business
   - brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings (completed) · v0.14.1
   - clickup-sync-integrity-provenance-version-round-trip-consolidates-177-178-179 (completed) · 0.20.0
@@ -70,8 +70,9 @@ date: '2026-08-17'
   - pre-publish-checklist-v0-23-0 (completed) · 0.23.1 · 2026-08-01 → …
   - pre-publish-checklist-v0-24-0 (completed) · 0.24.0 · 2026-08-17 → 2026-08-17
   - repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror (completed) · 0.20.0
+  - task-sync-pull-loses-data-silently-objectives-wiped-watermark-skips-failed-tasks (in_review) · 0.24.2 · 2026-08-17 → …
 
-### 🔵 **simplified-ux** — Simplified UX · 55/60 done (92%) · target 2026-07-31 · forecast 2026-08-17 🔴 SLIPPING
+### 🟡 **simplified-ux** — Simplified UX · 58/64 done (91%) · target 2026-07-31 · forecast 2026-08-17 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
   - agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief (completed) · 0.21.0 · 2026-07-24 → …
   - agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions (completed) · 0.21.0 · 2026-07-23 → …
@@ -82,7 +83,9 @@ date: '2026-08-17'
   - an-automation-run-opens-as-a-chat-session-not-an-inline-drill-in (completed) · 0.24.0
   - announcements-become-screenshot-driven-landing-pages-instead-of-excalidraw-boards (completed) · 0.21.0
   - announcements-whats-new (completed) · 0.20.0 · 2026-07-18 → …
+  - app-bundled-cli-reports-0-0-0-so-version-gated-migrations-never-fire-on-its-fallback-path (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
   - author-a-task-via-a-claude-agent-from-the-new-task-button (completed) · 0.20.0
+  - automations-are-undiscoverable-the-skill-description-omits-scheduling-entirely-and-the-snapshot-has-no-automations-channel (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
   - automations-redesign-the-flow-graph-is-the-manifest-the-run-asks-in-chat-and-the-queue-never-loses-a-fire (completed) · v0.24.0 · 2026-08-09 → …
   - call-the-planning-time-box-a-cycle-in-the-ui-and-cli-with-version-staying-canonical-on-disk (todo) · BACKLOG
   - changelog-json-and-releases-json-initialized-as-key-object-but-cli-requires-a-bare-array (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
@@ -112,6 +115,7 @@ date: '2026-08-17'
   - fix-sleepy-agent-auto-submit-timing-race-plus-composer-skill-browser-ux (completed) · v0.13.0
   - fix-tauri-acl-shell-allow-open-for-external-links (completed) · v0.13.0
   - full-suite-runs-intermittently-fail-on-a-vitest-reporter-rpc-timeout-under-load (completed) · 0.24.1 · 2026-08-17 → 2026-08-17
+  - heal-the-v0-24-1-release-record-npm-has-it-the-git-tag-and-announcement-do-not (todo) · 0.24.2
   - highlighter-the-agent-can-mark-the-load-bearing-phrase-not-just-bold-it (completed) · 0.23.1
   - in-app-agent-terminal-output-pump-fixes-terminal-freeze-during-long-tool-calls (completed) · 0.21.0
   - in-app-task-detail-inline-agent-curate-the-task-via-anchored-comments-revise-summarize-split-status-with-real-time-refresh (completed) · 0.18.0
@@ -132,7 +136,8 @@ date: '2026-08-17'
   - task-creation-scaffolds-lean-and-every-task-says-why-it-exists (completed) · 0.21.0
   - task-feature-objective-links-validated-assignment-bidirectional-maintenance (completed) · 2026-07-08 → …
   - task-manager-show-the-agent-s-document-edits-as-a-git-style-diff (completed) · 0.18.0 · 2026-07-17 → …
-  - update-exits-0-when-no-platform-is-installed-so-scripts-read-the-no-op-as-success (in_progress) · 0.24.2 · 2026-08-17 → …
+  - task-sync-pull-loses-data-silently-objectives-wiped-watermark-skips-failed-tasks (in_review) · 0.24.2 · 2026-08-17 → …
+  - update-exits-0-when-no-platform-is-installed-so-scripts-read-the-no-op-as-success (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
 
 ### 🔵 **make-it-a-business** — Make it a Business · $ 856/2000 MRR (43%) · target 2026-09-05 · forecast 2026-09-21 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready
   Unblocks: hello-world-pr

@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="./composer.css" />
+<style>
+  html, body { margin: 0; padding: 0; }
+  a { color: #9d8cff; }
+  a:hover { color: #b6a9ff; }
+</style>
+</helmet>
+<div data-theme="{{ theme }}" style="width: 900px; max-width: 100%; background: var(--color-bg); display: flex; flex-direction: column; justify-content: flex-end; min-height: 100vh;">
+  <div class="chat-cmp">
+    <div class="{{ cardClass }}">
+      <div class="chat-cmp-handle" role="separator" aria-orientation="horizontal">
+        <div class="chat-cmp-grip"></div>
+      </div>
+      <div class="chat-cmp-body">
+        <div class="chat-cmp-inputrow">
+          <textarea class="chat-cmp-input" placeholder="Message Claude…" rows="2" ref="{{ inputRef }}"></textarea>
+        </div>
+      </div>
+      <div class="chat-cmp-toolbar">
+        <div class="chat-cmp-perm-wrap">
+          <button type="button" class="chat-cmp-modeltrigger" aria-expanded="{{ permOpen }}" onClick="{{ togglePerm }}">
+            <span class="chat-cmp-modeltrigger-model">{{ mode }}</span>
+            <span class="chat-cmp-modeltrigger-effort">{{ permission }}</span>
+            <span class="chat-cmp-caret" aria-hidden="true">▾</span>
+          </button>
+        </div>
+        <button type="button" class="chat-cmp-iconbtn" aria-label="Attach" title="Attach">
+          <svg width="14" height="14" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+            <path d="M6 1.5v9M1.5 6h9"></path>
+          </svg>
+        </button>
+        <div class="chat-cmp-spacer"></div>
+        <div class="chat-cmp-right">
+          <button type="button" class="chat-cmp-usagebtn" aria-expanded="{{ usageOpen }}" aria-label="Session usage" onClick="{{ toggleUsage }}">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle class="chat-cmp-usagering-track" cx="8" cy="8" r="6.5" stroke-width="2"></circle>
+              <circle class="chat-cmp-usagering-fill" cx="8" cy="8" r="6.5" stroke-width="2" stroke-linecap="round" transform="rotate(-90 8 8)" stroke-dasharray="{{ usageDash }}"></circle>
+            </svg>
+          </button>
+          <div class="chat-cmp-model-wrap">
+            <button type="button" class="chat-cmp-modeltrigger" aria-expanded="{{ modelOpen }}" onClick="{{ toggleModel }}">
+              <span class="chat-cmp-modeltrigger-model">{{ model }}</span>
+              <span class="chat-cmp-modeltrigger-effort">{{ effortLabel }}</span>
+              <span class="chat-cmp-caret" aria-hidden="true">▾</span>
+            </button>
+          </div>
+          <button type="button" class="{{ sendClass }}" aria-label="Send">{{ sendGlyph }}</button>
+        </div>
+      </div>
+    </div>
+    <sc-if value="{{ usageOpen }}" hint-placeholder-val="{{ false }}">
+      <div class="chat-cmp-usagemenu" role="menu">
+        <div class="chat-cmp-usagerow">
+          <span class="chat-cmp-usagerow-title">Context window</span>
+          <span class="chat-cmp-usagerow-value">21%</span>
+        </div>
+        <div class="chat-cmp-usagebar"><span class="chat-cmp-usagebar-fill" style="width: 21%"></span></div>
+        <div class="chat-cmp-usagemeta">
+          <span>207k / 1.0M used</span>
+          <span>793k free</span>
+        </div>
+        <div class="chat-cmp-menu-divider"></div>
+        <div class="chat-cmp-usagerow">
+          <span class="chat-cmp-usagerow-title">Estimated cost</span>
+          <span class="chat-cmp-usagerow-value">$12.12</span>
+        </div>
+        <div class="chat-cmp-usagenote">At public API rates. A Max/Pro plan is flat-rate, so this is a what-if.</div>
+      </div>
+    </sc-if>
+    <sc-if value="{{ modelOpen }}" hint-placeholder-val="{{ false }}">
+      <div class="chat-cmp-modelmenu" role="menu">
+        <div class="chat-cmp-grouplabel">Model</div>
+        <div class="chat-cmp-scroll">
+        <sc-for list="{{ models }}" as="m" hint-placeholder-count="3">
+          <button type="button" class="{{ m.className }}" role="menuitem" onClick="{{ m.select }}">
+            <span class="chat-cmp-modelrow-head">
+              <span class="chat-cmp-modelrow-name">{{ m.name }}</span>
+              <sc-if value="{{ m.hasBadge }}" hint-placeholder-val="{{ false }}">
+                <span class="chat-cmp-badge">{{ m.badge }}</span>
+              </sc-if>
+              <span class="chat-cmp-modelrow-meta">{{ m.meta }}</span>
+            </span>
+            <span class="chat-cmp-modelrow-insight">{{ m.insight }}</span>
+          </button>
+        </sc-for>
+        <button type="button" class="chat-cmp-disclosure" aria-expanded="{{ otherOpen }}" onClick="{{ toggleOther }}">
+          <span>Other models</span>
+          <span class="chat-cmp-disclosure-caret" aria-hidden="true">{{ otherCaret }}</span>
+        </button>
+        <sc-if value="{{ otherOpen }}" hint-placeholder-val="{{ false }}">
+          <sc-for list="{{ otherModels }}" as="m" hint-placeholder-count="2">
+            <button type="button" class="{{ m.className }}" role="menuitem" onClick="{{ m.select }}">
+              <span class="chat-cmp-modelrow-head">
+                <span class="chat-cmp-modelrow-name">{{ m.name }}</span>
+                <sc-if value="{{ m.hasBadge }}" hint-placeholder-val="{{ false }}">
+                  <span class="chat-cmp-badge">{{ m.badge }}</span>
+                </sc-if>
+                <span class="chat-cmp-modelrow-meta">{{ m.meta }}</span>
+              </span>
+              <span class="chat-cmp-modelrow-insight">{{ m.insight }}</span>
+            </button>
+          </sc-for>
+        </sc-if>
+        </div>
+        <div class="chat-cmp-menu-divider"></div>
+        <div class="chat-cmp-effort-head">
+          <span class="chat-cmp-grouplabel">Reasoning effort</span>
+          <span class="chat-cmp-effort-value">{{ effortLabel }}</span>
+        </div>
+        <input type="range" class="chat-cmp-effort-slider" min="0" max="4" step="1" value="{{ effortIndex }}" onChange="{{ setEffort }}" aria-label="Reasoning effort" />
+        <div class="chat-cmp-effort-ticks">
+          <sc-for list="{{ effortTicks }}" as="tick" hint-placeholder-count="4">
+            <span class="{{ tick.className }}">{{ tick.label }}</span>
+          </sc-for>
+        </div>
+        <div class="chat-cmp-menu-foot">
+          <button type="button" class="chat-cmp-setdefault" onClick="{{ saveDefault }}">{{ defaultLabel }}</button>
+        </div>
+      </div>
+    </sc-if>
+    <sc-if value="{{ permOpen }}" hint-placeholder-val="{{ false }}">
+      <div class="chat-cmp-modemenu chat-cmp-modelmenu" role="menu">
+        <div class="chat-cmp-grouplabel">Mode</div>
+        <div class="chat-cmp-scroll is-grid">
+          <sc-for list="{{ modes }}" as="m" hint-placeholder-count="4">
+            <button type="button" class="{{ m.className }}" role="menuitem" disabled="{{ m.disabled }}" onClick="{{ m.select }}">
+              <span class="chat-cmp-modelrow-head">
+                <span class="chat-cmp-modelrow-name">{{ m.name }}</span>
+                <sc-if value="{{ m.hasBadge }}" hint-placeholder-val="{{ false }}">
+                  <span class="chat-cmp-badge is-muted">{{ m.badge }}</span>
+                </sc-if>
+              </span>
+              <span class="chat-cmp-modelrow-insight">{{ m.insight }}</span>
+            </button>
+          </sc-for>
+        </div>
+        <div class="chat-cmp-menu-divider"></div>
+        <div class="chat-cmp-permrow">
+          <span class="chat-cmp-grouplabel">Permission</span>
+          <span class="chat-cmp-segment">
+            <sc-for list="{{ permissions }}" as="p" hint-placeholder-count="2">
+              <button type="button" class="{{ p.className }}" role="menuitemradio" aria-checked="{{ p.active }}" onClick="{{ p.select }}">
+                <span aria-hidden="true">{{ p.glyph }}</span>
+                <span>{{ p.name }}</span>
+              </button>
+            </sc-for>
+          </span>
+        </div>
+        <div class="chat-cmp-permnote">{{ permissionNote }}</div>
+        <div class="chat-cmp-menu-foot">
+          <button type="button" class="chat-cmp-setdefault" onClick="{{ saveModeDefault }}">{{ modeDefaultLabel }}</button>
+        </div>
+      </div>
+    </sc-if>
+    <sc-if value="{{ skillsOpen }}" hint-placeholder-val="{{ false }}">
+      <div class="chat-cmp-skillmenu" role="menu">
+        <div class="chat-cmp-skillmenu-rail">
+          <sc-for list="{{ skillGroups }}" as="group" hint-placeholder-count="3">
+            <div class="chat-cmp-grouplabel">{{ group.label }}</div>
+            <sc-for list="{{ group.items }}" as="item" hint-placeholder-count="2">
+              <button type="button" class="{{ item.className }}" role="menuitem" onClick="{{ item.select }}">{{ item.name }}</button>
+            </sc-for>
+          </sc-for>
+        </div>
+        <div class="chat-cmp-skilldetail">
+          <div class="chat-cmp-skilldetail-head">
+            <span class="chat-cmp-skilldetail-title">{{ active.name }}</span>
+            <span class="chat-cmp-slug">{{ active.slug }}</span>
+          </div>
+          <div class="chat-cmp-skilldetail-desc">{{ active.desc }}</div>
+          <div class="chat-cmp-grouplabel">How it works</div>
+          <div class="chat-cmp-steps">
+            <sc-for list="{{ active.steps }}" as="step" hint-placeholder-count="4">
+              <div class="chat-cmp-step">
+                <span class="chat-cmp-step-num">{{ step.n }}</span>
+                <span class="chat-cmp-step-text">{{ step.text }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div class="chat-cmp-grouplabel">{{ active.agentsLabel }}</div>
+          <div class="chat-cmp-agents">
+            <sc-for list="{{ active.agents }}" as="agent" hint-placeholder-count="3">
+              <span class="chat-cmp-agent">{{ agent }}</span>
+            </sc-for>
+          </div>
+          <div class="chat-cmp-skilldetail-hint">{{ active.hint }}</div>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:900,&quot;height&quot;:720},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dark&quot;,&quot;light&quot;],&quot;default&quot;:&quot;dark&quot;,&quot;tsType&quot;:&quot;\&quot;dark\&quot; | \&quot;light\&quot;&quot;},&quot;focused&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;sendState&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;disabled&quot;,&quot;enabled&quot;,&quot;stop&quot;,&quot;queue&quot;],&quot;default&quot;:&quot;disabled&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+const SKILLS = [
+  { label: "Brain lifecycle", items: ["Initializer", "Curator", "Deep Research", "Sync"] },
+  { label: "Build & review", items: ["Goal", "Multi-review"] },
+  { label: "Decide & draw", items: ["Council", "Excalidraw"] },
+];
+
+const DETAIL = {
+  Initializer: {
+    name: "Initializer",
+    slug: "/initializer",
+    desc: "Bootstraps a missing or sparse brain from your real material — docs, wikis, Obsidian/Notion exports, or just the codebase — into a proper knowledge / feature / task hierarchy.",
+    steps: [
+      "Scout inventories your code + docs into a categorized ingestion manifest",
+      "You confirm the proposed knowledge / feature / task hierarchy",
+      "Ingestor agents fan out per batch, distilling sources into real files (never templates)",
+      "Verifier gates: no placeholders, doctor clean, recall actually returns hits",
+    ],
+    agents: ["initializer-scout", "initializer-ingestor", "initializer-verifier"],
+    hint: "Click to drop /initializer into the terminal — you finish the prompt.",
+  },
+};
+
+const MODELS = [
+  { name: "Fable", meta: "$5/M in", insight: "Strongest overall. Best reasoning, writing, and tool use." },
+  { name: "Opus", meta: "$15/M in", insight: "Deep reasoning. Best for hard refactors and long plans.", badge: "Recommended" },
+];
+
+const OTHER_MODELS = [
+  { name: "Sonnet", meta: "$3/M in", insight: "Balanced. Fast enough for everyday agent loops." },
+  { name: "Haiku", meta: "$0.80/M in", insight: "Cheapest and quickest. Good for lookups and small edits." },
+];
+
+const EFFORTS = ["Low", "Medium", "High", "Xhigh", "Max"];
+
+const MODES = [
+  { name: "Basic", insight: "Plain Claude. No mode enabled." },
+  { name: "Plan", insight: "Plans only. No edits until approved." },
+  { name: "Develop", insight: "Engineering practices." },
+  { name: "J.A.R.V.I.S", insight: "Talk with the agent.", badge: "Soon", disabled: true },
+];
+
+const PERMISSIONS = [
+  { name: "Auto", key: "auto", glyph: "🛡", cls: "is-auto", desc: "Edits auto-approved, risky commands still ask." },
+  { name: "Bypass", key: "bypass", glyph: "⚡", cls: "is-bypass", desc: "Everything auto-approved. Use with care." },
+];
+
+class Component extends DCLogic {
+  inputRef = React.createRef();
+  state = {
+    permOpen: false, skillsOpen: false, modelOpen: false, usageOpen: false,
+    activeSkill: "Initializer", model: "Opus", effortIndex: 3, savedDefault: false, otherOpen: false,
+    mode: "Basic", permission: "auto", savedModeDefault: false,
+  };
+
+  modelRow(m) {
+    return {
+      name: m.name, meta: m.meta, insight: m.insight, badge: m.badge || "", hasBadge: !!m.badge,
+      className: "chat-cmp-modelrow" + (m.name === this.state.model ? " is-active" : ""),
+      select: () => this.setState({ model: m.name, savedDefault: false }),
+    };
+  }
+
+  componentDidMount() {
+    if ((this.props.focused ?? true) && this.inputRef.current) this.inputRef.current.focus();
+  }
+
+  detailFor(name) {
+    const d = DETAIL[name];
+    if (d) return d;
+    const slug = "/" + name.toLowerCase().replace(/\s+/g, "-");
+    return {
+      name,
+      slug,
+      desc: "Skill detail for " + name + ".",
+      steps: [],
+      agents: [],
+      hint: "Click to drop " + slug + " into the terminal — you finish the prompt.",
+    };
+  }
+
+  renderVals() {
+    const state = this.props.sendState ?? "disabled";
+    const cls = { disabled: "", enabled: " is-enabled", stop: " is-stop", queue: " is-queue" }[state] || "";
+    const glyph = { disabled: "↑", enabled: "↑", stop: "■", queue: "⇡" }[state] || "↑";
+    const active = this.detailFor(this.state.activeSkill);
+    return {
+      theme: this.props.theme ?? "dark",
+      cardClass: "chat-cmp-card" + ((this.props.focused ?? true) ? " is-focused" : ""),
+      sendClass: "chat-cmp-send" + cls,
+      sendGlyph: glyph,
+      inputRef: this.inputRef,
+      permOpen: this.state.permOpen,
+      skillsOpen: this.state.skillsOpen,
+      modelOpen: this.state.modelOpen,
+      usageOpen: this.state.usageOpen,
+      mode: this.state.mode,
+      permission: this.state.permission,
+      modeDefaultLabel: this.state.savedModeDefault ? "Saved as default" : "Set as default",
+      saveModeDefault: () => this.setState({ savedModeDefault: true }),
+      modes: MODES.map(m => ({
+        name: m.name, insight: m.insight,
+        badge: m.badge || "", hasBadge: !!m.badge, disabled: !!m.disabled,
+        className: "chat-cmp-modelrow" + (m.name === this.state.mode ? " is-active" : ""),
+        select: () => { if (!m.disabled) this.setState({ mode: m.name, savedModeDefault: false }); },
+      })),
+      permissionNote: (PERMISSIONS.find(p => p.key === this.state.permission) || PERMISSIONS[0]).desc,
+      permissions: PERMISSIONS.map(p => ({
+        name: p.name, glyph: p.glyph, active: p.key === this.state.permission,
+        className: "chat-cmp-segment-opt " + p.cls + (p.key === this.state.permission ? " is-active" : ""),
+        select: () => this.setState({ permission: p.key, savedModeDefault: false }),
+      })),
+      usageDash: (2 * Math.PI * 6.5 * 0.21).toFixed(2) + " " + (2 * Math.PI * 6.5).toFixed(2),
+      toggleUsage: () => this.setState(s => ({ usageOpen: !s.usageOpen, permOpen: false, skillsOpen: false, modelOpen: false })),
+      togglePerm: () => this.setState(s => ({ permOpen: !s.permOpen, skillsOpen: false, modelOpen: false, usageOpen: false })),
+      toggleSkills: () => this.setState(s => ({ skillsOpen: !s.skillsOpen, permOpen: false, modelOpen: false, usageOpen: false })),
+      toggleModel: () => this.setState(s => ({ modelOpen: !s.modelOpen, permOpen: false, skillsOpen: false, usageOpen: false })),
+      model: this.state.model,
+      effortIndex: this.state.effortIndex,
+      effortLabel: EFFORTS[this.state.effortIndex],
+      setEffort: e => this.setState({ effortIndex: Number(e.target.value), savedDefault: false }),
+      defaultLabel: this.state.savedDefault ? "Saved as default" : "Set as default",
+      models: MODELS.map(m => this.modelRow(m)),
+      otherModels: OTHER_MODELS.map(m => this.modelRow(m)),
+      otherOpen: this.state.otherOpen,
+      otherCaret: this.state.otherOpen ? "▴" : "▾",
+      toggleOther: () => this.setState(s => ({ otherOpen: !s.otherOpen })),
+      effortTicks: EFFORTS.map((label, i) => ({
+        label,
+        className: i === this.state.effortIndex ? "is-active" : "",
+      })),
+      skillGroups: SKILLS.map(g => ({
+        label: g.label,
+        items: g.items.map(name => ({
+          name,
+          className: "chat-cmp-skillitem" + (name === this.state.activeSkill ? " is-active" : ""),
+          select: () => this.setState({ activeSkill: name }),
+        })),
+      })),
+      saveDefault: () => this.setState({ savedDefault: true }),
+      active: Object.assign({}, active, {
+        steps: active.steps.map((text, i) => ({ n: i + 1, text })),
+        agentsLabel: active.agents.length ? "Dispatches " + active.agents.length + " sub-agents" : "",
+      }),
+    };
+  }
+}
+</script>
+</body>
+</html>
