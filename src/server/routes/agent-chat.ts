@@ -358,7 +358,24 @@ const INTERRUPT_WATCHDOG_MS = 5000;
 /** After escalating to SIGINT, how long to wait before SIGKILL. */
 const INTERRUPT_KILL_GRACE_MS = 1500;
 
-function startChatSession(
+/** How long a chat's `claude` child may outlive its WebSocket to finish an in-flight turn.
+ *
+ *  A `claude -p --input-format stream-json` process whose stdin stays open waits for the
+ *  next frame FOREVER — so a route that only untracked the child on socket close stranded
+ *  a live ~200-400MB process per closed tab (observed: dozens of days-old "2.1.220"
+ *  processes in Activity Monitor, ~10GB RSS total). Stdin EOF is the graceful half of the
+ *  fix: an idle child exits 0 on its own once its queue drains (empirically verified on
+ *  2.1.220 with stdin at EOF), and a mid-turn child gets to finish — and transcript —
+ *  its current turn first. This window is the backstop for a wedged or very long turn;
+ *  generous on purpose, because the common (idle) case never reaches it. */
+export const CLOSE_LINGER_MS = 5 * 60_000;
+/** After the linger window's SIGTERM, how long to wait before SIGKILL. */
+export const CLOSE_KILL_GRACE_MS = 5000;
+
+/** Exported for tests (agent-chat-close-reap.test.ts drives it with a mocked spawn + a
+ *  fake ws to pin the socket-gone → drain → kill lifecycle); production callers reach it
+ *  only through `attachAgentChat`'s upgrade handler. */
+export function startChatSession(
   ws: import('ws').WebSocket,
   projectRoot: string,
   opts: ChatSpawnOpts,
@@ -470,6 +487,8 @@ function startChatSession(
   let alive = true;
   let interruptWatchdog: ReturnType<typeof setTimeout> | null = null;
   let interruptKillTimer: ReturnType<typeof setTimeout> | null = null;
+  let lingerTimer: ReturnType<typeof setTimeout> | null = null;
+  let lingerKillTimer: ReturnType<typeof setTimeout> | null = null;
 
   const untrack = trackChild(child);
 
@@ -487,6 +506,11 @@ function startChatSession(
   const clearInterruptTimers = () => {
     if (interruptWatchdog) { clearTimeout(interruptWatchdog); interruptWatchdog = null; }
     if (interruptKillTimer) { clearTimeout(interruptKillTimer); interruptKillTimer = null; }
+  };
+
+  const clearLingerTimers = () => {
+    if (lingerTimer) { clearTimeout(lingerTimer); lingerTimer = null; }
+    if (lingerKillTimer) { clearTimeout(lingerKillTimer); lingerKillTimer = null; }
   };
 
   /** Write one NDJSON line to claude's stdin, guarded by `alive` + a try/catch — a write
@@ -520,14 +544,44 @@ function startChatSession(
   // `submitPrompt` is already empty in that case, so both fall out of this one condition.
   if (submitPrompt) sendMeta({ subtype: 'prompt_echo', text: submitPrompt });
 
+  /** Full cleanup — runs when the CHILD is gone (exit/spawn-error), never on socket close
+   *  alone. Untracking here (and only here) is what lets a tab-less, still-draining child
+   *  remain reapable by the server's own shutdown (`killTrackedChildren`). */
   const teardown = (): void => {
     if (!alive) return;
     alive = false;
     clearInterruptTimers();
+    clearLingerTimers();
     untrack();
     releaseHeld();
     cleanupDeferred();
     cleanupBriefing();
+  };
+
+  /** Socket gone (tab closed, app window died, network drop) → drain and reap the child.
+   *  The terminal route kills its PTY the moment the socket closes (agent-terminal.ts's
+   *  teardown); chat drains instead of killing so an in-flight turn can finish and land in
+   *  the transcript, but the END state is the same: no child outlives its tab for long.
+   *  See CLOSE_LINGER_MS for the leak this closes. The conversation hold is released
+   *  immediately — same moment as before this fix — so a re-opened tab can `--resume`
+   *  without waiting out the drain (the drain-vs-resume write race this leaves open is the
+   *  same documented beta limitation the terminal/chat double-attach already has). */
+  const onSocketGone = (): void => {
+    if (!alive || lingerTimer || lingerKillTimer) return;
+    releaseHeld();
+    // EOF: nothing will ever write another stdin frame, and the CLI exits on its own once
+    // its queue drains. An already-dead stream just means the close handler is on its way.
+    try { child.stdin.end(); } catch { /* already torn down */ }
+    lingerTimer = setTimeout(() => {
+      lingerTimer = null;
+      if (!alive) return;
+      try { child.kill(); } catch { /* already gone */ }
+      lingerKillTimer = setTimeout(() => {
+        lingerKillTimer = null;
+        if (!alive) return;
+        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+      }, CLOSE_KILL_GRACE_MS);
+    }, CLOSE_LINGER_MS);
   };
 
   // ── claude stdout → ws (verbatim NDJSON relay) ─────────────────────────────────────
@@ -723,8 +777,8 @@ function startChatSession(
     // must never crash an established session).
   });
 
-  ws.on('close', teardown);
-  ws.on('error', teardown);
+  ws.on('close', onSocketGone);
+  ws.on('error', onSocketGone);
 }
 
 // ─── Transcript history (GET /api/agent/chat-history) ─────────────────────────────────
