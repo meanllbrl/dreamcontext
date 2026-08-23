@@ -27,6 +27,7 @@ import {
 import {
   initAgentSettingsFromServer,
   writeAgentSettings,
+  AGENT_SETTINGS_EVENT,
   accelFromKeyEvent as accelFromAgentKey,
   loneModifierToken,
   formatHotkey,
@@ -246,11 +247,21 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   // Tracks the last lone-modifier tap while the hotkey field is capturing, so a
   // second tap of the SAME modifier within the window binds a double-tap hotkey.
   const lastModTapRef = useRef<{ token: string; ts: number } | null>(null);
+  // Seed from the server, then TRACK the same event this page dispatches — because it is no
+  // longer the only editor of this blob. The agent surface floats OVER this page and its tab
+  // right-click menu writes `autoTitle`; without this listener the checkbox below would sit
+  // stale, and worse, the next whole-object `updateAgentCfg` write would spread that stale
+  // snapshot back over the change the user just made in the menu.
   useEffect(() => {
     if (!desktopSurfaces) return;
     let cancelled = false;
     void initAgentSettingsFromServer().then((s) => { if (!cancelled) setAgentCfg(s); });
-    return () => { cancelled = true; };
+    const onChange = (e: Event) => {
+      const detail = (e as CustomEvent<AgentSettings>).detail;
+      if (detail) setAgentCfg(detail);
+    };
+    window.addEventListener(AGENT_SETTINGS_EVENT, onChange);
+    return () => { cancelled = true; window.removeEventListener(AGENT_SETTINGS_EVENT, onChange); };
   }, [desktopSurfaces]);
   const updateAgentCfg = (next: AgentSettings) => {
     setAgentCfg(next);

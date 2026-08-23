@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-08-10'
+updated: '2026-08-23'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -53,6 +53,7 @@ related_tasks:
   - transcript-window-measures-in-cards-not-just-entries
   - >-
     chat-opens-a-pdf-in-the-app-and-every-file-panel-offers-open-on-computer-reveal-in-finder
+  - agent-tab-right-click-menu-rename-the-auto-rename-switch-from-settings
 type: feature
 name: in-app-agent-terminal
 description: ''
@@ -125,6 +126,8 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 
 - [x] As a developer, a PDF a KNOWLEDGE note links to opens the same way — clicking `[the contract](assets/msa.pdf)` in a note shows the document in the app instead of doing nothing, and it works in the browser dashboard too, not just the desktop app.
 
+- [x] As a developer, right-clicking a tab offers Rename (the inline editor a double-click already opened, now with something that says so) and the "auto-name tabs" switch itself — so the two things I want while looking AT a tab are reachable from it instead of being an undiscoverable gesture and a preference three panels away in Settings.
+
 ## Acceptance Criteria
 
 - [x] WS bridge (`/api/agent/terminal`) spawns `$SHELL -ilc 'exec claude [--dangerously-skip-permissions]'` via node-pty; desktop-only (`DREAMCONTEXT_DESKTOP=1` gate) and loopback-only (strict `remoteAddress` check).
@@ -166,6 +169,8 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - [x] Chat read surfaces (`GET /api/agent/file`, `POST /api/agent/grant`, `POST /api/agent/reveal`): text/markdown previews (512KB cap), directory listings (300 entries), range-streamed image/video/audio (2GB ceiling, correct 206 for seeking); project-root-scoped + explicit user grants for outside-root files (single-file grants only, recorded in `.file-grants.json`); reveal hands folders/media/documents to default app, reveals executables in file manager only (never launches).
 - [x] `GET`/`POST /api/launcher/agent-settings` (`~/.dreamcontext/agent-ui.json`, app-global not vault-scoped) persists `{ enabled, restoreTabs, defaultAgent, autoTitle, hotkey }`; `dashboard/src/lib/agentSettings.ts` mirrors `lib/sleepy.ts`'s pattern (localStorage + server write-through + `dreamcontext-agent-settings` window event so the always-mounted `AgentSurface` picks up a Settings-page change live, no reload).
 - [x] Settings → Agents (BETA, desktop-only) section: enable toggle, restore-tabs toggle, default-agent select (Claude Code only today), auto-title toggle, and a captured-hotkey field (`accelFromKeyEvent`/`matchesAccel` shared builder — same accelerator format as the existing Sleepy hotkey capture; Backspace/Delete clears the binding).
+- [x] A tab's RIGHT-CLICK MENU (`AgentTabs.tsx`, its only non-presentational state): a head naming the tab, `Rename` → the existing inline editor, and an `Auto-rename tabs` switch bound to `agentSettings.autoTitle`. PORTALED to `<body>` for two independently fatal reasons — `.agent-pane-tabbar` is an `overflow-x` scroller, and `.agent-surface`'s `contain: layout paint` makes it the containing block even for `position: fixed` (the trap that also keeps `AgentDock` a sibling). Placed at the pointer, clamped to the viewport and flipped above the cursor near the bottom edge; a KEYBOARD-raised menu (Menu key / Shift+F10 → 0,0 coords) anchors under the tab and takes focus, a pointer-raised one deliberately does not, so dismissing it leaves the pane typing-ready. Registered on the overlay stack, dismissed by outside `pointerdown` / resize / blur / Esc; the menu stays OPEN when the switch is flipped (the travel is the confirmation).
+- [x] The switch writes via `patchAgentSettings({ autoTitle })`, NEVER a whole-object `writeAgentSettings` — `AgentSurface`'s `agentSettings` can still be the pre-hydrate localStorage seed, and spreading it back would revert unrelated preferences. Two consequences are handled explicitly: `AgentSurface`'s Esc handler yields to `.agent-tab-menu` by DOM presence (it listens on `window`, so it fires BEFORE the menu's own `document` handler and would otherwise collapse the surface out from under it — same shape as the existing `.agent-new-menu` guard), and `SettingsPage` now subscribes to `AGENT_SETTINGS_EVENT` (it is no longer the only editor of this blob: without the listener its checkbox goes stale AND spreads that stale snapshot back on its next write). Proven end to end by `scripts/verify/agent-tab-menu.mjs` — real server/bundle/Chromium, 11 checks, tabs restored dormant from a seeded roster so the run spawns no `claude`.
 - [x] `createSession(...)` accepts `deferPrompt: boolean`; when true, the client sends `&deferPrompt=1` on the WS upgrade; server parks the sanitized prompt in a tmpdir file (`dreamcontext-deferred-<uuid>.txt`, mode 0600), exports `DREAMCONTEXT_DEFERRED_PROMPT=<path>` on the PTY env, and does NOT auto-submit it. On a real resume the flag is dropped (transcript already pinned). File cleaned on PTY exit.
 - [x] `user-prompt-submit` hook (src/cli/commands/hook.ts) calls `consumeDeferredPrompt()` BEFORE all other gates: single-use print+delete if `DREAMCONTEXT_DEFERRED_PROMPT` exists and passes the basename-prefix guard (`dreamcontext-deferred-*`), so the parked prompt rides the USER's first message.
 - [x] Any DOM slot receiving `.agent-pane-term` (xterm container, absolutely positioned inset:0) MUST declare `position: relative` to act as the containing block; without it the terminal resolves against the nearest positioned ancestor (e.g. a fixed overlay) and paints over the whole page.
@@ -355,7 +360,8 @@ Key files summary (post-2026-07-01 readability polish; 2026-07-04 basic-terminal
 - `dashboard/src/components/sleepy/AgentSurface.tsx` — `Prereqs`, multi-pane layout, dragend split pattern, cursor-targeted drop routing (`onTermDrop` → `elementFromPoint`), `kind` threaded through spawn/split/resume/hydration, auto-title effect (`autoTitledRef` dedup on busy→idle edge), split `＋ New ▾` Agent/Terminal control + `⌃\`` shortcut, `>_ Start terminal` empty-state button.
 - `dashboard/src/components/sleepy/agentSession.ts` — `createSession()` (xterm DOM renderer, `@xterm/addon-fit`, WebGL removed, `SessionKind` param), `readXtermTheme()` (`minimumContrastRatio: 3`, softened foreground, solid `#6a57d6` selection for both active/inactive), JetBrains-Mono-aware font-load-before-open, `copyPreservingUnicode()` + beep-free ⌘C/⌘X/⌘A handler.
 - `dashboard/src/components/sleepy/AgentTerminal.css` — inactive-pane dimming removed; `.xterm` font-smoothing override (`-webkit-font-smoothing: auto`).
-- `dashboard/src/components/sleepy/AgentTabs.tsx` — per-pane tab bars; `◇`/`>_` session-kind glyph.
+- `dashboard/src/components/sleepy/AgentTabs.tsx` — per-pane tab bars; `◇`/`>_` session-kind glyph; the per-tab right-click menu (Rename + the auto-rename switch), portaled to `<body>` and viewport-clamped.
+- `scripts/verify/agent-tab-menu.mjs` — runtime proof of that menu against the real server/bundle/Chromium; tabs restore dormant from a seeded roster, so it spawns no `claude`.
 - `dashboard/src/styles/tokens.css` + `dashboard/index.html` — `--font-mono` primary is JetBrains Mono (loaded 400/500/700); Sometype Mono removed (was never loaded).
 - `dashboard/src/components/sleepy/AgentDock.tsx` — minimize-to-corner chip (sibling of .agent-surface).
 - `dashboard/src/components/sleepy/AgentFab.tsx` — global FAB.

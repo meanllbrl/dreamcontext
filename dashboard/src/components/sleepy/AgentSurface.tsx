@@ -13,7 +13,7 @@ import {
 import { createChatSession, type ChatSession, type ChatUserItem } from './chatSession';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
-  initAgentSettingsFromServer, readAgentSettings, matchesAccel,
+  initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
   doubleTapToken, createDoubleTapMatcher,
   AGENT_SETTINGS_EVENT, type AgentSettings,
   readChatPermissionMode, writeChatPermissionMode,
@@ -1527,6 +1527,17 @@ export function AgentSurface() {
     if (title) setSessionList((prev) => prev.map((m) => (m.id === id ? { ...m, title } : m)));
   }, []);
 
+  // Settings → Agents' "auto-name tabs" preference, flipped from a tab's own right-click
+  // menu — the setting is edited where its effect shows up, not only three panels away.
+  //
+  // PATCHED, never written as a whole object: `agentSettings` here may still be the
+  // pre-hydrate localStorage seed (or plain defaults, before the server file resolves), and
+  // spreading it back would rewrite every OTHER preference from that stale snapshot — the
+  // exact failure `patchAgentSettings` exists to prevent. The write dispatches
+  // AGENT_SETTINGS_EVENT, so the new value arrives back through the listener above and the
+  // menu's switch re-renders from state rather than from a local copy.
+  const toggleAutoTitle = useCallback((on: boolean) => { patchAgentSettings({ autoTitle: on }); }, []);
+
   // ── Place each pane's active session container into its slot ─────────────────────
   // The single source of layout truth: append every pane's ACTIVE session container into
   // that pane's slot (matched by `data-pane`), and park every other session in the hidden
@@ -1688,6 +1699,12 @@ export function AgentSurface() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (document.querySelector('.agent-new-menu')) return;  // the "＋ New" menu owns Esc
+      // A tab's right-click menu owns Esc too. Tested by presence rather than by focus: it
+      // portals to <body> and never takes focus, so the `activeElement` checks below (which
+      // is still the terminal that was focused when the menu opened) would all miss it —
+      // and this listener is on `window`, so it runs BEFORE the menu's own document-level
+      // one and would otherwise collapse the whole surface out from under it.
+      if (document.querySelector('.agent-tab-menu')) return;
       const ae = document.activeElement as Element | null;
       if (ae?.closest('.agent-pane-slot')) return;   // Claude's TUI owns Esc
       // Any centered command surface on top of us owns Esc — ⌘K palette, ⌘P switcher,
@@ -2277,6 +2294,8 @@ export function AgentSurface() {
                 onGroupHover={setGroupTarget}
                 chatConvertEnabled={!!agentSettings.chatView && !!caps?.claudeCli}
                 onOpenInChat={openAgentInChat}
+                autoTitle={agentSettings.autoTitle}
+                onToggleAutoTitle={toggleAutoTitle}
               />
             ))}
           </div>
