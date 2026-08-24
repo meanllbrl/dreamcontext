@@ -19,6 +19,13 @@
  *   §11  the shared dismiss/overlay effect extracted out of `SkillPickerPopover` did not
  *        break `Popover` — for the chat composer's Attach menu OR the legacy Terminal
  *        composer's Skills picker
+ *   §12  a mode switch does not eat what the user STAGED — the half-typed message, the reply
+ *        quote, or the attachment chips. The switch respawns the process and unmounts the pane
+ *        holding all three, so they survive only because the draft is carried onto the incoming
+ *        session (`carryDraftInto`) and the quote + chips are keyed by conversation id
+ *        (`composerScratch`). Asserted against the real textarea, the real quote row and a real
+ *        pasted-and-uploaded image — including that its preview still RENDERS, which is what
+ *        proves the object URL was not revoked when the old pane went away
  *
  * WHAT MAKES THE PERMISSION ASSERTIONS HONEST: the stand-in echoes its OWN argv. A UI that
  * renders "auto" over a process spawned `--permission-mode bypassPermissions` would pass a
@@ -112,7 +119,23 @@ process.stdin.on('data', (c) => {
     if (!line) continue;
     let o; try { o = JSON.parse(line); } catch { continue; }
     if (o.type === 'control_request') {
-      // Ack every control the client can send. \`set_permission_mode\` MUST succeed: the
+      const req = o.request || {};
+      // Mirror the REAL CLI's asymmetry (2.1.220, measured through this very route — see the
+      // \`setPermissionMode\` arm in src/server/routes/agent-chat.ts): a live switch INTO
+      // \`bypassPermissions\` is REFUSED by a process that did not boot with
+      // \`--dangerously-skip-permissions\`, while a switch back to \`auto\` lands. Acking
+      // everything success — which this stand-in used to do — tested a path production never
+      // takes and let a regression through in which Bypass was simply unreachable: the client
+      // took its respawn fallback and the fallback re-adopted the mode being left. The
+      // refusal is the interesting case, so it has to be the scripted one.
+      if (req.subtype === 'set_permission_mode' && req.mode === 'bypassPermissions'
+          && PERM !== 'bypassPermissions') {
+        out({ type: 'control_response', response: { subtype: 'error', request_id: o.request_id,
+              error: 'Cannot set permission mode to bypassPermissions because the session was not '
+                   + 'launched with --dangerously-skip-permissions' } });
+        continue;
+      }
+      // Everything else acks success. \`set_permission_mode\` → \`auto\` MUST, because the
       // client only keeps \`session.bypass\` in lockstep on a successful ack, and B3's whole
       // argument is that \`cs.bypass\` is therefore the session's real current mode.
       out({ type: 'control_response', response: { subtype: 'success', request_id: o.request_id, response: {} } });
@@ -400,12 +423,24 @@ async function run(chromium, base, report) {
 
   // ── the project now REMEMBERS bypass — every check below runs against that ────────
   console.log('\n── the project default is switched to bypass (the escalation trap)');
+  const preBypassSockets = (await sockets()).length;
   await modeTrigger().click();
   await page.waitForTimeout(250);
   await vis('.chat-cmp-segment-opt.is-bypass').first().click();
   await page.waitForTimeout(600);
-  ok('picking Bypass moves THIS session (the CLI acked the live switch)',
-    await until(async () => (await permWord()) === 'bypass', 8000), await permWord());
+  // The CLI REFUSED the live switch (the stand-in mirrors 2.1.220), so the only route to
+  // Bypass is the respawn fallback. All three of these have to hold, and the last one is the
+  // one that actually matters: a chip reading "bypass" over a process still running `auto` is
+  // exactly the lie this whole section exists to catch.
+  ok('picking Bypass reaches THIS session — via the respawn fallback the CLI forces',
+    await until(async () => (await permWord()) === 'bypass', 20000), await permWord());
+  const bypassSockets = (await sockets()).slice(preBypassSockets);
+  ok('…the fallback\'s WS upgrade carries bypass=1',
+    bypassSockets.length > 0 && bypassSockets.some((u) => u.includes('bypass=1')),
+    JSON.stringify(bypassSockets.map((u) => u.slice(-120))));
+  await say('WHOAMI');
+  ok('…and the PROCESS is genuinely on bypassPermissions, not just the chip',
+    await until(async () => (await paneText()).includes('perm=bypassPermissions'), 20000), await paneText());
 
   // ── §9 — Plan → Develop, inside a bypass-remembered project ──────────────────────
   console.log('\n── §9 the Plan → Develop hand-off');
@@ -484,6 +519,97 @@ async function run(chromium, base, report) {
       await until(async () => (await paneText()).includes('perm=auto'), 20000), await paneText());
     ok('…and it kept its Plan brief across the restart',
       (await paneText()).includes('mode=Plan'), await paneText());
+  }
+
+  // ── §12 — the mode switch keeps everything the user STAGED but did not send ───────
+  // The point of doing this LIVE rather than in a unit test: survival depends on a React
+  // remount happening in the right order (the fresh Composer reading state written before it
+  // ever mounted). No source scan can see that, and an assertion on the store would pass even
+  // if the box came back empty. So this reads the actual input, the actual quote row, and the
+  // actual chip — after an actual process respawn.
+  //
+  // The chip's `<img>` is checked with `naturalWidth`, not just for presence: that is the ONE
+  // assertion that proves the preview's object URL was not revoked when the old pane unmounted,
+  // which was the reason the chips could not simply be copied across like the draft.
+  console.log('\n── §12 a mode switch keeps the draft, the quote and the chips');
+  if (await vis('.chat-cmp-input').count()) {
+    const DRAFT = 'half-typed: do not eat this';
+    const sockets0 = (await sockets()).length;
+
+    // (a) a half-typed message
+    await vis('.chat-cmp-input').first().click();
+    await vis('.chat-cmp-input').first().fill(DRAFT);
+
+    // (b) a reply quote — state 11's ↩ on the last thing Claude said. HOVER first, then click:
+    // the action bar is `pointer-events: none` until its row is hovered, so a forced click at
+    // those coordinates lands on whatever is underneath and silently does nothing.
+    const msgRow = page.locator('.chat-msg-assistant-row').last();
+    const quoteBtn = msgRow.locator('button[aria-label="Quote-reply"]');
+    ok('the transcript offers Quote-reply', (await quoteBtn.count()) > 0);
+    await msgRow.hover().catch(() => {});
+    await quoteBtn.click().catch(() => {});
+    ok('…and a quote row opens on the composer',
+      await until(async () => (await vis('.chat-cmp-quote').count()) > 0, 10000));
+    const quoteText = await vis('.chat-cmp-quote-text').first().innerText().catch(() => '');
+    // Non-vacuity: if the click missed, `quoteText` would be '' and the post-respawn comparison
+    // below would pass by comparing two empty strings. This is what stops that.
+    ok('…carrying the message it is replying to', quoteText.trim().length > 0, JSON.stringify(quoteText));
+
+    // (c) a pasted image, uploaded for real through POST /api/agent/drop
+    await page.evaluate(() => {
+      const ta = document.querySelector('.chat-cmp-input');
+      if (!ta) return;
+      // A real 1×1 PNG: the upload writes real bytes into the vault temp dir, so the chip ends
+      // up holding a path a Claude session could actually read.
+      const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const file = new File([bytes], 'pasted-shot.png', { type: 'image/png' });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      ta.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    });
+    const chipReady = await until(async () => (await vis('.chat-cmp-attachment[data-state="ready"]').count()) > 0, 20000);
+    ok('a pasted image becomes a chip and its upload settles',
+      chipReady, await vis('.chat-cmp-attachments').first().innerText().catch(() => '<no row>'));
+
+    // …now respawn the process under a new brief.
+    await modeTrigger().click();
+    await page.waitForTimeout(250);
+    await vis('.chat-cmp-modemenu .chat-cmp-modelrow').nth(2).click();   // Plan → Develop
+    ok('the session comes back in Develop mode',
+      await until(async () => (await modeWord()) === 'Develop', 25000), await modeWord());
+    // Proof the pane really was replaced rather than re-rendered: a second WS upgrade. Without
+    // this, a switch that silently no-op'd would make every assertion below vacuous.
+    ok('…having genuinely respawned the process (a new WS upgrade)',
+      await until(async () => (await sockets()).length > sockets0, 25000),
+      `${sockets0} → ${(await sockets()).length}`);
+
+    ok('…and the half-typed message is STILL in the box',
+      await until(async () => (await vis('.chat-cmp-input').first().inputValue()) === DRAFT, 25000),
+      JSON.stringify(await vis('.chat-cmp-input').first().inputValue().catch(() => '<gone>')));
+    ok('…and the reply quote is still queued',
+      await until(async () => (await vis('.chat-cmp-quote-text').first().innerText().catch(() => '')) === quoteText, 15000),
+      `${JSON.stringify(quoteText)} → ${JSON.stringify(await vis('.chat-cmp-quote-text').first().innerText().catch(() => '<gone>'))}`);
+    ok('…and the attachment chip is still staged, still ready to send',
+      await until(async () => (await vis('.chat-cmp-attachment[data-state="ready"]').count()) > 0, 15000),
+      await vis('.chat-cmp-attachments').first().innerText().catch(() => '<no row>'));
+    // The object URL survived the unmount — a revoked blob renders at naturalWidth 0.
+    ok('…and its preview still resolves (the object URL was not revoked on unmount)',
+      await until(async () => page.evaluate(() => {
+        const img = document.querySelector('.chat-cmp-attachment-image .chat-cmp-thumb, .chat-cmp-thumb');
+        return !!img && img.complete && img.naturalWidth > 0;
+      }), 15000));
+    // It has to be STAGED, not sent: a "carry" that submitted the message would also leave the
+    // box looking right, and would be far worse than the bug.
+    ok('…and nothing was sent on the user\'s behalf',
+      !(await paneText()).includes(DRAFT), await paneText());
+
+    // Leave the composer clean for anything after this section.
+    await vis('.chat-cmp-quote button[aria-label="Cancel reply"]').first().click().catch(() => {});
+    await vis('.chat-cmp-attachments .chat-cmp-chip-x').first().click().catch(() => {});
+    await vis('.chat-cmp-input').first().fill('');
+  } else {
+    report.note('⚠ SKIPPED §12 — no live chat composer at this point (see §10b).');
   }
 
   // ── §11b — the legacy Terminal composer's Skills picker ──────────────────────────

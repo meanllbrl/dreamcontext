@@ -24,7 +24,11 @@ export type PermissionMode = 'auto' | 'bypass';
  *  the same setting, and a redesign is not a reason to re-litigate what "bypass" means. */
 const PERMISSIONS: Array<{ id: PermissionMode; label: string; glyph: string; desc: string }> = [
   { id: 'auto', label: 'Auto', glyph: '🛡', desc: 'Edits auto-approved, risky commands still ask.' },
-  { id: 'bypass', label: 'Bypass', glyph: '⚡', desc: 'Everything auto-approved. Use with care.' },
+  // "Reloads" is not a hedge: CLI 2.1.220 refuses every LIVE switch into bypass (a session not
+  // launched with --dangerously-skip-permissions cannot acquire it), so AgentSurface's fallback
+  // respawn is how this setting is actually delivered — and the user watching their pane
+  // reconnect deserves to have been told. The draft rides along (`carryDraftInto`).
+  { id: 'bypass', label: 'Bypass', glyph: '⚡', desc: 'Everything auto-approved — reloads this conversation. Use with care.' },
 ];
 
 export function ModeMenu({
@@ -85,8 +89,11 @@ export function ModeMenu({
 
       {/* A mode is a system-prompt append, applied when the process starts — so switching one
           restarts the conversation under the new brief. Said out loud here rather than
-          discovered as a surprise reconnect; the transcript survives (`--resume`). */}
-      <p className="chat-cmp-permnote">Switching mode reloads this conversation — the transcript is kept.</p>
+          discovered as a surprise reconnect; the transcript survives (`--resume`) and so does
+          a half-typed draft (AgentSurface's `carryDraftInto`), which is why this line promises
+          both by name. Switching to Bypass below reloads for the same reason — CLI 2.1.220
+          refuses that switch live — and its own note says so. */}
+      <p className="chat-cmp-permnote">Switching mode reloads this conversation — the transcript and what you&apos;ve typed are kept.</p>
 
       <div className="chat-cmp-menu-divider" />
 
