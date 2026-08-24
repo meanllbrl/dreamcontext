@@ -4,6 +4,7 @@
  * APIs are absent. Outside the desktop app these fall back to web behaviour.
  */
 import { checklistWindowLabel } from './checklistStore';
+import { showWebviewConfirm } from './confirmDialog';
 
 /** True only inside the Tauri v2 webview (the desktop shell). */
 export function isDesktop(): boolean {
@@ -254,14 +255,23 @@ export interface ConfirmOptions {
  * error anywhere. In a browser tab the identical code works, which is exactly
  * why it survived so long.
  *
- * Inside the app this calls the shell's native `confirm_dialog` sheet; in a
- * browser it falls back to `window.confirm`, which works there.
+ * Inside the app this prefers the shell's native `confirm_dialog` sheet, which
+ * looks and behaves like macOS. Everywhere else — and whenever that call fails —
+ * it falls back to {@link showWebviewConfirm}, a dialog the dashboard renders
+ * itself out of plain DOM.
  *
- * An older app shell has no `confirm_dialog` command (the CLI-served dashboard
- * updates independently of the installed `.app`), so `invoke` rejects. That
- * falls back to `window.confirm` too, which returns false there — the button
- * stays inert exactly as it is today rather than silently doing the destructive
- * thing. A confirmation that cannot be shown must never read as consent.
+ * That fallback is the load-bearing part, not a browser nicety. The app shell is
+ * INSTALLED separately from the dashboard, which the CLI serves over http and
+ * updates on its own cadence, so a user on an older `.app` runs today's JS
+ * against a shell where `invoke('confirm_dialog')` rejects with "command not
+ * found". Falling back to `window.confirm` there put us straight back into the
+ * dead-button failure above — every confirmation silently answering "no" — which
+ * is exactly the bug reported against task delete. Owning the DOM means the
+ * confirmation cannot depend on which shell build the user happens to have.
+ *
+ * Fails CLOSED throughout: a dismissal, an Escape, or a dialog that could not be
+ * presented at all is `false`. A confirmation that cannot be shown must never
+ * read as consent.
  */
 export async function confirmAction(opts: ConfirmOptions): Promise<boolean> {
   const { title, body, confirmLabel, cancelLabel, destructive } = opts;
@@ -276,13 +286,12 @@ export async function confirmAction(opts: ConfirmOptions): Promise<boolean> {
         destructive,
       });
     } catch (err) {
-      console.error('[confirm] native confirmation failed:', err);
-      // Falls through to window.confirm — inert in this webview, but never a
-      // silent yes.
+      // An older shell has no such command. Expected, recoverable, and NOT a
+      // reason to swallow the user's click — fall through to our own dialog.
+      console.warn('[confirm] native confirmation unavailable, using the in-app dialog:', err);
     }
   }
-  const text = body ? `${title}\n\n${body}` : title;
-  return window.confirm(text);
+  return showWebviewConfirm({ title, body, confirmLabel, cancelLabel, destructive });
 }
 
 /** Run a picker, recording — never throwing — a failure to present the panel. */
