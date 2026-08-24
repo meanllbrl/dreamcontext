@@ -159,7 +159,17 @@ export const SKILL_GROUPS: SkillGroup[] = [
 
 // ── Model / effort config (fetched from the CLI via the server) ─────────────────────
 
-export interface ModelOption { id: string; label: string; }
+export interface ModelOption {
+  id: string;
+  label: string;
+  /** Public API list price in USD per MILLION input tokens, or null when the server can't
+   *  price this id. Filled by `GET /api/agent/model-config` from the SAME table the cost
+   *  readout prices turns with (`MODEL_PRICING` in agent-terminal.ts) — the model menu must
+   *  not carry a second copy that can drift from what the estimate actually charges.
+   *  Optional because a server that predates the field simply omits it; the row then prints
+   *  its name and insight without a price rather than "$undefined/M". */
+  priceIn?: number | null;
+}
 
 export interface ModelConfig {
   /** Models the CLI offers (aliases + its own cached extras). */
@@ -185,6 +195,24 @@ export const FALLBACK_MODEL_CONFIG: ModelConfig = {
   defaultEffort: 'high',
 };
 
+/** The model families this app knows how to talk about. Ordered longest-lived first only by
+ *  accident — nothing depends on the order, `modelFamily` takes the first substring hit. */
+const MODEL_FAMILIES = ['opus', 'sonnet', 'haiku', 'fable'] as const;
+export type ModelFamily = typeof MODEL_FAMILIES[number];
+
+/**
+ * The family a model id belongs to, or null for one this app has no opinion about.
+ *
+ * Mirrors the server's `modelAlias` (agent-terminal.ts). Extracted rather than inlined
+ * because THREE readers need the same answer — the picker's label, the menu's insight copy,
+ * and the primary/other split — and three copies of the same substring list is exactly how
+ * a new family ends up labelled but not described (or the reverse).
+ */
+export function modelFamily(id: string): ModelFamily | null {
+  const s = (id ?? '').toLowerCase();
+  return MODEL_FAMILIES.find((f) => s.includes(f)) ?? null;
+}
+
 /**
  * What to print on a model picker for `model`, which reaches us in three different shapes
  * and must never degrade to a bare "—":
@@ -200,9 +228,7 @@ export function modelLabelFor(config: ModelConfig, model: string): string {
     if (!id) return undefined;
     const exact = config.models.find((m) => m.id === id);
     if (exact) return exact.label;
-    // Family match — mirrors the server's `modelAlias` (agent-terminal.ts).
-    const s = id.toLowerCase();
-    const family = ['opus', 'sonnet', 'haiku', 'fable'].find((f) => s.includes(f));
+    const family = modelFamily(id);
     return family ? config.models.find((m) => m.id === family)?.label ?? family : undefined;
   };
   // The default stands in ONLY for "not reported yet". An id we simply don't recognize must
@@ -210,6 +236,76 @@ export function modelLabelFor(config: ModelConfig, model: string): string {
   // isn't.
   if (!model) return resolve(config.defaultModel) ?? config.defaultModel;
   return resolve(model) ?? model;
+}
+
+// ── Model menu presentation (what a row SAYS, beyond its name) ──────────────────────
+//
+// The redesigned model menu gives each row a one-line "what is this for" and, where the
+// server priced it, an input rate. The rate comes from the SERVER (`ModelOption.priceIn`,
+// one table) because it is a fact that must match the cost estimate; the sentence lives
+// HERE because it is product copy, not data — a server that starts shipping marketing
+// strings is a server that has to be redeployed to fix a typo.
+//
+// A family with no entry renders its name alone. That is the honest degradation: a model
+// this build has never heard of gets no invented description.
+
+export interface ModelNote {
+  /** One line: what this model is FOR. Shown under the row's name. */
+  insight: string;
+  /** Optional chip beside the name (e.g. "Recommended"). */
+  badge?: string;
+}
+
+export const MODEL_INSIGHTS: Record<ModelFamily, ModelNote> = {
+  fable: { insight: 'Strongest overall. Best reasoning, writing, and tool use.' },
+  opus: { insight: 'Deep reasoning. Best for hard refactors and long plans.', badge: 'Recommended' },
+  sonnet: { insight: 'Balanced. Fast enough for everyday agent loops.' },
+  haiku: { insight: 'Cheapest and quickest. Good for lookups and small edits.' },
+};
+
+/**
+ * The note for a model id in any of the shapes the picker sees — a picker alias (`opus`),
+ * the full id `system:init` reports (`claude-opus-4-5-20251101`), or an id from a newer CLI
+ * this build has never seen. The last case returns null, and the row prints its name alone.
+ */
+export function modelNoteFor(id: string): ModelNote | null {
+  const family = modelFamily(id);
+  return family ? MODEL_INSIGHTS[family] : null;
+}
+
+/** How many models the menu shows before the "Other models" disclosure. */
+export const MODEL_PRIMARY_COUNT = 2;
+
+/**
+ * Split the CLI's model list into the rows shown up front and the rows behind the
+ * disclosure.
+ *
+ * The one rule that isn't "take the first N": THE CURRENT MODEL IS ALWAYS PRIMARY. A menu
+ * that hides the running model behind a closed disclosure asks the user to go looking for
+ * the thing they came to read — and the checkmark they're hunting for is the one row not on
+ * screen. A promoted model joins the END of the primary list, so the first N keep the
+ * positions the CLI gave them and the promoted row reads as the addition it is.
+ *
+ * `current` is matched by exact id first, then by family — `system:init` reports the full id
+ * (`claude-sonnet-4-5-20250929`), which is never one of the picker's alias ids.
+ */
+export function splitModels(
+  config: ModelConfig,
+  current: string,
+  primaryCount: number = MODEL_PRIMARY_COUNT,
+): { primary: ModelOption[]; other: ModelOption[] } {
+  const count = Math.max(0, Math.min(config.models.length, Math.floor(primaryCount)));
+  const primary = config.models.slice(0, count);
+  const other = config.models.slice(count);
+  if (!current) return { primary, other };
+
+  const family = modelFamily(current);
+  const at = other.findIndex((m) => m.id === current || (!!family && m.id === family));
+  if (at === -1) return { primary, other };
+  return {
+    primary: [...primary, other[at]],
+    other: [...other.slice(0, at), ...other.slice(at + 1)],
+  };
 }
 
 /** Context-window usage at/above which a readout goes caution-coloured (and, in the chat
@@ -294,6 +390,35 @@ export function effortLabel(level: string): string {
   return level ? level.charAt(0).toUpperCase() + level.slice(1) : level;
 }
 
+// ── Effort as a SLIDER position ─────────────────────────────────────────────────────
+//
+// The redesigned model menu drives effort with an `<input type="range">` over the CLI's own
+// levels, so the two directions of that binding need a total function each. Neither may ever
+// hand the input an out-of-range value: a `range` whose `value` sits outside [min,max] is
+// silently clamped BY THE BROWSER, which then reports the clamped number back through
+// `onChange` — i.e. a bad index doesn't look wrong, it quietly rewrites the user's setting.
+
+/**
+ * Where `level` sits on the slider. Never -1.
+ *
+ * An unrecognised level (an older/newer CLI's own value) parks the THUMB at 0 — but the
+ * trigger and the menu head print `effortLabel(level)`, the real string, so the reading
+ * stays truthful even while the thumb is a best guess. This is deliberately the same
+ * discipline as `modelLabelFor`: show what is actually running, never a substituted default.
+ */
+export function effortIndex(efforts: string[], level: string): number {
+  const at = efforts.indexOf(level);
+  return at === -1 ? 0 : at;
+}
+
+/** The level at slider position `index`, clamped into range. `''` only when there are no
+ *  levels at all (in which case the caller has no slider to render). */
+export function effortAt(efforts: string[], index: number): string {
+  if (efforts.length === 0) return '';
+  const n = Number.isFinite(index) ? Math.round(index) : 0;
+  return efforts[Math.min(efforts.length - 1, Math.max(0, n))];
+}
+
 // ── Per-session context-window + cost readout ───────────────────────────────────────
 
 /** The focused agent's live token footprint + API-rate cost estimate (from its transcript,
@@ -306,6 +431,17 @@ export interface SessionStats {
   /** Cumulative spend priced at public API rates — a what-if for flat-rate plans. */
   costUsd: number | null;
 }
+
+/**
+ * The context reading the composer's gauge draws — {@link SessionStats} (or the live result
+ * frame) resolved against {@link contextLimitFor} and turned into a percentage.
+ *
+ * Declared HERE rather than in the component that renders it: the gauge, the usage popover
+ * and `usageLimits` below all speak this shape, and the component that used to own it
+ * (`chat/ContextReadout.tsx`) is replaced by the redesigned ring. A type whose home is a
+ * deleted file is a type that gets re-declared three times.
+ */
+export type ContextUsage = { used: number; limit: number; pct: number };
 
 /** Model ids whose context window is 200K rather than 1M: the whole Haiku line, and the
  *  Opus/Sonnet generations before 4.6. Everything the CLI can run today — Opus 4.6+, Opus 5,
@@ -352,6 +488,138 @@ export function fmtCost(usd: number): string {
   if (usd < 0.01) return '<$0.01';
   if (usd < 100) return `$${usd.toFixed(2)}`;
   return `$${Math.round(usd)}`;
+}
+
+// ── Account usage limits (the usage popover's nested bars) ──────────────────────────
+//
+// Three readings stack in the usage popover: how full THIS conversation's context window is
+// (local arithmetic), and how much of the account's 5-hour and weekly caps are spent — which
+// Claude Code itself caches in `~/.claude.json` under `cachedUsageUtilization` and the server
+// re-serves via `GET /api/agent/usage-limits`.
+//
+// THE RULE THAT GOVERNS ALL OF IT: show what's found, hide what isn't. A cap with no readable
+// source renders NOTHING — not an empty ring, not a zero, not "unknown". An empty bar reads as
+// "you've used none of it", which is a claim we have no basis for; absence reads as absence.
+// So every degradation below removes a bar rather than drawing a hollow one.
+
+/**
+ * One cap as the server reports it.
+ *
+ * MIRRORED in `src/lib/claude-usage.ts` (`UsageLimitWire`) — the server builds this shape
+ * field-by-field from `cachedUsageUtilization` and never spreads the source object, because
+ * that file also holds `oauthAccount`, `machineID`, `accountUuid` and spend history. Change
+ * one side, change the other; `tests/unit/claude-usage.test.ts` asserts the pair at runtime.
+ *
+ * PERCENT-based, not token-based: the source reports utilization as 0-100 with a reset time,
+ * and there is no used/limit token pair behind it to reconstruct. The interface models what
+ * the source actually provides.
+ */
+export interface UsageLimitWire {
+  key: 'session' | 'weekly';
+  /** 0-100. */
+  percent: number;
+  /** Epoch ms at which this window resets. */
+  resetsAt: number;
+  /** Set only when a per-model cap is the binding one, e.g. "Fable". */
+  scope?: string;
+}
+
+/** The body of `GET /api/agent/usage-limits`. MIRRORED in `src/lib/claude-usage.ts`.
+ *  `fetchedAtMs` is when CLAUDE CODE last refreshed its cache, not when we read it — it is
+ *  the only thing that can tell a live reading from a day-old one. */
+export interface UsageLimitsResponse {
+  limits: UsageLimitWire[];
+  fetchedAtMs: number | null;
+}
+
+/** One rendered bar. `context` is computed locally and has no reset; the account caps come
+ *  off the wire and always do. */
+export interface UsageLimit {
+  key: 'context' | 'session' | 'weekly';
+  title: string;
+  /** 0-100. */
+  percent: number;
+  resetsAt: number | null;
+  /** Context only — the raw reading behind the percent, for the row's `used / limit` line. */
+  detail?: { used: number; limit: number };
+  /** Weekly only, when a per-model cap is the binding one. */
+  scope?: string;
+}
+
+/** Past this the cache is old enough to be worth LABELLING ("as of 14:20") — the number is
+ *  still probably right, but the user should know it isn't live. */
+export const USAGE_STALE_MS = 30 * 60_000;
+/** Past this it isn't worth showing at all. Six hours is longer than the 5-hour window it
+ *  would be describing, so the bar could be a full window out of date — and a confidently
+ *  wrong "20% used" is worse than no bar. */
+export const USAGE_MAX_AGE_MS = 6 * 60 * 60_000;
+
+const USAGE_TITLES: Record<UsageLimitWire['key'], string> = {
+  session: '5-hour session',
+  weekly: 'Weekly',
+};
+/** Render order, independent of whatever order the wire happened to use. */
+const USAGE_ORDER: Record<UsageLimitWire['key'], number> = { session: 0, weekly: 1 };
+
+function isPercent(n: unknown): n is number {
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 100;
+}
+
+/**
+ * The bars to draw, in order, plus when to admit the account readings are stale.
+ *
+ * `now` is injected rather than read from `Date.now()` so this stays pure and the staleness
+ * rules are testable without faking the clock.
+ *
+ * Four things drop a bar, and all four are "we don't actually know", not "it's zero":
+ *   • no response, or a response with no `fetchedAtMs` — the server found no source;
+ *   • a cache older than {@link USAGE_MAX_AGE_MS};
+ *   • a `resetsAt` already in the past — that window has rolled over, so its percent
+ *     describes a window that no longer exists. This is the subtle one: the data isn't
+ *     stale in the "old file" sense, it is stale in the "wrong window" sense, and only the
+ *     reset time can reveal it;
+ *   • a percent outside 0-100. The server drops these too; this is the second layer, because
+ *     a clamped-into-range lie renders identically to the truth.
+ *
+ * `staleAsOf` is non-null only when at least one account bar SURVIVED — an "as of 09:00"
+ * caption under a popover showing nothing but the context bar labels the wrong thing.
+ */
+export function usageLimits(
+  ctx: ContextUsage | null,
+  res: UsageLimitsResponse | null,
+  now: number,
+): { limits: UsageLimit[]; staleAsOf: number | null } {
+  const limits: UsageLimit[] = [];
+  if (ctx) {
+    limits.push({
+      key: 'context',
+      title: 'Context window',
+      percent: Math.min(100, Math.max(0, ctx.pct)),
+      resetsAt: null,
+      detail: { used: ctx.used, limit: ctx.limit },
+    });
+  }
+
+  const fetchedAtMs = res?.fetchedAtMs ?? null;
+  if (fetchedAtMs === null) return { limits, staleAsOf: null };
+  // A cache stamped in the future is clock skew, not freshness — clamp the age at 0 rather
+  // than letting a negative number pass every threshold below.
+  const age = Math.max(0, now - fetchedAtMs);
+  if (age > USAGE_MAX_AGE_MS) return { limits, staleAsOf: null };
+
+  const account = (res?.limits ?? [])
+    .filter((l) => isPercent(l.percent) && Number.isFinite(l.resetsAt) && l.resetsAt > now)
+    .sort((a, b) => (USAGE_ORDER[a.key] ?? 99) - (USAGE_ORDER[b.key] ?? 99))
+    .map((l): UsageLimit => ({
+      key: l.key,
+      title: l.scope ? `${USAGE_TITLES[l.key]} · ${l.scope}` : USAGE_TITLES[l.key],
+      percent: l.percent,
+      resetsAt: l.resetsAt,
+      ...(l.scope ? { scope: l.scope } : {}),
+    }));
+
+  limits.push(...account);
+  return { limits, staleAsOf: account.length > 0 && age > USAGE_STALE_MS ? fetchedAtMs : null };
 }
 
 /**

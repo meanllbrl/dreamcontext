@@ -8,6 +8,7 @@ import { isDesktop } from '../desktop.js';
 import { listVaults } from '../../lib/vaults.js';
 import { UUID_RE } from '../../lib/agent-session-map.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
+import { CHAT_MODES, DEFAULT_CHAT_MODE, type ChatMode } from '../chat-modes.js';
 
 /**
  * Shared trust-boundary primitives for the two loopback `claude`-spawning surfaces —
@@ -85,6 +86,23 @@ export function sanitizeModel(v: string | null): string {
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export function sanitizeEffort(v: string | null): string {
   return v && EFFORT_LEVELS.includes(v) ? v : '';
+}
+
+/**
+ * Chat-mode gate. Anything outside {@link CHAT_MODES} resolves to {@link DEFAULT_CHAT_MODE}
+ * (`basic`) — and so does `jarvis`, which is rendered disabled in the composer and has no
+ * behaviour to select. The value never reaches a shell (it selects a briefing string, not an
+ * argv element), so this is an allowlist for CORRECTNESS rather than for injection: an
+ * unknown mode must degrade to plain Claude Code, never to a half-applied one.
+ *
+ * It lives HERE, beside `sanitizeUuid`/`sanitizeModel`/`sanitizeEffort`, because this file is
+ * the single trust boundary every `claude`-spawning upgrade reads its URL params through —
+ * one place to audit. The BRIEFING PROSE stays in `src/server/chat-modes.ts`: a route module
+ * has no business carrying a system prompt.
+ */
+export function sanitizeChatMode(v: string | null): ChatMode {
+  if (!v || v === 'jarvis') return DEFAULT_CHAT_MODE;
+  return (CHAT_MODES as readonly string[]).includes(v) ? (v as ChatMode) : DEFAULT_CHAT_MODE;
 }
 
 /** Cap on a stored prompt, in CHARACTERS. Applies to the POST body path too: the token

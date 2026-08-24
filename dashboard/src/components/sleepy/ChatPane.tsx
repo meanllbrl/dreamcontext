@@ -4,6 +4,7 @@ import { CouncilLivePanel } from './CouncilLivePanel';
 import { agentFileUrl } from '../../api/client';
 import { useApi, useVault } from '../../context/VaultContext';
 import type { ModelConfig } from '../../lib/agentComposer';
+import type { ChatMode } from '../../lib/chatModes';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
   nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent,
@@ -22,6 +23,8 @@ import { BypassNoticeCard } from './chat/BypassNoticeCard';
 import { SubAgentCard, SubAgentRail } from './chat/SubAgentCard';
 import { BackgroundShellsTray } from './chat/BackgroundShellsTray';
 import { QueuedMessages } from './chat/QueuedMessages';
+import { PinShelf } from './chat/PinShelf';
+import { useShelf } from './chat/useShelf';
 import { SlideOver } from './chat/SlideOver';
 import { Lightbox } from './chat/Lightbox';
 import { PdfViewer } from './chat/PdfViewer';
@@ -462,7 +465,8 @@ interface PdfState { path: string; label?: string }
 
 export function ChatPane({
   session, modelConfig, model, effort, onModelChange, onEffortChange, taskSlug, onContinueInTerminal,
-  permissionMode, onPermissionModeChange, onResume, automation, onOpenAppPage, onSignIn,
+  permissionMode, onPermissionModeChange, mode, onModeChange, onHandoffToDevelop,
+  onResume, automation, onOpenAppPage, onSignIn,
   canSignInInApp, signInCommand,
 }: {
   session: ChatSession;
@@ -474,13 +478,30 @@ export function ChatPane({
   /** No caller sets this yet — the ChatLiveRail's task chip is built and dormant. */
   taskSlug?: string;
   onContinueInTerminal: () => void;
-  /** The REMEMBERED permission-mode default (`agentSettings.chatPermissionMode`) — the
-   *  `bypass` dropdown, which now leads the COMPOSER's toolbar (owner reference 07-25)
-   *  rather than floating at the pane's top-right. Changing it applies from the next chat
-   *  session (AgentSurface's `spawn()` resolves a chat's actual bypass from this
-   *  centrally); this pane only passes the current value down and reports a change. */
+  /**
+   * The REMEMBERED permission-mode default for this PROJECT (`agentSettings.chatPermissionMode`).
+   *
+   * It is the WRITE path's current value — what the composer's Auto/Bypass segment should show
+   * as selected when the user goes to change the project default — and NOT what this session
+   * is running under. Those two can genuinely disagree: a Plan→Develop hand-off is forced to
+   * `auto` inside a project whose remembered default is `bypass`.
+   *
+   * So this value is deliberately NOT the composer's INDICATOR — `inBypass` below resolves the
+   * session's own truth from the CLI's report, and that is what the trigger and the segment
+   * render. This one travels alongside it as `projectPermissionMode`, purely so the menu can
+   * SAY what a click reaches ("Applies to every chat in this project (project default: …)").
+   * Both scopes are named; neither stands in for the other. See the render site.
+   */
   permissionMode: 'auto' | 'bypass';
   onPermissionModeChange: (mode: 'auto' | 'bypass') => void;
+  /** How this conversation's agent is briefed to work (plain / plan / develop). */
+  mode: ChatMode;
+  /** Re-brief it. Respawns the session under the new brief — see AgentSurface's
+   *  `changeChatMode`; the composer's mode menu says so before the reconnect happens. */
+  onModeChange: (mode: ChatMode) => void;
+  /** A `develop` action button asked to hand this plan off. Opens a NEW Develop session
+   *  carrying the slug and closes this tab (AgentSurface's `handoffToDevelop`). */
+  onHandoffToDevelop: (taskSlug: string) => void;
   /** Respawn this exact conversation UUID as a fresh chat session (state 12's "Session
    *  ended" banner, which REPLACES the composer). */
   onResume: () => void;
@@ -515,6 +536,11 @@ export function ChatPane({
   const api = useApi();
 
   const conv = session.getModel();
+  // The pinned shelf's whole state. Declared up here with the pane's other session-scoped
+  // hooks because BOTH the shelf and the composer read from it: the composer squares its top
+  // corners for exactly the states in which the shell grows a border, and asking the same
+  // question twice is how those two drift apart.
+  const shelf = useShelf(session, vault);
   const hasPendingQuestion = conv.pending.some((p) => p.kind === 'question');
   const askRouting = useAskQuestionWatchdog(conv.items, hasPendingQuestion);
 
@@ -1255,8 +1281,14 @@ export function ChatPane({
       case 'url':
         void openExternalUrl(action.url!);
         break;
+      case 'develop':
+        // The Plan→Develop hand-off. The only action here that does not land on a surface
+        // THIS pane owns — it closes this pane and opens another — so it is the surface's
+        // call, not ours; we only forward the slug the plan agent named.
+        onHandoffToDevelop(action.id!);
+        break;
     }
-  }, [handleNavApp, handleOpenFile, session, api]);
+  }, [handleNavApp, handleOpenFile, session, api, onHandoffToDevelop]);
 
   // ── Transcript pass: skip the spawning Agent/Task tool's OWN card (state 9 — it's
   //    already represented by ONE combined SubAgentCard, rendered at the position of the
@@ -1631,6 +1663,14 @@ export function ChatPane({
           rows are the only copy of text the user has already committed to sending, so they must
           survive the composer being replaced by a banner (see QueuedMessages.tsx). */}
       <QueuedMessages session={session} />
+      {/* The pinned shelf, docked to the composer's TOP EDGE — and, like the two rows above
+          it, OUTSIDE `.chat-transcript`. That placement is the whole mechanism behind its
+          defining property: it is not a child of the scroller, so scrolling to the top of a
+          long conversation and back cannot move it, hide it, or resize it. It renders nothing
+          at all when it holds nothing (no zero-height strip), and one bare tag line at rest.
+          `shelved` is the same question as the shell's own `has-rows`, which is why it comes
+          off the shelf handle rather than being computed twice. */}
+      <PinShelf shelf={shelf} onOpenUrl={openExternalUrl} />
       {needsSignIn ? (
         <SignInBanner
           canSignInInApp={canSignInInApp}
@@ -1657,8 +1697,32 @@ export function ChatPane({
           connected={session.status === 'open'}
           quote={replyQuote}
           onClearQuote={() => setReplyQuote(null)}
-          permissionMode={permissionMode}
+          // THIS SESSION's permission mode, not the project's remembered default (the
+          // `permissionMode` prop). `inBypass` is what the CLI itself reported — the init
+          // frame, or a successful mid-session `set_permission_mode` — and the two genuinely
+          // diverge: a Plan→Develop hand-off is forced to `auto` inside a project whose
+          // remembered default is `bypass`, so passing the prop straight through would print
+          // "bypass" over a process running `--permission-mode auto`. A security indicator
+          // that can disagree with the running process is worse than no indicator, so the
+          // trigger and the mode menu's segment both read the session's own truth.
+          // `onPermissionModeChange` is unchanged and still the PROJECT-wide setter: changing
+          // it pushes `set_permission_mode` into every live chat, whose ack moves
+          // `conv.permissionMode` — so the display follows the write rather than predicting it.
+          //
+          // Which leaves one control READING per-session and WRITING per-project. That
+          // asymmetry is deliberate on both ends — the display must be this session's truth,
+          // and the write must stay project-wide because this segment is the vault default's
+          // ONLY control — so the fix is to NAME both scopes rather than to merge them or to
+          // add a second control (which the menu's no-set-default rule forbids). The remembered
+          // value goes down beside the session's, and the menu's note states the scope.
+          permissionMode={inBypass ? 'bypass' : 'auto'}
+          projectPermissionMode={permissionMode}
           onPermissionModeChange={onPermissionModeChange}
+          mode={mode}
+          onModeChange={onModeChange}
+          // One object, not two cards: whenever the shelf grows a bordered shell above the
+          // composer, the composer squares the corners it would otherwise round against it.
+          shelved={shelf.hasRows}
           onSignIn={onSignIn}
           // No task-picker mechanism exists anywhere in this codebase yet (there is no
           // native "pick a task" dialog — TasksPage has no picker widget to open). The

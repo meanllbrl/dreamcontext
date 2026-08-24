@@ -9,6 +9,7 @@ import { ensureGitignoreEntries } from '../../lib/gitignore.js';
 import { UUID_RE } from '../../lib/agent-session-map.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { isSafeAutomationSlug } from '../../lib/automations/store.js';
+import { CHAT_MODES, type ChatMode } from '../chat-modes.js';
 
 /**
  * Per-vault persistence of the embedded-agent session ROSTER (titles + layout) so a
@@ -55,6 +56,16 @@ export interface SavedMeta {
    * from an untrusted roster rather than from code that already validated it.
    */
   automation?: { slug: string; runFiredAt: string };
+  /**
+   * Present only alongside `kind: 'chat'` — how that conversation's agent is BRIEFED to work
+   * (`src/server/chat-modes.ts`), so a Develop tab reopens as one after a relaunch.
+   *
+   * Whitelisted to {@link CHAT_MODES} on the way in for the same reason `kind` is: this value
+   * chooses which system-prompt append a respawn gets, and a roster is hand-editable and
+   * travels in the brain. An unknown value is dropped, which reads as Basic on the client —
+   * the mode with no extra brief at all, and therefore the safe direction.
+   */
+  mode?: ChatMode;
 }
 
 /** Hard ceiling on rostered sessions (extras are dropped, not rejected). */
@@ -97,7 +108,8 @@ function coerceAutomation(raw: unknown): SavedMeta['automation'] {
  * Coerce one untrusted roster entry into a safe {@link SavedMeta}. Strips every field
  * outside the known set; clamps title length + size; defaults a blank/non-string title
  * to "Agent"; treats anything but `true` as false for the booleans; keeps `kind` only when
- * it's one of {@link KNOWN_KINDS} and `automation` only alongside `kind: 'automation'`.
+ * it's one of {@link KNOWN_KINDS}, `automation` only alongside `kind: 'automation'`, and
+ * `mode` only alongside `kind: 'chat'` and only for a known {@link CHAT_MODES} value.
  * Total function — any input shape yields a valid meta.
  */
 function coerceMeta(raw: unknown): SavedMeta {
@@ -116,6 +128,11 @@ function coerceMeta(raw: unknown): SavedMeta {
     ? (o.kind as SessionKind)
     : undefined;
   const automation = kind === 'automation' ? coerceAutomation(o.automation) : undefined;
+  // Same containment rule as `automation`: a mode means nothing on a shell or a terminal
+  // agent, so it is kept only alongside `kind: 'chat'` and only for a mode THIS build knows.
+  const mode = kind === 'chat' && typeof o.mode === 'string' && (CHAT_MODES as readonly string[]).includes(o.mode)
+    ? (o.mode as ChatMode)
+    : undefined;
   return {
     title: title || DEFAULT_TITLE,
     bypass: o.bypass === true,
@@ -124,6 +141,7 @@ function coerceMeta(raw: unknown): SavedMeta {
     ...(sessionId ? { sessionId } : {}),
     ...(kind ? { kind } : {}),
     ...(automation ? { automation } : {}),
+    ...(mode ? { mode } : {}),
   };
 }
 

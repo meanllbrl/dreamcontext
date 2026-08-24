@@ -7,8 +7,9 @@
  *   • a fenced ```dream-actions block — a JSON array that becomes a row of real buttons
  *     under the message (and is removed from the prose, so nobody reads raw JSON);
  *   • a fenced ```dream-view block — a JSON object ({@link ChatViewSpec} from
- *     `lib/chatViewSpec.ts`, `type: 'chart' | 'page' | 'checklist'`) that becomes a chart,
- *     a widget page, or a pinned checklist card;
+ *     `lib/chatViewSpec.ts`, `type: 'chart' | 'page' | 'checklist' | 'pin' | 'progress'`)
+ *     that becomes a chart, a widget page, a pinned checklist card, or — for the last two —
+ *     a row on the shelf docked to the composer rather than anything in the transcript;
  *   • a board reference — `![x](path.excalidraw.md)` / `[x](path.excalidraw)` — which
  *     becomes the DRAWN board rather than the broken `<img>` it would otherwise be.
  *
@@ -29,14 +30,14 @@ import {
   parseViewBlock, MAX_VIEWS_PER_MESSAGE, type ChatViewSpec,
 } from '../../../lib/chatViewSpec';
 
-export type ChatActionKind = 'task' | 'knowledge' | 'core' | 'file' | 'board' | 'reveal' | 'ask' | 'url';
+export type ChatActionKind = 'task' | 'knowledge' | 'core' | 'file' | 'board' | 'reveal' | 'ask' | 'url' | 'develop';
 
-const ACTION_KINDS = new Set<string>(['task', 'knowledge', 'core', 'file', 'board', 'reveal', 'ask', 'url']);
+const ACTION_KINDS = new Set<string>(['task', 'knowledge', 'core', 'file', 'board', 'reveal', 'ask', 'url', 'develop']);
 
 export interface ChatAction {
   label: string;
   action: ChatActionKind;
-  /** dreamcontext slug — `task` / `knowledge` / `core`. */
+  /** dreamcontext slug — `task` / `knowledge` / `core` / `develop`. */
   id?: string;
   /** Project-relative (or granted absolute) path — `file` / `board` / `reveal`. */
   path?: string;
@@ -90,6 +91,19 @@ function isHttpsUrl(raw: string): boolean {
   }
 }
 
+/**
+ * A dreamcontext slug, as `develop` carries it. Bounded to 64 characters so a runaway string
+ * can't ride into a prompt.
+ *
+ * HONEST LIMIT: this character class also matches `..`, so it is NOT a traversal guarantee
+ * and must not be reused for anything that builds a path. It is safe HERE only because a
+ * `develop` slug never becomes one on this side — it is interpolated into a prompt string
+ * (`developKickoffPrompt`), which needs no escaping. The two places that DO resolve a slug
+ * to a file resolve it themselves: the server's task routes gate on `isSafeTaskSlug`
+ * (`src/lib/task-backend/local.ts`), and the spawned agent reads the task through the CLI.
+ */
+const SAFE_SLUG_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
 /** One entry of a `dream-actions` array (or a `card.actions` entry inside a `dream-view`
  *  page), or null if it can't be honoured as written. Exported so `parseViewBlock` can
  *  validate a card's buttons with the identical rules a `dream-actions` button follows —
@@ -111,6 +125,12 @@ export function toAction(raw: unknown): ChatAction | null {
   switch (action as ChatActionKind) {
     case 'task': case 'knowledge': case 'core':
       return id ? { label, action: action as ChatActionKind, id } : null;
+    // The Plan → Develop handoff: `id` is the task slug the planning half just created, and
+    // clicking it opens a NEW chat in Develop mode carrying that slug (ChatPane routes it).
+    // Stricter than the three above because this slug is the whole payload of a session
+    // hand-off — a malformed one would seed an agent with a brief pointing nowhere.
+    case 'develop':
+      return SAFE_SLUG_RE.test(id) ? { label, action: 'develop', id } : null;
     case 'file': case 'board': case 'reveal':
       return path ? { label, action: action as ChatActionKind, path } : null;
     case 'ask':

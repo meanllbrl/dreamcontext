@@ -1,10 +1,15 @@
 /**
  * Unit tests for coerceAgentSettings — the blob→settings normalizer shared (in shape)
- * by the dashboard and the server's agent-ui.json persistence (src/server/routes/
- * launcher.ts's own coerceAgentSettings is module-private, so this file exercises the
- * dashboard side only; the two are kept in lockstep by applying the identical rule per
- * field — verified by inspection, same convention as the existing renderer/chatView
- * coverage below). Focus: the `renderer` field added for the GPU/comfort terminal
+ * by the dashboard and the server's agent-ui.json persistence. The server's own
+ * `coerceAgentSettings` (src/server/routes/launcher.ts) USED to be module-private, so the
+ * older describes below exercise the dashboard side only and rely on "the identical rule
+ * per field, verified by inspection". That convention is fine for a default (`webgl`,
+ * `chatView`) and NOT fine for a VALIDATION rule, so the `chatDefault*` fields added for
+ * the composer's model+effort menu are asserted against BOTH functions, plus an explicit
+ * lockstep describe that runs one input table through the pair — inspection cannot catch a
+ * regex that drifts on one side only.
+ *
+ * Focus of the older describes: the `renderer` field added for the GPU/comfort terminal
  * toggle and the `chatView` field added for the Agent Chat view (beta) — task_nQb0y85X.
  * Contract for both: the default (webgl / Chat) applies whenever the key is absent or
  * garbage, and ONLY the documented explicit opt-out value flips it, so an old persisted
@@ -26,8 +31,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   coerceAgentSettings, DEFAULT_AGENT_SETTINGS,
   readChatPermissionMode, writeChatPermissionMode,
+  writeAgentSettings, AGENT_SETTINGS_EVENT,
   CHAT_PERMISSION_MODE_KEY, CHAT_PERMISSION_MODE_EVENT,
+  type AgentSettings as AgentSettingsShape,
 } from '../../dashboard/src/lib/agentSettings.js';
+import { coerceAgentSettings as coerceServerAgentSettings } from '../../src/server/routes/launcher.js';
 import { SCOPE_PREFIX } from '../../dashboard/src/lib/scopedStorage.js';
 
 function makeLocalStorageStub(): Storage {
@@ -124,6 +132,154 @@ describe('coerceAgentSettings chatView (Chat is the default Agent screen, 0.22)'
 
   it('an empty blob lands on every default at once, including chatView', () => {
     expect(coerceAgentSettings({})).toEqual(DEFAULT_AGENT_SETTINGS);
+  });
+});
+
+// The composer's model+effort menu has a "Set as default" footer (the mode menu deliberately
+// does NOT — owner delta). What it writes lands in these two fields, and from there in
+// `~/.dreamcontext/agent-ui.json`, and from there into a `claude --model` / `--effort` argv
+// inside a login-shell command string. So '' is the resting value ("inherit the CLI's own
+// default"), and anything that could not be spawned must never be persisted.
+
+/** Values that must survive both coercers untouched. */
+const VALID_MODELS = ['opus', 'sonnet', 'haiku', 'fable', 'claude-opus-5', 'claude-fable-5', 'a.b_c-1', 'x'];
+/** Values that must be rejected to '' by both coercers. */
+const BAD_MODELS: unknown[] = [
+  'opus; rm -rf /',      // command chaining
+  'opus && whoami',      // ditto
+  'opus`id`',            // backtick substitution
+  'opus$(id)',           // $() substitution
+  'opus|tee /tmp/x',     // pipe
+  'opus model',          // whitespace splits the argv element
+  'opus\nsonnet',        // newline
+  "opus'",               // quote — the argv is double-quoted into a shell string
+  'opus"',
+  '../../etc/passwd',    // slashes are outside the class
+  '',                    // the resting value, spelled explicitly
+  '   ',
+  'x'.repeat(65),        // 64-char ceiling
+  42, true, null, undefined, { id: 'opus' }, ['opus'],
+];
+
+describe('chatDefaultModel / chatDefaultEffort (composer "Set as default")', () => {
+  it("defaults to '' on both sides — nothing is forced until the user pins one", () => {
+    expect(DEFAULT_AGENT_SETTINGS.chatDefaultModel).toBe('');
+    expect(DEFAULT_AGENT_SETTINGS.chatDefaultEffort).toBe('');
+    for (const coerce of [coerceAgentSettings, coerceServerAgentSettings]) {
+      const cfg = coerce({});
+      expect(cfg.chatDefaultModel).toBe('');
+      expect(cfg.chatDefaultEffort).toBe('');
+    }
+    expect(coerceAgentSettings(null).chatDefaultModel).toBe('');
+    expect(coerceAgentSettings(undefined).chatDefaultEffort).toBe('');
+  });
+
+  it('round-trips a valid model + effort through both coercers', () => {
+    for (const model of VALID_MODELS) {
+      expect(coerceAgentSettings({ chatDefaultModel: model }).chatDefaultModel).toBe(model);
+      expect(coerceServerAgentSettings({ chatDefaultModel: model }).chatDefaultModel).toBe(model);
+    }
+    for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
+      expect(coerceAgentSettings({ chatDefaultEffort: effort }).chatDefaultEffort).toBe(effort);
+      expect(coerceServerAgentSettings({ chatDefaultEffort: effort }).chatDefaultEffort).toBe(effort);
+    }
+    // …and a re-coerce is a no-op, so a persisted blob survives every reload.
+    const once = coerceAgentSettings({ chatDefaultModel: 'fable', chatDefaultEffort: 'xhigh' });
+    expect(coerceAgentSettings(once).chatDefaultModel).toBe('fable');
+    expect(coerceAgentSettings(once).chatDefaultEffort).toBe('xhigh');
+  });
+
+  it("rejects a shell-metacharacter (or otherwise unspawnable) model to '' on both sides", () => {
+    for (const bad of BAD_MODELS) {
+      expect(coerceAgentSettings({ chatDefaultModel: bad as never }).chatDefaultModel,
+        `dashboard accepted ${JSON.stringify(bad)}`).toBe('');
+      expect(coerceServerAgentSettings({ chatDefaultModel: bad }).chatDefaultModel,
+        `server accepted ${JSON.stringify(bad)}`).toBe('');
+    }
+  });
+
+  it("rejects an off-list effort to '' on both sides", () => {
+    const bad: unknown[] = ['HIGH', 'Medium', 'extreme', 'high ', ' high', 'high;id', '', 7, true, null, ['high']];
+    for (const v of bad) {
+      expect(coerceAgentSettings({ chatDefaultEffort: v as never }).chatDefaultEffort,
+        `dashboard accepted ${JSON.stringify(v)}`).toBe('');
+      expect(coerceServerAgentSettings({ chatDefaultEffort: v }).chatDefaultEffort,
+        `server accepted ${JSON.stringify(v)}`).toBe('');
+    }
+  });
+
+  it('one bad field never takes the other down with it', () => {
+    const cfg = coerceServerAgentSettings({ chatDefaultModel: 'opus; id', chatDefaultEffort: 'max' });
+    expect(cfg.chatDefaultModel).toBe('');
+    expect(cfg.chatDefaultEffort).toBe('max');
+  });
+
+  it('keeps the pre-existing field contracts intact alongside the chat defaults (regression)', () => {
+    const cfg = coerceAgentSettings({
+      enabled: false, autoTitle: true, hotkey: '  ', renderer: 'dom',
+      chatView: false, screenMigrated: true, chatDefaultModel: 'opus', chatDefaultEffort: 'low',
+    });
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.restoreTabs).toBe(true);
+    expect(cfg.autoTitle).toBe(true);
+    expect(cfg.hotkey).toBe(DEFAULT_AGENT_SETTINGS.hotkey);
+    expect(cfg.renderer).toBe('dom');
+    expect(cfg.chatView).toBe(false);
+    expect(cfg.chatDefaultModel).toBe('opus');
+    expect(cfg.chatDefaultEffort).toBe('low');
+  });
+
+  it('an empty blob still lands on every default at once, including the chat defaults', () => {
+    expect(coerceAgentSettings({})).toEqual(DEFAULT_AGENT_SETTINGS);
+  });
+
+  // The event's `detail` is the whole coerced blob, so the new fields ride it by
+  // construction — asserted rather than assumed, because `AgentSurface`'s spawn path learns
+  // about a "Set as default" only through this event (no reload).
+  it('rides the AGENT_SETTINGS_EVENT payload so a live surface sees the change', async () => {
+    const realWindow = (globalThis as { window?: unknown }).window;
+    const realFetch = globalThis.fetch;
+    const bus = new EventTarget();
+    (globalThis as { window?: unknown }).window = bus;
+    // The write also POSTs to the local server; stubbed so this test never depends on a
+    // socket (and so a relative-URL fetch can't reject differently across Node versions).
+    globalThis.fetch = (async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+    try {
+      let heard: AgentSettingsShape | null = null;
+      bus.addEventListener(AGENT_SETTINGS_EVENT, (e) => {
+        heard = (e as CustomEvent<AgentSettingsShape>).detail;
+      });
+      writeAgentSettings(coerceAgentSettings({ chatDefaultModel: 'fable', chatDefaultEffort: 'max' }));
+      expect(heard).not.toBeNull();
+      expect(heard!.chatDefaultModel).toBe('fable');
+      expect(heard!.chatDefaultEffort).toBe('max');
+    } finally {
+      if (realWindow === undefined) delete (globalThis as { window?: unknown }).window;
+      else (globalThis as { window?: unknown }).window = realWindow;
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
+// The dashboard re-spells the server's `sanitizeModel` / `EFFORT_LEVELS` rules because it
+// cannot import a Node module. This describe is what stops that copy from drifting: one
+// table, both functions, identical verdicts. A regex tightened on one side only fails HERE
+// rather than in production, where the two would silently disagree about what is persisted.
+describe('chatDefault* server/dashboard lockstep', () => {
+  it('both coercers agree on every value in the model + effort tables', () => {
+    const efforts: unknown[] = ['low', 'medium', 'high', 'xhigh', 'max', 'HIGH', 'extreme', '', 7, null];
+    for (const v of [...VALID_MODELS, ...BAD_MODELS]) {
+      expect(
+        coerceServerAgentSettings({ chatDefaultModel: v }).chatDefaultModel,
+        `model disagreement on ${JSON.stringify(v)}`,
+      ).toBe(coerceAgentSettings({ chatDefaultModel: v as never }).chatDefaultModel);
+    }
+    for (const v of efforts) {
+      expect(
+        coerceServerAgentSettings({ chatDefaultEffort: v }).chatDefaultEffort,
+        `effort disagreement on ${JSON.stringify(v)}`,
+      ).toBe(coerceAgentSettings({ chatDefaultEffort: v as never }).chatDefaultEffort);
+    }
   });
 });
 

@@ -17,13 +17,15 @@ import { resolveAgentSession } from '../../lib/agent-session-map.js';
 import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
+import { modeBriefing, type ChatMode } from '../chat-modes.js';
+import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { resolveBoardAssets } from './knowledge.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
-  sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizePrompt,
+  sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizeChatMode, sanitizePrompt,
   claudeConversationExists, redeemPromptToken, findFirstTranscriptPath,
 } from './agent-spawn-shared.js';
 
@@ -283,8 +285,8 @@ export function shouldRejectAutomationResume(
 /**
  * Attach the agent-chat WebSocket upgrade handler to the shared http server.
  * Path: `/api/agent/chat?vault=<name>&bypass=0|1&(sessionId|resume)=<uuid>&model=<alias>
- * &effort=<lvl>&promptToken=<token>&prompt=<inline>&deferPrompt=0|1`. No-ops (rejects the
- * upgrade) unless the desktop gate is on and the request is loopback.
+ * &effort=<lvl>&mode=basic|plan|develop&promptToken=<token>&prompt=<inline>&deferPrompt=0|1`.
+ * No-ops (rejects the upgrade) unless the desktop gate is on and the request is loopback.
  */
 export function attachAgentChat(server: Server): void {
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -304,6 +306,9 @@ export function attachAgentChat(server: Server): void {
     const resumeId = sanitizeUuid(url.searchParams.get('resume'));
     const model = sanitizeModel(url.searchParams.get('model'));
     const effort = sanitizeEffort(url.searchParams.get('effort'));
+    // Selects a system-prompt append, not an argv element — an unknown value degrades to
+    // plain Claude Code rather than to a half-applied mode. See sanitizeChatMode.
+    const mode = sanitizeChatMode(url.searchParams.get('mode'));
 
     // T24 — the automation-bound resume gate (see the block comment on
     // `shouldRejectAutomationResume` above). Evaluated HERE, before `startChatSession` is
@@ -330,7 +335,7 @@ export function attachAgentChat(server: Server): void {
 
       const wss = new WebSocketServer({ noServer: true });
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, initialPrompt, deferPrompt });
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, initialPrompt, deferPrompt });
       });
     })();
   });
@@ -344,6 +349,9 @@ interface ChatSpawnOpts {
   resumeId: string;
   model: string;
   effort: string;
+  /** Which way of WORKING this session was opened in — selects the mode brief appended to
+   *  the surface briefing. Always a sanitized value; `basic` adds nothing. */
+  mode: ChatMode;
   initialPrompt: string;
   deferPrompt: boolean;
 }
@@ -380,7 +388,7 @@ export function startChatSession(
   projectRoot: string,
   opts: ChatSpawnOpts,
 ): void {
-  const { bypass, sessionId, resumeId, model, effort, initialPrompt, deferPrompt } = opts;
+  const { bypass, sessionId, resumeId, model, effort, mode, initialPrompt, deferPrompt } = opts;
   const contextRoot = join(projectRoot, '_dream_context');
 
   // Resume-target selection — mirrors agent-terminal.ts's startPtySession exactly:
@@ -439,7 +447,14 @@ export function startChatSession(
     // (see the quoting note on `script`): a tmpdir carrying a shell metacharacter drops the
     // briefing rather than reaching the command line.
     if (!isShellSafePath(brief)) throw new Error('unsafe tmpdir');
-    writeFileSync(brief, CHAT_SURFACE_BRIEFING, { encoding: 'utf-8', mode: 0o600 });
+    // ONE file, two parts: the surface briefing every chat gets, then the selected mode's
+    // behaviour brief (empty for `basic`). A second --append-system-prompt-file would be a
+    // second argv element and a second cleanup path for no gain — the CLI concatenates
+    // either way. `worktreeIsolationAllowed` never throws, and sits inside this try anyway
+    // so an unexpected failure degrades to the un-briefed agent rather than a failed spawn.
+    const modeBrief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot) });
+    const briefing = modeBrief ? `${CHAT_SURFACE_BRIEFING}\n${modeBrief}` : CHAT_SURFACE_BRIEFING;
+    writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
     briefingArg = ['--append-system-prompt-file', brief];
     cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
   } catch { /* no briefing this session — the chat still works, just terminal-flavoured */ }

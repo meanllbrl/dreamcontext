@@ -208,94 +208,9 @@
 /* Lightbox (state 4) styling lives in layout/ImageViewer.css — it is the shared
    full-window viewer now, not a pane-local overlay. */
 
-/* ── Permission-mode dropdown (left end of the composer toolbar) ─────────────────────
-   A checkbox-style chip, not a pill: the box reads as "is the leash off?" at a glance and
-   the caret says it still opens a menu. Sits in `.chat-cmp-toolbar`, so it borrows that
-   row's height and stays borderless like its Skills/＋ neighbours. */
-
-.chat-permmode-chip {
-  flex: 0 0 auto;   /* the toolbar is a single non-wrapping row — see composer.css */
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 6px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs, 12px);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-.chat-permmode-chip:hover, .chat-permmode-chip.open { background: var(--color-bg-tertiary); }
-.chat-permmode-box {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 15px;
-  height: 15px;
-  /* Literal 4px, not --radius-sm (6px): on a 15px box that token reads as a circle, and a
-     circle reads as a radio (pick one of many) rather than a checkbox (on/off). */
-  border-radius: 4px;
-  border: 1.5px solid var(--color-border-hover);
-  font-size: 10px;
-  line-height: 1;
-  color: transparent;
-}
-.chat-permmode-name { text-transform: lowercase; }
-.chat-permmode-caret { font-size: 9px; opacity: 0.55; }
-/* Bypass is the state worth SEEING from across the room — checked + warning-colored. */
-.chat-permmode-chip[data-mode='bypass'] { color: var(--color-warning); }
-.chat-permmode-chip[data-mode='bypass'] .chat-permmode-box {
-  border-color: var(--color-warning);
-  background: var(--color-warning);
-  color: #fff;
-}
-
-.chat-permmode-menu {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: 280px;
-  max-width: 320px;
-  padding: var(--space-1);
-  /* The shared popover shell is the terminal's (AgentTerminal.css) and speaks mono —
-     this menu is prose about a setting, so it speaks the UI font. */
-  font-family: var(--font-family-text);
-}
-.chat-permmode-menu-title {
-  padding: var(--space-1) var(--space-2);
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-bold);
-}
-.chat-permmode-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  align-items: flex-start;
-  padding: var(--space-3);
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-/* Each mode carries its own identity color, selected or not — you should be able to read
-   "the amber one is the dangerous one" before reading a word. Selection then shows as
-   that identity filled in (bg + border), so it survives without relying on color alone
-   (aria-checked names it for assistive tech). */
-.chat-permmode-row[data-mode='auto'] .chat-permmode-row-label { color: var(--color-accent); }
-.chat-permmode-row[data-mode='bypass'] { border-color: color-mix(in srgb, var(--color-warning) 55%, transparent); }
-.chat-permmode-row[data-mode='bypass'] .chat-permmode-row-label { color: var(--color-warning); }
-.chat-permmode-row:hover { background: var(--color-bg-tertiary); }
-.chat-permmode-row.on[data-mode='auto'] { background: var(--color-accent-soft); border-color: var(--color-accent); }
-.chat-permmode-row.on[data-mode='bypass'] { background: var(--color-warning-subtle); border-color: var(--color-warning); }
-.chat-permmode-row-label { font-size: var(--font-size-sm); font-weight: var(--font-weight-bold); }
-.chat-permmode-row-desc { font-size: var(--font-size-sm); color: var(--color-text-secondary); line-height: 1.4; }
+/* (The permission-mode dropdown is gone: mode AND permission now live in ONE trigger at the
+   left end of the composer toolbar, and its menu is `.chat-cmp-modemenu` — an absolutely
+   positioned panel inside `.chat-cmp`, not a portaled popover. See chat/ComposerMenus.tsx.) */
 
 /* ── Banners (empty / error / reconnecting / ended) ───────────────────────────────── */
 

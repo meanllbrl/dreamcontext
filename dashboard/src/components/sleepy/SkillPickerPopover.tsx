@@ -1,6 +1,6 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
+import { useDismissOnOutside } from '../../lib/useDismissOnOutside';
 import {
   SKILL_GROUPS,
   type SkillTrigger,
@@ -33,32 +33,14 @@ export function Popover({
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  // Stable per-instance id on the app's overlay stack (⌘K palette, ⌘P switcher, …):
-  // the portaled menu is a global overlay, so its Esc must arbitrate LIFO like the rest —
-  // never swallow an Esc meant for a surface stacked on top, never lose one to a
-  // background panel's earlier-registered listener.
-  const overlayId = useId();
-
-  useEffect(() => {
-    if (!open) return;
-    pushOverlay(overlayId);
-    const onDown = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (!anchorRef.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || !isTopOverlay(overlayId)) return;
-      e.stopPropagation();
-      setOpen(false);
-    };
-    document.addEventListener('pointerdown', onDown, true);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      popOverlay(overlayId);
-      document.removeEventListener('pointerdown', onDown, true);
-      document.removeEventListener('keydown', onKey, true);
-    };
-  }, [open, overlayId]);
+  // Esc/outside-click arbitration lives in `lib/useDismissOnOutside` — extracted from HERE so
+  // the redesigned composer's own menus share one implementation rather than a second copy of
+  // the overlay-stack rules (⌘K palette, ⌘P switcher, …). Behaviour is unchanged: the
+  // portaled menu is a global overlay, so its Esc arbitrates LIFO — it never swallows an Esc
+  // meant for a surface stacked on top, and never loses one to a background panel's
+  // earlier-registered listener.
+  const close = useCallback(() => setOpen(false), []);
+  useDismissOnOutside(open, close, [anchorRef, menuRef]);
 
   // Place the menu above the trigger, clamped inside the viewport. Anchoring via `bottom`
   // keeps the trigger edge fixed; menus are fixed-height while open (see

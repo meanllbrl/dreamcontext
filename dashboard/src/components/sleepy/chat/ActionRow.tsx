@@ -21,6 +21,9 @@ const ACTION_GLYPH: Record<ChatActionKind, string> = {
   reveal: '↗',
   ask: '▸',
   url: '⇗',
+  // Plan → Develop: a tab stop, because the click hands the work on to a NEW session rather
+  // than opening something in this one.
+  develop: '⇥',
 };
 
 export function ActionRow({

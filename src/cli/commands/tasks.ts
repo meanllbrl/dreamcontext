@@ -1357,6 +1357,11 @@ export function registerTasksCommand(program: Command): void {
         if (report.pendingQueue > 0) {
           console.log(chalk.yellow(`  ${report.pendingQueue} queued op(s) pending (offline?) — will replay on next sync.`));
         }
+        if (report.mirrorBackupDir) {
+          // state/ is gitignored: this dir is the ONLY copy of what the pull
+          // overwrote, so the path has to be visible, not just written.
+          console.log(chalk.dim(`  Mirrors changed by this pull were backed up to ${report.mirrorBackupDir}`));
+        }
         for (const c of report.conflicts) {
           console.log(chalk.yellow(`  conflict: ${c.slug} (${c.reason}) — local copy saved to ${c.savedTo}`));
         }

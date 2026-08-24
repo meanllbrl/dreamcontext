@@ -1,5 +1,6 @@
 import { ApiClient } from '../../api/client';
 import { contextLimitFor } from '../../lib/agentComposer';
+import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { raiseAskAttention } from '../../lib/attention';
 import {
   parseChatLine, buildQuestionAnswer, isUrgentChatEvent,
@@ -238,6 +239,19 @@ export interface ChatSession {
   capabilities: string[];
   model: string;
   effort: string;
+  /**
+   * How this conversation's agent is BRIEFED to work — the per-mode system-prompt append the
+   * server writes at spawn (`src/server/chat-modes.ts`).
+   *
+   * `readonly`, unlike `bypass` beside it, and the difference is the point: a permission mode
+   * can be switched on a LIVE process (`set_permission_mode`, see `setPermissionMode` below),
+   * so this object's copy has to be kept in lockstep with the CLI's. A mode cannot — a system
+   * prompt is fixed when the process starts. Changing one therefore means respawning the
+   * conversation under the new brief (`AgentSurface.changeChatMode`), which produces a NEW
+   * session object rather than mutating this one. Making the field readonly is what stops a
+   * future "just set it and re-render" from silently claiming a brief the process never got.
+   */
+  readonly mode: ChatMode;
   ensureOpen: () => void;
   fitAndResize: () => void;
   applyZoom: (zoom: number) => void;
@@ -420,6 +434,7 @@ export function createChatSession(
   initialPrompt = '',
   promptToken = '',
   deferPrompt = false,
+  mode: ChatMode = DEFAULT_CHAT_MODE,
 ): ChatSession {
   const id = `chat-${++chatSessionSeq}`;
   const container = document.createElement('div');
@@ -436,6 +451,11 @@ export function createChatSession(
   const idParam = resume ? `&resume=${encodeURIComponent(claudeId)}` : `&sessionId=${encodeURIComponent(claudeId)}`;
   const modelParam = model ? `&model=${encodeURIComponent(model)}` : '';
   const effortParam = effort ? `&effort=${encodeURIComponent(effort)}` : '';
+  // Omitted for `basic`, not sent as `&mode=basic`: the server's `sanitizeChatMode` already
+  // resolves an absent param to the same value, so the default costs no bytes and every
+  // pre-mode caller's URL is unchanged byte-for-byte. A mode that IS in the URL therefore
+  // always means somebody asked for one.
+  const modeParam = mode !== DEFAULT_CHAT_MODE ? `&mode=${encodeURIComponent(mode)}` : '';
   const bypassParam = bypass ? '1' : '0';
   const serverSubmitsPrompt = !!initialPrompt || !!promptToken;
   const promptParam = !serverSubmitsPrompt
@@ -445,7 +465,7 @@ export function createChatSession(
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
-    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${promptParam}${deferParam}`;
+    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${promptParam}${deferParam}`;
   const ws = new WebSocket(url);
 
   let itemSeq = 0;
@@ -508,6 +528,7 @@ export function createChatSession(
     capabilities: [],
     model,
     effort,
+    mode,
     ensureOpen: () => { /* no DOM-open step — the AgentSurface portal mount IS "open" */ },
     // No terminal grid to refit — the transcript's equivalent is "you were just moved or
     // resized; put the view back where it belongs" (see `setTranscriptRepin`).

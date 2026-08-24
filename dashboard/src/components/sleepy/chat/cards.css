@@ -1185,49 +1185,145 @@ video.chat-msg-user-media-el { cursor: default; }
 /* ── Background-shells tray (BackgroundShellsTray) ──────────────────────────────────
    Docked above the composer, OUTSIDE the transcript scroller: a `run_in_background`
    shell outlives the turn that started it, so its row must stay put while the process
-   runs. Sits on the composer's own chrome scale, not a transcript card's — it is
-   persistent furniture, not a message. */
+   runs.
+
+   RESTYLED to the composer/shelf design language (owner, live-test: it "looked bolted on"
+   beside them). It is the third object in a column of three — tray, queued messages, shelf
+   fused to the composer — and it now reads as a member of that family rather than as a
+   full-bleed strip someone taped above it. What changed, and why each one:
+
+     • IT IS A CARD, NOT A STRIP. The old version spanned the pane edge-to-edge with a bare
+       `border-top`, so its left and right edges lined up with nothing below them. It now
+       insets by the same 12px `.pin-shelf` and `.chat-cmp` use, and the header + row list
+       together form ONE bordered, rounded box whose edges land exactly on the composer
+       card's. The seam is drawn by the header alone when collapsed and by header-plus-list
+       when open, so there is never a floating border between them.
+     • MONO FOR MACHINE-AUTHORED TEXT. A shell's name is a command someone's tooling wrote,
+       not prose — so it speaks the same mono the pin chips, the progress counts and the
+       model triggers speak. The prose (the header sentence) stays in the UI font.
+     • ACCENT ONLY WHERE IT MEANS SOMETHING. The shelf spends accent exactly three times
+       (port chip, progress fill, open caret). Here it is spent on LIVE-NESS only: the run
+       marker, the spinner and a running row's status word — the tray's equivalent of the
+       progress fill. Hover no longer spends it; a row highlights with `--color-bg-tertiary`
+       like every other hoverable chip on this surface.
+     • HOVER-REVEALED AFFORDANCE, WITH ONE DELIBERATE EXCEPTION. `Output` fades in on row
+       hover/focus like `.pin-chip-x`, because it duplicates what clicking the row already
+       does — it is a convenience, not the only door. `Stop` NEVER hides: it is the single
+       control a running process depends on, and the whole reason this tray exists is that
+       a background shell once had no reachable off switch (owner report 07-25). An
+       affordance you have to hunt for is not an off switch.
+
+   Radius is `--radius-md`, one step under the shelf's `--radius-lg`: this is a smaller,
+   lighter object that floats above the composer rather than fusing to it, and the size
+   difference is what says so. */
 
 .chat-bgshells {
   flex: 0 0 auto;
-  border-top: 1px solid var(--color-border);
-  background: var(--color-bg-secondary);
+  min-width: 0;
+  /* Matches `.pin-shelf` and `.chat-cmp`'s own horizontal padding, so all three objects in
+     this column share one pair of vertical edges. */
+  padding: 6px 12px;
+  background: var(--color-bg);
+  /* Its OWN size container, for the same reason the shelf has one: this sits beside a
+     composer that is portaled into a detached per-session container, so a query resolved
+     against an ancestor would silently fall through to the widest layout. `inline-size`
+     contains the width axis only — the list's height is content-driven and capped below. */
+  container: bgshells / inline-size;
 }
+
+/* ── The header — the whole card when collapsed, its lid when open ─────────────────── */
+
 .chat-bgshells-head {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 8px;
   width: 100%;
-  padding: var(--space-2) var(--space-4);
-  border: none;
-  background: transparent;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
   color: var(--color-text-secondary);
+  font-family: var(--font-family-text);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   text-align: left;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
 }
-.chat-bgshells-head:hover { color: var(--color-text); }
-.chat-bgshells-head:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
-.chat-bgshells-glyph { font-family: var(--font-mono); color: var(--color-text-tertiary); }
-/* Only a LIVE tray earns the accent — a tray of finished shells is reference material. */
+/* Open: the header keeps only its TOP corners and gives up its bottom edge, so it and the
+   list read as one box rather than two stacked ones. Same trick as `.pin-shell.has-rows`
+   meeting `.chat-cmp-card.is-shelved`. */
+.chat-bgshells-head[aria-expanded='true'] {
+  border-bottom-color: transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+.chat-bgshells-head:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+.chat-bgshells-head:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+/* A LIVE tray tints its own edge — the same "this surface is active" language
+   `.chat-cmp-card:focus-within` speaks, at a quieter strength. A finished tray is reference
+   material and stays neutral. */
+.chat-bgshells[data-running] .chat-bgshells-head,
+.chat-bgshells[data-running] .chat-bgshells-rows {
+  border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
+}
+
+/* The run marker, not a second disclosure caret: the caret at the row's end owns that job.
+   Small and muted at rest; accent while something is actually running. */
+.chat-bgshells-glyph {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  line-height: 1;
+  color: var(--color-text-tertiary);
+}
 .chat-bgshells[data-running] .chat-bgshells-glyph { color: var(--color-accent); }
-.chat-bgshells-title { flex: 1 1 auto; }
+
+/* Prose — it is a sentence about state, so it stays in the UI font. */
+.chat-bgshells-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Header readouts that only matter once the rows are hidden — what failed, and how long the
-   batch ran. Tabular figures so the ticking clock never jitters the caret. */
-.chat-bgshells-note { flex: 0 0 auto; color: var(--color-error); }
+   batch ran. Tabular figures so the ticking clock never jitters the caret beside it. */
+.chat-bgshells-note {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: var(--font-weight-normal);
+  color: var(--color-error);
+}
 .chat-bgshells-clock {
   flex: 0 0 auto;
   font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: var(--font-weight-normal);
   font-variant-numeric: tabular-nums;
   color: var(--color-text-tertiary);
 }
-.chat-bgshells-caret { color: var(--color-text-tertiary); font-size: 10px; }
+/* Same shape and colour as `.pin-caret` — one disclosure mark, one meaning, everywhere on
+   this surface. */
+.chat-bgshells-caret {
+  flex: 0 0 auto;
+  width: 11px;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--color-text-tertiary);
+}
 .chat-bgshells-spinner {
   flex: 0 0 auto;
-  width: var(--space-3);
-  height: var(--space-3);
+  width: 10px;
+  height: 10px;
   border-radius: var(--radius-full);
   border: 2px solid var(--color-accent-soft);
   border-top-color: var(--color-accent);
@@ -1235,7 +1331,8 @@ video.chat-msg-user-media-el { cursor: default; }
 }
 @media (prefers-reduced-motion: reduce) { .chat-bgshells-spinner { animation: none; } }
 
-/* The list SCROLLS INSIDE ITS OWN BOX rather than growing the tray. Docked furniture takes
+/* ── The rows — the card's body ────────────────────────────────────────────────────────
+   The list SCROLLS INSIDE ITS OWN BOX rather than growing the tray. Docked furniture takes
    its height straight out of the transcript, and this list has no natural ceiling — a session
    that backgrounds a dozen shells at once grew the strip taller than the pane, which buried
    the transcript, this tray's own collapse header, and the composer under it (owner report
@@ -1248,6 +1345,10 @@ video.chat-msg-user-media-el { cursor: default; }
   margin: 0;
   padding: 0;
   list-style: none;
+  border: 1px solid var(--color-border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  background: var(--color-bg-secondary);
   max-height: min(240px, 32vh);
   overflow-y: auto;
   /* A wheel that runs out of rows must not scroll the transcript behind it — the tray is a
@@ -1258,61 +1359,118 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-bgshells-row {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-4) 0 0;
+  gap: 6px;
+  padding: 0 10px 0 0;
   border-top: 1px solid var(--color-border);
+  transition: background var(--transition-fast);
 }
+/* The row is the affordance — hovering it highlights the whole band, not just the label,
+   because the whole band is clickable. `--color-bg-tertiary`, not accent: hover is not a
+   state worth spending the surface's one loud colour on. */
+.chat-bgshells-row:hover { background: var(--color-bg-tertiary); }
 .chat-bgshells-open {
   flex: 1 1 auto;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: 8px;
   min-width: 0;
-  padding: var(--space-2) var(--space-4);
+  padding: 7px 10px 8px;
   border: none;
   background: transparent;
   cursor: pointer;
   text-align: left;
 }
-.chat-bgshells-open:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.chat-bgshells-open:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+/* MONO: this is a command, machine-authored, exactly like the ids and paths the pin chips
+   carry. It takes the row's slack and truncates, so the meta column stays where it is
+   whatever the command's length. */
 .chat-bgshells-row-name {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
   color: var(--color-text);
-  font-size: 12.5px;
 }
-.chat-bgshells-open:hover .chat-bgshells-row-name { color: var(--color-accent); }
 .chat-bgshells-row-meta {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 8px;
   font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
   color: var(--color-text-tertiary);
 }
+/* The outcome, in the status vocabulary the rest of the app already uses. `running` takes
+   the accent because live-ness is what this surface exists to keep visible — the same
+   reason the shelf spends it on a progress fill. */
 .chat-bgshells-row-status[data-status='running'] { color: var(--color-accent); }
 .chat-bgshells-row-status[data-status='completed'] { color: var(--color-success); }
 .chat-bgshells-row-status[data-status='stopped'] { color: var(--color-warning); }
 .chat-bgshells-row-status[data-status='error'] { color: var(--color-error); }
-.chat-bgshells-row-actions { flex: 0 0 auto; display: inline-flex; gap: var(--space-2); }
+
+.chat-bgshells-row-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* Chip-shaped, borderless, mono — the `.pin-chip` idiom. */
 .chat-bgshells-btn {
-  padding: 3px 10px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text-secondary);
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 600;
+  line-height: 1.2;
   cursor: pointer;
+  transition: opacity var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast);
 }
 .chat-bgshells-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
-.chat-bgshells-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
-.chat-bgshells-btn.danger { border-color: var(--color-error); color: var(--color-error); }
-.chat-bgshells-btn.danger:hover { background: var(--color-error-subtle); color: var(--color-error); }
+.chat-bgshells-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+/* `Output` is a SECOND door onto what clicking the row already does, so it stays out of the
+   way until the pointer is on the row — `.pin-chip-x`'s rule, for the same reason. Keyboard
+   users get it back on focus, so it is never unreachable. */
+.chat-bgshells-btn:not(.danger) { opacity: 0; }
+.chat-bgshells-row:hover .chat-bgshells-btn:not(.danger),
+.chat-bgshells-row:focus-within .chat-bgshells-btn:not(.danger),
+.chat-bgshells-btn:not(.danger):focus-visible { opacity: 1; }
+/* Stop is the exception that proves the rule: ALWAYS visible, always at full strength. It is
+   the only control a running process depends on, and this tray exists because one once had
+   no reachable off switch. Its colour is its warning; it needs no border to shout. */
+.chat-bgshells-btn.danger {
+  opacity: 1;
+  color: var(--color-error);
+  font-weight: 600;
+}
+.chat-bgshells-btn.danger:hover {
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+}
+
+/* Narrow (matches the shelf's own 470px stage): tighten the paddings, and drop `Output` —
+   the row click is the same action and survives, so nothing becomes unreachable. Stop and
+   the status column stay, because those are the two things a narrow pane still needs. */
+@container bgshells (max-width: 470px) {
+  .chat-bgshells { padding: 6px 8px; }
+  .chat-bgshells-head { padding: 6px 8px; gap: 6px; }
+  .chat-bgshells-open { padding: 6px 8px 7px; gap: 6px; }
+  .chat-bgshells-row { gap: 4px; padding-right: 8px; }
+  .chat-bgshells-row-meta { gap: 6px; }
+  .chat-bgshells-btn:not(.danger) { display: none; }
+}
 
 /* ── Message queue (QueuedMessages) ─────────────────────────────────────────────────
    Sits between the shells tray and the composer, on the same chrome scale: it is pending

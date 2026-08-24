@@ -936,7 +936,13 @@ function parseEffortsFromCli(): Promise<string[]> {
 }
 
 interface ModelOpt { id: string; label: string; }
-interface ModelConfig { models: ModelOpt[]; efforts: string[]; defaultModel: string; defaultEffort: string; }
+/** A model option as the CLIENT receives it: the static option plus its public input rate,
+ *  so the composer's model menu can print "$5/M in" without shipping a SECOND price table
+ *  that would drift from the one the cost readout already uses (`MODEL_PRICING` below).
+ *  Widened here rather than on `ModelOpt` so `buildStaticModelConfig` — which knows nothing
+ *  about pricing and is cached for the server's lifetime — stays untouched. */
+interface PricedModelOpt extends ModelOpt { priceIn: number }
+interface ModelConfig { models: PricedModelOpt[]; efforts: string[]; defaultModel: string; defaultEffort: string; }
 
 // Only the STATIC parts are cached for the server's lifetime: the model list (from the CLI's
 // `.claude.json` cache) and the effort levels (parsed from `claude --help`, an expensive spawn).
@@ -979,7 +985,11 @@ async function buildModelConfig(): Promise<ModelConfig> {
     ? settings.effortLevel
     : (efforts.includes('high') ? 'high' : efforts[0] ?? 'high');
   const defaultModel = modelAlias(String(settings.model ?? 'opus')) || 'opus';
-  return { models, efforts, defaultModel, defaultEffort };
+  // Priced HERE, not in the cached static build: `priceForModel` is the same function the
+  // per-session cost estimate runs on, so the menu's "$5/M in" and the toolbar's "$12.12"
+  // can never disagree about what a model costs.
+  const priced: PricedModelOpt[] = models.map((m) => ({ ...m, priceIn: priceForModel(m.id).in }));
+  return { models: priced, efforts, defaultModel, defaultEffort };
 }
 
 /** GET /api/agent/model-config — the model/effort options + the user's CLI defaults. */

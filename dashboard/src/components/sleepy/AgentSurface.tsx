@@ -40,6 +40,9 @@ import {
 } from '../../lib/automationCreateChat';
 import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
+import { CHAT_MODE_ROWS, DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
+import { preparePrompt, developKickoffPrompt } from '../../lib/agentPrompt';
+import { clearPins } from '../../lib/pinStore';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
@@ -108,6 +111,11 @@ interface SessionMeta {
    *  provenance survives a relaunch; nothing in THIS file reconstructs the richer
    *  `AutomationRunRef` header from it. */
   automation?: { slug: string; runFiredAt: string };
+  /** How this CHAT tab's agent is briefed to work. Absent for every other kind, and absent on
+   *  a chat that never left Basic — `undefined` reads as {@link DEFAULT_CHAT_MODE} everywhere,
+   *  so a legacy roster needs no migration. Round-tripped through the server roster so a
+   *  Develop tab reopens as one after a relaunch. */
+  mode?: ChatMode;
 }
 
 /** A fresh Claude conversation UUID for a new tab. `crypto.randomUUID()` works on the
@@ -189,6 +197,25 @@ interface SavedMeta {
    *  hasn't been updated is treated as "not bound" by the hydrate filter below — the safe
    *  default for a flag whose whole job is gating a resume attempt. */
   bound?: boolean;
+  /** The chat mode this tab was last in. Mirrors the server's `SavedMeta.mode`, which keeps it
+   *  only alongside `kind: 'chat'` and only for a known `CHAT_MODES` value. */
+  mode?: ChatMode;
+}
+
+/**
+ * Is this roster value a mode this build can actually SPAWN under? A hand-edited roster, or
+ * one written by a build that has a mode this one doesn't, degrades to Basic rather than
+ * travelling onward — the same discipline the server's `coerceMeta` applies on the way in.
+ *
+ * DISABLED rows are excluded, which is why this filters rather than just testing membership.
+ * `CHAT_MODE_ROWS` is the MENU's list, and it carries J.A.R.V.I.S so the capability can be
+ * announced as "Soon" — but the server's `sanitizeChatMode` coerces `jarvis` straight back to
+ * Basic (agent-spawn-shared.ts), so accepting it here would let the client hold a mode the
+ * spawn can never honour: the roster would say Develop-or-J.A.R.V.I.S while every process ran
+ * Basic. Matching the server's allowlist exactly keeps the two from disagreeing.
+ */
+function knownChatMode(v: unknown): ChatMode | undefined {
+  return CHAT_MODE_ROWS.some((r) => r.id === v && !r.disabled) ? (v as ChatMode) : undefined;
 }
 
 /**
@@ -249,6 +276,11 @@ export function AgentSurface() {
   const [capsError, setCapsError] = useState(false);
   const [bypass, setBypass] = useState(false); // default for NEW sessions
   const [sessionList, setSessionList] = useState<SessionMeta[]>([]);
+  // Mirrored so `closeSessionById` can read the roster (to find a DORMANT tab's conversation
+  // id) without taking `sessionList` as a dependency — it is passed as `onClose` to memoized
+  // tab/dock components, and re-creating it on every roster change would re-render them all.
+  const sessionListRef = useRef(sessionList);
+  sessionListRef.current = sessionList;
   const [panes, setPanes] = useState<PaneState[]>([]);
   const [activePaneId, setActivePaneId] = useState('');
   // Sessions the user minimized OUT of the side-by-side panes (to free terminal space)
@@ -275,6 +307,13 @@ export function AgentSurface() {
   // localStorage, then reconciled with the server file on mount, and kept live via
   // the AGENT_SETTINGS_EVENT the Settings page dispatches on save.
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(() => readAgentSettings());
+  // Mirrored into a ref for the SAME reason `chatPermissionModeRef` is: `spawn` reads the
+  // remembered chat model/effort default, and a settings change can be followed by a spawn in
+  // the same tick (the composer's "Set as default" then a ⌘T). Reading through the ref also
+  // keeps `spawn`'s identity off `agentSettings`, so editing an unrelated preference doesn't
+  // rebuild every callback that closes over it.
+  const agentSettingsRef = useRef(agentSettings);
+  agentSettingsRef.current = agentSettings;
   // Gates hydration: the restore-past-tabs decision must wait for the server's real
   // value, or a launch could restore tabs the user turned OFF (or skip a restore
   // they left ON) based on a stale localStorage seed.
@@ -288,6 +327,18 @@ export function AgentSurface() {
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
   const [sessionModel, setSessionModel] = useState<Record<string, string>>({});
   const [sessionEffort, setSessionEffort] = useState<Record<string, string>>({});
+
+  // What a session's model/effort ACTUALLY are right now, in the same authority order the
+  // pane's own props use (see the `<ChatPaneHost>` render): an explicit picker choice for this
+  // tab first, then whatever the CLI reported at `system:init`. `||`, not `??` — both start as
+  // EMPTY STRINGS until the init frame lands, and '' must fall through to the next source
+  // rather than being passed on as a model name.
+  //
+  // Extracted because every respawn path needs it: without these, a resume or a mode switch
+  // silently dropped the session's model and effort back to the CLI defaults (a pre-existing
+  // defect in `resumeChatSession`, fixed by using them).
+  const modelForSession = useCallback((s: ChatSession) => sessionModel[s.id] || s.model, [sessionModel]);
+  const effortForSession = useCallback((s: ChatSession) => sessionEffort[s.id] || s.effort, [sessionEffort]);
 
   // ── Agent screen (Settings → Agents): Chat (the default) vs Terminal (legacy) — a SWAP,
   // not a superset. `chatView` picks which surface a Claude session opens as, and the chosen
@@ -500,8 +551,17 @@ export function AgentSurface() {
             // surprising — so shells (and legacy tabs without a conversation id) restore
             // DORMANT, spawning a fresh session only on an explicit Resume click.
             if ((kind === 'agent' || kind === 'chat') && m.sessionId) {
-              const s = spawn(m.bypass, m.sessionId, true, kind);
-              return { id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId };
+              // A saved CHAT tab reopens under the mode it was last in — a Develop session that
+              // survives a relaunch is still a Develop session. `knownChatMode` drops anything
+              // this build doesn't recognise, and the mode is only meaningful for the chat
+              // surface (a tab saved as chat but restored as a terminal `agent` ignores it,
+              // which `spawn`'s non-chat arm does by construction).
+              const savedMode = knownChatMode(m.mode) ?? DEFAULT_CHAT_MODE;
+              const s = spawn(m.bypass, m.sessionId, true, kind, '', '', true, '', false, '', false, savedMode);
+              return {
+                id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId,
+                ...(kind === 'chat' ? { mode: savedMode } : {}),
+              };
             }
             return { id: `restored-${i}`, title: m.title, kind, bypass: m.bypass, claudeId: newClaudeId(), dormant: true };
           });
@@ -533,6 +593,10 @@ export function AgentSurface() {
             // Only carried for automation tabs — the server's `coerceMeta` drops it for
             // every other kind anyway, but there's no reason to send it otherwise.
             ...(m.kind === 'automation' && m.automation ? { automation: m.automation } : {}),
+            // Same rule for the chat mode: it means nothing on a shell or a terminal agent,
+            // and `coerceMeta` keeps it only alongside `kind: 'chat'`. Basic is the absent
+            // state on BOTH sides, so a plain chat tab's payload is unchanged.
+            ...(m.kind === 'chat' && m.mode && m.mode !== DEFAULT_CHAT_MODE ? { mode: m.mode } : {}),
           })),
       };
       void scopedApi.put('/agent/sessions', payload).catch(() => { /* best-effort mirror */ });
@@ -563,19 +627,36 @@ export function AgentSurface() {
   // checkbox decorative on the Chat surface — an autonomous overnight delegate would sit
   // waiting on a permission prompt, and a "Discuss" hand-off that must not touch files could
   // run under bypassPermissions.
-  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '', explicitBypass = false) => {
+  //
+  // TWELVE POSITIONAL PARAMETERS, and the order below is load-bearing — a call that gets one
+  // slot wrong compiles cleanly and misbehaves silently (a `false` landing in `explicitBypass`
+  // is exactly how a hand-off could have inherited a remembered `bypass`). Read this before
+  // adding or editing a call site:
+  //
+  //   1 bp             2 claudeId      3 resume        4 kind
+  //   5 initialPrompt  6 model         7 submitInitial 8 promptToken
+  //   9 deferPrompt   10 effort       11 explicitBypass 12 mode
+  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '', explicitBypass = false, mode: ChatMode = DEFAULT_CHAT_MODE) => {
     if (kind === 'chat') {
       // Read through the REF, not the state value: `changeChatPermissionMode` below can
       // respawn a conversation in the very same tick it changes the mode, and this closure's
       // `chatPermissionMode` would still be the pre-change render's — spawning the fallback
       // under exactly the mode the user just left.
       const effectiveBypass = explicitBypass ? bp : chatPermissionModeRef.current === 'bypass';
+      // The remembered model/effort default (`Set as default` in the composer's model menu)
+      // applies ONLY here, in the chat arm, and ONLY as a fallback: a caller that named a
+      // model named it for a reason (a resume carrying the session's own, a delegate's pick),
+      // and '' means "inherit whatever the CLI's own settings.json says" — which is what a
+      // user who never pressed the button still gets. A terminal agent is untouched by this:
+      // its defaults come from the CLI directly, and this preference is a Chat-surface one.
+      const chatModel = model || agentSettingsRef.current.chatDefaultModel;
+      const chatEffort = effort || agentSettingsRef.current.chatDefaultEffort;
       // Chat (BETA) is a headless stream-json engine, not a PTY — createChatSession has its
       // own factory (chatSession.ts), takes `effort` at spawn (the terminal only ever
       // switches it live via `/effort`, so its own createSession has no such param), and has
       // no `submitInitial` concept (an initial prompt is always delivered server-side; see
       // chatSession.ts's header note).
-      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, model, effort, initialPrompt, promptToken, deferPrompt);
+      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
       return cs;
@@ -593,8 +674,14 @@ export function AgentSurface() {
   const spawnAndRegister = useCallback((kind: SessionKind) => {
     // A new agent inherits the user's CLI defaults (model/effort from ~/.claude/settings.json);
     // the picker then reflects and can change them per agent. Nothing is forced at launch.
+    // A new CHAT starts in Basic — there is deliberately no remembered mode default (the mode
+    // menu has no "Set as default"), so `s.mode` is whatever `spawn` defaulted to and the
+    // roster records the session's own answer rather than a second copy of the constant.
     const s = spawn(bypass, undefined, false, kind);
-    setSessionList((prev) => [...prev, { id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId }]);
+    setSessionList((prev) => [...prev, {
+      id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId,
+      ...(s.kind === 'chat' ? { mode: (s as ChatSession).mode } : {}),
+    }]);
     return s;
   }, [spawn, bypass]);
 
@@ -634,6 +721,25 @@ export function AgentSurface() {
   // All mutations are FUNCTIONAL (read `prev`, never a captured list) and read live
   // sessions from the ref — so a stale snapshot can never act on the wrong session.
   const closeSessionById = useCallback((sid: string) => {
+    // THE one path that ends a conversation for good, which is why the pin sweep lives here
+    // and nowhere else. Every path that KEEPS the conversation — `resumeChatSession`,
+    // `resumeChatInTerminal`, `openAgentInChat`, the mode-switch respawn — disposes and swaps
+    // the tab id in place without coming through here, so none of them can lose their pins.
+    //
+    // The Plan→Develop hand-off DOES close through here, and clearing is still right: pins are
+    // keyed by the CLAUDE conversation id, and the Develop session is spawned with a fresh
+    // one, so the plan tab's pins were already unreachable from it the moment it was created.
+    // Leaving them behind would only leave litter no surface can ever read.
+    //
+    // Read from the live session when there is one, and fall back to the roster so a DORMANT
+    // restored tab (no live session, but a real conversation id from a previous run) also
+    // takes its pins with it.
+    const live = sessions.current.get(sid);
+    const meta = sessionListRef.current.find((m) => m.id === sid);
+    const kind = live?.kind ?? meta?.kind;
+    const claudeId = live?.claudeId ?? meta?.claudeId;
+    if (kind === 'chat' && vault && claudeId) clearPins(vault, claudeId);
+
     // dispose is hardened, but NEVER let a teardown throw block the actual removal —
     // one click must always make the tab disappear.
     try { sessions.current.get(sid)?.dispose(); } catch { /* best-effort */ }
@@ -641,7 +747,7 @@ export function AgentSurface() {
     setSessionList((prev) => prev.filter((s) => s.id !== sid));
     setPanes((prev) => prev.map((p) => removeFromPane(p, sid)).filter((p) => p.tabs.length > 0));
     setMinimizedIds((prev) => (prev.includes(sid) ? prev.filter((x) => x !== sid) : prev));
-  }, []);
+  }, [vault]);
 
   // Resume a DORMANT restored tab: spawn a real session for it (using the saved bypass
   // default) and swap the synthetic `restored-N` id for the live `agent-N` one in place
@@ -749,20 +855,63 @@ export function AgentSurface() {
 
   // State 12's "Session ended" banner Resume — respawn the SAME conversation UUID as a
   // fresh chat session (the process exited; the conversation itself is intact on disk).
-  // Mirrors `resumeChatInTerminal`'s dispose-then-respawn idiom but stays in chat; `spawn`
-  // resolves the actual bypass from the CURRENT remembered permission-mode default (not
-  // necessarily what this dying session was spawned with — the mode may have changed since).
+  // Mirrors `resumeChatInTerminal`'s dispose-then-respawn idiom but stays in chat.
+  //
+  // It carries THIS conversation's own settings across, not the project's current defaults —
+  // model, effort, permission mode and chat mode all survive the restart. That is a
+  // deliberate exemption from `spawn`'s centralized default resolution, on the same reasoning
+  // the Delegate composer's is: the remembered default exists for spawns carrying NO
+  // permission decision of their own, and resuming a conversation carries the one it is
+  // already running under. `cs.bypass` is that answer — `setPermissionMode`'s ack keeps it in
+  // lockstep with every accepted live switch (chatSession.ts's control-ack arm) — so
+  // `explicitBypass` is set and it is used verbatim. Without that, a session the user moved to
+  // `auto` would come back as `bypass` in a project whose remembered default never changed,
+  // which is a silent privilege escalation one click deep.
+  //
+  // CAVEAT, stated rather than hidden: for a session whose socket is already gone (the case
+  // this banner exists for), `cs.bypass` is the last value the process ACKNOWLEDGED. A live
+  // switch attempted after the process died has no ack, so it is not reflected here. The
+  // resumed session's trigger then shows what the new process is genuinely running (ChatPane
+  // resolves it from the CLI's own `system:init`), so the indicator stays truthful even when
+  // this seed is a beat behind.
   const resumeChatSession = useCallback((cs: ChatSession) => {
     try { cs.dispose(); } catch { /* best-effort */ }
     sessions.current.delete(cs.id);
-    const s = spawn(cs.bypass, cs.claudeId, true, 'chat');
-    setSessionList((prev) => prev.map((m) => (m.id === cs.id ? { ...m, id: s.id, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId } : m)));
+    const s = spawn(cs.bypass, cs.claudeId, true, 'chat', '', modelForSession(cs), true, '', false, effortForSession(cs), true, cs.mode);
+    setSessionList((prev) => prev.map((m) => (m.id === cs.id ? { ...m, id: s.id, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode: cs.mode } : m)));
     setPanes((prev) => prev.map((p) => ({
       ...p,
       tabs: p.tabs.map((t) => (t === cs.id ? s.id : t)),
       active: p.active === cs.id ? s.id : p.active,
     })));
-  }, [spawn]);
+  }, [spawn, modelForSession, effortForSession]);
+
+  /**
+   * Change how a live chat's agent is BRIEFED, by respawning it under the new brief.
+   *
+   * A mode is a `--append-system-prompt-file`, fixed when the process starts — there is no
+   * live-switch control frame for it the way there is for permission mode. So this reuses the
+   * resume path wholesale: same conversation UUID (`--resume`, transcript intact), same model,
+   * effort and permission mode, new mode. The composer's menu says so out loud rather than
+   * letting the reconnect read as a glitch.
+   */
+  const changeChatMode = useCallback((sid: string, mode: ChatMode) => {
+    const cs = sessions.current.get(sid);
+    if (!cs || cs.kind !== 'chat') return;
+    const chat = cs as ChatSession;
+    if (chat.mode === mode) return; // picking the mode you are already in is not a restart
+    try { chat.dispose(); } catch { /* best-effort */ }
+    sessions.current.delete(chat.id);
+    // Same B3 call shape as `resumeChatSession` above — `explicitBypass` with `bp = cs.bypass`,
+    // so switching Basic → Develop can never also switch `auto` → `bypass`.
+    const s = spawn(chat.bypass, chat.claudeId, true, 'chat', '', modelForSession(chat), true, '', false, effortForSession(chat), true, mode);
+    setSessionList((prev) => prev.map((m) => (m.id === chat.id ? { ...m, id: s.id, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode } : m)));
+    setPanes((prev) => prev.map((p) => ({
+      ...p,
+      tabs: p.tabs.map((t) => (t === chat.id ? s.id : t)),
+      active: p.active === chat.id ? s.id : p.active,
+    })));
+  }, [spawn, modelForSession, effortForSession]);
 
   // The `bypass` dropdown in a chat composer. The mode is ONE setting PER PROJECT (there is a
   // single `chatPermissionMode` for this vault, and every composer's chip in this project
@@ -786,6 +935,61 @@ export function AgentSurface() {
       cs.setPermissionMode(mode, () => resumeChatSession(cs));
     });
   }, [bus, vault, resumeChatSession]);
+
+  /**
+   * Plan → Develop: the hand-off behind a plan agent's "Go to development" button.
+   *
+   * Opens a NEW chat in Develop mode seeded with the task slug, then closes the plan tab. The
+   * owner chose a new session over an in-place `/clear` so the plan transcript stays auditable
+   * — this is the code half of that decision.
+   *
+   * Two orderings are load-bearing:
+   *
+   *   SPAWN BEFORE CLOSE. `closeSessionById` drops any pane left with zero tabs, so closing
+   *   first would delete the pane the new tab is meant to land in whenever the plan tab was
+   *   alone in it. The new tab is registered at the plan tab's own index in the plan tab's own
+   *   pane, so the work stays where the user was looking.
+   *
+   *   NEVER ESCALATES. `bp = false` WITH `explicitBypass = true` (params 1 and 11). Without
+   *   the explicit flag `spawn`'s chat arm would discard that `false` and adopt the project's
+   *   REMEMBERED mode instead — so inside a bypass-remembered project, a button an AGENT wrote
+   *   into its own message would have launched a session with every permission pre-granted.
+   *   A hand-off carries no permission decision of its own, so it takes the safe one; the user
+   *   can still raise it deliberately from the composer.
+   */
+  const handoffToDevelop = useCallback((cs: ChatSession, taskSlug: string) => {
+    void (async () => {
+      let prepared: { inline: string; token: string };
+      try {
+        prepared = await preparePrompt(vault, developKickoffPrompt(taskSlug));
+      } catch (err) {
+        // `mintPromptToken` rejects rather than degrading to an unseeded session (see its
+        // doc). Say so instead of opening a Develop tab that has no idea what it is for.
+        console.error('[agent-surface] Plan→Develop hand-off could not prepare its prompt:', err);
+        alert(`Could not open the development session for "${taskSlug}".\n\n${err instanceof Error ? err.message : String(err)}`);
+        return;
+      }
+      const s = spawn(false, undefined, false, 'chat', prepared.inline, modelForSession(cs), true, prepared.token, false, effortForSession(cs), true, 'develop');
+      const meta: SessionMeta = {
+        id: s.id, title: taskSlug, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode: 'develop',
+      };
+      // Land at the plan tab's index in the plan tab's pane. Both lookups run BEFORE the close
+      // below, while that tab still exists; `-1`/`undefined` degrade to "append to the focused
+      // pane", which is where a new tab goes anyway.
+      const planPane = panes.find((p) => p.tabs.includes(cs.id));
+      const at = planPane ? planPane.tabs.indexOf(cs.id) : -1;
+      setSessionList((prev) => [...prev, meta]);
+      setPanes((prev) => prev.map((p) => {
+        if (planPane && p.id !== planPane.id) return p;
+        if (!planPane && p.id !== activePaneId) return p;
+        const tabs = [...p.tabs];
+        tabs.splice(at >= 0 ? at : tabs.length, 0, s.id);
+        return { ...p, tabs, active: s.id };
+      }));
+      if (planPane) setActivePaneId(planPane.id);
+      closeSessionById(cs.id);
+    })();
+  }, [spawn, vault, panes, activePaneId, closeSessionById, modelForSession, effortForSession]);
 
   // ChatPane's "Open in app ↗" (state 3 — a dreamcontext entity referenced from chat).
   // AgentSurface is mounted beside Shell (under `ProjectInstance`) with no direct handle on
@@ -1489,6 +1693,8 @@ export function AgentSurface() {
     continueInTerminal: resumeChatInTerminal,
     resumeChat: resumeChatSession,
     changePermissionMode: changeChatPermissionMode,
+    changeMode: changeChatMode,
+    handoffToDevelop,
     openAppPage: onOpenAppPage,
     signIn: signInToClaude,
   };
@@ -1500,6 +1706,8 @@ export function AgentSurface() {
     continueInTerminal: (cs) => chatActionsRef.current.continueInTerminal(cs),
     resumeChat: (cs) => chatActionsRef.current.resumeChat(cs),
     changePermissionMode: (mode) => chatActionsRef.current.changePermissionMode(mode),
+    changeMode: (sid, mode) => chatActionsRef.current.changeMode(sid, mode),
+    handoffToDevelop: (cs, taskSlug) => chatActionsRef.current.handoffToDevelop(cs, taskSlug),
     openAppPage: (page, id) => chatActionsRef.current.openAppPage(page, id),
     signIn: () => chatActionsRef.current.signIn(),
   }), []);
@@ -2461,6 +2669,10 @@ export function AgentSurface() {
           // tab-id swap every resume path performs. Undefined for every ordinary chat, which
           // is what keeps the header absent from all of them.
           automation={automationRuns[cs.claudeId]}
+          // Read off the SESSION, not the roster: a mode is fixed when the process starts, so
+          // the live object is the only thing that can't be a beat ahead of what the agent was
+          // actually briefed with. `changeChatMode` respawns, which replaces this object.
+          mode={cs.mode}
           permissionMode={chatPermissionMode}
           canSignInInApp={canSignInInApp}
           signInCommand={signInCommand}

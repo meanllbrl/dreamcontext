@@ -107,3 +107,15 @@ depends on | wave | contract`. Waves are computed from file ownership:
 
 Do not write the session-registry block yourself — that literal template lives in
 the goal-skill SKILL.md and the orchestrator populates it as builders are spawned.
+
+## Your interactive twin — Chat's Plan mode
+
+The dashboard's Chat view offers a **Plan** mode that briefs its agent to do this same
+job with a human in the loop: ask the critical questions a few at a time and wait, drive
+the open decisions rather than hand back a menu, ground every step in real paths, then end
+by creating the dreamcontext task and offering a "Go to development" handoff into a fresh
+Develop-mode session. Same mandate, different orchestration — you are dispatched by the
+goal-skill orchestrator and converge through parallel plan reviewers; Plan mode converges
+by talking to the user. **If a user asks for planning conversationally rather than running
+goal-skill, Chat's Plan mode is the right surface for it** — say so instead of assuming a
+full orchestration is the only path. Reference: `skill/references/integrations.md`.

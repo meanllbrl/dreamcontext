@@ -2,6 +2,7 @@ import { memo, useCallback } from 'react';
 import { ChatPane } from './ChatPane';
 import type { ModelConfig } from '../../lib/agentComposer';
 import type { AutomationRunRef } from '../../lib/automationRunChat';
+import type { ChatMode } from '../../lib/chatModes';
 import type { ChatSession } from './chatSession';
 
 /**
@@ -39,12 +40,19 @@ export interface ChatSurfaceActions {
   resumeChat: (cs: ChatSession) => void;
   /** App-wide remembered permission-mode default (not per session — see AgentSurface). */
   changePermissionMode: (mode: 'auto' | 'bypass') => void;
+  /** Re-brief this conversation's agent. A mode is a spawn-time system-prompt append, so
+   *  this RESPAWNS the session under the new brief (same conversation UUID, transcript kept)
+   *  rather than switching anything live — see AgentSurface's `changeChatMode`. */
+  changeMode: (sid: string, mode: ChatMode) => void;
+  /** Plan → Develop: open a NEW chat in Develop mode carrying `taskSlug`, then close the plan
+   *  tab. Fired by a `develop` action button the plan agent wrote into its own message. */
+  handoffToDevelop: (cs: ChatSession, taskSlug: string) => void;
   openAppPage: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
   signIn: () => void;
 }
 
 function ChatPaneHostInner({
-  session, actions, modelConfig, model, effort, automation, permissionMode, canSignInInApp,
+  session, actions, modelConfig, model, effort, mode, automation, permissionMode, canSignInInApp,
   signInCommand,
 }: {
   session: ChatSession;
@@ -52,6 +60,11 @@ function ChatPaneHostInner({
   modelConfig: ModelConfig;
   model: string;
   effort: string;
+  /** How this conversation's agent is briefed. A PRIMITIVE, like `model`/`effort` beside it,
+   *  rather than read off `session` — the memo boundary's rule 1 (see this file's header) is
+   *  that every prop is a stable reference or a primitive, and a mode CHANGE respawns the
+   *  session anyway, so the surface is the honest owner of the current value. */
+  mode: ChatMode;
   /** Set only when this conversation is an automation run reopened from its run history.
    *  Safe across the memo boundary because AgentSurface keeps ONE object per conversation
    *  uuid and never rewrites it (rule 1 above: stable references only). */
@@ -65,7 +78,11 @@ function ChatPaneHostInner({
   const onContinueInTerminal = useCallback(() => actions.continueInTerminal(session), [actions, session]);
   const onResume = useCallback(() => actions.resumeChat(session), [actions, session]);
   const onPermissionModeChange = useCallback(
-    (mode: 'auto' | 'bypass') => actions.changePermissionMode(mode), [actions],
+    (next: 'auto' | 'bypass') => actions.changePermissionMode(next), [actions],
+  );
+  const onModeChange = useCallback((next: ChatMode) => actions.changeMode(session.id, next), [actions, session]);
+  const onHandoffToDevelop = useCallback(
+    (taskSlug: string) => actions.handoffToDevelop(session, taskSlug), [actions, session],
   );
   const onOpenAppPage = useCallback(
     (page: 'tasks' | 'knowledge' | 'core', id: string) => actions.openAppPage(page, id), [actions],
@@ -83,6 +100,9 @@ function ChatPaneHostInner({
       onContinueInTerminal={onContinueInTerminal}
       permissionMode={permissionMode}
       onPermissionModeChange={onPermissionModeChange}
+      mode={mode}
+      onModeChange={onModeChange}
+      onHandoffToDevelop={onHandoffToDevelop}
       onResume={onResume}
       automation={automation}
       onOpenAppPage={onOpenAppPage}

@@ -134,6 +134,8 @@ import {
   handleAgentCouncilLive,
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
+import { handleAgentUsageLimits } from './routes/agent-usage.js';
+import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
 import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
@@ -355,6 +357,9 @@ export function buildRouter(): Router {
   // Model/effort options + the user's CLI defaults, and a session's current model (from its
   // transcript). Vault-agnostic — they read the Claude CLI's own state, not the vault.
   router.get('/api/agent/model-config', handleAgentModelConfig);
+  // The account's 5-hour + weekly caps, from Claude Code's own cache. Vault-agnostic for
+  // the same reason model-config is: it reads the user's install, not a project.
+  router.get('/api/agent/usage-limits', handleAgentUsageLimits);
   router.get('/api/agent/session-model', handleAgentSessionModel);
   router.get('/api/agent/session-stats', handleAgentSessionStats);
   router.get('/api/agent/chat-history', handleAgentChatHistory);
@@ -376,6 +381,11 @@ export function buildRouter(): Router {
   router.post('/api/agent/grant', handleAgentGrant);
   router.get('/api/agent/goal-live', handleAgentGoalLive);
   router.get('/api/agent/council-live', handleAgentCouncilLive);
+  // The chat's pinned shelf: run progress counted off the task file's own acceptance
+  // criteria, and the branch/worktree this session acts on. VAULT-SCOPED — both read one
+  // project's brain, so neither goes in VAULT_AGNOSTIC_PREFIXES.
+  router.get('/api/agent/task-progress', handleAgentTaskProgress);
+  router.get('/api/agent/session-facts', handleAgentSessionFacts);
   router.post('/api/agent/open-terminal', handleOpenTerminal);
   // In-app prerequisite installer (Claude CLI / node-pty) — vault-agnostic.
   router.post('/api/agent/install', handleAgentInstall);
@@ -547,7 +557,7 @@ export function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/model-config', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

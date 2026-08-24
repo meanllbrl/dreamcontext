@@ -45,6 +45,7 @@ import { resolveActor } from './identity.js';
 import { resolveGitHubToken, writeGitHubToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
+import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
 import {
   BOOTSTRAP_PUSH_THRESHOLD,
@@ -627,6 +628,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 
     report.pendingQueue = this.ledger.readQueue().length;
     report.watermark = this.ledger.readSyncState().watermark;
+    // Surface WHERE the overwritten mirrors were kept — a backup nobody is told
+    // about is not a recovery path (state/ has no git history to fall back on).
+    report.mirrorBackupDir = this.ledger.prePullBackupDir();
     return report;
   }
 
@@ -1124,10 +1128,15 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     const pendingDeletes = this.ledger.pendingDeleteRemoteIds();
     this.progress?.({ phase: 'pull', current: 0, total: remoteIssues.length });
     let pullDone = 0;
-    for (const issue of remoteIssues) {
-      // Long-pull heartbeat; abort on lost ownership — watermark advances per
-      // APPLIED issue, so remaining issues re-fetch on the next delta pull.
+    // Poison-pill guard: the batch is NOT sorted by time, so anything this run
+    // fails to ingest caps the watermark below its timestamp (see noteUnapplied).
+    this.ledger.beginPullBatch(this.nowMs());
+    for (let i = 0; i < remoteIssues.length; i++) {
+      const issue = remoteIssues[i];
+      // Long-pull heartbeat; abort on lost ownership — every issue we did not
+      // reach stays ABOVE the (capped) watermark and re-fetches next pull.
       if (!this.ledger.touchSyncLock(this.nowMs())) {
+        for (const left of remoteIssues.slice(i)) this.ledger.noteUnapplied(githubTimeMs(left.updated_at));
         report.errors.push('pull aborted: sync lock ownership lost mid-run (this process stalled and another sync took over) — remaining issues re-fetch next pull.');
         break;
       }
@@ -1135,11 +1144,17 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         try {
           await this.applyRemoteIssue(issue, adapter, owner, repo, report);
         } catch (err) {
+          // NOT ingested → the watermark may not pass it, or this issue silently
+          // drops out of every future delta pull.
+          this.ledger.noteUnapplied(githubTimeMs(issue.updated_at));
           report.errors.push(`pull #${issue.number}: ${(err as Error).message ?? err}`);
         }
       }
       this.progress?.({ phase: 'pull', current: ++pullDone, total: remoteIssues.length });
     }
+    // A failure discovered AFTER a newer issue already advanced the watermark
+    // has to pull it back down — do that once, at the end of the batch.
+    this.ledger.enforceUnappliedFloor();
 
     await this.reconcileRemoteDeletions(adapter, owner, repo, pendingDeletes, report, fullSetIds);
   }
@@ -1220,6 +1235,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
             const savedTo = this.saveConflictCopy(entry.slug, raw, null);
             report.conflicts.push({ slug: entry.slug, savedTo, reason: 'remote_deleted' });
           }
+          this.ledger.backupMirror(entry.slug, raw);
           this.applyingRemote = true;
           try {
             await super.delete(entry.slug);
@@ -1372,6 +1388,15 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 
     if (!slug || !existsSync(this.taskPath(slug))) {
       // NEW remote issue (or vanished mirror) → create the mirror file.
+      //
+      // REBUILD, not create: when the mapping survived but the FILE is gone (a
+      // lost `state/` file, a `.tasks-map.json` team-merge re-slug, a crashed
+      // write), the remote payload alone cannot restore the task's local-only
+      // fields — `objectives:` above all — because no remote carries them. The
+      // ledger still holds the last synced bytes of that exact mirror, so
+      // rebuild from BOTH: remote for everything the remote owns, snapshot for
+      // everything only the mirror ever knew.
+      const rebuiltFrom = slug ? localOnlyFieldsFromSnapshot(this.ledger.taskSync(slug)?.base_snapshot?.body) : {};
       slug = slug ?? this.uniqueSlugFor(issue.title);
       const fm: Record<string, unknown> = {
         id: generateId('task'),
@@ -1392,7 +1417,15 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         created_by: 'github',
         updated_by: 'github',
         ...(Object.keys(remoteCustomFields).length > 0 ? { custom_fields: remoteCustomFields } : {}),
+        ...rebuiltFrom,
       };
+      if (Object.keys(rebuiltFrom).length > 0) {
+        report.warnings.push(
+          `pull ${slug}: the local mirror file was missing and has been REBUILT from ${this.name} — ` +
+          `local-only field(s) ${Object.keys(rebuiltFrom).sort().join(', ')} were restored from the last sync snapshot ` +
+          `(the remote does not carry them; verify them before relying on the task).`,
+        );
+      }
       const written = this.writeMirror(slug, fm, remoteBody, remoteEntries);
       this.ledger.recordMapping({ slug, dcId: fm.id as string, backend: this.name, remoteId });
       this.ledger.updateTaskSync(slug, {
@@ -1537,7 +1570,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       report.conflicts.push({ slug, savedTo, reason });
     }
 
-    const fm: Record<string, unknown> = {
+    const merged: Record<string, unknown> = {
       ...local.raw,
       name: nameM.value,
       status: statusM.value,
@@ -1555,9 +1588,30 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       updated_by: anyRemoteWin || conflicts.length > 0 ? 'github' : (local.raw.updated_by ?? null),
       ...(declaredFieldKeys.length > 0 ? { custom_fields: customFieldsM } : {}),
     };
-    delete fm.assignee;
+    delete merged.assignee;
 
-    const written = this.writeMirror(slug, fm, mergedBody, mergedEntries);
+    // LOCAL-ONLY GUARD — the merge above may only author the fields this backend
+    // maps; `objectives:` and everything else the remote cannot express must
+    // come out of the merge exactly as it went in. `state/` is gitignored, so a
+    // field dropped here is gone for good (2026-07-27: 72 task→objective links
+    // lost in one pull). The guard restores anything the merge would have lost
+    // AND names it, so a mapping regression is loud instead of silent.
+    const guarded = preserveLocalOnlyFields(local.raw, merged);
+    if (guarded.rescued.length > 0) {
+      report.warnings.push(
+        `pull ${slug}: local-only field(s) ${guarded.rescued.sort().join(', ')} would have been dropped by the ` +
+        `${this.name} merge and were preserved — these have no remote representation; please report this.`,
+      );
+    }
+    const fm = guarded.fm;
+
+    // The mirror is about to be rewritten with remote-derived content and has no
+    // git history to fall back on — keep the pre-pull bytes first. Only when the
+    // bytes actually MOVE: a no-op merge writing a copy of itself would push a
+    // real backup out of the keep window.
+    const rendered = this.renderMirror(fm, mergedBody, mergedEntries);
+    if (rendered !== localRaw) this.ledger.backupMirror(slug, localRaw);
+    const written = this.writeMirrorContent(slug, rendered);
 
     const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0;
     if (keptLocal) {
@@ -1675,6 +1729,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
           const savedTo = this.saveConflictCopy(slug, raw, remoteTime);
           report.conflicts.push({ slug, savedTo, reason: 'remote_deleted' });
         }
+        // Even an unchanged mirror is unrecoverable once removed (gitignored).
+        this.ledger.backupMirror(slug, raw);
         this.applyingRemote = true;
         try {
           await super.delete(slug);
@@ -1874,7 +1930,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     body: string,
     changelogEntries: string[],
   ): string {
-    const content = this.renderMirror(fm, body, changelogEntries);
+    return this.writeMirrorContent(slug, this.renderMirror(fm, body, changelogEntries));
+  }
+
+  /** Write already-composed mirror bytes (callers that render first to diff them). */
+  protected writeMirrorContent(slug: string, content: string): string {
     this.applyingRemote = true;
     try {
       writeFileSync(this.taskPath(slug), content, 'utf-8');

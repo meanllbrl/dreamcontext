@@ -48,6 +48,7 @@ import {
   type CloneGitHubRepoResult,
 } from '../../lib/git-sync/github-browse.js';
 import { GitSyncError } from '../../lib/git-sync/git.js';
+import { sanitizeModel, sanitizeEffort } from './agent-spawn-shared.js';
 import { ApiError } from '../../lib/task-backend/api-adapter.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { readAppManifest } from '../../cli/commands/app.js';
@@ -869,6 +870,15 @@ interface AgentUiSettings {
    *  mode) or 'bypass' (bypassPermissions) — same mapping as permissionModeFor in
    *  agent-chat.ts. Mirrors dashboard/src/lib/agentSettings. */
   chatPermissionMode: 'auto' | 'bypass';
+  /** Remembered default MODEL for a new Chat session, written by the composer's model+effort
+   *  menu ("Set as default"). EMPTY STRING means "inherit whatever the Claude CLI itself
+   *  defaults to" (`~/.claude/settings.json`, surfaced by /api/agent/model-config) — it is
+   *  the resting value, not a missing one, so nothing is forced at launch until the user
+   *  deliberately pins a model. Mirrors dashboard/src/lib/agentSettings. */
+  chatDefaultModel: string;
+  /** Remembered default EFFORT level for a new Chat session, same menu, same empty-string
+   *  = inherit-the-CLI contract as chatDefaultModel. Mirrors dashboard/src/lib/agentSettings. */
+  chatDefaultEffort: string;
 }
 const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
@@ -880,14 +890,28 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   chatView: true,
   screenMigrated: true,
   chatPermissionMode: 'auto',
+  chatDefaultModel: '',
+  chatDefaultEffort: '',
 };
 
 function agentSettingsPath(): string {
   return join(homedir(), '.dreamcontext', 'agent-ui.json');
 }
 
-/** Coerce an arbitrary parsed blob to a valid AgentUiSettings, filling defaults. */
-function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettings {
+/**
+ * Coerce an arbitrary parsed blob to a valid AgentUiSettings, filling defaults.
+ *
+ * This is the STRICT-PICK boundary for `POST /api/launcher/agent-settings` — the body is
+ * untrusted and whatever survives here is what gets written to `~/.dreamcontext/agent-ui.json`
+ * and handed back to every project window. Every field applies its own rule; nothing is
+ * spread through from the caller.
+ *
+ * Exported for unit testing (same reason as `sanitizeRoster` in agent-sessions.ts): the two
+ * chat defaults below are validation rules, and `tests/unit/agent-settings.test.ts` asserts
+ * them against this function AND against the dashboard's mirror, so the pair cannot drift
+ * on inspection alone.
+ */
+export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettings {
   return {
     // Default-TRUE flags: only an explicit `false` turns them off (an absent key
     // must not silently disable the surface for someone upgrading).
@@ -907,6 +931,13 @@ function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettings {
     screenMigrated: true,
     // Only an explicit 'bypass' opts into the caution mode; anything else → 'auto' default.
     chatPermissionMode: raw.chatPermissionMode === 'bypass' ? 'bypass' : 'auto',
+    // The two chat defaults reuse the SPAWN-PATH gates rather than re-spelling their rules,
+    // because that is where these values end up: whatever is stored here is later handed to
+    // `claude --model` / `--effort` through a login-shell command string. One gate, so a
+    // value that could not be spawned can never be persisted either. Both reject to '' —
+    // which is not a failure state but the documented "inherit the CLI's own default".
+    chatDefaultModel: sanitizeModel(typeof raw.chatDefaultModel === 'string' ? raw.chatDefaultModel : null),
+    chatDefaultEffort: sanitizeEffort(typeof raw.chatDefaultEffort === 'string' ? raw.chatDefaultEffort : null),
   };
 }
 
@@ -1527,14 +1558,25 @@ export async function handleLauncherUpdate(
     return;
   }
   try {
-    await defaultCliRunner(['update'], target);
+    // `update` now exits non-zero when it could not do its job (e.g. no
+    // installed platform), which `defaultCliRunner` surfaces as a rejection.
+    // Catch it HERE rather than letting it reach the outer handler: the child's
+    // "Command failed: …" string is the worst available description of what went
+    // wrong, and the status check below already distinguishes the two real
+    // causes by name. Hold the message, diagnose first, report second.
+    let updateError: string | null = null;
+    try {
+      await defaultCliRunner(['update'], target);
+    } catch (err) {
+      updateError = err instanceof Error ? err.message : 'unknown error';
+    }
     const latest = dreamcontextVersion();
     const status = computeVaultStatus(vault, latest);
-    // VERIFY, don't assume. `dreamcontext update` prints "No installed platforms
-    // found" and still exits 0 (tracked separately), so a zero exit code is not
-    // evidence that anything happened. Without this check the launcher reports
-    // success, the dot stays yellow, and "Update all" claims to have fixed
-    // projects it never touched.
+    // VERIFY, don't assume. A vault can also come out of a zero-exit `update`
+    // still stale (a migration that did not finish), so the exit code alone —
+    // in either direction — is not evidence about what happened here. Without
+    // this check the launcher reports success, the dot stays yellow, and
+    // "Update all" claims to have fixed projects it never touched.
     if (status.needsUpdate) {
       // Two very different causes, and guessing between them actively hurts.
       // This message used to assert the platform one unconditionally, so a fully
@@ -1554,6 +1596,14 @@ export async function handleLauncherUpdate(
         'update_incomplete',
         `Update ran but "${name}" is still on v${status.setupVersion} (expected v${latest}). ${detail}`,
       );
+      return;
+    }
+    if (updateError !== null) {
+      // Non-zero exit, yet the vault reads as current: something failed that
+      // `setupVersion` does not measure (a pack refresh, a stale-file delete).
+      // Report it — claiming success on a command that failed is the habit this
+      // whole path exists to break.
+      sendError(res, 500, 'update_failed', `Update failed: ${updateError}`);
       return;
     }
     sendJson(res, 200, { ok: true, status });

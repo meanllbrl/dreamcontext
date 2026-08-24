@@ -65,6 +65,13 @@ function ChatViewItem({
       return <PageView spec={view} onAction={onAction} onOpenFile={onOpenFile} />;
     case 'checklist':
       return <ChecklistCard spec={view} conversationId={conversationId} />;
+    // Hoisted OUT of the transcript: a pin and a progress row live on the shelf docked to
+    // the composer, which is the whole point of them — drawn here as well, they would scroll
+    // away exactly like the inline card they exist to replace. `PinShelf` collects them.
+    // Their `notices` still render above, so a degraded block stays visible either way.
+    case 'pin':
+    case 'progress':
+      return null;
   }
 }
 

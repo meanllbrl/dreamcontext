@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { CONFLICTS_DIR_REL, TASKS_LOCK_REL, TASKS_MAP_REL, TASKS_QUEUE_REL, TASKS_SYNC_REL } from './paths.js';
+import { CONFLICTS_DIR_REL, PRE_PULL_DIR_PREFIX, TASKS_LOCK_REL, TASKS_MAP_REL, TASKS_QUEUE_REL, TASKS_SYNC_REL } from './paths.js';
 import { TaskBackendError } from './types.js';
 import { splitConflictMarkers } from './conflict-markers.js';
+import { ensureGitignoreEntries } from '../gitignore.js';
 import { foldAscii } from '../fold-ascii.js';
 
 /**
@@ -569,13 +570,139 @@ export class SyncLedger {
     this.writeSyncState(state);
   }
 
-  /** Advance the global pull watermark (server time, monotonic). */
+  // ── pull-batch guards (in-memory, one sync run) ──────────────────────────
+  /**
+   * Oldest remote timestamp this pull run did NOT ingest (a task that threw, or
+   * one left unprocessed by an aborted run). The watermark may never reach it —
+   * see {@link noteUnapplied}.
+   */
+  private unappliedFloor: number | null = null;
+  /** Backup dir for mirrors this pull run is about to overwrite (lazy). */
+  private prePullDir: string | null = null;
+  /** Wall-clock stamp for {@link prePullDir}, set at batch start. */
+  private prePullStamp: number | null = null;
+
+  /**
+   * Start a pull batch: clear the per-run guards. Called once per pull, before
+   * any remote item is applied.
+   */
+  beginPullBatch(nowMs: number): void {
+    this.unappliedFloor = null;
+    this.prePullDir = null;
+    this.prePullStamp = nowMs;
+  }
+
+  /**
+   * POISON-PILL GUARD — record that the remote item at `serverTimeMs` was NOT
+   * ingested this run, so the watermark must stay strictly below it.
+   *
+   * The pull applies items in whatever order the remote listed them, and the
+   * watermark advances per APPLIED item. Without this, one task that throws
+   * (an over-limit body, a transient 5xx on its comments, a corrupt mirror) is
+   * dropped from the pull FOREVER as soon as any LATER item in the same
+   * unsorted batch succeeds with a newer timestamp: the watermark jumps past
+   * the failed task's `updated_at`, so the next delta pull never asks for it
+   * again. Same silent-exclusion family as the #185 watermark bugs, and just as
+   * invisible — the pull reports success, the task simply stops arriving.
+   *
+   * The floor is in-memory and per-run: a failure is transient by assumption,
+   * so the next sync starts clean and re-fetches from the capped watermark.
+   */
+  noteUnapplied(serverTimeMs: number | null): void {
+    if (serverTimeMs === null) return;
+    if (this.unappliedFloor === null || serverTimeMs < this.unappliedFloor) {
+      this.unappliedFloor = serverTimeMs;
+    }
+  }
+
+  /**
+   * Lower an already-persisted watermark back below the oldest unapplied item.
+   * Needed because the failure can be discovered AFTER a later item already
+   * advanced the watermark past it (the batch is not sorted by time). Called
+   * once at the end of the pull; a no-op when everything applied.
+   */
+  enforceUnappliedFloor(): void {
+    if (this.unappliedFloor === null) return;
+    const state = this.readSyncState();
+    if (state.watermark === null) return;
+    const cap = this.unappliedFloor - 1;
+    if (state.watermark <= cap) return;
+    state.watermark = cap;
+    this.writeSyncState(state);
+  }
+
+  /** Advance the global pull watermark (server time, monotonic, floor-capped). */
   advanceWatermark(serverTimeMs: number | null): void {
     if (serverTimeMs === null) return;
+    // Never step onto or past an item this run failed to apply (see noteUnapplied).
+    const capped = this.unappliedFloor === null
+      ? serverTimeMs
+      : Math.min(serverTimeMs, this.unappliedFloor - 1);
     const state = this.readSyncState();
-    if (state.watermark === null || serverTimeMs > state.watermark) {
-      state.watermark = serverTimeMs;
+    if (state.watermark === null || capped > state.watermark) {
+      state.watermark = capped;
       this.writeSyncState(state);
+    }
+  }
+
+  /**
+   * PRE-PULL BACKUP — keep the bytes a pull is about to overwrite or delete.
+   *
+   * `state/*.md` is gitignored, so a mirror the pull rewrites has no history to
+   * restore from: whatever the merge dropped is gone. `hard-refresh` already
+   * backs its mirrors up before rebuilding them; an ordinary pull did not, even
+   * though it rewrites the same files. This closes that asymmetry — one dir per
+   * pull run (`state/.pre-pull-<stamp>/`), written only for mirrors the pull
+   * actually changes, pruned to the newest {@link SyncLedger.PRE_PULL_KEEP} runs.
+   *
+   * Best-effort by contract: a backup failure must never fail a sync.
+   */
+  backupMirror(slug: string, raw: string): string | null {
+    try {
+      if (this.prePullDir === null) {
+        const stamp = new Date(this.prePullStamp ?? Date.now())
+          .toISOString().slice(0, 19).replace(/[:T]/g, '-');
+        let dir = join(this.contextRoot, 'state', `${PRE_PULL_DIR_PREFIX}${stamp}`);
+        for (let n = 2; existsSync(dir); n++) {
+          dir = join(this.contextRoot, 'state', `${PRE_PULL_DIR_PREFIX}${stamp}-${n}`);
+        }
+        mkdirSync(dir, { recursive: true });
+        this.prePullDir = dir;
+        this.prunePrePullBackups();
+        try {
+          ensureGitignoreEntries(dirname(this.contextRoot), ['_dream_context/state/.pre-pull-*/'], {
+            comment: 'dreamcontext pre-pull task mirror backups',
+          });
+        } catch { /* not a git project — nothing to ignore */ }
+      }
+      const path = join(this.prePullDir, `${slug}.md`);
+      if (existsSync(path)) return path; // first write of this run wins (the pre-pull state)
+      writeFileSync(path, raw, 'utf-8');
+      return path;
+    } catch {
+      return null; // a backup must never break a sync
+    }
+  }
+
+  /** Where this run's overwritten mirrors were kept (null when nothing was). */
+  prePullBackupDir(): string | null {
+    return this.prePullDir;
+  }
+
+  /** How many pull backup dirs are kept before the oldest are pruned. */
+  static readonly PRE_PULL_KEEP = 5;
+
+  /** Drop all but the newest PRE_PULL_KEEP backup dirs (name-sorted = time-sorted). */
+  private prunePrePullBackups(): void {
+    const stateDir = join(this.contextRoot, 'state');
+    if (!existsSync(stateDir)) return;
+    const dirs = readdirSync(stateDir)
+      .filter((n) => n.startsWith(PRE_PULL_DIR_PREFIX))
+      .sort();
+    for (const name of dirs.slice(0, Math.max(0, dirs.length - SyncLedger.PRE_PULL_KEEP))) {
+      try {
+        rmSync(join(stateDir, name), { recursive: true, force: true });
+      } catch { /* best effort */ }
     }
   }
 

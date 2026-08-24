@@ -48,6 +48,7 @@ import { foreignProjectOf, projectScopeId, projectTag } from './provenance.js';
 import { writeClickUpToken, resolveClickUpToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
+import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
 import {
   BOOTSTRAP_PUSH_THRESHOLD,
@@ -700,6 +701,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
     report.pendingQueue = this.ledger.readQueue().length;
     report.watermark = this.ledger.readSyncState().watermark;
+    // Surface WHERE the overwritten mirrors were kept — a backup nobody is told
+    // about is not a recovery path (state/ has no git history to fall back on).
+    report.mirrorBackupDir = this.ledger.prePullBackupDir();
     return report;
   }
 
@@ -885,6 +889,8 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // Tag/field endpoints bump date_updated without returning it — refetch
     // once at the end so the watermark covers our own writes (no echo pull).
     let needsTimestampRefetch = false;
+    /** A tag add/remove that genuinely failed — the task stays pending (see below). */
+    let tagOpsFailed = false;
     const bindings = this.fieldBindings();
     // True once a CREATE carried its custom fields inline — the per-field
     // fallback loop below must then skip them (they're already on the task).
@@ -993,11 +999,39 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         toAdd.push(myStamp);
       }
 
-      for (const tag of toAdd) {
-        await adapter.request('POST', `/task/${remoteId}/tag/${encodeURIComponent(tag)}`);
-      }
-      for (const tag of toRemove) {
-        await adapter.request('DELETE', `/task/${remoteId}/tag/${encodeURIComponent(tag)}`);
+      // TAG-OP REPLAY SEMANTICS. Each tag is its own request, so this loop can
+      // die half-applied. Letting it throw used to abort the whole push before
+      // its ledger write, which left `base_snapshot` at the PRE-push state: the
+      // retry recomputed the SAME delta and re-sent tag ops that had already
+      // landed. So the loop is tolerant instead — an op that fails is recorded,
+      // never fatal, and the remaining tags still get their chance:
+      //
+      //  • add of a tag the task already carries → ClickUp treats it as a no-op;
+      //  • remove of a tag the task no longer carries → 404 / no-op.
+      //
+      // Both are exactly what a replay re-sends, so replay is safe by
+      // construction; if a provider ever disagrees, the error is caught here and
+      // reported rather than wedging the push. A GENUINE failure keeps the task
+      // pending (see `tagOpsFailed` at the bookkeeping below), so the delta is
+      // retried on the next sync rather than being silently forgotten.
+      const tagOpFailures: string[] = [];
+      const tagOp = async (method: 'POST' | 'DELETE', tag: string): Promise<void> => {
+        try {
+          await adapter.request(method, `/task/${remoteId}/tag/${encodeURIComponent(tag)}`);
+        } catch (err) {
+          // 'not_found' on a REMOVE is the already-applied case, not a failure.
+          if (method === 'DELETE' && (err as { kind?: string }).kind === 'not_found') return;
+          tagOpFailures.push(`${method === 'POST' ? '+' : '−'}${tag}: ${(err as Error).message ?? err}`);
+        }
+      };
+      for (const tag of toAdd) await tagOp('POST', tag);
+      for (const tag of toRemove) await tagOp('DELETE', tag);
+      if (tagOpFailures.length > 0) {
+        tagOpsFailed = true;
+        report.warnings.push(
+          `push ${slug}: ${tagOpFailures.length} tag op(s) failed (${tagOpFailures.join('; ')}) — the rest of the ` +
+          `task was pushed; the tag delta is kept pending and retried on the next sync.`,
+        );
       }
       if (toAdd.length > 0 || toRemove.length > 0) needsTimestampRefetch = true;
     }
@@ -1056,12 +1090,22 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
     // Success bookkeeping. last_synced_at is ClickUp SERVER time — never the
     // local clock; when the server omitted it we keep the previous value.
+    //
+    // A FAILED TAG OP is the one case where the new base may not claim the whole
+    // task landed: the base is what the next push diffs its tag set against, so
+    // recording the post-push local tags would make the failed add/remove
+    // disappear forever (silently). Instead the base keeps the PREVIOUS tag set
+    // — everything else (body, fields, changelog entries already posted) is
+    // absorbed, so nothing re-sends or duplicates — and the task is re-queued so
+    // the next sync recomputes exactly the tag delta that did not land. Replaying
+    // it is safe: the tag ops above tolerate an already-applied op.
     const raw = readFileSync(path, 'utf-8');
+    const newBase = tagOpsFailed ? renderWithBaseTags(raw, entry?.base_snapshot?.body ?? null) : raw;
     this.ledger.updateTaskSync(slug, {
       last_synced_at: serverTime ?? entry?.last_synced_at ?? 0,
-      base_snapshot: { hash: hashContent(raw), body: raw },
+      base_snapshot: { hash: hashContent(newBase), body: newBase },
       localHash: hashContent(raw),
-      pendingPush: false,
+      pendingPush: tagOpsFailed,
     });
     // NOTE: the push must NOT advance the global pull watermark (#185). The
     // watermark's contract is "I have PULLED everything up to T" — it gates
@@ -1076,6 +1120,12 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // write merges to a no-op. Per-task `last_synced_at` stays — that IS per-task
     // bookkeeping, not the global pull gate.
     this.ledger.dequeueFor(slug, enqueueCutoff);
+    // Re-queue AFTER the dequeue (which clears ops at or below `enqueueCutoff`),
+    // so a tag delta that failed is actually retried instead of being dropped
+    // together with the op that triggered this push.
+    if (tagOpsFailed) {
+      this.ledger.enqueue({ id: `tag-retry-${slug}-${enqueueCutoff}`, kind: 'push', slug, ts: enqueueCutoff + 1 });
+    }
   }
 
   // ── PULL (ClickUp → local) ────────────────────────────────────────────────
@@ -1126,11 +1176,16 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const pendingDeletes = this.ledger.pendingDeleteRemoteIds();
     this.progress?.({ phase: 'pull', current: 0, total: remoteTasks.length });
     let pullDone = 0;
-    for (const remote of remoteTasks) {
-      // Long-pull heartbeat (see pushLocal). Aborting on lost ownership is
-      // safe here: the watermark advances per APPLIED task, so unprocessed
-      // tasks stay above it and re-fetch on the next delta pull.
+    // Poison-pill guard: the batch is NOT sorted by time, so anything this run
+    // fails to ingest caps the watermark below its timestamp (see noteUnapplied).
+    this.ledger.beginPullBatch(this.nowMs());
+    for (let i = 0; i < remoteTasks.length; i++) {
+      const remote = remoteTasks[i];
+      // Long-pull heartbeat (see pushLocal). Aborting on lost ownership is safe:
+      // every task we did not reach stays ABOVE the (capped) watermark and
+      // re-fetches on the next delta pull.
       if (!this.ledger.touchSyncLock(this.nowMs())) {
+        for (const left of remoteTasks.slice(i)) this.ledger.noteUnapplied(serverTimeMs(left.date_updated));
         report.errors.push('pull aborted: sync lock ownership lost mid-run (this process stalled and another sync took over) — remaining tasks re-fetch next pull.');
         break;
       }
@@ -1138,11 +1193,17 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         try {
           await this.applyRemoteTask(remote, adapter, report);
         } catch (err) {
+          // NOT ingested → the watermark may not pass it, or this task silently
+          // drops out of every future delta pull.
+          this.ledger.noteUnapplied(serverTimeMs(remote.date_updated));
           report.errors.push(`pull ${remote.id}: ${(err as Error).message ?? err}`);
         }
       }
       this.progress?.({ phase: 'pull', current: ++pullDone, total: remoteTasks.length });
     }
+    // A failure discovered AFTER a newer task already advanced the watermark has
+    // to pull it back down — do that once, at the end of the batch.
+    this.ledger.enforceUnappliedFloor();
 
     // ── Remote-deletion reconciliation ──────────────────────────────────────
     // A deleted remote task produces NO delta event — it just vanishes from
@@ -1234,6 +1295,8 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
             const savedTo = this.saveConflictCopy(entry.slug, raw, null);
             report.conflicts.push({ slug: entry.slug, savedTo, reason: 'remote_deleted' });
           }
+          // Even an unchanged mirror is unrecoverable once removed (gitignored).
+          this.ledger.backupMirror(entry.slug, raw);
           this.applyingRemote = true;
           try {
             await super.delete(entry.slug);
@@ -1375,6 +1438,12 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
     if (!slug || !existsSync(this.taskPath(slug))) {
       // NEW remote task (or vanished mirror) → create the mirror file.
+      //
+      // REBUILD, not create: when the mapping survived but the FILE is gone, the
+      // remote payload alone cannot restore the task's local-only fields
+      // (`objectives:` above all) — no remote carries them. The ledger still
+      // holds the last synced bytes of that exact mirror, so rebuild from BOTH.
+      const rebuiltFrom = slug ? localOnlyFieldsFromSnapshot(this.ledger.taskSync(slug)?.base_snapshot?.body) : {};
       slug = slug ?? this.uniqueSlugFor(remote.name);
       const fm: Record<string, unknown> = {
         id: generateId('task'),
@@ -1398,7 +1467,15 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         // project sharing this list — never on native rows, so `tasks list` and
         // the snapshot stay clean for the common single-project case.
         ...(foreign ? { source_project: foreign } : {}),
+        ...rebuiltFrom,
       };
+      if (Object.keys(rebuiltFrom).length > 0) {
+        report.warnings.push(
+          `pull ${slug}: the local mirror file was missing and has been REBUILT from ${this.name} — ` +
+          `local-only field(s) ${Object.keys(rebuiltFrom).sort().join(', ')} were restored from the last sync snapshot ` +
+          `(the remote does not carry them; verify them before relying on the task).`,
+        );
+      }
       const written = this.writeMirror(slug, fm, remoteDesc, remoteEntries);
       this.ledger.recordMapping({ slug, dcId: fm.id as string, backend: this.name, remoteId: remote.id });
       this.ledger.updateTaskSync(slug, {
@@ -1589,7 +1666,33 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       };
     }
 
-    const written = this.writeMirror(slug, fm, mergedDesc, mergedEntries);
+    // LOCAL-ONLY GUARD — the merge may only author the fields this sync maps:
+    // the static remote-owned set PLUS whatever the list's bound custom fields
+    // actually carried this time (ClickUp can bind `description`,
+    // `related_feature`, `rice`, … — clearing one of THOSE from the remote is a
+    // legitimate merge outcome). Everything else — `objectives:` first — has no
+    // remote representation, and `state/` is gitignored, so a field dropped here
+    // is gone for good. Restore it AND name it, so a mapping regression is loud.
+    const boundKeys = fieldWinners.map((fw) =>
+      (RICE_KEYS as string[]).includes(fw.key) ? 'rice'
+        : BUILTIN_FIELD_KEYS.has(fw.key) ? fw.key
+        : 'custom_fields');
+    const guarded = preserveLocalOnlyFields(local.raw, fm, boundKeys);
+    for (const key of guarded.rescued) fm[key] = guarded.fm[key];
+    if (guarded.rescued.length > 0) {
+      report.warnings.push(
+        `pull ${slug}: local-only field(s) ${guarded.rescued.sort().join(', ')} would have been dropped by the ` +
+        `${this.name} merge and were preserved — these have no remote representation; please report this.`,
+      );
+    }
+
+    // The mirror is about to be rewritten with remote-derived content and has no
+    // git history to fall back on — keep the pre-pull bytes first. Only when the
+    // bytes actually MOVE: a no-op merge writing a copy of itself would push a
+    // real backup out of the keep window.
+    const rendered = this.renderMirror(fm, mergedDesc, mergedEntries);
+    if (rendered !== localRaw) this.ledger.backupMirror(slug, localRaw);
+    const written = this.writeMirrorContent(slug, rendered);
 
     // ── bookkeeping: base reflects the REMOTE state so surviving local
     //    changes still diff (and push) against it. ──
@@ -1937,7 +2040,11 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     desc: string,
     changelogEntries: string[],
   ): string {
-    const content = this.renderMirror(fm, desc, changelogEntries);
+    return this.writeMirrorContent(slug, this.renderMirror(fm, desc, changelogEntries));
+  }
+
+  /** Write already-composed mirror bytes (callers that render first to diff them). */
+  protected writeMirrorContent(slug: string, content: string): string {
     this.applyingRemote = true;
     try {
       writeFileSync(this.taskPath(slug), content, 'utf-8');
@@ -1966,6 +2073,29 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 /** Epoch-ms (server time) → YYYY-MM-DD frontmatter date. */
 function dateOf(ms: number | null): string {
   return new Date(ms ?? 0).toISOString().split('T')[0];
+}
+
+/**
+ * The pushed mirror, but with `tags:` rolled back to the previous base snapshot.
+ *
+ * Used when a per-tag endpoint failed mid-push: everything else DID land and
+ * must be absorbed by the new base (or the next push re-sends it and duplicates
+ * changelog comments), while the tag set must keep diffing against what the
+ * remote actually has, so the failed add/remove is recomputed and retried.
+ * A missing/unparseable previous base leaves the tags as pushed — there is
+ * nothing better to diff against, and the version/dcproject reconciliation
+ * below still self-heals against the LIVE remote tag set.
+ */
+function renderWithBaseTags(raw: string, previousBase: string | null): string {
+  if (!previousBase) return raw;
+  try {
+    const current = matter(raw);
+    const baseTags = (matter(previousBase).data as Record<string, unknown>).tags;
+    if (baseTags === undefined) return raw;
+    return matter.stringify(current.content, { ...(current.data as Record<string, unknown>), tags: baseTags });
+  } catch {
+    return raw;
+  }
 }
 
 /** Extract the changelog entries from a stored base-snapshot body. */

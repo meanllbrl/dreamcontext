@@ -104,9 +104,9 @@
   white-space: nowrap;
 }
 
-/* (The permission-mode dropdown no longer floats over this pane's top-right corner — it
-   leads the composer's toolbar as the `bypass` checkbox-chip. See overlays.css's
-   `.chat-permmode-chip`.) */
+/* (The permission-mode dropdown no longer floats over this pane's top-right corner — mode
+   and permission now share the ONE trigger leading the composer's toolbar. See
+   chat/ComposerMenus.tsx's `ModeMenu`.) */
 
 /* ── Transcript scroll ────────────────────────────────────────────────────────────── */
 

@@ -92,3 +92,7 @@ _dream_context/automations/output/*/*
 # Scratch harness written by scripts/verify/project-chip-status.mjs. The script removes it
 # on the way out; this is the safety net for a run that was killed before it could.
 dashboard/.verify-harness/
+
+# dreamcontext pre-pull task mirror backups
+_dream_context/state/.pre-pull-*/
+*.tgz

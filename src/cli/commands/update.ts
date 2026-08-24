@@ -196,6 +196,13 @@ export function registerUpdateCommand(program: Command): void {
 
         if (platforms.length === 0) {
           error('No installed platforms found. Run `dreamcontext install-skill` first.');
+          // Refuse LOUDLY, in the one channel a script actually reads. This
+          // branch used to fall out on a bare `return`, so the process exited 0
+          // and every batch caller — `upgrade`'s per-project fan-out, the
+          // launcher's "Update all", a user's propagate loop — recorded a
+          // refresh that never happened. A no-op reported as success is how
+          // automation learns to ignore real failures.
+          process.exitCode = 1;
           return;
         }
 
@@ -323,7 +330,12 @@ export function registerUpdateCommand(program: Command): void {
           info('Cancelled.');
           return;
         }
+        // Same contract as the no-platforms bail above: a throw means the
+        // refresh did not finish, so the exit code has to say so. (A deliberate
+        // Ctrl-C above stays 0 — that is a human choosing to stop, and it is
+        // unreachable without a TTY, so no script can observe it.)
         error(err.message);
+        process.exitCode = 1;
       }
     });
 }

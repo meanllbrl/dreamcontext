@@ -323,6 +323,10 @@ export function nodeStatus(node: MermaidNode): NodeStatus | null {
   return null;
 }
 
+/** The one line grammar both checkbox readers below share, so "what counts as a criterion"
+ *  can never drift between the counter and the reader. Group 1 is the box, group 2 the text. */
+const CHECKBOX_LINE_RE = /^\s*[-*]\s+\[([ xX])\]\s+(.*)$/;
+
 /**
  * Count acceptance-criteria checkboxes (- [ ] / - [x]) in a markdown body.
  * Returns { total, done }.
@@ -332,11 +336,46 @@ export function countCheckboxes(sectionBody: string): { total: number; done: num
   let total = 0;
   let done = 0;
   for (const line of lines) {
-    const m = line.match(/^\s*[-*]\s+\[([ xX])\]\s+/);
+    const m = line.match(CHECKBOX_LINE_RE);
     if (!m) continue;
     total++;
     if (m[1].toLowerCase() === 'x') done++;
   }
   return { total, done };
+}
+
+/**
+ * Strip the markdown emphasis a criterion carries, keeping its words.
+ *
+ * DELIBERATELY CONSERVATIVE: only `**strong**`, `__strong__` and `` `code` `` are unwrapped.
+ * Single `*`/`_` are left alone because acceptance criteria are full of paths — a naive
+ * `_italic_` rule turns `_dream_context/state/x.md` into `dreamcontext/state/x.md`, which is
+ * a worse outcome than leaving a stray asterisk in the rare italicised criterion. This is a
+ * label for one line of UI, not a markdown renderer.
+ */
+function stripEmphasis(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/`([^`]*)`/g, '$1');
+}
+
+/**
+ * The text of the FIRST unticked acceptance criterion — "what is in flight" for the chat
+ * shelf's progress row — or null when the section has no criteria or every one is ticked.
+ *
+ * Reads the same line grammar {@link countCheckboxes} counts, so the number and the name can
+ * never describe different sets of lines. Emphasis is stripped (see {@link stripEmphasis});
+ * the result is trimmed and never empty — a `- [ ]` with no text after it is skipped rather
+ * than returned as `''`.
+ */
+export function firstUnticked(sectionBody: string): string | null {
+  for (const line of sectionBody.split('\n')) {
+    const m = line.match(CHECKBOX_LINE_RE);
+    if (!m || m[1].toLowerCase() === 'x') continue;
+    const text = stripEmphasis(m[2]).trim();
+    if (text) return text;
+  }
+  return null;
 }
 

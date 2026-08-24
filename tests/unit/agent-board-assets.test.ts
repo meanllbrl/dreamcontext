@@ -213,8 +213,21 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * sitting at 2992/3000, so the next capability was always going to move it. Moving it is
    * allowed; moving it SILENTLY is what this test exists to prevent. Spend the headroom on a
    * capability, not on prose — and compress the prose before raising the number again.
+   *
+   * Raised 3400 → 4300 on 2026-08-23 for the shelf's two `dream-view` types (`pin` +
+   * `progress`), which cost 695 characters INCLUDING both fenced examples — the
+   * chat-surface-lockstep test requires one worked example per `VIEW_TYPES` member, so an
+   * example is not prose and cannot be cut. The prose around them was compressed from 963 to
+   * 695 before this number moved, per the rule above.
+   *
+   * AND a correction the raise turned up: the briefing had ALREADY drifted to 3491 — over the
+   * 3400 ceiling — before this change, so this assertion was red on `main` and the drift that
+   * put it there went in without moving the number. That is exactly the silent creep this
+   * test exists to catch, which means it was not being run (or not being read) at the moment
+   * it fired. The 4300 below covers 4186 actual; the next capability should compress before
+   * it spends the remaining ~114.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(3400);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(4300);
   });
 });

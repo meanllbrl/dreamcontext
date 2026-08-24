@@ -19,10 +19,11 @@ import type { ChatAction } from '../components/sleepy/chat/chatActions';
 // Types
 // ---------------------------------------------------------------------------------------
 
-export const VIEW_TYPES = ['chart', 'page', 'checklist'] as const;
+export const VIEW_TYPES = ['chart', 'page', 'checklist', 'pin', 'progress'] as const;
 export type ChatViewType = typeof VIEW_TYPES[number];
 
-export type ChatViewSpec = ChartViewSpec | PageViewSpec | ChecklistViewSpec;
+export type ChatViewSpec =
+  ChartViewSpec | PageViewSpec | ChecklistViewSpec | PinViewSpec | ProgressViewSpec;
 
 export interface ChartViewSpec {
   type: 'chart';
@@ -82,6 +83,54 @@ export interface ChecklistItemSpec {
   wants?: 'note' | 'file' | 'secret';
 }
 
+/**
+ * `type: "pin"` — a fact the agent wants kept OUT of the transcript, on the shelf docked to
+ * the composer's top edge.
+ *
+ * `weight` is a REQUEST, not a command: the agent asks for a `tag` (one short label sharing
+ * the tag line) or a `row` (a lede plus openable detail), and the surface is free to demote
+ * a `row` whose content is tag-sized. That is what keeps the shelf's two-row ceiling
+ * enforceable no matter what an agent sends — see `lib/shelfModel.ts`'s `effectiveWeight`.
+ */
+export type PinWeight = 'tag' | 'row';
+
+export interface PinFactSpec {
+  label: string;
+  /** A loopback http(s) URL, and ONLY loopback — see {@link sanitizeLoopbackUrl}. */
+  url?: string;
+  /** A marker chip (`worktree`) rather than a value chip: no value, just a state. */
+  marker?: boolean;
+}
+
+export interface PinViewSpec {
+  type: 'pin';
+  id: string;
+  weight: PinWeight;
+  facts: PinFactSpec[];
+  lede?: string;
+  detail?: string;
+  /**
+   * True when the SURFACE produced the lede by clamping `detail` — the `…` chip the design
+   * calls `.pin-clamp`, which means "the shelf cut this line", not "the author was brief".
+   * `validatePin` ALWAYS strips this from author input and never sets it; only the shelf
+   * model (`foldViews` → `clampLede`) may. A truncated pin presented as complete is the one
+   * dishonesty this flag exists to prevent, so the agent must not be able to fake it.
+   */
+  ledeClamped?: boolean;
+}
+
+/**
+ * `type: "progress"` — a run's progress, DERIVED FROM DISK. The payload carries only the
+ * task slug: percent comes from that task file's ticked acceptance criteria (the same
+ * counter `tasks doctor` uses), so it cannot be wrong in a way the user can't check. A
+ * percent supplied by the agent is not a fallback, it is a bug — `validateProgress` drops it
+ * and says so.
+ */
+export interface ProgressViewSpec {
+  type: 'progress';
+  task: string;
+}
+
 // ---------------------------------------------------------------------------------------
 // Caps (§1.3) — every breach here degrades loudly: the excess is dropped and a notice
 // names what happened. Never a silent truncation.
@@ -102,6 +151,16 @@ export const MAX_TABLE_COLS = 8;
 export const MAX_TABLE_ROWS = 50;
 export const MAX_TABLE_CELL_CHARS = 120;
 export const MAX_CHECKLIST_ITEMS = 40;
+
+// Shelf caps. The first four are enforced HERE (a payload the agent sent); the last two are
+// enforced by `lib/shelfModel.ts`, which owns how many entries a conversation keeps and how
+// many chips one tag line may carry. Both halves degrade loudly, never silently.
+export const MAX_PINS_PER_CONVERSATION = 24;
+export const MAX_PIN_FACTS = 6;
+export const MAX_PIN_LEDE_CHARS = 160;
+export const MAX_PIN_DETAIL_CHARS = 4000;
+export const MAX_TAG_LABEL_CHARS = 48;
+export const MAX_TAGS_PER_LINE = 12;
 
 // ---------------------------------------------------------------------------------------
 // Small shared helpers
@@ -167,6 +226,78 @@ export function sanitizeImageSrc(raw: string): { src: string | null; strippedQue
   url.search = '';
   url.hash = '';
   return { src: url.toString(), strippedQuery };
+}
+
+// ---------------------------------------------------------------------------------------
+// Loopback URLs (pin facts only) — the DELIBERATE carve-out to this surface's https-only rule
+// ---------------------------------------------------------------------------------------
+
+/** Exactly the hosts a pinned dev-server URL may name, AFTER WHATWG normalization. */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * The one place `http:` is allowed on this surface: a pin fact naming the dev server the
+ * work can be tested on. It is scoped to PIN FACTS on purpose — the `url` ACTION
+ * (`chat/chatActions.ts`) stays https-only, because nothing asked for it and a narrower
+ * carve-out is a smaller thing to get wrong.
+ *
+ * The gate is POST-PARSE, and that is a deliberate choice with a consequence worth stating.
+ * WHATWG `URL` normalizes every alternative spelling of loopback to the canonical host:
+ * `127.1`, `0177.0.0.1`, `0x7f000001`, `2130706433` and the IDNA forms `①27.0.0.1` /
+ * `127。0。0。1` all become `127.0.0.1`, and `[0:0:0:0:0:0:0:1]` becomes `[::1]`. Those are
+ * therefore ACCEPTED, and that is safe by construction: the browser and the OS opener
+ * resolve the identical normalized host we compared against, so an obfuscated spelling of
+ * loopback cannot reach anywhere loopback does not. A pre-parse string match would have been
+ * the UNSAFE design — it would reject the obfuscated spellings while the browser happily
+ * resolved them, which is a filter that only stops honest input.
+ *
+ * Rejected, each for its own reason:
+ *   • any host that does not normalize into {@link LOOPBACK_HOSTS} — `localhost.evil.com`
+ *     and `127.0.0.1.evil.com` are ordinary public names that merely LOOK local;
+ *   • `0.0.0.0` — it is not loopback, but a connection to it lands on loopback on Linux and
+ *     Windows, so it is the one non-loopback host that behaves like one. Rejected by its own
+ *     explicit check rather than left to the host compare, so the intent survives a refactor;
+ *   • `[::ffff:127.0.0.1]`, which normalizes to `[::ffff:7f00:1]` and so fails the host
+ *     compare. That is FAIL-CLOSED ON PURPOSE: an IPv4-mapped IPv6 literal is a form no user
+ *     types. Do not "fix" it into the accept list without first re-deriving the safety
+ *     argument above for it;
+ *   • userinfo (`http://user:pass@localhost/`) — same rule `sanitizeImageSrc` applies;
+ *   • protocol-relative `//host`, and any scheme but http/https.
+ *
+ * `search` and `hash` are STRIPPED (mirroring `sanitizeImageSrc`), and the caller reports it.
+ * That is not only tidiness: the hosts this function permits include the dashboard's OWN
+ * loopback port, so a pinned chip carrying `?vault=…` or `?token=…` would be a same-origin
+ * request the agent authored. A pinned link is an address, never a payload.
+ */
+export function sanitizeLoopbackUrl(raw: string): { url: string | null; strippedQuery: boolean } {
+  const NOTHING = { url: null, strippedQuery: false };
+  if (typeof raw !== 'string') return NOTHING;
+
+  // Same strip as sanitizeImageSrc, and for the same reason: the browser drops these bytes
+  // before it acts on the URL, so we have to see what it sees.
+  const cleaned = raw.replace(CONTROL_OR_WHITESPACE_RE, '');
+  if (!cleaned || cleaned.startsWith('//')) return NOTHING;
+
+  const schemeMatch = SCHEME_RE.exec(cleaned);
+  if (!schemeMatch) return NOTHING; // a bare `localhost:5173` is a scheme-less path, not a URL
+  const scheme = schemeMatch[1].toLowerCase();
+  if (scheme !== 'http' && scheme !== 'https') return NOTHING;
+
+  let url: URL;
+  try {
+    url = new URL(cleaned);
+  } catch {
+    return NOTHING;
+  }
+
+  if (url.username || url.password) return NOTHING;
+  if (url.hostname === '0.0.0.0') return NOTHING;
+  if (!LOOPBACK_HOSTS.has(url.hostname)) return NOTHING;
+
+  const strippedQuery = url.search !== '' || url.hash !== '';
+  url.search = '';
+  url.hash = '';
+  return { url: url.toString(), strippedQuery };
 }
 
 // ---------------------------------------------------------------------------------------
@@ -600,6 +731,123 @@ function validateChecklist(obj: Record<string, unknown>, notices: string[]): { v
 }
 
 // ---------------------------------------------------------------------------------------
+// type: "pin"
+// ---------------------------------------------------------------------------------------
+
+/** The same grammar {@link CHECKLIST_ID_RE} uses, and for the same reason rather than by
+ *  accident: both ids become part of a `localStorage` key built by joining hex-encoded
+ *  parts, so neither may contain the separators those keys join on. Kept as its own constant
+ *  so a future change to one surface's ids can't silently move the other's. */
+const PIN_ID_RE = /^[a-zA-Z0-9._-]+$/;
+const PIN_WEIGHTS = new Set(['tag', 'row']);
+/** A task slug as `dreamcontext` writes one. Longer than a pin id because a task slug is a
+ *  whole sentence kebab-cased (`two-new-agent-actions-pinned-session-facts-…`). */
+const PROGRESS_SLUG_RE = /^[A-Za-z0-9._-]{1,120}$/;
+/** Keys that would mean the agent is ASSERTING progress instead of letting it be derived. */
+const ASSERTED_PROGRESS_KEYS = ['percent', 'pct', 'done', 'total'] as const;
+
+/** One fact, or null when it has no label to show. A rejected `url` costs the fact its LINK,
+ *  never its label — a dropped link is a chip you can't click, a dropped fact is one you
+ *  can't read. */
+function validatePinFact(raw: unknown, counts: { clamped: number; badUrl: number; stripped: number }): PinFactSpec | null {
+  if (!isRecord(raw)) return null;
+  const rawLabel = optStr(raw.label);
+  if (!rawLabel) return null;
+
+  const label = rawLabel.length > MAX_TAG_LABEL_CHARS ? rawLabel.slice(0, MAX_TAG_LABEL_CHARS) : rawLabel;
+  if (label !== rawLabel) counts.clamped++;
+
+  const fact: PinFactSpec = { label };
+  if (raw.marker === true) fact.marker = true;
+
+  if (typeof raw.url === 'string' && raw.url.trim()) {
+    const { url, strippedQuery } = sanitizeLoopbackUrl(raw.url);
+    if (!url) counts.badUrl++;
+    else {
+      fact.url = url;
+      if (strippedQuery) counts.stripped++;
+    }
+  }
+  return fact;
+}
+
+function validatePin(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  const idRaw = typeof obj.id === 'string' ? obj.id.trim() : '';
+  if (!idRaw || idRaw.length > 64 || !PIN_ID_RE.test(idRaw)) {
+    notices.push('A pin was skipped — its "id" is missing or contains characters other than letters, digits, ".", "_" and "-".');
+    return { view: null, notices };
+  }
+
+  // Absent `weight` is the documented default, so it is silent; a weight this app doesn't
+  // have is a promise it can't keep, so it is not.
+  let weight: PinWeight = 'tag';
+  if (obj.weight !== undefined) {
+    if (typeof obj.weight === 'string' && PIN_WEIGHTS.has(obj.weight)) weight = obj.weight as PinWeight;
+    else notices.push(`A pin asked for a weight this app doesn't have (${JSON.stringify(obj.weight)}) — it was shown as a tag.`);
+  }
+
+  const counts = { clamped: 0, badUrl: 0, stripped: 0 };
+  const rawFacts = Array.isArray(obj.facts) ? obj.facts : [];
+  let facts = rawFacts.map((f) => validatePinFact(f, counts)).filter((f): f is PinFactSpec => f !== null);
+  if (facts.length > MAX_PIN_FACTS) {
+    const extra = facts.length - MAX_PIN_FACTS;
+    facts = facts.slice(0, MAX_PIN_FACTS);
+    notices.push(`A pin had more than ${MAX_PIN_FACTS} facts — ${extra} were dropped.`);
+  }
+  if (counts.clamped > 0) {
+    notices.push(`A pin had ${counts.clamped} fact label(s) longer than ${MAX_TAG_LABEL_CHARS} characters — they were shortened.`);
+  }
+  if (counts.badUrl > 0) {
+    notices.push(`A pin had ${counts.badUrl} fact URL(s) that aren't allowed — a pinned link must be https, or http on localhost / 127.0.0.1 / [::1]. The fact is still shown, without the link.`);
+  }
+  if (counts.stripped > 0) {
+    notices.push("A pinned URL's query string was removed — a pinned link is an address, not a payload.");
+  }
+
+  const view: PinViewSpec = { type: 'pin', id: idRaw, weight, facts };
+
+  const ledeRaw = optStr(obj.lede);
+  if (ledeRaw) {
+    view.lede = ledeRaw.length > MAX_PIN_LEDE_CHARS ? ledeRaw.slice(0, MAX_PIN_LEDE_CHARS) : ledeRaw;
+    if (view.lede !== ledeRaw) notices.push(`A pin's lede was longer than ${MAX_PIN_LEDE_CHARS} characters — it was shortened.`);
+  }
+  const detailRaw = optStr(obj.detail);
+  if (detailRaw) {
+    view.detail = detailRaw.length > MAX_PIN_DETAIL_CHARS ? detailRaw.slice(0, MAX_PIN_DETAIL_CHARS) : detailRaw;
+    if (view.detail !== detailRaw) notices.push(`A pin's detail was longer than ${MAX_PIN_DETAIL_CHARS} characters — it was shortened.`);
+  }
+  // `ledeClamped` is never copied across, whatever the agent sent: it means "the SHELF cut
+  // this line", and only the shelf may say so. See PinViewSpec's field doc.
+
+  if (facts.length === 0 && !view.lede && !view.detail) {
+    notices.push('A pin was skipped — it has no facts, lede or detail to show.');
+    return { view: null, notices };
+  }
+  return { view, notices };
+}
+
+// ---------------------------------------------------------------------------------------
+// type: "progress"
+// ---------------------------------------------------------------------------------------
+
+function validateProgress(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  const task = typeof obj.task === 'string' ? obj.task.trim() : '';
+  if (!task || !PROGRESS_SLUG_RE.test(task)) {
+    notices.push('A progress block was skipped — its "task" is missing or is not a task slug.');
+    return { view: null, notices };
+  }
+
+  // Loud, not silent: the whole point of this block is that the user can TRUST the number,
+  // so an agent that supplied one is told its number was thrown away rather than left to
+  // believe the bar it drew is the bar the user sees.
+  if (ASSERTED_PROGRESS_KEYS.some((k) => obj[k] !== undefined)) {
+    notices.push("A progress block supplied its own percent — it was ignored. The number is read from the task file's acceptance criteria.");
+  }
+
+  return { view: { type: 'progress', task }, notices };
+}
+
+// ---------------------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------------------
 
@@ -642,6 +890,8 @@ export function parseViewBlock(
       case 'chart': return validateChart(parsed, notices);
       case 'page': return validatePage(parsed, toAction, notices);
       case 'checklist': return validateChecklist(parsed, notices);
+      case 'pin': return validatePin(parsed, notices);
+      case 'progress': return validateProgress(parsed, notices);
       default:
         notices.push(`This answer asked for a view type this app doesn't have (${JSON.stringify(parsed.type ?? null)}).`);
         return { view: null, notices };

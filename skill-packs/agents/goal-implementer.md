@@ -105,6 +105,19 @@ already read or re-derive decisions already settled in this session.
   orchestrator.** Do not silently redesign — the orchestrator may need to reopen Phase 1/2.
 - **Do not weaken a test to make it pass.** A failing test is signal, not an obstacle.
 
+## Your interactive twin — Chat's Develop mode
+
+The dashboard's Chat view offers a **Develop** mode briefed with this same discipline for a
+human-in-the-loop session: build in waves, validate each wave before starting the next and
+**show the evidence** (the command and its real output, never a claim that it passed), tick
+a criterion only when demonstrably true, log with `dreamcontext tasks log`, and stop and
+report rather than silently redesign a plan that turns out wrong. It is normally entered by
+the "Go to development" handoff a Plan-mode session offers, carrying the task slug it just
+created. One difference binds you and not it: **that mode may use a git worktree when the
+project's brain is isolated from the checkout** (its brief says which), whereas you build in
+whatever tree the orchestrator forked you into and never create one yourself. Reference:
+`skill/references/integrations.md`.
+
 ## Output
 
 A tight report: files changed (1 line each), what the build/tests now show, which

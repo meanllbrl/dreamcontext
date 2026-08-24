@@ -5,11 +5,17 @@
    (native DOM listeners write the dropped file to a vault temp path and call
    `ChatSession.sendText` with the quoted path — see AgentSurface.tsx's drag-drop effect),
    not by this composer; only clipboard PASTE of an image is handled locally here (a
-   distinct input source the surface-level handler doesn't cover). This composer's own
-   Popover-based menus (Files/Skills/model/effort) render via the shared `Popover`
-   component, whose portaled menu shell (`.agent-composer-menu`, `.agent-composer-pop`)
-   is styled by `AgentTerminal.css` — loaded globally by `AgentSurface.tsx`, so it is
-   available wherever this composer ends up mounted (see SkillPickerPopover.tsx's header). */
+   distinct input source the surface-level handler doesn't cover).
+
+   TWO KINDS OF MENU live in this file, and the split is structural:
+     • the three PANELS (mode+permission / model+effort / usage) are absolutely positioned
+       children of `.chat-cmp`, full-card-width, opening upward — the same escape from
+       `.chat-cmp-card`'s `overflow: hidden` that `.chat-cmp-slash` makes. Styled below.
+     • the ATTACH menu is still a shared `Popover`, whose portaled shell
+       (`.agent-composer-menu`, `.agent-composer-pop`) is styled by `AgentTerminal.css` —
+       loaded globally by `AgentSurface.tsx`, so it is available wherever this composer ends
+       up mounted (see SkillPickerPopover.tsx's header). It clamps to its trigger because it
+       is a short list, not a panel. */
 
 /* The composer is ONE CARD: everything you type or set lives inside a single bordered
    surface — textarea over a hairline-separated toolbar, with the round Send at the
@@ -50,6 +56,14 @@
 .chat-cmp-card:focus-within {
   border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
   box-shadow: 0 0 0 3px var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 14%, transparent));
+}
+/* The pinned shelf has an open row docked to this card's top edge. Squaring the top corners
+   (and dropping the seam between them) is what makes the two read as ONE object rather than
+   as a card sitting on another card. */
+.chat-cmp-card.is-shelved {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top-color: transparent;
 }
 
 /* ── Resize handle ────────────────────────────────────────────────────────────────── */
@@ -128,25 +142,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-/* ── Skill chip (state 8) ────────────────────────────────────────────────────────── */
-
-.chat-cmp-skillchip {
-  flex: 0 0 auto;
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: var(--radius-full);
-  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
-  /* Accent, not `--color-accent-text` — see the slash-row note below: that token is white,
-     which on this same tint made the chip's own label invisible. */
-  color: var(--color-accent);
-  font-size: var(--font-size-xs, 11.5px);
-  font-weight: 600;
-}
-.chat-cmp-skillchip-label { font-family: var(--font-mono); }
 
 /* ── Attachments row (state 7) ────────────────────────────────────────────────────── */
 
@@ -303,10 +298,10 @@
 .chat-cmp-input:focus { outline: none; }
 .chat-cmp-input:disabled { opacity: 0.6; }
 
-/* Send/Stop — a ROUND icon button at the toolbar's end. Empty-handed it is just an
-   outline (nothing to send yet); with content it fills in, so "can I send this?" is
-   answered by the button's weight rather than by a disabled label. */
-.chat-cmp-btn {
+/* Send / Queue / Stop — ONE round disc with three states, at the toolbar's end.
+   Empty-handed Send is just an outline (nothing to send yet); with content it fills in, so
+   "can I send this?" is answered by the button's weight rather than by a disabled label. */
+.chat-cmp-send {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -315,58 +310,58 @@
   height: 28px;
   padding: 0;
   border-radius: 50%;
-  border: 1.5px solid transparent;
+  border: 1.5px solid var(--color-border-hover);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-family: inherit;
   font-size: 12px;
   font-weight: 600;
   line-height: 1;
-  cursor: pointer;
-  transition: filter var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
-}
-.chat-cmp-send {
-  background: var(--color-text);
-  color: var(--color-bg);
-}
-.chat-cmp-send:hover:not(:disabled) { filter: brightness(1.15); }
-.chat-cmp-send:disabled {
-  background: transparent;
-  border-color: var(--color-border-hover);
-  color: var(--color-text-tertiary);
   cursor: default;
+  transition: filter var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast), border-color var(--transition-fast);
 }
-/* Queue (⇡) — its OWN button beside Send while a turn runs, since ⏎/↑ now steer into that
+.chat-cmp-send.is-enabled {
+  background: var(--color-text);
+  border-color: transparent;
+  color: var(--color-bg);
+  cursor: pointer;
+}
+.chat-cmp-send.is-enabled:hover { filter: brightness(1.15); }
+
+/* Queue (⇡) — its OWN disc beside Send while a turn runs, since ⏎/↑ now steer into that
    turn and "hold it for the next one" needs somewhere to live (see Composer.tsx's `commit`).
    Outlined in the accent rather than filled, because the filled solid belongs to "this goes
    now" — and it sits between the red Stop and the solid Send, so it is also what keeps those
    two discs from reading as one control with a broken half. */
-.chat-cmp-queue:not(:disabled) {
+.chat-cmp-send.is-queue:not(:disabled) {
   background: transparent;
   border-color: var(--color-accent);
   color: var(--color-accent);
+  cursor: pointer;
 }
-.chat-cmp-queue:not(:disabled):hover {
+.chat-cmp-send.is-queue:not(:disabled):hover {
   filter: none;
   background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
 }
-.chat-cmp-queue:disabled {
-  background: transparent;
-  border-color: var(--color-border-hover);
-  color: var(--color-text-tertiary);
-  cursor: default;
-}
-.chat-cmp-stop {
+
+.chat-cmp-send.is-stop {
   background: var(--color-error);
+  border-color: transparent;
   color: #fff;
   font-size: 9px;
+  cursor: pointer;
 }
-.chat-cmp-stop:hover { filter: brightness(1.08); }
+.chat-cmp-send.is-stop:hover { filter: brightness(1.08); }
 
 /* ── Toolbar (inside the card, under a hairline) ──────────────────────────────────── */
 
 /* ONE ROW at every width — never wrapped. Wrapping split a ~430px pane into a lopsided
    two-line block (bypass/Attach/Skills up top; gauge + model + Send below), which reads as
-   broken rather than as responsive. Instead the row's only status element — the context
-   readout — sheds detail in stages (see the container queries at the end of this file), and
-   the controls go icon-only, so everything keeps fitting on the single line it belongs on. */
+   broken rather than as responsive. The redesign removes the pressure at the source: the
+   readout is a 16px ring instead of a bar-plus-two-numbers, model and effort share one
+   trigger instead of two pills, and Skills is gone. What is left degrades by dropping WORDS
+   (see the container queries at the end of this file), never by wrapping. */
 .chat-cmp-toolbar {
   flex: 0 0 auto;
   display: flex;
@@ -377,124 +372,120 @@
   flex-wrap: nowrap;
   min-width: 0;
 }
-/* Model + effort + Send as one unit, and the one cluster that never shrinks: losing the
-   Send button to a squeeze would be the single worst outcome of a narrow pane. */
-.chat-cmp-toolbar-right {
+/* The gauge, the model/effort trigger and Send as one unit, and the one cluster that never
+   shrinks: losing the Send button to a squeeze would be the single worst outcome of a narrow
+   pane. */
+.chat-cmp-right {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 6px;
   margin-left: auto;
 }
+.chat-cmp-perm-wrap,
+.chat-cmp-model-wrap { display: inline-flex; flex: 0 0 auto; min-width: 0; }
 
 /* Toolbar controls are BORDERLESS — the card is already a bordered surface, and a row of
-   outlined pills inside it reads as boxes-in-a-box. Hover/open is the only chrome. */
-.chat-cmp-btn-ghost {
-  flex: 0 0 auto;
+   outlined pills inside it reads as boxes-in-a-box. Hover/open is the only chrome.
+
+   ONE trigger shape serves both ends of the row: a bold word (the mode / the model) plus a
+   mono qualifier (the permission / the effort) plus a caret. They are the same KIND of
+   control — "what am I on, and tap to change it" — so they read as a matched pair rather
+   than as two unrelated widgets. */
+.chat-cmp-modeltrigger {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   height: 28px;
+  min-width: 0;
   padding: 0 8px;
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: var(--font-size-xs, 12px);
-  font-weight: 600;
+  font-family: inherit;
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
-.chat-cmp-btn-ghost:hover,
-.chat-cmp-btn-ghost.open {
+.chat-cmp-modeltrigger:hover:not(:disabled),
+.chat-cmp-modeltrigger[aria-expanded='true'] {
   background: var(--color-bg-tertiary);
   color: var(--color-text);
 }
-.chat-cmp-spark { color: var(--color-accent); }
-.chat-cmp-caret { font-size: 9px; opacity: 0.55; }
-
-.chat-cmp-spacer { flex: 1 1 auto; }
-
-/* Context + cost travel as ONE toolbar child, so wrapping can never leave the cost chip
-   stranded on a row by itself. */
-.chat-cmp-readout {
-  flex: 0 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* ── Context + cost readout (centred in the toolbar, between the two clusters) ────────
-   Deliberately NOT a row of its own: it is a status, not a control, and giving it a line
-   above the card both stole height from the transcript and made the composer jump the
-   moment the first turn reported usage. `flex: 0 1 auto` + min-width:0 lets it be the
-   first thing to give way when a pane gets narrow. */
-
-.chat-cmp-ctx {
-  flex: 0 1 auto;
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs, 11.5px);
-  white-space: nowrap;
-  /* `help`, not `default`: hovering is the whole affordance once the stages start dropping
-     detail, and the cursor is the only thing that advertises it. */
-  cursor: help;
-  border-radius: var(--radius-sm, 6px);
-}
-/* Focusable (it is a `meter`, and at the narrow stages the hover card is the ONLY place the
-   reading exists) — so it needs a focus ring like any other reachable element. */
-.chat-cmp-ctx:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 3px;
-}
-.chat-cmp-ctx-track {
-  flex: 0 0 auto;
-  width: 42px;
-  height: 4px;
-  border-radius: var(--radius-full);
-  background: var(--color-bg-tertiary);
-  overflow: hidden;
-  transition: width var(--transition-fast);
-}
-.chat-cmp-ctx-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--color-accent);
-  transition: width var(--transition-normal, 240ms) ease;
-}
-.chat-cmp-ctx-pct {
-  font-family: var(--font-mono);
+.chat-cmp-modeltrigger:disabled { opacity: 0.5; cursor: default; }
+.chat-cmp-modeltrigger-model {
+  font-size: var(--font-size-xs, 12px);
   font-weight: 600;
-  color: var(--color-text-secondary);
-}
-/* The raw counts are the supporting detail behind the % — first to be dropped when the
-   pane is too narrow to carry both. */
-.chat-cmp-ctx-count {
-  font-family: var(--font-mono);
-  opacity: 0.75;
+  white-space: nowrap;
+  /* The row's last-resort give: at the tightest widths a long model name (`Sonnet 4.5`)
+     ellipsises rather than pushing Send out of the card. */
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.chat-cmp-ctx-cost {
-  flex: 0 0 auto;
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-tertiary);
+.chat-cmp-modeltrigger-effort {
   font-family: var(--font-mono);
-  font-size: var(--font-size-xs, 11px);
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
   white-space: nowrap;
-  cursor: default;
 }
-/* Past the pressure threshold the gauge goes amber — the numbers stop being trivia. */
-.chat-cmp-ctx[data-tight='true'] { color: var(--color-warning); }
-.chat-cmp-ctx[data-tight='true'] .chat-cmp-ctx-pct { color: var(--color-warning); }
-.chat-cmp-ctx[data-tight='true'] .chat-cmp-ctx-fill { background: var(--color-warning); }
+
+/* Attach — the row's only icon-only control, so it needs no label to avoid reading as a
+   loose part (there is nothing labelled beside it any more). */
+.chat-cmp-iconbtn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.chat-cmp-iconbtn:hover,
+.chat-cmp-iconbtn[aria-expanded='true'] {
+  background: var(--color-bg-tertiary);
+  color: var(--color-accent);
+}
+
+.chat-cmp-caret { font-size: 9px; opacity: 0.55; }
+
+.chat-cmp-spacer { flex: 1 1 auto; min-width: 0; }
+
+/* ── The context ring ─────────────────────────────────────────────────────────────────
+   The meter's whole resting state: one 16px mark. The arithmetic it used to print inline is
+   a hover away (`title`) and a click away (the usage popover), and `aria-valuetext` carries
+   it for a screen reader — demoted, never deleted. Past the pressure threshold it goes amber
+   and `/compact` appears beside it WITHOUT hover, because at that point the action is the
+   point and burying it would put it out of the keyboard's reach. */
+
+.chat-cmp-usagebtn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.chat-cmp-usagebtn:hover,
+.chat-cmp-usagebtn[aria-expanded='true'] { background: var(--color-bg-tertiary); }
+.chat-cmp-usagebtn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.chat-cmp-usagering-track { stroke: var(--color-border-hover); }
+.chat-cmp-usagering-fill { stroke: var(--color-accent); }
+.chat-cmp-usagebtn[data-tight='true'] .chat-cmp-usagering-fill { stroke: var(--color-warning); }
 
 .chat-cmp-compact-btn {
   flex: 0 0 auto;
@@ -516,122 +507,324 @@
 .chat-cmp-compact-btn:hover:not(:disabled) { filter: brightness(0.95); }
 .chat-cmp-compact-btn:disabled { opacity: 0.5; cursor: default; }
 
-/* ── The readout's hover card (portaled to <body>) ────────────────────────────────────
-   Everything the toolbar stage dropped, in full — so narrowing a pane costs a hover, never
-   the information. Portaled because `.chat-cmp` is a size container and therefore the
-   containing block even for `position: fixed`; placement is done in ContextReadout.tsx. */
+/* ── The three toolbar panels (mode+permission / model+effort / usage) ────────────────
+   Absolutely positioned inside `.chat-cmp` and opening UPWARD, exactly like
+   `.chat-cmp-slash` above — NOT portaled `Popover`s. They are full-card-width panels that
+   line up with the composer's own edges, and `.chat-cmp-card`'s `overflow: hidden` is
+   escaped by anchoring to `.chat-cmp` (which is `position: relative`) rather than to the
+   card. See useAnchoredMenu.ts.
 
-.chat-cmp-ctxcard {
-  position: fixed;
-  z-index: 60;  /* same layer as the portaled composer menus */
+   `max-width` is stated as well as `width`: in a narrow split pane a fixed 328px panel would
+   overhang the composer it belongs to, and a menu wider than its own surface reads as a
+   rendering bug rather than as a menu. */
+
+.chat-cmp-modelmenu,
+.chat-cmp-usagemenu {
+  position: absolute;
+  bottom: calc(100% - 4px);
+  right: 12px;
+  z-index: 30;   /* the same layer the slash menu occupies */
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  width: 236px;
-  padding: 11px 13px 12px;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  padding: 14px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg, 14px);
-  background: var(--color-bg-secondary);
-  box-shadow: var(--shadow-xl);
-  color: var(--color-text-secondary);
-  /* Stated, not inherited: portaled to <body>, this escapes `.chat-cmp` — the same reason
-     .chat-permmode-menu names its family rather than trusting the cascade. */
+  border-radius: var(--radius-lg, 12px);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  box-shadow: var(--shadow-lg, 0 12px 32px rgba(0, 0, 0, 0.28));
+  /* Stated, not inherited: this is a panel of prose about a setting, and the surface it
+     sits on speaks mono in places. */
   font-family: var(--font-family-text);
-  font-size: 11.5px;
-  line-height: 1.45;
 }
-.chat-cmp-ctxcard-head {
+.chat-cmp-modelmenu {
+  width: 328px;
+  max-height: calc(100vh - 130px);
+  overflow: hidden;
+}
+.chat-cmp-usagemenu {
+  width: 244px;
+  gap: 9px;
+  padding: 13px 14px;
+}
+/* The MODE menu hangs off the LEFT trigger, so it grows from the left edge. */
+.chat-cmp-modemenu { left: 12px; right: auto; }
+
+/* The scrolling region inside a fixed-height menu, so the effort slider and the
+   "Set as default" footer stay put while a long model list scrolls under them. */
+.chat-cmp-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* Four modes read as a 2×2 block rather than a list — they are peers, not a ranking. */
+.chat-cmp-scroll.is-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.chat-cmp-grouplabel {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+/* One row shape for a model AND for a mode: a name, an optional badge, an optional right-
+   aligned meta, and a sentence underneath. They are the same question ("which of these?"),
+   so they are the same object. */
+.chat-cmp-modelrow {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 11px;
+  text-align: left;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.chat-cmp-modelrow:hover:not(:disabled) { border-color: var(--color-border-hover); }
+.chat-cmp-modelrow:disabled { opacity: 0.45; cursor: default; }
+.chat-cmp-modelrow.is-active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
+}
+.chat-cmp-modelrow-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
 }
-.chat-cmp-ctxcard-title {
+.chat-cmp-modelrow-name {
+  font-size: 13px;
+  font-weight: 600;
   color: var(--color-text);
+}
+/* NOT `--color-accent-text` (white — it belongs on a SOLID accent fill): over the 16% tint
+   above, white is the one label you could not read. Same fix as the slash row's. */
+.chat-cmp-modelrow.is-active .chat-cmp-modelrow-name { color: var(--color-accent); }
+.chat-cmp-modelrow-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+.chat-cmp-modelrow-insight {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+  text-wrap: pretty;
+}
+
+.chat-cmp-badge {
+  margin-left: 6px;
+  margin-right: auto;   /* pushes the meta to the row's right edge */
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+/* "Soon" is not a recommendation — a muted badge says unavailable, an accent one says pick me. */
+.chat-cmp-badge.is-muted {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+}
+
+.chat-cmp-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 2px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+.chat-cmp-disclosure:hover { color: var(--color-text-secondary); }
+.chat-cmp-disclosure-caret { font-size: 9px; opacity: 0.55; }
+
+/* ── Permission segment (inside the mode menu) ─────────────────────────────────────── */
+
+.chat-cmp-permrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.chat-cmp-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+}
+.chat-cmp-segment-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.chat-cmp-segment-opt:hover { color: var(--color-text-secondary); }
+.chat-cmp-segment-opt.is-active {
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  color: var(--color-text);
+}
+/* Each mode keeps its identity colour when selected — you should be able to read "the amber
+   one is the dangerous one" before reading a word. `aria-checked` names it for assistive
+   tech, so this never carries the state alone. */
+.chat-cmp-segment-opt.is-auto.is-active { color: var(--color-accent); }
+.chat-cmp-segment-opt.is-bypass.is-active { color: var(--color-warning); }
+
+.chat-cmp-permnote {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+  text-wrap: pretty;
+}
+
+.chat-cmp-menu-divider {
+  height: 1px;
+  margin: 2px 0;
+  background: var(--color-border);
+}
+
+/* ── Effort slider (inside the model menu) ─────────────────────────────────────────── */
+
+.chat-cmp-effort-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.chat-cmp-effort-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-accent);
+}
+.chat-cmp-effort-slider {
+  width: 100%;
+  margin: 2px 0 0;
+  accent-color: var(--color-accent);
+  background: transparent;
+  cursor: pointer;
+}
+.chat-cmp-effort-ticks {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+.chat-cmp-effort-ticks span.is-active { color: var(--color-text-secondary); }
+
+.chat-cmp-menu-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+.chat-cmp-setdefault {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-hover);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
   font-size: 12px;
   font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
-.chat-cmp-ctxcard-pct {
+.chat-cmp-setdefault:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+/* ── Usage popover rows ───────────────────────────────────────────────────────────────
+   One bar per reading the app actually FOUND — context, and whatever account caps the
+   server could read. A cap with no source is absent from the array upstream, so there is no
+   empty state here: an empty bar would claim "you've used none of it", which is a statement
+   we have no basis for. */
+
+.chat-cmp-usagerow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.chat-cmp-usagerow-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.chat-cmp-usagerow-value {
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 600;
   color: var(--color-text);
 }
-.chat-cmp-ctxcard-pct[data-tight='true'] { color: var(--color-warning); }
-.chat-cmp-ctxcard-track {
-  display: block;
-  width: 100%;
-  height: 5px;
+.chat-cmp-usagebar {
+  height: 4px;
+  margin-top: 6px;
   border-radius: var(--radius-full);
   background: var(--color-bg-tertiary);
   overflow: hidden;
 }
-.chat-cmp-ctxcard-fill {
+.chat-cmp-usagebar-fill {
   display: block;
   height: 100%;
   border-radius: inherit;
   background: var(--color-accent);
+  transition: width var(--transition-normal, 240ms) ease;
 }
-.chat-cmp-ctxcard-fill[data-tight='true'] { background: var(--color-warning); }
-.chat-cmp-ctxcard-row {
+.chat-cmp-usagemeta {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
+  margin-top: 5px;
   font-family: var(--font-mono);
+  font-size: 11px;
   color: var(--color-text-tertiary);
 }
-.chat-cmp-ctxcard-free { color: var(--color-text-secondary); }
-.chat-cmp-ctxcard-cost {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding-top: 8px;
-  border-top: 1px solid var(--color-border);
-}
-.chat-cmp-ctxcard-cost .chat-cmp-ctxcard-row { font-family: inherit; }
-.chat-cmp-ctxcard-costval {
-  font-family: var(--font-mono);
-  font-weight: 600;
-  color: var(--color-text);
-}
-.chat-cmp-ctxcard-note {
+.chat-cmp-usagenote {
   margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
   color: var(--color-text-tertiary);
-  font-size: 10.5px;
-  line-height: 1.4;
-  opacity: 0.85;
-}
-
-/* ── Model / effort ───────────────────────────────────────────────────────────────────
-   Quiet TEXT triggers, not pills: what model and effort you're on is a status you read,
-   and only occasionally a control you touch — so it carries no chrome until hovered.
-   Still the same click-to-open Popover menus. */
-
-.chat-cmp-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: var(--radius-md);
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs, 12px);
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-.chat-cmp-pill:hover:not(:disabled),
-.chat-cmp-pill.open { background: var(--color-bg-tertiary); color: var(--color-text); }
-.chat-cmp-pill:disabled { opacity: 0.5; cursor: default; }
-.chat-cmp-pill-label {
-  font-weight: 600;
-  white-space: nowrap;
-  /* The row's last-resort give: at the tightest widths a long model name (`Sonnet 4.5`)
-     ellipsises rather than pushing Send out of the card. */
-  overflow: hidden;
-  text-overflow: ellipsis;
+  text-wrap: pretty;
 }
 
 /* ── Popover menu contents (the portaled shell itself is AgentTerminal.css's
@@ -657,59 +850,39 @@
 .chat-cmp-menu-row.on { color: var(--color-accent); font-weight: 600; }
 
 /* ── Toolbar responsiveness (via `.chat-cmp`'s own `chatcmp` size container) ───────────
-   The toolbar does not wrap (see .chat-cmp-toolbar), so it degrades instead. The order is
-   by cost of losing something: the readout's redundant halves go first, then its detail,
-   then the controls' words, and only at the very end the model name's tail.
+   The toolbar does not wrap (see .chat-cmp-toolbar), so it degrades instead — and after the
+   redesign there is far less to shed, because the readout is already one 16px mark and
+   model+effort already share one trigger.
 
-   Everything the readout drops stays one hover away in `.chat-cmp-ctxcard`; everything the
-   controls drop is still named by their `title`. */
+   The order is by cost of losing something: the two QUALIFIERS go first (the permission word,
+   then the effort word — both still on the trigger's `title` and both still readable in the
+   menu one click away), and only at the very end does the model name truncate. Nothing that
+   is an ACTION is ever dropped: Attach, `/compact` and Send survive every width. */
 
-/* 1. The raw counts say what the % already said, in three times the width. */
-@container chatcmp (max-width: 660px) {
-  .chat-cmp-ctx-count { display: none; }
-}
-
-/* 2. The cost is trivia next to "how much room is left" — it moves into the hover card. */
+/* 1. The permission word is the first qualifier to go: the mode name is what you are
+      choosing between, and the permission has its own segment one click away. */
 @container chatcmp (max-width: 560px) {
-  .chat-cmp-ctx-cost { display: none; }
+  .chat-cmp-perm-wrap .chat-cmp-modeltrigger-effort { display: none; }
 }
 
-/* 3. Where the screenshot lived: the toolbar used to wrap right about here. The readout
-      becomes what the owner asked for — a gauge barely wider than `***`, detail on hover —
-      and Attach/Skills go icon-only to pay for the controls that must stay. */
+/* 2. Where the toolbar used to wrap. Tighten the row's own padding and let `/compact` go to
+      the bare ⚠ — the action survives, its label doesn't. */
 @container chatcmp (max-width: 470px) {
   .chat-cmp-toolbar { gap: 3px; padding: 7px 8px; }
-  .chat-cmp-btn-ghost { padding: 0 6px; }
-  .chat-cmp-btn-label,
-  .chat-cmp-btn-ghost .chat-cmp-caret { display: none; }
-  .chat-cmp-ctx-pct { display: none; }
-  .chat-cmp-ctx-track { width: 22px; }
-  /* A 22px dash is too small to aim at, and hovering it is now the ONLY way to read the
-     numbers — so the gauge takes a button-sized hit area (and a button-like hover) around
-     it. The bar itself stays 4px; only the target grows. */
-  .chat-cmp-ctx { height: 28px; padding: 0 5px; }
-  .chat-cmp-ctx:hover { background: var(--color-bg-tertiary); }
-  /* Left-docked, not centred: with its label gone the gauge is a bare mark, and a bare mark
-     floating in the middle of the row reads as a stray dash rather than as a column. Beside
-     the controls it reads as what it is — this session's status. (`toolbar-right` is pinned
-     by its own `margin-left:auto`, so the trailing spacer still holds the row apart.) */
-  .chat-cmp-spacer-lead { flex: 0 0 2px; }
-  /* `/compact` survives as the bare ⚠: at ≥90% the action IS the point, and hiding a
-     control behind hover would put it out of the keyboard's reach (the card is portaled to
-     the end of <body>, so Tab from the gauge never enters it). */
+  .chat-cmp-modeltrigger { padding: 0 6px; gap: 5px; }
+  .chat-cmp-right { gap: 5px; }
+  /* `/compact` survives as the bare ⚠: at ≥90% the action IS the point, and a control the
+     narrow layout hides is a control the user cannot reach at the one moment it matters. */
   .chat-cmp-compact-label { display: none; }
   .chat-cmp-compact-btn { padding: 0 7px; gap: 0; }
 }
 
-/* 4. Three or four splits: the permission chip keeps only its checkbox (the state worth
-      seeing), and the model/effort names truncate before Send is ever squeezed. */
+/* 3. Three or four splits: the effort word joins the permission word in the menu, and the
+      model name truncates before Send is ever squeezed. */
 @container chatcmp (max-width: 380px) {
   .chat-cmp-toolbar { gap: 2px; padding: 6px 6px; }
-  .chat-cmp-readout { gap: 5px; }
-  .chat-permmode-chip { padding: 0 5px; }
-  .chat-permmode-name,
-  .chat-permmode-caret { display: none; }
-  .chat-cmp-pill { padding: 0 5px; min-width: 0; }
-  .chat-cmp-pill-label { max-width: 62px; }
-  .chat-cmp-toolbar-right { gap: 3px; }
+  .chat-cmp-modeltrigger { padding: 0 5px; gap: 4px; }
+  .chat-cmp-right .chat-cmp-modeltrigger-effort { display: none; }
+  .chat-cmp-modeltrigger-model { max-width: 62px; }
+  .chat-cmp-right { gap: 3px; }
 }

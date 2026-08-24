@@ -2,20 +2,23 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { pickFiles, pickFolders } from '../../../lib/desktop';
 import { useVault } from '../../../context/VaultContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
-import { useAgentSessionStats } from '../../../hooks/useAgentCapabilities';
+import { useAgentSessionStats, useUsageLimits } from '../../../hooks/useAgentCapabilities';
 import {
-  effortLabel, modelLabelFor, quotePath, isSignInCommand, contextLimitFor,
+  effortLabel, modelLabelFor, quotePath, isSignInCommand, contextLimitFor, usageLimits,
+  fmtTokens, CONTEXT_TIGHT_PCT,
   slashQueryAt, filterSlashCommands, applySlashCommand, type ModelConfig,
 } from '../../../lib/agentComposer';
+import { chatModeRow, DEFAULT_CHAT_MODE, type ChatMode } from '../../../lib/chatModes';
+import { patchAgentSettings } from '../../../lib/agentSettings';
 import {
   composerBodyHeight, composerHeightBounds, measureBodyChrome, measureFieldContent, readFieldMetrics,
 } from './composerHeight';
 import {
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV, type HistoryNav,
 } from './chatEntities';
-import { Popover, SkillBrowser } from '../SkillPickerPopover';
-import { PermissionModeMenu } from './PermissionModeMenu';
-import { ContextReadout } from './ContextReadout';
+import { Popover } from '../SkillPickerPopover';
+import { ModeMenu, ModelMenu, UsageMenu } from './ComposerMenus';
+import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
 import type { ChatSession } from '../chatSession';
 import './composer.css';
 
@@ -33,14 +36,26 @@ import './composer.css';
  * that appended value instead of clobbering free typing. `setFocusTarget` registers the
  * textarea so `session.focus()` (click-to-focus on the transcript, etc.) has a target.
  *
- * ── What's new vs the old composer (state 7/8/11, plan rev.3) ──────────────────────
- * Attachments (file/folder picks, pasted images) and a picked skill are held as SEPARATE
- * local-state "chips" above the textarea rather than being merged into the draft text
- * character-by-character — they're folded into the outgoing message only at submit time.
- * This is a deliberate departure from the old composer's `insert()` (which spliced skill/
- * path text directly into the draft): the redesign brief asks for a distinct attachments
- * row + an accent skill chip, and since this pane never unmounts while its session lives,
- * plain local state survives minimize/restore exactly like the draft does.
+ * ── Attachments (state 7) ───────────────────────────────────────────────────────────
+ * Attachments (file/folder picks, pasted images) are held as SEPARATE local-state "chips"
+ * above the textarea rather than being merged into the draft text character-by-character —
+ * they're folded into the outgoing message only at submit time. This is a deliberate
+ * departure from the old composer's `insert()` (which spliced path text directly into the
+ * draft): the brief asks for a distinct attachments row, and since this pane never unmounts
+ * while its session lives, plain local state survives minimize/restore exactly like the
+ * draft does.
+ *
+ * ── The chrome (D1-C) ───────────────────────────────────────────────────────────────
+ * The toolbar is five controls: mode+permission, attach, spacer, usage ring, model+effort,
+ * send. The Skills popover and its accent chip are GONE — the `/` menu below already lists
+ * every command this session reported, including every skill, so a second door onto the
+ * same list cost a control and taught two paths to one place. The idle placeholder names
+ * the surviving one.
+ *
+ * Three of the toolbar's menus (mode / model+effort / usage) are absolutely-positioned
+ * children of `.chat-cmp` under `useAnchoredMenu`, not `Popover`s — they are full-card-width
+ * panels that line up with the composer's edges. The Attach menu stays a `Popover`: it is a
+ * short list that clamps to its trigger. See ComposerMenus.tsx and useAnchoredMenu.ts.
  *
  * ── Parity with the terminal's readline (07-26) ─────────────────────────────────────
  * Two things the terminal pane gets free from the CLI's own readline, which a headless chat
@@ -102,7 +117,9 @@ function PlusIcon() {
 
 export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
-  quote, onClearQuote, onOpenTaskPicker, permissionMode, onPermissionModeChange, onSignIn,
+  quote, onClearQuote, onOpenTaskPicker, permissionMode, projectPermissionMode,
+  onPermissionModeChange, onSignIn,
+  mode = DEFAULT_CHAT_MODE, onModeChange, onSetModelDefault, shelved = false,
 }: {
   session: ChatSession;
   model: string;
@@ -112,10 +129,29 @@ export function Composer({
   onEffortChange: (level: string) => void;
   busy: boolean;
   connected: boolean;
-  /** The REMEMBERED permission-mode default — rendered as the toolbar's leading `bypass`
-   *  checkbox-dropdown (owner reference 07-25 moved it here from the pane's top-right
-   *  corner). Owned by `ChatPane`; this composer only renders it and reports a change. */
+  /**
+   * THIS SESSION's permission mode — what the running `claude` process is actually under, not
+   * the project's remembered default for the NEXT one.
+   *
+   * The distinction is the whole reason this doc changed: a handoff-spawned session is forced
+   * to `auto` even inside a project whose remembered default is `bypass`, so rendering the
+   * remembered value would print "bypass" over a process running `--permission-mode auto`.
+   * A security indicator that can disagree with the process is worse than no indicator.
+   * `ChatPane` owns the resolution (the CLI's own `conv.permissionMode`, falling back to
+   * `session.bypass`); this composer renders what it is handed, verbatim, and reports a
+   * change.
+   */
   permissionMode: 'auto' | 'bypass';
+  /**
+   * The PROJECT's remembered permission default — what `onPermissionModeChange` actually
+   * writes, as opposed to what `permissionMode` above DISPLAYS.
+   *
+   * Forwarded straight to `ModeMenu`, which names both scopes in its note (see its prop doc).
+   * This composer holds the two apart rather than merging them: they answer different
+   * questions, and the whole reason the indicator is trustworthy is that it shows the session
+   * rather than the default.
+   */
+  projectPermissionMode?: 'auto' | 'bypass';
   onPermissionModeChange: (mode: 'auto' | 'bypass') => void;
   /** The quoted-reply text (state 11's ↩ Quote-reply), or `null` when nothing is queued.
    *  Owned by the orchestrator (`ChatPane`, wave 4) — this composer only renders/consumes it. */
@@ -131,6 +167,34 @@ export function Composer({
    *  with "isn't available in this environment", so sending them would spend a turn to be told
    *  nothing. The handler opens an interactive terminal Claude tab that CAN run the flow. */
   onSignIn: () => void;
+  /**
+   * How this conversation's agent is briefed to WORK (plain / plan / develop). OPTIONAL with a
+   * default so this file compiles and renders the moment it lands: `ChatPane` wires the real
+   * value a wave later, and until it does the trigger reads "Basic" — which is exactly what an
+   * unwired session is running.
+   */
+  mode?: ChatMode;
+  /** Inert by default for the same reason — see `mode`. */
+  onModeChange?: (mode: ChatMode) => void;
+  /**
+   * OVERRIDE for "Set as default" — not the thing that makes the button work.
+   *
+   * The write is SELF-CONTAINED here: `saveModelDefault` below persists `chatDefaultModel` /
+   * `chatDefaultEffort` to `~/.dreamcontext/agent-ui.json` via `patchAgentSettings`, because
+   * this component already holds both values the write needs and the settings module is a
+   * plain import — routing it through the pane would add a hop carrying no decision. So the
+   * footer is ALWAYS rendered and the default is ALWAYS persisted; no caller supplies this
+   * prop today and none needs to.
+   *
+   * Pass it only to do something ELSE with the gesture (write somewhere other than the
+   * settings blob, confirm first). Doing so REPLACES the built-in write — it does not run
+   * alongside it. NOTE: `ModelMenu` hides its footer when given no `onSetDefault`, but that
+   * arm is unreachable from here — this composer always hands it `saveModelDefault`.
+   */
+  onSetModelDefault?: () => void;
+  /** The pinned shelf has an open row docked to this card's top edge, so the card squares its
+   *  top corners and the two read as one object. Off until the shelf exists. */
+  shelved?: boolean;
 }) {
   // Which project a pasted image is uploaded into. From THIS subtree, never a module global:
   // with several projects live in one window the bytes would otherwise land in the temp dir of
@@ -278,10 +342,6 @@ export function Composer({
     if (addedImage) e.preventDefault(); // don't also paste raw image bytes as garbage text
   };
 
-  // ── Skill chip (state 8) — reuses the terminal's SkillBrowser; picking one sets an
-  //    accent chip instead of splicing text into the draft (see file header note). ────
-  const [skillChip, setSkillChip] = useState<string | null>(null);
-
   // ── Slash-command autocomplete ───────────────────────────────────────────────────
   // Typing `/` opens the same menu the CLI's own TUI offers, from the SAME list: the
   // command names `system:init` reported for this session (built-ins + this project's
@@ -372,8 +432,8 @@ export function Composer({
   // Every input that can change how many lines the draft occupies, or how much of the box
   // the chips have taken: typing/paste (`draft`), an external `sendText` or a rewind prefill
   // (also `draft`, via the draftEpoch adoption above), submit (draft → ''), and the quote /
-  // skill / attachment rows appearing or disappearing.
-  useLayoutEffect(() => { resize(); }, [resize, draft, draggedH, quote, skillChip, attachments]);
+  // attachment rows appearing or disappearing.
+  useLayoutEffect(() => { resize(); }, [resize, draft, draggedH, quote, attachments]);
 
   // Width changes rewrap the text (so the line COUNT moves without the draft changing) and
   // height changes move the ceiling — neither is a React render. Guarded on the observed box
@@ -439,6 +499,13 @@ export function Composer({
   // `total_cost_usd` off the result frame is already cumulative for the conversation.
   const costUsd = lastResult?.costUsd ?? stats?.costUsd ?? null;
 
+  // The ACCOUNT's 5-hour and weekly caps, stacked under the context bar in the usage popover.
+  // One 60s poll shared by every pane (see useUsageLimits); `usageLimits` drops any cap whose
+  // source is missing, stale or describing a window that has already rolled over — so an
+  // absent cap draws NO bar rather than an empty one.
+  const usageRes = useUsageLimits(connected).data ?? null;
+  const { limits: usageBars, staleAsOf } = usageLimits(ctx, usageRes, Date.now());
+
   const runCompact = () => {
     if (!connected) return;
     session.send('/compact');
@@ -453,13 +520,13 @@ export function Composer({
   const sendableAttachments = attachments.filter((a) => !!a.path);
   const uploadingCount = attachments.filter((a) => a.uploading).length;
   const hasSendableContent = !!draft.trim() || sendableAttachments.length > 0
-    || uploadingCount > 0 || !!skillChip;
+    || uploadingCount > 0;
 
   /** Everything `commit` builds the message from, re-read AFTER the await below — this
    *  render's closure would be stale by then (the user keeps typing; the turn can flip
    *  busy) and the message has to be the one that was actually in the box. */
-  const liveRef = useRef({ draft, busy, connected, quote, skillChip });
-  liveRef.current = { draft, busy, connected, quote, skillChip };
+  const liveRef = useRef({ draft, busy, connected, quote });
+  liveRef.current = { draft, busy, connected, quote };
   /** Guards the window between "⏎ pressed" and "upload settled" against a second submit. */
   const sendingRef = useRef(false);
   const [awaitingUpload, setAwaitingUpload] = useState(false);
@@ -469,13 +536,12 @@ export function Composer({
   type SubmitMode = 'auto' | 'queue';
 
   const commit = (mode: SubmitMode) => {
-    const { draft: text, busy: isBusy, connected: isConnected, quote: liveQuote, skillChip: skill } = liveRef.current;
+    const { draft: text, busy: isBusy, connected: isConnected, quote: liveQuote } = liveRef.current;
     if (!isConnected) return;
     const pathsText = attachmentsRef.current.filter((a) => !!a.path)
       .map((a) => quotePath(a.path ?? '')).join(' ');
     const bodyText = pathsText ? (text.trim() ? `${text.trim()} ${pathsText}` : pathsText) : text.trim();
-    const withSkill = skill ? `${skill}${bodyText}` : bodyText;
-    const message = liveQuote ? `> ${liveQuote}\n\n${withSkill}` : withSkill;
+    const message = liveQuote ? `> ${liveQuote}\n\n${bodyText}` : bodyText;
     if (!message.trim()) return;
 
     // `/login` is the one command this surface must not forward. The headless engine replies
@@ -515,7 +581,6 @@ export function Composer({
     });
     attachmentsRef.current = kept;
     setAttachments(kept);
-    setSkillChip(null);
     onClearQuote();
   };
 
@@ -540,6 +605,43 @@ export function Composer({
   const disabled = !connected;
   const modelLabel = modelLabelFor(modelConfig, model);
   const effortValue = effort || modelConfig.defaultEffort;
+  const modeRow = chatModeRow(mode);
+
+  // ── Toolbar menus (mode / model+effort / usage) ──────────────────────────────────
+  // One open at a time, absolutely positioned inside `.chat-cmp` and opening upward — the
+  // same escape `.chat-cmp-slash` makes from the card's `overflow: hidden`. See
+  // useAnchoredMenu.ts for why these are not `Popover`s (the Attach menu still is: it clamps
+  // to its trigger rather than spanning the card).
+  const menu = useAnchoredMenu();
+  // "Saved as default" is a receipt, so it is only ever shown for a write that HAPPENED. Any
+  // subsequent model/effort change clears it: a receipt next to a value you have since
+  // changed is a false one.
+  //
+  // The write lands in `~/.dreamcontext/agent-ui.json` via `patchAgentSettings` — app-global,
+  // like every other surface preference in that blob, and read back by the next chat spawn.
+  // Done HERE rather than handed up as a prop because this component holds both values the
+  // write needs and the settings module is a plain import; routing it through the pane would
+  // add a hop that carries no decision. `onSetModelDefault` stays as an override seam for a
+  // caller that needs to do something else with it.
+  const [savedDefault, setSavedDefault] = useState(false);
+  const saveModelDefault = () => {
+    if (onSetModelDefault) onSetModelDefault();
+    else patchAgentSettings({ chatDefaultModel: model, chatDefaultEffort: effortValue });
+    setSavedDefault(true);
+  };
+
+  // The gauge, as a ring. `ctx.pct` drives an arc over a 6.5px-radius circle; the full
+  // reading stays reachable as the button's title (a hover) and as `aria-valuetext` (a
+  // screen reader) — demoted, never deleted.
+  const RING_R = 6.5;
+  const RING_C = 2 * Math.PI * RING_R;
+  const isTight = !!ctx && ctx.pct >= CONTEXT_TIGHT_PCT;
+  const ctxReading = ctx
+    ? `Context window ${ctx.pct}% — ${fmtTokens(ctx.used)} of ${fmtTokens(ctx.limit)} used, ${fmtTokens(Math.max(0, ctx.limit - ctx.used))} free`
+    : 'Session usage';
+  // Nothing found on ANY of the three readings means there is nothing behind the button, so
+  // it isn't drawn. An empty popover is worse than an absent one.
+  const hasUsage = usageBars.length > 0 || costUsd != null;
 
   return (
     <div className="chat-cmp" ref={rootRef}>
@@ -567,7 +669,41 @@ export function Composer({
         </div>
       )}
 
-      <div className="chat-cmp-card">
+      {/* The toolbar's three menus. Siblings of the CARD, not children: the card clips its own
+          overflow, and these open upward out of it (see useAnchoredMenu.ts). */}
+      {menu.open === 'mode' && (
+        <div ref={menu.menuRef}>
+          <ModeMenu
+            mode={mode}
+            onModeChange={(m) => onModeChange?.(m)}
+            permission={permissionMode}
+            projectPermission={projectPermissionMode}
+            onPermissionChange={onPermissionModeChange}
+            close={menu.close}
+          />
+        </div>
+      )}
+      {menu.open === 'model' && (
+        <div ref={menu.menuRef}>
+          <ModelMenu
+            config={modelConfig}
+            model={model}
+            effort={effortValue}
+            onModelChange={(id) => { onModelChange(id); setSavedDefault(false); }}
+            onEffortChange={(lvl) => { onEffortChange(lvl); setSavedDefault(false); }}
+            onSetDefault={saveModelDefault}
+            savedDefault={savedDefault}
+            close={menu.close}
+          />
+        </div>
+      )}
+      {menu.open === 'usage' && (
+        <div ref={menu.menuRef}>
+          <UsageMenu limits={usageBars} staleAsOf={staleAsOf} costUsd={costUsd} />
+        </div>
+      )}
+
+      <div className={`chat-cmp-card${shelved ? ' is-shelved' : ''}`}>
       <div
         className="chat-cmp-handle"
         role="separator"
@@ -595,14 +731,6 @@ export function Composer({
               <span className="chat-cmp-quote-text">{truncateQuote(quote)}</span>
             </div>
             <button type="button" className="chat-cmp-chip-x" aria-label="Cancel reply" onClick={onClearQuote}>✕</button>
-          </div>
-        )}
-
-        {skillChip && (
-          <div className="chat-cmp-skillchip">
-            <span aria-hidden>✦</span>
-            <span className="chat-cmp-skillchip-label">{skillChip.trim()}</span>
-            <button type="button" className="chat-cmp-chip-x" aria-label="Remove skill" onClick={() => setSkillChip(null)}>✕</button>
           </div>
         )}
 
@@ -637,7 +765,11 @@ export function Composer({
           <textarea
             ref={taRef}
             className="chat-cmp-input"
-            placeholder={!connected ? 'Connecting…' : busy ? 'Claude is working — ⏎ queues your next message…' : 'Message Claude…'}
+            // The idle arm names the slash path, which is where skills now live: the Skills
+            // popover is gone and the `/` menu (already here, already listing every command
+            // this session reported) is the whole affordance. Only the IDLE arm — the other
+            // two are saying something more urgent than where to find a feature.
+            placeholder={!connected ? 'Connecting…' : busy ? 'Claude is working — ⏎ queues your next message…' : 'Message Claude…   ·   "/" for skills'}
             value={draft}
             disabled={disabled}
             onChange={(e) => {
@@ -704,21 +836,36 @@ export function Composer({
       </div>
 
       <div className="chat-cmp-toolbar">
-        {/* Leading control: is this conversation on a leash? Everything after it is about
-            composing the message; this one is about what Claude may do with it. */}
-        <PermissionModeMenu mode={permissionMode} onChange={onPermissionModeChange} />
+        {/* Leading control, and it answers two questions in one word each: how is this agent
+            briefed to WORK, and what may it do without asking. Everything after it is about
+            composing the message; this is about who you are talking to. */}
+        <div className="chat-cmp-perm-wrap">
+          <button
+            type="button"
+            {...{ [MENU_TRIGGER_ATTR]: '' }}
+            className="chat-cmp-modeltrigger"
+            onClick={() => menu.toggle('mode')}
+            title={`Mode: ${modeRow.name} · Permission: ${permissionMode}`}
+            aria-haspopup="menu"
+            aria-expanded={menu.open === 'mode'}
+          >
+            <span className="chat-cmp-modeltrigger-model">{modeRow.name}</span>
+            {/* THIS SESSION's permission, handed down already resolved — see the prop's doc. */}
+            <span className="chat-cmp-modeltrigger-effort">{permissionMode}</span>
+            <span className="chat-cmp-caret" aria-hidden>▾</span>
+          </button>
+        </div>
 
         {/* One control for every kind of attachment — files, folders and (once a picker
-            exists) a task. It is LABELLED like its Skills neighbour rather than left as a
-            bare `+`: both open a menu, so both carry a glyph, a word and a caret; an
-            unlabelled icon between two labelled ones just reads as a loose part. */}
+            exists) a task. A bare `+` now that its labelled Skills neighbour is gone: it is
+            the only icon control on this side of the row, so there is nothing for it to read
+            as a loose part OF. Still a `Popover` (not one of the three panels above): its
+            menu is a short list that clamps to its trigger rather than spanning the card. */}
         <Popover
           align="left"
           trigger={(open, toggle) => (
-            <button type="button" className={`chat-cmp-btn-ghost${open ? ' open' : ''}`} onClick={toggle} title="Attach files, folders or a task" aria-label="Attach" aria-haspopup="menu" aria-expanded={open}>
-              {/* The word and the caret are wrapped, not bare text: below the icon-only
-                  breakpoint both are dropped and the `title` carries the label instead. */}
-              <PlusIcon /> <span className="chat-cmp-btn-label">Attach</span> <span className="chat-cmp-caret" aria-hidden>▾</span>
+            <button type="button" className="chat-cmp-iconbtn" onClick={toggle} title="Attach files, folders or a task" aria-label="Attach" aria-haspopup="menu" aria-expanded={open}>
+              <PlusIcon />
             </button>
           )}
         >
@@ -731,83 +878,81 @@ export function Composer({
           )}
         </Popover>
 
-        <Popover
-          align="left"
-          trigger={(open, toggle) => (
-            <button type="button" className={`chat-cmp-btn-ghost${open ? ' open' : ''}`} onClick={toggle} title="Skills" aria-label="Skills" aria-haspopup="menu" aria-expanded={open}>
-              <span className="chat-cmp-spark" aria-hidden>✦</span> <span className="chat-cmp-btn-label">Skills</span> <span className="chat-cmp-caret" aria-hidden>▾</span>
-            </button>
-          )}
-        >
-          {(close) => (
-            <SkillBrowser
-              onInsert={(snippet) => { setSkillChip(snippet); taRef.current?.focus(); }}
-              close={close}
-            />
-          )}
-        </Popover>
-
-        {/* Its own class, not a bare `.chat-cmp-spacer`: the narrow stages collapse THIS one
-            (and only this one) to left-dock the gauge against the controls. */}
-        <div className="chat-cmp-spacer chat-cmp-spacer-lead" />
-
-        {/* Context + cost, in the toolbar's own dead space rather than on a line of its own:
-            it belongs to the same strip as the model and effort it depends on, and it costs
-            the transcript no height. It is also the row's only elastic child — as the pane
-            narrows it sheds detail in stages down to a bare gauge, so the toolbar stays ONE
-            row instead of wrapping into a lopsided two-line block. See ContextReadout.tsx. */}
-        <ContextReadout ctx={ctx} costUsd={costUsd} onCompact={runCompact} compactEnabled={connected} />
-
         <div className="chat-cmp-spacer" />
 
-        {/* Model, effort and Send travel together: on a narrow pane the toolbar wraps, and
-            this keeps the send action with its two modifiers instead of orphaning it. */}
-        <div className="chat-cmp-toolbar-right">
-        <Popover
-          trigger={(open, toggle) => (
-            <button type="button" className={`chat-cmp-pill${open ? ' open' : ''}`} disabled={!connected} onClick={toggle} title="Model — switches live (applies from the next turn)" aria-haspopup="menu" aria-expanded={open}>
-              <span className="chat-cmp-pill-label">{modelLabel}</span>
-            </button>
-          )}
-        >
-          {(close) => (
-            <div className="chat-cmp-menu-list">
-              {modelConfig.models.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={m.id === model}
-                  className={`chat-cmp-menu-row${m.id === model ? ' on' : ''}`}
-                  onClick={() => { onModelChange(m.id); close(); }}
-                >{m.label}</button>
-              ))}
-            </div>
-          )}
-        </Popover>
+        {/* The gauge, the two modifiers and Send travel together and never shrink: losing the
+            Send button to a squeeze would be the single worst outcome of a narrow pane. */}
+        <div className="chat-cmp-right">
+        {/* The context meter, demoted to a ring. Its resting state is one mark — the full
+            `X / Y · N%` is a hover away (`title`) and a click away (the usage popover), and
+            `aria-valuetext` carries it for a screen reader. It ESCALATES on its own: past
+            CONTEXT_TIGHT_PCT the ring goes amber and `/compact` appears beside it without
+            hover or focus, because at that point the action is the point. */}
+        {hasUsage && (
+          <button
+            type="button"
+            {...{ [MENU_TRIGGER_ATTR]: '' }}
+            className="chat-cmp-usagebtn"
+            data-tight={isTight}
+            onClick={() => menu.toggle('usage')}
+            title={ctxReading}
+            aria-label={ctxReading}
+            aria-haspopup="menu"
+            aria-expanded={menu.open === 'usage'}
+          >
+            <svg
+              width="16" height="16" viewBox="0 0 16 16" fill="none"
+              role={ctx ? 'meter' : undefined}
+              aria-valuemin={ctx ? 0 : undefined}
+              aria-valuemax={ctx ? 100 : undefined}
+              aria-valuenow={ctx ? ctx.pct : undefined}
+              aria-valuetext={ctx ? ctxReading : undefined}
+              aria-hidden={ctx ? undefined : true}
+            >
+              <circle className="chat-cmp-usagering-track" cx="8" cy="8" r={RING_R} strokeWidth="2" />
+              {ctx && (
+                <circle
+                  className="chat-cmp-usagering-fill"
+                  cx="8" cy="8" r={RING_R} strokeWidth="2" strokeLinecap="round"
+                  transform="rotate(-90 8 8)"
+                  strokeDasharray={`${(RING_C * Math.min(100, ctx.pct) / 100).toFixed(2)} ${RING_C.toFixed(2)}`}
+                />
+              )}
+            </svg>
+          </button>
+        )}
 
-        <Popover
-          trigger={(open, toggle) => (
-            <button type="button" className={`chat-cmp-pill${open ? ' open' : ''}`} disabled={!connected} onClick={toggle} title="Effort — switches live (applies from the next turn)" aria-haspopup="menu" aria-expanded={open}>
-              <span className="chat-cmp-pill-label">{effortLabel(effortValue)}</span>
-            </button>
-          )}
-        >
-          {(close) => (
-            <div className="chat-cmp-menu-list">
-              {modelConfig.efforts.map((lvl) => (
-                <button
-                  key={lvl}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={lvl === effortValue}
-                  className={`chat-cmp-menu-row${lvl === effortValue ? ' on' : ''}`}
-                  onClick={() => { onEffortChange(lvl); close(); }}
-                >{effortLabel(lvl)}</button>
-              ))}
-            </div>
-          )}
-        </Popover>
+        {isTight && (
+          <button
+            type="button"
+            className="chat-cmp-compact-btn"
+            onClick={runCompact}
+            disabled={!connected}
+            title="Ask Claude to compact the conversation"
+          >
+            <span aria-hidden>⚠</span>
+            <span className="chat-cmp-compact-label">/compact</span>
+          </button>
+        )}
+
+        {/* Model and effort as ONE trigger: they are read together ("Opus, Xhigh") and set
+            together, and two adjacent text pills for one decision was half this row's width. */}
+        <div className="chat-cmp-model-wrap">
+          <button
+            type="button"
+            {...{ [MENU_TRIGGER_ATTR]: '' }}
+            className="chat-cmp-modeltrigger"
+            disabled={!connected}
+            onClick={() => menu.toggle('model')}
+            title="Model and reasoning effort — switch applies from the next turn"
+            aria-haspopup="menu"
+            aria-expanded={menu.open === 'model'}
+          >
+            <span className="chat-cmp-modeltrigger-model">{modelLabel}</span>
+            <span className="chat-cmp-modeltrigger-effort">{effortLabel(effortValue)}</span>
+            <span className="chat-cmp-caret" aria-hidden>▾</span>
+          </button>
+        </div>
 
         {/* Round icon buttons, sized to sit level with the model/effort text beside them —
             a label would only repeat what ⏎ already does.
@@ -820,14 +965,14 @@ export function Composer({
             Both text buttons appear only once there is something to send, so an idle-handed
             Stop stays the single obvious control. */}
         {busy && (
-          <button type="button" className="chat-cmp-btn chat-cmp-stop" title="Interrupt the in-flight turn (⌃C)" aria-label="Stop" onClick={() => session.interrupt()}>
+          <button type="button" className="chat-cmp-send is-stop" title="Interrupt the in-flight turn (⌃C)" aria-label="Stop" onClick={() => session.interrupt()}>
             <span aria-hidden>■</span>
           </button>
         )}
         {busy && hasSendableContent && (
           <button
             type="button"
-            className="chat-cmp-btn chat-cmp-queue"
+            className="chat-cmp-send is-queue"
             disabled={!connected || awaitingUpload}
             onClick={() => submit('queue')}
             title="Queue for the next turn — held above, editable until it goes"
@@ -841,7 +986,9 @@ export function Composer({
         {(!busy || hasSendableContent) && (
           <button
             type="button"
-            className="chat-cmp-btn chat-cmp-send"
+            // Empty-handed it is an outline; with something to send it fills in — "can I send
+            // this?" answered by the button's weight rather than by a disabled label.
+            className={`chat-cmp-send${!connected || !hasSendableContent || awaitingUpload ? '' : ' is-enabled'}`}
             // Held (not dropped) while a pasted image finishes attaching — `submit` is
             // already waiting on it, so a second press would only be a double-send.
             disabled={!connected || !hasSendableContent || awaitingUpload}

@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
 import type { Capabilities } from '../components/sleepy/agentSession';
-import { FALLBACK_MODEL_CONFIG, type ModelConfig, type SessionStats } from '../lib/agentComposer';
+import {
+  FALLBACK_MODEL_CONFIG, type ModelConfig, type SessionStats, type UsageLimitsResponse,
+} from '../lib/agentComposer';
 import type { GoalLiveResponse } from '../lib/goalLive';
 import type { CouncilLiveResponse } from '../lib/councilLive';
 
@@ -85,6 +87,120 @@ export function useAgentSessionStats(claudeId: string | undefined, enabled: bool
     staleTime: 4_000,
     retry: false,
     placeholderData: EMPTY_STATS,
+  });
+}
+
+/** Nothing found — see `usageLimits`: an absent cap draws no bar, never an empty one. */
+const NO_USAGE_LIMITS: UsageLimitsResponse = { limits: [], fetchedAtMs: null };
+
+/**
+ * The ACCOUNT's 5-hour and weekly caps (`GET /api/agent/usage-limits`), for the composer's
+ * usage popover.
+ *
+ * Deliberately NOT folded into `useAgentSessionStats`, and the difference is the whole
+ * design: session-stats is per-conversation and polls every 5s, while these numbers belong
+ * to the account, are shared by every pane in every project, and only move as fast as Claude
+ * Code refreshes its own cache. Keying by `claudeId` at the 5s cadence would re-read the same
+ * file N times a tick for N open panes and learn nothing new.
+ *
+ * The query key carries no id for exactly that reason: every pane's popover subscribes to ONE
+ * cache entry, so concurrent fetches dedupe and the 60s timer is shared rather than
+ * per-observer. Falls back to an empty list, which the popover renders as no bars at all.
+ */
+export function useUsageLimits(enabled: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agent-usage-limits'],
+    queryFn: () => api.get<UsageLimitsResponse>('/agent/usage-limits'),
+    enabled,
+    refetchInterval: enabled ? 60_000 : false,
+    staleTime: 55_000,
+    retry: false,
+    placeholderData: NO_USAGE_LIMITS,
+  });
+}
+
+// ─── The pinned shelf's two reads ────────────────────────────────────────────────────
+//
+// Both shapes are MIRRORED from the server (`src/server/routes/agent-shelf.ts` for
+// TaskProgress, `src/lib/session-facts.ts` for SessionFacts) — the same convention
+// `SessionStats` and `UsageLimitsResponse` already follow in `lib/agentComposer.ts`. Change
+// one side, change the other; the route's own unit tests pin the server half.
+
+/** Why a run's progress could not simply be reported. Every non-`ok` state carries a
+ *  `notice`: the row degrades loudly, never into a blank or a NaN. */
+export type TaskProgressState = 'ok' | 'unknown-slug' | 'no-criteria' | 'all-done' | 'unreadable';
+
+export interface TaskProgress {
+  slug: string;
+  state: TaskProgressState;
+  /** 0-100 for `ok`/`all-done`; NULL for every degenerate state. */
+  percent: number | null;
+  done: number;
+  total: number;
+  /** The first unticked criterion — what is in flight. */
+  now: string | null;
+  /** The newest task-changelog bullet — what was just done. */
+  last: string | null;
+  /** The task file's mtime in ms. */
+  updatedAt: number;
+  notice: string | null;
+}
+
+export interface SessionFacts {
+  branch: string | null;
+  worktree: boolean;
+  mainRoot: string | null;
+  worktreeAllowed: boolean;
+  /** False when git is unavailable or this is not a work tree — the shelf then shows no
+   *  branch chip at all rather than an empty one. */
+  isRepo: boolean;
+}
+
+const UNKNOWN_SESSION_FACTS: SessionFacts = {
+  branch: null, worktree: false, mainRoot: null, worktreeAllowed: false, isRepo: false,
+};
+
+/**
+ * A pinned run's progress, DERIVED FROM DISK (`GET /api/agent/task-progress?slug=…`).
+ *
+ * Polled at 4s while a progress row is on the shelf, because the whole promise of that row is
+ * that it tracks the task file as the run edits it — a frozen number would be the agent prose
+ * it replaced, only harder to distrust. `slug` is null whenever no run owns the row, which
+ * disables the query outright: an idle shelf costs nothing.
+ */
+export function useTaskProgress(slug: string | null, enabled: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agent-task-progress', slug],
+    queryFn: () => api.get<TaskProgress>(`/agent/task-progress?slug=${encodeURIComponent(slug!)}`),
+    enabled: enabled && !!slug,
+    refetchInterval: enabled && slug ? 4_000 : false,
+    staleTime: 3_000,
+    retry: false,
+  });
+}
+
+/**
+ * Which branch/worktree this project's checkout is on (`GET /api/agent/session-facts`), for
+ * the shelf's resting tag line.
+ *
+ * 15s, not 4s: a branch changes when a human switches it, which is orders of magnitude slower
+ * than a task file changes during a run. The query key carries no session id — these facts
+ * belong to the CHECKOUT, so every pane in this project subscribes to one cache entry and
+ * concurrent panes dedupe into a single request (the server memoises the `git` calls behind
+ * it for the same reason).
+ */
+export function useSessionFacts(enabled: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agent-session-facts'],
+    queryFn: () => api.get<SessionFacts>('/agent/session-facts'),
+    enabled,
+    refetchInterval: enabled ? 15_000 : false,
+    staleTime: 12_000,
+    retry: false,
+    placeholderData: UNKNOWN_SESSION_FACTS,
   });
 }
 

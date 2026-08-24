@@ -67,6 +67,24 @@ describe('CHAT_SURFACE_BRIEFING <-> dream-view parser lockstep', () => {
   it('the fence name itself is named in prose, not just shown in examples', () => {
     expect(CHAT_SURFACE_BRIEFING).toContain('dream-view');
   });
+
+  /**
+   * "Progress is DERIVED, never asserted" is the whole reason the user can trust that
+   * number, and the briefing is where an agent learns what to send. A `percent` shown in an
+   * example would teach exactly the habit `validateProgress` then has to punish — so the
+   * rule is pinned here rather than left to whoever next edits the prose.
+   */
+  it('no progress example ever shows a percent — it is derived, not asserted', () => {
+    const progress = examples
+      .map((json) => JSON.parse(json) as Record<string, unknown>)
+      .filter((v) => v.type === 'progress');
+    expect(progress.length, 'the briefing demonstrates no progress block at all').toBeGreaterThan(0);
+    for (const p of progress) {
+      for (const key of ['percent', 'pct', 'done', 'total']) {
+        expect(p[key], `a progress example carries "${key}"`).toBeUndefined();
+      }
+    }
+  });
 });
 
 /**

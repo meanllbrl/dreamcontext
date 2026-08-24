@@ -28,7 +28,9 @@
  *   • `==highlight==`       — `lib/markdownMark.ts` (the `marked` extension) + the bare `mark`
  *                             rule in `styles/global.css`
  *   • `dream-view`          — `lib/chatViewSpec.ts` (`parseViewBlock`, the schema + caps) and
- *                             `chat/ChatViews.tsx` (the chart/page/checklist renderer)
+ *                             `chat/ChatViews.tsx` (the chart/page/checklist renderer).
+ *                             `pin` and `progress` are hoisted OUT of the transcript onto the
+ *                             composer's shelf — `lib/shelfModel.ts` + `chat/PinShelf.tsx`
  * A capability named here that the view doesn't render is worse than one left unnamed: the
  * agent writes a promise the UI then breaks. Change one, change the other. Mechanically
  * pinned by `tests/unit/chat-surface-lockstep.test.ts`.
@@ -92,6 +94,21 @@ click of consent, then works the same).
   Always-on-top window for a procedure in ANOTHER app — user ticks/notes/attaches, Submit
   sends it back as one message. \`wants\`: \`note\`|\`file\`|\`secret\`; max 40 items, re-send the
   same \`id\` to update.
+
+- **A shelf on the composer** — facts and run progress, outside the transcript, never scrolling away.
+
+\`\`\`dream-view
+{"type":"pin","id":"dev","weight":"tag","facts":[{"label":":5173","url":"http://localhost:5173"}]}
+\`\`\`
+  \`weight\` is a REQUEST: \`tag\` (short label) or \`row\` (\`lede\`+\`detail\` the user opens); the
+  shelf may demote. Re-send the \`id\` to update. Branch/worktree are already there — pin what
+  only you know (a dev server; \`url\` is loopback-only). Max 6 facts.
+
+\`\`\`dream-view
+{"type":"progress","task":"my-task-slug"}
+\`\`\`
+  Percent is read live from that task's ticked criteria. Send the slug only — a percent you
+  send is ignored and drawn as a notice.
 
 Only name paths that exist — a wrong one renders as a dead card. At most ~4 buttons, and
 only when there is a real next step. Don't narrate the mechanism ("I'll add a button"),

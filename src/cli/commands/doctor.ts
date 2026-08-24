@@ -9,6 +9,7 @@ import { hasTaskOverride, loadTaskOverride } from '../../lib/overrides.js';
 import { listObjectives, getObjective, isSafeObjectiveSlug, isCalendarDate, OBJECTIVE_STATUSES } from '../../lib/objectives-store.js';
 import { auditFeatureLinks, reconcileFeatureLinks, type LinkAudit } from '../../lib/feature-links.js';
 import { buildRoadmapModel } from '../../lib/roadmap-model.js';
+import { auditObjectiveLinkLoss } from '../../lib/roadmap-link-audit.js';
 import { listVaults, type Vault } from '../../lib/vaults.js';
 import { dirname } from 'node:path';
 import { listInsights, isSafeInsightSlug, getInsight, readCache } from '../../lib/lab/store.js';
@@ -418,7 +419,7 @@ function checkOverrides(root: string): CheckResult[] {
  * overrides, dependency resolution + acyclicity, and that task `objectives:`
  * references resolve (surfaced via the roadmap builder's own warnings).
  */
-function checkObjectives(root: string): CheckResult[] {
+export function checkObjectives(root: string): CheckResult[] {
   const results: CheckResult[] = [];
   const objectives = listObjectives(root);
   let model: ReturnType<typeof buildRoadmapModel>;
@@ -480,6 +481,31 @@ function checkObjectives(root: string): CheckResult[] {
         supportedFixes: ['give the metric block a label and a numeric target different from the baseline', 'remove the metric block to let progress fall back to tasks'],
       });
     }
+  }
+
+  // LINK LOSS — `objectives:` lives in the gitignored `state/`, so a stripped
+  // link has no history to restore from; the committed board.md does. An
+  // objective that lost EVERY recorded link while its tasks still exist is the
+  // signature of a pull that dropped the local-only field (2026-07-27: 72 links
+  // in one command), not of a PO unlinking work.
+  for (const loss of auditObjectiveLinkLoss(root)) {
+    results.push({
+      name: 'Objectives',
+      status: 'warn',
+      message:
+        `Objective ${loss.objective}: all ${loss.tasks.length} task link(s) recorded in knowledge/roadmap/board.md are ` +
+        `gone from the task files, but the tasks still exist (${loss.tasks.slice(0, 3).join(', ')}` +
+        `${loss.tasks.length > 3 ? `, +${loss.tasks.length - 3} more` : ''}) — links may have been stripped. ` +
+        `Restore with \`dreamcontext tasks objectives <task> ${loss.objective}\`, then re-run \`dreamcontext roadmap\`.`,
+      code: 'doctor/objective-links-vanished',
+      subject: { objective: loss.objective, field: 'objectives' },
+      evidence: { tasks: loss.tasks },
+      supportedFixes: [
+        `re-link each task: dreamcontext tasks objectives <task> ${loss.objective}`,
+        'recover the previous mapping from git: git show HEAD:_dream_context/knowledge/roadmap/board.md',
+        'if the unlink was intentional, re-run `dreamcontext roadmap` to refresh the board',
+      ],
+    });
   }
 
   if (results.length === 0) {

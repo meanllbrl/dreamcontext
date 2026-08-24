@@ -92,3 +92,40 @@ export async function preparePrompt(vault: string | null, prompt: string): Promi
   if (promptFitsInline(prompt)) return { inline: prompt, token: '' };
   return { inline: '', token: await mintPromptToken(vault, prompt) };
 }
+
+// ── Plan → Develop hand-off ──────────────────────────────────────────────────────────
+
+/**
+ * The prompt a Plan→Develop hand-off seeds its fresh Develop session with.
+ *
+ * The planning half ends by creating a dreamcontext task and offering a `develop` button
+ * (see `chat/chatActions.ts`); clicking it opens a NEW chat in Develop mode rather than
+ * clearing the plan session, so the planning transcript stays auditable. This function is
+ * that new session's first message — the ONLY thing it inherits, since it starts with an
+ * empty context. So the prompt has to do three jobs: point at the task, make the agent prove
+ * it read the task before it writes code, and forbid re-planning (the plan is already
+ * reviewed and agreed; re-deriving it is how a hand-off quietly becomes a second planning
+ * session).
+ *
+ * PURE — no network, no module state. `taskSlug` is expected to have come through
+ * `toAction`'s `SAFE_SLUG_RE` gate; nothing is escaped here because a prompt string needs no
+ * escaping, and the two consumers that DO resolve the slug to a file gate it themselves (the
+ * server's task routes via `isSafeTaskSlug`, and the agent via the CLI).
+ *
+ * Written to survive being flattened: the server's `sanitizePrompt` collapses every newline
+ * and tab to a space before the text reaches `claude`, so this reads as one paragraph either
+ * way — no line structure is load-bearing.
+ */
+export function developKickoffPrompt(taskSlug: string): string {
+  return [
+    `You are picking up the task \`${taskSlug}\` from the planning session that just created it.`,
+    `First read its document at \`_dream_context/state/${taskSlug}.md\` end to end.`,
+    'Then, before you write any code, restate the plan back to me in your own words — the goal,',
+    'the waves, and what each acceptance criterion will actually take.',
+    'Then implement it wave by wave, strictly against those acceptance criteria: build what they',
+    'require, show the evidence, tick each criterion only when it is demonstrably true, and log',
+    `progress with \`dreamcontext tasks log ${taskSlug} "..."\` as you go.`,
+    'Do not re-plan and do not widen the scope — the plan is already reviewed and agreed.',
+    'If you find the plan is genuinely wrong, stop and say so rather than quietly redesigning it.',
+  ].join(' ');
+}

@@ -1,0 +1,404 @@
+/* The pinned shelf — translated from the design import
+   (`_dream_context/workspace/design-import/composer.design.css`, §Pinned shelf) with three
+   deliberate departures, each recorded where it happens:
+
+     • `--font-text` → `--font-family-text`. The design's stylesheet is self-contained; this
+       repo's token is named differently and carries the same value. It is the ONLY token that
+       needed mapping — every other `--color-*`, `--radius-*` and `--transition-*` the design
+       uses already exists verbatim in `styles/tokens.css`. Map, never duplicate.
+     • `.pin-pop*` is OMITTED. The design drew the progress detail twice — a popover and an
+       in-place panel — and said "pick one". The in-place variant is the chosen one, because
+       it is the only one that keeps the tag line and the composer where they are.
+     • `.pin-pane` / `.pin-dock` / `.pin-composer` / `.pin-frame` are OMITTED. Those are the
+       design doc's own harness — a stand-in pane and a replica composer so the seam could be
+       drawn. Here the real `.chat-pane` and `.chat-cmp-card` play those parts.
+
+   The seam: `.pin-shell.has-rows` rounds its TOP corners and drops its bottom border while
+   `.chat-cmp-card.is-shelved` (composer.css) squares its top ones — so an open shelf and the
+   composer read as one object rather than two stacked cards. At rest there is no border at
+   all: the resting state is a bare tag line, not a card. */
+
+.pin-shelf {
+  flex: 0 0 auto;
+  min-width: 0;
+  /* Matches `.chat-cmp`'s own horizontal padding (composer.css) so the shell's edges land
+     exactly on the composer card's — the seam is only convincing if it is pixel-aligned. */
+  padding: 0 12px;
+  background: var(--color-bg);
+  font-family: var(--font-family-text);
+  /* Its OWN size container, not the pane's: this shelf sits beside the composer, which is
+     portaled into a detached per-session container, so a query resolved against an ancestor
+     would silently fall through to the widest layout. `inline-size` contains the width axis
+     only — the shell's height is content-driven and must stay that way. */
+  container: pinshelf / inline-size;
+}
+
+.pin-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.pin-shell.has-rows {
+  border: 1px solid var(--color-border);
+  border-bottom: none;
+  border-radius: var(--radius-lg, 12px) var(--radius-lg, 12px) 0 0;
+  background: var(--color-bg-secondary);
+}
+
+/* ── Rows ──────────────────────────────────────────────────────────────────────────── */
+
+.pin-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 9px;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.pin-row + .pin-row { border-top: 1px solid var(--color-border); }
+.pin-shell.has-rows > .pin-tags { border-top: 1px solid var(--color-border); }
+
+/* The progress track is the row's own bottom edge rather than a bar inside it: the row is
+   already a horizontal band, and a second one inside would read as two things. */
+.pin-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--color-border);
+}
+.pin-track-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width var(--transition-normal, 240ms) ease;
+}
+
+.pin-pct {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+}
+.pin-count {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.pin-dot { flex: 0 0 auto; color: var(--color-border-hover); font-size: 10px; }
+.pin-now {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pin-now-key { color: var(--color-text-tertiary); }
+
+/* ── The lede button (the whole row is the affordance) ─────────────────────────────── */
+
+.pin-lede {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  font: inherit;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.pin-lede:disabled { cursor: default; }
+.pin-lede:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.pin-caret {
+  flex: 0 0 auto;
+  width: 11px;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--color-text-tertiary);
+}
+.pin-title {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+.pin-ledetext {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* "The shelf cut this line" — and it only ever appears when that is true. An author-written
+   lede gets the `⌄` and no `…`, so a clamped pin is never presented as a complete one. */
+.pin-clamp {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 4px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.06em;
+}
+/* "There is more behind it" — on every long pin, clamped or not. */
+.pin-open-hint { flex: 0 0 auto; font-size: 10px; color: var(--color-accent); }
+
+/* ── The opened detail ─────────────────────────────────────────────────────────────── */
+
+.pin-open { background: color-mix(in srgb, var(--color-bg-tertiary) 38%, transparent); }
+.pin-shell.has-rows > .pin-open:first-child { border-radius: var(--radius-lg, 12px) var(--radius-lg, 12px) 0 0; }
+
+/* Capped at 40% of the PANE, measured in JS and written to `--pin-detail-max` by PinShelf's
+   ResizeObserver (`cqh` has no size container to resolve against here). Past the cap it
+   scrolls INSIDE itself, so a user-opened detail can pass the two-row ceiling — the ceiling
+   binds what the agent can force, not what the user opens — without ever pushing the tag
+   line or the composer off their pixel. The `34vh` fallback is the design's own value and is
+   only ever on screen before the first measurement. */
+.pin-body {
+  padding: 0 34px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  text-wrap: pretty;
+  max-height: var(--pin-detail-max, 34vh);
+  overflow-y: auto;
+}
+.pin-body .markdown-preview { font-size: 12px; }
+.pin-notice {
+  margin: 0 0 6px;
+  color: var(--color-warning);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+/* Progress detail rows. */
+.pin-task { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; }
+.pin-task-glyph { flex: 0 0 auto; width: 11px; font-size: 9px; line-height: 1.6; color: var(--color-text-tertiary); }
+.pin-task-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+.pin-task-meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 12px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.pin-task.is-done .pin-task-name { color: var(--color-text-tertiary); }
+.pin-task.is-now .pin-task-glyph { color: var(--color-accent); }
+.pin-task.is-now .pin-task-name { color: var(--color-text); font-weight: 500; }
+.pin-task.is-now .pin-task-meta { color: var(--color-accent); }
+
+/* ── The tag line — the resting state, and the row that never moves ────────────────── */
+
+.pin-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px 8px;
+  min-width: 0;
+  box-sizing: border-box;
+  /* WRAPS, and there is no fold. Owner call after live testing: a fact you have to press a
+     button to reveal is not a pinned fact, and the width measurement that decided when to
+     fold misfired at full width. Wrapping has no measurement to get wrong. The tag area is
+     the BOTTOM row of the shelf, so a second line grows downward into the composer's own
+     padding — it cannot displace a row above it, and the rows above it are the only thing
+     the ceiling was ever protecting. */
+  flex-wrap: wrap;
+  row-gap: 5px;
+  /* THE COMPOSER OUTRANKS THE TAG AREA. Wrapping is unbounded by nature, and measured at
+     470px an expanded detail plus ~29 tags pushed the composer 7px past the bottom of the
+     pane — a composer you cannot reach is worse than any tag you have to scroll to. So the
+     area is capped at its share of the MEASURED pane (written by the same observer that sets
+     `--pin-detail-max`) and scrolls inside itself past that.
+
+     This is NOT the fold coming back: every tag is rendered, none is `display:none`, there is
+     no count chip and no button to press. In the common case (one to three rows) the cap
+     never engages at all. */
+  max-height: var(--pin-tags-max, 25vh);
+  overflow-y: auto;
+}
+
+.pin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+}
+/* A state, not a value — so it reads as a label rather than as data. */
+.pin-chip.is-marker {
+  background: transparent;
+  border-color: var(--color-border);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-text);
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+/* The accent is spent exactly three times on this surface: the port chip, the progress fill,
+   and the open caret. Everything else is border, chip and text. */
+.pin-chip.is-link {
+  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
+  color: var(--color-accent);
+}
+.pin-chip.is-link:hover { background: color-mix(in srgb, var(--color-accent) 24%, transparent); }
+.pin-chip.is-demoted {
+  background: transparent;
+  border-color: var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-family: var(--font-family-text);
+  font-size: 11px;
+  gap: 6px;
+}
+.pin-chip.is-demoted:hover { border-color: var(--color-border-hover); color: var(--color-text); }
+
+/* The chip BOX is always a span; the hit area lives inside it. A link chip that was itself a
+   button could not also carry a dismiss `×` (nested buttons are invalid markup), so both
+   actions are real buttons within the one box and both are keyboard-reachable. */
+.pin-chip-open,
+.pin-chip-x {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.pin-chip-open { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.pin-chip-open:focus-visible,
+.pin-chip-x:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+.pin-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pin-chip-x {
+  margin-left: 1px;
+  margin-right: -3px;
+  padding: 0 3px;
+  font-family: var(--font-family-text);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+.pin-chip:hover .pin-chip-x,
+.pin-chip-x:focus-visible { opacity: 0.85; }
+
+.pin-x {
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.45;
+  cursor: pointer;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+.pin-x:hover { opacity: 1; background: var(--color-bg-tertiary); }
+.pin-x:focus-visible { opacity: 1; outline: 2px solid var(--color-accent); outline-offset: -2px; }
+
+/* ── The progress detail, as a popover over the conversation ───────────────────────────
+   Absolutely positioned against `.pin-shell`, so it takes the shelf NO height: opening it
+   cannot move the tag line or the composer, which is the property the in-place version could
+   not offer without paying for it in layout. `.pin-shell` is the positioning parent (and is
+   already a containing block anyway — `.pin-shelf`'s `container-type` applies layout
+   containment). Nothing here clips it: layout containment is not paint containment, so the
+   panel overhangs the shelf into the transcript exactly as drawn. */
+.pin-shell { position: relative; }
+
+.pin-pop {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  padding: 10px 14px 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  max-height: 34vh;
+  overflow-y: auto;
+  z-index: 5;
+}
+[data-theme='light'] .pin-pop { box-shadow: 0 12px 32px rgba(41, 45, 52, 0.14); }
+
+.pin-pop-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding-bottom: 8px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+/* The count is pushed to the right and the close button follows it — so `.pin-x`'s usual
+   `margin-left: auto` has to be neutralised or it would claim the space first. */
+.pin-pop-head .pin-count { margin-left: auto; }
+.pin-pop-head .pin-x { flex: 0 0 auto; margin-left: 0; }
+
+.pin-poplist { display: flex; flex-direction: column; }
+
+/* The worktree marker ships both spellings; the narrow stage decides which is on screen. */
+.pin-chip-glyph { display: none; }
+
+/* ── Narrow (≤470px) ───────────────────────────────────────────────────────────────
+   Expressed as a container query rather than the design's JS `is-narrow` prop: this is the
+   same idiom `composer.css` already uses for the toolbar's stages, and it needs no width
+   measured in JS to stay correct inside a split pane. */
+@container pinshelf (max-width: 470px) {
+  .pin-row { padding: 7px 10px 8px; gap: 6px; }
+  .pin-tags { padding: 6px 10px 7px; gap: 5px; }
+  .pin-body { padding: 0 10px 9px; }
+  /* The marker drops to its bracket glyph — the state survives, the eight characters don't. */
+  .pin-chip-glyph { display: inline-flex; }
+  .pin-chip-word { display: none; }
+  .pin-chip.is-marker { padding: 0 5px; }
+}

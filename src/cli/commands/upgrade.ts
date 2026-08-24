@@ -83,6 +83,15 @@ function defaultProjectUpdater(vault: Vault): ProjectUpdateResult {
     });
     return { vault, ok: true };
   } catch (e) {
+    // `update` exits non-zero when it refused to do anything (no installed
+    // platform) or blew up mid-refresh, and this is where that lands. Report the
+    // code, not execFileSync's "Command failed: npx dreamcontext update --yes" —
+    // the child inherited this terminal, so its own message is already on
+    // screen and the summary line only has to point back at it.
+    const status = (e as { status?: unknown }).status;
+    if (typeof status === 'number') {
+      return { vault, ok: false, error: `update exited ${status} — see its output above` };
+    }
     return { vault, ok: false, error: (e as Error).message };
   }
 }

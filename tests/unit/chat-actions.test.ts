@@ -167,6 +167,26 @@ describe('toAction — url kind', () => {
     }
   });
 
+  // Criterion 27. The pinned shelf gains a DELIBERATE loopback carve-out for its pin FACTS
+  // (`sanitizeLoopbackUrl`, chatViewSpec.ts) — the `url` ACTION is deliberately NOT widened
+  // with it, so the two gates cannot be conflated later. A narrower carve-out is a smaller
+  // thing to get wrong, and nothing in the goal asked an action button to reach loopback.
+  // These are correctness assertions of the narrowed design, not an oversight.
+  it('still rejects loopback http URLs — the carve-out is pin-facts-only', () => {
+    for (const url of [
+      'http://localhost:5173',
+      'http://127.0.0.1:3000',
+      'http://[::1]:8080',
+    ]) {
+      expect(toAction({ label: 'Open the dev server', action: 'url', url }), url).toBeNull();
+    }
+  });
+
+  it('accepts https on loopback — the scheme is the rule, not the host', () => {
+    expect(toAction({ label: 'x', action: 'url', url: 'https://localhost:5173/app' }))
+      .toEqual({ label: 'x', action: 'url', url: 'https://localhost:5173/app' });
+  });
+
   it('rejects a url action with no url, or an unparseable one', () => {
     expect(toAction({ label: 'x', action: 'url' })).toBeNull();
     expect(toAction({ label: 'x', action: 'url', url: 'not a url' })).toBeNull();
@@ -178,6 +198,58 @@ describe('toAction — url kind', () => {
       { label: 'Steal cookies', action: 'url', url: 'javascript:alert(document.cookie)' },
     ])));
     expect(r.actions).toEqual([{ label: 'Open listing', action: 'url', url: 'https://example.com' }]);
+  });
+});
+
+/**
+ * The Plan → Develop hand-off button. Its `id` is the whole payload of a session hand-off:
+ * a malformed slug would seed a fresh Develop agent with a brief pointing at nothing, and
+ * the user would only find out a turn later. So the grammar is stricter than the other
+ * id-carrying kinds and is pinned here rather than trusted.
+ */
+describe('toAction — develop kind (Plan → Develop hand-off)', () => {
+  it('accepts a safe task slug', () => {
+    expect(toAction({ label: 'Go to development', action: 'develop', id: 'chat-density-shrink-chrome' }))
+      .toEqual({ label: 'Go to development', action: 'develop', id: 'chat-density-shrink-chrome' });
+  });
+
+  it('accepts the full punctuation set a dreamcontext slug can carry', () => {
+    expect(toAction({ label: 'x', action: 'develop', id: 'Task_v0.25.0-final' }))
+      .toEqual({ label: 'x', action: 'develop', id: 'Task_v0.25.0-final' });
+  });
+
+  it('accepts a 64-char slug and drops a 65-char one', () => {
+    const at64 = 'a'.repeat(64);
+    expect(toAction({ label: 'x', action: 'develop', id: at64 }))
+      .toEqual({ label: 'x', action: 'develop', id: at64 });
+    expect(toAction({ label: 'x', action: 'develop', id: 'a'.repeat(65) })).toBeNull();
+  });
+
+  it('drops a slug carrying a separator, a traversal, whitespace or nothing at all', () => {
+    for (const id of ['../x', 'a/b', 'a\\b', '', '   ', 'a b', 'a;rm -rf /', 'a\u0000b']) {
+      expect(toAction({ label: 'x', action: 'develop', id }), JSON.stringify(id)).toBeNull();
+    }
+  });
+
+  it('drops a develop action with no id at all', () => {
+    expect(toAction({ label: 'Go to development', action: 'develop' })).toBeNull();
+  });
+
+  it("honours the plan briefing's own button, verbatim", () => {
+    // The exact shape `modeBriefing('plan')` teaches the agent to emit (src/server/chat-modes.ts).
+    // If these two ever drift, the hand-off silently stops rendering — so the fence is parsed
+    // here rather than the object being hand-built.
+    const r = parseChatActions(fence('[{"label": "Go to development", "action": "develop", "id": "my-task-slug"}]'));
+    expect(r.actions).toEqual([{ label: 'Go to development', action: 'develop', id: 'my-task-slug' }]);
+    expect(r.body).not.toContain('dream-actions');
+  });
+
+  it('drops a malformed develop button without taking its neighbours down', () => {
+    const r = parseChatActions(fence(JSON.stringify([
+      { label: 'Bad', action: 'develop', id: '../../etc/passwd' },
+      { label: 'Good', action: 'develop', id: 'real-slug' },
+    ])));
+    expect(r.actions).toEqual([{ label: 'Good', action: 'develop', id: 'real-slug' }]);
   });
 });
 

@@ -20,7 +20,12 @@ import { emitInstance } from '../context/VaultContext';
 const CONFIG_KEY = 'agent:settings:v1';
 
 /** Dispatched on `window` after a write so the always-mounted AgentSurface picks
- *  up a Settings-page change immediately (same pattern as `dreamcontext-zoom`). */
+ *  up a Settings-page change immediately (same pattern as `dreamcontext-zoom`).
+ *
+ *  Its `detail` is the WHOLE coerced {@link AgentSettings} blob, never a patch — so every
+ *  field added to that interface rides this event by construction, including the chat
+ *  model/effort defaults a composer "Set as default" writes. That is what lets a change made
+ *  in one surface reach `AgentSurface`'s spawn path without a reload. */
 export const AGENT_SETTINGS_EVENT = 'dreamcontext-agent-settings';
 
 /** The only agent backend today; typed as a union so adding one later is a compile
@@ -57,6 +62,15 @@ export interface AgentSettings {
    *  running sessions keep their surface. Key name kept from the original beta checkbox
    *  for agent-ui.json compatibility. */
   chatView: boolean;
+  /** Remembered default MODEL for a new Chat session — written by the composer's model+effort
+   *  menu ("Set as default"), read by `AgentSurface`'s spawn when the caller named no model.
+   *  EMPTY STRING is the resting value, not a missing one: it means "inherit whatever the
+   *  Claude CLI itself defaults to" (`~/.claude/settings.json`), so nothing is forced at
+   *  launch until the user deliberately pins a model. */
+  chatDefaultModel: string;
+  /** Remembered default EFFORT level for a new Chat session — same menu, same
+   *  empty-string-means-inherit contract as {@link AgentSettings.chatDefaultModel}. */
+  chatDefaultEffort: string;
   /** One-time marker that this blob has been through the "Chat is the default screen"
    *  flip (0.22). Before the flip, `chatView:false` was written into EVERY persisted
    *  blob as the old opt-out default, so a raw `false` is not evidence anybody chose
@@ -76,7 +90,21 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   renderer: 'webgl',
   chatView: true,
   screenMigrated: true,
+  chatDefaultModel: '',
+  chatDefaultEffort: '',
 };
+
+/** MIRRORED from `sanitizeModel` in `src/server/routes/agent-spawn-shared.ts`. The dashboard
+ *  cannot import that module (it is a Node/server file), so the rule is re-spelled here and
+ *  the two are pinned together by `tests/unit/agent-settings.test.ts`, which runs the SAME
+ *  input table through both coercers and asserts identical output. Claude Code's `--model`
+ *  takes an alias (`opus`) or a full model id — all `[A-Za-z0-9._-]`, never a shell
+ *  metacharacter, never over 64 chars. */
+const CHAT_DEFAULT_MODEL_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
+/** MIRRORED from `EFFORT_LEVELS` in `src/server/routes/agent-spawn-shared.ts` — the levels
+ *  `claude --effort` documents. Same pinning as above. */
+const CHAT_DEFAULT_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 /** Coerce an arbitrary blob to a valid AgentSettings (defaults fill gaps). `enabled`
  *  and `restoreTabs` default TRUE (only an explicit `false` disables, so a missing key
@@ -101,6 +129,14 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     // blob → Chat (that IS the migration); migrated blob → whatever the user picked.
     chatView: r.screenMigrated === true ? r.chatView !== false : true,
     screenMigrated: true,
+    // The two chat defaults reject to '' — which is not a failure state but the documented
+    // "inherit the CLI's own default". Validated on this side too, not only server-side:
+    // `readAgentSettings` parses localStorage, so a hand-edited or stale store reaches this
+    // function without ever passing through the route's coercer.
+    chatDefaultModel: typeof r.chatDefaultModel === 'string' && CHAT_DEFAULT_MODEL_RE.test(r.chatDefaultModel)
+      ? r.chatDefaultModel : '',
+    chatDefaultEffort: typeof r.chatDefaultEffort === 'string' && CHAT_DEFAULT_EFFORT_LEVELS.includes(r.chatDefaultEffort)
+      ? r.chatDefaultEffort : '',
     // NOTE: a legacy blob's `chatPermissionMode` is dropped here, on purpose — it is no
     // longer part of this shape. See {@link readChatPermissionMode}.
   };

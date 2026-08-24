@@ -5,8 +5,9 @@
  *   - clamps title length (200) and size ([0.1, 10]), defaults a blank title
  *   - coerces the booleans (only `true` is true)
  *   - strips every field outside the known four
- *   - keeps `kind` only when it names a known session surface, and `automation`
- *     only alongside `kind: 'automation'` (T18a / C11)
+ *   - keeps `kind` only when it names a known session surface, `automation`
+ *     only alongside `kind: 'automation'` (T18a / C11), and `mode` only alongside
+ *     `kind: 'chat'` for a known CHAT_MODES value (D1-E1)
  *
  * Plus the GET handler's transient `bound` flag (T18a / X2), which is the whole
  * reason the roster route now reaches into the automations session registry.
@@ -21,6 +22,7 @@ import {
   sanitizeRoster, MAX_SESSIONS, handleAgentSessionsGet, type SavedMeta,
 } from '../../src/server/routes/agent-sessions.js';
 import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
+import { CHAT_MODES } from '../../src/server/chat-modes.js';
 
 const valid = (over: Partial<SavedMeta> = {}): SavedMeta => ({
   title: 'Agent', bypass: false, minimized: false, size: 1, ...over,
@@ -251,6 +253,59 @@ describe('sanitizeRoster — automation companion object', () => {
       expect(out.automation).toBeUndefined();
       expect('automation' in out).toBe(false);
     }
+  });
+});
+
+/**
+ * D1-E1: a chat tab remembers the MODE its agent was briefed with, so a Develop session
+ * reopens as one after a relaunch. The value chooses which system-prompt append a respawn
+ * gets (`src/server/chat-modes.ts`), and a roster is hand-editable and travels in the brain —
+ * so it goes through the same drop-what-you-don't-recognise discipline as `kind`, plus the
+ * same containment rule as `automation`: it is meaningless on any other surface.
+ */
+describe('sanitizeRoster — mode (how a chat tab is briefed)', () => {
+  const entry = (over: Record<string, unknown>) =>
+    sanitizeRoster({ sessions: [{ title: 'A', bypass: false, minimized: false, size: 1, ...over }] })![0];
+
+  it('round-trips every known chat mode alongside kind: chat', () => {
+    for (const mode of CHAT_MODES) {
+      expect(entry({ kind: 'chat', mode }).mode).toBe(mode);
+    }
+  });
+
+  it('drops a mode this build does not recognize rather than passing it through', () => {
+    // A typo, a hand-edited roster, or a mode a FUTURE build understands and this one does
+    // not. Dropping reads as Basic on the client — the mode with NO extra system-prompt
+    // append at all, which is the safe direction for an unknown briefing instruction.
+    for (const mode of ['Develop', 'DEVELOP', 'plan ', 'agent', '', 42, null, {}, ['plan'], 'plan;rm -rf /']) {
+      const out = entry({ kind: 'chat', mode });
+      expect(out.mode).toBeUndefined();
+      expect('mode' in out).toBe(false);
+    }
+  });
+
+  it('drops mode when the kind is NOT chat, even for a known mode', () => {
+    // A shell has no system prompt and a terminal agent is not briefed by this surface, so a
+    // mode riding on either is noise at best — and a value nothing validates downstream at
+    // worst. Same containment rule the `automation` companion object gets.
+    for (const kind of ['agent', 'shell', 'automation', undefined]) {
+      const out = entry({ ...(kind ? { kind } : {}), mode: 'develop' });
+      expect(out.mode).toBeUndefined();
+      expect('mode' in out).toBe(false);
+    }
+  });
+
+  it('omits mode entirely on a legacy roster that never had one', () => {
+    // Absent === Basic on both sides, so no migration is needed for a pre-mode roster.
+    expect('mode' in entry({ kind: 'chat' })).toBe(false);
+  });
+
+  it('keeps mode alongside every other chat field, without disturbing them', () => {
+    const UUID = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+    const out = entry({ kind: 'chat', mode: 'plan', sessionId: UUID, bypass: true, title: 'Planning' });
+    expect(out).toEqual({
+      title: 'Planning', bypass: true, minimized: false, size: 1, sessionId: UUID, kind: 'chat', mode: 'plan',
+    });
   });
 });
 

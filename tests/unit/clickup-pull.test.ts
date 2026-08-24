@@ -311,6 +311,46 @@ describe('clickup PULL + merge (M4, mocked transport)', () => {
     expect(REMOTE_BACKEND_GITIGNORE_ENTRIES.some((e: string) => e.includes('.tasks-map'))).toBe(false);
   });
 
+  it('LOCAL-ONLY fields survive a pull that updates the mirror (objectives first)', async () => {
+    // `objectives:` (and rice / parent_task / an unknown key) have no ClickUp
+    // representation — a pull that touches the mirror must return them intact,
+    // because state/ is gitignored and a dropped field has no history to
+    // recover from (task: "tasks sync pull loses data silently").
+    await backend.create({
+      name: 'Linked Local',
+      objectives: ['ship-v1', 'team-ready'],
+      rice: { reach: 5, impact: 3, confidence: 80, effort: 2, score: 6 },
+      variant: 'cli',
+    });
+    await backend.updateFields('linked-local', { parent_task: 'umbrella', future_field: 'keep me' });
+    await backend.sync('push');
+
+    fake.editTask(remoteIdOf('linked-local'), { name: 'Linked Local Renamed' });
+    const report = await backend.sync('pull');
+
+    expect(report.errors).toEqual([]);
+    expect(report.warnings.some((w) => w.includes('would have been dropped'))).toBe(false);
+    const m = mirror('linked-local');
+    expect(m).toContain('objectives:\n  - ship-v1\n  - team-ready');
+    expect(m).toContain('parent_task: umbrella');
+    expect(m).toContain('future_field: keep me');
+    expect(m).toContain('reach: 5');
+    expect(m).toContain('name: Linked Local Renamed'); // the remote still won its own field
+  });
+
+  it('a VANISHED mirror is rebuilt WITH its local-only fields, and the report says so', async () => {
+    await backend.create({ name: 'Ghost Mirror', objectives: ['ship-v1'], variant: 'cli' });
+    await backend.sync('push');
+    rmSync(join(contextRoot, 'state', 'ghost-mirror.md'));
+
+    fake.editTask(remoteIdOf('ghost-mirror'), { name: 'Ghost Mirror' });
+    const report = await backend.sync('pull');
+
+    expect(report.errors).toEqual([]);
+    expect(mirror('ghost-mirror')).toContain('ship-v1');
+    expect(report.warnings.some((w) => w.includes('REBUILT') && w.includes('objectives'))).toBe(true);
+  });
+
   it('"pending push" is visible in the sync state for offline writes', async () => {
     await backend.create({ name: 'Pending Vis', variant: 'cli' });
     expect(syncStateFile().tasks['pending-vis'].pendingPush).toBe(true);

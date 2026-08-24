@@ -283,6 +283,13 @@ export interface SyncReport {
   /** Remote server-time watermark after this sync (epoch ms), if any. */
   watermark: number | null;
   /**
+   * Where this pull kept the mirrors it overwrote or removed
+   * (`state/.pre-pull-<stamp>/`), or null when it changed nothing. `state/` is
+   * gitignored, so a rewritten mirror has no git history to recover from — the
+   * path has to reach the user, not just the disk.
+   */
+  mirrorBackupDir?: string | null;
+  /**
    * Tasks whose local assignees were HEALED to the remote set by a `--reconcile`
    * pass (#78). Always 0 unless `SyncOptions.reconcile` was set; a non-zero count
    * means below-watermark assignee drift was found and fixed.

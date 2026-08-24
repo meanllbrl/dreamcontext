@@ -17,6 +17,8 @@ export const TASKS_SYNC_REL = 'state/.tasks-sync.json';
 export const TASKS_QUEUE_REL = 'state/.tasks-queue.json';
 export const TASKS_LOCK_REL = 'state/.tasks-sync.lock';
 export const CONFLICTS_DIR_REL = 'state/.conflicts';
+/** Prefix of a pull's pre-write mirror backup dir (`state/.pre-pull-<stamp>/`). */
+export const PRE_PULL_DIR_PREFIX = '.pre-pull-';
 
 /** .gitignore entries required when a remote backend owns the tasks. */
 export const REMOTE_BACKEND_GITIGNORE_ENTRIES = [
@@ -25,6 +27,7 @@ export const REMOTE_BACKEND_GITIGNORE_ENTRIES = [
   '_dream_context/state/.tasks-sync.json',
   '_dream_context/state/.tasks-queue.json',
   '_dream_context/state/.conflicts/',
+  '_dream_context/state/.pre-pull-*/',
   SECRETS_GITIGNORE_ENTRY,
 ];
 
