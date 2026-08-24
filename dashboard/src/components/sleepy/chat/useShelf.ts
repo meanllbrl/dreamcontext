@@ -4,8 +4,9 @@ import {
   foldViews, layoutShelf, type ShelfEntry, type ShelfFact, type ShelfLayout,
 } from '../../../lib/shelfModel';
 import { readPins, writePins } from '../../../lib/pinStore';
+import { newlyTicked } from '../../../lib/progressModel';
 import {
-  useSessionFacts, useTaskProgress, type TaskProgress,
+  useSessionFacts, useTaskProgress, type ProgressCriterion, type TaskProgress,
 } from '../../../hooks/useAgentCapabilities';
 import type { ChatViewSpec } from '../../../lib/chatViewSpec';
 import type { ChatSession } from '../chatSession';
@@ -54,9 +55,28 @@ export interface ShelfHandle {
   promote: (entryId: string) => void;
   /** The live reading behind a `progress` row, or null when no run owns the row. */
   progress: TaskProgress | null;
+  /** `criterionKey`s of criteria that flipped ticked within the flash window — the panel's
+   *  "you just saw that happen" set. Empty on the first reading of a run. */
+  justTicked: ReadonlySet<string>;
+  /** Whether the TURN is actually running. The live treatment keys off this rather than off
+   *  the panel being open: a settled run's row goes quiet and lets its clock say when it last
+   *  moved, instead of animating over a task nobody is working on. */
+  live: boolean;
   /** How many pins this conversation has evicted past the cap — reported, never silent. */
   evicted: number;
 }
+
+/**
+ * How long a newly-ticked criterion stays highlighted. Comfortably longer than the 4s poll, so
+ * a tick is never applied and expired between two frames the user could have been looking at.
+ *
+ * Expiry is evaluated when the NEXT payload lands rather than on a timer, so the flash outlives
+ * this window by up to one poll. That slack is deliberate and it costs nothing visually: the
+ * CSS animation is what fades the highlight and the label, and it runs on its own clock (see
+ * `progressPanel.css`). Paying for a second interval here — one that re-renders the whole pane
+ * every second — to make a purely decorative expiry exact would be the wrong trade.
+ */
+const FLASH_MS = 6_000;
 
 /**
  * A tag's id is `<entryId>#<factIndex>` for a fact chip and the bare entry id for a demoted
@@ -121,13 +141,20 @@ export function useShelf(session: ChatSession, vault: string | null): ShelfHandl
   }, [scope, conversationId, entries]);
 
   // ── 3. Server-derived session facts ─────────────────────────────────────────────────
-  const factsQuery = useSessionFacts(connected);
+  // Scoped to THIS conversation, not to the vault: the session moves (EnterWorktree), and a
+  // vault-wide cache entry showed every pane whichever checkout answered last.
+  const factsQuery = useSessionFacts(connected, conversationId || null);
   const factsData = factsQuery.data;
   const facts = useMemo<ShelfFact[]>(() => {
     if (!factsData?.isRepo) return [];
     const out: ShelfFact[] = [];
     if (factsData.branch) out.push({ label: factsData.branch, icon: 'branch' });
-    if (factsData.worktree) out.push({ label: 'worktree', marker: true, icon: 'worktree' });
+    // The NAME when the server knows it, the bare word otherwise. "worktree" answers a
+    // question nobody with one open is asking; "which one" is the useful fact, and a
+    // pre-`worktreeName` server (or an unnamed root) still gets the marker it had.
+    if (factsData.worktree) {
+      out.push({ label: factsData.worktreeName || 'worktree', marker: true, icon: 'worktree' });
+    }
     return out;
   }, [factsData]);
 
@@ -136,6 +163,44 @@ export function useShelf(session: ChatSession, vault: string | null): ShelfHandl
   // ── The progress reading behind the row, when a run owns it ─────────────────────────
   const progressTask = layout.row?.kind === 'progress' ? layout.row.task : null;
   const progress = useTaskProgress(progressTask, connected).data ?? null;
+
+  // ── Liveness: which criteria flipped between two readings ──────────────────────────
+  // The complaint this answers is not that the number was wrong — it is that nothing on the
+  // panel ever moved, so a run that had stalled looked exactly like one that was working
+  // (owner, 2026-08-24). Which criteria just ticked is derived by diffing successive payloads
+  // (`newlyTicked`, pure and unit-tested), so the server is asked for nothing it was not
+  // already sending and no timer runs here at all.
+  //
+  // The OTHER half of the liveness — the clock that ticks every second — deliberately does NOT
+  // live in this hook. `useShelf` is called by `ChatPane`, so a per-second state change here
+  // would re-render the entire pane, transcript included, for the sake of one changing word.
+  // It lives in `ProgressRow` instead, which is a leaf and exists only while a progress row
+  // does. See `useSecondTick` in PinShelf.tsx.
+  const [flashes, setFlashes] = useState<{ key: string; at: number }[]>([]);
+  const prevCriteria = useRef<ProgressCriterion[]>([]);
+
+  // A different task is a different run: its first reading is the state of the world, not a
+  // burst of things that just happened. Both the baseline and the flashes reset with the slug.
+  useEffect(() => {
+    prevCriteria.current = [];
+    setFlashes([]);
+  }, [progressTask]);
+
+  useEffect(() => {
+    const next = progress?.criteria ?? [];
+    const fresh = newlyTicked(prevCriteria.current, next);
+    prevCriteria.current = next;
+    const at = Date.now();
+    setFlashes((prev) => {
+      const kept = prev.filter((f) => at - f.at < FLASH_MS);
+      // Identity-stable when nothing changed: a poll that reports no movement must not produce
+      // a new array, or every 4s tick of an idle run would re-render the shelf for nothing.
+      if (fresh.length === 0) return kept.length === prev.length ? prev : kept;
+      return [...kept, ...fresh.map((key) => ({ key, at }))];
+    });
+  }, [progress]);
+
+  const justTicked = useMemo(() => new Set(flashes.map((f) => f.key)), [flashes]);
 
   // M3: when the run ENDS the row closes and the tag line stays. "Ends" is the conjunction of
   // both signals — every criterion ticked on disk AND the turn settled. While the turn is
@@ -167,6 +232,6 @@ export function useShelf(session: ChatSession, vault: string | null): ShelfHandl
 
   return {
     layout, facts, openId, setOpenId, hasRows,
-    dismiss, promote, progress, evicted,
+    dismiss, promote, progress, justTicked, live: session.busy, evicted,
   };
 }

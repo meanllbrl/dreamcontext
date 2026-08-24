@@ -16,6 +16,10 @@ import {
 import {
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV, type HistoryNav,
 } from './chatEntities';
+import {
+  addAttachments, dropSentAttachments, nextAttachmentId, readScratch, removeAttachment,
+  settleAttachment, subscribeScratch, type Attachment,
+} from './composerScratch';
 import { Popover } from '../SkillPickerPopover';
 import { ModeMenu, ModelMenu, UsageMenu } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
@@ -36,14 +40,26 @@ import './composer.css';
  * that appended value instead of clobbering free typing. `setFocusTarget` registers the
  * textarea so `session.focus()` (click-to-focus on the transcript, etc.) has a target.
  *
+ * That mirror is also what makes the draft survive a RESPAWN, which is the one thing the
+ * "never unmounts" rule above does not cover: a mode switch (and a permission switch into
+ * Bypass, which the CLI refuses to apply live) replaces the session object, so this pane
+ * unmounts and a fresh one mounts against the new session. AgentSurface reads `conv.draft`
+ * off the outgoing session and hands it to the incoming one (`carryDraftInto`), and the
+ * `useState` initializer below picks it up on first paint. The chips and the quote survive
+ * the same respawn by a DIFFERENT route — they are keyed by conversation id, which no respawn
+ * changes, so there is nothing to carry (see composerScratch.ts).
+ *
  * ── Attachments (state 7) ───────────────────────────────────────────────────────────
- * Attachments (file/folder picks, pasted images) are held as SEPARATE local-state "chips"
- * above the textarea rather than being merged into the draft text character-by-character —
- * they're folded into the outgoing message only at submit time. This is a deliberate
- * departure from the old composer's `insert()` (which spliced path text directly into the
- * draft): the brief asks for a distinct attachments row, and since this pane never unmounts
- * while its session lives, plain local state survives minimize/restore exactly like the
- * draft does.
+ * Attachments (file/folder picks, pasted images) are held as SEPARATE "chips" above the
+ * textarea rather than being merged into the draft text character-by-character — they're
+ * folded into the outgoing message only at submit time. This is a deliberate departure from
+ * the old composer's `insert()` (which spliced path text directly into the draft): the brief
+ * asks for a distinct attachments row.
+ *
+ * They live in `composerScratch`, keyed by CONVERSATION id, not in this component's state —
+ * along with the reply quote, which `ChatPane` reads from the same place. That is what makes
+ * them survive the respawn case below (and it is why nothing here revokes an object URL on
+ * unmount any more: an unmount is not evidence that the user is done with a chip).
  *
  * ── The chrome (D1-C) ───────────────────────────────────────────────────────────────
  * The toolbar is five controls: mode+permission, attach, spacer, usage ring, model+effort,
@@ -73,27 +89,6 @@ import './composer.css';
  *             rules that keep it from eating a half-typed draft are pure and tested in
  *             chatEntities.ts (`canRecallHistory`, `stepHistory`).
  */
-
-interface Attachment {
-  id: string;
-  kind: 'image' | 'file' | 'folder';
-  name: string;
-  /** Image attachments only — an object URL for the pasted `File` blob, so the chip shows
-   *  the picture itself while its bytes are still on their way to disk; revoked on removal
-   *  and on unmount. The preview is NOT what gets sent (see `path`). */
-  url?: string;
-  /** The absolute path the outgoing message quotes — a real path from the native picker
-   *  (`pickFiles`/`pickFolders`) for a file/folder, and for a pasted image the path the
-   *  vault temp dir got when its bytes were uploaded (`uploadAgentFile`). The chat protocol
-   *  is text-only, so this path IS the attachment as far as the agent is concerned. */
-  path?: string;
-  /** Image attachments only — bytes still in flight, so there is no `path` to send yet.
-   *  `submit` waits for these rather than sending a message that references nothing. */
-  uploading?: boolean;
-  /** Image attachments only — the upload was refused (not the desktop app, over the 25 MB
-   *  cap, unwritable temp dir). The chip says so instead of pretending it will be sent. */
-  failed?: boolean;
-}
 
 function basenameOf(path: string): string {
   const clean = path.replace(/\/+$/, '');
@@ -259,40 +254,35 @@ export function Composer({
     }
   }, [session, draftEpoch]);
 
-  // ── Attachments (state 7) — local-only chips, folded into the message at submit ──
-  const attSeqRef = useRef(0);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const attachmentsRef = useRef(attachments);
-  attachmentsRef.current = attachments;
-  // Revoke every still-live object URL on unmount — the pane can unmount for real when
-  // its session is disposed (tab closed), unlike the draft/focus mechanics above which
-  // only need to survive minimize/restore.
-  useEffect(() => () => {
-    attachmentsRef.current.forEach((a) => { if (a.kind === 'image' && a.url) URL.revokeObjectURL(a.url); });
-  }, []);
-
-  const removeAttachment = (id: string) => {
-    setAttachments((prev) => {
-      const found = prev.find((a) => a.id === id);
-      if (found?.kind === 'image' && found.url) URL.revokeObjectURL(found.url);
-      return prev.filter((a) => a.id !== id);
-    });
-  };
+  // ── Attachments (state 7) — staged per CONVERSATION, folded into the message at submit ──
+  // The chips live in `composerScratch`, keyed by the conversation id, NOT in this component:
+  // a mode/permission respawn unmounts this pane, and chips staged against the conversation
+  // must outlive the process the way the conversation itself does. That module owns their
+  // object URLs too, so there is no revoke-on-unmount here any more — an unmount is no longer
+  // evidence that the user is done with a chip. See composerScratch.ts's header.
+  //
+  // Local state mirrors the store so React re-renders; the SUBSCRIPTION is what makes an
+  // upload that settles after a respawn reach the new pane. `submit` reads the store directly
+  // rather than a ref, which is what retired the old "ref first, state second" hazard: there
+  // is no second copy left to be a render behind.
+  const convId = session.claudeId;
+  const [attachments, setAttachments] = useState<Attachment[]>(() => readScratch(convId).attachments);
+  useEffect(() => {
+    setAttachments(readScratch(convId).attachments);
+    return subscribeScratch(convId, (next) => setAttachments(next.attachments));
+  }, [convId]);
 
   const pickPaths = async (kind: 'files' | 'folders', close: () => void) => {
     const paths = kind === 'folders' ? await pickFolders() : await pickFiles();
     close();
     if (!paths.length) return;
     const attKind: Attachment['kind'] = kind === 'folders' ? 'folder' : 'file';
-    setAttachments((prev) => [
-      ...prev,
-      ...paths.map((p): Attachment => ({
-        id: `att-${++attSeqRef.current}`,
-        kind: attKind,
-        path: p,
-        name: basenameOf(p),
-      })),
-    ]);
+    addAttachments(convId, paths.map((p): Attachment => ({
+      id: nextAttachmentId(),
+      kind: attKind,
+      path: p,
+      name: basenameOf(p),
+    })));
   };
 
   // Clipboard-paste image capture (drag/drop of real files is handled at the surface
@@ -315,26 +305,17 @@ export function Composer({
       if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
       const file = item.getAsFile();
       if (!file) continue;
-      const id = `att-${++attSeqRef.current}`;
+      const id = nextAttachmentId();
       const name = file.name || 'Pasted image';
       const url = URL.createObjectURL(file);
-      const chip: Attachment = { id, kind: 'image', url, name, uploading: true };
-      // Ref first, state second — same reason as the settle below: the ref is what `submit`
-      // and the unmount cleanup read, and it must know about this chip before the next render.
-      attachmentsRef.current = [...attachmentsRef.current, chip];
-      setAttachments((prev) => [...prev, chip]);
-      const job = uploadAgentFile(vault, file, name).then((path) => {
-        const settle = (list: Attachment[]) => list.map((a) => (a.id === id
-          ? { ...a, path: path ?? undefined, uploading: false, failed: !path }
-          : a));
-        // Written STRAIGHT to the ref as well as to state, because `submit` can read it in
-        // the same microtask batch this resolved in — before React has re-rendered and
-        // re-pointed the ref. Without this the path would depend on flush ordering, which is
-        // exactly the kind of "works on my machine" the send path must not rest on. The next
-        // render overwrites the ref with the same value.
-        attachmentsRef.current = settle(attachmentsRef.current);
-        setAttachments(settle);
-      });
+      // Staged in the store, which is both what `submit` reads (so there is no flush-ordering
+      // question — a settle that lands in the same microtask batch as a send is already
+      // visible) and what survives a respawn. The upload's resolution is addressed by
+      // CONVERSATION id, so a mode switch mid-upload still lands the path on the right chip
+      // in the pane that replaced this one.
+      addAttachments(convId, [{ id, kind: 'image', url, name, uploading: true }]);
+      const job = uploadAgentFile(vault, file, name)
+        .then((path) => { settleAttachment(convId, id, path); });
       uploadsRef.current.add(job);
       void job.finally(() => uploadsRef.current.delete(job));
       addedImage = true;
@@ -538,7 +519,7 @@ export function Composer({
   const commit = (mode: SubmitMode) => {
     const { draft: text, busy: isBusy, connected: isConnected, quote: liveQuote } = liveRef.current;
     if (!isConnected) return;
-    const pathsText = attachmentsRef.current.filter((a) => !!a.path)
+    const pathsText = readScratch(convId).attachments.filter((a) => !!a.path)
       .map((a) => quotePath(a.path ?? '')).join(' ');
     const bodyText = pathsText ? (text.trim() ? `${text.trim()} ${pathsText}` : pathsText) : text.trim();
     const message = liveQuote ? `> ${liveQuote}\n\n${bodyText}` : bodyText;
@@ -572,15 +553,11 @@ export function Composer({
     session.syncDraft('');
     setNavBoth(NO_HISTORY_NAV);
     setSlashQuery(null);
-    // Sent chips go (their previews with them); a chip that could NOT be attached stays, so
-    // the row keeps saying "not sent" instead of implying it went with the message. Ref and
-    // state together, for the same reason the paste path writes both.
-    const kept = attachmentsRef.current.filter((a) => a.failed);
-    attachmentsRef.current.forEach((a) => {
-      if (!a.failed && a.kind === 'image' && a.url) URL.revokeObjectURL(a.url);
-    });
-    attachmentsRef.current = kept;
-    setAttachments(kept);
+    // Sent chips go (their previews with them); anything that could NOT be attached stays, so
+    // the row keeps saying "not sent" instead of implying it went with the message. The rule is
+    // "had a path" rather than "was not failed" — see `dropSentAttachments`, which also clears
+    // the quote, so this conversation's staged state settles in one write.
+    dropSentAttachments(convId);
     onClearQuote();
   };
 
@@ -755,7 +732,7 @@ export function Composer({
                   {a.uploading && <span className="chat-cmp-attachment-note">attaching…</span>}
                   {a.failed && <span className="chat-cmp-attachment-note">couldn't attach — not sent</span>}
                 </span>
-                <button type="button" className="chat-cmp-chip-x" aria-label={`Remove ${a.name}`} onClick={() => removeAttachment(a.id)}>✕</button>
+                <button type="button" className="chat-cmp-chip-x" aria-label={`Remove ${a.name}`} onClick={() => removeAttachment(convId, a.id)}>✕</button>
               </div>
             ))}
           </div>

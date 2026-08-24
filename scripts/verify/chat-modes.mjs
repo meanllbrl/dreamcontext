@@ -215,12 +215,28 @@ const report = {
 };
 const ok = (label, cond, detail) => report.check(label, cond, detail);
 
-/** The surface briefing's own last sentence — the anchor that proves nothing was appended
- *  after it. (`dist/` is a single tsup bundle with no importable `chat-surface.js`, so the
- *  identity check is made structurally; `tests/unit/chat-modes.test.ts` pins the other half,
- *  `modeBriefing('basic') === ''`.) */
+/** The surface briefing's own last sentence — the anchor that proves where the surface half
+ *  ends and a mode append begins. (`dist/` is a single tsup bundle with no importable
+ *  `chat-surface.js`, so the identity check is made structurally.)
+ *
+ *  CHANGED 2026-08-24: `basic` no longer ends HERE. It used to append nothing at all, which
+ *  left the worktree prohibition out of the DEFAULT mode; it now carries that paragraph and
+ *  nothing else. So the basic-shaped assertions below check "no mode heading + the worktree
+ *  paragraph", not "ends on the surface briefing". `tests/unit/chat-modes.test.ts` pins the
+ *  pure-function half. */
 const SURFACE_TAIL = 'Nothing else about how you work changes.';
 const SURFACE_HEAD = '# Surface: dreamcontext Chat';
+
+/** The two worktree arms, by the sentence each one says. The scratch vaults are set up so the
+ *  default one is brain IN-TREE (forbids) and `isolated` is full-repo (permits). */
+const FORBIDS = /Do\s+NOT\s+create\s+a\s+git\s+worktree/;
+const PERMITS = /MAY\s+use\s+a\s+git\s+worktree/;
+/** A basic-shaped briefing: the surface briefing, then the worktree paragraph, and no mode
+ *  heading. The paragraph must come AFTER the surface tail — it is an append, not a splice. */
+const basicShaped = (b) => !b.includes('# Mode:')
+  && FORBIDS.test(b)
+  && b.indexOf(SURFACE_TAIL) < b.search(FORBIDS)
+  && b.includes('EnterWorktree');
 
 let server = null;
 try {
@@ -242,9 +258,11 @@ try {
     ok('basic: the surface briefing is written and passed as --append-system-prompt-file',
       !!s.briefPath && typeof s.briefing === 'string' && s.briefing.includes(SURFACE_HEAD),
       `briefPath=${s.briefPath}`);
-    ok('basic: NOTHING is appended after it — no mode heading, ends on the surface briefing',
-      !s.briefing.includes('# Mode:') && s.briefing.trimEnd().endsWith(SURFACE_TAIL),
-      `tail=${JSON.stringify(s.briefing.trimEnd().slice(-80))}`);
+    ok('basic: the worktree paragraph is appended — and NO mode heading (still plain Claude Code)',
+      basicShaped(s.briefing),
+      `tail=${JSON.stringify(s.briefing.trimEnd().slice(-120))}`);
+    ok('basic: it carries the DECLARE sentence, so a move the shelf cannot see gets pinned',
+      /pin the checkout as a tag/.test(s.briefing));
     ok('basic: exactly ONE --append-system-prompt-file on the command line',
       s.argv.filter((a) => a === '--append-system-prompt-file').length === 1,
       JSON.stringify(s.argv));
@@ -282,8 +300,10 @@ try {
 
     const isolated = await observeSpawn(WebSocket, port, { mode: 'develop', vault: 'isolated' });
     ok('develop + brain FULL-REPO: a worktree is permitted',
-      /MAY\s+use\s+a\s+git\s+worktree/.test(isolated.briefing)
-      && !/Do\s+NOT\s+create\s+a\s+git\s+worktree/.test(isolated.briefing));
+      PERMITS.test(isolated.briefing) && !FORBIDS.test(isolated.briefing));
+    ok('basic + brain FULL-REPO: the SAME permission reaches basic (the default mode)',
+      await observeSpawn(WebSocket, port, { mode: 'basic', vault: 'isolated' })
+        .then((b) => PERMITS.test(b.briefing) && !b.briefing.includes('# Mode:')));
     ok('…and it is the SAME develop brief either way — only the worktree paragraph differs',
       isolated.briefing.includes('# Mode: Develop') && inTree.briefing.includes('# Mode: Develop'));
   }
@@ -292,7 +312,7 @@ try {
   for (const [label, mode] of [['jarvis (disabled in the UI)', 'jarvis'], ['a hostile value', ';rm -rf /'], ['an unknown value', 'turbo']]) {
     const s = await observeSpawn(WebSocket, port, { mode });
     ok(`${label} → the basic briefing, no mode brief`,
-      !s.briefing.includes('# Mode:') && s.briefing.trimEnd().endsWith(SURFACE_TAIL),
+      basicShaped(s.briefing),
       `mode=${JSON.stringify(mode)}`);
   }
 

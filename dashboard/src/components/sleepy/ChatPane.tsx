@@ -41,6 +41,7 @@ import {
   EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, SignInBanner, WorkingIndicator,
 } from './chat/Banners';
 import { Composer } from './chat/Composer';
+import { readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
 import { shouldInterruptChat } from './chat/interruptKey';
 import './chat/cards.css';
 import './chat/overlays.css';
@@ -444,8 +445,9 @@ function AutomationQuestionComposerLock() {
 }
 
 // ─── View-only state for the two overlay surfaces (state 3/9's slide-over, state 4's
-//    lightbox) + the composer's queued quote (state 11). Every OTHER piece of state
-//    this pane renders from lives in `session.getModel()` — this is purely presentation. ──
+//    lightbox). Every OTHER piece of state this pane renders from lives in
+//    `session.getModel()` — or, for the composer's quote (state 11), in `composerScratch`
+//    under the conversation id, so a respawn cannot drop it. This is purely presentation. ──
 
 type SlideOverState =
   | { mode: 'file'; path: string }
@@ -552,7 +554,21 @@ export function ChatPane({
    *  across this file, `BoardEmbed` and `TranscriptItem`, and a single owner is what makes
    *  all four converge on the same overlay instead of drifting back apart. */
   const [boardFull, setBoardFull] = useState<string | null>(null);
-  const [replyQuote, setReplyQuote] = useState<string | null>(null);
+  /**
+   * The message the next send quotes (state 11's ↩ Quote-reply).
+   *
+   * Held in `composerScratch` under the CONVERSATION id, not in this pane: a mode switch — or
+   * a permission switch into Bypass, which the CLI refuses to apply live — respawns the
+   * process, and this pane unmounts with it. "I am replying to THIS message" is a fact about
+   * the conversation, not about the process, so it outlives the respawn for the same reason
+   * the attachment chips beside it do. Local state mirrors the store so React re-renders.
+   */
+  const convId = session.claudeId;
+  const [replyQuote, setReplyQuote] = useState<string | null>(() => readScratch(convId).quote);
+  useEffect(() => {
+    setReplyQuote(readScratch(convId).quote);
+    return subscribeScratch(convId, (next) => setReplyQuote(next.quote));
+  }, [convId]);
   /** Does this automation run have an unanswered question right now? Reported up by
    *  `AutomationQuestionSlot` (which owns the poll) so the composer can be replaced while
    *  it is open — see `AutomationQuestionComposerLock` for why that matters. Always false
@@ -1249,7 +1265,7 @@ export function ChatPane({
   ), []);
   const handleOpenShell = useCallback((run: SubAgentRun) => setSlideOver({ mode: 'shell', run }), []);
   const handleStopShell = useCallback((run: SubAgentRun) => session.stopTask(run.taskId), [session]);
-  const handleQuote = useCallback((text: string) => setReplyQuote(text), []);
+  const handleQuote = useCallback((text: string) => setQuote(convId, text), [convId]);
   const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core', id: string) => {
     setSlideOver(null);
     onOpenAppPage?.(page, id);
@@ -1696,7 +1712,7 @@ export function ChatPane({
           busy={session.busy}
           connected={session.status === 'open'}
           quote={replyQuote}
-          onClearQuote={() => setReplyQuote(null)}
+          onClearQuote={() => setQuote(convId, null)}
           // THIS SESSION's permission mode, not the project's remembered default (the
           // `permissionMode` prop). `inBypass` is what the CLI itself reported — the init
           // frame, or a successful mid-session `set_permission_mode` — and the two genuinely

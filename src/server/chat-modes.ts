@@ -88,11 +88,29 @@ You are building to a task's acceptance criteria.
   silently redesigning it.
 `;
 
-/** Appended to the develop brief when the project's dreamcontext brain is ISOLATED, so a
- *  second checkout cannot fork it. */
+/**
+ * The sentence both arms end with.
+ *
+ * The shelf's branch tag is SERVER-derived, and the server can only follow a move it has a
+ * frame for — the harness's own `EnterWorktree`. A manual `git worktree add` + `cd` leaves
+ * the tag reporting the checkout the session STARTED in, which is the failure the owner
+ * photographed on 2026-08-24: a whole run in a worktree under a tag that still said `main`.
+ * So: prefer the tool, and when you cannot, say so.
+ *
+ * Appended to the FORBIDDEN arm too, deliberately. That arm forbids CREATING a worktree; it
+ * does not stop a session being driven from one that already exists, and a wrong tag is
+ * exactly as wrong there.
+ */
+const WORKTREE_DECLARE = `Moving checkout? Use the EnterWorktree tool — the shelf's branch tag
+follows it. Any other move (a manual \`git worktree add\` + \`cd\`) is invisible to the shelf:
+say so, and pin the checkout as a tag.`;
+
+/** Appended when the project's dreamcontext brain is ISOLATED, so a second checkout cannot
+ *  fork it. */
 const WORKTREE_ALLOWED = `
 This project's dreamcontext brain is isolated from the code checkout, so you MAY use a git
 worktree to keep parallel work off the main tree. Say which worktree and branch you created.
+${WORKTREE_DECLARE}
 `;
 
 /** Appended otherwise. Stated as a prohibition, not as silence: an unmentioned capability is
@@ -100,26 +118,40 @@ worktree to keep parallel work off the main tree. Say which worktree and branch 
 const WORKTREE_FORBIDDEN = `
 Do NOT create a git worktree in this project. \`_dream_context/\` lives in the working tree,
 so a second checkout would fork the brain. Work in the main checkout.
+${WORKTREE_DECLARE}
 `;
 
 /**
  * The system-prompt append for `mode`, or `''` for a mode that adds nothing.
  *
- * `basic` is plain Claude Code — the surface briefing and nothing else. `jarvis` also returns
- * `''`: it is unselectable in the UI and `sanitizeChatMode` coerces it away before it ever
- * reaches here, so this arm is defence in depth, not a feature.
+ * ── `basic` is no longer empty, and that is a REVERSAL ────────────────────────────────
+ * It used to return `''` — "plain Claude Code, the surface briefing and nothing else" — with
+ * the worktree paragraph appended only in `develop`. That put the one paragraph standing
+ * between an agent and a FORKED BRAIN in the mode the fewest sessions run: `basic` is
+ * `DEFAULT_CHAT_MODE`, a fresh chat is in it, and it carries exactly the same tools as
+ * develop. The prohibition was guarding the door nobody uses. `basic` now gets the worktree
+ * paragraph and nothing else, so the mode is still plain Claude Code in BEHAVIOUR, plus the
+ * one rule that protects the brain from it.
+ *
+ * `plan` is deliberately excluded: it opens with "Do not edit code in this session", so a
+ * worktree rule there is prose that rides every turn of every planning session to say
+ * nothing. `jarvis` still returns `''` — it is unselectable in the UI and `sanitizeChatMode`
+ * coerces it away before it ever reaches here, so that arm is defence in depth, not a feature.
  *
  * Pure — `worktreeAllowed` is passed in rather than resolved here, so this stays a
  * string-in/string-out function the tests can drive across every combination without a
  * filesystem. The caller reads it from `worktreeIsolationAllowed` (lib/worktree-gate.ts).
  */
 export function modeBriefing(mode: ChatMode, opts: { worktreeAllowed: boolean }): string {
+  // ONE constant for both modes that get it — two copies would be two things to keep in step.
+  const worktree = opts.worktreeAllowed ? WORKTREE_ALLOWED : WORKTREE_FORBIDDEN;
   switch (mode) {
     case 'plan':
       return PLAN_BRIEFING;
     case 'develop':
-      return DEVELOP_BRIEFING + (opts.worktreeAllowed ? WORKTREE_ALLOWED : WORKTREE_FORBIDDEN);
+      return DEVELOP_BRIEFING + worktree;
     case 'basic':
+      return worktree;
     case 'jarvis':
       return '';
   }

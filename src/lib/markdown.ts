@@ -379,3 +379,70 @@ export function firstUnticked(sectionBody: string): string | null {
   return null;
 }
 
+
+/**
+ * One acceptance-criterion checkbox, with the milestone heading it sits under.
+ *
+ * `group` exists because a flat list of twenty answers "how many" and not "where am I".
+ * Criteria in this repo are written under `### ` milestone headings (`### Part A — …`,
+ * `### Validation`), which are already the run's phases.
+ */
+export interface Checkbox {
+  /** Read from the same `[x]` / `[ ]` grammar {@link countCheckboxes} counts. */
+  done: boolean;
+  /** The criterion's words, emphasis unwrapped (see {@link stripEmphasis}). EMPTY when the
+   *  task file holds a malformed `- [ ]` with nothing after it — kept rather than skipped,
+   *  so the list length can never drift from the number rendered beside it. */
+  text: string;
+  /** The nearest `###`-or-deeper heading ABOVE this line inside the section, or null when
+   *  the line precedes every heading (or the section has none). */
+  group: string | null;
+}
+
+/** `### `…`###### ` inside a section body. `##` cannot appear here — it would have ENDED the
+ *  section before `readSection` handed the body over. */
+const SUBHEADING_LINE_RE = /^\s{0,3}#{3,6}\s+(.+?)\s*#*\s*$/;
+
+/**
+ * Every acceptance-criteria checkbox in a section body, in document order.
+ *
+ * ONE READER, ONE GRAMMAR. This walks the same `CHECKBOX_LINE_RE` {@link countCheckboxes}
+ * counts and applies the same {@link stripEmphasis} {@link firstUnticked} applies, so the
+ * list, the fraction and the name of what is in flight can never describe different sets of
+ * lines. That is the whole reason it lives here beside them rather than being re-derived by
+ * whatever needs a list — a second parser is a second, quietly different answer.
+ *
+ * The invariant callers rely on, and the reason nothing is filtered out:
+ *
+ *     listCheckboxes(body).length === countCheckboxes(body).total
+ *
+ * holds for EVERY body, including malformed ones. `firstUnticked` skips a `- [ ]` with no
+ * text (returning `''` as "what is in flight" would be worse than looking further down), but
+ * a LIST that silently dropped it would render 19 rows under a heading reading `8/20`, which
+ * is the exact defect this list was added to fix. So the entry is kept with an empty `text`,
+ * and a caller wanting the line `firstUnticked` names asks for the first unticked entry whose
+ * text is non-empty — the two then agree by construction.
+ *
+ * Consistent with both of them, this is deliberately NOT a markdown parser:
+ *   • no fenced-code tracking — a `- [ ]` inside a fence is counted by `countCheckboxes`
+ *     today, and a list that skipped it would no longer match the number beside it;
+ *   • only the checkbox's OWN line is read, so a criterion continued on following lines
+ *     contributes its first line exactly as `firstUnticked` already reports it.
+ */
+export function listCheckboxes(sectionBody: string): Checkbox[] {
+  const out: Checkbox[] = [];
+  let group: string | null = null;
+  for (const line of sectionBody.split('\n')) {
+    const heading = line.match(SUBHEADING_LINE_RE);
+    if (heading) {
+      const name = stripEmphasis(heading[1]).trim();
+      // An empty `### ` resets to ungrouped rather than becoming a blank heading on screen.
+      group = name || null;
+      continue;
+    }
+    const m = line.match(CHECKBOX_LINE_RE);
+    if (!m) continue;
+    out.push({ done: m[1].toLowerCase() === 'x', text: stripEmphasis(m[2]).trim(), group });
+  }
+  return out;
+}

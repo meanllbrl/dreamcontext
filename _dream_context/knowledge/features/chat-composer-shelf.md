@@ -1,23 +1,31 @@
 ---
-id: "feat_EoAQ7k5f"
-type: "feature"
-name: "chat-composer-shelf"
-description: "A shelf docked to the chat composer that holds pinned facts and progress rows outside the transcript, so session-critical information never scrolls away. Supports dream-view pin and progress blocks, with tags wrapping to multiple lines (no fold), progress detail opening as a floating popover, and loopback URL clicks."
+id: feat_EoAQ7k5f
+type: feature
+name: chat-composer-shelf
+description: >-
+  A shelf docked to the chat composer that holds pinned facts and progress rows
+  outside the transcript, so session-critical information never scrolls away.
+  Supports dream-view pin and progress blocks, with tags wrapping to multiple
+  lines (no fold), progress detail opening as a floating popover, and loopback
+  URL clicks.
 pinned: false
-date: "2026-08-23"
-status: "in_review"
-created: "2026-08-23"
-updated: "2026-08-24"
+date: '2026-08-23'
+status: in_review
+created: '2026-08-23'
+updated: '2026-08-24'
 released_version: null
 tags:
-  - topic:agents
-  - topic:desktop
-  - layer:frontend
-  - layer:backend
+  - 'topic:agents'
+  - 'topic:desktop'
+  - 'layer:frontend'
+  - 'layer:backend'
 related_tasks:
-  - two-new-agent-actions-pinned-session-facts-that-stay-put-and-progress-read-from-the-task-file
-  - chat-names-the-branch-and-worktree-it-acts-on-backend-done-placement-waits-on-chat-density
-  - chat-density-shrink-chrome-and-demote-the-context-meter-so-more-conversation-fits
+  - >-
+    two-new-agent-actions-pinned-session-facts-that-stay-put-and-progress-read-from-the-task-file
+  - >-
+    session-facts-name-the-checkout-the-session-is-actually-in-and-the-worktree-brief-covers-basic-develop
+  - >-
+    run-progress-reads-as-a-live-checklist-not-two-lines-under-a-number-it-never-explains
 ---
 
 ## Why
@@ -52,7 +60,7 @@ Both need a surface that PERSISTS and, for progress, one that is DERIVED from th
 - [x] **Pin: a fact with a weight** — `dream-view` block `{"type":"pin","id":"…","weight":"tag"|"row","facts":[…]}` renders in the shelf, outside the transcript flow.
 - [x] **Weight is a REQUEST**: the surface may demote a row whose content is tag-sized; criteria hold either way.
 - [x] **Re-sending the same id updates that pin in place** and never produces a second one (id-keyed contract).
-- [x] **Session facts are server-derived and not dismissable** — branch and worktree marker from `GET /api/agent/session-facts` (git symbolic-ref, worktree via --git-common-dir ≠ --absolute-git-dir).
+- [x] **Session facts are server-derived and not dismissable** — branch and worktree marker from `GET /api/agent/session-facts?session=<uuid>` (git symbolic-ref, worktree via --git-common-dir ≠ --absolute-git-dir). AMENDED 2026-08-24: the route is SESSION-scoped, not vault-scoped. It first answered for the vault's project root, which is only right until the agent moves — see the decision below.
 - [x] **Loopback URL carve-out** — `http://localhost:PORT` / `127.0.0.1` facts are clickable and open in the OS browser. Post-parse `sanitizeLoopbackUrl` accepts exactly localhost / 127.0.0.1 / [::1] (and their normalizing spellings), REJECTS 0.0.0.0 / evil.com tricks / javascript: / credentials in URL. Search and hash are stripped. Pin-facts-only carve-out; chatActions.ts url action stays https-only.
 - [x] **Pins survive reopening** (persisted per conversation, like checklistStore).
 - [x] **Long pins: lede + detail** — A pin with long content occupies ONE row showing lede + open affordance at rest. Clicking opens detail IN PLACE (M2b unchanged), growing UPWARD, capped at ~40% of pane height (scrolls inside), one pin open at a time. Tag line and composer y unchanged between collapsed/expanded.
@@ -67,6 +75,16 @@ Both need a surface that PERSISTS and, for progress, one that is DERIVED from th
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-08-24 - The branch tag follows the SESSION, not the vault
+Owner report with two screenshots: a run whose every step happened in a worktree, under a tag that still read `main`; and a Develop session that called the harness's own `EnterWorktree` tool, still reading `main`. The original design read git in `projectRootOf(contextRoot)` — where `claude` is spawned — which is correct at t=0 and never again, because Develop mode's briefing is what invites the agent to leave.
+
+Three decisions came out of it. (1) The SIGNAL is the harness's tool frames, not the model's prose: the chat bridge already parses the stdout NDJSON, so an `EnterWorktree` move arrives structured. Prose is the fallback only for a manual `git worktree add` + `cd`, which produces no frame. (2) A directory named by a frame is VALIDATED before git runs there — its `--git-common-dir` must match the project root's, bounding the blast radius to sibling checkouts of the project already open. A refused move leaves the session where it was; there is deliberately no heuristic fallback, because a surface whose promise is "you never have to re-ask" cannot afford a guess. (3) `useSessionFacts`' query key now carries the session id. The old comment — "these facts belong to the CHECKOUT, so every pane subscribes to one cache entry" — was itself the bug: a session does not stay in the checkout it was spawned in, and one shared entry showed every pane whichever answer arrived last.
+
+Not covered: the tag visibly flipping in a BROWSER after a move. Proven at the HTTP/WS layer only.
+
+### 2026-08-24 - The worktree paragraph belongs in basic too, not just develop
+`WORKTREE_ALLOWED`/`WORKTREE_FORBIDDEN` were appended only in `develop`, so the one paragraph standing between an agent and a forked brain was absent from `basic` — `DEFAULT_CHAT_MODE`, the mode a fresh chat is in, carrying exactly the same tools. Owner decision: basic and develop both get it from one shared constant; `plan` stays excluded because it opens with "Do not edit code in this session"; `jarvis` still returns `''`. This REVERSES the earlier "basic is plain Claude Code — the surface briefing and nothing else" decision, and both arms now end with the instruction to declare a move the shelf cannot see.
 
 ### 2026-08-23 - Tags NEVER fold — the +N chip was cut after live testing
 After live testing, owner decision: tags are ALWAYS visible. The tag area wraps onto as many lines as needed (flex-wrap), capping at ~25% of the pane and scrolling inside itself. The +N / −N fold chip and its fold row were REMOVED from shelfModel/PinShelf. A fact you must press a button to see is not a pinned fact. MAX_TAGS_PER_LINE no longer folds anything; the only tag-count bound is MAX_PINS_PER_CONVERSATION eviction (24), which stays loud.
@@ -95,8 +113,10 @@ With an open row, .pin-shell.has-rows carries 12px top corners and no bottom bor
 - **`dashboard/src/components/sleepy/chat/PinShelf.tsx`** — shelf render: tag line + optional open row, wrap layout for tags (no fold), loopback URL click handler, dismiss affordances.
 - **`dashboard/src/components/sleepy/chat/ProgressPopover.tsx`** — floating popover for progress detail (header + criteria list + × dismiss).
 - **`dashboard/src/lib/chatViewSpec.ts`** — VIEW_TYPES definitions for pin + progress, caps (MAX_PINS_PER_CONVERSATION = 24, MAX_FACTS_PER_PIN = 6, NO per-line tag cap), parseViewBlock with notices.
-- **`src/server/routes/agent-shelf.ts`** (188 lines) — GET /api/agent/session-facts (branch via git symbolic-ref, worktree via --git-common-dir), GET /api/agent/task-progress (reads task file, derives percent from checkboxes, extracts latest changelog + first unticked criterion).
-- **`src/lib/session-facts.ts`** (134 lines) — SessionFacts + readSessionFacts + UNKNOWN_SESSION_FACTS, 12s TTL memo, isRepo/branch/worktree via git commands.
+- **`src/server/routes/agent-shelf.ts`** — GET /api/agent/session-facts (resolves `?session=` through the checkout registry, then reads git THERE), GET /api/agent/task-progress (reads task file, derives percent from checkboxes, extracts latest changelog + first unticked criterion).
+- **`src/lib/session-facts.ts`** — SessionFacts (+ `worktreeName`) + readSessionFacts + UNKNOWN_SESSION_FACTS, 12s TTL memo, isRepo/branch/worktree via git commands, and the exported `gitCommonDir` that identifies a REPOSITORY (TTL-memoized, bounded 128).
+- **`src/lib/session-cwd.ts`** — the per-session checkout registry. A directory is accepted only when its `--git-common-dir` canonicalises to the project root's, i.e. a worktree of the SAME repo; bounded at 64 sessions, oldest-first eviction; a removed worktree falls back to the project root on the next read.
+- **`src/server/worktree-frames.ts`** — reads `EnterWorktree`/`ExitWorktree` moves off the NDJSON relay `agent-chat.ts` already parses. The path comes from the tool RESULT, never the call.
 - **`src/lib/markdown.ts`** — firstUnticked + shared CHECKBOX_LINE_RE (extracted from countCheckboxes).
 - **`src/server/chat-surface.ts`** — CHAT_SURFACE_BRIEFING updated to document pin and progress types.
 
@@ -106,15 +126,18 @@ With an open row, .pin-shell.has-rows carries 12px top corners and no bottom bor
 - **`tests/unit/pin-store.test.ts`** (30 tests) — persistent storage, eviction, coercion, flush timing.
 - **`tests/unit/shelf-model.test.ts`** (22 tests) — ceiling enforcement, row-to-tag demotion, progress derivation.
 - **`tests/unit/task-progress.test.ts`** (17 tests) — percent calculation, states, notices for edge cases.
-- **`tests/unit/session-facts.test.ts`** (10 tests) — git probes, worktree detection, TTL memo.
+- **`tests/unit/session-facts.test.ts`** (9 tests) — git probes, worktree detection, TTL memo.
+- **`tests/unit/session-cwd.test.ts`** (16 tests) — the same-repository gate against real `git worktree add`: sibling accepted; foreign repo, non-repo, missing dir, a file, a relative path all refused and the session KEEPS its previous checkout; removed-worktree fallback; bounded eviction.
+- **`tests/unit/worktree-frames.test.ts`** (11 tests) — driven by frames captured from real transcripts (structure verbatim, paths anonymised): result-not-call, Created and Entered, errored tool moves nothing, ids consumed once, two watchers isolated.
+- **`tests/unit/agent-session-facts-route.test.ts`** (7 tests) — session scoping, no-id and unknown-id compatibility, two sessions two branches, non-UUID param ignored, desktop gate.
 - **`tests/unit/chat-surface-lockstep.test.ts`** — briefing examples execute through real parser, bidirectional coverage.
 - **`tests/unit/chat-shelf-placement.test.ts`** (4 tests) — shelf geometry invariant across scroll positions.
-- **`scripts/verify/chat-shelf.mjs`** (28 checks) — HTTP validation: 64% from 7/11, in-flight criterion, tick → 73%, zero-criteria → null + notice, unknown slug → 200 state, hostile slugs → 400, branch reported, worktree detection, desktop gate.
+- **`scripts/verify/chat-shelf.mjs`** (34 checks) — HTTP validation: 64% from 7/11, in-flight criterion, tick → 73%, zero-criteria → null + notice, unknown slug → 200 state, hostile slugs → 400, branch reported, worktree detection, desktop gate. Check 9 drives a REAL chat WebSocket against a scripted `claude` replaying captured EnterWorktree frames and proves the branch MOVES for that session while a no-id caller, a different session and a non-UUID param all still read the project root.
 - **`scripts/verify/chat-shelf-ui.mjs`** (6 screenshots + geometry assertions) — real Chromium against dist server: resting shelf, 29 tags → 3 lines, progress row, progress popover, long pin expanded, background-commands tray. Placement verified: shelf y unchanged at scroll-top/mid/bottom.
 
 ### Routes
 
-- **GET /api/agent/session-facts** — returns {branch, isRepo, worktree, mainRoot, isDesktop}. Branch via `git symbolic-ref --short HEAD`, worktree via `--git-common-dir` ≠ `--absolute-git-dir` (both realpaths to fix macOS /var symlink). Desktop-gated, vault-scoped, 12s TTL memo.
+- **GET /api/agent/session-facts?session=&lt;uuid&gt;** — returns {branch, isRepo, worktree, mainRoot, worktreeName}. Answers for the checkout THAT SESSION is in; an absent or unknown id answers for the project root, which is the pre-2026-08-24 behaviour and keeps a fresh pane, a resumed conversation and the terminal view working. Branch via `git symbolic-ref --short HEAD`, worktree via `--git-common-dir` ≠ `--absolute-git-dir` (both realpaths to fix macOS /var symlink). The id is held to `sanitizeUuid` before it keys anything. Desktop-gated, 12s TTL memo.
 - **GET /api/agent/task-progress/:slug** — returns {percent, state, now, last, updatedAt, notice}. 400 invalid_slug before fs, 200 unknown-slug for well-formed-missing. Percent from countCheckboxes, null never NaN. Now = firstUnticked, last = latest changelog. Desktop-gated, vault-scoped.
 
 ### Key behaviors
@@ -141,6 +164,12 @@ Original design had progress detail expand in-place (like long pins). Owner chan
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-08-24 - Session-scoped session facts + the worktree brief reaches basic
+- Shipped and pushed: `7c5857f` (worktree brief → basic + develop, plan excluded) and `282e3fe` (session-scoped facts) on `main`.
+- New: `src/lib/session-cwd.ts`, `src/server/worktree-frames.ts`; `SessionFacts.worktreeName`; `gitCommonDir` exported and TTL-memoized after a test caught four git forks per pane per poll.
+- Evidence: 34 new unit tests; `verify:chat-shelf` 34/34 (was 28) incl. a real chat WS replaying captured EnterWorktree frames; `verify:chat-modes` 28/28; `verify:chat-shelf-ui` 100/100 in real Chromium; tsc clean both projects; build clean.
+- Task: `[[session-facts-name-the-checkout-the-session-is-actually-in-and-the-worktree-brief-covers-basic-develop]]`.
 
 ### 2026-08-23 - Shipped (uncommitted)
 - All acceptance criteria met across 6-session goal-skill v2 run (waves D1-E1-E2-E3, D2-A/B/C, phases 1-6).

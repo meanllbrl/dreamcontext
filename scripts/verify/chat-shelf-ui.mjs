@@ -31,7 +31,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,6 +45,15 @@ const PROJ = join(SCRATCH, 'proj');
 const EPS = 2;
 
 const TASK_SLUG = 'shelf-verify-task';
+/** A task whose Acceptance Criteria section holds prose and no checkboxes. There is nothing to
+ *  divide by, so there is no percent — and the panel has to SAY so rather than draw an empty
+ *  checklist frame under a header with no number in it. */
+const EMPTY_SLUG = 'shelf-verify-no-criteria';
+
+/** Set VERIFY_SHOTS=<dir> to drop PNGs of the states asserted below. Declared here rather than
+ *  at the one old call site so the run-progress panel — which overflows `.pin-shelf` and so
+ *  cannot be captured by an element shot of it — can be photographed where it is open. */
+const SHOTS = process.env.VERIFY_SHOTS;
 
 /** A task file with 11 acceptance criteria, 7 ticked → the design's own 64% / 7-of-11. */
 const TASK_MD = `---
@@ -55,15 +64,23 @@ status: in_progress
 
 ## Acceptance Criteria
 
+### Part A - wiring
+
 - [x] read the capability allowlist
 - [x] map the dev proxy entry
 - [x] dedupe the dev proxy entry
 - [x] patch vite.config.ts
 - [x] patch dev.json
+
+### Part B - the surface
+
 - [x] regenerate capability types
 - [x] restart the dev server
 - [ ] loopback url exception
 - [ ] route the port pin through one source
+
+### Validation
+
 - [ ] smoke test tauri dev
 - [ ] note it in the 0.25.0 changelog
 
@@ -109,6 +126,9 @@ const LONG = fence({
 // PROGRESS — derived from the task file on disk, never from this payload.
 const PROGRESS = fence({ type: 'progress', task: '${TASK_SLUG}' });
 
+// NOCRIT — a progress block for a task with no checkboxes at all. Degrades loudly or fails.
+const NOCRIT = fence({ type: 'progress', task: '${EMPTY_SLUG}' });
+
 // CEILING — five row-weight pins in ONE turn. The shelf must still show exactly one row.
 const MANY = [1, 2, 3, 4, 5].map((n) => fence({
   type: 'pin', id: 'many' + n, weight: 'row',
@@ -133,6 +153,9 @@ function reply(prompt) {
   if (prompt.includes('MANYTAGS')) return 'Pinned a lot of tags.' + MANYTAGS;
   if (prompt.includes('FACTS')) return 'Pinned this session\\'s facts.' + FACTS;
   if (prompt.includes('LONG')) return 'Pinned a summary.' + LONG;
+  // NOCRIT before PROGRESS: neither string contains the other, but keeping the degenerate arm
+  // first matches the order the checks run in and costs nothing.
+  if (prompt.includes('NOCRIT')) return 'Tracking a task with nothing to count.' + NOCRIT;
   if (prompt.includes('PROGRESS')) return 'Tracking the run.' + PROGRESS;
   if (prompt.includes('MANY')) return 'Pinned five rows.' + MANY;
   if (prompt.includes('FILL')) return FILLER;
@@ -198,6 +221,8 @@ function setupScratch() {
     '{"github":{"token":"gho_fake_verify_token","login":"verify-user"}}');
   // The task the progress row reads. Written to the SCRATCH project, never anywhere real.
   writeFileSync(join(PROJ, '_dream_context', 'state', `${TASK_SLUG}.md`), TASK_MD);
+  writeFileSync(join(PROJ, '_dream_context', 'state', `${EMPTY_SLUG}.md`),
+    '---\nid: task_nocrit\nstatus: in_progress\n---\n\n## Acceptance Criteria\n\nProse only, no checkboxes.\n');
   spawnSync('git', ['init', '-q', '-b', 'feat/pin-surface'], { cwd: PROJ });
 
   const bin = join(HOME, '.local', 'bin', 'claude');
@@ -259,6 +284,18 @@ async function runWidth(chromium, base, width, report) {
   const bottomOf = (b) => (b ? { b: b.y + b.h } : null);
   const bottomHeld = (a, b) => near(bottomOf(a), bottomOf(b), 'b');
 
+  // The reload check above leaves the surface collapsed, so anything that has to TYPE after it
+  // must re-open the pane first. Factored out of the opening sequence rather than duplicated,
+  // so a future change to how the surface is opened only has to be made once.
+  const expandSurface = async () => {
+    if (await page.locator('.agent-surface.expanded').count()) return;
+    for (const sel of ['.agent-fab', '.agent-overlay-head', '.agent-surface']) {
+      const el = page.locator(sel).first();
+      if (await el.count()) { await el.click({ force: true }).catch(() => {}); await page.waitForTimeout(1500); }
+      if (await page.locator('.agent-surface.expanded').count()) break;
+    }
+  };
+
   const say = async (text) => {
     await vis('.chat-cmp-input').first().click();
     await vis('.chat-cmp-input').first().fill(text);
@@ -271,13 +308,7 @@ async function runWidth(chromium, base, width, report) {
   await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(4000);
   for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(300); }
-  if (!(await page.locator('.agent-surface.expanded').count())) {
-    for (const sel of ['.agent-fab', '.agent-overlay-head', '.agent-surface']) {
-      const el = page.locator(sel).first();
-      if (await el.count()) { await el.click({ force: true }).catch(() => {}); await page.waitForTimeout(1500); }
-      if (await page.locator('.agent-surface.expanded').count()) break;
-    }
-  }
+  await expandSurface();
   if (!(await vis('.chat-cmp-input').count())) await page.getByRole('button', { name: /Start chat/ }).click();
   ok('a chat session opens against the real WS route', await until(async () => (await vis('.chat-cmp-input').count()) > 0, 20000));
   await page.waitForTimeout(1200);
@@ -340,6 +371,33 @@ async function runWidth(chromium, base, width, report) {
   // AMENDED by the owner after live testing: the row stays pinned, but its detail floats over
   // the conversation so it costs the shelf no height at all.
   console.log('── progress detail: a popover over the conversation');
+  // ── the row READS AS LIVE, not as a frozen fraction ──────────────────────────────
+  // The owner's complaint was not that the number was wrong — it was that nothing ever moved,
+  // so a run that had stalled looked identical to one that was working. The since-last-write
+  // clock is the honest signal, and this is the only way to prove it actually ticks.
+  // The fixture is written at setup and is minutes old by the time this runs, which would park
+  // the clock in its "3m ago" band where nothing changes inside a 2s window. Touching the file
+  // puts the reading back into SECONDS — the band that has to visibly move — and then one poll
+  // cycle (4s, plus margin) carries the new mtime to the row.
+  const SECONDS_CLOCK = /^(\d+)s ago$/;
+  utimesSync(join(PROJ, '_dream_context', 'state', `${TASK_SLUG}.md`), new Date(), new Date());
+  await page.waitForTimeout(5_500);
+  const clock0 = (await vis('.pin-since').first().innerText().catch(() => '')).trim();
+  ok('the row carries a since-last-write clock, in seconds while the write is recent',
+    SECONDS_CLOCK.test(clock0), `"${clock0}"`);
+  const tagsBeforeClock = await box('.pin-tags');
+  await page.waitForTimeout(2_200);
+  const clock1 = (await vis('.pin-since').first().innerText().catch(() => '')).trim();
+  // The point of the whole liveness change: this number advances on its OWN interval, between
+  // polls and without the percent moving. A frozen fraction was the complaint.
+  ok('…and it MOVES on its own — the panel is watched, not re-read',
+    SECONDS_CLOCK.test(clock1)
+    && Number(clock1.match(SECONDS_CLOCK)[1]) > Number(clock0.match(SECONDS_CLOCK)?.[1] ?? -1),
+    JSON.stringify({ before: clock0, after: clock1 }));
+  ok('…without moving the tag line, which is the one thing the shelf must never do',
+    near(tagsBeforeClock, await box('.pin-tags'), 'y'),
+    JSON.stringify({ before: tagsBeforeClock, after: await box('.pin-tags') }));
+
   const rowBefore = await box('.pin-row');
   await vis('.pin-lede').first().click();
   await page.waitForTimeout(350);
@@ -355,7 +413,59 @@ async function runWidth(chromium, base, width, report) {
     && (await vis('.pin-pop-head').first().innerText()).includes('7/11'),
     (await vis('.pin-pop-head').first().innerText().catch(() => '(none)')).replace(/\s+/g, ' '));
   ok('it caps itself and scrolls inside rather than growing',
-    !!popBox && popBox.h <= 900 * 0.34 + EPS, JSON.stringify(popBox));
+    !!popBox && popBox.h <= 900 * 0.46 + EPS, JSON.stringify(popBox));
+  // ── the CHECKLIST — the defect this panel was rebuilt to remove ──────────────────
+  // It used to render exactly two rows under a header reading `7/11`: the criterion in flight
+  // and the newest changelog bullet. Everything below asserts the header's denominator is now
+  // something you can actually count on screen.
+  const taskRows = await vis('.pin-pop .pin-task').count();
+  ok('every criterion is on screen — the count matches the header\'s denominator',
+    taskRows === 11, `rendered ${taskRows} rows under a header reading 7/11`);
+  ok('…7 ticked, 1 in flight, 3 still to do — three states and no fourth',
+    (await vis('.pin-pop .pin-task.is-done').count()) === 7
+    && (await vis('.pin-pop .pin-task.is-now').count()) === 1
+    && (await vis('.pin-pop .pin-task.is-todo').count()) === 3,
+    JSON.stringify({
+      done: await vis('.pin-pop .pin-task.is-done').count(),
+      now: await vis('.pin-pop .pin-task.is-now').count(),
+      todo: await vis('.pin-pop .pin-task.is-todo').count(),
+    }));
+  const heads = await vis('.pin-pop .pin-group-name').allInnerTexts();
+  ok('…grouped under the milestone headings the task was written with',
+    JSON.stringify(heads) === JSON.stringify(['Part A - wiring', 'Part B - the surface', 'Validation']),
+    JSON.stringify(heads));
+  const groupCounts = await vis('.pin-pop .pin-group-head .pin-count').allInnerTexts();
+  ok('…and each group counts itself', JSON.stringify(groupCounts) === JSON.stringify(['5/5', '2/4', '0/2']),
+    JSON.stringify(groupCounts));
+  const flightStrip = (await vis('.pin-pop-flight').first().innerText()).replace(/\s+/g, ' ');
+  ok('the criterion in flight is held at the top of the panel, not hunted for in the list',
+    flightStrip.includes('loopback url exception') && flightStrip.includes('in flight'), flightStrip);
+  ok('…and it is the SAME line the row names, so the two cannot disagree',
+    (await vis('.pin-row .pin-now').first().innerText()).includes('loopback url exception'),
+    (await vis('.pin-row .pin-now').first().innerText()).replace(/\s+/g, ' '));
+  if (SHOTS) {
+    await page.locator('.chat-pane').first()
+      .screenshot({ path: `${SHOTS}/run-progress-panel.png` }).catch(() => {});
+  }
+  const foot = (await vis('.pin-pop-foot').first().innerText().catch(() => '')).replace(/\s+/g, ' ');
+  ok('the changelog bullet is a FOOTER, not a twelfth criterion',
+    (await vis('.pin-pop-foot').count()) === 1 && foot.includes('last logged')
+    && (await vis('.pin-pop-foot .pin-task').count()) === 0,
+    `foot="${foot}" rows=${taskRows}`);
+
+  // ── the panel STAYS anchored while the list scrolls under it ─────────────────────
+  // This is what replaced "scroll to the in-flight row on open": sticky holds at every scroll
+  // position, and `PinShelf.tsx` is forbidden from touching scroll at all.
+  const stripBefore = await box('.pin-pop-flight');
+  await vis('.pin-pop').first().evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await page.waitForTimeout(250);
+  const stripAfter = await box('.pin-pop-flight');
+  ok('scrolling the list does NOT scroll the in-flight strip away',
+    near(stripBefore, stripAfter, 'y'), JSON.stringify({ before: stripBefore, after: stripAfter }));
+  ok('…and the list really did scroll (the assertion above is not vacuous)',
+    (await vis('.pin-pop').first().evaluate((el) => el.scrollTop)) > 0);
+  await vis('.pin-pop').first().evaluate((el) => { el.scrollTop = 0; });
+
   ok('THE POPOVER COSTS THE SHELF NO HEIGHT — the row did not move',
     near(rowBefore, await box('.pin-row'), 'y') && near(rowBefore, await box('.pin-row'), 'h'));
   ok('…the tag line did not move', near(activeTags, await box('.pin-tags'), 'y'));
@@ -374,6 +484,43 @@ async function runWidth(chromium, base, width, report) {
   await vis('.pin-pop .pin-x').first().click();
   await page.waitForTimeout(300);
   ok('its own × closes it', (await vis('.pin-pop').count()) === 0);
+
+  // ── 2c — a reading that cannot be honest degrades LOUDLY ─────────────────────────
+  // The checklist makes this arm matter MORE, not less: a task with nothing to count must
+  // produce a notice and NO list — never an empty checklist frame under a blank denominator.
+  // Placed here rather than at the end because the pane is open and the state is restorable:
+  // this pins a second progress entry, checks it, then DISMISSES it, which hands the row back
+  // to the original run and leaves the shelf exactly as the sections below expect it.
+  console.log('── degradation: a task with no checkboxes at all');
+  await say('NOCRIT please');
+  await until(async () =>
+    (await vis('.pin-row').first().innerText().catch(() => '')).includes('nothing to'), 15000);
+  const degradedRow = (await vis('.pin-row').first().innerText()).replace(/\s+/g, ' ');
+  ok('the row states the reason instead of drawing a bar',
+    degradedRow.includes('nothing to derive') || degradedRow.includes('nothing to count'), degradedRow);
+  ok('…and shows no percentage and no track fill',
+    !/\d+%/.test(degradedRow) && (await page.locator('.pin-track-fill').count()) === 0, degradedRow);
+  await vis('.pin-lede').first().click();
+  await page.waitForTimeout(350);
+  ok('…the panel carries the notice', (await vis('.pin-pop .pin-notice').count()) === 1,
+    (await vis('.pin-pop').first().innerText().catch(() => '(closed)')).replace(/\s+/g, ' ').slice(0, 160));
+  ok('…and NO checklist — an empty list frame would be the silent version of the bug',
+    (await vis('.pin-pop .pin-task').count()) === 0
+    && (await vis('.pin-pop .pin-group-head').count()) === 0
+    && (await vis('.pin-pop-flight').count()) === 0,
+    JSON.stringify({
+      tasks: await vis('.pin-pop .pin-task').count(),
+      groups: await vis('.pin-pop .pin-group-head').count(),
+      flight: await vis('.pin-pop-flight').count(),
+    }));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
+  // Restore: dismissing the degenerate entry hands the row back to the real run.
+  await vis('.pin-row .pin-x').first().click();
+  await until(async () => (await vis('.pin-row').first().innerText().catch(() => '')).includes('7/11'), 15000);
+  ok('dismissing it hands the row back to the real run, unchanged',
+    (await vis('.pin-row').first().innerText()).includes('7/11'),
+    (await vis('.pin-row').first().innerText()).replace(/\s+/g, ' '));
 
   // ── 3 — no scroll reaction ───────────────────────────────────────────────────────
   console.log('── scroll: the shelf is not in the scroller');

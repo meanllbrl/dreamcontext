@@ -43,6 +43,7 @@ import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { CHAT_MODE_ROWS, DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { preparePrompt, developKickoffPrompt } from '../../lib/agentPrompt';
 import { clearPins } from '../../lib/pinStore';
+import { dropScratch } from './chat/composerScratch';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig, useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
@@ -235,6 +236,33 @@ function removeFromPane(p: PaneState, sid: string): PaneState {
   if (!p.tabs.includes(sid)) return p;
   const tabs = p.tabs.filter((t) => t !== sid);
   return { ...p, tabs, active: p.active === sid ? (tabs[0] ?? '') : p.active };
+}
+
+/**
+ * Carry the half-typed composer draft from a chat session onto the one REPLACING it.
+ *
+ * A chat pane's identity IS its session object — `ChatPaneHost` is keyed by session id and
+ * portaled into that session's own container — so every respawn path below unmounts the pane
+ * and mounts a fresh one. The textarea's text is LOCAL React state (Composer.tsx's draft
+ * discipline), so without this it died with the outgoing pane: switching mode, or moving
+ * permission to Bypass (which CLI 2.1.220 refuses to switch LIVE, making the fallback respawn
+ * the NORMAL path there rather than an edge case), silently ate whatever the user was typing.
+ * A control that reloads the conversation is allowed to cost a process; it is not allowed to
+ * cost a message the user has not sent yet.
+ *
+ * `syncDraft` mirrors every keystroke into `conv.draft`, so the outgoing session's model is an
+ * accurate copy of the textarea — READ IT BEFORE `dispose()`, which is why every caller
+ * captures the string first and calls this after the respawn. `sendText` appends it to the
+ * incoming session's still-empty draft (the same external-insert path a dropped file uses) and
+ * bumps `draftEpoch`; the fresh Composer reads `conv.draft` in its `useState` initializer, so
+ * the text is in the box on FIRST paint rather than arriving a frame later.
+ *
+ * NOT attempted for chat→terminal ("Continue in Terminal"): a draft would have to be typed
+ * into the CLI's readline after a boot-settle delay, and a draft containing a newline would
+ * submit itself halfway. Losing it there is better than sending half a message.
+ */
+function carryDraftInto(next: ChatSession, draft: string): void {
+  if (draft) next.sendText(draft);
 }
 
 // ── The persistent surface ─────────────────────────────────────────────────────
@@ -838,6 +866,12 @@ export function AgentSurface() {
     const kind = live?.kind ?? meta?.kind;
     const claudeId = live?.claudeId ?? meta?.claudeId;
     if (kind === 'chat' && vault && claudeId) clearPins(vault, claudeId);
+    // Same sweep, same reasoning, one line later: the composer's staged chips and reply quote
+    // are keyed by the conversation id too (composerScratch.ts), and this is the only path
+    // that ends a conversation. It is also where the chips' object URLs are released — the
+    // composer deliberately does NOT revoke them on unmount, because a respawn unmounts a pane
+    // whose chips are still wanted.
+    if (kind === 'chat' && claudeId) dropScratch(claudeId);
 
     // dispose is hardened, but NEVER let a teardown throw block the actual removal —
     // one click must always make the tab disappear.
@@ -967,16 +1001,37 @@ export function AgentSurface() {
   // `auto` would come back as `bypass` in a project whose remembered default never changed,
   // which is a silent privilege escalation one click deep.
   //
+  // `targetBypass` is the deliberate exception, and it is what makes Bypass REACHABLE at all.
+  // This function is also `changeChatPermissionMode`'s fallback, and that fallback is the only
+  // path that delivers Bypass on a running chat: CLI 2.1.220 refuses every live switch INTO
+  // bypass ("the session was not launched with --dangerously-skip-permissions"), so the switch
+  // is always a respawn. Carrying `cs.bypass` there would respawn under the mode the user just
+  // asked to LEAVE — the click would reconnect the session and land back on `auto`, forever.
+  // So that caller passes the requested mode explicitly and this one honours it; every other
+  // caller passes nothing and keeps the never-escalate guarantee above. The asymmetry is the
+  // point: escalation happens only when a caller names it, never by inheriting a default.
+  //
   // CAVEAT, stated rather than hidden: for a session whose socket is already gone (the case
   // this banner exists for), `cs.bypass` is the last value the process ACKNOWLEDGED. A live
   // switch attempted after the process died has no ack, so it is not reflected here. The
   // resumed session's trigger then shows what the new process is genuinely running (ChatPane
   // resolves it from the CLI's own `system:init`), so the indicator stays truthful even when
   // this seed is a beat behind.
-  const resumeChatSession = useCallback((cs: ChatSession) => {
+  const resumeChatSession = useCallback((cs: ChatSession, targetBypass?: boolean) => {
+    // Captured BEFORE dispose, applied after the respawn — see `carryDraftInto`. This path is
+    // also the permission-mode fallback, so it is the one a Bypass switch actually takes.
+    const carried = cs.getModel().draft;
     try { cs.dispose(); } catch { /* best-effort */ }
     sessions.current.delete(cs.id);
-    const s = spawn(cs.bypass, cs.claudeId, true, 'chat', '', modelForSession(cs), true, '', false, effortForSession(cs), true, cs.mode);
+    // `targetBypass` is the ONE thing this path does not carry over when it is passed: the
+    // caller is asking for a mode this conversation is NOT running under yet (see the
+    // parameter's contract above). Absent — the "Session ended · Resume" case — `cs.bypass`
+    // stands, so a resume never escalates.
+    const bp = targetBypass ?? cs.bypass;
+    const s = spawn(bp, cs.claudeId, true, 'chat', '', modelForSession(cs), true, '', false, effortForSession(cs), true, cs.mode);
+    // `spawn` is typed as the Session|ChatSession union; the `'chat'` kind two lines up
+    // provably took its chat arm, which is the same narrowing `changeChatMode` does by hand.
+    carryDraftInto(s as ChatSession, carried);
     setSessionList((prev) => prev.map((m) => (m.id === cs.id ? { ...m, id: s.id, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode: cs.mode } : m)));
     setPanes((prev) => prev.map((p) => ({
       ...p,
@@ -995,19 +1050,21 @@ export function AgentSurface() {
    * A mode is a `--append-system-prompt-file`, fixed when the process starts — there is no
    * live-switch control frame for it the way there is for permission mode. So this reuses the
    * resume path wholesale: same conversation UUID (`--resume`, transcript intact), same model,
-   * effort and permission mode, new mode. The composer's menu says so out loud rather than
-   * letting the reconnect read as a glitch.
+   * effort, permission mode and half-typed draft (`carryDraftInto`), new mode. The composer's
+   * menu says so out loud rather than letting the reconnect read as a glitch.
    */
   const changeChatMode = useCallback((sid: string, mode: ChatMode) => {
     const cs = sessions.current.get(sid);
     if (!cs || cs.kind !== 'chat') return;
     const chat = cs as ChatSession;
     if (chat.mode === mode) return; // picking the mode you are already in is not a restart
+    const carried = chat.getModel().draft;  // BEFORE dispose — see `carryDraftInto`
     try { chat.dispose(); } catch { /* best-effort */ }
     sessions.current.delete(chat.id);
     // Same B3 call shape as `resumeChatSession` above — `explicitBypass` with `bp = cs.bypass`,
     // so switching Basic → Develop can never also switch `auto` → `bypass`.
     const s = spawn(chat.bypass, chat.claudeId, true, 'chat', '', modelForSession(chat), true, '', false, effortForSession(chat), true, mode);
+    carryDraftInto(s as ChatSession, carried);  // union → chat arm, as above
     setSessionList((prev) => prev.map((m) => (m.id === chat.id ? { ...m, id: s.id, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode } : m)));
     setPanes((prev) => prev.map((p) => ({
       ...p,
@@ -1027,15 +1084,29 @@ export function AgentSurface() {
   //                        with `--resume` under the new mode, which reaches the same end
   //                        state at the cost of a process restart.
   const changeChatPermissionMode = useCallback((mode: 'auto' | 'bypass') => {
-    chatPermissionModeRef.current = mode;  // eagerly, so a fallback respawn in THIS tick is correct
+    // Eagerly, so any spawn in THIS tick that resolves the project default (a brand-new chat,
+    // a Delegate launch) reads the mode just chosen rather than the one being replaced. The
+    // fallback respawn below does NOT rely on this — it is handed the requested mode as an
+    // argument, because a session-scoped decision must not be delivered by a project-wide ref.
+    chatPermissionModeRef.current = mode;
     // Persist under THIS vault's key and announce on THIS instance's bus, which is also what
     // feeds our own `useInstanceEvent` above and moves the state — one write path, no
     // second `setChatPermissionMode` here that could disagree with what was stored.
     writeChatPermissionMode(bus, vault, mode);
-    sessions.current.forEach((s) => {
+    // A SNAPSHOT of the roster, not `sessions.current.forEach` — and this is load-bearing, not
+    // tidiness. `Map.prototype.forEach` visits entries ADDED DURING ITERATION, and the fallback
+    // below adds one: `resumeChatSession` deletes the old id and registers the replacement. For
+    // a session whose socket is already gone (an ended tab, a server restart, a tab still
+    // connecting) `setPermissionMode` fails SYNCHRONOUSLY — `sendControl` returns false on a
+    // non-OPEN socket — so the fallback ran inside the loop, the loop then visited the
+    // replacement, whose own socket was still CONNECTING, which failed for the same reason and
+    // respawned again: an unbounded `claude` spawn storm on one click. Iterating a copy makes a
+    // session spawned UNDER the new mode invisible to this pass, which is also the correct
+    // semantics — it has nothing left to switch.
+    Array.from(sessions.current.values()).forEach((s) => {
       if (s.kind !== 'chat') return;
       const cs = s as ChatSession;
-      cs.setPermissionMode(mode, () => resumeChatSession(cs));
+      cs.setPermissionMode(mode, () => resumeChatSession(cs, mode === 'bypass'));
     });
   }, [bus, vault, resumeChatSession]);
 

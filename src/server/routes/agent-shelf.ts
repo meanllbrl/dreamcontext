@@ -3,10 +3,11 @@ import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
-import { projectRootOf } from './agent-spawn-shared.js';
-import { countCheckboxes, firstUnticked, readSection } from '../../lib/markdown.js';
+import { projectRootOf, sanitizeUuid } from './agent-spawn-shared.js';
+import { countCheckboxes, firstUnticked, listCheckboxes, readSection } from '../../lib/markdown.js';
 import { isSafeTaskSlug } from '../../lib/task-backend/local.js';
 import { readSessionFacts, UNKNOWN_SESSION_FACTS } from '../../lib/session-facts.js';
+import { sessionCheckout } from '../../lib/session-cwd.js';
 
 /**
  * The two reads behind the chat's PINNED SHELF — the surface docked to the composer's top
@@ -41,6 +42,24 @@ import { readSessionFacts, UNKNOWN_SESSION_FACTS } from '../../lib/session-facts
  */
 export type TaskProgressState = 'ok' | 'unknown-slug' | 'no-criteria' | 'all-done' | 'unreadable';
 
+/**
+ * ONE acceptance criterion, as the popover draws it.
+ *
+ * This list is why the route exists in its current shape. It used to send two strings — the
+ * criterion in flight and the newest changelog bullet — under a header reading `8/20`, so the
+ * panel promised twenty lines and drew two (owner, 2026-08-24: "genelde iki madde var 20
+ * görünüyor … live progress izleme gibi durmuyor"). The other eighteen were never hidden;
+ * they were never sent.
+ */
+export interface ProgressCriterion {
+  done: boolean;
+  /** One line, capped like `now`/`last`. Empty only for a malformed `- [ ]` in the task
+   *  file — see `listCheckboxes`, which keeps it so the list length matches `total`. */
+  text: string;
+  /** The `### ` milestone heading this criterion sits under, or null when ungrouped. */
+  group: string | null;
+}
+
 export interface TaskProgress {
   slug: string;
   state: TaskProgressState;
@@ -53,6 +72,15 @@ export interface TaskProgress {
   now: string | null;
   /** The newest task-changelog bullet — what was just done. Null when there is none. */
   last: string | null;
+  /** EVERY criterion, in document order — `criteria.length === total` for any readable task,
+   *  including a malformed one. Empty for every degenerate state. */
+  criteria: ProgressCriterion[];
+  /** How many criteria were dropped to stay under {@link MAX_CRITERIA}. 0 almost always; when
+   *  it is not, the popover SAYS so — a short list under an honest total is precisely the
+   *  defect this field exists to keep from coming back in at the cap. It is deliberately not
+   *  folded into `notice`, whose contract ("set iff the reading is degenerate") still holds:
+   *  a truncated list is a complete READING, just an abbreviated drawing of it. */
+  truncated: number;
   /** The task file's mtime in ms, so a poller can see the file change. 0 when unknown. */
   updatedAt: number;
   /** Always set when `state !== 'ok'`; always null when it is. */
@@ -64,13 +92,24 @@ export interface TaskProgress {
  *  rather than shipped in full for CSS to hide. */
 const MAX_LINE_CHARS = 240;
 
+/**
+ * The list is bounded because it is polled: a task with a runaway Acceptance Criteria section
+ * would otherwise put an unbounded payload on a 4-second timer. 200 is far above anything in
+ * this repo (the largest task here has 26) and the overflow is REPORTED via `truncated`, never
+ * swallowed — the whole point of the list is that the count beside it can be checked.
+ */
+const MAX_CRITERIA = 200;
+
 function oneLine(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > MAX_LINE_CHARS ? `${flat.slice(0, MAX_LINE_CHARS - 1)}…` : flat;
 }
 
 function degraded(slug: string, state: TaskProgressState, notice: string, updatedAt = 0): TaskProgress {
-  return { slug, state, percent: null, done: 0, total: 0, now: null, last: null, updatedAt, notice };
+  return {
+    slug, state, percent: null, done: 0, total: 0,
+    now: null, last: null, criteria: [], truncated: 0, updatedAt, notice,
+  };
 }
 
 /**
@@ -166,10 +205,20 @@ export async function handleAgentTaskProgress(
   const last = changelog ? newestChangelogEntry(changelog) : null;
   const percent = Math.round((done / total) * 100);
 
+  // Read from the SAME section text `countCheckboxes` just counted, by the same reader — so
+  // the rows the popover draws and the fraction above them cannot describe different lines.
+  // `oneLine` is applied here rather than in `listCheckboxes` for the reason it caps `now`
+  // and `last`: a criterion in this repo routinely runs past 2 KB and this route is polled.
+  const all = listCheckboxes(criteria);
+  const listing = {
+    criteria: all.slice(0, MAX_CRITERIA).map((c) => ({ ...c, text: oneLine(c.text) })),
+    truncated: Math.max(0, all.length - MAX_CRITERIA),
+  };
+
   if (done === total) {
     sendJson(res, 200, {
       slug, state: 'all-done', percent: 100, done, total,
-      now: null, last, updatedAt,
+      now: null, last, ...listing, updatedAt,
       notice: `Every one of "${slug}"'s ${total} criteria is ticked — this task reads as complete.`,
     } satisfies TaskProgress);
     return;
@@ -179,27 +228,48 @@ export async function handleAgentTaskProgress(
   sendJson(res, 200, {
     slug, state: 'ok', percent, done, total,
     now: nextUp ? oneLine(nextUp) : null,
-    last, updatedAt, notice: null,
+    last, ...listing, updatedAt, notice: null,
   } satisfies TaskProgress);
 }
 
 // ─── GET /api/agent/session-facts ────────────────────────────────────────────────────
 
 /**
- * GET /api/agent/session-facts — the branch and worktree marker for THIS project's checkout,
- * for the shelf's resting tag line. See src/lib/session-facts.ts for why these two are
- * server-derived while the dev-server port is not.
+ * GET /api/agent/session-facts?session=<uuid> — the branch and worktree marker for the
+ * checkout THIS SESSION is working in, for the shelf's resting tag line. See
+ * src/lib/session-facts.ts for why these two are server-derived while the dev-server port
+ * is not.
+ *
+ * ── Why the session id, and why it is optional ────────────────────────────────────────
+ * This route used to answer for `projectRootOf(contextRoot)` unconditionally — the folder the
+ * app has open. That is where `claude` is SPAWNED, so it was right until the agent moved, and
+ * Develop mode's own briefing is what invites it to move. `sessionCheckout` resolves the id to
+ * the directory the session is actually in (src/lib/session-cwd.ts), falling back to the
+ * project root for an id it has never seen a move from — so a fresh pane, a resumed
+ * conversation and a caller that sends no id at all all keep the previous behaviour rather
+ * than losing the branch chip.
+ *
+ * The id is held to `sanitizeUuid` before it is used as a map key. It never reaches a shell
+ * and never reaches the filesystem, so this is hygiene rather than an injection boundary — but
+ * an unbounded string from a client is not something to key server state on either.
  *
  * `projectRootOf` because git runs in the CODE checkout, not in `_dream_context/` — which in
  * the default layout is a subdirectory of it, and in `full-repo` mode is a different repo
  * entirely.
  */
 export async function handleAgentSessionFacts(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
   contextRoot: string | null,
 ): Promise<void> {
   if (!isDesktop() || !contextRoot) { sendJson(res, 200, UNKNOWN_SESSION_FACTS); return; }
-  sendJson(res, 200, readSessionFacts(projectRootOf(contextRoot)));
+
+  let session = '';
+  try {
+    session = sanitizeUuid(new URL(req.url || '/', `http://${req.headers.host}`).searchParams.get('session'));
+  } catch { /* unparseable URL — falls back to the project root, same as no id */ }
+
+  const projectRoot = projectRootOf(contextRoot);
+  sendJson(res, 200, readSessionFacts(sessionCheckout(session || null, projectRoot)));
 }
