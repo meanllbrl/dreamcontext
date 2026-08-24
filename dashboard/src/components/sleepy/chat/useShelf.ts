@@ -121,13 +121,20 @@ export function useShelf(session: ChatSession, vault: string | null): ShelfHandl
   }, [scope, conversationId, entries]);
 
   // ── 3. Server-derived session facts ─────────────────────────────────────────────────
-  const factsQuery = useSessionFacts(connected);
+  // Scoped to THIS conversation, not to the vault: the session moves (EnterWorktree), and a
+  // vault-wide cache entry showed every pane whichever checkout answered last.
+  const factsQuery = useSessionFacts(connected, conversationId || null);
   const factsData = factsQuery.data;
   const facts = useMemo<ShelfFact[]>(() => {
     if (!factsData?.isRepo) return [];
     const out: ShelfFact[] = [];
     if (factsData.branch) out.push({ label: factsData.branch, icon: 'branch' });
-    if (factsData.worktree) out.push({ label: 'worktree', marker: true, icon: 'worktree' });
+    // The NAME when the server knows it, the bare word otherwise. "worktree" answers a
+    // question nobody with one open is asking; "which one" is the useful fact, and a
+    // pre-`worktreeName` server (or an unnamed root) still gets the marker it had.
+    if (factsData.worktree) {
+      out.push({ label: factsData.worktreeName || 'worktree', marker: true, icon: 'worktree' });
+    }
     return out;
   }, [factsData]);
 

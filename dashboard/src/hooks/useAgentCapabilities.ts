@@ -151,6 +151,9 @@ export interface SessionFacts {
   branch: string | null;
   worktree: boolean;
   mainRoot: string | null;
+  /** The worktree's own directory name, when `worktree` is true. With several open at once,
+   *  WHICH one is the question the bare marker could not answer. */
+  worktreeName: string | null;
   worktreeAllowed: boolean;
   /** False when git is unavailable or this is not a work tree — the shelf then shows no
    *  branch chip at all rather than an empty one. */
@@ -158,7 +161,8 @@ export interface SessionFacts {
 }
 
 const UNKNOWN_SESSION_FACTS: SessionFacts = {
-  branch: null, worktree: false, mainRoot: null, worktreeAllowed: false, isRepo: false,
+  branch: null, worktree: false, mainRoot: null, worktreeName: null,
+  worktreeAllowed: false, isRepo: false,
 };
 
 /**
@@ -182,20 +186,30 @@ export function useTaskProgress(slug: string | null, enabled: boolean) {
 }
 
 /**
- * Which branch/worktree this project's checkout is on (`GET /api/agent/session-facts`), for
- * the shelf's resting tag line.
+ * Which branch/worktree THIS SESSION is working in (`GET /api/agent/session-facts`), for the
+ * shelf's resting tag line.
  *
- * 15s, not 4s: a branch changes when a human switches it, which is orders of magnitude slower
- * than a task file changes during a run. The query key carries no session id — these facts
- * belong to the CHECKOUT, so every pane in this project subscribes to one cache entry and
- * concurrent panes dedupe into a single request (the server memoises the `git` calls behind
- * it for the same reason).
+ * 15s, not 4s: a branch changes when a human switches it, or when the agent enters a worktree
+ * — both orders of magnitude slower than a task file changes during a run.
+ *
+ * ── The query key carries the session id, and that is a REVERSAL ──────────────────────
+ * It used to carry nothing, on the reasoning that "these facts belong to the CHECKOUT, so
+ * every pane in this project subscribes to one cache entry". The premise was wrong: a session
+ * does not stay in the checkout it was spawned in. `EnterWorktree` moves it, Develop mode's
+ * briefing invites it to, and one shared cache entry cannot describe two panes in two
+ * worktrees — it just shows both of them whichever answer arrived last. The dedupe that
+ * bought is not worth a fact that is wrong; the server still memoises its `git` calls (12s,
+ * under this poll) so concurrent panes on the SAME checkout still cost one fork.
+ *
+ * A null `sessionId` still asks — the server answers for the project root, which is the
+ * pre-move behaviour and the right answer for a pane that has not moved.
  */
-export function useSessionFacts(enabled: boolean) {
+export function useSessionFacts(enabled: boolean, sessionId: string | null) {
   const api = useApi();
   return useQuery({
-    queryKey: ['agent-session-facts'],
-    queryFn: () => api.get<SessionFacts>('/agent/session-facts'),
+    queryKey: ['agent-session-facts', sessionId ?? ''],
+    queryFn: () => api.get<SessionFacts>(
+      sessionId ? `/agent/session-facts?session=${encodeURIComponent(sessionId)}` : '/agent/session-facts'),
     enabled,
     refetchInterval: enabled ? 15_000 : false,
     staleTime: 12_000,

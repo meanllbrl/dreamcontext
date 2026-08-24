@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { currentBranch, isGitRepo } from './git-sync/git.js';
 import { worktreeIsolationAllowed } from './worktree-gate.js';
 
@@ -37,6 +37,10 @@ export interface SessionFacts {
   /** The main checkout's root — set only when `worktree` is true, else null. This is a
    *  REALPATH (see readWorktree): canonicalise before comparing it to a vault path. */
   mainRoot: string | null;
+  /** The checkout's OWN directory name, set only when `worktree` is true. The shelf's tag has
+   *  room for one word and "worktree" is not the useful one — with several open at once, the
+   *  question the user is actually asking is WHICH. */
+  worktreeName: string | null;
   /** May a Develop-mode agent create a worktree here? See worktree-gate.ts. */
   worktreeAllowed: boolean;
   /** False when git is unavailable or this is not a work tree — the shelf then shows no
@@ -50,6 +54,7 @@ export const UNKNOWN_SESSION_FACTS: SessionFacts = Object.freeze({
   branch: null,
   worktree: false,
   mainRoot: null,
+  worktreeName: null,
   worktreeAllowed: false,
   isRepo: false,
 });
@@ -115,12 +120,63 @@ function canonical(path: string): string {
  * common dir is the same path, so they match.
  */
 function readWorktree(cwd: string): { worktree: boolean; mainRoot: string | null } {
-  const commonRaw = gitLine(cwd, ['rev-parse', '--git-common-dir']);
+  const commonDir = gitCommonDir(cwd);
   const ownRaw = gitLine(cwd, ['rev-parse', '--absolute-git-dir']);
-  if (!commonRaw || !ownRaw) return { worktree: false, mainRoot: null };
-  const commonDir = canonical(resolve(cwd, commonRaw));
+  if (!commonDir || !ownRaw) return { worktree: false, mainRoot: null };
   if (commonDir === canonical(ownRaw)) return { worktree: false, mainRoot: null };
   return { worktree: true, mainRoot: dirname(commonDir) };
+}
+
+/** Memo for {@link gitCommonDir}. Bounded, because unlike `cache` above it is keyed by any
+ *  directory a chat frame names rather than by the handful of project roots this server
+ *  serves. Oldest-first eviction; a dropped entry just costs one fork to recompute. */
+const commonDirCache = new Map<string, { value: string | null; at: number }>();
+const MAX_COMMON_DIR_CACHE = 128;
+
+/**
+ * The SHARED git directory for `cwd`, canonicalised — `null` when `cwd` is not a work tree.
+ *
+ * Every worktree of one repository answers the same path here, and two different repositories
+ * never do. That makes this the identity of a REPOSITORY rather than of a checkout, which is
+ * exactly the gate `session-cwd.ts` needs before it will point the shelf at a directory a
+ * chat frame named: same common dir ⇒ a sibling checkout of the project already open; anything
+ * else ⇒ refused.
+ *
+ * Both normalisations from {@link readWorktree}'s note apply and are the reason this is one
+ * function rather than two call sites: `resolve(cwd, …)` because the main checkout answers a
+ * RELATIVE `.git`, and `canonical` because git realpaths `--absolute-git-dir` but not this.
+ *
+ * ── Why this one is memoized and `readWorktree` is not ────────────────────────────────
+ * `readWorktree` is reached once per `readSessionFacts`, which has its own TTL in front of it.
+ * This is reached TWICE per same-repository check, and `session-cwd.ts` runs one of those on
+ * every read of a session's checkout — i.e. on every shelf poll of every pane. Unmemoized
+ * that is four `git` forks per pane per poll to answer a question whose answer, for a given
+ * directory, does not change while the directory exists. The case where it DOES change —
+ * the worktree was removed — is caught by the caller's `statSync`, which costs no fork at all.
+ */
+export function gitCommonDir(cwd: string, now: number = Date.now()): string | null {
+  const hit = commonDirCache.get(cwd);
+  if (hit && now - hit.at < SESSION_FACTS_TTL_MS) return hit.value;
+
+  const raw = gitLine(cwd, ['rev-parse', '--git-common-dir']);
+  const value = raw ? canonical(resolve(cwd, raw)) : null;
+
+  commonDirCache.delete(cwd);
+  commonDirCache.set(cwd, { value, at: now });
+  while (commonDirCache.size > MAX_COMMON_DIR_CACHE) {
+    const oldest = commonDirCache.keys().next();
+    if (oldest.done) break;
+    commonDirCache.delete(oldest.value);
+  }
+  return value;
+}
+
+/** TEST SEAM, shared with `session-cwd.ts`'s own reset: the two memos in this module are
+ *  process-global by design, so a test that creates and destroys real worktrees inside one
+ *  TTL window needs a way to ask for a clean read. Production code never calls this. */
+export function resetSessionFactsCaches(): void {
+  cache.clear();
+  commonDirCache.clear();
 }
 
 /**
@@ -145,6 +201,7 @@ function computeSessionFacts(projectRoot: string): SessionFacts {
     branch: currentBranch(projectRoot),
     worktree,
     mainRoot,
+    worktreeName: worktree ? basename(projectRoot) || null : null,
     worktreeAllowed: worktreeIsolationAllowed(projectRoot),
     isRepo: true,
   };

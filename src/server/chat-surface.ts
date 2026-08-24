@@ -101,8 +101,10 @@ click of consent, then works the same).
 {"type":"pin","id":"dev","weight":"tag","facts":[{"label":":5173","url":"http://localhost:5173"}]}
 \`\`\`
   \`weight\` is a REQUEST: \`tag\` (short label) or \`row\` (\`lede\`+\`detail\` the user opens); the
-  shelf may demote. Re-send the \`id\` to update. Branch/worktree are already there — pin what
-  only you know (a dev server; \`url\` is loopback-only). Max 6 facts.
+  shelf may demote. Re-send the \`id\` to update. Pin what only you know: a dev server
+  (\`url\` is loopback-only), or the checkout you moved to if you got there any way OTHER than
+  the EnterWorktree tool — the branch tag follows that tool by itself, and nothing else.
+  Max 6 facts.
 
 \`\`\`dream-view
 {"type":"progress","task":"my-task-slug"}

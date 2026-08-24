@@ -19,6 +19,8 @@ import { resolveChatReference } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
 import { modeBriefing, type ChatMode } from '../chat-modes.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
+import { clearSessionCheckout, enterSessionCheckout, exitSessionCheckout } from '../../lib/session-cwd.js';
+import { createWorktreeWatcher } from '../worktree-frames.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
@@ -571,6 +573,9 @@ export function startChatSession(
     releaseHeld();
     cleanupDeferred();
     cleanupBriefing();
+    // The session's checkout override dies with the session. Left behind it would be answered
+    // to a RESUMED conversation of the same id whose agent is back in the project root.
+    if (pinId) clearSessionCheckout(pinId);
   };
 
   /** Socket gone (tab closed, app window died, network drop) → drain and reap the child.
@@ -600,6 +605,9 @@ export function startChatSession(
   };
 
   // ── claude stdout → ws (verbatim NDJSON relay) ─────────────────────────────────────
+  // One watcher per session: correlating a tool_use id with the tool_result that carries the
+  // path is per-conversation state, and two panes must not read each other's moves.
+  const observeWorktree = createWorktreeWatcher();
   let buf = '';
   child.stdout.on('data', (chunk: Buffer) => {
     buf += chunk.toString('utf-8');
@@ -634,6 +642,17 @@ export function startChatSession(
       if (obj.type === 'system' && obj.subtype === 'init' && Array.isArray(obj.slash_commands)) {
         const list = obj.slash_commands.filter((c): c is string => typeof c === 'string' && !!c);
         if (list.length) writeSlashCache(contextRoot, list);
+      }
+
+      // Which CHECKOUT this session is working in. `EnterWorktree` moves the agent out of the
+      // directory it was spawned in, and until this landed the shelf went on reporting the one
+      // it had left — see src/lib/session-cwd.ts for the bug, src/server/worktree-frames.ts
+      // for the frame shapes. A move the registry refuses simply doesn't happen: the session
+      // keeps its previous checkout rather than gaining a wrong one.
+      if (pinId) {
+        const move = observeWorktree(obj);
+        if (move?.kind === 'enter') enterSessionCheckout(pinId, move.dir, projectRoot);
+        else if (move?.kind === 'exit') exitSessionCheckout(pinId);
       }
     }
   });

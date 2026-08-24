@@ -3,10 +3,11 @@ import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
-import { projectRootOf } from './agent-spawn-shared.js';
+import { projectRootOf, sanitizeUuid } from './agent-spawn-shared.js';
 import { countCheckboxes, firstUnticked, readSection } from '../../lib/markdown.js';
 import { isSafeTaskSlug } from '../../lib/task-backend/local.js';
 import { readSessionFacts, UNKNOWN_SESSION_FACTS } from '../../lib/session-facts.js';
+import { sessionCheckout } from '../../lib/session-cwd.js';
 
 /**
  * The two reads behind the chat's PINNED SHELF — the surface docked to the composer's top
@@ -186,20 +187,41 @@ export async function handleAgentTaskProgress(
 // ─── GET /api/agent/session-facts ────────────────────────────────────────────────────
 
 /**
- * GET /api/agent/session-facts — the branch and worktree marker for THIS project's checkout,
- * for the shelf's resting tag line. See src/lib/session-facts.ts for why these two are
- * server-derived while the dev-server port is not.
+ * GET /api/agent/session-facts?session=<uuid> — the branch and worktree marker for the
+ * checkout THIS SESSION is working in, for the shelf's resting tag line. See
+ * src/lib/session-facts.ts for why these two are server-derived while the dev-server port
+ * is not.
+ *
+ * ── Why the session id, and why it is optional ────────────────────────────────────────
+ * This route used to answer for `projectRootOf(contextRoot)` unconditionally — the folder the
+ * app has open. That is where `claude` is SPAWNED, so it was right until the agent moved, and
+ * Develop mode's own briefing is what invites it to move. `sessionCheckout` resolves the id to
+ * the directory the session is actually in (src/lib/session-cwd.ts), falling back to the
+ * project root for an id it has never seen a move from — so a fresh pane, a resumed
+ * conversation and a caller that sends no id at all all keep the previous behaviour rather
+ * than losing the branch chip.
+ *
+ * The id is held to `sanitizeUuid` before it is used as a map key. It never reaches a shell
+ * and never reaches the filesystem, so this is hygiene rather than an injection boundary — but
+ * an unbounded string from a client is not something to key server state on either.
  *
  * `projectRootOf` because git runs in the CODE checkout, not in `_dream_context/` — which in
  * the default layout is a subdirectory of it, and in `full-repo` mode is a different repo
  * entirely.
  */
 export async function handleAgentSessionFacts(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
   contextRoot: string | null,
 ): Promise<void> {
   if (!isDesktop() || !contextRoot) { sendJson(res, 200, UNKNOWN_SESSION_FACTS); return; }
-  sendJson(res, 200, readSessionFacts(projectRootOf(contextRoot)));
+
+  let session = '';
+  try {
+    session = sanitizeUuid(new URL(req.url || '/', `http://${req.headers.host}`).searchParams.get('session'));
+  } catch { /* unparseable URL — falls back to the project root, same as no id */ }
+
+  const projectRoot = projectRootOf(contextRoot);
+  sendJson(res, 200, readSessionFacts(sessionCheckout(session || null, projectRoot)));
 }
