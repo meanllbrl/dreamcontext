@@ -124,6 +124,35 @@ function taskFile(total, done) {
   ].join('\n');
 }
 
+/**
+ * A task written the way this repo actually writes them — criteria under `### ` milestone
+ * headings — so the route's grouping is verified against the real shape and not a flat list
+ * nobody authors.
+ */
+function groupedTaskFile() {
+  return [
+    '---',
+    'id: task_grouped',
+    'status: in_progress',
+    '---',
+    '## Acceptance Criteria',
+    '',
+    '### Part A — the payload',
+    '- [x] A1 ships the list',
+    '- [x] A2 carries the group',
+    '- [ ] A3 caps each line',
+    '',
+    '### Validation',
+    '- [ ] V1 tsc is clean',
+    '',
+    '## Changelog',
+    '',
+    '### 2026-08-24 - Session Update',
+    '- part A landed',
+    '',
+  ].join('\n');
+}
+
 function writeTask(root, slug, body) {
   const dir = join(root, '_dream_context', 'state');
   mkdirSync(dir, { recursive: true });
@@ -155,6 +184,8 @@ function setup() {
   writeTask(PROJ, 'seven-of-eleven', taskFile(11, 7));
   writeTask(PROJ, 'no-boxes', '---\nid: task_nb\n---\n## Acceptance Criteria\n\nProse only.\n');
   writeTask(PROJ, 'all-ticked', taskFile(5, 5));
+  writeTask(PROJ, 'grouped', groupedTaskFile());
+  writeTask(PROJ, 'runaway', taskFile(214, 3));
 
   // The scripted `claude` check 9 drives. Installed under the scratch HOME, and reached only
   // because startServer PREPENDS this dir to PATH — the real binary is never shadowed
@@ -243,6 +274,44 @@ try {
     seven.body?.last === 'the newest thing that happened', String(seven.body?.last));
   ok('a healthy reading carries no notice', seven.body?.notice === null, String(seven.body?.notice));
 
+  console.log('\nTHE CHECKLIST — every criterion, not the two strings the panel used to draw');
+  // The defect: the header said `8/20` and the body rendered TWO rows, because the route only
+  // ever derived `now` and `last`. The list is what makes the fraction checkable.
+  ok('the list is as long as the total above it',
+    Array.isArray(seven.body?.criteria) && seven.body.criteria.length === seven.body.total,
+    JSON.stringify({ criteria: seven.body?.criteria?.length, total: seven.body?.total }));
+  ok('…with exactly the ticked ones marked done',
+    seven.body?.criteria?.filter((c) => c.done).length === seven.body?.done,
+    JSON.stringify({ done: seven.body?.criteria?.filter((c) => c.done).length, want: seven.body?.done }));
+  ok('…in document order', seven.body?.criteria?.[0]?.text === 'criterion number 1'
+    && seven.body?.criteria?.[10]?.text === 'criterion number 11',
+    JSON.stringify([seven.body?.criteria?.[0]?.text, seven.body?.criteria?.[10]?.text]));
+  ok('…and the row and the list agree on what is in flight',
+    seven.body?.criteria?.find((c) => !c.done)?.text === seven.body?.now,
+    JSON.stringify({ list: seven.body?.criteria?.find((c) => !c.done)?.text, row: seven.body?.now }));
+  ok('a healthy reading reports nothing truncated', seven.body?.truncated === 0,
+    String(seven.body?.truncated));
+
+  const grouped = await progress(base, 'grouped');
+  ok('criteria carry the ### milestone heading they were written under',
+    JSON.stringify(grouped.body?.criteria?.map((c) => c.group))
+      === JSON.stringify(['Part A — the payload', 'Part A — the payload', 'Part A — the payload', 'Validation']),
+    JSON.stringify(grouped.body?.criteria?.map((c) => c.group)));
+  ok('…and the per-group tally the panel draws is derivable from it',
+    grouped.body?.criteria?.filter((c) => c.group === 'Part A — the payload' && c.done).length === 2,
+    JSON.stringify(grouped.body?.criteria));
+
+  const runaway = await progress(base, 'runaway');
+  ok('past the cap the list truncates at 200', runaway.body?.criteria?.length === 200,
+    String(runaway.body?.criteria?.length));
+  ok('…the total stays honest — it is the number tasks doctor reports',
+    runaway.body?.total === 214, String(runaway.body?.total));
+  ok('…and the shortfall is REPORTED, not swallowed', runaway.body?.truncated === 14,
+    String(runaway.body?.truncated));
+  ok('…while the reading itself is still not degenerate',
+    runaway.body?.state === 'ok' && runaway.body?.notice === null,
+    JSON.stringify({ state: runaway.body?.state, notice: runaway.body?.notice }));
+
   console.log('\nREFRESH — it follows the file, it is not frozen at first read');
   await sleep(50); // so the mtime is measurably later, not merely equal
   writeTask(PROJ, 'seven-of-eleven', taskFile(11, 8));
@@ -252,11 +321,20 @@ try {
   ok('…the in-flight criterion moves with it', eight.body?.now === 'criterion number 9', String(eight.body?.now));
   ok('…and updatedAt advanced', eight.body?.updatedAt > seven.body?.updatedAt,
     JSON.stringify({ before: seven.body?.updatedAt, after: eight.body?.updatedAt }));
+  // The panel's flash is derived by diffing two payloads client-side, so what it needs from the
+  // server is exactly this: the same criterion, identified the same way, with `done` flipped.
+  ok('…and criterion 8 flipped in the LIST — which is what the just-ticked flash diffs',
+    seven.body?.criteria?.[7]?.done === false && eight.body?.criteria?.[7]?.done === true
+      && seven.body?.criteria?.[7]?.text === eight.body?.criteria?.[7]?.text,
+    JSON.stringify({ before: seven.body?.criteria?.[7], after: eight.body?.criteria?.[7] }));
 
   console.log('\nDEGRADATION — loudly, never a NaN and never a silent empty row');
   const none = await progress(base, 'no-boxes');
   ok('zero criteria → percent null (not NaN, not 0)', none.body?.percent === null, JSON.stringify(none.body));
   ok('…and says why', none.body?.state === 'no-criteria' && !!none.body?.notice, JSON.stringify(none.body));
+  ok('…and carries an EMPTY list, never a half-drawn panel',
+    Array.isArray(none.body?.criteria) && none.body.criteria.length === 0 && none.body?.truncated === 0,
+    JSON.stringify({ criteria: none.body?.criteria, truncated: none.body?.truncated }));
 
   const all = await progress(base, 'all-ticked');
   ok('an all-ticked task reads 100%', all.body?.percent === 100, JSON.stringify(all.body));
@@ -264,12 +342,16 @@ try {
     all.body?.state === 'all-done' && all.body?.now === null, JSON.stringify(all.body));
   ok('…and still carries a notice — a full bar is not self-explanatory', !!all.body?.notice,
     String(all.body?.notice));
+  ok('…and STILL ships its list — 100% is a reading, not an empty panel',
+    all.body?.criteria?.length === 5 && all.body.criteria.every((c) => c.done),
+    JSON.stringify(all.body?.criteria));
 
   const missing = await progress(base, 'no-such-task-here');
   ok('a well-formed slug with no file is a 200 STATE, not a failed request',
     missing.status === 200 && missing.body?.state === 'unknown-slug', JSON.stringify(missing));
   ok('…with a notice naming the slug', String(missing.body?.notice).includes('no-such-task-here'),
     String(missing.body?.notice));
+  ok('…and an empty list', missing.body?.criteria?.length === 0, JSON.stringify(missing.body?.criteria));
 
   console.log('\nSLUG SAFETY — refused before the filesystem is consulted');
   for (const slug of ['../../etc/passwd', '../secrets', '/etc/passwd', '']) {
@@ -343,7 +425,8 @@ try {
   server = await startServer(port, { desktop: false });
   const gatedProgress = await progress(base, 'seven-of-eleven');
   ok('task-progress answers 200 with a renderable shape',
-    gatedProgress.status === 200 && gatedProgress.body?.percent === null && !!gatedProgress.body?.notice,
+    gatedProgress.status === 200 && gatedProgress.body?.percent === null && !!gatedProgress.body?.notice
+      && gatedProgress.body?.criteria?.length === 0,
     JSON.stringify(gatedProgress));
   const gatedFacts = await facts(base, 'proj');
   ok('session-facts answers 200 with the unknown shape',

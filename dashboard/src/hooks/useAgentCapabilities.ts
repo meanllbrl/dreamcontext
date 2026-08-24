@@ -131,6 +131,15 @@ export function useUsageLimits(enabled: boolean) {
  *  `notice`: the row degrades loudly, never into a blank or a NaN. */
 export type TaskProgressState = 'ok' | 'unknown-slug' | 'no-criteria' | 'all-done' | 'unreadable';
 
+/** ONE acceptance criterion. The list is the panel's whole content: a header reading `8/20`
+ *  above two rows was the defect (owner, 2026-08-24). */
+export interface ProgressCriterion {
+  done: boolean;
+  text: string;
+  /** The `### ` milestone heading this criterion sits under, or null when ungrouped. */
+  group: string | null;
+}
+
 export interface TaskProgress {
   slug: string;
   state: TaskProgressState;
@@ -142,7 +151,13 @@ export interface TaskProgress {
   now: string | null;
   /** The newest task-changelog bullet — what was just done. */
   last: string | null;
-  /** The task file's mtime in ms. */
+  /** EVERY criterion, in document order — `criteria.length === total`. Empty when degenerate. */
+  criteria: ProgressCriterion[];
+  /** How many criteria the route dropped at its cap. Rendered, never swallowed. */
+  truncated: number;
+  /** The task file's mtime in ms. The since-last-write clock is derived from this — it is the
+   *  one liveness signal that moves whether or not the percent does, so a run that has stalled
+   *  looks different from one that is working. */
   updatedAt: number;
   notice: string | null;
 }

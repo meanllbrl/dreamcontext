@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { projectRootOf, sanitizeUuid } from './agent-spawn-shared.js';
-import { countCheckboxes, firstUnticked, readSection } from '../../lib/markdown.js';
+import { countCheckboxes, firstUnticked, listCheckboxes, readSection } from '../../lib/markdown.js';
 import { isSafeTaskSlug } from '../../lib/task-backend/local.js';
 import { readSessionFacts, UNKNOWN_SESSION_FACTS } from '../../lib/session-facts.js';
 import { sessionCheckout } from '../../lib/session-cwd.js';
@@ -42,6 +42,24 @@ import { sessionCheckout } from '../../lib/session-cwd.js';
  */
 export type TaskProgressState = 'ok' | 'unknown-slug' | 'no-criteria' | 'all-done' | 'unreadable';
 
+/**
+ * ONE acceptance criterion, as the popover draws it.
+ *
+ * This list is why the route exists in its current shape. It used to send two strings — the
+ * criterion in flight and the newest changelog bullet — under a header reading `8/20`, so the
+ * panel promised twenty lines and drew two (owner, 2026-08-24: "genelde iki madde var 20
+ * görünüyor … live progress izleme gibi durmuyor"). The other eighteen were never hidden;
+ * they were never sent.
+ */
+export interface ProgressCriterion {
+  done: boolean;
+  /** One line, capped like `now`/`last`. Empty only for a malformed `- [ ]` in the task
+   *  file — see `listCheckboxes`, which keeps it so the list length matches `total`. */
+  text: string;
+  /** The `### ` milestone heading this criterion sits under, or null when ungrouped. */
+  group: string | null;
+}
+
 export interface TaskProgress {
   slug: string;
   state: TaskProgressState;
@@ -54,6 +72,15 @@ export interface TaskProgress {
   now: string | null;
   /** The newest task-changelog bullet — what was just done. Null when there is none. */
   last: string | null;
+  /** EVERY criterion, in document order — `criteria.length === total` for any readable task,
+   *  including a malformed one. Empty for every degenerate state. */
+  criteria: ProgressCriterion[];
+  /** How many criteria were dropped to stay under {@link MAX_CRITERIA}. 0 almost always; when
+   *  it is not, the popover SAYS so — a short list under an honest total is precisely the
+   *  defect this field exists to keep from coming back in at the cap. It is deliberately not
+   *  folded into `notice`, whose contract ("set iff the reading is degenerate") still holds:
+   *  a truncated list is a complete READING, just an abbreviated drawing of it. */
+  truncated: number;
   /** The task file's mtime in ms, so a poller can see the file change. 0 when unknown. */
   updatedAt: number;
   /** Always set when `state !== 'ok'`; always null when it is. */
@@ -65,13 +92,24 @@ export interface TaskProgress {
  *  rather than shipped in full for CSS to hide. */
 const MAX_LINE_CHARS = 240;
 
+/**
+ * The list is bounded because it is polled: a task with a runaway Acceptance Criteria section
+ * would otherwise put an unbounded payload on a 4-second timer. 200 is far above anything in
+ * this repo (the largest task here has 26) and the overflow is REPORTED via `truncated`, never
+ * swallowed — the whole point of the list is that the count beside it can be checked.
+ */
+const MAX_CRITERIA = 200;
+
 function oneLine(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > MAX_LINE_CHARS ? `${flat.slice(0, MAX_LINE_CHARS - 1)}…` : flat;
 }
 
 function degraded(slug: string, state: TaskProgressState, notice: string, updatedAt = 0): TaskProgress {
-  return { slug, state, percent: null, done: 0, total: 0, now: null, last: null, updatedAt, notice };
+  return {
+    slug, state, percent: null, done: 0, total: 0,
+    now: null, last: null, criteria: [], truncated: 0, updatedAt, notice,
+  };
 }
 
 /**
@@ -167,10 +205,20 @@ export async function handleAgentTaskProgress(
   const last = changelog ? newestChangelogEntry(changelog) : null;
   const percent = Math.round((done / total) * 100);
 
+  // Read from the SAME section text `countCheckboxes` just counted, by the same reader — so
+  // the rows the popover draws and the fraction above them cannot describe different lines.
+  // `oneLine` is applied here rather than in `listCheckboxes` for the reason it caps `now`
+  // and `last`: a criterion in this repo routinely runs past 2 KB and this route is polled.
+  const all = listCheckboxes(criteria);
+  const listing = {
+    criteria: all.slice(0, MAX_CRITERIA).map((c) => ({ ...c, text: oneLine(c.text) })),
+    truncated: Math.max(0, all.length - MAX_CRITERIA),
+  };
+
   if (done === total) {
     sendJson(res, 200, {
       slug, state: 'all-done', percent: 100, done, total,
-      now: null, last, updatedAt,
+      now: null, last, ...listing, updatedAt,
       notice: `Every one of "${slug}"'s ${total} criteria is ticked — this task reads as complete.`,
     } satisfies TaskProgress);
     return;
@@ -180,7 +228,7 @@ export async function handleAgentTaskProgress(
   sendJson(res, 200, {
     slug, state: 'ok', percent, done, total,
     now: nextUp ? oneLine(nextUp) : null,
-    last, updatedAt, notice: null,
+    last, ...listing, updatedAt, notice: null,
   } satisfies TaskProgress);
 }
 

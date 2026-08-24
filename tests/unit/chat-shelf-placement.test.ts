@@ -96,3 +96,80 @@ describe('the shelf takes no scroll input at all', () => {
     expect(code(read(HOOK))).toContain('layoutShelf');
   });
 });
+
+/**
+ * The run-progress LIVENESS, and the two absences it depends on.
+ *
+ * Both are "true because of where code isn't", which is why they are here and not in
+ * `progress-criteria.test.ts` beside the pure model. There is no jsdom in this repo, so a
+ * mounted-and-unmounted assertion is not available — but the property that actually matters is
+ * structural anyway: the interval must be OWNED BY A LEAF that only exists while a progress row
+ * does, and it must be cleared. A guard that has to be remembered is a guard that eventually
+ * isn't.
+ */
+describe('the second-tick clock is owned by the row, not by the pane', () => {
+  it('useShelf starts no interval at all — it is called by ChatPane', () => {
+    // A per-second state change in `useShelf` re-renders the entire chat pane, transcript
+    // included, to change one word in one row. It lived there for one revision; this is what
+    // stops it moving back.
+    const executable = code(read(HOOK));
+    expect(
+      executable.includes('setInterval'),
+      'useShelf must not run an interval — it is called by ChatPane, so every tick would re-render the whole pane',
+    ).toBe(false);
+  });
+
+  it('PinShelf creates exactly one interval and clears it', () => {
+    const executable = code(read(SHELF));
+    const starts = executable.match(/setInterval/g) ?? [];
+    const stops = executable.match(/clearInterval/g) ?? [];
+    expect(starts, 'the since-last-write clock is gone from PinShelf').toHaveLength(1);
+    expect(stops, 'an interval with no clearInterval outlives the row that justified it').toHaveLength(1);
+  });
+
+  it('the interval lives in ProgressRow\'s own hook, so no row means no timer', () => {
+    // `ProgressRow` is rendered only when `layout.row?.kind === 'progress'`. Putting the
+    // interval inside a hook that only IT calls is what makes "an idle shelf costs nothing"
+    // true by construction rather than by a `if (!progressTask) return` somebody must keep.
+    const src = read(SHELF);
+    const hook = src.indexOf('function useSecondTick');
+    const interval = src.indexOf('setInterval');
+    const nextFn = src.indexOf('\nfunction ', hook + 1);
+    expect(hook, 'useSecondTick is gone — re-derive where the clock lives').toBeGreaterThan(-1);
+    expect(interval).toBeGreaterThan(hook);
+    expect(interval, 'setInterval escaped useSecondTick').toBeLessThan(nextFn);
+    // …and exactly one place CALLS it. The trailing `;` is what separates a call site from the
+    // declaration `function useSecondTick(): number {`, which also contains `useSecondTick()`.
+    const callers = (src.match(/useSecondTick\(\);/g) ?? []).length;
+    expect(callers, 'useSecondTick is called from more than one place').toBe(1);
+    // …and that place is ProgressRow.
+    const row = src.indexOf('function ProgressRow');
+    const call = src.indexOf('useSecondTick();');
+    expect(call).toBeGreaterThan(row);
+    expect(call).toBeLessThan(src.indexOf('\nfunction ', row + 1));
+  });
+});
+
+/**
+ * The live treatment is bound to the RUN, not to the panel.
+ *
+ * A settled task whose row still pulsed would be the same lie the static panel told, inverted:
+ * motion that means nothing. `live` comes from `session.busy` and from nothing else — in
+ * particular not from `openId`, which would make the animation a property of the user having
+ * clicked rather than of work happening.
+ */
+describe('run-progress liveness is bound to the turn, not to the popover', () => {
+  it('useShelf derives `live` from session.busy', () => {
+    expect(code(read(HOOK))).toContain('live: session.busy');
+  });
+
+  it('the is-live class is driven by that prop and not by open state', () => {
+    const src = read(SHELF);
+    expect(src).toContain("${live ? ' is-live' : ''}");
+    // The row's class expression must not mention the open flag. Anchored on the row's own
+    // className rather than the file, because `open` legitimately appears elsewhere in it.
+    const cls = src.slice(src.indexOf('function ProgressRow'));
+    const expr = cls.slice(cls.indexOf('className={`pin-row'), cls.indexOf('data-pin-progress-trigger'));
+    expect(expr).not.toContain('open');
+  });
+});

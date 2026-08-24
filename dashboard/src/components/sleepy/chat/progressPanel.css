@@ -1,0 +1,180 @@
+/**
+ * Run progress — the row's liveness and the panel's checklist.
+ *
+ * Split out of `pinShelf.css` because it is one coherent subject and that file is already the
+ * shelf's own geometry, which nothing here is allowed to touch: every rule below styles either
+ * the INSIDE of `.pin-row` (whose height is fixed by its padding, open or closed) or the inside
+ * of `.pin-pop` (which is absolutely positioned and costs the shelf no height at all). The one
+ * property the shelf exists to protect — the tag line does not move — is therefore untouched by
+ * construction rather than by care.
+ *
+ * Imported by `PinShelf.tsx` immediately AFTER `pinShelf.css` — the one rule here that overrides
+ * that file (`.pin-pop`'s max-height) needs the later sheet to win at equal specificity.
+ */
+
+/* ── The row: a clock, and a pulse that means the turn is running ───────────────────── */
+
+/* The clock sits at the right end of the lede, before the open affordance: it is the row's
+   least urgent fact and the first thing a narrow pane should be able to drop. Mono +
+   tabular-nums because it reruns every second — proportional digits would make the whole row
+   twitch as "9s" became "10s". */
+.pin-since {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 10px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Liveness is spent ONLY on the track, and only while the turn is actually running. The fill
+   already animates its width when the percent moves; this is what distinguishes "working, no
+   criterion ticked yet" from "stopped" during the minutes between ticks. */
+.pin-row.is-live .pin-track-fill { animation: pin-live-pulse 1.8s ease-in-out infinite; }
+
+@keyframes pin-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* ── The panel: every criterion, under its own milestone heading ────────────────────── */
+
+/* Taller than the 34vh this panel had when it held two lines. It floats above the shelf and is
+   absolutely positioned, so height here costs the composer and the tag line nothing — and a
+   list of twenty that shows four is the same "denominator you decline to show" the payload fix
+   removed, only in CSS. Still under half the pane: it is a glance, not a document. */
+.pin-pop { max-height: 46vh; }
+
+/* The head and the in-flight strip STICK to the top of the scrolling list, as ONE box — one
+   sticky element with one offset, rather than two that have to agree about each other's height.
+
+   This is what replaces "scroll the list to the in-flight row when the panel opens". That
+   version could not be written: `chat-shelf-placement.test.ts` forbids every scroll token in
+   `PinShelf.tsx`, on the argument that a surface which cannot touch scroll cannot get scroll
+   wrong — and the guard is right. Sticky is the better answer regardless, because it holds the
+   live criterion on screen at EVERY scroll position rather than only at the moment of opening,
+   and it costs no JavaScript at all.
+
+   Two details this needs to be correct rather than nearly correct:
+     • the background is set explicitly. `.pin-pop` paints ITS background on the scroller, which
+       a sticky child does not inherit a paint of — the list would slide up underneath and read
+       as two overlapping lines.
+     • the popover's own `padding-top` moves ONTO this box. A sticky element offsets from the
+       scrollport's padding edge, so with the padding left on `.pin-pop` there would be a 10px
+       band above the header in which scrolling text stayed visible. */
+.pin-pop { padding-top: 0; }
+.pin-pop-top {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-top: 10px;
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+}
+
+/* Two rules stacked inside one sticky box would read as a double border, so the head keeps its
+   own only when it IS the whole box — i.e. on a degenerate reading, where there is no in-flight
+   criterion to name and the head still has to be separated from the notice below it. */
+.pin-pop-top .pin-pop-head { margin-bottom: 0; }
+.pin-pop-top .pin-pop-head:not(:last-child) { border-bottom: none; padding-bottom: 5px; }
+.pin-pop-top .pin-pop-head:last-child { margin-bottom: 6px; }
+
+.pin-pop-flight {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 0 7px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+.pin-pop-flight .pin-task-glyph { color: var(--color-accent); }
+.pin-pop-flight .pin-task-name { color: var(--color-text); font-weight: 500; }
+.pin-pop-flight .pin-task-meta { color: var(--color-accent); }
+
+.pin-group + .pin-group { margin-top: 10px; }
+
+.pin-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0 3px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 3px;
+}
+.pin-group-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text-secondary);
+}
+.pin-group-head .pin-count { flex: 0 0 auto; }
+
+/* Not yet reached. Dimmer than a ticked criterion is NOT the goal — done and to-do have to be
+   distinguishable from each other, not merely both quieter than the live one — so this keeps
+   full text colour at reduced weight and lets the glyph carry the state. */
+.pin-task.is-todo .pin-task-glyph { color: var(--color-border-hover); }
+.pin-task.is-todo .pin-task-name { color: var(--color-text-secondary); }
+
+/* A criterion that flipped ticked within the last few seconds. This is the only place the panel
+   claims something HAPPENED, so it is the only place that animates: a highlight that fades is
+   the difference between reading a number and watching it move. */
+.pin-task.is-just-ticked {
+  border-radius: var(--radius-sm);
+  animation: pin-just-ticked 6s ease-out forwards;
+}
+.pin-task.is-just-ticked .pin-task-name { color: var(--color-text); }
+
+/* The label fades on the SAME 6s clock as the highlight. `useShelf` evaluates flash expiry when
+   the next payload lands rather than on a timer, so the class can outlive its window by up to
+   one 4s poll — this is what makes that slack invisible instead of leaving a stale "just ticked"
+   sitting on a row for another few seconds. */
+.pin-task-meta.is-fresh {
+  color: var(--color-accent);
+  animation: pin-fresh-fade 6s ease-out forwards;
+}
+
+@keyframes pin-just-ticked {
+  0% { background: color-mix(in srgb, var(--color-accent) 26%, transparent); }
+  100% { background: transparent; }
+}
+@keyframes pin-fresh-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Motion is the message here, so the reduced-motion fallback keeps the MEANING and drops the
+   movement: the pulse stops at full opacity and the flash holds a flat tint for its window
+   instead of fading. Nothing that only exists as an animation is left with nothing. */
+@media (prefers-reduced-motion: reduce) {
+  .pin-row.is-live .pin-track-fill { animation: none; }
+  .pin-task.is-just-ticked {
+    animation: none;
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  }
+  /* The label must NOT keep the fade here — with the animation gone it would otherwise be the
+     one thing left at opacity 0 and the row would lose its explanation entirely. */
+  .pin-task-meta.is-fresh { animation: none; opacity: 1; }
+}
+
+/* The newest changelog bullet. Below a rule and outside the list, because it is what the agent
+   last wrote about the run — not a criterion, not counted, and not something to tick. */
+.pin-pop-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+.pin-pop-foot .pin-task-meta { margin-left: 0; padding-left: 0; }
+.pin-pop-foot .pin-task-name { color: var(--color-text-tertiary); }
+
+/* ── Narrow (≤470px) ────────────────────────────────────────────────────────────────
+   The same stage `pinShelf.css` declares. The clock is the row's least urgent fact, so it is
+   what goes: the percent, the fraction and the criterion in flight all survive a split pane. */
+@container pinshelf (max-width: 470px) {
+  .pin-since { display: none; }
+}
