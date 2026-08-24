@@ -1,6 +1,117 @@
 [
   {
     "date": "2026-08-23",
+    "type": "chore",
+    "scope": "release",
+    "description": "Bump version to 0.25.0 in package.json, desktop/package.json, desktop/src-tauri/Cargo.toml, and desktop/src-tauri/tauri.conf.json. A dreamcontext-0.25.0.tgz sits untracked in the working tree. Version surfaces modified but nothing is committed/tagged yet — this is version-bump prep, not a shipped release. Release readiness will be assessed separately.",
+    "breaking": false,
+    "summary": "Version surfaces bumped to 0.25.0 (package.json, desktop/package.json, Cargo.toml, tauri.conf.json)",
+    "references": [
+      "file:package.json",
+      "file:desktop/package.json",
+      "file:desktop/src-tauri/Cargo.toml",
+      "file:desktop/src-tauri/tauri.conf.json"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-23",
+    "type": "docs",
+    "scope": "skill",
+    "description": "Update skill documentation to cover the pinned shelf (pin and progress view types, the shelf's ceiling and overflow rules, loopback-only URLs, derived progress, loud degradation), chat modes (Basic/Plan/Develop as system-prompt appends, the develop handoff action, worktree isolation gating, no user-settable default), and expanded chat view BETA capabilities. skill/SKILL.md: added Chat modes row to the Capabilities table with the three modes described and J.A.R.V.I.S marked Soon; updated the Web dashboard row to mention the shelf docked to the composer that holds pin facts + progress rows outside the transcript; updated the update command description to note it exits 1 when it refreshed nothing (no installed platform or a throw mid-refresh), so scripts can trust the exit code. skill/references/integrations.md: added full sections for pin (id-keyed update, weight as request not command, loopback-only URLs, caps), progress (slug-only payload, percent derived from disk by reading Acceptance Criteria checkboxes with countCheckboxes, clicking opens a popover with the full criteria list, three degradation notices), the shelf itself (resting state, two-row ceiling, overflow demotion, tag wrapping, no scroll reaction, the rule that the tag line never moves), chat modes (three modes, mode as system-prompt append written at spawn, develop action as handoff, worktree isolation gating), and a new subsection under task sync documenting local-only fields (the closed set remote backends own, what a pull must preserve, the two guards, pre-pull backups, the doctor check for vanished objective links). These updates document the uncommitted features so agents working in a Chat view spawn can use them correctly.",
+    "breaking": false,
+    "summary": "Document the pinned shelf, chat modes, and chat view BETA updates in skill/SKILL.md and integrations.md",
+    "references": [
+      "file:skill/SKILL.md",
+      "file:skill/references/integrations.md"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-23",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Add worktree isolation gate — a new module src/lib/worktree-gate.ts exports worktreeIsolationAllowed(projectRoot), which returns true only in the two layouts where the brain does NOT ride the code tree: brainRepo.mode === full-repo (the brain is its own repo, synced independently, so a worktree of the code checkout never duplicates it), or a linked repo is present on this machine (the code lives in a bare repo with no _dream_context/ of its own, governed by this brain from outside it). The hazard this gates is specific: _dream_context/ is the brain, and in the default layout it lives inside the code checkout — a second checkout of that repo is therefore a second copy of the brain, two working trees writing tasks/changelogs/knowledge that diverge silently and get reconciled by nobody. Never throws: a missing/corrupt config or unreadable home registry resolves to false — refusing a worktree costs an agent one convenience; wrongly permitting one forks the brain, so false is the only safe failure. The function is wired into the Develop mode's system-prompt append: when the brain is isolated the brief permits a git worktree; when _dream_context/ lives in the working tree the brief explicitly FORBIDS one (stated as a prohibition rather than left unsaid, because an unmentioned capability is one the agent reaches for anyway). Test seam: the home parameter threads through to resolveLinkedRepos so a test can exercise the linked-repo arm against a scratch HOME instead of the developer's real one; production callers pass nothing.",
+    "breaking": false,
+    "summary": "Worktree isolation gate: agents may create git worktrees only when the brain is isolated from the code checkout",
+    "references": [
+      "file:src/lib/worktree-gate.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-23",
+    "type": "refactor",
+    "scope": "chat",
+    "description": "Refactor the composer's chrome: deleted dashboard/src/components/sleepy/chat/ContextReadout.tsx (190 lines) and PermissionModeMenu.tsx (70 lines), consolidating their surfaces into the new ComposerMenus.tsx. The left and right triggers now open anchored menus via useAnchoredMenu.ts (reusable hook for pointer/keyboard-raised menus with viewport clamping and flip-above-cursor-near-bottom-edge placement), dismissed via useDismissOnOutside.ts. The left trigger reads <mode> · <permission> and opens one menu holding both mode rows (Basic/Plan/Develop/J.A.R.V.I.S in a 2×2 grid) and permission rows (auto/manual); the right trigger opens model+effort. Composer.tsx reworked (+274 / -127 lines) to consolidate the menu logic. CSS rework: composer.css, overlays.css, cards.css. The composer verification harness grew from 44 to 47 checks (scripts/verify/chat-composer-ui.mjs). This reduces the composer's component count, consolidates the menu pattern, and makes the left trigger's dual purpose (mode + permission) explicit in the UI rather than split across two surfaces.",
+    "breaking": false,
+    "summary": "Composer chrome cleanup: deleted ContextReadout and PermissionModeMenu, consolidated into ComposerMenus",
+    "references": [
+      "file:dashboard/src/components/sleepy/chat/ComposerMenus.tsx",
+      "file:dashboard/src/components/sleepy/chat/Composer.tsx",
+      "file:dashboard/src/components/sleepy/chat/useAnchoredMenu.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-23",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add Claude usage readout — the chat composer's usage popover draws three nested bars: context window (derived from transcript token usage via computeSessionStats, existing), 5-hour session cap, and weekly cap. The two account-level caps are PERCENTAGES Claude Code fetches from the API and caches in ~/.claude.json's cachedUsageUtilization; this feature reads that cache, never asserts the numbers. New module src/lib/claude-usage.ts reads the file with a test seam (home defaults to homedir() so an isolated scratch HOME reads its own fixture, never the developer's real credentials; the route handler calls readUsageLimits() with no argument so no request-derived value can choose which file is read). Field-by-field narrowing from the cache — no spread from the parsed object, so a key we do not know about cannot ride out to the client. The module never throws (guarded JSON read plus typeof/Number.isFinite narrowing). Server route: src/server/routes/agent-usage.ts (GET /api/agent/usage). Shape mirrored as UsageLimitWire in dashboard/src/lib/agentComposer.ts, validated at runtime by tests/unit/claude-usage.test.ts so a field that drifts fails loudly instead of leaking to the client. The bars are optional — if the cache is missing or unparseable, the popover shows only the context window bar as before.",
+    "breaking": false,
+    "summary": "Claude usage readout: the composer's usage popover now shows 5-hour session cap and weekly cap bars",
+    "references": [
+      "file:src/lib/claude-usage.ts",
+      "file:src/server/routes/agent-usage.ts",
+      "file:tests/unit/claude-usage.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-23",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add chat modes — the composer's left trigger now reads <mode> · <permission> and opens one menu holding both. The mode is a per-session system-prompt append written at spawn (src/server/chat-modes.ts, concatenated after the surface briefing into --append-system-prompt-file), so it says how the agent should WORK — distinct from the surface briefing which says what the surface can DRAW. Three modes: Basic (plain Claude Code, no append), Plan (goal-skill's planning half — asks the critical questions, drives the decisions, ends by creating a real task and offering a develop handoff as a dream-actions button), and Develop (goal-skill's implementing half — works in waves, validates each wave, shows evidence, worktrees gated on brain isolation: permitted only when brainRepo.mode is full-repo or a linked code repo is present, explicitly forbidden otherwise to prevent forking the brain). J.A.R.V.I.S is rendered disabled with a Soon badge. No user-settable mode default — a fresh chat is Basic. Switching mode on a live session respawns it with --resume, preserving transcript, model, effort and permission mode. The develop action button (the handoff) opens a NEW chat in Develop mode carrying the task slug as its first prompt, and closes the Plan tab — new-session-per-handoff keeps the plan transcript auditable instead of clearing it away. New files: dashboard/src/lib/chatModes.ts (mode rows, menu copy), src/server/chat-modes.ts (CHAT_MODES, per-mode system-prompt append, sanitizer allowlist). Mirrored structure validated by tests/unit/chat-mode-mirror.test.ts. Verify harness: scripts/verify/chat-modes.mjs (6 checks). Chat view only — modes are a chat-specific orchestration on top of the surface briefing.",
+    "breaking": false,
+    "summary": "Chat modes (Basic/Plan/Develop): pick how the agent works, as a per-session system-prompt append",
+    "references": [
+      "file:dashboard/src/lib/chatModes.ts",
+      "file:src/server/chat-modes.ts",
+      "file:scripts/verify/chat-modes.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-23",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add the pinned shelf — a surface docked to the composer's top edge that holds what a transcript would scroll away: this session's facts (branch, worktree marker, dev-server port) and a long run's progress. One tag line plus at most one open row above it, so the ceiling is hard and enforceable no matter what an agent sends. Resting state is never empty ceremony — branch + worktree marker come from the server (GET /api/agent/session-facts: git symbolic-ref, worktree detected by --git-common-dir ≠ --absolute-git-dir) — true without the agent asserting anything. Pins: the agent sends {type:\"pin\",id,weight:\"tag\"|\"row\",facts:[{label,url?,marker?}],lede?,detail?} and re-sending the same id UPDATES in place. Weight is a request: the surface may demote a row whose content is tag-sized, so the ceiling stays enforceable. URLs are loopback-only (localhost/127.0.0.1/[::1], query+fragment stripped). Progress: {type:\"progress\",task:\"<slug>\"} and the percent is DERIVED from disk (reading ## Acceptance Criteria checkboxes with countCheckboxes, re-reading as the file changes) — never asserted, so the user can check it. Clicking the row opens a dialog with the full criteria list. Overflow degrades loudly: past the ceiling the oldest row demotes to a ⌃ tag (clickable to promote back). Tags never hide — the tag area WRAPS to as many lines as it needs. The tag line's y is identical whether a row is open above it or not, at every scroll position, in every state — that is why rows open upward and why this component has no scroll listener, no scrollTop read, and no IntersectionObserver. New files: dashboard/src/lib/shelfModel.ts (pure, zero React/DOM/Date.now, testable in root vitest), pinStore.ts (localStorage persistence, vault+id hex-keyed), chat/PinShelf.tsx, pinShelf.css, useShelf.ts, useDismissOnOutside.ts. Server: src/server/routes/agent-shelf.ts (GET /api/agent/session-facts, GET /api/agent/task-progress), src/lib/session-facts.ts. chatViewSpec.ts gained pin + progress view types. Tests: tests/unit/chat-view-pin.test.ts, pin-store.test.ts, shelf-model.test.ts, chat-shelf-placement.test.ts, task-progress.test.ts. Verify harnesses: scripts/verify/chat-shelf.mjs (5 checks), chat-shelf-ui.mjs (6 checks). Phase 6 eyeball verification completed against a real Chromium + real dist server in a scratch HOME — six states captured.",
+    "breaking": false,
+    "summary": "The composer shelf: pinned session facts + run progress, docked outside the transcript and never scrolled away",
+    "references": [
+      "file:dashboard/src/lib/shelfModel.ts",
+      "file:dashboard/src/components/sleepy/chat/PinShelf.tsx",
+      "file:src/server/routes/agent-shelf.ts",
+      "file:src/lib/session-facts.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-23",
     "type": "feat",
     "scope": "agents",
     "description": "Add AgentTabs' own right-click menu — a head naming the tab, Rename (the inline editor that double-click already opened, undiscoverable until now), and an Auto-rename tabs switch bound to agentSettings.autoTitle. It PORTALS to <body> for two independently fatal reasons: .agent-pane-tabbar is an overflow-x scroller, and .agent-surface's `contain: layout paint` makes it the containing block even for position:fixed — the same trap that keeps AgentDock a sibling of the surface. Placed at the pointer, clamped to the viewport, flipped above the cursor near the bottom edge; a keyboard-raised menu (Menu key, 0,0 coords) anchors under the tab and takes focus while a pointer-raised one deliberately does not, so dismissing it leaves the pane typing-ready. The switch writes through patchAgentSettings({ autoTitle }) rather than a whole-object writeAgentSettings, because AgentSurface's agentSettings can still be the pre-hydrate localStorage seed and spreading it back would revert unrelated preferences. Two consequences handled rather than discovered later: AgentSurface's window-level Esc handler now yields to .agent-tab-menu by DOM presence (it fires before the menu's own document handler and would otherwise collapse the surface), and SettingsPage subscribes to AGENT_SETTINGS_EVENT since it is no longer the only editor of that blob. Verified end to end by scripts/verify/agent-tab-menu.mjs (new, real server + bundle + Chromium, 11/11); auto-titling itself is explicitly NOT covered, since it needs a live Haiku call. Suite 7170 green, tsc and build clean.",

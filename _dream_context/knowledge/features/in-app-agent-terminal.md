@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-08-23'
+updated: '2026-08-24'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -54,6 +54,12 @@ related_tasks:
   - >-
     chat-opens-a-pdf-in-the-app-and-every-file-panel-offers-open-on-computer-reveal-in-finder
   - agent-tab-right-click-menu-rename-the-auto-rename-switch-from-settings
+  - >-
+    two-new-agent-actions-pinned-session-facts-that-stay-put-and-progress-read-from-the-task-file
+  - >-
+    chat-density-shrink-chrome-and-demote-the-context-meter-so-more-conversation-fits
+  - >-
+    chat-names-the-branch-and-worktree-it-acts-on-backend-done-placement-waits-on-chat-density
 type: feature
 name: in-app-agent-terminal
 description: ''
@@ -127,6 +133,8 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - [x] As a developer, a PDF a KNOWLEDGE note links to opens the same way — clicking `[the contract](assets/msa.pdf)` in a note shows the document in the app instead of doing nothing, and it works in the browser dashboard too, not just the desktop app.
 
 - [x] As a developer, right-clicking a tab offers Rename (the inline editor a double-click already opened, now with something that says so) and the "auto-name tabs" switch itself — so the two things I want while looking AT a tab are reachable from it instead of being an undiscoverable gesture and a preference three panels away in Settings.
+
+- [x] As a developer in Chat view, I can see session facts (branch, worktree, localhost:PORT) and long-run progress in a shelf docked to the composer — not scrolling away in the transcript — so I always know where I am and how far along a task is. (See [[chat-composer-shelf]] for full PRD.)
 
 ## Acceptance Criteria
 
@@ -234,6 +242,8 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - [x] Every file surface carries the two ways out to the OS (`chat/FileActions.tsx`, shared by the slide-over panel, the PDF viewer and the image lightbox via `ImageViewer`'s new `actions` slot): "Open on computer" (`mode:'auto'`), "Reveal in Finder" (`mode:'reveal'`) and Copy path, with a refusal SHOWN rather than swallowed. The panel previously offered the OS for a FOLDER only. `POST /agent/reveal`'s `mode` can only NARROW — an open becomes a reveal, never the reverse, and an unrecognised mode means "decide for me" — so the never-launch-an-executable rule survives any client; the answer reports which happened (`{opened, mode}`). Verified end-to-end against a real server: `npm run verify:pdf-viewer` (17 checks).
 
 - [x] The surface briefing (`src/server/chat-surface.ts`) names the PDF shape, so the agent writes `[the handbook](docs/handbook.pdf)` rather than telling the user where the file is. Trimmed to fit the existing 3,400-char budget rather than raising it — the briefing rides in every chat turn.
+
+- [x] **Chat composer shelf** (see [[chat-composer-shelf]] for full PRD): shelf docks to composer top edge, holds pinned facts + progress rows outside transcript. Session facts (branch/worktree/localhost:PORT) server-derived from GET /api/agent/session-facts. Progress derived from task file (percent from checkboxes, now/last from changelog + criteria). Tags wrap (no +N fold), progress detail opens as floating popover (not in-place). Loopback URLs clickable (http://localhost / 127.0.0.1 only). VIEW_TYPES in chatViewSpec.ts gains pin + progress types. Verified by scripts/verify/chat-shelf.mjs + chat-shelf-ui.mjs.
 
 ## Acceptance Criteria
 

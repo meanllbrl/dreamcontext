@@ -105,11 +105,11 @@ P.push(...callout({
 }));
 P.push(...callout({
   x: 80, y: RY + 336, w: 660, title: 'OVERFLOW',
-  text: 'Past the ceiling, the oldest row demotes to a tag; past the tag line\'s width, tags fold into a "+3" chip that opens the rest. Nothing is dropped silently — the count is always visible.',
+  text: 'Past the ceiling, the oldest row demotes to a tag — it demoted, it did not close. Tags themselves are NEVER hidden: no "+N" fold, no per-line cap. The tag area wraps onto more lines as needed, capping at ~25% of the pane and scrolling inside itself.',
 }));
 P.push(...callout({
   x: 80, y: RY + 482, w: 660, title: 'EXPANSION',
-  text: 'A pin that does not fit one line rests as a lede and opens on click. The ceiling binds what the AGENT can force, not what the USER opens: expansion grows upward, past two rows, capped near 40% of the pane and scrolling inside itself. One pin is open at a time — opening a second closes the first.',
+  text: 'A long PIN rests as a lede and opens IN PLACE on click. The ceiling binds what the AGENT can force, not what the USER opens: expansion grows upward, past two rows, capped near 40% of the pane. One pin is open at a time. Progress detail is NOT in place — it opens as a floating popover, so the row costs the same height open or closed.',
 }));
 P.push(...callout({
   x: 80, y: RY + 640, w: 660, title: 'NO SCROLL REACTION',
@@ -128,7 +128,7 @@ P.push(...table({
 }));
 P.push(...callout({
   x: 820, y: RY + 330, w: 620, title: 'HISTORY',
-  text: 'Eight placements were rejected on 2026-08-17 because the composer was too crowded to receive anything. The 2026-08-22 composer redesign — one row, the context meter demoted to a ring — is what made this shelf possible.',
+  text: 'Eight placements were rejected on 2026-08-17 because the composer was too crowded to receive anything. The 2026-08-22 composer redesign — one row, the context meter demoted to a ring — is what made this shelf possible.\n\n2026-08-23 live test: fold cut — tags always visible and wrap; progress detail became a popover.',
 }));
 
 buildExcalidraw({

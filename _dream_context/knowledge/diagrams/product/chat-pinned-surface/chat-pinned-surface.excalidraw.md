@@ -135,17 +135,18 @@ the one failure mode option A has. ^ke0SYmJJ
 
 OVERFLOW ^mbmmwvVf
 
-Past the ceiling, the oldest row demotes to a tag; past the tag line's
-width, tags fold into a "+3" chip that opens the rest. Nothing is
-dropped silently — the count is always visible. ^UechAODH
+Past the ceiling, the oldest row demotes to a tag — it demoted, it did
+not close. Tags themselves are NEVER hidden: no "+N" fold, no per-line
+cap. The tag area wraps onto more lines as needed, capping at ~25% of
+the pane and scrolling inside itself. ^UechAODH
 
 EXPANSION ^bVFZoMKH
 
-A pin that does not fit one line rests as a lede and opens on click.
-The ceiling binds what the AGENT can force, not what the USER opens:
-expansion grows upward, past two rows, capped near 40% of the pane and
-scrolling inside itself. One pin is open at a time — opening a second
-closes the first. ^ibIiGrC8
+A long PIN rests as a lede and opens IN PLACE on click. The ceiling
+binds what the AGENT can force, not what the USER opens: expansion
+grows upward, past two rows, capped near 40% of the pane. One pin is
+open at a time. Progress detail is NOT in place — it opens as a
+floating popover, so the row costs the same height open or closed. ^ibIiGrC8
 
 NO SCROLL REACTION ^R1LEnzyl
 
@@ -188,7 +189,10 @@ HISTORY ^7zWXvLrN
 Eight placements were rejected on 2026-08-17 because the composer
 was too crowded to receive anything. The 2026-08-22 composer
 redesign — one row, the context meter demoted to a ring — is what
-made this shelf possible. ^igClaIQ3
+made this shelf possible.
+
+2026-08-23 live test: fold cut — tags always visible and wrap;
+progress detail became a popover. ^igClaIQ3
 
 ## Embedded Files
 %%
@@ -4467,7 +4471,7 @@ made this shelf possible. ^igClaIQ3
 			"x": 80,
 			"y": 1736,
 			"width": 642,
-			"height": 110.25,
+			"height": 129,
 			"angle": 0,
 			"strokeColor": "#868e96",
 			"backgroundColor": "#e9ecef",
@@ -4539,7 +4543,7 @@ made this shelf possible. ^igClaIQ3
 			"x": 96,
 			"y": 1776,
 			"width": 620,
-			"height": 56,
+			"height": 75,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -4562,9 +4566,9 @@ made this shelf possible. ^igClaIQ3
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "Past the ceiling, the oldest row demotes to a tag; past the tag line's\nwidth, tags fold into a \"+3\" chip that opens the rest. Nothing is\ndropped silently — the count is always visible.",
-			"rawText": "Past the ceiling, the oldest row demotes to a tag; past the tag line's\nwidth, tags fold into a \"+3\" chip that opens the rest. Nothing is\ndropped silently — the count is always visible.",
-			"originalText": "Past the ceiling, the oldest row demotes to a tag; past the tag line's\nwidth, tags fold into a \"+3\" chip that opens the rest. Nothing is\ndropped silently — the count is always visible.",
+			"text": "Past the ceiling, the oldest row demotes to a tag — it demoted, it did\nnot close. Tags themselves are NEVER hidden: no \"+N\" fold, no per-line\ncap. The tag area wraps onto more lines as needed, capping at ~25% of\nthe pane and scrolling inside itself.",
+			"rawText": "Past the ceiling, the oldest row demotes to a tag — it demoted, it did\nnot close. Tags themselves are NEVER hidden: no \"+N\" fold, no per-line\ncap. The tag area wraps onto more lines as needed, capping at ~25% of\nthe pane and scrolling inside itself.",
+			"originalText": "Past the ceiling, the oldest row demotes to a tag — it demoted, it did\nnot close. Tags themselves are NEVER hidden: no \"+N\" fold, no per-line\ncap. The tag area wraps onto more lines as needed, capping at ~25% of\nthe pane and scrolling inside itself.",
 			"fontSize": 15,
 			"fontFamily": 5,
 			"textAlign": "left",
@@ -4578,7 +4582,7 @@ made this shelf possible. ^igClaIQ3
 			"type": "rectangle",
 			"x": 80,
 			"y": 1882,
-			"width": 642,
+			"width": 624,
 			"height": 147.75,
 			"angle": 0,
 			"strokeColor": "#868e96",
@@ -4674,9 +4678,9 @@ made this shelf possible. ^igClaIQ3
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "A pin that does not fit one line rests as a lede and opens on click.\nThe ceiling binds what the AGENT can force, not what the USER opens:\nexpansion grows upward, past two rows, capped near 40% of the pane and\nscrolling inside itself. One pin is open at a time — opening a second\ncloses the first.",
-			"rawText": "A pin that does not fit one line rests as a lede and opens on click.\nThe ceiling binds what the AGENT can force, not what the USER opens:\nexpansion grows upward, past two rows, capped near 40% of the pane and\nscrolling inside itself. One pin is open at a time — opening a second\ncloses the first.",
-			"originalText": "A pin that does not fit one line rests as a lede and opens on click.\nThe ceiling binds what the AGENT can force, not what the USER opens:\nexpansion grows upward, past two rows, capped near 40% of the pane and\nscrolling inside itself. One pin is open at a time — opening a second\ncloses the first.",
+			"text": "A long PIN rests as a lede and opens IN PLACE on click. The ceiling\nbinds what the AGENT can force, not what the USER opens: expansion\ngrows upward, past two rows, capped near 40% of the pane. One pin is\nopen at a time. Progress detail is NOT in place — it opens as a\nfloating popover, so the row costs the same height open or closed.",
+			"rawText": "A long PIN rests as a lede and opens IN PLACE on click. The ceiling\nbinds what the AGENT can force, not what the USER opens: expansion\ngrows upward, past two rows, capped near 40% of the pane. One pin is\nopen at a time. Progress detail is NOT in place — it opens as a\nfloating popover, so the row costs the same height open or closed.",
+			"originalText": "A long PIN rests as a lede and opens IN PLACE on click. The ceiling\nbinds what the AGENT can force, not what the USER opens: expansion\ngrows upward, past two rows, capped near 40% of the pane. One pin is\nopen at a time. Progress detail is NOT in place — it opens as a\nfloating popover, so the row costs the same height open or closed.",
 			"fontSize": 15,
 			"fontFamily": 5,
 			"textAlign": "left",
@@ -5326,7 +5330,7 @@ made this shelf possible. ^igClaIQ3
 			"x": 820,
 			"y": 1730,
 			"width": 598,
-			"height": 129,
+			"height": 185.25,
 			"angle": 0,
 			"strokeColor": "#868e96",
 			"backgroundColor": "#e9ecef",
@@ -5398,7 +5402,7 @@ made this shelf possible. ^igClaIQ3
 			"x": 836,
 			"y": 1770,
 			"width": 588,
-			"height": 75,
+			"height": 131,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -5421,9 +5425,9 @@ made this shelf possible. ^igClaIQ3
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "Eight placements were rejected on 2026-08-17 because the composer\nwas too crowded to receive anything. The 2026-08-22 composer\nredesign — one row, the context meter demoted to a ring — is what\nmade this shelf possible.",
-			"rawText": "Eight placements were rejected on 2026-08-17 because the composer\nwas too crowded to receive anything. The 2026-08-22 composer\nredesign — one row, the context meter demoted to a ring — is what\nmade this shelf possible.",
-			"originalText": "Eight placements were rejected on 2026-08-17 because the composer\nwas too crowded to receive anything. The 2026-08-22 composer\nredesign — one row, the context meter demoted to a ring — is what\nmade this shelf possible.",
+			"text": "Eight placements were rejected on 2026-08-17 because the composer\nwas too crowded to receive anything. The 2026-08-22 composer\nredesign — one row, the context meter demoted to a ring — is what\nmade this shelf possible.\n\n2026-08-23 live test: fold cut — tags always visible and wrap;\nprogress detail became a popover.",
+			"rawText": "Eight placements were rejected on 2026-08-17 because the composer\nwas too crowded to receive anything. The 2026-08-22 composer\nredesign — one row, the context meter demoted to a ring — is what\nmade this shelf possible.\n\n2026-08-23 live test: fold cut — tags always visible and wrap;\nprogress detail became a popover.",
+			"originalText": "Eight placements were rejected on 2026-08-17 because the composer\nwas too crowded to receive anything. The 2026-08-22 composer\nredesign — one row, the context meter demoted to a ring — is what\nmade this shelf possible.\n\n2026-08-23 live test: fold cut — tags always visible and wrap;\nprogress detail became a popover.",
 			"fontSize": 15,
 			"fontFamily": 5,
 			"textAlign": "left",
