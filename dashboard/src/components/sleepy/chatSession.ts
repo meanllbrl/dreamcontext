@@ -602,6 +602,28 @@ export function createChatSession(
   }
 
   /**
+   * Forget every card still waiting for an answer, because the REQUEST behind it is gone.
+   *
+   * A `pending` entry is one live `can_use_tool` control_request from the turn in flight —
+   * the CLI is blocked on our `control_response` for exactly as long as it stands. Three
+   * edges end that request without any answer of ours: an interrupt (the CLI rejects the
+   * tool it was blocked on — "[Request interrupted by user for tool use]" — and never
+   * re-asks), the child exiting, and the socket going away. None of them emits a frame that
+   * names the request, so nothing else can retire the card: left up it is a control that
+   * answers into a void, `asking` stays true forever (the composer can't steer, and the
+   * project chip keeps its asking bubble), and — because pending cards render AFTER the
+   * transcript — it sits pinned below every later message for the rest of the session.
+   *
+   * Mutation only: callers wrap it in `applyAndNotify` so `asking` flipping false is one
+   * coarse transition alongside whatever else that edge changed.
+   */
+  function dropPending(): void {
+    if (conv.pending.length === 0) return;
+    conv = { ...conv, pending: [] };
+    session.asking = false;
+  }
+
+  /**
    * Push a card that ASKS the user something directly — a question or a plan to approve —
    * onto `pending`, raising the user only on the edge where none was pending before.
    *
@@ -1069,6 +1091,9 @@ export function createChatSession(
       }
       case 'meta-exit': {
         session.busy = false;
+        // The process that raised them is gone — see `dropPending`. A card outliving its own
+        // CLI is the same dead control the interrupt path leaves behind, one edge later.
+        dropPending();
         // Distinguishes a real process exit from a network drop (ws.onclose/onerror never
         // set this) so the Session-ended banner shows only for the former.
         conv = { ...conv, exited: { code: ev.code } };
@@ -1106,7 +1131,10 @@ export function createChatSession(
     if (ev.kind === 'result') void syncTranscriptUuids();
   };
   const stopOnClose = () => {
-    applyAndNotify(() => { session.busy = false; session.asking = false; session.status = 'closed'; });
+    // `dropPending` before the flag, not instead of it: it no-ops when nothing was open, and
+    // the flag must come down on a closed socket either way. A card left standing here was
+    // already only half-retired — `asking` went false while the card itself stayed on screen.
+    applyAndNotify(() => { session.busy = false; dropPending(); session.asking = false; session.status = 'closed'; });
   };
   ws.onclose = stopOnClose;
   ws.onerror = stopOnClose;
@@ -1293,10 +1321,15 @@ export function createChatSession(
   function interrupt(): void {
     if (ws.readyState !== WebSocket.OPEN) return;
     try { ws.send(JSON.stringify({ type: 'interrupt' } as ClientControl)); } catch { /* best-effort */ }
-    // Stop means stop — including whatever was lined up behind this turn. The queue is held,
-    // not dropped: the interrupt's own `result` frame is a busy→idle edge, and without this the
-    // next queued message would go out in the same breath as the interrupt.
-    if (conv.queued.length > 0) applyAndNotify(() => { conv = { ...conv, queuePaused: true }; });
+    applyAndNotify(() => {
+      // Stop means stop — the cards go with the turn that raised them (owner report 08-24:
+      // "soru sorduğu an durdurursam ... chat bubble'ı hiç gitmiyor").
+      dropPending();
+      // …including whatever was lined up behind this turn. The queue is held, not dropped:
+      // the interrupt's own `result` frame is a busy→idle edge, and without this the next
+      // queued message would go out in the same breath as the interrupt.
+      if (conv.queued.length > 0) conv = { ...conv, queuePaused: true };
+    });
   }
 
   // ── Live model / effort switches ────────────────────────────────────────────────────
