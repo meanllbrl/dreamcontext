@@ -91,6 +91,55 @@ function writeSlashCache(contextRoot: string, commands: string[]): void {
  *  limitation (see the task's Constraints), not something this guards against. */
 const liveConversations = new Set<string>();
 
+/**
+ * How long a resuming upgrade will wait for the PREVIOUS holder of that conversation to let
+ * go before giving up and taking the old fall-through.
+ *
+ * ── The race this closes ───────────────────────────────────────────────────────────────
+ * Every respawn-in-place path — the account-switch restart, "Session ended → Resume", the
+ * Basic/Plan/Develop mode switch — disposes the old session and opens the new socket in the
+ * SAME tick. The old session's hold is released promptly (`onSocketGone`, which is exactly
+ * why that release does not wait out the drain), but "promptly" is the server noticing a
+ * socket close, and the new upgrade is a fresh connection racing it. Either can land first.
+ *
+ * When the upgrade wins, `startChatSession` reads a conversation that is still marked live
+ * and falls all the way through: `resumeTarget` is blocked by the hold, and `freshPin` is
+ * blocked because the transcript EXISTS — so `idArg` comes out EMPTY and the spawn silently
+ * starts a brand-new, unpinned conversation. The user's transcript is not resumed and the
+ * new one is not even resumable. Observed live: two consecutive runs of
+ * `verify:claude-auth-switch`, one landing on `--resume <id>` and the next on no id at all.
+ *
+ * Waiting is the fix rather than weakening the guard, because the guard is right: a
+ * conversation must have at most one writer. This only ever delays an upgrade that (a) asked
+ * to resume, (b) names a conversation with a real transcript, and (c) finds it still held —
+ * so the ordinary case costs one Set lookup and no delay whatsoever. A genuine double-attach
+ * (a chat and a terminal on one conversation, the documented beta limitation) still ends in
+ * the same fall-through it always did, just 1.5s later.
+ */
+export const RESUME_HANDOFF_WAIT_MS = 1500;
+const RESUME_HANDOFF_POLL_MS = 25;
+
+/**
+ * Give the previous holder of `resumeId`'s conversation a moment to release it.
+ *
+ * Resolves as soon as nothing holds it (the overwhelmingly common case: immediately), or
+ * after {@link RESUME_HANDOFF_WAIT_MS}. Both candidate ids are considered — the tab-session
+ * map's answer and the pinned id itself — because `startChatSession` will try both, and a
+ * hold on either is what makes it fall through.
+ */
+async function awaitResumeHandoff(contextRoot: string, resumeId: string): Promise<void> {
+  if (!resumeId) return;
+  const mapped = resolveAgentSession(contextRoot, resumeId);
+  // Only conversations that actually EXIST can produce the bad fall-through, so an id with no
+  // transcript never costs a wait.
+  const candidates = [mapped, resumeId].filter((c) => c && claudeConversationExists(c));
+  if (!candidates.length) return;
+  const deadline = Date.now() + RESUME_HANDOFF_WAIT_MS;
+  while (candidates.some((c) => liveConversations.has(c)) && Date.now() < deadline) {
+    await new Promise((r) => { setTimeout(r, RESUME_HANDOFF_POLL_MS); });
+  }
+}
+
 // ─── Permission mode (identical rule to the terminal — agent-terminal.ts:1206) ────────
 
 /** No-bypass chat maps to Auto (`auto`); bypass maps to `bypassPermissions` — the same
@@ -333,6 +382,12 @@ export function attachAgentChat(server: Server): void {
       let WebSocketServer: typeof import('ws').WebSocketServer;
       try { ({ WebSocketServer } = await import('ws')); }
       catch { rejectUpgrade(socket, 501); return; }
+
+      // A respawn-in-place (account switch, Resume, mode switch) opens this socket in the
+      // same tick it closed the old one — wait out that hand-off before deciding the resume
+      // target, or the conversation reads as still-held and the spawn silently starts a new,
+      // unpinned one. No-op unless a resume was asked for and is genuinely still held.
+      await awaitResumeHandoff(join(projectRoot, '_dream_context'), resumeId);
 
       const wss = new WebSocketServer({ noServer: true });
       wss.handleUpgrade(req, socket, head, (ws) => {

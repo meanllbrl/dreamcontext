@@ -234,8 +234,9 @@ const authSpawns = () => spawnLines().filter((l) => l.startsWith('auth\t'));
 const convIdOf = (line) => (line.match(/--(?:session-id|resume) ([0-9a-f-]{36})/) ?? [])[1] ?? null;
 
 /** Open a chat WS and collect every `_meta` frame it is sent. */
-async function openChat(WebSocket, port, sessionId) {
-  const url = `ws://127.0.0.1:${port}/api/agent/chat?vault=proj&bypass=0&sessionId=${sessionId}`;
+async function openChat(WebSocket, port, sessionId, { resume = false } = {}) {
+  const key = resume ? 'resume' : 'sessionId';
+  const url = `ws://127.0.0.1:${port}/api/agent/chat?vault=proj&bypass=0&${key}=${sessionId}`;
   const ws = new WebSocket(url);
   const metas = [];
   ws.on('message', (raw) => {
@@ -324,8 +325,32 @@ async function runWire(port, report) {
   ok('…while the pre-existing session still holds its single frame',
     a.authFrames().length === 1);
 
-  a.ws.close();
   b.ws.close();
+
+  // ── The respawn hand-off ────────────────────────────────────────────────────────────
+  //
+  // The restart closes the old socket and opens the new one in the SAME tick. The server
+  // marks a conversation live while a process holds it, and releases that hold when it
+  // notices the socket close — so the new upgrade can arrive first. When it did, the resume
+  // target read as still-held, the fresh-pin fallback was blocked because the transcript
+  // EXISTS, and the spawn came out with NO id at all: a brand-new unpinned conversation, the
+  // user's transcript abandoned. Caught live — two consecutive runs of this script, one
+  // landing on `--resume`, the next on nothing.
+  //
+  // Driven here rather than left to the UI half, because in the UI it is a coin flip: this
+  // reconnects with ZERO gap, which is the losing side of the race every time.
+  console.log('── an immediate reconnect must still resume, not silently start a new conversation');
+  const beforeHandoff = engineSpawns().length;
+  a.ws.close();
+  const c = await openChat(WebSocket, port, convA, { resume: true });
+  await sleep(2500);
+  const handoff = engineSpawns().slice(beforeHandoff);
+  ok('the reconnect spawned exactly one process', handoff.length === 1, JSON.stringify(handoff));
+  ok('…and it resumed the SAME conversation instead of abandoning the transcript',
+    convIdOf(handoff[0] ?? '') === convA, handoff[0]);
+  ok('…via --resume, the real path (not a re-pin, and certainly not an unpinned session)',
+    / --resume /.test(handoff[0] ?? ''), handoff[0]);
+  c.ws.close();
   await sleep(500);
 }
 
