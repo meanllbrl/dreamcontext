@@ -36,6 +36,7 @@
     "verify:past-chats": "node scripts/verify/past-chats.mjs",
     "verify:past-chats-ui": "node scripts/verify/past-chats-ui.mjs",
     "verify:pdf-viewer": "node scripts/verify/pdf-viewer.mjs",
+    "verify:claude-auth-switch": "node scripts/verify/claude-auth-switch.mjs",
     "diagrams": "node scripts/diagrams/build-all.mjs",
     "prepublishOnly": "npm run build",
     "verify:chat-toolrows": "node scripts/verify/chat-toolrows.mjs",

@@ -55,6 +55,12 @@ export interface Capabilities {
      *  the manual fallback prints. */
     loginCommand: string;
     error?: string;
+    /** The account watcher's change counter (src/lib/claude-auth-watch.ts). It INCREASES
+     *  once per confirmed account switch and never otherwise, which is what lets a poller
+     *  distinguish "the user signed into a different account" from "the probe started
+     *  answering" — diffing `email` cannot tell those apart, because an unknown probe has
+     *  no email either. Absent on a server that predates the watcher. */
+    epoch?: number;
   };
   npm: boolean;
   /** git presence probed with the server's own env — exactly how cloud sync invokes it. */

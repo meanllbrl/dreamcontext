@@ -44,7 +44,7 @@ import { CHAT_MODE_ROWS, DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chat
 import { preparePrompt, developKickoffPrompt } from '../../lib/agentPrompt';
 import { clearPins } from '../../lib/pinStore';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
-import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
+import { useAgentModelConfig, useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
 import { pickFiles, pickFolders } from '../../lib/desktop';
 import { listenForChecklistSubmits, type ChecklistSubmitPayload } from '../../lib/checklistBridge';
@@ -426,6 +426,76 @@ export function AgentSurface() {
   // turn) does NOT mark the id done — it stays retryable, so the tab you actually worked on
   // still gets named on its next completed turn instead of silently losing the race.
   // `busyPrevRef` is the prior busy state per session, so we fire on the busy→idle edge.
+  // ── The Claude account changed underneath us ───────────────────────────────────────
+  //
+  // `claude` reads its credentials once, at startup, so signing into a different account
+  // leaves every already-running session talking to the API as the OLD one. Chat sessions
+  // fix themselves (`armAuthRestart` below respawns each one on the same conversation id the
+  // moment it is idle); this strip is how the user finds out that happened, and the only
+  // thing a TERMINAL session gets — a live TUI cannot be respawned without throwing away its
+  // screen and whatever is half-typed in it, so those are named rather than restarted.
+  //
+  // `resumeChatRef` exists purely for declaration order: `armAuthRestart` has to be defined
+  // before `spawn` (which arms every chat it creates), and `resumeChatSession` is defined
+  // after it because it IS a spawn caller. Same latest-value ref idiom as
+  // `chatPermissionModeRef` above.
+  const resumeChatRef = useRef<((cs: ChatSession) => void) | null>(null);
+  const [authNotice, setAuthNotice] = useState<{
+    identity: string; loggedIn: boolean | null; restarted: number;
+  } | null>(null);
+  /** Record an account change, folding repeats into the one strip. Keyed by IDENTITY rather
+   *  than by a counter, so the two detectors that can report the same switch — the chat
+   *  socket (instant) and the capabilities poll (≤30s, and the only one a terminal-only user
+   *  has) — collapse into a single notice instead of racing to overwrite each other. */
+  const noteAuthChange = useCallback((identity: string, loggedIn: boolean | null, restarted: number) => {
+    setAuthNotice((prev) => {
+      if (!prev || prev.identity !== identity || prev.loggedIn !== loggedIn) {
+        return { identity, loggedIn, restarted };
+      }
+      return restarted ? { ...prev, restarted: prev.restarted + restarted } : prev;
+    });
+  }, []);
+
+  /**
+   * Watch ONE chat session for the account-changed frame and restart it onto the new
+   * credentials — the whole point of the feature, and the reason the frame exists.
+   *
+   * Three refusals, each deliberate:
+   *   • BUSY / a card open — a turn in flight was authorized by the old credentials and will
+   *     finish on them. Killing it mid-answer to save one turn's attribution is a bad trade,
+   *     so the restart waits for the boundary; `subscribe` fires on every applied event, so
+   *     the busy→idle edge is what eventually lets it through.
+   *   • ALREADY EXITED — the "Session ended" banner already offers Resume, and that resume
+   *     picks up the new account for free. Two restart paths for one dead process is one too
+   *     many.
+   *   • `restart: false` — the server could not confirm a signed-in account (see
+   *     claude-auth-watch.ts's `isRestartable`). The user is told; nothing is killed.
+   *
+   * And one hard stop: NO LONGER REGISTERED. Closing a tab disposes its session, and the
+   * socket teardown that follows still flips `busy` to false — which is exactly the "now it
+   * is idle, restart it" edge this is watching for. Respawning there would put a live
+   * `claude` behind a tab that no longer exists in the roster or in any pane: an invisible,
+   * unclosable process. The registry is the authority on whether this session is still
+   * something the surface owns.
+   */
+  const armAuthRestart = useCallback((cs: ChatSession) => {
+    let settled = false;
+    let noticed = false;
+    const stop = () => { settled = true; off(); };
+    const off = cs.subscribe(() => {
+      if (settled) return;
+      if (sessions.current.get(cs.id) !== cs) { stop(); return; }  // closed/replaced — see above
+      const changed = cs.getModel().authChanged;
+      if (!changed) return;
+      if (!noticed) { noticed = true; noteAuthChange(changed.identity, changed.loggedIn, 0); }
+      if (!changed.restart || cs.getModel().exited) { stop(); return; }
+      if (cs.busy || cs.asking) return;  // wait for the turn boundary
+      stop();
+      noteAuthChange(changed.identity, changed.loggedIn, 1);
+      resumeChatRef.current?.(cs);
+    });
+  }, [noteAuthChange]);
+
   const autoTitledRef = useRef<Set<string>>(new Set());
   const titleInFlightRef = useRef<Set<string>>(new Set());
   // Attempts per session id — the retry BUDGET. "Empty response stays retryable" must
@@ -447,6 +517,31 @@ export function AgentSurface() {
     catch { setCapsError(true); return null; }
   }, []);
   useEffect(() => { void refreshCaps(); }, [refreshCaps]);
+
+  // The SLOW, universal half of account-change detection. `caps` above is fetched once at
+  // mount, so it can never notice a switch; this is the app-wide 30s query (already mounted
+  // by the header's sleep tracker, so it costs no extra request) read purely for its epoch.
+  //
+  // The chat socket beats it by ~30s and is what actually drives the restarts. This exists
+  // for the case the socket cannot cover: a user with no chat session open at all — a
+  // terminal-only user, or one sitting on the empty surface — who otherwise would get no
+  // signal that their terminals are now running as the wrong account.
+  //
+  // Compares the EPOCH, not the email: an unknown probe carries no email either, so a
+  // string diff would read "probe recovered" as an account switch. The epoch only ever
+  // advances on a confirmed change (claude-auth-watch.ts).
+  const { data: polledCaps } = useAgentCapabilities();
+  const authEpochRef = useRef<number | null>(null);
+  useEffect(() => {
+    const auth = polledCaps?.claudeAuth;
+    if (typeof auth?.epoch !== 'number') return;
+    const seen = authEpochRef.current;
+    authEpochRef.current = auth.epoch;
+    // First reading BASELINES. Without this, simply opening the app after having switched
+    // accounts at some point in the server's life would announce a switch that is old news.
+    if (seen === null || auth.epoch <= seen) return;
+    noteAuthChange([auth.email, auth.subscription].filter(Boolean).join(' · '), auth.loggedIn, 0);
+  }, [polledCaps, noteAuthChange]);
 
   // ── Agent-surface settings: load the server-persisted prefs once, then track
   //    live changes the Settings page broadcasts (no reload needed). ──
@@ -659,6 +754,10 @@ export function AgentSurface() {
       const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
+      // Every chat spawned anywhere in this surface follows the signed-in account, for the
+      // same reason the permission-mode default is resolved here rather than per call site:
+      // one place to arm means no future spawn path can forget to.
+      armAuthRestart(cs);
       return cs;
     }
     // A shell has no permission model, so bypass is meaningless for it — force it off.
@@ -666,7 +765,7 @@ export function AgentSurface() {
     s.applyZoom(currentZoom());
     sessions.current.set(s.id, s);
     return s;
-  }, [chatPermissionMode, vault]);
+  }, [chatPermissionMode, vault, armAuthRestart]);
 
   // Spawn a fresh session AND append its roster entry — the two steps every "new session"
   // path shares. Callers keep only their pane placement, so the roster-entry shape lives in
@@ -885,6 +984,10 @@ export function AgentSurface() {
       active: p.active === cs.id ? s.id : p.active,
     })));
   }, [spawn, modelForSession, effortForSession]);
+  // The account watcher's restart path calls this through a ref — see `resumeChatRef`'s note
+  // for why it can't call it directly. Assigned on every render so the ref never holds a
+  // closure over a stale `spawn`.
+  resumeChatRef.current = resumeChatSession;
 
   /**
    * Change how a live chat's agent is BRIEFED, by respawning it under the new brief.
@@ -2338,6 +2441,18 @@ export function AgentSurface() {
     // working session behind it).
     body = (
       <div className="agent-term">
+        {/* The account changed under the running sessions. Chats have already dealt with it
+            (or are waiting out a turn); this says so, because an unexplained reconnect reads
+            as a glitch — and it is the ONLY thing a terminal agent gets, since respawning a
+            live TUI would throw away its screen. */}
+        {authNotice && (
+          <AuthChangedStrip
+            notice={authNotice}
+            liveChats={chatPanes.length}
+            liveTerminals={sessionList.filter((m) => m.kind === 'agent' && !m.dormant).length}
+            onDismiss={() => setAuthNotice(null)}
+          />
+        )}
         {/* Drop a PNG/JPG/GIF/WebP anywhere on a terminal OR chat pane to hand that
             session the file — its path is written to the vault temp dir and injected
             (readline for a terminal, composer draft for a chat). The listeners live on
@@ -2681,5 +2796,57 @@ export function AgentSurface() {
         `chat-${cs.id}`,
       ))}
     </>
+  );
+}
+
+/**
+ * "You are on a different Claude account now" — the surface-wide strip.
+ *
+ * ONE strip, not one per pane, because the event is ONE machine-wide act: the user ran
+ * `claude auth login`. N panes announcing the same sign-in would read as N things having
+ * gone wrong.
+ *
+ * It exists to make the automatic restart legible. A chat pane blanking and reconnecting on
+ * its own is indistinguishable from a crash, and a user who reads it as a crash learns to
+ * distrust the surface — so the restart is stated in the same breath as the account that
+ * caused it. The terminal clause is the honest other half: those sessions were NOT fixed,
+ * and saying nothing would leave them quietly running as the previous account.
+ */
+function AuthChangedStrip({ notice, liveChats, liveTerminals, onDismiss }: {
+  notice: { identity: string; loggedIn: boolean | null; restarted: number };
+  liveChats: number;
+  liveTerminals: number;
+  onDismiss: () => void;
+}) {
+  const who = notice.identity || 'a different account';
+  const signedOut = notice.loggedIn === false;
+  // Signed OUT is deliberately not a restart: a session respawned with no credentials fails
+  // its first turn, while the one already running may still hold a valid token and be doing
+  // real work. See claude-auth-watch.ts's `isRestartable`.
+  const headline = signedOut ? 'Signed out of Claude' : `Claude account changed — now ${who}`;
+  const chatClause = signedOut
+    ? 'Open sessions keep the sign-in they started with until it expires.'
+    : notice.restarted > 0
+      ? `${notice.restarted} open ${notice.restarted === 1 ? 'chat' : 'chats'} restarted on it — conversations intact.`
+      : liveChats > 0
+        ? 'Open chats restart on it as soon as they finish what they are doing.'
+        : '';
+  const terminalClause = !signedOut && liveTerminals > 0
+    ? ` ${liveTerminals === 1 ? 'Your terminal agent keeps' : `Your ${liveTerminals} terminal agents keep`} the old sign-in until restarted.`
+    : '';
+  return (
+    <div className="agent-auth-strip" role="status">
+      <span className="agent-auth-strip-mark" aria-hidden>◈</span>
+      <span className="agent-auth-strip-text">
+        <strong>{headline}.</strong>{chatClause ? ` ${chatClause}` : ''}{terminalClause}
+      </span>
+      <button
+        type="button"
+        className="agent-auth-strip-close"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        title="Dismiss"
+      >✕</button>
+    </div>
   );
 }

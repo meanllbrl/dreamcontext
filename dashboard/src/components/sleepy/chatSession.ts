@@ -215,6 +215,21 @@ export interface ConversationModel {
    *  OAuth flow), and the recovery path is respawning this conversation, which builds a fresh
    *  model. See ChatPane's SignInBanner. */
   authRequired?: { text: string };
+  /**
+   * The machine signed into a DIFFERENT Claude account while this conversation was open
+   * (chatProtocol's `auth-changed`, pushed by the server's account watcher).
+   *
+   * The process behind this chat read its credentials at startup, so it is still running as
+   * the previous account — every turn from here on is billed to and rate-limited by an
+   * account the user believes they left. The cure is a respawn on the SAME conversation id
+   * (`AgentSurface.resumeChatSession`), which is why this is recorded on the model rather
+   * than acted on here: the reducer knows a restart is due, the surface owns the restarting,
+   * and the wait for a turn boundary happens between the two.
+   *
+   * Sticky by design. It is set once and never cleared: the only thing that clears it is the
+   * restart, which replaces this model entirely.
+   */
+  authChanged?: { identity: string; restart: boolean; loggedIn: boolean | null };
 }
 
 // ─── Public session API (contract C4) ──────────────────────────────────────────────
@@ -801,6 +816,15 @@ export function createChatSession(
         // instead.
         session.busy = false;
         conv = { ...conv, authRequired: { text: ev.text } };
+        return;
+      }
+      case 'auth-changed': {
+        // Recorded, NOT acted on — and `busy` is deliberately untouched. A turn that is
+        // already in flight was authorized by the old credentials and will finish on them;
+        // interrupting it here would throw away work to save nothing (the restart has to
+        // wait for a turn boundary either way). See `authChanged`'s note and
+        // AgentSurface's `armAuthRestart`, which is the half that restarts.
+        conv = { ...conv, authChanged: { identity: ev.identity, restart: ev.restart, loggedIn: ev.loggedIn } };
         return;
       }
       case 'control-ack': {

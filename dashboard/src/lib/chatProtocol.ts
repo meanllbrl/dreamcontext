@@ -162,6 +162,13 @@ export type ChatEvent =
    *  (also verified) — the OAuth flow only exists in the interactive TUI. The UI turns this
    *  into a sign-in card that opens a terminal session instead of showing the user a dead end. */
   | { kind: 'auth-required'; text: string }
+  /** The machine signed into a DIFFERENT Claude account while this session was open. The
+   *  process behind it read its credentials at startup and is still using the old ones, so
+   *  it has to be restarted to follow — `restart` is the server's judgement on whether doing
+   *  so would actually help (see claude-auth-watch.ts's `isRestartable`: only a confirmed
+   *  sign-in qualifies; restarting onto a signed-out or unknown state makes things worse).
+   *  `identity` is a display label ("someone@example.com · team"), possibly empty. */
+  | { kind: 'auth-changed'; identity: string; restart: boolean; loggedIn: boolean | null }
   /** `parentToolUseId` present ⇒ this is a result for a tool a SUB-AGENT called, not the
    *  main agent (the parent's own final Agent-tool result carries none — spike-verified),
    *  so the parent transcript must not open or close a card for it. */
@@ -805,6 +812,18 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
   if (subtype === 'prompt_echo') {
     const text = str(obj.text);
     return text ? { kind: 'prompt-echo', text } : ignored('_meta:prompt_echo');
+  }
+  // The user signed into another Claude account (server-detected — claude-auth-watch.ts).
+  // `restart` and `loggedIn` are read STRICTLY: anything that is not a literal `true` /
+  // boolean is the conservative answer, because the fallback for both is "do nothing to a
+  // running session", and a malformed frame must never be the thing that kills one.
+  if (subtype === 'auth_changed') {
+    return {
+      kind: 'auth-changed',
+      identity: str(obj.identity) ?? '',
+      restart: obj.restart === true,
+      loggedIn: typeof obj.loggedIn === 'boolean' ? obj.loggedIn : null,
+    };
   }
   return ignored('_meta:' + (subtype ?? 'unknown'));
 }

@@ -73,6 +73,49 @@
   background: var(--color-bg);
 }
 
+/* ── "The Claude account changed" strip ────────────────────────────────────────
+   One row above the panes, for one machine-wide event (see AuthChangedStrip). It is
+   informational, NOT a failure: an accent tint, not the error red — the app has already
+   dealt with it, and painting a successful self-repair in alarm colours teaches the user
+   to fear a message that means "handled". `flex: 0 0 auto` so it takes its row off the
+   panes' height instead of overlaying a composer. */
+.agent-auth-strip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-accent) 26%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg));
+  font-size: 12px;
+  line-height: 1.45;
+  /* Full-contrast body text, never accent-on-its-own-tint — that measures ~3.7:1 in the
+     light theme and this row is meant to be read, not glanced at. The accent lives in the
+     mark and the border. Same rule the slash-menu focused row settled on. */
+  color: var(--color-text);
+}
+.agent-auth-strip-mark {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+  font-size: 13px;
+}
+.agent-auth-strip-text { flex: 1 1 auto; min-width: 0; }
+.agent-auth-strip-close {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1;
+}
+.agent-auth-strip-close:hover {
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-text) 10%, transparent);
+}
+
 /* ── Fullscreen overlay header ─────────────────────────────────────────────────
    The top bar of the expanded overlay, and the ONLY chrome row: collapse `[—]`, the
    session TABS themselves (one group per pane — see `.agent-overlay-tabs` below), and

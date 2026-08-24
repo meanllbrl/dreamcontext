@@ -20,6 +20,7 @@ import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
 import { modeBriefing, type ChatMode } from '../chat-modes.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
+import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { resolveBoardAssets } from './knowledge.js';
@@ -391,6 +392,13 @@ export function startChatSession(
   const { bypass, sessionId, resumeId, model, effort, mode, initialPrompt, deferPrompt } = opts;
   const contextRoot = join(projectRoot, '_dream_context');
 
+  // Which Claude account this process is about to inherit. Captured BEFORE the spawn (it is
+  // a synchronous counter read — no probe, no cost) so the window between "read the epoch"
+  // and "the child has its credentials" is as small as it can be. See claude-auth-watch.ts:
+  // a switch that lands after this point advances the epoch past it, which is precisely the
+  // signal that this process is now running on stale credentials.
+  const spawnAuthEpoch = claudeAuthWatcher.epoch();
+
   // Resume-target selection — mirrors agent-terminal.ts's startPtySession exactly:
   //  • resume requested → resolve the pinned id through the tab-session map FIRST (the
   //    live conversation may have rotated since the id was pinned), falling back to the
@@ -559,6 +567,29 @@ export function startChatSession(
   // `submitPrompt` is already empty in that case, so both fall out of this one condition.
   if (submitPrompt) sendMeta({ subtype: 'prompt_echo', text: submitPrompt });
 
+  // ── The account underneath this process changed ───────────────────────────────────────
+  //
+  // `claude` reads its credentials once, at startup, so a `claude auth login` into another
+  // account leaves every already-open session talking to the API as the OLD one. Nothing in
+  // the stream says so — the turns keep working, they are just billed to and rate-limited by
+  // an account the user thinks they left. The only cure is a restart, and this frame is what
+  // tells the client one is due.
+  //
+  // The epoch guard is what keeps this honest: a session spawned AFTER the switch already
+  // holds the new credentials, and telling it to restart would be a pointless reconnect. Only
+  // a session that predates the change hears about it.
+  const unwatchAuth = claudeAuthWatcher.subscribe((change) => {
+    if (change.epoch <= spawnAuthEpoch) return;   // spawned into the new account already
+    sendMeta({
+      subtype: 'auth_changed',
+      identity: change.identity,
+      // The client restarts on `true` only. A signed-out or unknown result is reported so the
+      // user is not left guessing, but never acted on — see `isRestartable`.
+      restart: change.restartable,
+      loggedIn: change.status.loggedIn,
+    });
+  });
+
   /** Full cleanup — runs when the CHILD is gone (exit/spawn-error), never on socket close
    *  alone. Untracking here (and only here) is what lets a tab-less, still-draining child
    *  remain reapable by the server's own shutdown (`killTrackedChildren`). */
@@ -571,6 +602,7 @@ export function startChatSession(
     releaseHeld();
     cleanupDeferred();
     cleanupBriefing();
+    unwatchAuth();
   };
 
   /** Socket gone (tab closed, app window died, network drop) → drain and reap the child.

@@ -600,6 +600,29 @@ describe('parseChatLine — _meta (server-relay lifecycle frames)', () => {
     expect(parseChatLine(JSON.stringify({ type: '_meta', subtype: 'prompt_echo' })))
       .toEqual({ kind: 'ignored', rawType: '_meta:prompt_echo' });
   });
+
+  it('auth_changed → auth-changed carrying the new account and the restart verdict', () => {
+    const line = JSON.stringify({
+      type: '_meta', subtype: 'auth_changed',
+      identity: 'someone@example.com · team', restart: true, loggedIn: true,
+    });
+    expect(parseChatLine(line)).toEqual({
+      kind: 'auth-changed', identity: 'someone@example.com · team', restart: true, loggedIn: true,
+    });
+  });
+
+  it('auth_changed for a sign-OUT → reported, but restart:false (never kill a live session for it)', () => {
+    const line = JSON.stringify({ type: '_meta', subtype: 'auth_changed', identity: '', restart: false, loggedIn: false });
+    expect(parseChatLine(line)).toEqual({ kind: 'auth-changed', identity: '', restart: false, loggedIn: false });
+  });
+
+  it('auth_changed reads restart/loggedIn STRICTLY — a malformed frame can never kill a session', () => {
+    // The fallback for both fields is "do nothing to the running process", so anything that
+    // is not a literal boolean has to degrade to the conservative answer rather than to a
+    // truthy one. A server bug must not become a restart.
+    const line = JSON.stringify({ type: '_meta', subtype: 'auth_changed', restart: 'yes', loggedIn: 'true' });
+    expect(parseChatLine(line)).toEqual({ kind: 'auth-changed', identity: '', restart: false, loggedIn: null });
+  });
 });
 
 describe('parseChatLine — malformed / empty lines', () => {
@@ -939,6 +962,9 @@ describe('isUrgentChatEvent', () => {
     { kind: 'meta-exit', code: 0 },
     { kind: 'meta-error', message: 'relay died' },
     { kind: 'auth-required', text: 'Please run /login' },
+    // Urgent because it is the trigger for a session RESTART — a frame delayed here is a
+    // session left running on the wrong account for another beat.
+    { kind: 'auth-changed', identity: 'a@b.c · max', restart: true, loggedIn: true },
     { kind: 'prompt-echo', text: 'hello' },
     { kind: 'control-ack', requestId: 'r4', ok: true },
     { kind: 'assistant-text', text: 'pong', synthetic: false },
@@ -978,7 +1004,7 @@ describe('isUrgentChatEvent', () => {
     const allKinds: Array<ChatEvent['kind']> = [
       'init', 'background-tasks', 'task-started', 'task-updated', 'task-progress',
       'task-notification', 'block-start', 'text-delta', 'thinking-delta', 'block-stop',
-      'assistant-tool-use', 'assistant-text', 'assistant-thinking', 'auth-required',
+      'assistant-tool-use', 'assistant-text', 'assistant-thinking', 'auth-required', 'auth-changed',
       'tool-result', 'control-ack', 'permission-request', 'question', 'plan-review',
       'result', 'slash-commands', 'prompt-echo', 'meta-exit', 'meta-error', 'ignored',
     ];

@@ -33,6 +33,11 @@ export interface ClaudeAuthStatus {
   /** `authMethod` as reported ("claude.ai", "console", …). */
   method?: string;
   email?: string;
+  /** `orgId` as reported. Carried because the same email can hold seats in more than one
+   *  organization, each with its OWN rate limits — so an org switch is a genuine account
+   *  change even though the email is unchanged. `claude-auth-watch.ts` folds it into the
+   *  identity fingerprint for exactly that case. */
+  orgId?: string;
   /** `subscriptionType` as reported ("max", "pro", …). */
   subscription?: string;
   /** The command that starts an interactive sign-in on THIS CLI — what the UI
@@ -73,6 +78,7 @@ export function parseAuthStatus(stdout: string, stderr: string, code: number | n
       loginCommand: CLAUDE_LOGIN_COMMAND,
       ...str(payload.authMethod) ? { method: str(payload.authMethod) } : {},
       ...str(payload.email) ? { email: str(payload.email) } : {},
+      ...str(payload.orgId) ? { orgId: str(payload.orgId) } : {},
       ...str(payload.subscriptionType) ? { subscription: str(payload.subscriptionType) } : {},
     };
   }

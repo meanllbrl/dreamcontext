@@ -14,6 +14,7 @@ import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession, readAgentSessionEntry } from '../../lib/agent-session-map.js';
 import { claudeAwarePath, findClaudeBin, ensureClaudeOnShellPath, claudePathExportLine } from '../../lib/claude-path.js';
 import { claudeAuthStatus } from '../../lib/claude-auth.js';
+import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizePrompt, EFFORT_LEVELS,
@@ -142,6 +143,13 @@ export async function handleAgentCapabilities(
   // "not signed in — here's the button" instead of letting a chat turn die silently.
   // Advisory only: nothing downstream gates a spawn on it (see claude-auth.ts).
   const claudeAuth = desktop && claudeCli ? await claudeAuthStatus() : null;
+  // Hand the answer to the account watcher rather than letting it rot here. This poll runs
+  // every 30s per window and has already paid for the probe; feeding it in keeps ONE notion
+  // of "which account is in force" (claude-auth-watch.ts) and advances the epoch even on a
+  // machine with no live chat — where nothing is subscribed and the watcher's own file poll
+  // is not running at all. The epoch rides back out below so a surface that only polls this
+  // endpoint can still tell the account moved.
+  if (claudeAuth) claudeAuthWatcher.observe(claudeAuth);
   // git is probed with the SERVER's own env (not a login shell) because that is
   // exactly how the sync engine invokes it — and unconditionally: cloud sync runs
   // in the browser dashboard too. Cheap (one --version exec).
@@ -157,7 +165,11 @@ export async function handleAgentCapabilities(
     nodePty,
     claudeCli,
     claudePathBroken: claudeBin !== null,
-    ...(claudeAuth ? { claudeAuth } : {}),
+    // `epoch` is the watcher's change counter, folded in beside the probe it describes: a
+    // client that sees it INCREASE knows the account moved since its last poll, without
+    // having to diff email/subscription strings itself (and without mistaking a probe that
+    // merely started answering for a switch). See claude-auth-watch.ts's epoch note.
+    ...(claudeAuth ? { claudeAuth: { ...claudeAuth, epoch: claudeAuthWatcher.epoch() } } : {}),
     npm,
     git: gitOk,
   });
