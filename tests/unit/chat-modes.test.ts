@@ -65,9 +65,52 @@ describe('sanitizeChatMode', () => {
 });
 
 describe('modeBriefing', () => {
-  it('basic adds NOTHING — plain Claude Code plus the surface briefing', () => {
-    expect(modeBriefing('basic', { worktreeAllowed: true })).toBe('');
-    expect(modeBriefing('basic', { worktreeAllowed: false })).toBe('');
+  // REVERSAL, 2026-08-24. This test used to assert `modeBriefing('basic', …) === ''` —
+  // "basic adds NOTHING — plain Claude Code plus the surface briefing". The worktree
+  // paragraph was appended only in `develop`, which left the prohibition that stops a second
+  // checkout forking the brain absent from `basic`: the DEFAULT mode, the one a fresh chat is
+  // in, carrying exactly the same tools. The guard was on the door nobody uses. Basic now
+  // carries that paragraph and nothing else, so the mode is still plain Claude Code in
+  // BEHAVIOUR — the assertions below pin both halves of that sentence.
+  it('basic carries the worktree paragraph — and ONLY the worktree paragraph', () => {
+    expect(modeBriefing('basic', { worktreeAllowed: true })).toMatch(PERMITS);
+    expect(modeBriefing('basic', { worktreeAllowed: false })).toMatch(FORBIDS);
+    for (const worktreeAllowed of [true, false]) {
+      const brief = modeBriefing('basic', { worktreeAllowed });
+      expect(brief).not.toContain('# Mode:');
+      expect(brief).not.toContain('dreamcontext tasks log');
+      expect(brief).not.toContain('"type":"progress"');
+      expect(brief).not.toMatch(/Work in waves/);
+    }
+  });
+
+  it('develop ends with the SAME paragraph basic gets — one constant, not two copies', () => {
+    for (const worktreeAllowed of [true, false]) {
+      const basic = modeBriefing('basic', { worktreeAllowed });
+      expect(basic.length).toBeGreaterThan(0);
+      expect(modeBriefing('develop', { worktreeAllowed }).endsWith(basic),
+        `worktreeAllowed=${worktreeAllowed}`).toBe(true);
+    }
+  });
+
+  it('plan is excluded from the worktree paragraph entirely', () => {
+    for (const worktreeAllowed of [true, false]) {
+      const brief = modeBriefing('plan', { worktreeAllowed });
+      expect(brief).not.toMatch(PERMITS);
+      expect(brief).not.toMatch(FORBIDS);
+      expect(brief).not.toContain('EnterWorktree');
+    }
+  });
+
+  // The shelf's branch tag is server-derived and can only follow a move it has a FRAME for.
+  // Both arms therefore have to say it: the forbidden arm bans CREATING a worktree, it does
+  // not stop a session being driven from one that already exists.
+  it('BOTH arms name EnterWorktree and ask for a pin when the shelf cannot see the move', () => {
+    for (const worktreeAllowed of [true, false]) {
+      const brief = modeBriefing('basic', { worktreeAllowed });
+      expect(brief, `worktreeAllowed=${worktreeAllowed}`).toContain('EnterWorktree');
+      expect(brief, `worktreeAllowed=${worktreeAllowed}`).toMatch(/pin the checkout as a tag/);
+    }
   });
 
   it('jarvis adds nothing either (defence in depth — the sanitizer coerces it away first)', () => {
