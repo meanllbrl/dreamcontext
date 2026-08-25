@@ -166,6 +166,12 @@ export interface ConversationModel {
   /** Set by a `_meta/error` relay frame (e.g. the child failed to spawn). Not cleared
    *  automatically — a fresh `send()` naturally supersedes it once real output arrives. */
   lastError?: string;
+  /** What the server's fresh-session branch guard did to the working tree, when it did
+   *  something or refused to (src/lib/session-start-branch.ts). Held on the conversation rather
+   *  than appended as an item because it is a property of how this session STARTED, not a turn
+   *  in it — and because a `git checkout` the user did not ask for is not something to let
+   *  scroll away. Dismissable: `dismissBranchNotice` clears it. */
+  branchNotice?: { tone: 'info' | 'warn'; message: string };
   /** Composer draft text — `sendText` appends to it (skill-chip / file-path inserts); the
    *  composer itself owns clearing it on submit by calling `send()` then setting it back to
    *  '' is the CALLER's job (see `send`'s own draft-clear below) — ChatPane reads this to
@@ -280,6 +286,9 @@ export interface ChatSession {
    *  external `sendText` (file drop, page-level skill insert) would append to a STALE
    *  model draft and the epoch adoption would clobber what the user had typed. */
   syncDraft: (text: string) => void;
+  /** Take down the fresh-session branch notice ({@link ConversationModel.branchNotice}).
+   *  Dismissable because it reports a one-time event: once read, it is history. */
+  dismissBranchNotice: () => void;
   /** Focus the composer's input element, if `setFocusTarget` has registered one (a no-op
    *  before the pane mounts, or after it unmounts — same as focusing a not-yet-open
    *  terminal). See {@link ChatSession.setFocusTarget} for why this is a ref-registration
@@ -551,6 +560,7 @@ export function createChatSession(
     applyZoom,
     sendText,
     syncDraft,
+    dismissBranchNotice,
     focus: () => { focusTarget?.focus(); },
     dispose,
     subscribe,
@@ -657,6 +667,12 @@ export function createChatSession(
     // Mirror only — no subscriber fire (a per-keystroke transcript re-render buys nothing)
     // and no epoch bump (the textarea already shows this text; adoption would be a no-op).
     conv = { ...conv, draft: text };
+  }
+
+  function dismissBranchNotice(): void {
+    if (!conv.branchNotice) return;
+    conv = { ...conv, branchNotice: undefined };
+    renderFlush.flush();
   }
 
   // ── Reducer: one parsed ChatEvent → conversation model + derived-state mutation ────
@@ -1096,6 +1112,12 @@ export function createChatSession(
         // Distinguishes a real process exit from a network drop (ws.onclose/onerror never
         // set this) so the Session-ended banner shows only for the former.
         conv = { ...conv, exited: { code: ev.code } };
+        return;
+      }
+      case 'branch-start': {
+        // Never touches `busy`: this frame is sent at connect time, alongside the slash-command
+        // replay, and says nothing about whether a turn is running.
+        conv = { ...conv, branchNotice: { tone: ev.tone, message: ev.message } };
         return;
       }
       case 'meta-error': {

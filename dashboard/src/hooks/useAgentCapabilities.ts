@@ -164,6 +164,9 @@ export interface TaskProgress {
 
 export interface SessionFacts {
   branch: string | null;
+  /** The repository's default branch, or null when it cannot be established. What lets the
+   *  chip say "this is a leftover branch on the main checkout" instead of just naming it. */
+  defaultBranch: string | null;
   worktree: boolean;
   mainRoot: string | null;
   /** The worktree's own directory name, when `worktree` is true. With several open at once,
@@ -176,7 +179,7 @@ export interface SessionFacts {
 }
 
 const UNKNOWN_SESSION_FACTS: SessionFacts = {
-  branch: null, worktree: false, mainRoot: null, worktreeName: null,
+  branch: null, defaultBranch: null, worktree: false, mainRoot: null, worktreeName: null,
   worktreeAllowed: false, isRepo: false,
 };
 

@@ -32,6 +32,12 @@ import { worktreeIsolationAllowed } from './worktree-gate.js';
 export interface SessionFacts {
   /** The checked-out branch, or null on a detached/unborn HEAD or a non-repo. */
   branch: string | null;
+  /** The repository's DEFAULT branch (`main`, `master`, whatever the remote says), or null when
+   *  it cannot be established. Not a decoration: it is what turns the branch chip from a name
+   *  into a STATE — the owner read a bare `feat/shelf-pin-drop` as "you are in a different
+   *  worktree" (2026-08-25), and the chip can only say "this is a leftover branch on the main
+   *  checkout" if it knows which branch would NOT be leftover. See {@link readDefaultBranch}. */
+  defaultBranch: string | null;
   /** True when this directory is a LINKED worktree rather than the main checkout. */
   worktree: boolean;
   /** The main checkout's root — set only when `worktree` is true, else null. This is a
@@ -52,6 +58,7 @@ export interface SessionFacts {
  *  constant into a lie for every subsequent caller. */
 export const UNKNOWN_SESSION_FACTS: SessionFacts = Object.freeze({
   branch: null,
+  defaultBranch: null,
   worktree: false,
   mainRoot: null,
   worktreeName: null,
@@ -127,6 +134,42 @@ function readWorktree(cwd: string): { worktree: boolean; mainRoot: string | null
   return { worktree: true, mainRoot: dirname(commonDir) };
 }
 
+/**
+ * The repository's DEFAULT branch, or null.
+ *
+ * ── Why this does not ask for `origin` ────────────────────────────────────────────────
+ * `git symbolic-ref refs/remotes/origin/HEAD` is the usual one-liner and it is wrong here:
+ * THIS repository's remote is named `main`, not `origin` (measured 2026-08-23 during the
+ * brain-separation survey), and a dreamcontext user's remote can be named anything at all.
+ * Hardcoding `origin` would have answered null on the very repo the feature was built in. So
+ * every remote is asked, in git's own listing order, and the first that has a resolvable HEAD
+ * wins — a single-remote repo (the overwhelming case) costs exactly one extra `git remote`.
+ *
+ * ── Why there is a local fallback at all ──────────────────────────────────────────────
+ * `refs/remotes/<remote>/HEAD` only exists if it was ever written — a `git clone` writes it,
+ * but a repo created locally with `git init` and later given a remote has no such ref, and
+ * neither does one where the ref has been pruned. In that case the honest reading is "whichever
+ * of the conventional names actually exists as a local branch", checked in that order and
+ * verified rather than assumed. If neither exists the answer is null and the chip simply says
+ * less; it never invents a default the user does not have.
+ */
+export function readDefaultBranch(cwd: string): string | null {
+  const remotes = (gitLine(cwd, ['remote']) ?? '').split('\n').map((r) => r.trim()).filter(Boolean);
+  for (const remote of remotes) {
+    const head = gitLine(cwd, ['symbolic-ref', '--short', `refs/remotes/${remote}/HEAD`]);
+    // `<remote>/<branch>` → `<branch>`. Sliced by the known prefix rather than split on `/`,
+    // because a branch name may itself contain slashes (`release/2026-08`).
+    if (head && head.startsWith(`${remote}/`)) {
+      const branch = head.slice(remote.length + 1);
+      if (branch) return branch;
+    }
+  }
+  for (const name of ['main', 'master']) {
+    if (gitLine(cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${name}`])) return name;
+  }
+  return null;
+}
+
 /** Memo for {@link gitCommonDir}. Bounded, because unlike `cache` above it is keyed by any
  *  directory a chat frame names rather than by the handful of project roots this server
  *  serves. Oldest-first eviction; a dropped entry just costs one fork to recompute. */
@@ -171,6 +214,19 @@ export function gitCommonDir(cwd: string, now: number = Date.now()): string | nu
   return value;
 }
 
+/**
+ * Drop the memoized facts for ONE directory.
+ *
+ * Called after something in this process CHANGES that directory's git state — today that is
+ * `session-start-branch.ts` moving the main checkout to the default branch. Without it the
+ * shelf would keep answering the pre-switch branch for the rest of the TTL, which is the same
+ * "reports the checkout it left" defect this whole surface exists to end, just from the other
+ * direction. Not a test seam: production code calls this.
+ */
+export function forgetSessionFacts(projectRoot: string): void {
+  cache.delete(projectRoot);
+}
+
 /** TEST SEAM, shared with `session-cwd.ts`'s own reset: the two memos in this module are
  *  process-global by design, so a test that creates and destroys real worktrees inside one
  *  TTL window needs a way to ask for a clean read. Production code never calls this. */
@@ -199,6 +255,7 @@ function computeSessionFacts(projectRoot: string): SessionFacts {
   const { worktree, mainRoot } = readWorktree(projectRoot);
   return {
     branch: currentBranch(projectRoot),
+    defaultBranch: readDefaultBranch(projectRoot),
     worktree,
     mainRoot,
     worktreeName: worktree ? basename(projectRoot) || null : null,

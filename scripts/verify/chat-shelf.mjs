@@ -40,6 +40,7 @@
 
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
+import { randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -50,9 +51,14 @@ const SCRATCH = join(tmpdir(), 'dreamcontext-verify-chat-shelf');
 const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'proj');
 const WT = join(SCRATCH, 'worktree');
+/** Two more REAL repos, for the fresh-session branch guard: one clean and one dirty, both
+ *  sitting on a leftover branch with `main` available to go back to. */
+const LEFT = join(SCRATCH, 'leftover');
+const LEFT_DIRTY = join(SCRATCH, 'leftover-dirty');
 
 const BRANCH = 'feat/pin-surface';
 const WT_BRANCH = 'feat/side-quest';
+const LEFT_BRANCH = 'feat/left-behind';
 
 /** The session id check 9 drives the chat with. Must be a canonical UUID — `sanitizeUuid`
  *  rejects anything else, and the server keys the checkout registry on it. */
@@ -181,6 +187,21 @@ function setup() {
   git(PROJ, 'worktree', 'add', '-q', '-b', WT_BRANCH, WT);
   mkdirSync(join(WT, '_dream_context', 'state'), { recursive: true });
 
+  // The fresh-session branch guard's two arms, each a REAL repo. Both have `main` (so there
+  // IS a default to return to) and both are parked on a leftover branch, exactly as a previous
+  // session's `git checkout -b` would have left them. The second one is DIRTY.
+  for (const [root, dirty] of [[LEFT, false], [LEFT_DIRTY, true]]) {
+    mkdirSync(join(root, '_dream_context', 'state'), { recursive: true });
+    git(root, 'init', '-q', '-b', 'main');
+    git(root, 'config', 'user.email', 'verify@example.com');
+    git(root, 'config', 'user.name', 'Verify');
+    writeFileSync(join(root, 'README.md'), '# fixture\n', 'utf-8');
+    git(root, 'add', 'README.md');
+    git(root, 'commit', '-qm', 'initial');
+    git(root, 'checkout', '-q', '-b', LEFT_BRANCH);
+    if (dirty) writeFileSync(join(root, 'README.md'), '# edited, uncommitted\n', 'utf-8');
+  }
+
   writeTask(PROJ, 'seven-of-eleven', taskFile(11, 7));
   writeTask(PROJ, 'no-boxes', '---\nid: task_nb\n---\n## Acceptance Criteria\n\nProse only.\n');
   writeTask(PROJ, 'all-ticked', taskFile(5, 5));
@@ -194,7 +215,7 @@ function setup() {
   writeFileSync(bin, STANDIN);
   chmodSync(bin, 0o755);
 
-  for (const [name, path] of [['proj', PROJ], ['wt', WT]]) {
+  for (const [name, path] of [['proj', PROJ], ['wt', WT], ['left', LEFT], ['leftdirty', LEFT_DIRTY]]) {
     const add = spawnSync(process.execPath, [join(REPO, 'dist', 'index.js'), 'vaults', 'add', name, path],
       { env: { ...process.env, HOME }, encoding: 'utf-8' });
     if (add.status !== 0) throw new Error(`vaults add ${name} failed: ${add.stderr || add.stdout}`);
@@ -418,6 +439,100 @@ try {
     const hostile = await facts(base, 'proj', '../../etc');
     ok('a session param that is not a UUID is ignored, not used as a key',
       hostile.body?.branch === BRANCH, JSON.stringify(hostile.body));
+  }
+
+  console.log('\nA MOVE WITH NO FRAME AT ALL — the transcript is what the shelf reads');
+  {
+    // The defect the owner photographed on 2026-08-25: a whole run in a worktree the session
+    // reached by a manual `git worktree add` + `cd`, under a tag that still read the main
+    // checkout. NO EnterWorktree frame is emitted anywhere in this block — the only thing that
+    // changes is the conversation's own transcript, exactly as the real CLI writes it.
+    const TSID = '3c9e1b44-77aa-4d21-bc10-9e2f5a6c1d33';
+    const dir = join(HOME, '.claude', 'projects', 'verify-proj');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${TSID}.jsonl`);
+    const entry = (cwd) => JSON.stringify({ type: 'assistant', cwd, message: { content: [] } }) + '\n';
+    // A `queue-operation` last line, which is how every real transcript in this project ends —
+    // so "read the last line" would answer nothing and the backward scan is load-bearing.
+    const tail = JSON.stringify({ type: 'queue-operation', sessionId: TSID }) + '\n';
+
+    writeFileSync(file, entry(WT) + tail, 'utf-8');
+    const moved = await facts(base, 'proj', TSID);
+    ok('a session the server saw NO frame from still reports the worktree it is in',
+      moved.body?.branch === WT_BRANCH && moved.body?.worktree === true, JSON.stringify(moved.body));
+    ok('…and names it', moved.body?.worktreeName === 'worktree', JSON.stringify(moved.body));
+
+    // The Bash tool's cwd persists, so it drifts DOWN the tree. Git answers the same branch
+    // from a subdirectory, so a naive pass looks right — but worktreeName is basename(dir).
+    const deep = join(WT, '_dream_context', 'state');
+    writeFileSync(file, entry(deep) + tail, 'utf-8');
+    const sub = await facts(base, 'proj', TSID);
+    ok('a cwd that drifted into a SUBDIRECTORY still names the checkout, not the subfolder',
+      sub.body?.worktreeName === 'worktree' && sub.body?.branch === WT_BRANCH, JSON.stringify(sub.body));
+
+    // A `cd` back out — the case the override registry, once set, could never take back.
+    writeFileSync(file, entry(PROJ) + tail, 'utf-8');
+    const home = await facts(base, 'proj', TSID);
+    ok('…and a cd back OUT of the worktree is followed too',
+      home.body?.branch === BRANCH && home.body?.worktree === false, JSON.stringify(home.body));
+
+    // A transcript is not a licence to point the shelf anywhere on disk.
+    writeFileSync(file, entry(LEFT) + tail, 'utf-8');
+    const foreign = await facts(base, 'proj', TSID);
+    ok('a transcript naming ANOTHER repository is refused, falling back to the project root',
+      foreign.body?.branch === BRANCH && foreign.body?.worktree === false, JSON.stringify(foreign.body));
+  }
+
+  console.log('\nA FRESH SESSION STARTS ON THE DEFAULT BRANCH');
+  {
+    let WebSocket;
+    try { ({ WebSocket } = await import('ws')); }
+    catch { throw new Error('the `ws` package is required (it is a root dependency — run npm install)'); }
+
+    /** Connect a fresh chat and collect the `_meta branch_start` frame, if one is sent. The
+     *  guard runs BEFORE the spawn and the frame is sent at connect time, so no turn is needed. */
+    const connect = (vault) => new Promise((resolve, reject) => {
+      const sid = randomUUID();
+      const ws = new WebSocket(
+        `ws://127.0.0.1:${port}/api/agent/chat?vault=${vault}&bypass=0&sessionId=${sid}`);
+      let seen = null;
+      const done = () => { try { ws.close(); } catch { /* closing */ } resolve(seen); };
+      const timer = setTimeout(done, 6_000);
+      ws.on('message', (raw) => {
+        let o; try { o = JSON.parse(raw.toString('utf-8')); } catch { return; }
+        if (o.type === '_meta' && o.subtype === 'branch_start') {
+          seen = o;
+          clearTimeout(timer);
+          done();
+        }
+      });
+      ws.on('error', (e) => { clearTimeout(timer); reject(e); });
+    });
+
+    const branchOf = (root) =>
+      execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root, encoding: 'utf-8' }).trim();
+
+    ok('the leftover branch is really checked out before we start', branchOf(LEFT) === LEFT_BRANCH, branchOf(LEFT));
+    const switched = await connect('left');
+    ok('a CLEAN checkout parked on a leftover branch is moved back to the default',
+      branchOf(LEFT) === 'main', branchOf(LEFT));
+    ok('…and the move is REPORTED, never silent',
+      switched?.kind === 'switched' && /moved the main checkout/.test(switched?.message || ''),
+      JSON.stringify(switched));
+
+    const blocked = await connect('leftdirty');
+    ok('a DIRTY checkout is never switched — the tree is left exactly as it was',
+      branchOf(LEFT_DIRTY) === LEFT_BRANCH, branchOf(LEFT_DIRTY));
+    ok('…and the refusal is reported too, which is the arm that matters most',
+      blocked?.kind === 'blocked-dirty' && /staying on/.test(blocked?.message || ''),
+      JSON.stringify(blocked));
+
+    // The verify fixture's own project has no `main`/`master` and no remote, so there is no
+    // default to return to. Asserted rather than relied on: every branch expectation in this
+    // whole file depends on PROJ still being on `feat/pin-surface` after a chat connects.
+    const quiet = await connect('proj');
+    ok('a repo with no resolvable default branch is left alone, and says nothing',
+      quiet === null && branchOf(PROJ) === BRANCH, JSON.stringify({ quiet, branch: branchOf(PROJ) }));
   }
 
   console.log('\nTHE DESKTOP GATE — an unavailable reading is empty, never a 500');
