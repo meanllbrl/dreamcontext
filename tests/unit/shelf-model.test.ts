@@ -245,6 +245,117 @@ describe('foldViews — id-keyed, update in place, loud eviction', () => {
   });
 });
 
+/**
+ * The DROP — the other half of the id-keyed contract, and the reason it had to exist: with
+ * update alone, an agent could keep a pin current forever but could never retire one, so a
+ * fact that had stopped being true stood on the shelf until the user dismissed it by hand.
+ *
+ * The position tests matter as much as the removal one. `foldViews` was rewritten onto a Map
+ * to get `delete` without invalidating indices, and a Map that reorders on `set` would break
+ * the older, still-load-bearing rule that an UPDATED pin keeps its place so the tag line does
+ * not reshuffle under the user's cursor.
+ */
+describe('foldViews — the drop', () => {
+  const pinView = (id: string, label: string): ChatViewSpec =>
+    ({ type: 'pin', id, weight: 'tag', facts: [{ label }] });
+  const dropView = (id: string): ChatViewSpec =>
+    ({ type: 'pin', id, weight: 'tag', facts: [], drop: true });
+
+  it('REMOVES the pin it names and reports the id it retired', () => {
+    const seeded = foldViews([], [pinView('a', 'A'), pinView('b', 'B')], 1).entries;
+    const { entries, retired } = foldViews(seeded, [dropView('a')], 2);
+    expect(entries.map((e) => e.id)).toEqual(['b']);
+    expect(retired).toEqual(['a']);
+  });
+
+  it('leaves every neighbour exactly where it was', () => {
+    const seeded = foldViews([], [pinView('a', 'A'), pinView('b', 'B'), pinView('c', 'C')], 1).entries;
+    const { entries } = foldViews(seeded, [dropView('b')], 2);
+    expect(entries.map((e) => e.id)).toEqual(['a', 'c']);
+    expect(entries.every((e) => e.updatedAt === 1)).toBe(true);
+  });
+
+  it('is a SILENT no-op for an id the shelf is not holding', () => {
+    const seeded = foldViews([], [pinView('a', 'A')], 1).entries;
+    const { entries, retired, evicted } = foldViews(seeded, [dropView('gone')], 2);
+    expect(entries.map((e) => e.id)).toEqual(['a']);
+    expect(retired).toEqual([]);
+    expect(evicted).toBe(0);
+  });
+
+  it('drops nothing at all on an empty shelf', () => {
+    const { entries, retired } = foldViews([], [dropView('a')], 1);
+    expect(entries).toEqual([]);
+    expect(retired).toEqual([]);
+  });
+
+  it('re-sending a dropped id brings it back, as the NEWEST entry', () => {
+    const seeded = foldViews([], [pinView('a', 'A'), pinView('b', 'B')], 1).entries;
+    const gone = foldViews(seeded, [dropView('a')], 2).entries;
+    const { entries } = foldViews(gone, [pinView('a', 'A-again')], 3);
+    expect(entries.map((e) => e.id)).toEqual(['b', 'a']);
+    expect(entries[1].updatedAt).toBe(3);
+  });
+
+  it('applies a drop and an add from the SAME message in the order they were written', () => {
+    const seeded = foldViews([], [pinView('a', 'A')], 1).entries;
+    const { entries, retired } = foldViews(seeded, [dropView('a'), pinView('b', 'B')], 2);
+    expect(entries.map((e) => e.id)).toEqual(['b']);
+    expect(retired).toEqual(['a']);
+  });
+
+  it('a drop followed by the same id in one message ends with the pin PRESENT', () => {
+    const seeded = foldViews([], [pinView('a', 'old')], 1).entries;
+    const { entries } = foldViews(seeded, [dropView('a'), pinView('a', 'new')], 2);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].kind === 'pin' && entries[0].facts[0].label).toBe('new');
+  });
+
+  it('reports every id it retired when a message drops several', () => {
+    const seeded = foldViews([], [pinView('a', 'A'), pinView('b', 'B'), pinView('c', 'C')], 1).entries;
+    const { entries, retired } = foldViews(seeded, [dropView('a'), dropView('c')], 2);
+    expect(entries.map((e) => e.id)).toEqual(['b']);
+    expect(retired).toEqual(['a', 'c']);
+  });
+
+  it('retires a pin that was over the cap without counting it as an eviction', () => {
+    const views = Array.from({ length: MAX_PINS_PER_CONVERSATION },
+      (_, i) => pinView(`p${i}`, `l${i}`));
+    const full = foldViews([], views, 1).entries;
+    const { entries, evicted, retired } = foldViews(full, [dropView('p0')], 2);
+    expect(entries).toHaveLength(MAX_PINS_PER_CONVERSATION - 1);
+    expect(evicted).toBe(0);
+    expect(retired).toEqual(['p0']);
+  });
+
+  it('a drop makes room, so a same-message add no longer evicts anyone', () => {
+    const views = Array.from({ length: MAX_PINS_PER_CONVERSATION },
+      (_, i) => pinView(`p${i}`, `l${i}`));
+    const full = foldViews([], views, 1).entries;
+    const { entries, evicted } = foldViews(full, [dropView('p0'), pinView('fresh', 'f')], 2);
+    expect(entries).toHaveLength(MAX_PINS_PER_CONVERSATION);
+    expect(evicted).toBe(0);
+    expect(entries.map((e) => e.id)).toContain('fresh');
+    expect(entries.map((e) => e.id)).not.toContain('p0');
+  });
+
+  it('a pin WITHOUT drop is never treated as one — the field is opt-in', () => {
+    const seeded = foldViews([], [pinView('a', 'A')], 1).entries;
+    const { entries, retired } = foldViews(seeded, [pinView('a', 'A2')], 2);
+    expect(entries).toHaveLength(1);
+    expect(retired).toEqual([]);
+  });
+
+  it('a drop never removes a progress row — progress has no drop, and its id cannot be spelled', () => {
+    const seeded = foldViews([], [{ type: 'progress', task: 't' }], 1).entries;
+    // `progress:t` is not a legal pin id (`validatePin` forbids `:`), so this is the closest
+    // an agent could get. It must not reach the row.
+    const { entries, retired } = foldViews(seeded, [dropView('progress'), dropView('t')], 2);
+    expect(entries.map((e) => e.id)).toEqual(['progress:t']);
+    expect(retired).toEqual([]);
+  });
+});
+
 describe('constants', () => {
   it('caps a user-opened detail near 40% of the pane', () => {
     expect(SHELF_DETAIL_PANE_FRACTION).toBeCloseTo(0.4);

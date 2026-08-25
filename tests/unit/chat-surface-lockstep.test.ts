@@ -85,6 +85,29 @@ describe('CHAT_SURFACE_BRIEFING <-> dream-view parser lockstep', () => {
       }
     }
   });
+
+  /**
+   * The drop is the shelf's only retirement path, and an agent that is never told about it
+   * cannot use it — which is precisely the state the shelf was in when a session's tag line
+   * filled up with conditions that had long since been resolved (owner, 2026-08-25). A
+   * mechanism whose documentation is optional gets deleted by the next person shortening this
+   * prose, so the example is pinned here alongside the rule it teaches.
+   */
+  it('demonstrates the pin drop — the only way an agent can retire a stale fact', () => {
+    const drops = examples
+      .map((json) => JSON.parse(json) as Record<string, unknown>)
+      .filter((v) => v.type === 'pin' && v.drop === true);
+    expect(drops.length, 'the briefing never shows how to drop a pin').toBe(1);
+    // A drop takes an id and nothing else — an example carrying facts would teach the one
+    // ambiguous payload `validatePin` then has to resolve by ignoring half of it.
+    for (const key of ['facts', 'lede', 'detail']) {
+      expect(drops[0][key], `the drop example carries "${key}"`).toBeUndefined();
+    }
+    // The MECHANISM alone would teach an agent how to retire a pin without telling it why a
+    // pin needs retiring. The prose rule is the half that stops the stale tag being created,
+    // so it is pinned too — loosely, on the word that carries it, not on a sentence.
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/expire/i);
+  });
 });
 
 /**

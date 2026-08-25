@@ -117,6 +117,15 @@ export interface PinViewSpec {
    * dishonesty this flag exists to prevent, so the agent must not be able to fake it.
    */
   ledeClamped?: boolean;
+  /**
+   * A RETIREMENT rather than a fact: the shelf is asked to forget `id` and to show nothing.
+   *
+   * Without it the agent could correct a pin forever but never take one down — `foldViews` is
+   * id-keyed UPDATE-only and the shelf has no expiry — so a fact that had stopped being true
+   * (a port that moved, a blocker that cleared) stood until the USER noticed and pressed `×`.
+   * Only `true` ever reaches here; `validatePin` reports any other value and ignores it.
+   */
+  drop?: true;
 }
 
 /**
@@ -776,6 +785,25 @@ function validatePin(obj: Record<string, unknown>, notices: string[]): { view: C
   if (!idRaw || idRaw.length > 64 || !PIN_ID_RE.test(idRaw)) {
     notices.push('A pin was skipped — its "id" is missing or contains characters other than letters, digits, ".", "_" and "-".');
     return { view: null, notices };
+  }
+
+  // A drop is read BEFORE anything else, and it wins whatever rode along with it. A payload
+  // that says "remove this" and also carries facts is an agent contradicting itself, and the
+  // half worth honouring is the removal: the defect this field exists to end is a pin that
+  // cannot be taken down, so it must not be defeated by a stray leftover key. What the drop
+  // does NOT do is invent state — `facts` is empty and `weight` is the default, because a
+  // retired pin is never rendered (see `shelfModel.foldViews`).
+  if (obj.drop !== undefined) {
+    if (obj.drop === true) {
+      const carried = ['facts', 'lede', 'detail'].filter((k) => obj[k] !== undefined);
+      if (carried.length > 0) {
+        notices.push(`A pin asked to be dropped and also carried ${carried.join(', ')} — it was dropped and the rest ignored. A drop takes an "id" and nothing else.`);
+      }
+      return { view: { type: 'pin', id: idRaw, weight: 'tag', facts: [], drop: true }, notices };
+    }
+    if (obj.drop !== false) {
+      notices.push(`A pin's "drop" was ${JSON.stringify(obj.drop)}, which is neither true nor false — it was ignored and the pin read as an ordinary one.`);
+    }
   }
 
   // Absent `weight` is the documented default, so it is silent; a weight this app doesn't

@@ -1,5 +1,21 @@
 [
   {
+    "date": "2026-08-25",
+    "type": "feat",
+    "scope": "chat",
+    "description": "The shelf had update-in-place but no retirement, so a pinned fact that stopped being true (a port that moved, a blocker that cleared) stood until the user pressed the x — the owner reported a tag line of long-resolved conditions on 2026-08-25. Two changes, same day: the briefing now teaches pin hygiene (pin only what holds at session end; a to-do or a blocker belongs in the message), and the pin schema gained `drop`. A drop wins over content that rode along with it, because a notice is read by the user rather than fed back to the model, so refusing an ambiguous payload would leave the stale chip standing. A drop for an id the shelf isn't holding is a deliberate SILENT no-op — the user may already have dismissed it. foldViews moved onto a Map (position-preserving set, index-safe delete) and returns the retired ids so useShelf can close a panel that was open on one. Briefing budget 4300 -> 4600 after compressing the shelf paragraph 1020 -> 734 first, per that test's own protocol.",
+    "breaking": false,
+    "summary": "A chat agent can now retire a pin it put on the composer shelf: dream-view pin + drop:true removes that id.",
+    "references": [
+      "feature:chat-composer-shelf",
+      "task:an-agent-can-drop-a-pin-whose-fact-stopped-being-true",
+      "file:dashboard/src/lib/shelfModel.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-24",
     "type": "fix",
     "scope": "chat",
