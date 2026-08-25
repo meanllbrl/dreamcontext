@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-08-10'
+updated: '2026-08-25'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -22,6 +22,7 @@ related_tasks:
   - >-
     insights-sync-all-make-bulk-insight-sync-a-background-job-with-bounded-concurrency
   - insights-board-redesign-plug-and-play-charts
+  - insights-breakdown-contract-matrix-v1-native-reports-layer
 type: feature
 name: lab-analytics-insights
 description: >-
@@ -29,12 +30,12 @@ description: >-
   sources (generic HTTP or custom script) into the brain: manifest + bounded
   cache with sync history, TTL sync, secret-redacting credential layer, roadmap
   KR binding, SessionStart/recall surfacing, dashboard Lab page whose cards
-  resolve through a plug-and-play chart registry (ten renders: number/line/pie/
-  raw/funnel/bar/bar_compare/stacked/table/heatmap), a universal date-range
+  resolve through a plug-and-play chart registry (eleven renders: number/line/pie/
+  raw/funnel/bar/bar_compare/stacked/table/heatmap/breakdown), a universal date-range
   control on every windowed insight, size-aware cards, and an
-  InsightDetailPanel slide-over. NEW (in_review): funnel analytics —
-  multi-page routed insights with comparison tables, node lanes, arc gestures,
-  filters, breakdowns, and multi-funnel compare.
+  InsightDetailPanel slide-over. NEW (in_review): matrix/v1 breakdown contract for
+  multi-dimensional analytics, html/v1 hybrid (script-authored card bodies with design-
+  token injection), and My Reports (native date-navigable composition layer).
 pinned: false
 date: '2026-07-05'
 ---

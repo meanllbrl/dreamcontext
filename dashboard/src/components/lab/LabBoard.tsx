@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useLabInsights, useLabSyncJob, useStartLabSyncJob } from '../../hooks/useLab';
+import { useLabInsights, useLabReports, useLabSyncJob, useStartLabSyncJob } from '../../hooks/useLab';
 import { useLabPrefs } from '../../hooks/useLabPrefs';
 import { InsightCard } from './InsightCard';
 import { InsightDetailPanel } from './InsightDetailPanel';
-import { pushLabPath } from './funnel/labRoute';
+import { pushLabPath, pushLabReportPath } from './funnel/labRoute';
 import { isRoutedRender } from './chartRegistry';
 import { LabCredentialsBanner } from './LabCredentialsBanner';
 import { LabEmptyState } from './LabEmptyState';
@@ -110,6 +110,8 @@ interface LabBoardProps {
 export function LabBoard({ focus }: LabBoardProps = {}) {
   const { data: insights, isLoading, isError, error } = useLabInsights();
   const { data: syncJob } = useLabSyncJob();
+  const { data: reports } = useLabReports();
+  const [reportsOpen, setReportsOpen] = useState(false);
   const startSyncAll = useStartLabSyncJob();
   const queryClient = useQueryClient();
   const { prefs, toggleCollapsed, setGroupOrder, setCategory, setCategoryOrder } = useLabPrefs();
@@ -196,7 +198,7 @@ export function LabBoard({ focus }: LabBoardProps = {}) {
 
   const handleSyncAll = () => {
     if (syncRunning) return;
-    startSyncAll.mutate(true, {
+    startSyncAll.mutate({ force: true }, {
       onError: (err) => setToast(`Sync all failed to start: ${(err as Error).message}`),
     });
   };
@@ -339,6 +341,37 @@ export function LabBoard({ focus }: LabBoardProps = {}) {
               </button>
             ))}
           </nav>
+        )}
+        {/* My Reports — the routed report pages' entry. Only when reports exist
+            (created via `dreamcontext lab report create`); an empty menu would
+            just be furniture. */}
+        {(reports?.length ?? 0) > 0 && (
+          <div className="lab-board-reports" onMouseLeave={() => setReportsOpen(false)}>
+            <button
+              className="lab-board-reports-toggle"
+              onClick={() => setReportsOpen((v) => !v)}
+              aria-expanded={reportsOpen}
+              title="Open a report — a composed, date-navigable view over these insights"
+            >
+              Reports ▾
+            </button>
+            {reportsOpen && (
+              <div className="lab-board-reports-menu" role="menu">
+                {reports!.map((r) => (
+                  <button
+                    key={r.slug}
+                    role="menuitem"
+                    className="lab-board-reports-item"
+                    onClick={() => { setReportsOpen(false); pushLabReportPath(r.slug); }}
+                    title={r.description ?? undefined}
+                  >
+                    <span className="lab-board-reports-item-title">{r.title}</span>
+                    <span className="lab-board-reports-item-meta">{r.items} insight(s)</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         {/* One button, three states. While the server-owned job runs it becomes a
             determinate chip (n/total + a mini bar) — the run outlives this page,

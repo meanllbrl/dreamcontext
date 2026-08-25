@@ -25,6 +25,9 @@ import { emitInstance, useInstanceEvent, useVault } from '../../../context/Vault
 export interface LabRoute {
   slug: string | null;
   funnelId: string | null;
+  /** `/lab/reports/<slug>` — the My Reports page. `reports` is a reserved
+   *  first segment (the API reserves it identically), never an insight slug. */
+  report: string | null;
 }
 
 /**
@@ -102,12 +105,21 @@ function commit(target: string, mode: 'push' | 'replace', bus: EventTarget | und
 }
 
 export function parseLabPath(pathname: string): LabRoute {
+  const none: LabRoute = { slug: null, funnelId: null, report: null };
+  const report = /^\/lab\/reports\/([^/]+)\/?$/.exec(pathname);
+  if (report) {
+    try {
+      return { ...none, report: decodeURIComponent(report[1]) };
+    } catch {
+      return none;
+    }
+  }
   const m = /^\/lab\/([^/]+)(?:\/f\/([^/]+))?\/?$/.exec(pathname);
-  if (!m) return { slug: null, funnelId: null };
+  if (!m || m[1] === 'reports') return none;
   try {
-    return { slug: decodeURIComponent(m[1]), funnelId: m[2] ? decodeURIComponent(m[2]) : null };
+    return { ...none, slug: decodeURIComponent(m[1]), funnelId: m[2] ? decodeURIComponent(m[2]) : null };
   } catch {
-    return { slug: null, funnelId: null };
+    return none;
   }
 }
 
@@ -116,6 +128,15 @@ export function labPath(slug: string | null, funnelId: string | null): string {
   return funnelId
     ? `/lab/${encodeURIComponent(slug)}/f/${encodeURIComponent(funnelId)}`
     : `/lab/${encodeURIComponent(slug)}`;
+}
+
+export function labReportPath(slug: string): string {
+  return `/lab/reports/${encodeURIComponent(slug)}`;
+}
+
+/** Push the My Reports page for one report (same contract as pushLabPath). */
+export function pushLabReportPath(slug: string, bus?: EventTarget): void {
+  commit(labReportPath(slug) + splitTarget(currentTarget(bus)).search, 'push', bus);
 }
 
 /**

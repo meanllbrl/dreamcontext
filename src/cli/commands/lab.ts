@@ -10,6 +10,8 @@ import { ProgressBar } from '../../lib/progress.js';
 import { writeCredential, listCredentialNames } from '../../lib/lab/credentials.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
 import { computeFunnelPrev, computeStepRows, worstDropIndex } from '../../lib/lab/funnel.js';
+import { dimLabel, dimValues, pivotCell, MATRIX_LOW_SAMPLE_THRESHOLD } from '../../lib/lab/matrix.js';
+import { createReport, getReport, listReports, resolveReport, DATE_NAVS, type DateNav } from '../../lib/lab/reports-store.js';
 import {
   INSIGHT_SIZES,
   LabError,
@@ -17,6 +19,7 @@ import {
   type FunnelCacheEntry,
   type InsightCache,
   type InsightSize,
+  type MatrixCacheEntry,
   type Render,
 } from '../../lib/lab/types.js';
 
@@ -66,6 +69,66 @@ function printFunnelSet(funnel: FunnelCacheEntry, history: InsightCache['funnelH
       const line = `    ${cell(row.label.slice(0, labelWidth), labelWidth)}  ${cell(String(row.users), 8)}  ${cell(fmtPct(row.ofTop), 8)}  ${cell(fmtPct(row.ofPrev), 8)}  ${drop}`;
       console.log(i === worst ? chalk.red(`${line}  ◄ worst drop`) : line);
     });
+  }
+}
+
+function fmtV(v: number | null, unit?: string): string {
+  if (v === null) return '—';
+  const s = Math.abs(v) >= 1000 ? v.toLocaleString('en-US') : String(v);
+  return unit ? `${s} ${unit}` : s;
+}
+
+/** `lab show` breakdown view: the pivot the dashboard draws, in text. 1 dim →
+ *  a value list; 2 dims → rows=dim1 × cols=dim2; a 3rd dim → one pivot per
+ *  value. Low-sample cells (n < 30) are marked, mirroring the F4 idiom. */
+function printMatrixSet(matrix: MatrixCacheEntry): void {
+  const { set, notices, range } = matrix;
+  console.log(`  range: ${range.fromISO} → ${range.toISO}`);
+  for (const notice of notices) warn(notice);
+  const unit = set.unit ?? undefined;
+
+  const [dim1, dim2, dim3] = set.dims;
+  const printPivot = (coords: Record<string, string>): void => {
+    const rowValues = dimValues(set, dim1.key);
+    if (!dim2) {
+      const width = Math.min(28, Math.max(8, ...rowValues.map((v) => v.length)));
+      console.log(chalk.dim(`    ${cell(dimLabel(dim1), width)}  value`));
+      for (const value of rowValues) {
+        const c = pivotCell(set, { ...coords, [dim1.key]: value });
+        const low = c.n !== null && c.n < MATRIX_LOW_SAMPLE_THRESHOLD ? chalk.dim(' (low sample)') : '';
+        console.log(`    ${cell(value.slice(0, width), width)}  ${fmtV(c.v, unit)}${c.n !== null ? chalk.dim(` n=${c.n}`) : ''}${low}`);
+      }
+      return;
+    }
+    const colValues = dimValues(set, dim2.key);
+    const rowWidth = Math.min(28, Math.max(dimLabel(dim1).length, ...rowValues.map((v) => v.length)));
+    const colWidth = Math.max(10, ...colValues.map((v) => v.length + 2));
+    console.log(chalk.dim(`    ${cell(dimLabel(dim1), rowWidth)}  ${colValues.map((v) => cell(v, colWidth)).join('')}`));
+    for (const rowValue of rowValues) {
+      const cells = colValues.map((colValue) => {
+        const c = pivotCell(set, { ...coords, [dim1.key]: rowValue, [dim2.key]: colValue });
+        const text = fmtV(c.v);
+        const low = c.n !== null && c.n < MATRIX_LOW_SAMPLE_THRESHOLD;
+        return cell(low ? `${text}*` : text, colWidth);
+      });
+      console.log(`    ${cell(rowValue.slice(0, rowWidth), rowWidth)}  ${cells.join('')}`);
+    }
+    console.log(chalk.dim('    (* = low sample, n < ' + MATRIX_LOW_SAMPLE_THRESHOLD + ')'));
+  };
+
+  if (dim3) {
+    for (const value of dimValues(set, dim3.key)) {
+      console.log();
+      console.log(`  ${chalk.magentaBright(dimLabel(dim3))}: ${value}`);
+      printPivot({ [dim3.key]: value });
+    }
+  } else {
+    console.log();
+    printPivot({});
+  }
+  if (set.total) {
+    console.log();
+    console.log(`  total: ${fmtV(set.total.v, unit)}${set.total.n !== null && set.total.n !== undefined ? chalk.dim(` n=${set.total.n}`) : ''}`);
   }
 }
 
@@ -189,6 +252,7 @@ export function registerLabCommand(program: Command): void {
         console.log(`  fetchedAt: ${cache.fetchedAt || '(never)'}`);
         if (cache.error) console.log(chalk.red(`  error: ${cache.error}`));
         if (cache.funnel) printFunnelSet(cache.funnel, cache.funnelHistory);
+        if (cache.matrix) printMatrixSet(cache.matrix);
       } else {
         console.log(chalk.dim('  (no cache yet — run `dreamcontext lab sync ' + slug + '`)'));
       }
@@ -270,6 +334,108 @@ export function registerLabCommand(program: Command): void {
         for (const u of unbound) warn(`${u}: unbound from "${objective}" — an objective's Key Result has one feeder.`);
       } catch (err) {
         handleLabError(err);
+      }
+    });
+
+  const report = lab
+    .command('report')
+    .description('My Reports: composed, date-navigable views over existing insight caches');
+
+  report
+    .command('create')
+    .argument('<slug>', 'Kebab-case report slug (e.g. daily-product-report)')
+    .description('Scaffold a new report in lab/reports/<slug>.md')
+    .requiredOption('--title <title>', 'Report title')
+    .option('--description <description>', 'One-line description')
+    .option('--date-nav <nav>', `${DATE_NAVS.join('|')} (default daily)`)
+    .option('--insights <slugs>', 'Comma-separated insight slugs to seed the first section')
+    .action((slug: string, opts: { title: string; description?: string; dateNav?: string; insights?: string }) => {
+      const root = ensureContextRoot();
+      try {
+        const r = createReport(root, {
+          slug,
+          title: opts.title,
+          description: opts.description ?? null,
+          date_nav: opts.dateNav as DateNav | undefined,
+          insights: opts.insights ? opts.insights.split(',').map((s) => s.trim()).filter(Boolean) : [],
+        });
+        success(`Report created: lab/reports/${r.slug}.md`);
+        console.log(chalk.dim('  Edit the manifest to add sections/items, then `dreamcontext lab report show ' + r.slug + '`.'));
+      } catch (err) {
+        handleLabError(err);
+      }
+    });
+
+  report
+    .command('list')
+    .description('List reports')
+    .option('--json', 'Emit as JSON')
+    .action((opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const reports = listReports(root);
+      if (opts.json) {
+        console.log(JSON.stringify(reports, null, 2));
+        return;
+      }
+      console.log(header('Lab Reports'));
+      if (reports.length === 0) {
+        console.log(chalk.dim('  (none yet — dreamcontext lab report create <slug> --title "...")'));
+        return;
+      }
+      for (const r of reports) {
+        const items = r.sections.reduce((a, s) => a + s.items.length, 0);
+        console.log(`  ${chalk.magentaBright(r.slug)} — ${r.title} · ${r.sections.length} section(s), ${items} item(s) · ${chalk.dim(r.date_nav)}`);
+      }
+    });
+
+  report
+    .command('show')
+    .argument('<slug>', 'Report slug')
+    .description('Show a report with every item resolved (optionally as of a date)')
+    .option('--date <date>', 'Resolve to the latest snapshot at/before this YYYY-MM-DD date')
+    .option('--json', 'Emit as JSON')
+    .action((slug: string, opts: { date?: string; json?: boolean }) => {
+      const root = ensureContextRoot();
+      const manifest = getReport(root, slug);
+      if (!manifest) {
+        error(`Report not found: ${slug}`);
+        process.exitCode = 1;
+        return;
+      }
+      const date = opts.date ?? null;
+      if (date !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`)))) {
+        error(`--date must be a valid YYYY-MM-DD date (got "${date}").`);
+        process.exitCode = 1;
+        return;
+      }
+      const sections = resolveReport(root, manifest, date);
+      if (opts.json) {
+        console.log(JSON.stringify({ report: manifest, date, sections }, null, 2));
+        return;
+      }
+      console.log(header(`Report: ${manifest.title}`));
+      if (manifest.description) console.log(chalk.dim(`  ${manifest.description}`));
+      console.log(`  date: ${date ?? '(live)'}${date ? ' — latest snapshot at/before end of day' : ''}`);
+      for (const section of sections) {
+        console.log();
+        console.log(`  ${chalk.magentaBright(section.title)}`);
+        if (section.prose) console.log(chalk.dim(`  ${section.prose}`));
+        for (const item of section.items) {
+          if (item.missing) {
+            warn(`${item.insight}: insight no longer exists — remove it from the report.`);
+            continue;
+          }
+          if (item.asOf === null) {
+            console.log(chalk.dim(`    ${item.insight}: no snapshot at/before this date — nothing to show (no interpolation).`));
+            continue;
+          }
+          const latest = item.latest !== null ? ` · ${item.latest}${item.unit ? ` ${item.unit}` : ''}` : '';
+          console.log(`    ${item.title ?? item.insight}${latest} ${chalk.dim(`as of ${item.asOf}`)}`);
+        }
+      }
+      if (manifest.notes) {
+        console.log();
+        console.log(chalk.dim(manifest.notes));
       }
     });
 

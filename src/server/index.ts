@@ -77,6 +77,8 @@ import {
   handleLabBinding,
   handleLabCredentialsGet,
   handleLabCredentialsSet,
+  handleLabReportsList,
+  handleLabReportShow,
 } from './routes/lab.js';
 import {
   handleAutomationsList,
@@ -458,6 +460,10 @@ export function buildRouter(): Router {
   router.get('/api/lab/sync-jobs/current', handleLabSyncJobCurrent);
   router.get('/api/lab/credentials', handleLabCredentialsGet);
   router.post('/api/lab/credentials', handleLabCredentialsSet);
+  // Reports before `/api/lab/:slug` — first match wins within a method, and
+  // `/api/lab/reports` must never be read as an insight named "reports".
+  router.get('/api/lab/reports', handleLabReportsList);
+  router.get('/api/lab/reports/:slug', handleLabReportShow);
   router.get('/api/lab/:slug', handleLabShow);
   router.patch('/api/lab/:slug/tweaks', handleLabTweaks);
   router.patch('/api/lab/:slug/binding', handleLabBinding);
