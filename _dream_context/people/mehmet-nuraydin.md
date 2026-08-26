@@ -1,7 +1,7 @@
 ---
 name: mehmet-nuraydin
 type: person
-updated: "2026-07-30"
+updated: "2026-08-26"
 ---
 
 ## Preferences
@@ -20,6 +20,7 @@ updated: "2026-07-30"
 - **Lab = "Insights" in UI** (analytics surface; `lab` CLI is implementation detail).
 - **Do not commit unless explicitly asked** (2026-07-25): wait for user direction. Parallel sessions can sweep in-flight work.
 - **Turkish content must survive every transform** (2026-07-30): the owner writes task names, tags and directives in Turkish. Slugs fold to ASCII (`foldToAscii`), display uses the frontmatter name verbatim, search/grep is case-insensitive over Turkish. A transform that mangles Turkish is a bug, not cosmetics.
+- **Short answers, lead with conclusion** (2026-08-26): 'in a nutshell' — long structured write-ups unwanted even for architecture questions. Lead with the conclusion.
 
 ## Communication Style
 

@@ -7,12 +7,12 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-08-24'
+date: '2026-08-26'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-08-24 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-08-26 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### ⚪ **improve-recall-mechanism** — Improve Recall Mechanism · 4/5 done (80%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
@@ -55,18 +55,21 @@ date: '2026-08-24'
   - repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror (completed) · 0.20.0
   - untrack-legacy-tracked-task-mirrors-remote-backend (todo) · BACKLOG
 
-### ⚪ **simplified-ux** — Simplified UX · 41/44 done (93%) · target 2026-07-31 · forecast 2026-08-17 🔴 SLIPPING
+### 🔵 **simplified-ux** — Simplified UX · 46/50 done (92%) · target 2026-07-31 · forecast 2026-08-26 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
+  - a-claude-account-switch-reaches-the-sessions-already-open (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
   - a-project-chip-says-how-many-chats-it-holds-and-how-many-are-working-one-counted-bubble-per-status (completed) · 2026-08-14 → 2026-08-14
   - agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief (completed) · 0.21.0 · 2026-07-24 → …
   - agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions (completed) · 0.21.0 · 2026-07-23 → …
   - agent-composer-add-folder-picker-to-files-button (completed) · 0.18.0
   - agent-surface-polish-unified-chrome-composer-redesign-slash-menu-inline-images-reveal-endpoint (completed) · 0.21.0
+  - an-agent-can-drop-a-pin-whose-fact-stopped-being-true (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
   - announcements-become-screenshot-driven-landing-pages-instead-of-excalidraw-boards (completed) · 0.21.0
   - announcements-whats-new (completed) · 0.20.0 · 2026-07-18 → …
   - approve-time-duplicate-run-warning-for-shared-automations (completed) · 2026-08-13 → 2026-08-13
   - author-a-task-via-a-claude-agent-from-the-new-task-button (completed) · 0.20.0
   - changelog-json-and-releases-json-initialized-as-key-object-but-cli-requires-a-bare-array (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
+  - chat-answers-become-agent-written-html-typed-chart-page-retire-dream-html-renders-in-a-themed-sandbox (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
   - chat-answers-become-interactive-inline-charts-fullscreen-boards-widget-pageviews-and-a-pinned-checklist-window (completed) · 0.21.0 · 2026-07-26 → …
   - chat-becomes-the-standard-agent-screen-the-embedded-terminal-becomes-terminal-legacy (completed) · 0.21.0
   - chat-view-a-sub-agent-s-tool-calls-must-not-leak-into-the-main-transcript (completed) · 0.21.0
@@ -88,6 +91,7 @@ date: '2026-08-24'
   - fix-tauri-acl-shell-allow-open-for-external-links (completed) · v0.13.0
   - in-app-agent-terminal-output-pump-fixes-terminal-freeze-during-long-tool-calls (completed) · 0.21.0
   - in-app-task-detail-inline-agent-curate-the-task-via-anchored-comments-revise-summarize-split-status-with-real-time-refresh (completed) · 0.18.0
+  - insights-breakdown-contract-matrix-v1-native-reports-layer (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
   - lab-funnel-analytics (completed) · 0.19.0
   - launcher-clone-from-github-sign-in-search-repos-clone-locally-dreamcontext-ready (completed) · 0.17.2 · 2026-07-10 → …
   - launcher-cross-project-multi-vault-task-view-for-portfolio-planning (todo) · BACKLOG
@@ -96,15 +100,17 @@ date: '2026-08-24'
   - pack-badge-false-positive-declined-optional-packs-show-as-new-forever (completed) · 0.17.2
   - roadmap-forecast-accuracy-effort-aware-envelope-clamped-cascade (completed) · 2026-07-08 → …
   - roadmap-timeline-start-only-dated-tasks-collapse-the-committed-window-bar-to-a-point (completed) · 0.17.2
+  - script-authored-insights-become-multi-page-interactive-apps-not-fixed-height-cards (in_progress) · 0.26.0 · 2026-08-26 → …
   - survey-questions-page-horizontally-one-question-per-view (completed) · 0.21.0
   - task-creation-scaffolds-lean-and-every-task-says-why-it-exists (completed) · 0.21.0
   - task-feature-objective-links-validated-assignment-bidirectional-maintenance (completed) · 2026-07-08 → …
   - task-manager-show-the-agent-s-document-edits-as-a-git-style-diff (completed) · 0.18.0 · 2026-07-17 → …
-  - upgrade-never-runs-migrations-and-maybeupdateallprojects-has-4-silent-skip-holes (todo) · 0.26.0
+  - the-insights-custom-range-applies-a-window-nobody-can-clear-and-reloads-226kb-to-do-it (completed) · 2026-08-26 → 2026-08-26
+  - upgrade-never-runs-migrations-and-maybeupdateallprojects-has-4-silent-skip-holes (todo)
 
-### 🔵 **make-it-a-business** — Make it a Business · $ 856/2000 MRR (43%) · target 2026-09-05 · forecast 2026-09-21 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready
+### 🔵 **make-it-a-business** — Make it a Business · $ 856/2000 MRR (43%) · target 2026-09-05 · forecast 2026-09-23 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready
   Unblocks: hello-world-pr
   - feat-web-hosted-dreamcontext-com-github-oauth-collaboration-layer-over-the-brain (todo) · BACKLOG
   - feat-web-read-only-public-surface-safely-share-a-single-knowledge-file-excalidraw-board-via-tunnel (todo) · BACKLOG
 
-### ⚪ **hello-world-pr** — Hello World PR · no tasks yet · target 2026-10-02 · forecast 2026-10-19 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-it-a-business
+### ⚪ **hello-world-pr** — Hello World PR · no tasks yet · target 2026-10-02 · forecast 2026-10-21 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-it-a-business
