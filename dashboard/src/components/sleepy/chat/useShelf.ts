@@ -15,7 +15,9 @@ import type { ChatSession } from '../chatSession';
  * The shelf's state, assembled from four sources that must not fight:
  *
  *   1. the STORE      — what this conversation pinned before the page was reloaded,
- *   2. the TRANSCRIPT — `pin`/`progress` blocks in messages that have finished streaming,
+ *   2. the TRANSCRIPT — `pin`/`progress` blocks in messages that have finished streaming (a
+ *                       `pin` carrying `drop` REMOVES one, so this source both adds and takes
+ *                       away),
  *   3. the SERVER     — branch + worktree, polled (the user never has to ask the agent),
  *   4. the USER       — what is open, what was dismissed, what was promoted back.
  *
@@ -127,10 +129,14 @@ export function useShelf(session: ChatSession, vault: string | null): ShelfHandl
       }
     }
     if (fresh.length === 0) return;
-    const { entries: next, evicted: dropped } = foldViews(entriesRef.current, fresh, Date.now());
+    const { entries: next, evicted: dropped, retired } = foldViews(entriesRef.current, fresh, Date.now());
     entriesRef.current = next;
     setEntries(next);
     if (dropped > 0) setEvicted((n) => n + dropped);
+    // A pin the agent retired must not leave the open panel pointing at its id — the same
+    // clean-up a user dismissal does, and for the same reason: that id can be re-sent later,
+    // and it has to come back CLOSED rather than already open on prose nobody asked for.
+    if (retired.length > 0) setOpenId((cur) => (cur !== null && retired.includes(cur) ? null : cur));
   }, [items]);
 
   // ── 1. Persistence ──────────────────────────────────────────────────────────────────

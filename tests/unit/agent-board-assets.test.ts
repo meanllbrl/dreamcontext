@@ -226,8 +226,17 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * test exists to catch, which means it was not being run (or not being read) at the moment
    * it fired. The 4300 below covers 4186 actual; the next capability should compress before
    * it spends the remaining ~114.
+   *
+   * Raised 4300 → 4600 on 2026-08-25 for the pin DROP — the shelf's only retirement path, and
+   * the fix for a tag line that filled up with conditions the session had long since resolved
+   * (owner report, same day). It cost 313 characters: 57 for the fenced example, which the
+   * chat-surface-lockstep test now requires and which is therefore not prose, and 256 for the
+   * rule that stops a stale pin being created in the first place. Compression came first, per
+   * the rule above: the shelf paragraph was rewritten from 1020 characters to 734 in the same
+   * edit — the update sentence and "pin what only you know" were folded into the new one
+   * rather than left to say the same thing twice. The 4600 covers 4499 actual.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(4300);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(4600);
   });
 });

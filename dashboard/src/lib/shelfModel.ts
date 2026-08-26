@@ -267,6 +267,12 @@ function entryFromView(view: ChatViewSpec, at: number): ShelfEntry | null {
  * (so the tag line doesn't reshuffle under the cursor) but takes the new `updatedAt`, which
  * is what lets it win the row slot.
  *
+ * A pin carrying `drop` is the other half of that contract: it REMOVES `id`. Update alone was
+ * not enough, because a shelf fact has no expiry — the agent could correct "the port is 5173"
+ * forever but could never say "there is no server any more", and the stale chip stood until
+ * the user pressed `×`. Retired ids are RETURNED rather than swallowed, so the caller can
+ * close a panel that was open on one (`useShelf`), exactly as a user dismissal does.
+ *
  * Past `MAX_PINS_PER_CONVERSATION` the oldest entries are evicted and COUNTED — the caller
  * reports the number, so a conversation that pinned 200 things says so instead of quietly
  * forgetting 176 of them.
@@ -275,23 +281,30 @@ export function foldViews(
   prev: ShelfEntry[],
   views: ChatViewSpec[],
   at: number,
-): { entries: ShelfEntry[]; evicted: number } {
-  const entries = [...prev];
-  const indexById = new Map(entries.map((e, i) => [e.id, i]));
+): { entries: ShelfEntry[]; evicted: number; retired: string[] } {
+  // A Map rather than an array plus an index map: `set` on a key it already holds keeps that
+  // key's POSITION (which is the update-in-place rule, unchanged) and `delete` removes one
+  // without invalidating every index after it (which is what a drop needs). Insertion order
+  // IS the list order, so a dropped-then-re-sent id correctly comes back as the newest.
+  const byId = new Map(prev.map((e) => [e.id, e]));
+  const retired: string[] = [];
 
   for (const view of views) {
+    if (view.type === 'pin' && view.drop) {
+      if (byId.delete(view.id)) retired.push(view.id);
+      // An id the shelf isn't holding is a NO-OP, and deliberately a silent one: the user may
+      // have dismissed that pin already, or the cap may have evicted it, and neither is a
+      // state the agent can observe. A notice here would report the agent's ignorance to the
+      // very person who caused it.
+      continue;
+    }
     const next = entryFromView(view, at);
     if (!next) continue;
-    const existing = indexById.get(next.id);
-    if (existing === undefined) {
-      indexById.set(next.id, entries.length);
-      entries.push(next);
-    } else {
-      entries[existing] = next;
-    }
+    byId.set(next.id, next);
   }
 
-  if (entries.length <= MAX_PINS_PER_CONVERSATION) return { entries, evicted: 0 };
+  const entries = [...byId.values()];
+  if (entries.length <= MAX_PINS_PER_CONVERSATION) return { entries, evicted: 0, retired };
   const evicted = entries.length - MAX_PINS_PER_CONVERSATION;
-  return { entries: entries.slice(evicted), evicted };
+  return { entries: entries.slice(evicted), evicted, retired };
 }

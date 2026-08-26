@@ -14,7 +14,8 @@
  *   4. it does not react to scroll: identical boxes at scroll top, middle and bottom.
  *
  * Plus M2b (a user-opened detail moves nothing below it), the `+N` fold opening upward,
- * dismissal leaving its neighbours alone, and pins surviving a reload.
+ * dismissal leaving its neighbours alone, the agent's own `drop` retiring a pin (and a drop
+ * for an id nobody holds changing nothing), and pins surviving a reload.
  *
  * Same harness contract as scripts/verify/dream-actions.mjs: the real server, the real
  * `/api/agent/chat` WS route, a real browser, a scripted stand-in for `claude` in an isolated
@@ -147,9 +148,21 @@ const MANYTAGS = [1, 2, 3, 4].map((n) => fence({
   facts: [1, 2, 3, 4, 5, 6].map((f) => ({ label: 'tag-' + n + '-' + f })),
 })).join('');
 
+// DROP — the retirement: an id and nothing else. bulk1 is one of the MANYTAGS pins above, so
+// this proves the agent can take down a pin it pinned itself, without the user's x.
+const DROP = fence({ type: 'pin', id: 'bulk1', drop: true });
+
+// DROPGONE — a drop naming an id the shelf is not holding. Must be a NO-OP: the user may
+// already have dismissed that pin, and neither a notice nor a change belongs here.
+const DROPGONE = fence({ type: 'pin', id: 'never-pinned', drop: true });
+
 function reply(prompt) {
   // MANYTAGS is tested BEFORE MANY: 'MANYTAGS' contains 'MANY', so the narrower match has to
   // win or this turn would silently deliver five row pins instead.
+  // DROPGONE before DROP: 'DROPGONE' contains 'DROP', so the narrower match has to win or
+  // the no-op turn would silently retire a real pin instead.
+  if (prompt.includes('DROPGONE')) return 'Dropped one that was never there.' + DROPGONE;
+  if (prompt.includes('DROP')) return 'Took that one down.' + DROP;
   if (prompt.includes('MANYTAGS')) return 'Pinned a lot of tags.' + MANYTAGS;
   if (prompt.includes('FACTS')) return 'Pinned this session\\'s facts.' + FACTS;
   if (prompt.includes('LONG')) return 'Pinned a summary.' + LONG;
@@ -485,6 +498,71 @@ async function runWidth(chromium, base, width, report) {
   await page.waitForTimeout(300);
   ok('its own × closes it', (await vis('.pin-pop').count()) === 0);
 
+  // ── 2d — the type ladder MULTIPLIES app zoom ─────────────────────────────────────
+  // The shelf was the one surface in the chat written in raw px, so it alone stayed put when
+  // the window zoomed: at 120% the transcript, composer and tray grew and the shelf's 12px
+  // criteria did not, which is why the gap the owner reported got worse the more you zoomed.
+  // `--zoom` is a custom property on <html> (WindowChrome.applyZoom) and NO CSS `zoom`
+  // property is applied anywhere, so a `calc(px * var(--zoom))` ladder is the whole mechanism
+  // — and computed font-size is the only honest probe of it. Declarations are not measured
+  // here; what the browser RESOLVED is.
+  console.log('── zoom: the type ladder multiplies --zoom');
+  const setZoom = async (z) => {
+    await page.evaluate((v) => {
+      document.documentElement.style.setProperty('--zoom', String(v));
+      window.dispatchEvent(new CustomEvent('dreamcontext-zoom', { detail: v }));
+    }, z);
+    await page.waitForTimeout(200);
+  };
+  const fontOf = (sel) => vis(sel).first().evaluate((n) => parseFloat(getComputedStyle(n).fontSize));
+  // Every rung of the ladder, sampled where it is actually spent. `.pin-since` is deliberately
+  // absent: the narrow stage hides it, and a probe that vanishes at one width would make this
+  // section quietly weaker there instead of failing.
+  const RUNGS = [
+    ['the row\'s criterion (--pin-text)', '.pin-now'],
+    ['the panel\'s criterion (--pin-text, one rung up)', '.pin-pop .pin-task-name'],
+    ['the panel\'s meta (--pin-num)', '.pin-pop .pin-task-meta'],
+    ['a group head (--pin-text-sm)', '.pin-group-name'],
+    ['a tag chip (--pin-num)', '.pin-chip'],
+  ];
+  await vis('.pin-lede').first().click();
+  await page.waitForTimeout(350);
+  const at = async () => {
+    const out = {};
+    for (const [, sel] of RUNGS) out[sel] = await fontOf(sel);
+    return out;
+  };
+  const at100 = await at();
+
+  // The baseline first: the ladder has to have actually MOVED, or a perfectly proportional
+  // scale of the old 12px would pass every ratio below and still read small.
+  ok('the panel\'s criteria read at the conversation\'s scale, not the old 12px',
+    at100['.pin-pop .pin-task-name'] >= 14, `${at100['.pin-pop .pin-task-name']}px`);
+  ok('…and the panel reads a rung ABOVE the row, which is a strip you glance at',
+    at100['.pin-pop .pin-task-name'] > at100['.pin-now'],
+    JSON.stringify({ panel: at100['.pin-pop .pin-task-name'], row: at100['.pin-now'] }));
+
+  // Both ends of the app's own range (ZOOM_LEVELS: 0.85 … 1.2). A rung that is still raw px
+  // holds its value here and the ratio gives it away.
+  for (const z of [1.2, 0.85]) {
+    await setZoom(z);
+    const now = await at();
+    for (const [name, sel] of RUNGS) {
+      const want = at100[sel] * z;
+      // 1.5% — the browser resolves calc() to a fractional px and reports it rounded.
+      ok(`at ${Math.round(z * 100)}% zoom, ${name} scales with it`,
+        Math.abs(now[sel] - want) / want <= 0.015,
+        JSON.stringify({ px100: at100[sel], expected: Math.round(want * 100) / 100, got: now[sel] }));
+    }
+  }
+  await setZoom(1);
+  const restored = await at();
+  ok('back at 100% every rung returns to exactly where it started',
+    RUNGS.every(([, sel]) => Math.abs(restored[sel] - at100[sel]) < 0.05),
+    JSON.stringify({ at100, restored }));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
+
   // ── 2c — a reading that cannot be honest degrades LOUDLY ─────────────────────────
   // The checklist makes this arm matter MORE, not less: a task with nothing to count must
   // produce a notice and NO list — never an empty checklist frame under a blank denominator.
@@ -630,6 +708,34 @@ async function runWidth(chromium, base, width, report) {
   ok('the tag area never grows past its share of the pane',
     !!tagCap && tagCap.h <= tagCap.pane * 0.25 + EPS, JSON.stringify(tagCap));
 
+  // ── 6b — the AGENT takes its own pin down ────────────────────────────────────────
+  // The gap this closes: `foldViews` was update-only, so a pinned fact that had stopped being
+  // true could be corrected forever but never retired, and the stale chip stood until the user
+  // pressed ×. Proven here on a pin the agent itself put up two sections ago.
+  console.log('── drop: the agent retires its own pin');
+  const beforeDrop = await page.locator('.pin-tags [data-pin-tag]').allInnerTexts();
+  const beforeDropBox = await box('.pin-tags');
+  await say('DROPGONE please');
+  const afterNoop = await page.locator('.pin-tags [data-pin-tag]').allInnerTexts();
+  ok('a drop naming an id the shelf never held changes nothing at all',
+    JSON.stringify(afterNoop) === JSON.stringify(beforeDrop),
+    JSON.stringify({ before: beforeDrop.slice(0, 6), after: afterNoop.slice(0, 6) }));
+
+  await say('DROP that pin');
+  const afterDrop = await page.locator('.pin-tags [data-pin-tag]').allInnerTexts();
+  const droppedFlat = afterDrop.join(' ');
+  ok('a dropped pin takes every one of its facts off the tag line',
+    !/tag-1-/.test(droppedFlat), droppedFlat.slice(0, 240));
+  ok('…and leaves every other pin standing, the agent\'s and the server\'s alike',
+    /tag-2-1/.test(droppedFlat) && /5173/.test(droppedFlat) && /feat\/pin-surface/.test(droppedFlat),
+    droppedFlat.slice(0, 240));
+  ok('…in the same order they were in — a drop is a removal, not a re-shuffle',
+    JSON.stringify(afterDrop) === JSON.stringify(beforeDrop.filter((t) => !/tag-1-/.test(t))),
+    JSON.stringify({ expected: beforeDrop.filter((t) => !/tag-1-/.test(t)).slice(0, 6), got: afterDrop.slice(0, 6) }));
+  ok('…and the tag area still ends where it did — the seam with the composer held',
+    bottomHeld(beforeDropBox, await box('.pin-tags')),
+    JSON.stringify({ before: bottomOf(beforeDropBox), after: bottomOf(await box('.pin-tags')) }));
+
   // ── 7 — dismissal, and persistence across a reload ───────────────────────────────
   console.log('── dismiss + reload');
   const tagsBefore = (await vis('.pin-tags').first().innerText()).replace(/\s+/g, ' ');
@@ -672,6 +778,8 @@ async function runWidth(chromium, base, width, report) {
     afterReload);
   ok('…and a DISMISSED pin stays dismissed — the store was written, not just the view',
     !afterReload.includes('5173') && !afterReload.includes('node 22.3.0'), afterReload);
+  ok('…and a DROPPED pin stays dropped, for the same reason',
+    !afterReload.includes('tag-1-1'), afterReload);
 
   const shot = process.env.VERIFY_SHOTS;
   if (shot) await page.locator('.pin-shelf').first().screenshot({ path: `${shot}/chat-shelf-${width}.png` }).catch(() => {});

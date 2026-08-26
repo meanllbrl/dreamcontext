@@ -31,6 +31,26 @@
      would silently fall through to the widest layout. `inline-size` contains the width axis
      only — the shell's height is content-driven and must stay that way. */
   container: pinshelf / inline-size;
+
+  /* ── The shelf's type scale ────────────────────────────────────────────────────────
+     Every size below is derived from ONE ladder rather than typed per rule, and every
+     rung multiplies `--zoom` — the two reasons the shelf read small. It was written in
+     raw px (10.5 → 12), so (a) it sat a full step under the conversation it docks to
+     (`--chat-text`, 15px) and (b) it was the one surface in the chat that did not move
+     when the window zoomed. Owner report with two screenshots, 2026-08-25: the progress
+     detail in particular, which is a LIST you read, not a strip you glance at.
+
+     `--pin-text` is the sentence you actually read; `--pin-text-sm` the label beside it;
+     `--pin-num` the mono numerals (mono renders larger at equal px, so it sits a rung
+     below the text it aligns with rather than matching it); `--pin-marker` the uppercase
+     state words; `--pin-glyph` the carets and bullets. `--pin-hit` sizes the boxes that
+     are font-coupled (caret gutter, bullet gutter) so nothing clips when the ladder moves. */
+  --pin-text: calc(13.5px * var(--zoom, 1));
+  --pin-text-sm: calc(12.5px * var(--zoom, 1));
+  --pin-num: calc(12px * var(--zoom, 1));
+  --pin-marker: calc(11px * var(--zoom, 1));
+  --pin-glyph: calc(10px * var(--zoom, 1));
+  --pin-hit: calc(12px * var(--zoom, 1));
 }
 
 .pin-shell {
@@ -80,21 +100,21 @@
 .pin-pct {
   flex: 0 0 auto;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--pin-num);
   color: var(--color-accent);
   font-variant-numeric: tabular-nums;
 }
 .pin-count {
   flex: 0 0 auto;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--pin-num);
   color: var(--color-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
-.pin-dot { flex: 0 0 auto; color: var(--color-border-hover); font-size: 10px; }
+.pin-dot { flex: 0 0 auto; color: var(--color-border-hover); font-size: var(--pin-glyph); }
 .pin-now {
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--pin-text);
   color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -126,20 +146,20 @@
 }
 .pin-caret {
   flex: 0 0 auto;
-  width: 11px;
-  font-size: 9px;
+  width: var(--pin-hit);
+  font-size: var(--pin-glyph);
   line-height: 1;
   color: var(--color-text-tertiary);
 }
 .pin-title {
   flex: 0 0 auto;
-  font-size: 12px;
+  font-size: var(--pin-text);
   font-weight: 600;
   color: var(--color-text);
   white-space: nowrap;
 }
 .pin-ledetext {
-  font-size: 12px;
+  font-size: var(--pin-text);
   color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -151,7 +171,7 @@
 .pin-clamp {
   flex: 0 0 auto;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--pin-marker);
   line-height: 1;
   padding: 3px 4px 4px;
   border-radius: var(--radius-sm);
@@ -160,7 +180,7 @@
   letter-spacing: 0.06em;
 }
 /* "There is more behind it" — on every long pin, clamped or not. */
-.pin-open-hint { flex: 0 0 auto; font-size: 10px; color: var(--color-accent); }
+.pin-open-hint { flex: 0 0 auto; font-size: var(--pin-marker); color: var(--color-accent); }
 
 /* ── The opened detail ─────────────────────────────────────────────────────────────── */
 
@@ -175,28 +195,28 @@
    only ever on screen before the first measurement. */
 .pin-body {
   padding: 0 34px 10px;
-  font-size: 12px;
+  font-size: var(--pin-text);
   line-height: 1.6;
   color: var(--color-text-secondary);
   text-wrap: pretty;
   max-height: var(--pin-detail-max, 34vh);
   overflow-y: auto;
 }
-.pin-body .markdown-preview { font-size: 12px; }
+.pin-body .markdown-preview { font-size: var(--pin-text); }
 .pin-notice {
   margin: 0 0 6px;
   color: var(--color-warning);
-  font-size: 11.5px;
+  font-size: var(--pin-text-sm);
   line-height: 1.45;
 }
 
 /* Progress detail rows. */
 .pin-task { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; }
-.pin-task-glyph { flex: 0 0 auto; width: 11px; font-size: 9px; line-height: 1.6; color: var(--color-text-tertiary); }
+.pin-task-glyph { flex: 0 0 auto; width: var(--pin-hit); font-size: var(--pin-glyph); line-height: 1.6; color: var(--color-text-tertiary); }
 .pin-task-name {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--pin-text);
   line-height: 1.6;
   color: var(--color-text-secondary);
 }
@@ -205,7 +225,7 @@
   margin-left: auto;
   padding-left: 12px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--pin-num);
   color: var(--color-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
@@ -248,7 +268,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 22px;
+  height: calc(24px * var(--zoom, 1));
   padding: 0 8px;
   box-sizing: border-box;
   border: 1px solid transparent;
@@ -256,7 +276,7 @@
   background: var(--color-bg-tertiary);
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--pin-num);
   white-space: nowrap;
   flex: 0 0 auto;
   max-width: 100%;
@@ -268,7 +288,7 @@
   border-color: var(--color-border);
   color: var(--color-text-tertiary);
   font-family: var(--font-family-text);
-  font-size: 10px;
+  font-size: var(--pin-marker);
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
@@ -285,7 +305,7 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   font-family: var(--font-family-text);
-  font-size: 11px;
+  font-size: var(--pin-text-sm);
   gap: 6px;
 }
 .pin-chip.is-demoted:hover { border-color: var(--color-border-hover); color: var(--color-text); }
@@ -315,7 +335,7 @@
   margin-right: -3px;
   padding: 0 3px;
   font-family: var(--font-family-text);
-  font-size: 11px;
+  font-size: var(--pin-text-sm);
   line-height: 1;
   color: var(--color-text-tertiary);
   opacity: 0;
@@ -327,8 +347,8 @@
 .pin-x {
   flex: 0 0 auto;
   margin-left: auto;
-  width: 18px;
-  height: 18px;
+  width: calc(20px * var(--zoom, 1));
+  height: calc(20px * var(--zoom, 1));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -336,7 +356,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--pin-text-sm);
   line-height: 1;
   opacity: 0.45;
   cursor: pointer;

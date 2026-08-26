@@ -12,7 +12,7 @@ pinned: false
 date: '2026-08-23'
 status: in_review
 created: '2026-08-23'
-updated: '2026-08-24'
+updated: '2026-08-25'
 released_version: null
 tags:
   - 'topic:agents'
@@ -26,6 +26,7 @@ related_tasks:
     session-facts-name-the-checkout-the-session-is-actually-in-and-the-worktree-brief-covers-basic-develop
   - >-
     run-progress-reads-as-a-live-checklist-not-two-lines-under-a-number-it-never-explains
+  - an-agent-can-drop-a-pin-whose-fact-stopped-being-true
 ---
 
 ## Why
@@ -60,6 +61,7 @@ Both need a surface that PERSISTS and, for progress, one that is DERIVED from th
 - [x] **Pin: a fact with a weight** — `dream-view` block `{"type":"pin","id":"…","weight":"tag"|"row","facts":[…]}` renders in the shelf, outside the transcript flow.
 - [x] **Weight is a REQUEST**: the surface may demote a row whose content is tag-sized; criteria hold either way.
 - [x] **Re-sending the same id updates that pin in place** and never produces a second one (id-keyed contract).
+- [x] **A pin can be RETIRED by the agent** — `{"type":"pin","id":"…","drop":true}` removes that id from the shelf and from the store, takes every fact of that pin with it, leaves every other pin present and in order, and closes the panel if it was the open one. A drop naming an id the shelf isn't holding changes nothing and says nothing. A drop that also carries `facts`/`lede`/`detail` is still a drop, and names what it ignored.
 - [x] **Session facts are server-derived and not dismissable** — branch and worktree marker from `GET /api/agent/session-facts?session=<uuid>` (git symbolic-ref, worktree via --git-common-dir ≠ --absolute-git-dir). AMENDED 2026-08-24: the route is SESSION-scoped, not vault-scoped. It first answered for the vault's project root, which is only right until the agent moves — see the decision below.
 - [x] **Loopback URL carve-out** — `http://localhost:PORT` / `127.0.0.1` facts are clickable and open in the OS browser. Post-parse `sanitizeLoopbackUrl` accepts exactly localhost / 127.0.0.1 / [::1] (and their normalizing spellings), REJECTS 0.0.0.0 / evil.com tricks / javascript: / credentials in URL. Search and hash are stripped. Pin-facts-only carve-out; chatActions.ts url action stays https-only.
 - [x] **Pins survive reopening** (persisted per conversation, like checklistStore).
@@ -71,10 +73,46 @@ Both need a surface that PERSISTS and, for progress, one that is DERIVED from th
 - [x] **Zero criteria / unknown slug / all-ticked task degrade loudly** with notice — no NaN%, no silent empty row.
 - [x] **VIEW_TYPES in chatViewSpec.ts** gains both types with explicit caps (pins per conversation = 24, facts per pin = 6, NO per-line tag cap — that limit was removed), following degrade-loudly convention.
 - [x] **CHAT_SURFACE_BRIEFING** documents both types and teaches the weight. chat-surface-lockstep.test.ts green.
+- [x] **The shelf's type is ONE zoom-aware ladder** — `--pin-text` / `--pin-text-sm` / `--pin-num` / `--pin-marker` / `--pin-glyph` declared once on `.pin-shelf`, every rung `calc(<px> * var(--zoom, 1))`, and NO raw `font-size: <n>px` left in `pinShelf.css` or `progressPanel.css`. `.pin-pop` re-declares the two text rungs one step up because it is a reading surface, not a strip. Proven by MEASUREMENT, not by declaration: `verify:chat-shelf-ui` samples computed `font-size` at every rung at 100% / 120% / 85% and asserts each scales proportionally and returns exactly.
 - [x] **Verification script** — `scripts/verify/chat-shelf-ui.mjs` drives resting state, row opening/closing, ceiling, scroll-invariance against real server in Chromium (geometry via boundingBox at scroll positions, ±2px tolerance).
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-08-25 - The drop: a pin can be retired by the agent that pinned it
+Same day, same report, owner's call: hygiene prose alone leaves an already-stale pin standing, so the shelf gets the retirement it never had. `{"type":"pin","id":"…","drop":true}` removes that id. Four decisions are load-bearing and none of them is the obvious one:
+
+(1) **A drop WINS over content that rode along with it.** A payload saying both "remove this" and "show that" is an agent contradicting itself, and the half worth honouring is the removal — the defect this field exists to end is a pin that cannot die, and it must not be resurrected by a leftover `facts` key. The ignored half is named in a notice. Rejecting the ambiguous block was the alternative and it is worse: notices are read by the USER, not fed back to the model, so a refusal would leave the stale chip standing and report the agent's confusion to the person it inconveniences.
+
+(2) **A drop for an id the shelf isn't holding is a SILENT no-op.** The user may have dismissed that pin already, or the cap may have evicted it; neither is a state the agent can observe. This is the one place the shelf deliberately does NOT degrade loudly, because the loud version would be noise about the agent's ignorance.
+
+(3) **`foldViews` moved from an array-plus-index-map onto a Map.** `set` on an existing key keeps that key's POSITION (the update-in-place rule that stops the tag line reshuffling under the cursor, unchanged) and `delete` removes one without invalidating every index after it. Insertion order IS list order, so a dropped-then-re-sent id correctly returns as the newest.
+
+(4) **A retired id is RETURNED, not swallowed** — `{entries, evicted, retired}`. `useShelf` closes the open panel when its pin is retired, exactly as a user dismissal does: the id can be re-sent later and must come back CLOSED.
+
+The briefing's size budget (`agent-board-assets.test.ts`) went 4300 → 4600, per its own protocol: the shelf paragraph was compressed from 1020 to 734 characters FIRST — the old "re-send the `id` to update" and "pin what only you know" were folded into the new rule rather than left saying the same thing twice — and the raise is documented in the test with the actual count (4499).
+
+Progress rows are deliberately NOT droppable: `progress:<slug>` is not a spellable pin id (`validatePin` forbids `:`), and a run's row already closes itself when the task file reports all-done.
+
+### 2026-08-25 - The shelf's type is a ladder, and the ladder multiplies --zoom
+Owner report with two screenshots: the progress row, and the progress panel open over a conversation. Both read small, and the panel — a list of full sentences, several of them wrapping to four lines — read smallest. Two distinct causes, and neither was a judgement call about one rule:
+
+(1) **The shelf was the only surface in the chat written in raw px.** `pinShelf.css` and `progressPanel.css` named sixteen sizes between 9px and 12px, each typed at its own rule. The conversation they dock to is `--chat-text` (15px), so the shelf sat a full step under the thing it annotates — and no single edit could move it, because there was no ladder to move.
+
+(2) **Raw px does not multiply `--zoom`.** Every token in `styles/tokens.css` is `calc(<n>px * var(--zoom))` and `ChatPane.css` follows it for `--chat-text`; the shelf did not. So a user who zoomed the window grew the transcript, the composer and the tray, and the shelf alone stayed put — the gap the owner saw gets WORSE the more you zoom.
+
+The fix is one ladder on `.pin-shelf` (`--pin-text` 13.5 / `--pin-text-sm` 12.5 / `--pin-num` 12 / `--pin-marker` 11 / `--pin-glyph` 10, each `* var(--zoom, 1)`), plus the boxes that are font-coupled (chip height, caret and bullet gutters, the dismiss target) scaling with it so nothing clips when the ladder moves. Mono sits a rung BELOW the text it aligns with rather than matching it, because mono renders larger at equal px.
+
+`.pin-pop` re-declares the two text rungs one step up (14.5 / 13). This is the only place on the surface that departs from the ladder, and it is deliberate: the row is a one-line strip where every extra px is spent out of the criterion's ellipsis budget, while the panel is a list you read. That override needs no import order — a custom property resolves against the nearest declaring ANCESTOR, and `.pin-pop` is a descendant of `.pin-shelf`.
+
+DELIBERATELY NOT DONE: raising `.pin-pop`'s 46vh cap. Bigger type in the same box shows fewer criteria, which is a real cost — but "still under half the pane: it is a glance, not a document" is this file's own recorded constraint, and the sticky in-flight strip keeps the live criterion on screen at every scroll position. If the panel now reads as too short, the cap is the next change and it is a one-line one.
+
+### 2026-08-25 - A pin outlives the fact it states, so the briefing now teaches hygiene
+Owner report with a screenshot: a session's tag line read `Brave CDP :9222 — KAPATMA`, `SensorTower: login gerekli`, `AdSpyLab: login gerekli` — three TRANSIENT conditions pinned as permanent facts, still standing after they had been dealt with. Nothing is misbehaving: `foldViews` is id-keyed UPDATE-only, `layoutShelf` has no notion of expiry, and `validatePin` SKIPS a pin carrying no facts/lede/detail (with a notice) rather than reading it as a retirement — so an agent can never unpin, and only the user's `×` takes a tag down. The briefing taught WHAT to pin and never that a pin outlives its truth.
+
+The fix is prose in `CHAT_SURFACE_BRIEFING`, not a new mechanism: pin only what still holds when the session ends (an address, a port, a checkout); a to-do, a blocker, a "login needed" or anything you are waiting on goes in the MESSAGE, where it ages with the transcript; when a pinned fact does change, re-send that `id` with the new truth in the same turn you learn it.
+
+DELIBERATELY NOT DONE: an agent-side retire (explicit `"drop"`, or empty-facts-means-remove). Naming one in the briefing before it exists is the exact failure this file's header forbids, so the instruction asks for hygiene it cannot repair — a pin that goes stale anyway still needs the user's `×`. If stale tags survive this, that retire path is the next change, and it is a schema + `foldViews` + lockstep change, not a prose one. — AMENDED the same day: the owner's answer to "hygiene it cannot repair" was to build the repair. See the entry above.
 
 ### 2026-08-24 - The branch tag follows the SESSION, not the vault
 Owner report with two screenshots: a run whose every step happened in a worktree, under a tag that still read `main`; and a Develop session that called the harness's own `EnterWorktree` tool, still reading `main`. The original design read git in `projectRootOf(contextRoot)` — where `claude` is spawned — which is correct at t=0 and never again, because Develop mode's briefing is what invites the agent to leave.
@@ -164,6 +202,25 @@ Original design had progress detail expand in-place (like long pins). Owner chan
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-08-25 - The pin drop
+- `drop` on the pin schema (`chatViewSpec.ts`), retirement in `foldViews` (`shelfModel.ts`, rewritten onto a Map), `retired` closing the open panel in `useShelf.ts`, and the rule + worked example in `CHAT_SURFACE_BRIEFING`.
+- Tests: +9 parser (`chat-view-pin`), +11 fold (`shelf-model`), +1 lockstep pinning the briefing's drop example, budget raised 4300 → 4600 with the count documented. Full suite 7561 passed / 0 failed (426 files).
+- Runtime: `verify:chat-shelf-ui` in real Chromium at 1200px and 740px — 5 new checks (the no-op, the removal, neighbours standing, order preserved, the composer seam holding) plus "a DROPPED pin stays dropped" across a reload. 171/172 on my tree alone; the single failure is PRE-EXISTING ("pins survive a reload" — 2/2 red on baseline without this change) and is a timing race in the CHECK, not in persistence: with another session's added post-reload wait the same run is 172/172.
+- `tsc` clean both projects, `npm run build` clean.
+
+### 2026-08-25 - The shelf reads at the conversation's scale
+- `dashboard/src/components/sleepy/chat/pinShelf.css`: type ladder declared on `.pin-shelf`; all 16 raw `font-size` values replaced by rungs; `.pin-chip` height 22 → `calc(24px * --zoom)`, `.pin-caret`/`.pin-task-glyph` gutters → `--pin-hit`, `.pin-x` 18 → `calc(20px * --zoom)`.
+- `dashboard/src/components/sleepy/chat/progressPanel.css`: `.pin-since` and `.pin-group-name` onto the ladder; `.pin-pop` re-declares the two text rungs one step up (14.5 / 13) as the reading surface.
+- Evidence: `verify:chat-shelf-ui` 134/134 in real Chromium — including the three byte-identical-at-every-scroll-position checks, the ceiling, the tag wrap and "THE TAG LINE DID NOT MOVE", i.e. the growth cost the shelf none of its invariants. 117 unit tests green (placement, shelf-model, view-pin, lockstep). `build:dashboard` clean.
+- `scripts/verify/chat-shelf-ui.mjs`: new stage `2d — the type ladder MULTIPLIES app zoom` — 14 checks per width. It samples COMPUTED font-size (never the declaration) at five rungs, at 120% and 85% (the ends of `WindowChrome.ZOOM_LEVELS`), asserts each scales within 1.5% and returns exactly at 100%, and guards the baseline separately: the panel's criteria must resolve ≥14px and above the row's, so a perfectly proportional scale of the old 12px cannot pass.
+- `verify:chat-shelf-ui` **172/172** after the stage (was 134/134 before it). Two `pins survive a reload` failures seen mid-work were collateral: another process rebuilt `dashboard/dist` at 12:27 during the run, so the post-reload page loaded a different bundle. Clean on a rebuilt tree.
+- Screenshot: `_dream_context/tmp/shelf-type/run-progress-panel.png`.
+
+### 2026-08-25 - Pin hygiene reaches the briefing
+- `src/server/chat-surface.ts`: the shelf paragraph gains six lines — a shelf fact never expires and the agent cannot take one down, so pin only session-durable facts, keep transient conditions in the message, and re-send the `id` the moment a pinned fact changes.
+- Prose-only: no schema, model, route or renderer change. `tests/unit/chat-surface-lockstep.test.ts` + `tests/unit/chat-view-pin.test.ts` green (54 tests).
+- Open: no agent-side retire exists, and the decision above records why it was not invented in prose.
 
 ### 2026-08-24 - Session-scoped session facts + the worktree brief reaches basic
 - Shipped and pushed: `7c5857f` (worktree brief → basic + develop, plan excluded) and `282e3fe` (session-scoped facts) on `main`.
