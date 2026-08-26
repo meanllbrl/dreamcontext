@@ -1,5 +1,28 @@
 [
   {
+    "date": "2026-08-26",
+    "type": "feat",
+    "scope": "lab",
+    "description": "Script authors can now build multi-page, interactive, full-screen-capable insight bodies without platform React work — the thing the hand-written funnel insight is — by returning {data: dataset/v1, app: app/v1}. The host serves data over a postMessage bridge (lab.data(key)), handles navigation (lab.navigate(pageId, params?)), and routes to /lab/<slug>/p/<pageId> with real history. Typed data stays MANDATORY and queryable: dataset/v1 (src/lib/lab/dataset.ts) is the plural successor to matrix/v1, using the same dimension-coordinate row grammar, validated by delegating each dataset to parseMatrixSet. app/v1 (src/lib/lab/app.ts) declares pages[{id,title,html,dataset?}] with optional card preview and shell{style,script}. The sandbox is unchanged (allow-scripts, NO allow-same-origin, CSP default-src 'none') — the bridge uses event.source === iframeRef.current?.contentWindow as the identity gate, not origin (the frame is opaque-origin). Security hardening: detect-and-cut teardown with per-instance nonce protects against self-navigation exfiltration (a sandboxed frame can always navigate itself; the host watches load events and tears down the bridge on navigation-away, verified in the verify script). URL params are sanitized on BOTH write (pushLabAppPath) and read (readAppParams) paths — a cold deep-link bypasses the write path, so the read-side guard is load-bearing; capped at ≤8 params, ≤64 chars per value, ≤256 total query growth. CLI: lab body <slug> [--page] [--format text|md|html] reads what a page renders (htmlToText extractor, dependency-free); lab query <slug> [--dataset] [--where k=v] [--group-by] [--top] [--date] slices cached numbers without fetching. Dashboard: LabAppFrame/LabAppPage/LabRoutedInsight/labAppRuntime; height is content-driven (ResizeObserver in the injected shim) with per-mode clamps; full-screen via ?fs=1 (CSS overlay, not native Fullscreen API — deep-linkable and survives reload). matrix/v1 is DEPRECATED for NEW insights (lab create --render breakdown removed from scaffold; existing breakdown insights grandfathered and keep rendering). Skill docs updated: entity router grew Report, cli-reference.md gained render decision table, tasks-and-features.md gained § App insights. New pattern: knowledge/patterns/sandboxed-app-bridge-pattern.md. Verified: scripts/verify/lab-app-insight.mjs proves sandbox network-less (zero requestfinished on fetch+img while inline script runs), height growth, bridge round-trip, multi-page routing, cold deep-links, ?fs=1, navigation teardown (frame reaches stopped state, host posts nothing after), and malicious-params cap on both write and read paths.",
+    "breaking": false,
+    "summary": "Lab insights now support script-authored multi-page interactive apps (render: app): dataset/v1 typed data, app/v1 presentation, sandboxed postMessage bridge, CLI query/body verbs, and full-screen routed pages",
+    "references": [
+      "task:script-authored-insights-become-multi-page-interactive-apps-not-fixed-height-cards",
+      "feature:lab-analytics-insights",
+      "file:src/lib/lab/app.ts",
+      "file:src/lib/lab/dataset.ts",
+      "file:src/lib/lab/datasetQuery.ts",
+      "file:src/lib/lab/htmlText.ts",
+      "file:dashboard/src/components/lab/LabAppFrame.tsx",
+      "file:dashboard/src/components/lab/LabAppPage.tsx",
+      "file:scripts/verify/lab-app-insight.mjs",
+      "knowledge:sandboxed-app-bridge-pattern"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-25",
     "type": "feat",
     "scope": "lab",

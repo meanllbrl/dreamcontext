@@ -55,7 +55,7 @@ date: '2026-08-26'
   - repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror (completed) · 0.20.0
   - untrack-legacy-tracked-task-mirrors-remote-backend (todo) · BACKLOG
 
-### 🔵 **simplified-ux** — Simplified UX · 46/50 done (92%) · target 2026-07-31 · forecast 2026-08-26 🔴 SLIPPING
+### ⚪ **simplified-ux** — Simplified UX · 47/50 done (94%) · target 2026-07-31 · forecast 2026-08-26 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
   - a-claude-account-switch-reaches-the-sessions-already-open (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
   - a-project-chip-says-how-many-chats-it-holds-and-how-many-are-working-one-counted-bubble-per-status (completed) · 2026-08-14 → 2026-08-14
@@ -100,7 +100,7 @@ date: '2026-08-26'
   - pack-badge-false-positive-declined-optional-packs-show-as-new-forever (completed) · 0.17.2
   - roadmap-forecast-accuracy-effort-aware-envelope-clamped-cascade (completed) · 2026-07-08 → …
   - roadmap-timeline-start-only-dated-tasks-collapse-the-committed-window-bar-to-a-point (completed) · 0.17.2
-  - script-authored-insights-become-multi-page-interactive-apps-not-fixed-height-cards (in_progress) · 0.26.0 · 2026-08-26 → …
+  - script-authored-insights-become-multi-page-interactive-apps-not-fixed-height-cards (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
   - survey-questions-page-horizontally-one-question-per-view (completed) · 0.21.0
   - task-creation-scaffolds-lean-and-every-task-says-why-it-exists (completed) · 0.21.0
   - task-feature-objective-links-validated-assignment-bidirectional-maintenance (completed) · 2026-07-08 → …
