@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tansta
 import { useApi } from '../context/VaultContext';
 import type { FunnelCacheEntry, FunnelPrev, FunnelSnapshot } from '../components/lab/funnel/funnelModel';
 import type { MatrixCacheEntry, MatrixSnapshot } from '../components/lab/matrixModel';
+import type { AppCacheEntry, DatasetCacheEntry } from '../components/lab/appModel';
 import type { InsightSize, Render } from '../components/lab/chartRegistry';
 
 /** Tweak kinds. No `range` type — a relative range is an `enum` tweak keyed `range`. */
@@ -83,6 +84,15 @@ export interface InsightCache {
   /** Optional script-authored card body (html/v1 hybrid) — drawn in a
    *  network-less sandboxed iframe; never a substitute for the typed data. */
   html?: string;
+  /** Multi-page app spec (`render: app` with an app/v1 payload only) — the
+   *  declared pages a script-authored body routes between. */
+  app?: AppCacheEntry;
+  /** The app's typed data half (dataset/v1) — what `lab.data()` answers from. */
+  datasets?: DatasetCacheEntry;
+  /** Bounded per-sync dataset snapshots (the app's time axis), oldest→newest.
+   *  Stripped from this payload by the server like `funnelHistory` — kept
+   *  here only to mirror the engine's `InsightCache` shape 1:1. */
+  datasetHistory?: unknown[];
 }
 
 export interface PublicManifest {

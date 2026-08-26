@@ -11,6 +11,7 @@ import { TableBody } from './MetricTable';
 import { HeatmapBody } from './HeatmapChart';
 import { FunnelBody } from './funnel/FunnelCardPreview';
 import { BreakdownBody } from './BreakdownPivot';
+import { LabAppBody } from './LabAppBody';
 
 /**
  * The chart registry — the ONE place a render type is wired up. The card and the
@@ -34,6 +35,7 @@ export const RENDERS = [
   'table',
   'heatmap',
   'breakdown',
+  'app',
 ] as const;
 
 export type Render = (typeof RENDERS)[number];
@@ -145,6 +147,15 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
     supportsWindow: true,
     emptyHint: 'No breakdown data yet — sync to fetch.',
     openHint: DETAIL_HINT,
+  },
+  app: {
+    // A multi-page app body needs room to preview its entry/card page.
+    CardBody: LabAppBody,
+    defaultSpan: 2,
+    supportsWindow: true,
+    emptyHint: 'No app body yet — sync to build it.',
+    routed: true,
+    openHint: 'Open the app',
   },
 };
 

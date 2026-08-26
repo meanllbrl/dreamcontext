@@ -5,6 +5,7 @@ import { TweakEditor } from './TweakEditor';
 import { RangeControl, nonWindowTweaks } from './RangeControl';
 import { cardSpan, chartEntry } from './chartRegistry';
 import { HtmlInsightBody } from './HtmlInsightBody';
+import { LabAppBody } from './LabAppBody';
 import './InsightCard.css';
 
 /** Staleness badge: fresh / stale(Nh) / never synced / error. */
@@ -160,11 +161,23 @@ export function InsightCard({
       )}
 
       {/* The card body keeps its own hover layer (chart tooltips) — clicks
-          still bubble to the card and open the panel. A script-authored html
-          body (html/v1 hybrid) replaces the typed CARD body only; the detail
-          panel always shows the typed twin next to it (a11y). */}
+          still bubble to the card and open the panel. Precedence is
+          app -> html -> typed: a script-authored app body (app/v1) wins over
+          a plain html/v1 body, which in turn replaces the typed CARD body
+          only — the detail panel always shows the typed twin next to it
+          (a11y). An `app`-render insight with no cache.app yet (unsynced)
+          falls through to CardBody, which the registry already points at
+          LabAppBody for that render — it renders the same emptyHint either
+          way. */}
       <div className="lab-card-body">
-        {cache?.html ? (
+        {cache?.app ? (
+          <LabAppBody
+            summary={summary}
+            cache={cache ?? null}
+            series={series}
+            emptyHint={entry.emptyHint}
+          />
+        ) : cache?.html ? (
           <HtmlInsightBody html={cache.html} title={summary.title} />
         ) : (
           <CardBody
