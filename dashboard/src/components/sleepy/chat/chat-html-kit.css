@@ -1,0 +1,482 @@
+/**
+ * chat-html-kit.css — the class kit an agent's ```dream-html block writes against.
+ *
+ * Embedded into the sandboxed iframe's srcdoc together with a :root block of RESOLVED
+ * design-token values (CSS variables do not cross the iframe document boundary, so
+ * chatHtmlKit.ts inlines the current theme's values and re-injects on theme change), and
+ * followed by the vault's optional brand override.
+ *
+ * THE RULE FOR AUTHORS: don't write your own colors, fonts or spacing — use these classes
+ * and the block looks native dreamcontext in both themes, on both surfaces, and follows the
+ * user's brand override for free. Reach for a `style=` attribute only for geometry the kit
+ * has no word for (an SVG path, a grid template, a bar width).
+ *
+ * Prefixed `dc-`. Unlike the Lab's `lk-` kit — a 232px card body — this is a READING and
+ * PRESENTATION surface: it has headings, prose, and a slide mode.
+ *
+ * TWO MODES. `<html data-dc-mode>` is set by the host: "card" inline in the transcript,
+ * "full" in the fullscreen presentation overlay. Only `.dc-slide` reads it — everything else
+ * renders identically, so an author writes once and it works in both.
+ */
+
+* { box-sizing: border-box; }
+
+html, body {
+  /* Auto height, both of them: the host measures the body to size the iframe, so a
+     percentage height here would make the measurement chase the frame it is setting. */
+  height: auto;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--color-text);
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── The root wrapper. Wrap the whole block in it: it owns the rhythm between
+     sections so an author never hand-spaces margins. ── */
+.dc-doc { display: flex; flex-direction: column; gap: 14px; }
+.dc-doc--tight { gap: 8px; }
+.dc-doc--airy { gap: 22px; }
+
+/* ═══ Typography ═══ */
+
+.dc-h1, .dc-h2, .dc-h3 {
+  font-family: var(--font-family-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+  margin: 0;
+}
+.dc-h1 { font-size: 24px; line-height: 1.25; }
+.dc-h2 { font-size: 18px; line-height: 1.3; }
+.dc-h3 { font-size: 15px; line-height: 1.35; font-weight: 600; letter-spacing: -0.01em; }
+
+/* The one line under a heading that frames what follows. */
+.dc-lede { font-size: 14.5px; color: var(--color-text-secondary); margin: 0; }
+.dc-p { margin: 0; color: var(--color-text); }
+.dc-muted { font-size: 13px; color: var(--color-text-tertiary); }
+.dc-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+.dc-strong { font-weight: 650; color: var(--color-text); }
+
+.dc-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.dc-list li { color: var(--color-text); }
+
+/* The marker stroke, matching the transcript's own ==highlight==. */
+.dc-mark { background: var(--color-accent-soft); color: var(--color-accent-text); padding: 0 3px; border-radius: 3px; }
+
+.dc-code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+.dc-pre {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* ═══ Numbers — the NumberCard idiom: display face, tight tracking, tabular digits.
+     Mono is for ALIGNED COLUMNS only (see .dc-num), never for a headline figure. ═══ */
+
+.dc-value {
+  font-family: var(--font-family-display);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--color-text);
+}
+.dc-value--lg { font-size: 40px; }
+.dc-value--sm { font-size: 19px; }
+.dc-unit { font-size: 14px; font-weight: 500; color: var(--color-text-tertiary); margin-left: 4px; }
+.dc-num { font-family: var(--font-mono); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.dc-delta { font-size: 13px; font-weight: 600; }
+.dc-delta--up { color: var(--color-success); }
+.dc-delta--down { color: var(--color-error); }
+.dc-delta--flat { color: var(--color-text-tertiary); }
+
+/* ═══ Layout ═══ */
+
+.dc-row { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.dc-row--top { align-items: flex-start; }
+.dc-row--between { justify-content: space-between; }
+.dc-stack { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.dc-spacer { flex: 1; }
+
+.dc-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.dc-grid--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dc-grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dc-grid--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+/* The horizontally scrolling shelf — what `page`'s rail was for: six things read
+   side by side instead of stacked down the screen. */
+.dc-rail {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.dc-rail > * { flex: 0 0 auto; width: 250px; scroll-snap-align: start; }
+.dc-rail::-webkit-scrollbar { height: 8px; }
+.dc-rail::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+
+.dc-divider { border: none; border-top: 1px solid var(--color-border); margin: 2px 0; }
+.dc-divider-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+.dc-divider-label::after { content: ""; flex: 1; border-top: 1px solid var(--color-border); }
+
+/* ═══ Card ═══ */
+
+.dc-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  min-width: 0;
+}
+.dc-card--flat { background: transparent; }
+.dc-card--accent { border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); }
+.dc-card-title { font-family: var(--font-family-display); font-size: 15px; font-weight: 650; letter-spacing: -0.01em; color: var(--color-text); }
+.dc-card-sub { font-size: 12.5px; color: var(--color-text-tertiary); }
+.dc-card-img { width: 100%; border-radius: var(--radius-md); display: block; object-fit: cover; }
+.dc-card-foot { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* ═══ Stat tile — a lighter surface than the chips inside it, so toned chips keep
+     their separation instead of sinking into the same grey. ═══ */
+
+.dc-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  min-width: 0;
+}
+.dc-stat-label { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
+.dc-stat-note { font-size: 11.5px; color: var(--color-text-tertiary); }
+
+/* ═══ Chip / badge — the .lab-badge pair: subtle background, toned text, no border ═══ */
+
+.dc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+}
+.dc-chip--accent { color: var(--color-accent); background: var(--color-accent-soft); }
+.dc-chip--good { color: var(--color-success); background: var(--color-success-subtle); }
+.dc-chip--bad { color: var(--color-error); background: var(--color-error-subtle); }
+.dc-chip--warn { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 15%, transparent); }
+
+/* ═══ Callout — tinted SURFACE with body text on top (never a solid accent fill
+     behind prose: it fails contrast in one theme or the other) ═══ */
+
+.dc-callout {
+  padding: 11px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 38%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-tertiary));
+  color: var(--color-text);
+  font-size: 13.5px;
+}
+.dc-callout--good { border-color: color-mix(in srgb, var(--color-success) 38%, var(--color-border)); background: color-mix(in srgb, var(--color-success) 10%, var(--color-bg-tertiary)); }
+.dc-callout--bad { border-color: color-mix(in srgb, var(--color-error) 38%, var(--color-border)); background: color-mix(in srgb, var(--color-error) 10%, var(--color-bg-tertiary)); }
+.dc-callout--warn { border-color: color-mix(in srgb, var(--color-warning) 38%, var(--color-border)); background: color-mix(in srgb, var(--color-warning) 10%, var(--color-bg-tertiary)); }
+
+/* ═══ Table — the MetricTable idiom ═══ */
+
+.dc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.dc-table th {
+  text-align: left;
+  padding: 8px 12px;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+  white-space: nowrap;
+}
+.dc-table td { padding: 7px 12px; border-top: 1px solid var(--color-border); color: var(--color-text); }
+.dc-table th.dc-num, .dc-table td.dc-num { text-align: right; }
+.dc-table tr.dc-row--pick td { background: var(--color-accent-soft); }
+.dc-caption { font-size: 12px; color: var(--color-text-tertiary); }
+
+/* Key/value pairs — a spec list without a table's ceremony. */
+.dc-kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
+.dc-kv dt { color: var(--color-text-tertiary); }
+.dc-kv dd { margin: 0; color: var(--color-text); }
+
+/* ═══ Bar row — the BarList idiom. Set the fill's width inline. ═══ */
+
+.dc-bar { display: flex; align-items: center; gap: 10px; font-size: 13px; min-width: 0; }
+.dc-bar-label { flex: 0 0 32%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); }
+.dc-bar-track { flex: 1; min-width: 0; height: 9px; border-radius: 5px; background: var(--color-bg-tertiary); overflow: hidden; }
+.dc-bar-fill { display: block; height: 100%; border-radius: 5px; background: var(--chart-1); }
+.dc-bar-value { flex-shrink: 0; font-family: var(--font-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--color-text); }
+
+/* ═══ Funnel — stacked proportional steps, the shape a conversion story wants ═══ */
+
+.dc-funnel { display: flex; flex-direction: column; gap: 6px; }
+.dc-funnel-step { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.dc-funnel-bar { height: 30px; border-radius: var(--radius-sm); background: var(--chart-1); display: flex; align-items: center; padding: 0 10px; color: #fff; font-weight: 600; font-size: 12.5px; min-width: 44px; }
+.dc-funnel-drop { font-size: 12px; color: var(--color-text-tertiary); }
+
+/* ═══ Steps / flow — how to explain a PROCESS instead of narrating it ═══ */
+
+.dc-steps { display: flex; flex-direction: column; gap: 10px; counter-reset: dc-step; }
+.dc-step { display: flex; gap: 12px; align-items: flex-start; }
+.dc-step::before {
+  counter-increment: dc-step;
+  content: counter(dc-step);
+  flex: 0 0 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+.dc-step-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+
+/* Left-to-right pipeline: boxes joined by arrows. Wraps on a narrow pane. */
+.dc-flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
+.dc-flow-node {
+  flex: 1 1 130px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  font-size: 12.5px;
+}
+.dc-flow-arrow { display: grid; place-items: center; padding: 0 8px; color: var(--color-text-tertiary); font-size: 15px; }
+
+/* ═══ Timeline ═══ */
+
+.dc-timeline { display: flex; flex-direction: column; gap: 0; }
+.dc-tl { display: flex; gap: 12px; align-items: flex-start; padding-bottom: 14px; position: relative; }
+.dc-tl:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 14px;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-border);
+}
+.dc-tl-dot { flex: 0 0 11px; height: 11px; margin-top: 5px; border-radius: 999px; background: var(--chart-1); position: relative; z-index: 1; }
+.dc-tl-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dc-tl-when { font-size: 11.5px; color: var(--color-text-tertiary); }
+
+/* ═══ Compare — the DECISION block. Two or three options rendered side by side so
+     the reader picks by looking, instead of reading a paragraph about each. ═══ */
+
+.dc-compare { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); align-items: stretch; }
+.dc-option {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  min-width: 0;
+}
+/* The one being recommended — a tinted surface and a heavier border, never a fill. */
+.dc-option--pick {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-secondary));
+}
+.dc-option-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.dc-option-title { font-family: var(--font-family-display); font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+.dc-pros, .dc-cons { margin: 0; padding-left: 16px; font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
+.dc-pros li { color: var(--color-text); }
+.dc-cons li { color: var(--color-text-secondary); }
+.dc-pros li::marker { content: "+ "; color: var(--color-success); font-weight: 700; }
+.dc-cons li::marker { content: "− "; color: var(--color-error); font-weight: 700; }
+
+/* ═══ Tabs — CSS-only, no script needed. Structure (ids must be unique in the block):
+       <div class="dc-tabs">
+         <input type="radio" name="g" id="g1" checked><input type="radio" name="g" id="g2">
+         <div class="dc-tablist"><label class="dc-tab" for="g1">A</label>
+                                 <label class="dc-tab" for="g2">B</label></div>
+         <div class="dc-panels"><section class="dc-panel">…</section>
+                                <section class="dc-panel">…</section></div>
+       </div>
+     The nth-of-type pairs below wire tab N to panel N, up to five. ═══ */
+
+.dc-tabs { display: flex; flex-direction: column; gap: 10px; }
+.dc-tabs > input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+.dc-tablist { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--color-border); }
+.dc-tab {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  user-select: none;
+}
+.dc-tab:hover { color: var(--color-text); }
+.dc-panel { display: none; }
+.dc-panel > * + * { margin-top: 10px; }
+
+.dc-tabs > input:nth-of-type(1):checked ~ .dc-tablist > .dc-tab:nth-of-type(1),
+.dc-tabs > input:nth-of-type(2):checked ~ .dc-tablist > .dc-tab:nth-of-type(2),
+.dc-tabs > input:nth-of-type(3):checked ~ .dc-tablist > .dc-tab:nth-of-type(3),
+.dc-tabs > input:nth-of-type(4):checked ~ .dc-tablist > .dc-tab:nth-of-type(4),
+.dc-tabs > input:nth-of-type(5):checked ~ .dc-tablist > .dc-tab:nth-of-type(5) {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+.dc-tabs > input:nth-of-type(1):checked ~ .dc-panels > .dc-panel:nth-of-type(1),
+.dc-tabs > input:nth-of-type(2):checked ~ .dc-panels > .dc-panel:nth-of-type(2),
+.dc-tabs > input:nth-of-type(3):checked ~ .dc-panels > .dc-panel:nth-of-type(3),
+.dc-tabs > input:nth-of-type(4):checked ~ .dc-panels > .dc-panel:nth-of-type(4),
+.dc-tabs > input:nth-of-type(5):checked ~ .dc-panels > .dc-panel:nth-of-type(5) {
+  display: block;
+}
+/* Keyboard: the hidden radio is what actually receives focus, so the ring has to be
+   drawn on the label it controls or a keyboard user sees nothing move. */
+.dc-tabs > input:nth-of-type(1):focus-visible ~ .dc-tablist > .dc-tab:nth-of-type(1),
+.dc-tabs > input:nth-of-type(2):focus-visible ~ .dc-tablist > .dc-tab:nth-of-type(2),
+.dc-tabs > input:nth-of-type(3):focus-visible ~ .dc-tablist > .dc-tab:nth-of-type(3),
+.dc-tabs > input:nth-of-type(4):focus-visible ~ .dc-tablist > .dc-tab:nth-of-type(4),
+.dc-tabs > input:nth-of-type(5):focus-visible ~ .dc-tablist > .dc-tab:nth-of-type(5) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ═══ Interactive affordances — a button the author's own inline script wires up.
+     It can change what the block SHOWS; it cannot reach the network or the app. ═══ */
+
+.dc-btn {
+  appearance: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  cursor: pointer;
+}
+.dc-btn:hover { border-color: var(--color-border-hover); }
+.dc-btn[aria-pressed="true"], .dc-btn--on { color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border)); background: var(--color-accent-soft); }
+.dc-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+/* ═══ Media ═══ */
+
+.dc-img { max-width: 100%; border-radius: var(--radius-md); display: block; }
+.dc-figcaption { font-size: 12px; color: var(--color-text-tertiary); margin-top: 5px; }
+
+/* ═══ Chart colors — the ONLY palette. Never a hardcoded hex: these follow the
+     theme and the user's brand override. Use on SVG (fill/stroke) or a div. ═══ */
+
+.dc-f1 { fill: var(--chart-1); } .dc-f2 { fill: var(--chart-2); } .dc-f3 { fill: var(--chart-3); } .dc-f4 { fill: var(--chart-4); }
+.dc-f5 { fill: var(--chart-5); } .dc-f6 { fill: var(--chart-6); } .dc-f7 { fill: var(--chart-7); } .dc-f8 { fill: var(--chart-8); }
+.dc-s1 { stroke: var(--chart-1); } .dc-s2 { stroke: var(--chart-2); } .dc-s3 { stroke: var(--chart-3); } .dc-s4 { stroke: var(--chart-4); }
+.dc-s5 { stroke: var(--chart-5); } .dc-s6 { stroke: var(--chart-6); } .dc-s7 { stroke: var(--chart-7); } .dc-s8 { stroke: var(--chart-8); }
+.dc-bg1 { background: var(--chart-1); } .dc-bg2 { background: var(--chart-2); } .dc-bg3 { background: var(--chart-3); } .dc-bg4 { background: var(--chart-4); }
+.dc-bg5 { background: var(--chart-5); } .dc-bg6 { background: var(--chart-6); } .dc-bg7 { background: var(--chart-7); } .dc-bg8 { background: var(--chart-8); }
+.dc-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.dc-axis { stroke: var(--color-border); stroke-width: 1; }
+.dc-gridline { stroke: var(--color-border); stroke-width: 1; opacity: 0.55; }
+/* SVG text scales with the viewBox — a 320-wide viewBox stretched to 960px renders this
+   at ~30px, not 10px. Prefer .dc-axis-row BELOW the svg for labels; reach for this only
+   when a label must sit at a coordinate, and then size the viewBox near the real render
+   width (~900) so one user unit is about one pixel. */
+.dc-axis-text { fill: var(--color-text-tertiary); font-size: 10px; font-family: var(--font-family); }
+/* Axis labels as HTML, outside the svg — never scaled, always legible. */
+.dc-axis-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--color-text-tertiary); margin-top: 4px; }
+.dc-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--color-text-secondary); }
+.dc-legend-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 5px; vertical-align: -1px; }
+
+/* ═══ Honesty helpers — the same words the native renders use ═══ */
+
+.dc-low-sample { opacity: 0.45; }
+.dc-empty { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; text-align: center; }
+
+/* ═══ Slides — a presentation, only in the fullscreen overlay.
+     Inline in the transcript a slide is just a padded section (a viewport-height
+     slide would make the auto-height measurement chase the frame it is setting);
+     in fullscreen the host sets data-dc-mode="full" and they become real pages. ═══ */
+
+.dc-slide {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 0;
+}
+html[data-dc-mode="full"] .dc-slides { scroll-snap-type: y mandatory; }
+html[data-dc-mode="full"] .dc-slide {
+  min-height: calc(100vh - 40px);
+  justify-content: center;
+  scroll-snap-align: start;
+  padding: 40px 0;
+}
+html[data-dc-mode="full"] .dc-slide .dc-h1 { font-size: 40px; }
+html[data-dc-mode="full"] .dc-slide .dc-h2 { font-size: 26px; }
+html[data-dc-mode="full"] .dc-slide .dc-value { font-size: 52px; }
+html[data-dc-mode="full"] body { font-size: 15px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

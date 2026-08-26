@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-08-24'
+updated: '2026-08-26'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -57,6 +57,8 @@ related_tasks:
   - >-
     switching-mode-or-permission-in-the-chat-composer-must-not-eat-the-half-typed-message
   - a-claude-account-switch-reaches-the-sessions-already-open
+  - >-
+    chat-answers-become-agent-written-html-typed-chart-page-retire-dream-html-renders-in-a-themed-sandbox
 type: feature
 name: in-app-agent-terminal
 description: ''

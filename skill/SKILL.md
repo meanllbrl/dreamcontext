@@ -442,7 +442,8 @@ _dream_context/
 │   ├── scripts/<slug>.mjs            ←   custom-script adapters (run locally with your credentials)
 │   └── credentials.json              ←   gitignored — write ONLY via `lab credentials set`
 ├── overrides/
-│   └── task.md                       ← OPTIONAL: project task template + custom_fields schema (briefed to agents)
+│   ├── task.md                       ← OPTIONAL: project task template + custom_fields schema (briefed to agents)
+│   └── chat-html-kit.css             ← OPTIONAL: brand override for the Chat view's rendered-HTML kit
 ├── state/
 │   ├── <task>.md                     ← Active tasks (frontmatter may include product:, start_date, due_date, custom_fields)
 │   ├── .config.json                  ← platforms, packs, multiProduct, taskBackend, peopleIdentity, linkedRepos…

@@ -2,43 +2,40 @@ import { useVault } from '../../../context/VaultContext';
 import { isDesktop, openChecklistWindow } from '../../../lib/desktop';
 import { writeEnvelope } from '../../../lib/checklistStore';
 import type { ChatViewSpec, ChecklistViewSpec } from '../../../lib/chatViewSpec';
-import type { ChatAction } from './chatActions';
-import { ChartView } from './ChartView';
-import { PageView } from './PageView';
+import type { ChatBlock } from './chatActions';
+import { HtmlView } from './HtmlView';
+import { InsightView } from './InsightView';
 import './ChatViews.css';
 
 /**
- * The view host — the seam between what `parseChatActions` extracted from an answer
- * (`views`/`notices`/`pendingView`, see `chatActions.ts`) and the actual rich objects: a
- * `switch (view.type)` onto `ChartView` (chart), `PageView` (page) or `ChecklistCard`
- * (checklist, defined here), plus the degradation strip and the streaming placeholder.
+ * The block host — the seam between what `parseChatActions` extracted from an answer
+ * (`blocks`/`notices`/`pendingView`, see `chatActions.ts`) and the actual rich objects.
  *
- * Per the plan's degradation contract (§1.3): the prose this sits below ALWAYS survives —
- * `notices` are additive, never a replacement for it — and nothing here ever throws, since
- * `views`/`notices` already arrived pre-validated from `lib/chatViewSpec.ts`.
+ * `blocks` is rendered in WRITTEN order and mixes two kinds: the agent's own HTML
+ * (`dream-html`, the surface's main expressive channel since 2026-08-26) and the typed
+ * `dream-view` payloads that survived the retirement of `chart`/`page` — the three things
+ * HTML cannot be (a tracked metric's canonical rendering, an OS window, a shelf row).
+ *
+ * Per the degradation contract: the prose this sits below ALWAYS survives — `notices` are
+ * additive, never a replacement for it — and nothing here ever throws, since every block
+ * arrived pre-validated from `lib/chatViewSpec.ts` (views) or capped by byte size (html).
  */
 export function ChatViews({
-  views, notices, pendingView, conversationId, onAction, onOpenFile,
+  blocks, notices, pendingView, conversationId,
 }: {
-  views: ChatViewSpec[];
+  blocks: ChatBlock[];
   notices: string[];
   pendingView: boolean;
   conversationId: string;
-  onAction: (a: ChatAction) => void;
-  onOpenFile?: (path: string) => void;
 }) {
-  if (views.length === 0 && notices.length === 0 && !pendingView) return null;
+  if (blocks.length === 0 && notices.length === 0 && !pendingView) return null;
 
   return (
     <div className="chat-views">
-      {views.map((view, i) => (
-        <ChatViewItem
-          key={i}
-          view={view}
-          conversationId={conversationId}
-          onAction={onAction}
-          onOpenFile={onOpenFile}
-        />
+      {blocks.map((block, i) => (
+        block.kind === 'html'
+          ? <HtmlView key={i} html={block.html} />
+          : <ChatViewItem key={i} view={block.view} conversationId={conversationId} />
       ))}
       {pendingView && <PendingViewPill />}
       {notices.length > 0 && (
@@ -50,19 +47,13 @@ export function ChatViews({
   );
 }
 
-function ChatViewItem({
-  view, conversationId, onAction, onOpenFile,
-}: {
+function ChatViewItem({ view, conversationId }: {
   view: ChatViewSpec;
   conversationId: string;
-  onAction: (a: ChatAction) => void;
-  onOpenFile?: (path: string) => void;
 }) {
   switch (view.type) {
-    case 'chart':
-      return <ChartView spec={view} onAction={onAction} />;
-    case 'page':
-      return <PageView spec={view} onAction={onAction} onOpenFile={onOpenFile} />;
+    case 'insight':
+      return <InsightView spec={view} />;
     case 'checklist':
       return <ChecklistCard spec={view} conversationId={conversationId} />;
     // Hoisted OUT of the transcript: a pin and a progress row live on the shelf docked to
@@ -75,9 +66,9 @@ function ChatViewItem({
   }
 }
 
-/** A still-open `dream-view` fence hasn't closed yet — a large `page` payload can run
+/** A still-open `dream-view` or `dream-html` fence hasn't closed yet — either can run
  *  10-20KB and take seconds to stream, so this stands in for it rather than showing
- *  nothing (plan §1.1). Same dots-and-pill shape as `WorkingIndicator`'s `.chat-working`
+ *  nothing. Same dots-and-pill shape as `WorkingIndicator`'s `.chat-working`
  *  (`overlays.css`), duplicated locally so this file has no cross-file class dependency. */
 function PendingViewPill() {
   return (

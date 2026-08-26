@@ -1,0 +1,102 @@
+/* The `dream-html` block's HOST chrome — everything outside the sandbox.
+   Tokens only, so both themes are automatic; same convention as ChatViews.css.
+
+   THIS FILE USED TO BE ALMOST EMPTY, ON PURPOSE, AND THAT WAS WRONG. The argument was that
+   content which already knows how to present itself needs no frame around it. Seeing it in
+   the real transcript killed that: an unbounded block bleeds past the prose's measure with
+   no edge anywhere, so it reads as something that landed in the conversation rather than
+   something the answer contains — the owner's word for it was "emanet", borrowed. A rendered
+   artifact needs to look OWNED, and what makes it owned is a boundary, the transcript's own
+   measure, and its affordance living inside that boundary.
+
+   So the block is now a CARD, in the same family as the assistant bubble (`cards.css`) and
+   the view cards (`ChatViews.css`) — but deliberately one surface DOWN from both: it sits on
+   `--color-bg`, the page canvas, not `--color-bg-secondary`. That is not a detail. The kit's
+   own `.dc-card` / `.dc-stat` tiles inside are `--color-bg-secondary`, so a container at the
+   same tone would swallow them — the identical "toned chips sinking into the same grey"
+   mistake the Lab kit made and had to undo. A canvas under raised tiles keeps the depth the
+   agent drew. */
+
+.chat-htmlview {
+  position: relative;
+  align-self: stretch;
+  width: 100%;
+  /* The transcript's measure, so its left edge lines up with the prose above instead of
+     running wider than everything else in the column. */
+  max-width: var(--chat-line-width, 100%);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-sm);
+  /* Clips the frame to the rounded corners — without it the iframe paints square over them. */
+  overflow: hidden;
+}
+
+.chat-htmlview-frame {
+  width: 100%;
+  border: none;
+  display: block;
+  background: transparent;
+  /* The bridge reports the content's height, so the frame never scrolls on its own —
+     a nested scrollbar inside a transcript that already scrolls is a trap. In fullscreen
+     the frame is 100% of the overlay and the DOCUMENT inside it scrolls instead. */
+  overflow: hidden;
+  transition: height 120ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-htmlview-frame { transition: none; }
+}
+
+/* Always present, not hover-revealed. A control that only exists on hover is a control most
+   people never learn about, and this one is the door to presentation mode — the reason a
+   deck is worth writing at all. It rests quiet and comes forward on hover/focus. */
+.chat-htmlview-full-btn {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms ease-out, color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.chat-htmlview:hover .chat-htmlview-full-btn {
+  opacity: 1;
+}
+
+.chat-htmlview-full-btn:hover {
+  opacity: 1;
+  color: var(--color-text);
+  border-color: var(--color-border-hover);
+}
+
+.chat-htmlview-full-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.chat-htmlview-notice {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+/* The fullscreen mount: the frame fills the overlay body and the document inside it
+   scrolls, which is what makes `.dc-slide`'s viewport-height pages behave like slides. */
+.chat-htmlview-full {
+  width: 100%;
+  height: 100%;
+  padding: 0 clamp(16px, 6vw, 96px);
+}

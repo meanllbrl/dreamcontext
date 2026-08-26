@@ -201,18 +201,27 @@ function PivotTable({ set, rowDim, colDim, filter, prevSnapshot, showDeltas, sor
   );
 }
 
-function BreakdownView({ matrix, matrixHistory, fetchedAt, unit, full }: {
+function BreakdownView({ matrix, matrixHistory, fetchedAt, unit, full, pivot }: {
   matrix: MatrixCacheEntry;
   matrixHistory: MatrixSnapshot[] | undefined;
   fetchedAt: string;
   unit: string | null;
   full: boolean;
+  pivot?: ChartBodyProps['pivot'];
 }) {
   const { set } = matrix;
   // Dim swap (detail): pivot axes in declared order until the user flips them.
-  const [swapped, setSwapped] = useState(false);
+  // A caller may ask to START swapped — `pivot.rows` naming the SECOND declared dim is the
+  // only thing that can mean "put that on the rows axis", since the axes are the dims. An
+  // unrecognised name is ignored rather than erroring: it degrades to the declared order,
+  // which is a correct pivot, just not the requested one.
+  const [swapped, setSwapped] = useState(
+    () => !!pivot?.rows && set.dims.length > 1 && pivot.rows === set.dims[1].key,
+  );
   const [sort, setSort] = useState<{ col: string | null; dir: 'asc' | 'desc' } | null>(null);
-  const [filterValue, setFilterValue] = useState<string | null>(null);
+  const [filterValue, setFilterValue] = useState<string | null>(
+    () => (set.dims[2] && pivot?.filter ? pivot.filter[set.dims[2].key] ?? null : null),
+  );
   const [copied, setCopied] = useState(false);
 
   const effectiveUnit = set.unit ?? unit;
@@ -311,7 +320,7 @@ function BreakdownView({ matrix, matrixHistory, fetchedAt, unit, full }: {
 
 /** Registry body (`breakdown`). Chips/sort/copy are the body's own affordances,
  *  so it swallows clicks that would otherwise open the card's detail panel. */
-export function BreakdownBody({ summary, cache, series, full = false, emptyHint }: ChartBodyProps) {
+export function BreakdownBody({ summary, cache, series, full = false, emptyHint, pivot }: ChartBodyProps) {
   if (!cache?.matrix) {
     // Legacy Series[] under render:breakdown — the funnel card's fallback idiom.
     const rows = toBarRows(series);
@@ -326,6 +335,7 @@ export function BreakdownBody({ summary, cache, series, full = false, emptyHint 
         fetchedAt={cache.fetchedAt}
         unit={summary.unit}
         full={full}
+        pivot={pivot}
       />
     </div>
   );

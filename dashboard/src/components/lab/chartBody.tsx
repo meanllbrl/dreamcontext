@@ -19,6 +19,14 @@ export interface ChartBodyProps {
   full?: boolean;
   /** The registry's per-render copy for the no-data state. */
   emptyHint?: string;
+  /**
+   * An OPENING view a caller wants this body to start from, when the body has axes to
+   * choose (today: `breakdown`). Purely initial state — the body's own controls stay live
+   * and win from the first interaction, and nothing here is written back to the insight's
+   * stored tweaks. Added for the Chat surface's `{"type":"insight"}` block, which composes
+   * an existing insight the way a report item does and must never re-configure it.
+   */
+  pivot?: { rows?: string; cols?: string; filter?: Record<string, string> };
 }
 
 /** The shared "nothing to draw" body — one idiom across every render. */

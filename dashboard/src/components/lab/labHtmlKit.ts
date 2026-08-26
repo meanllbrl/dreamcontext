@@ -1,3 +1,5 @@
+import { SANDBOX_CSP, SANDBOX_GRANT, resolveTokens, buildSandboxSrcdoc } from '../../lib/sandboxHtml';
+
 /** The kit, embedded as a TS string so it survives every toolchain (vitest
  *  stubs `.css?raw` imports to empty). `lab-html-kit.css` next to this file
  *  is the SAME text — the reference copy script authors read — and
@@ -23,11 +25,10 @@ export const LAB_HTML_KIT_CSS = "/**\n * lab-html-kit.css — the curated class 
  * iframe never needs the network.
  */
 
-export const HTML_KIT_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'";
+export const HTML_KIT_CSP = SANDBOX_CSP;
 
 /** The sandbox grant — scripts yes, same-origin NEVER (that would void the CSP). */
-export const HTML_KIT_SANDBOX = 'allow-scripts';
+export const HTML_KIT_SANDBOX = SANDBOX_GRANT;
 
 /** The design tokens resolved into the srcdoc — the full kit surface: charts,
  *  surfaces/text/borders, status, spacing, typography, radii. */
@@ -49,13 +50,7 @@ export const HTML_KIT_TOKENS: readonly string[] = [
 
 /** Read the current computed value of every kit token off the live document. */
 export function resolveKitTokens(): Record<string, string> {
-  const styles = getComputedStyle(document.documentElement);
-  const out: Record<string, string> = {};
-  for (const token of HTML_KIT_TOKENS) {
-    const value = styles.getPropertyValue(token).trim();
-    if (value) out[token] = value;
-  }
-  return out;
+  return resolveTokens(HTML_KIT_TOKENS);
 }
 
 /** The complete srcdoc: CSP meta FIRST, resolved tokens, kit, then the body.
@@ -68,17 +63,5 @@ export function buildSrcdoc(
   tokens: Record<string, string>,
   scheme: 'light' | 'dark' = 'light',
 ): string {
-  const rootVars = Object.entries(tokens)
-    .map(([token, value]) => `${token}: ${value};`)
-    .join(' ');
-  return [
-    '<!doctype html><html><head>',
-    `<meta http-equiv="Content-Security-Policy" content="${HTML_KIT_CSP}">`,
-    '<meta charset="utf-8">',
-    `<style>:root { color-scheme: ${scheme}; ${rootVars} }</style>`,
-    `<style>${LAB_HTML_KIT_CSS}</style>`,
-    '</head><body>',
-    html,
-    '</body></html>',
-  ].join('\n');
+  return buildSandboxSrcdoc({ html, css: LAB_HTML_KIT_CSS, tokens, scheme });
 }

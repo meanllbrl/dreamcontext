@@ -11,7 +11,7 @@
  *     is only correct while it names the shapes the client actually parses.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -235,8 +235,47 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * the rule above: the shelf paragraph was rewritten from 1020 characters to 734 in the same
    * edit — the update sentence and "pin what only you know" were folded into the new one
    * rather than left to say the same thing twice. The 4600 covers 4499 actual.
+   *
+   * Raised 4600 → 8000 on 2026-08-26, and this one is a STEP CHANGE rather than another
+   * capability's rent, so it deserves more than a line. The typed `chart` and `page` payloads
+   * retired that day and `dream-html` replaced them: the agent now AUTHORS the presentation
+   * instead of naming a widget the app validates. That moved two things into this file that
+   * had lived in code. The `dc-` CLASS VOCABULARY (~1.2KB) is one — it is the schema now, and
+   * an agent that has to guess class names emits unstyled markup, which is precisely the
+   * broken promise the lockstep rule forbids; it is no more prose than a fenced example is.
+   * The STEERING (~0.9KB: draw complex structure, render a decision's options rather than
+   * describing them) is the other, and it is the owner's actual ask — "düz ve uzun yazıları
+   * okumak yoruyor", "iki tasarım arasında seçim yaptıracaksa iki html göstersin" — which no
+   * validator can enforce from the client side. Retiring chart/page paid back ~700 characters
+   * and two trim passes took the draft from 8035 to 7512 before this number moved. The 8000
+   * covers 7512 actual. The rule above is unchanged and now matters more: compress prose
+   * before raising this again, and if the class list is what grows, ask first whether the KIT
+   * should shrink.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(4600);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(8000);
+  });
+
+  /**
+   * The class list in the briefing IS the schema an agent writes against, so a name that the
+   * kit doesn't define is a promise the render breaks — the agent writes `dc-timeline`,
+   * the iframe draws an unstyled div, and nothing anywhere fails. Pinned by parsing both
+   * sides: every `dc-` token the briefing names must appear as a selector in the kit CSS.
+   */
+  it('names no dc- class the kit does not define', () => {
+    const kit = readFileSync(
+      join(new URL('../../', import.meta.url).pathname,
+        'dashboard/src/components/sleepy/chat/chat-html-kit.css'), 'utf-8');
+    // `dc-f1..8` in the briefing is shorthand for the eight numbered classes; expand it the
+    // same way a reader would before checking each one exists.
+    const expanded = CHAT_SURFACE_BRIEFING.replace(
+      /dc-([fs]|bg)1\.\.8/g,
+      (_m, p: string) => Array.from({ length: 8 }, (_x, i) => `dc-${p}${i + 1}`).join(' '),
+    );
+    const named = new Set(expanded.match(/dc-[a-z0-9]+(?:-[a-z0-9]+)*(?:--[a-z]+)?/g) ?? []);
+    // `dc-mode` is the host's data attribute, not a class the agent writes.
+    named.delete('dc-mode');
+    const missing = [...named].filter((cls) => !kit.includes(`.${cls}`));
+    expect(missing, `briefing names dc- classes the kit does not define: ${missing.join(', ')}`).toEqual([]);
   });
 });

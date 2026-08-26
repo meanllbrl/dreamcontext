@@ -682,6 +682,7 @@ All flags are optional (medium priority/urgency, todo status by default), so eve
 - **Date ranges**: start must be on or before due; setting any date removes the `backlog` tag, and the first move to `in_progress` auto-stamps `start_date` if unset. Dates render in Timeline/Calendar and sync natively to both remote backends.
 - **Version folding**: `tasks version` folds against `RELEASES.json`, so a lowercased round-trip or a typed `s5` resolves to the canonical spelling instead of minting a near-duplicate version string.
 - **Custom fields**: declare them in `_dream_context/overrides/task.md` (`text` / `number` / `select` / `date`); values validate against the schema and sync to both backends. Absent the override file, tasks behave exactly as the defaults.
+- **Chat HTML kit branding**: the desktop Chat view renders the agent's own HTML inline, in a network-less sandbox styled by dreamcontext's class kit. Drop a `_dream_context/overrides/chat-html-kit.css` in the project to make it yours — it is loaded *after* the base kit, so redefining a token (`:root { --color-accent: #… }`) or a `dc-` class is all it takes, and the agent keeps writing the same classes. Absent the file, the base kit is used unchanged.
 
 ### Roadmap (objectives — the OKR board)
 

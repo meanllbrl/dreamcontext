@@ -116,6 +116,7 @@ import {
   handleLearningDisable,
 } from './routes/theses.js';
 import { handleBoardGet, handleBoardSharedPut, handleBoardLocalPut } from './routes/board.js';
+import { handleChatHtmlKitGet } from './routes/chat-html-kit.js';
 import {
   handleSleepyChatSend,
   handleSleepyChatStream,
@@ -537,6 +538,10 @@ export function buildRouter(): Router {
   //   shared → overrides/board.json (version-controlled, "save for all")
   //   local  → state/board.local.json (git-ignored, "save for yourself")
   router.get('/api/board', handleBoardGet);
+
+  // The Chat `dream-html` kit's optional per-vault brand override. Read-only by design —
+  // see the route module for why there is deliberately no write path.
+  router.get('/api/chat/html-kit', handleChatHtmlKitGet);
   router.put('/api/board/shared', handleBoardSharedPut);
   router.put('/api/board/local', handleBoardLocalPut);
 

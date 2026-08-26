@@ -145,7 +145,7 @@ describe('parseChatActions — boards', () => {
 describe('parseChatActions — empty input', () => {
   it('returns empties for an empty message rather than throwing', () => {
     expect(parseChatActions('')).toEqual({
-      body: '', actions: [], boards: [], views: [], notices: [], pendingView: false,
+      body: '', actions: [], boards: [], blocks: [], views: [], notices: [], pendingView: false,
     });
   });
 });

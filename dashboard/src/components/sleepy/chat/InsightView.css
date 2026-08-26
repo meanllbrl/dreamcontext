@@ -1,0 +1,83 @@
+/* The `{"type":"insight"}` card's HOST chrome. Tokens only, both themes automatic —
+   same convention as ChatViews.css.
+
+   Intentionally quieter than the board's own card: this is a figure quoted inside an
+   answer, not a tile on a dashboard. It carries the title, the body the registry draws,
+   and the as-of stamp — and nothing clickable, because a chat block composes an insight
+   rather than owning it. */
+
+.chat-insightcard {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-insightcard-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chat-insightcard-title {
+  font-family: var(--font-family-display);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-insightcard-unit {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.chat-insightcard-body { min-width: 0; }
+
+.chat-insightcard-foot {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+}
+
+/* Never synced / renamed / removed — an honest state, styled as information rather than
+   as a failure of the answer around it. */
+.chat-insightcard--missing {
+  border-color: color-mix(in srgb, var(--color-warning) 40%, var(--color-border));
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-bg-secondary));
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.chat-insightcard--missing code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.chat-insightcard-skeleton {
+  height: 76px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-tertiary) 25%,
+    var(--color-bg-elevated) 37%,
+    var(--color-bg-tertiary) 63%
+  );
+  background-size: 400% 100%;
+  animation: chat-insight-shimmer 1.4s ease infinite;
+}
+
+@keyframes chat-insight-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-insightcard-skeleton { animation: none; }
+}

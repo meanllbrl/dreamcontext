@@ -182,11 +182,11 @@ function AssistantMessage({
   const [confirming, setConfirming] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
-  // What the answer asked the view to render (buttons, boards, charts/pages/checklists)
-  // versus what it asked it to READ. Re-derived per token while streaming —
-  // parseChatActions is pure and cheap, and hides a half-written fence rather than
-  // flashing raw JSON.
-  const { body, actions, boards, views, notices, pendingView } = useMemo(
+  // What the answer asked the view to render (buttons, boards, rendered HTML, insight
+  // cards, checklists) versus what it asked it to READ. Re-derived per token while
+  // streaming — parseChatActions is pure and cheap, and hides a half-written fence rather
+  // than flashing raw markup.
+  const { body, actions, boards, blocks, notices, pendingView } = useMemo(
     () => parseChatActions(item.text), [item.text],
   );
 
@@ -204,7 +204,7 @@ function AssistantMessage({
   // degradation contract requires every drop to stay visible, never silently vanish with
   // the rest of an otherwise-empty message.
   if (!item.text && item.done) return null;
-  if (item.done && !body && !actions.length && !boards.length && !views.length && !notices.length && !pendingView) {
+  if (item.done && !body && !actions.length && !boards.length && !blocks.length && !notices.length && !pendingView) {
     return null;
   }
 
@@ -216,12 +216,10 @@ function AssistantMessage({
       </div>
       {onAction && conversationId && (
         <ChatViews
-          views={views}
+          blocks={blocks}
           notices={notices}
           pendingView={pendingView}
           conversationId={conversationId}
-          onAction={onAction}
-          onOpenFile={onOpenFile}
         />
       )}
       {/* Drawn, not linked: the board the answer just made, in the conversation. Only once
