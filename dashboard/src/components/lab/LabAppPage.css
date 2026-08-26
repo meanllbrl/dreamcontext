@@ -1,0 +1,171 @@
+/* LabAppPage — the routed `app/v1` insight page. Self-contained (does not
+   reach into FunnelOverviewPage.css's classes, even though the visual intent
+   mirrors it — that file belongs to a different task). */
+
+.lab-app-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+
+.lab-app-page-state {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  padding: var(--space-4) 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.lab-app-page-state--error {
+  color: var(--color-error);
+}
+
+.lab-app-page-syncbtn {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border-radius: var(--radius-md);
+  padding: 4px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.lab-app-page-syncbtn:hover { border-color: var(--color-border-hover); }
+.lab-app-page-syncbtn:disabled { opacity: 0.6; cursor: default; }
+
+/* ── Breadcrumb ── */
+
+.lab-app-crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.lab-app-crumb-link {
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+}
+.lab-app-crumb-link:hover { text-decoration: underline; }
+
+.lab-app-crumb-sep { color: var(--color-text-tertiary); }
+
+.lab-app-crumb-here {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* ── Toolbar ── */
+
+.lab-app-page-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.lab-app-page-toolbar-spacer { flex: 1; }
+
+.lab-app-page-action {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border-radius: var(--radius-md);
+  padding: 4px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.lab-app-page-action:hover { border-color: var(--color-border-hover); }
+.lab-app-page-action:disabled { opacity: 0.6; cursor: default; }
+
+/* ── Page tabs ── */
+
+.lab-app-page-tabs {
+  display: flex;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.lab-app-page-tab {
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 4px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.lab-app-page-tab:hover { color: var(--color-text); }
+.lab-app-page-tab--active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+/* ── Body (page mode: content-driven height, the frame reports its own). ── */
+
+.lab-app-page-body {
+  min-width: 0;
+}
+
+/* ── Full screen — URL-driven (`?fs=1`), NOT the native Fullscreen API: a
+   plain fixed overlay so it deep-links, survives reload, and is
+   Playwright-drivable. Level with the app's own full-window viewers
+   (PDF/image at z-index 1200) rather than a modal dialog. ── */
+
+.lab-app-page--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: var(--color-bg);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.lab-app-page-fs-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.lab-app-page-fs-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-app-page-fs-exit {
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border-radius: var(--radius-md);
+  padding: 4px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.lab-app-page-fs-exit:hover { border-color: var(--color-border-hover); }
+
+.lab-app-page-fs-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}

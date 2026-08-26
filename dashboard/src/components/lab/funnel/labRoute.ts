@@ -5,14 +5,19 @@ import { emitInstance, useInstanceEvent, useVault } from '../../../context/Vault
  * Multi-page insight routing (A2) — the minimal contract a render kind can
  * adopt to get routed pages instead of a slide-over:
  *
- *   /lab/<slug>                → the insight's page 1 (funnel: overview table)
- *   /lab/<slug>/f/<funnelId>   → page 2 (funnel: detail lane)
+ *   /lab/<slug>                → the insight's page 1 (funnel: overview table; app: entry page)
+ *   /lab/<slug>/f/<funnelId>   → funnel's page 2 (detail lane)
+ *   /lab/<slug>/p/<pageId>     → an app/v1 insight's routed page
  *
  * The Lab board card is page 1's entry. View state (filters, breakdown,
  * compare, arcs, sort — see funnelModel's view-state codecs) rides the QUERY
  * STRING so `?vault=` and `?page=` survive untouched; back/forward work via
- * real history entries + popstate. `funnel` is the only adopter today — a
- * future table/cohort-grid insight reuses this module, not a new framework.
+ * real history entries + popstate. `funnel` and `app` are the routed renders
+ * today (`chartRegistry`'s `routed: true`) — a future routed render reuses
+ * this module's `/lab/<slug>` + a sub-segment of its own, not a new framework.
+ * An `app/v1` page's own in-page params ride the query string too, under the
+ * `p.` namespace (see `pushLabAppPath`/`readAppParams`) — chosen precisely so
+ * they can never collide with `vault`/`page`/`from`/`to`/`range`/`cols`/`fs`.
  *
  * ONE ADDRESS BAR, N LIVE PROJECTS. A window now holds several projects at once (the chip
  * strip), and there is still exactly one URL. So the address bar is an owned resource: the
@@ -25,6 +30,10 @@ import { emitInstance, useInstanceEvent, useVault } from '../../../context/Vault
 export interface LabRoute {
   slug: string | null;
   funnelId: string | null;
+  /** `/lab/<slug>/p/<pageId>` — an `app/v1` insight's routed page (A2's `/f/`
+   *  grammar sibling). Mutually exclusive with `funnelId` — the path grammar
+   *  only ever matches one of `f`/`p` per URL. */
+  pageId: string | null;
   /** `/lab/reports/<slug>` — the My Reports page. `reports` is a reserved
    *  first segment (the API reserves it identically), never an insight slug. */
   report: string | null;
@@ -105,7 +114,7 @@ function commit(target: string, mode: 'push' | 'replace', bus: EventTarget | und
 }
 
 export function parseLabPath(pathname: string): LabRoute {
-  const none: LabRoute = { slug: null, funnelId: null, report: null };
+  const none: LabRoute = { slug: null, funnelId: null, pageId: null, report: null };
   const report = /^\/lab\/reports\/([^/]+)\/?$/.exec(pathname);
   if (report) {
     try {
@@ -114,10 +123,19 @@ export function parseLabPath(pathname: string): LabRoute {
       return none;
     }
   }
-  const m = /^\/lab\/([^/]+)(?:\/f\/([^/]+))?\/?$/.exec(pathname);
+  // Group 2 is the segment kind (`f` funnel detail, `p` app page) — mutually
+  // exclusive by construction, so at most one of funnelId/pageId is ever set.
+  const m = /^\/lab\/([^/]+)(?:\/(f|p)\/([^/]+))?\/?$/.exec(pathname);
   if (!m || m[1] === 'reports') return none;
   try {
-    return { ...none, slug: decodeURIComponent(m[1]), funnelId: m[2] ? decodeURIComponent(m[2]) : null };
+    const slug = decodeURIComponent(m[1]);
+    const subId = m[3] ? decodeURIComponent(m[3]) : null;
+    return {
+      ...none,
+      slug,
+      funnelId: m[2] === 'f' ? subId : null,
+      pageId: m[2] === 'p' ? subId : null,
+    };
   } catch {
     return none;
   }
@@ -127,6 +145,16 @@ export function labPath(slug: string | null, funnelId: string | null): string {
   if (!slug) return '/';
   return funnelId
     ? `/lab/${encodeURIComponent(slug)}/f/${encodeURIComponent(funnelId)}`
+    : `/lab/${encodeURIComponent(slug)}`;
+}
+
+/** The `app/v1` sibling of {@link labPath} — `/lab/<slug>` (no page, or the
+ *  entry page) vs `/lab/<slug>/p/<pageId>`. Kept as a separate builder rather
+ *  than overloading `labPath`'s `f`/`p` choice implicitly: a caller should
+ *  never be able to ask for a funnel URL and an app URL out of one call. */
+export function labAppPath(slug: string, pageId: string | null): string {
+  return pageId
+    ? `/lab/${encodeURIComponent(slug)}/p/${encodeURIComponent(pageId)}`
     : `/lab/${encodeURIComponent(slug)}`;
 }
 
@@ -149,6 +177,141 @@ export function pushLabReportPath(slug: string, bus?: EventTarget): void {
  */
 export function pushLabPath(slug: string | null, funnelId: string | null, bus?: EventTarget): void {
   commit(labPath(slug, funnelId) + splitTarget(currentTarget(bus)).search, 'push', bus);
+}
+
+// ─── app/v1 navigate params (S2) ────────────────────────────────────────────
+//
+// A `lab.navigate(pageId, params)` call from inside a script-authored app body
+// is untrusted-body input that can reach the REAL, shareable browser URL (via
+// pushLabAppPath below and Copy-link reading it back). Every other
+// author-controlled surface in this contract has a cap; params gets one too,
+// enforced in exactly this one place so nothing downstream can round-trip an
+// unsanitized value into history.
+
+const APP_PARAM_MAX_COUNT = 8;
+const APP_PARAM_KEY_RE = /^[a-z0-9_-]{1,24}$/;
+const APP_PARAM_MAX_VALUE_CHARS = 64;
+/** A cheap proxy for "serialized size" — the sum of raw key+value characters,
+ *  not `URLSearchParams#toString()`'s percent-encoded length. The cap exists
+ *  to bound a covert-channel payload, not to predict the exact URL byte
+ *  count, so the simpler measure is the right one. */
+const APP_PARAM_MAX_TOTAL_CHARS = 256;
+
+function warnDroppedParam(key: string, reason: string): void {
+  console.warn(`[lab-app] navigate params: dropped "${key}" — ${reason}.`);
+}
+
+/**
+ * Cap an app body's `lab.navigate(pageId, params)` payload before it can ever
+ * reach the URL. PURE and browser-free (no `window`/DOM) so it is directly
+ * unit-testable; the one side effect is `console.warn`, which the contract
+ * requires ("every drop emits one console.warn naming the key") and which
+ * does not affect the return value for a given input.
+ *
+ * Rules, in order: keep only keys matching `[a-z0-9_-]{1,24}`; drop any value
+ * over 64 chars (after `String()`) — NEVER truncate, since a truncated value
+ * is a silently wrong view, not a safe one; cap the count at 8, keeping the
+ * first 8 in key-sorted order for a deterministic result; then, if the total
+ * is still over budget, drop from the end of that sorted, count-capped list
+ * until it fits.
+ */
+export function sanitizeAppParams(raw: unknown): { params: Record<string, string>; dropped: string[] } {
+  const dropped: string[] = [];
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return { params: {}, dropped };
+  }
+
+  const candidates: { key: string; value: string }[] = [];
+  for (const [key, rawValue] of Object.entries(raw as Record<string, unknown>)) {
+    if (!APP_PARAM_KEY_RE.test(key)) {
+      dropped.push(key);
+      warnDroppedParam(key, 'key must match /^[a-z0-9_-]{1,24}$/');
+      continue;
+    }
+    const value = String(rawValue);
+    if (value.length > APP_PARAM_MAX_VALUE_CHARS) {
+      dropped.push(key);
+      warnDroppedParam(key, `value is ${value.length} chars — over the ${APP_PARAM_MAX_VALUE_CHARS}-char cap`);
+      continue;
+    }
+    candidates.push({ key, value });
+  }
+
+  // Deterministic count cap: key-sorted, keep the first 8.
+  candidates.sort((a, b) => a.key.localeCompare(b.key));
+  const kept = candidates.slice(0, APP_PARAM_MAX_COUNT);
+  for (const extra of candidates.slice(APP_PARAM_MAX_COUNT)) {
+    dropped.push(extra.key);
+    warnDroppedParam(extra.key, `over the ${APP_PARAM_MAX_COUNT}-param cap`);
+  }
+
+  // Total-size cap: trim from the end of the surviving, sorted list.
+  let total = kept.reduce((sum, { key, value }) => sum + key.length + value.length, 0);
+  while (total > APP_PARAM_MAX_TOTAL_CHARS && kept.length > 0) {
+    const removed = kept.pop()!;
+    total -= removed.key.length + removed.value.length;
+    dropped.push(removed.key);
+    warnDroppedParam(removed.key, `total navigate params exceed the ${APP_PARAM_MAX_TOTAL_CHARS}-char cap`);
+  }
+
+  const params: Record<string, string> = {};
+  for (const { key, value } of kept) params[key] = value;
+  return { params, dropped };
+}
+
+/**
+ * Push a page/params change for an `app/v1` insight — the SOLE writer of the
+ * `p.`-namespaced query params (never colliding with `vault`/`page`/`from`/
+ * `to`/`range`/`cols`/`fs`). Params are capped by {@link sanitizeAppParams}
+ * before they can reach the URL; a stale page's params are cleared, not
+ * merged, so switching pages never leaks the outgoing page's `p.*` keys into
+ * the incoming one.
+ *
+ * `bus` has no click-driven exemption here (contrast `pushLabPath`): a
+ * `lab.navigate()` call arrives over `postMessage`, which is exactly the "an
+ * effect, a timer, a message" case the module doc above requires a bus for —
+ * the caller (`LabAppPage`) always has one via `useVault()`.
+ */
+export function pushLabAppPath(
+  slug: string,
+  pageId: string | null,
+  params: Record<string, string>,
+  bus?: EventTarget,
+): void {
+  const { params: safeParams } = sanitizeAppParams(params);
+  const current = new URLSearchParams(splitTarget(currentTarget(bus)).search);
+  for (const key of [...current.keys()]) {
+    if (key.startsWith('p.')) current.delete(key);
+  }
+  for (const [key, value] of Object.entries(safeParams)) current.set(`p.${key}`, value);
+  const search = current.toString();
+  commit(labAppPath(slug, pageId) + (search ? `?${search}` : ''), 'push', bus);
+}
+
+/**
+ * The inverse of {@link pushLabAppPath}'s write: strip the `p.` namespace
+ * back off the live query string into the plain params an `app/v1` page
+ * hands `<LabAppFrame>` — run back through {@link sanitizeAppParams} first.
+ *
+ * This is NOT redundant with `pushLabAppPath`'s own sanitizing. That call
+ * only caps params THIS instance wrote via `lab.navigate()`; a URL can also
+ * arrive hand-typed, bookmarked, or shared by someone else, never touching
+ * `pushLabAppPath` at all. Without sanitizing here too, an over-cap `p.*`
+ * query string would reach `window.__LAB_APP__` verbatim (and, via
+ * `currentDeepLink`, get echoed straight back out through Copy-link) — the
+ * cap held for exactly one arrival path and no others. The cap is a property
+ * of what reaches the app, not of one code path, so both directions enforce
+ * it. Returns `dropped` too, so a caller can tell an over-cap URL apart from
+ * a clean one and rewrite the address bar to match what the app actually
+ * received (see `LabAppPage`'s normalize effect — `readAppParams` itself
+ * stays pure/browser-free, same as `sanitizeAppParams`).
+ */
+export function readAppParams(params: URLSearchParams): { params: Record<string, string>; dropped: string[] } {
+  const raw: Record<string, string> = {};
+  for (const [key, value] of params.entries()) {
+    if (key.startsWith('p.')) raw[key.slice(2)] = value;
+  }
+  return sanitizeAppParams(raw);
 }
 
 /** Replace the current query string (view-state edits don't spam history). */

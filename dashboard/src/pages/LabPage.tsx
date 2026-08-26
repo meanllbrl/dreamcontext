@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { LabBoard } from '../components/lab/LabBoard';
-import { FunnelOverviewPage } from '../components/lab/funnel/FunnelOverviewPage';
 import { FunnelDetailPage } from '../components/lab/funnel/FunnelDetailPage';
+import { LabAppPage } from '../components/lab/LabAppPage';
+import { LabRoutedInsight } from '../components/lab/LabRoutedInsight';
 import { ReportPage } from '../components/lab/reports/ReportPage';
 import {
   clearLabPath,
@@ -21,9 +22,12 @@ interface LabPageProps {
 
 /**
  * Lab — the analytics-insights dashboard page. The board is the default view;
- * multi-page insights (today: `render: funnel`) route to `/lab/<slug>` and
- * `/lab/<slug>/f/<funnelId>` with real history entries, so back/forward and
- * deep links work. Strictly self-contained; no reach into Roadmap.
+ * multi-page insights (`render: funnel` and `render: app`) route to
+ * `/lab/<slug>` and a render-specific sub-segment (`/f/<funnelId>` for
+ * funnel, `/p/<pageId>` for app) with real history entries, so back/forward
+ * and deep links work. A bare `/lab/<slug>` dispatches by the insight's
+ * actual render (`LabRoutedInsight`) rather than assuming funnel. Strictly
+ * self-contained; no reach into Roadmap.
  */
 export function LabPage({ focus }: LabPageProps = {}) {
   const { bus, isActive } = useVault();
@@ -80,9 +84,19 @@ export function LabPage({ focus }: LabPageProps = {}) {
         onToast={setToast}
       />
     );
+  } else if (route.slug && route.pageId) {
+    content = (
+      <LabAppPage
+        key={route.slug}
+        slug={route.slug}
+        pageId={route.pageId}
+        onBack={() => pushLabPath(null, null, bus)}
+        onToast={setToast}
+      />
+    );
   } else if (route.slug) {
     content = (
-      <FunnelOverviewPage
+      <LabRoutedInsight
         slug={route.slug}
         onBack={() => pushLabPath(null, null, bus)}
         onToast={setToast}

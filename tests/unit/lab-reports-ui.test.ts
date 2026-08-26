@@ -18,12 +18,20 @@ const DASH = join(import.meta.dirname, '../../dashboard/src');
 
 describe('report routing (B3)', () => {
   it('parses /lab/reports/<slug> as a report — never as an insight named "reports"', () => {
-    expect(parseLabPath('/lab/reports/daily')).toEqual({ slug: null, funnelId: null, report: 'daily' });
-    expect(parseLabPath('/lab/reports/daily/')).toEqual({ slug: null, funnelId: null, report: 'daily' });
-    expect(parseLabPath('/lab/reports')).toEqual({ slug: null, funnelId: null, report: null });
-    expect(parseLabPath('/lab/wau')).toEqual({ slug: 'wau', funnelId: null, report: null });
-    expect(parseLabPath('/lab/wau/f/516')).toEqual({ slug: 'wau', funnelId: '516', report: null });
-    expect(parseLabPath('/')).toEqual({ slug: null, funnelId: null, report: null });
+    expect(parseLabPath('/lab/reports/daily')).toEqual({ slug: null, funnelId: null, pageId: null, report: 'daily' });
+    expect(parseLabPath('/lab/reports/daily/')).toEqual({ slug: null, funnelId: null, pageId: null, report: 'daily' });
+    expect(parseLabPath('/lab/reports')).toEqual({ slug: null, funnelId: null, pageId: null, report: null });
+    expect(parseLabPath('/lab/wau')).toEqual({ slug: 'wau', funnelId: null, pageId: null, report: null });
+    expect(parseLabPath('/lab/wau/f/516')).toEqual({ slug: 'wau', funnelId: '516', pageId: null, report: null });
+    expect(parseLabPath('/')).toEqual({ slug: null, funnelId: null, pageId: null, report: null });
+  });
+
+  it('parses /lab/<slug>/p/<pageId> as an app/v1 routed page — never as a funnel detail', () => {
+    expect(parseLabPath('/lab/onboarding/p/steps')).toEqual({ slug: 'onboarding', funnelId: null, pageId: 'steps', report: null });
+    expect(parseLabPath('/lab/onboarding/p/steps/')).toEqual({ slug: 'onboarding', funnelId: null, pageId: 'steps', report: null });
+    // funnelId and pageId are mutually exclusive by construction.
+    expect(parseLabPath('/lab/wau/f/516').pageId).toBeNull();
+    expect(parseLabPath('/lab/onboarding/p/steps').funnelId).toBeNull();
   });
 
   it('labReportPath builds the encoded path', () => {
