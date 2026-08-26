@@ -112,6 +112,26 @@ export function LabBoard({ focus }: LabBoardProps = {}) {
   const { data: syncJob } = useLabSyncJob();
   const { data: reports } = useLabReports();
   const [reportsOpen, setReportsOpen] = useState(false);
+  const reportsRef = useRef<HTMLDivElement | null>(null);
+
+  // The menu closes on outside-click or Escape — the idiom a real mouse can
+  // live with (a mouseleave-close died the moment the pointer crossed the gap
+  // between the trigger and the panel).
+  useEffect(() => {
+    if (!reportsOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (reportsRef.current && !reportsRef.current.contains(e.target as Node)) setReportsOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setReportsOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [reportsOpen]);
   const startSyncAll = useStartLabSyncJob();
   const queryClient = useQueryClient();
   const { prefs, toggleCollapsed, setGroupOrder, setCategory, setCategoryOrder } = useLabPrefs();
@@ -342,21 +362,28 @@ export function LabBoard({ focus }: LabBoardProps = {}) {
             ))}
           </nav>
         )}
-        {/* My Reports — the routed report pages' entry. Only when reports exist
-            (created via `dreamcontext lab report create`); an empty menu would
-            just be furniture. */}
+        {/* My Reports — the routed report pages' entry, docked in the toolbar's
+            RIGHT cluster next to Sync all. Only when reports exist (created via
+            `dreamcontext lab report create`); an empty menu would just be
+            furniture. Click-toggled, closed by outside-click/Escape — NEVER by
+            mouseleave: the pointer crossing the 4px gap between trigger and
+            panel was closing the menu before a real mouse could reach it. */}
         {(reports?.length ?? 0) > 0 && (
-          <div className="lab-board-reports" onMouseLeave={() => setReportsOpen(false)}>
+          <div className="lab-board-reports" ref={reportsRef}>
             <button
               className="lab-board-reports-toggle"
               onClick={() => setReportsOpen((v) => !v)}
+              aria-haspopup="menu"
               aria-expanded={reportsOpen}
               title="Open a report — a composed, date-navigable view over these insights"
             >
-              Reports ▾
+              <span className="lab-board-reports-toggle-glyph" aria-hidden>▤</span>
+              Reports
+              <span className="lab-board-reports-count">{reports!.length}</span>
             </button>
             {reportsOpen && (
               <div className="lab-board-reports-menu" role="menu">
+                <div className="lab-board-reports-head">My Reports</div>
                 {reports!.map((r) => (
                   <button
                     key={r.slug}
@@ -366,7 +393,9 @@ export function LabBoard({ focus }: LabBoardProps = {}) {
                     title={r.description ?? undefined}
                   >
                     <span className="lab-board-reports-item-title">{r.title}</span>
-                    <span className="lab-board-reports-item-meta">{r.items} insight(s)</span>
+                    <span className="lab-board-reports-item-meta">
+                      {r.items} insight(s){r.date_nav !== 'none' ? ` · ${r.date_nav}` : ''}
+                    </span>
                   </button>
                 ))}
               </div>

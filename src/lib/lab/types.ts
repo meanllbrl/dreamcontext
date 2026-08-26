@@ -40,8 +40,10 @@ export type Granularity = 'daily' | 'weekly' | 'monthly';
  *  the dashboard's chart registry (mirrored + drift-tested) all derive from it.
  *  Adding a render = one entry here + one component + one registry entry.
  *
- *  All of them read the same cached `Series[]`; `funnel` is the one multi-page
- *  render (its card routes to `/lab/<slug>` overview + `/lab/<slug>/f/<id>`). */
+ *  All of them read the cached `Series[]` (`funnel` and `breakdown` read their
+ *  own typed cache entries — `cache.funnel` / `cache.matrix` — with the series
+ *  as synthesized fallback); `funnel` is the one multi-page render (its card
+ *  routes to `/lab/<slug>` overview + `/lab/<slug>/f/<id>`). */
 export const RENDERS = [
   'number',
   'line',

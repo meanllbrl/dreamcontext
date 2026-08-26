@@ -161,6 +161,14 @@ describe('the sandboxed iframe (security pins — C5 unit half)', () => {
     expect(doc).toContain('<div class="lk-value">42</div>');
   });
 
+  it('buildSrcdoc declares the embedding theme as the document color-scheme', () => {
+    // A scheme MISMATCH makes Chromium paint an opaque white canvas behind the
+    // transparent body — under the dark theme that is a white slab with
+    // near-white text. The srcdoc must say which scheme it belongs to.
+    expect(buildSrcdoc('<b>x</b>', {}, 'dark')).toContain('color-scheme: dark;');
+    expect(buildSrcdoc('<b>x</b>', {})).toContain('color-scheme: light;'); // safe default
+  });
+
   it('HtmlInsightBody mounts the iframe with exactly the pinned grant', () => {
     const source = readFileSync(join(DASH, 'HtmlInsightBody.tsx'), 'utf-8');
     // The sandbox attribute must be the pinned constant — a literal here could
