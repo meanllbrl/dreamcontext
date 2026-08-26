@@ -28,6 +28,13 @@ import {
 import { resolveTweaks } from '../../src/lib/lab/tweaks.js';
 import { LabError } from '../../src/lib/lab/types.js';
 import { handleLabTweaks } from '../../src/server/routes/lab.js';
+import {
+  DEFAULT_RANGE_PRESETS,
+  ENGINE_FALLBACK_RANGE,
+  activeRange,
+  fallbackPreset,
+} from '../../dashboard/src/components/lab/rangeModel.js';
+import type { PublicTweak } from '../../dashboard/src/hooks/useLab.js';
 
 let root: string;
 
@@ -51,6 +58,19 @@ function writeManifest(slug: string, tweaksYaml: string): void {
 
 function tweakOf(slug: string, key: string) {
   return getInsight(root, slug)!.tweaks.find((t) => t.key === key);
+}
+
+/** The manifest as the DASHBOARD sees it — mirrors `toPublicTweaks` in the route,
+ *  so these tests exercise the control against the shape it is actually handed. */
+function publicTweaks(slug: string): PublicTweak[] {
+  return getInsight(root, slug)!.tweaks.map((t) => ({
+    key: t.key,
+    type: t.type,
+    label: t.label ?? null,
+    options: t.options ?? null,
+    default: (t.default ?? null) as string | null,
+    value: (t.value ?? null) as string | null,
+  }));
 }
 
 describe('well-known tweaks — undeclared writes', () => {
@@ -195,15 +215,93 @@ describe('well-known tweaks — the API and the dashboard agree with the engine'
     expect(range.options).toBeNull();
   });
 
-  it('the dashboard RangeControl mirrors the engine default presets', async () => {
-    const { readFileSync } = await import('node:fs');
-    const source = readFileSync(
-      join(import.meta.dirname, '../../dashboard/src/components/lab/RangeControl.tsx'),
-      'utf-8',
-    );
-    const block = /DEFAULT_RANGE_PRESETS\s*=\s*\[([^\]]*)\]/.exec(source);
-    expect(block, 'RangeControl must export DEFAULT_RANGE_PRESETS').toBeTruthy();
-    const presets = [...block![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-    expect(presets).toEqual([...DEFAULT_RANGE_OPTIONS]);
+  it('the dashboard RangeControl mirrors the engine default presets', () => {
+    expect(DEFAULT_RANGE_PRESETS).toEqual([...DEFAULT_RANGE_OPTIONS]);
+  });
+});
+
+/**
+ * An inverted window is not a window.
+ *
+ * `resolveTweaks` clamps `spanDays` to 0 and hands `from > to` straight to the
+ * adapter, where every source answers differently — empty rows, a provider
+ * error, or a silently swapped range. The one place a window is written is the
+ * one place that can refuse it.
+ */
+describe('well-known tweaks — an inverted custom window is refused', () => {
+  it('rejects from > to when a single write carries both halves', () => {
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    expect(() => writeInsightTweaks(root, 'wau', { from: '2026-03-10', to: '2026-03-01' }))
+      .toThrow(/inverted/i);
+    // Refused means refused: nothing was persisted from the bad write.
+    expect(tweakOf('wau', 'from')).toBeUndefined();
+  });
+
+  it('judges the MERGED pair, so half a window cannot invert a stored one', () => {
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    writeInsightTweaks(root, 'wau', { from: '2026-03-01', to: '2026-03-10' });
+
+    expect(() => writeInsightTweaks(root, 'wau', { to: '2026-02-01' })).toThrow(/inverted/i);
+    expect(() => writeInsightTweaks(root, 'wau', { from: '2026-04-01' })).toThrow(/inverted/i);
+
+    expect(tweakOf('wau', 'from')!.value).toBe('2026-03-01');
+    expect(tweakOf('wau', 'to')!.value).toBe('2026-03-10');
+  });
+
+  it('still accepts a single-day window and a half-cleared one', () => {
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    writeInsightTweaks(root, 'wau', { from: '2026-03-01', to: '2026-03-01' });
+    expect(resolveTweaks(getInsight(root, 'wau')!).spanDays).toBe(0);
+    // Clearing one half is how you leave custom mode — never an inversion.
+    writeInsightTweaks(root, 'wau', { to: '' });
+    expect(tweakOf('wau', 'to')!.value).toBe('');
+  });
+});
+
+/**
+ * The Clear button's parity test — the regression that made it dead.
+ *
+ * Writing `from`/`to` does NOT clear the `range` enum (from/to simply out-rank
+ * it), so an insight with a curated enum still holds the user's real preset
+ * underneath a custom window. `clearCustom` used to write a hardcoded
+ * `last_30_days`, which such an enum rejects outright: Clear threw, and since a
+ * custom window can only be escaped by writing `range`, the window stayed pinned.
+ */
+describe('well-known tweaks — clearing a custom window writes an ACCEPTED preset', () => {
+  const CURATED = ['last_7_days', 'last_28_days', 'last_90_days'];
+
+  it('the engine rejects the old hardcoded fallback on a curated enum', () => {
+    writeManifest('funnels', `  - key: range\n    type: enum\n    options: ${JSON.stringify(CURATED)}\n    value: last_7_days\n`);
+    expect(() => writeInsightTweaks(root, 'funnels', { range: ENGINE_FALLBACK_RANGE })).toThrow(LabError);
+  });
+
+  it('what the control now offers to Clear WITH is accepted, and un-pins the window', () => {
+    writeManifest('funnels', `  - key: range\n    type: enum\n    options: ${JSON.stringify(CURATED)}\n    value: last_7_days\n  - key: from\n    type: date\n    value: ''\n  - key: to\n    type: date\n    value: ''\n`);
+    writeInsightTweaks(root, 'funnels', { from: '2026-01-01', to: '2026-01-05' });
+
+    const active = activeRange(publicTweaks('funnels'));
+    expect(active.kind).toBe('custom');
+    // The masked preset is the one the manifest still holds — not a guess.
+    const masked = active.kind === 'custom' ? active.masked : '';
+    expect(masked).toBe('last_7_days');
+    expect(CURATED).toContain(masked);
+
+    writeInsightTweaks(root, 'funnels', { range: masked });
+    const resolved = resolveTweaks(getInsight(root, 'funnels')!, new Date('2026-03-10T12:00:00Z'));
+    expect(resolved.range).toEqual({ fromISO: '2026-03-03', toISO: '2026-03-10' });
+  });
+
+  it('falls back to the first curated option when the enum holds no value at all', () => {
+    writeManifest('funnels', `  - key: range\n    type: enum\n    options: ${JSON.stringify(CURATED)}\n`);
+    expect(fallbackPreset(publicTweaks('funnels'))).toBe('last_7_days');
+    writeInsightTweaks(root, 'funnels', { range: fallbackPreset(publicTweaks('funnels')) });
+    expect(tweakOf('funnels', 'range')!.value).toBe('last_7_days');
+  });
+
+  it('falls back to the engine default only when nothing is curated', () => {
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    expect(fallbackPreset(publicTweaks('wau'))).toBe(ENGINE_FALLBACK_RANGE);
+    writeInsightTweaks(root, 'wau', { range: fallbackPreset(publicTweaks('wau')) });
+    expect(tweakOf('wau', 'range')!.value).toBe(ENGINE_FALLBACK_RANGE);
   });
 });

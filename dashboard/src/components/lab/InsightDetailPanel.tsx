@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import type { InsightSummary, SyncEvent } from '../../hooks/useLab';
-import { useLabInsight, useSyncInsight, useUpdateTweaks } from '../../hooks/useLab';
+import { useApplyTweaks, useLabInsight, useSyncInsight } from '../../hooks/useLab';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
 import { useOverlayId } from '../../lib/useOverlayId';
 import { TweakEditor } from './TweakEditor';
@@ -71,7 +71,7 @@ function HistoryRow({ event, unit }: { event: SyncEvent; unit: string | null }) 
 export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
   const detail = useLabInsight(summary.slug);
   const sync = useSyncInsight();
-  const updateTweaks = useUpdateTweaks();
+  const applyTweaks = useApplyTweaks();
   const { locale } = useI18n();
   const overlayId = useOverlayId('insight-detail-panel');
 
@@ -123,23 +123,25 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
 
   const handleRefresh = () => runSync('refreshed.', 'sync failed');
 
-  const handleSaveTweaks = (values: Record<string, string>) => {
-    updateTweaks.mutate({ slug: summary.slug, tweaks: values }, {
-      // Same rule as the card and the funnel views (#235): the data follows the control, so
-      // a saved tweak re-fetches rather than leaving the panel on the pre-tweak window.
-      onSuccess: () => runSync('tweaks saved, refreshed.', 'tweaks saved, but the refresh failed'),
+  /** Same rule as the card and the funnel views (#235): the data follows the
+   *  control, so a saved tweak re-fetches rather than leaving the panel on the
+   *  pre-tweak window — and the toast names which of the two actually happened. */
+  const applyAndReport = (values: Record<string, string>, okMessage: string, failPrefix: string) => {
+    applyTweaks.mutate({ slug: summary.slug, tweaks: values }, {
+      onSuccess: ({ synced, error }) => onToast(
+        synced ? `${summary.title}: ${okMessage}` : `${summary.title}: ${failPrefix} — ${error}`,
+      ),
       onError: (err) => onToast(`${summary.title}: could not save tweaks — ${(err as Error).message}`),
     });
   };
 
+  const handleSaveTweaks = (values: Record<string, string>) =>
+    applyAndReport(values, 'tweaks saved, refreshed.', 'tweaks saved, but the refresh failed');
+
   /** Range changes re-fetch too — same chain, and the panel's chart is the surface
    *  most likely to be read as "the current window" (#235). */
-  const handleApplyRange = (values: Record<string, string>, label: string) => {
-    updateTweaks.mutate({ slug: summary.slug, tweaks: values }, {
-      onSuccess: () => runSync(`${label} applied.`, `${label} saved, but the refresh failed`),
-      onError: (err) => onToast(`${summary.title}: ${label} failed — ${(err as Error).message}`),
-    });
-  };
+  const handleApplyRange = (values: Record<string, string>, label: string) =>
+    applyAndReport(values, `${label} applied.`, `${label} saved, but the refresh failed`);
 
   // The window keys belong to the RangeControl; the editor keeps the rest.
   const editableTweaks = nonWindowTweaks(summary.tweaks);
@@ -185,7 +187,7 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
             <div className="idp-rangerow">
               <RangeControl
                 tweaks={summary.tweaks}
-                disabled={updateTweaks.isPending || sync.isPending}
+                disabled={applyTweaks.isPending || sync.isPending}
                 onApply={handleApplyRange}
               />
             </div>
@@ -250,7 +252,7 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
                 {editableTweaks.length > 0 && (
                   <div className="idp-tweaks">
                     <div className="idp-section-label">Edit tweaks</div>
-                    <TweakEditor tweaks={editableTweaks} saving={updateTweaks.isPending} onSave={handleSaveTweaks} />
+                    <TweakEditor tweaks={editableTweaks} saving={applyTweaks.isPending} onSave={handleSaveTweaks} />
                   </div>
                 )}
 

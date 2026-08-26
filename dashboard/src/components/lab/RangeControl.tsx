@@ -4,7 +4,26 @@ import { useI18n } from '../../context/I18nContext';
 import { humanizeTweakValue } from './tweakLabels';
 import { FilterPopover } from '../tasks/FilterPopover';
 import { pushOverlay, popOverlay } from '../../lib/overlayStack';
+import { activeRange, formatISO, quickWindows, rangePresets, type QuickWindow } from './rangeModel';
 import './RangeControl.css';
+
+// The window MODEL (preset lists, active-window precedence, the URL codec, the
+// quick windows) lives in rangeModel.ts and is re-exported here so the four
+// mounting surfaces keep one import. See that file for why it is split out.
+export {
+  DEFAULT_RANGE_PRESETS,
+  ENGINE_FALLBACK_RANGE,
+  WINDOW_TWEAK_KEYS,
+  activeRange,
+  fallbackPreset,
+  isRelativeRange,
+  nonWindowTweaks,
+  quickWindows,
+  rangePresets,
+  writeRangeParams,
+  type ActiveRange,
+  type QuickWindow,
+} from './rangeModel';
 
 /**
  * The date-range control every windowed insight gets — card toolbar, detail
@@ -25,80 +44,6 @@ import './RangeControl.css';
  * one the user picked.
  */
 
-/** Presets offered when a manifest declares no `range` options of its own.
- *  MIRRORS `DEFAULT_RANGE_OPTIONS` in src/lib/lab/store.ts (unit-test guarded). */
-export const DEFAULT_RANGE_PRESETS = [
-  'last_7_days',
-  'last_28_days',
-  'last_30_days',
-  'last_90_days',
-  'last_1_year',
-];
-
-/** What `resolveTweaks` falls back to when nothing is set (DEFAULT_SPAN_DAYS). */
-export const ENGINE_FALLBACK_RANGE = 'last_30_days';
-
-/** The window keys this control owns — every other tweak stays with TweakEditor,
- *  so a surface never renders two competing date pickers. */
-export const WINDOW_TWEAK_KEYS = ['range', 'from', 'to'];
-
-/** The tweaks a generic tweak editor should still show next to a RangeControl. */
-export function nonWindowTweaks(tweaks: PublicTweak[]): PublicTweak[] {
-  return tweaks.filter((t) => !WINDOW_TWEAK_KEYS.includes(t.key));
-}
-
-/**
- * Mirror an applied window into the funnel pages' URL params, so a deep link
- * carries the window its author was looking at. Preset and custom are mutually
- * exclusive here for the same reason they are in the manifest: a leftover
- * `from`/`to` in the query would out-rank the `range` the link asks for.
- */
-export function writeRangeParams(params: URLSearchParams, values: Record<string, string>): void {
-  if (values.range) {
-    params.set('range', values.range);
-    params.delete('from');
-    params.delete('to');
-    return;
-  }
-  if (values.from) params.set('from', values.from);
-  if (values.to) params.set('to', values.to);
-  params.delete('range');
-}
-
-/** The relative-range grammar the engine parses (`parseRelativeRange`). */
-const RELATIVE_RANGE_RE = /^last_(\d+)_(day|days|week|weeks|month|months|year|years)$/;
-
-export function isRelativeRange(value: string): boolean {
-  return RELATIVE_RANGE_RE.test((value ?? '').trim());
-}
-
-function tweakValue(tweaks: PublicTweak[], key: string): string {
-  const t = tweaks.find((x) => x.key === key);
-  return (t?.value ?? '').trim();
-}
-
-/** The preset list for these tweaks: the author's curated enum, else the defaults. */
-export function rangePresets(tweaks: PublicTweak[]): string[] {
-  const decl = tweaks.find((t) => t.key === 'range' && t.type === 'enum');
-  const options = (decl?.options ?? []).filter((o) => o.trim() !== '');
-  return options.length > 0 ? options : DEFAULT_RANGE_PRESETS;
-}
-
-export type ActiveRange =
-  | { kind: 'preset'; value: string }
-  | { kind: 'custom'; from: string; to: string };
-
-/** Which window these tweaks currently describe — the same precedence
- *  `resolveTweaks` applies (explicit from/to beat the enum). */
-export function activeRange(tweaks: PublicTweak[]): ActiveRange {
-  const from = tweakValue(tweaks, 'from');
-  const to = tweakValue(tweaks, 'to');
-  if (from && to) return { kind: 'custom', from, to };
-  const decl = tweaks.find((t) => t.key === 'range' && t.type === 'enum');
-  const value = (decl?.value ?? decl?.default ?? '').trim();
-  return { kind: 'preset', value: value || ENGINE_FALLBACK_RANGE };
-}
-
 type Lang = 'en' | 'tr';
 
 /** Control chrome. Parametric/close to the component, same reasoning as
@@ -112,6 +57,14 @@ const UI_TEXT: Record<Lang, Record<string, string>> = {
     from: 'From',
     to: 'To',
     customTitle: 'Custom range',
+    quick: 'Quick pick',
+    inverted: 'The start date is after the end date',
+    prevYear: 'Previous year',
+    nextYear: 'Next year',
+    d14: 'Last 14 days',
+    thisMonth: 'This month',
+    lastMonth: 'Last month',
+    ytd: 'Year to date',
   },
   tr: {
     label: 'Tarih aralığı',
@@ -121,22 +74,20 @@ const UI_TEXT: Record<Lang, Record<string, string>> = {
     from: 'Başlangıç',
     to: 'Bitiş',
     customTitle: 'Özel aralık',
+    quick: 'Hızlı seçim',
+    inverted: 'Başlangıç tarihi bitişten sonra',
+    prevYear: 'Önceki yıl',
+    nextYear: 'Sonraki yıl',
+    d14: 'Son 14 gün',
+    thisMonth: 'Bu ay',
+    lastMonth: 'Geçen ay',
+    ytd: 'Yıl başından beri',
   },
 };
 
 function text(locale: string, key: string): string {
   const lang: Lang = locale.toLowerCase().startsWith('tr') ? 'tr' : 'en';
   return UI_TEXT[lang][key] ?? key;
-}
-
-function pad(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
-/** Local-calendar ISO date — never `toISOString()`, which shifts the day for
- *  anyone east/west of UTC and would apply a window they did not pick. */
-function formatISO(d: Date): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function shortDate(value: string): string {
@@ -193,8 +144,10 @@ function RangeCalendar({ from, to, onPick }: {
   const cells = useMemo(() => monthCells(viewYear, viewMonth), [viewYear, viewMonth]);
   const today = formatISO(new Date());
 
-  const step = (delta: number) => {
-    const next = new Date(viewYear, viewMonth + delta, 1);
+  /** Walk the view by months. A year is ±12 — stepping twelve times to reach
+   *  the same quarter last year is the whole reason this control felt slow. */
+  const step = (deltaMonths: number) => {
+    const next = new Date(viewYear, viewMonth + deltaMonths, 1);
     setViewYear(next.getFullYear());
     setViewMonth(next.getMonth());
   };
@@ -209,11 +162,13 @@ function RangeCalendar({ from, to, onPick }: {
   return (
     <div className="lab-range-cal">
       <div className="lab-range-cal-nav">
+        <button type="button" className="lab-range-cal-navbtn" onClick={() => step(-12)} aria-label={text(locale, 'prevYear')} title={text(locale, 'prevYear')}>«</button>
         <button type="button" className="lab-range-cal-navbtn" onClick={() => step(-1)} aria-label="Previous month">‹</button>
         <span className="lab-range-cal-month">
           {new Date(viewYear, viewMonth, 1).toLocaleDateString(locale, MONTH_FORMAT)}
         </span>
         <button type="button" className="lab-range-cal-navbtn" onClick={() => step(1)} aria-label="Next month">›</button>
+        <button type="button" className="lab-range-cal-navbtn" onClick={() => step(12)} aria-label={text(locale, 'nextYear')} title={text(locale, 'nextYear')}>»</button>
       </div>
       <div className="lab-range-cal-grid">
         {DAY_NAMES.map((d) => <div key={d} className="lab-range-cal-daylabel">{d}</div>)}
@@ -286,18 +241,30 @@ export function RangeControl({ tweaks, onApply, disabled = false, compact = fals
     onApply({ range: preset }, `${text(locale, 'label')} ${humanizeTweakValue(preset, locale)}`);
   };
 
+  /** Both halves set and in order. The engine rejects an inverted window
+   *  (`writeInsightTweaks`), so offering Apply on one would only produce a toast. */
+  const inverted = !!draftFrom && !!draftTo && draftFrom > draftTo;
+  const canApply = !!draftFrom && !!draftTo && !inverted;
+
   const applyCustom = () => {
-    if (!draftFrom || !draftTo) return;
+    if (!canApply) return;
     close();
     onApply({ from: draftFrom, to: draftTo }, text(locale, 'customTitle'));
   };
 
-  /** Clearing a custom window returns to the preset (the engine drops from/to). */
+  /** A quick window applies straight away — its whole point is one click. */
+  const applyQuick = (q: QuickWindow) => {
+    close();
+    onApply({ from: q.from, to: q.to }, text(locale, q.key));
+  };
+
+  /** Clearing a custom window returns to the preset it was masking — writing
+   *  `range` is what makes the engine drop `from`/`to`. */
   const clearCustom = () => {
     setDraftFrom('');
     setDraftTo('');
     close();
-    const preset = active.kind === 'preset' ? active.value : ENGINE_FALLBACK_RANGE;
+    const preset = active.kind === 'custom' ? active.masked : active.value;
     onApply({ range: preset }, `${text(locale, 'label')} ${humanizeTweakValue(preset, locale)}`);
   };
 
@@ -323,6 +290,19 @@ export function RangeControl({ tweaks, onApply, disabled = false, compact = fals
           ))}
         </div>
       )}
+      <div className="lab-range-pop-title">{text(locale, 'quick')}</div>
+      <div className="lab-range-pop-presets lab-range-pop-quick">
+        {quickWindows(new Date()).map((q) => (
+          <button
+            type="button"
+            key={q.key}
+            className={`lab-range-pill${active.kind === 'custom' && active.from === q.from && active.to === q.to ? ' lab-range-pill--on' : ''}`}
+            onClick={() => applyQuick(q)}
+            disabled={disabled}
+            title={`${q.from} → ${q.to}`}
+          >{text(locale, q.key)}</button>
+        ))}
+      </div>
       <div className="lab-range-pop-title">{text(locale, 'customTitle')}</div>
       <RangeCalendar
         from={draftFrom}
@@ -340,8 +320,8 @@ export function RangeControl({ tweaks, onApply, disabled = false, compact = fals
         </label>
       </div>
       <div className="lab-range-pop-foot">
-        <span className="lab-range-pop-hint">
-          {draftFrom && !draftTo ? text(locale, 'pickEnd') : ''}
+        <span className={`lab-range-pop-hint${inverted ? ' lab-range-pop-hint--bad' : ''}`}>
+          {inverted ? text(locale, 'inverted') : draftFrom && !draftTo ? text(locale, 'pickEnd') : ''}
         </span>
         {active.kind === 'custom' && (
           <button type="button" className="lab-range-pop-clear" onClick={clearCustom} disabled={disabled}>
@@ -352,7 +332,7 @@ export function RangeControl({ tweaks, onApply, disabled = false, compact = fals
           type="button"
           className="lab-range-pop-apply"
           onClick={applyCustom}
-          disabled={disabled || !draftFrom || !draftTo}
+          disabled={disabled || !canApply}
         >{text(locale, 'apply')}</button>
       </div>
     </div>

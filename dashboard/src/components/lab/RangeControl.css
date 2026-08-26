@@ -255,3 +255,19 @@
 .lab-range-cal-day--end {
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
+
+.lab-range-pop-hint--bad {
+  color: var(--color-error);
+}
+
+/* The custom popover stacks two rows of pills (quick windows, and in compact
+   mode the presets too), so they wrap rather than widen the popover. */
+.lab-range-pop-presets .lab-range-pill--on {
+  border-color: var(--color-accent);
+}
+
+/* The first title in the popover has no divider above it — nothing to divide. */
+.lab-range-pop > .lab-range-pop-title:first-child {
+  border-top: none;
+  padding-top: 0;
+}

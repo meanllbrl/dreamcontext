@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { useLabInsight, useSyncInsight, useUpdateTweaks } from '../../../hooks/useLab';
+import { useApplyTweaks, useLabInsight, useSyncInsight } from '../../../hooks/useLab';
 import { useLabPrefs } from '../../../hooks/useLabPrefs';
 import { copyPreservingUnicode } from '../../../lib/clipboard';
 import { pushOverlay, popOverlay } from '../../../lib/overlayStack';
@@ -57,7 +57,7 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
 }) {
   const detail = useLabInsight(slug);
   const sync = useSyncInsight();
-  const updateTweaks = useUpdateTweaks();
+  const applyTweaks = useApplyTweaks();
   const { prefs, setColumnKeys } = useLabPrefs();
   const { locale } = useI18n();
   const [params, updateParams] = useLabSearchParams();
@@ -78,17 +78,25 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
 
   const setView = (next: FunnelViewState) => updateParams((p) => writeViewState(p, next));
 
+  /**
+   * Save the window and re-fetch as one act (#235) — and NAME THE OUTCOME.
+   *
+   * `POST /lab/sync` answers 200 with a populated `failed[]` when the adapter
+   * throws (a window with no rows, an upstream error), so the old success arm
+   * toasted "Custom range applied." over numbers from the window the user had
+   * just left. The fused mutation has already read `results[0]`.
+   */
   const applyTweaksAndSync = (values: Record<string, string>, label: string) => {
-    updateTweaks.mutate({ slug, tweaks: values }, {
-      onSuccess: () => {
-        sync.mutate(slug, {
-          onSuccess: () => onToast(`${label} applied.`),
-          onError: (err) => onToast(`Re-fetch failed — ${(err as Error).message}`),
-        });
-      },
+    applyTweaks.mutate({ slug, tweaks: values }, {
+      onSuccess: ({ synced, error }) => onToast(
+        synced ? `${label} applied.` : `${label} saved, but the re-fetch failed — ${error}`,
+      ),
       onError: (err) => onToast(`${label} failed — ${(err as Error).message}`),
     });
   };
+
+  /** True while the numbers on screen do not yet answer for the chosen window. */
+  const applying = applyTweaks.isPending;
 
   // Deep-linked window (A13): a `from`+`to` or `range` URL param that differs
   // from the stored tweak is what the link author was looking at — apply it
@@ -271,13 +279,20 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
             manifest declared knobs for one. */}
         <RangeControl
           tweaks={tweaks}
-          disabled={updateTweaks.isPending || sync.isPending}
+          disabled={applying || sync.isPending}
           onApply={applyRange}
         />
-        <span className="funnel-ovw-window" title={`Data window ${entry.range.fromISO} → ${entry.range.toISO}`}>
+        {/* The label reports the window the DATA is for, which lags the control
+            during a re-fetch — say so, rather than letting the two disagree in
+            silence for the several seconds a live source takes. */}
+        <span
+          className={`funnel-ovw-window${applying ? ' funnel-ovw-window--applying' : ''}`}
+          title={`Data window ${entry.range.fromISO} → ${entry.range.toISO}`}
+        >
           {entry.range.fromISO} → {entry.range.toISO}
         </span>
-        {stale && <span className="lab-badge lab-badge--stale">stale</span>}
+        {applying && <span className="lab-badge lab-badge--loading">loading…</span>}
+        {stale && !applying && <span className="lab-badge lab-badge--stale">stale</span>}
         <div className="funnel-ovw-toolbar-spacer" />
         <input
           className="funnel-ovw-search"
@@ -298,11 +313,16 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
         <button
           className="funnel-ovw-action"
           onClick={() => sync.mutate(slug, {
-            onSuccess: () => onToast('Refreshed.'),
+            onSuccess: (data) => {
+              const result = data.results[0];
+              onToast(result?.status === 'failed'
+                ? `Refresh failed — ${result.error ?? 'unknown error'}`
+                : 'Refreshed.');
+            },
             onError: (e) => onToast(`Refresh failed — ${(e as Error).message}`),
           })}
-          disabled={sync.isPending}
-        >{sync.isPending ? 'Syncing…' : '↻ Refresh'}</button>
+          disabled={sync.isPending || applying}
+        >{sync.isPending || applying ? 'Syncing…' : '↻ Refresh'}</button>
       </div>
 
       <div className="funnel-ovw-filterrow">
@@ -312,7 +332,7 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
           refetchValues={refetchValues}
           onChange={(filters) => setView({ ...view, filters })}
           onApplyRefetch={applyRefetchDim}
-          syncing={sync.isPending || updateTweaks.isPending}
+          syncing={sync.isPending || applying}
         />
         {selected.length >= 2 && (
           <button className="funnel-ovw-compare" onClick={() => setView({ ...view, compare: selected })}>
@@ -321,6 +341,20 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
         )}
       </div>
 
+      {/* A failed fetch keeps the PRIOR funnel data by design (sync's keep-prior
+          contract), so without this banner the page silently answers for a
+          window that is no longer the one the control shows. */}
+      {cache?.error && (
+        <div className="funnel-ovw-notices funnel-ovw-notices--error" role="alert">
+          <div>
+            <strong>Last fetch failed{cache.errorAt ? ` · ${new Date(cache.errorAt).toLocaleString()}` : ''}</strong>
+            {' — '}{cache.error}
+          </div>
+          <div className="funnel-ovw-notices-sub">
+            The table below is the last window that DID load ({entry.range.fromISO} → {entry.range.toISO}).
+          </div>
+        </div>
+      )}
       {entry.notices.length > 0 && (
         <div className="funnel-ovw-notices" role="note">
           {entry.notices.map((n, i) => <div key={i}>⚠ {n}</div>)}
