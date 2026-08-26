@@ -4,10 +4,12 @@ description: >-
   Generate or extend Obsidian Excalidraw (.excalidraw.md) boards in this vault — visual-first diagrams,
   charts (line/bar/comparison/stacked/gantt/quadrant/donut/heatmap/table/timeline/KPI/sparkline),
   funnels, device mockups (iPhone/iPad/Mac) and wireframes/prototypes, flowcharts, image/screenshot
-  layouts, shapes, arrows, frames, lanes and grids — by passing DATA to ~44 ready-made deterministic
+  layouts, shapes, arrows, frames, lanes and grids — by passing DATA to ~45 ready-made deterministic
   builders and letting a script emit valid plugin markup (so it costs ~no tokens and always renders).
-  Every builder works from JS or straight from a JSON spec. Text wraps to a readable measure; the build
-  audits the scene for overlaps, buried labels and over-long lines. Embeds local images via the plugin's
+  Every builder works from JS or straight from a JSON spec. Body text is set in a real UI sans on a
+  readable measure and line height, with inline emphasis (**bold** rules, ==highlight== bands, `code`
+  chips) drawn as geometry behind a single clean text element; the build audits the scene for overlaps,
+  buried labels, over-long lines and walls of text. Embeds local images via the plugin's
   sha1 wikilink trick (no base64). Triggers: '/excalidraw', 'draw this in excalidraw', 'make an
   excalidraw board', 'excalidraw diagram', 'chart', 'line chart', 'bar chart', 'compare before/after',
   'gantt', 'timeline', 'quadrant', 'impact effort matrix', 'heatmap', 'KPI tiles', 'dashboard board',
@@ -28,28 +30,33 @@ correct sha1 image links, fractional z-indices, and deterministic seeds (clean g
 
 ## Design principles (read first)
 
-Excalidraw's strength is **pictures, not paragraphs**. Four rules keep a board clean, readable, and
+Excalidraw's strength is **pictures, not paragraphs**. Five rules keep a board clean, readable, and
 visually rich — the primitives below enforce them, so lean on them instead of placing raw text/shapes:
 
-1. **Use a primitive; don't hand-roll one.** There are ~44 ready builders (charts, house style,
+1. **Use a primitive; don't hand-roll one.** There are ~45 ready builders (charts, house style,
    devices/UI) covering most of what a board needs — pass DATA, get correct geometry. This is the rule
-   the other three depend on: hand-rolled composites are where boards break. Reach for `charts.js` /
+   the other four depend on: hand-rolled composites are where boards break. Reach for `charts.js` /
    `wireframe.js` / `style.js` **before** writing rects + text yourself, and only drop to raw elements
    when nothing fits. Every builder is also a spec JSON `type`, so a whole board can be pure JSON.
 2. **Visual-first.** Explain complex things with *structure you can see*: a `funnel()` of trapezoid
    bands, a `device()` of the actual screen, a `lineChart()` of the trend, a `hub()`/flow of `card()`s.
    Reach for a picture before a sentence. When you must write, keep it to labels and short notes.
 3. **Readable measure — text never runs edge-to-edge.** Every text primitive wraps to a bounded width
-   (`READ_W ≈ 620px`, ~60 chars). Use `prose()` for body copy, `bullets()` for lists, `callout()` for
-   titled notes, `sectionTitle()` for headers — they cap + wrap for you. A raw `text` element **must**
-   carry a `width` (it then wraps and the newlines are baked in, so it renders at that measure). Long
-   unbounded text is the #1 readability killer, and the build now **enforces** this (`longLines`).
-4. **No overlap — flow the layout, don't hand-place.** Build with `stack()` (top-to-bottom) and `row()`
+   (`READ_W ≈ 620px`, ~70 chars at the 17px body size). Use `prose()` for body copy, `bullets()` for
+   lists, `callout()` for titled notes, `takeaway()` for the one-line conclusion, `sectionTitle()` for
+   headers — they cap + wrap for you. A raw `text` element **must** carry a `width` (it then wraps and
+   the newlines are baked in, so it renders at that measure). Long unbounded text is a readability
+   killer, and the build **enforces** this (`longLines`).
+4. **Write for a glance, not for a sitting.** A board is skimmed. Lead with the conclusion, keep a
+   block under ~4 lines, and mark the one number the argument rests on. The build enforces this too
+   (`wallOfText`) — see **Writing for a board**, which is the rule most boards actually break.
+5. **No overlap — flow the layout, don't hand-place.** Build with `stack()` (top-to-bottom) and `row()`
    (left-to-right): each block is placed after the previous one's *measured* size, so boxes can't
    collide. Every build audits the finished scene and reports
-   `overlaps=N buriedText=N longLines=N` — any non-zero count is a real defect (see **Layout rules**).
+   `overlaps=N buriedText=N longLines=N wallOfText=N` — any non-zero count is a real defect (see
+   **Layout rules**).
 
-Everything downstream (the primitives, the auditors, the wrap-baking) exists to make these four cheap.
+Everything downstream (the primitives, the auditors, the wrap-baking) exists to make these five cheap.
 
 > **A clean audit is necessary, not sufficient — render the board and LOOK at it.** This is not a
 > platitude: in practice most defects that reach a finished board are ones the audit cannot see —
@@ -69,11 +76,14 @@ maps `<sha1>: [[image.png]]`. The plugin resolves the picture from the vault via
 node .claude/skills/excalidraw/scripts/build_excalidraw.js <spec.json> [--out <path.excalidraw.md>]
 ```
 Write a spec JSON, then run it. On success it prints
-`elements=… images=… texts=… overlaps=… buriedText=… longLines=…` — the last three must all be **0**.
-A spec element's `type` may be a primitive OR any of the ~44 composites (charts, house style, devices,
+`elements=… images=… texts=… overlaps=… buriedText=… longLines=… wallOfText=…` — the last four must all
+be **0**. A spec element's `type` may be a primitive OR any of the ~45 composites (charts, house style, devices,
 `stack`/`row`), so a whole board can be pure JSON with no generator script.
 
 ### JS API (for pipelines that generate many boards)
+If the project's `package.json` sets `"type": "module"`, a `.js` generator cannot `require()`. Drop a
+`package.json` containing `{"type":"commonjs"}` next to the generator (the skill folder does exactly
+this for its own scripts), or name the generator `.cjs`.
 ```js
 const path = require('path');
 // skill lives at <project>/.claude/skills/excalidraw/ — adjust leading ../ count to match your script's depth from project root
@@ -208,9 +218,70 @@ buildExcalidraw({ out, elements:[ ...a, ...b ] });
 ```
 House-style `card()` labels are also vertically centered correctly even when the label **wraps** to the card width.
 
+## Type & emphasis (`scripts/lib/typography.js`)
+
+**The drawing is hand-drawn; the writing is not.** Text defaults to **Nunito (fontFamily 6)** at
+**17px** on a **1.6 line height**. Excalifont at 15px/1.25 — the old default — is a hand for labels,
+not for paragraphs: a nine-line block of it is a wall you slog through rather than something you read.
+
+| what | default | override |
+| --- | --- | --- |
+| face | `sans` → Nunito (6) | `font: 'hand'` (Excalifont, 5) for sketch annotations · `font: 'code'` (Cascadia, 3) for identifiers |
+| body size | 17px | `fontSize` |
+| leading | `1.6` body · `1.4` compact · `1.25` labels · `1.2` display | `lh` |
+| measure | `READ_W` 620px ≈ 70 chars | `width` |
+
+Any text element takes `font:` (alias) or `fontFamily:` (raw Excalidraw id) and `lineHeight:`.
+
+### Inline emphasis — three marks, no second font
+
+Excalidraw has no rich text: one element, one font, one colour. So emphasis is drawn as **geometry
+behind the words**, and the paragraph stays a single text element — which is what keeps
+`## Text Elements` clean prose for dreamcontext recall instead of a confetti of styled fragments.
+
+| markup | renders as | use it for |
+| --- | --- | --- |
+| `**phrase**` | a rule under the phrase | the claim itself |
+| `==phrase==` | a highlighter band | the number the claim rests on |
+| `` `phrase` `` | a soft grey chip | identifiers, paths, table names |
+
+Works in `prose`, `bullets`, `callout` (title excluded), `takeaway`. Markers are stripped from the
+emitted text. Opt out with `markup: false`. **Mark one or two phrases per block** — highlighting
+everything is the same as highlighting nothing, and underlining a whole sentence just makes it noisy.
+
+`callout()` picks mark colours that contrast with its OWN fill (a yellow band gets a blue highlighter
+instead of an invisible yellow one). If you hand-roll a band behind marked text, pass the same:
+`textBlock({ …, ...emphasisOn(myFill) })`. This failure is silent — the geometry is correct, the audit
+is clean, and the emphasis is simply not there — so it is worth knowing about rather than discovering.
+
+Bands carry 2–3px of padding around the phrase so the words can breathe; on a short mark followed by
+punctuation that can read as though the full stop were included. That is the padding, not a
+mis-measurement: summed advances land within ~1px of the browser's own measurement even on all-caps.
+
+> Measurement is measured, not guessed: the advance tables in `typography.js` were generated from the
+> real font files by `scripts/diagrams/calibrate-excalidraw-fonts.mjs` (headless Chromium, canvas
+> `measureText`). Summed advances land within **0.5%** of the browser's own measurement — which is why
+> a highlight band can be placed to the pixel behind a phrase that has already been wrapped. Re-run
+> that script if you add a font.
+
+## Writing for a board
+
+Most boards that "look bad" are not a layout problem, they are a **copy** problem. The old callout in
+this kit shipped one 9-line paragraph containing the finding, the evidence, the caveat and the fix —
+all at the same visual weight, so nothing was findable. The words were fine; the shape was wrong.
+
+- **Conclusion first.** `takeaway()` or a callout `lead:` states the point in one sentence. Evidence
+  comes after, and only if it changes what someone does.
+- **One idea per block.** If a paragraph contains a "but" and a "so", it is two blocks.
+- **Bullets over prose** for anything enumerable. `items:` gives each one its own element and real
+  space between them; a list packed at line-height reads as a grey paragraph.
+- **Mark the load-bearing number.** `==%99,8==`, `==17.607==` — the eye lands there first.
+- **Numbers belong in `kpi()` / `chip()` / a chart**, not buried mid-sentence, when they are the point.
+- **Ceiling: 5 lines / 45 words per block.** Past that the build reports `wallOfText` and it is right.
+
 ## House style (`scripts/lib/style.js`) — learned from the vault's presentation boards
-Match the team's look by default. The builder now defaults text to **Excalifont (fontFamily 5)**.
-`style.js` exports the palette + ready-made builders so boards look hand-drawn and consistent:
+Match the team's look by default. `style.js` exports the palette + ready-made builders so boards look
+consistent:
 
 - **`PALETTE`** (semantic, = Excalidraw's native swatches): `green` benefit/go · `red` pain/risk ·
   `blue` system/flow · `purple` core service · `yellow` processing · `mint` result · `gray` muted.
@@ -238,9 +309,15 @@ Match the team's look by default. The builder now defaults text to **Excalifont 
 ### Readable text + flow layout (use these, don't hand-place)
 Every builder below returns an `ElementSpec[]` that also carries `.x/.y/.w/.h/.nextX/.nextY`, so the
 layout helpers can measure and place blocks for you — no coordinate math, no overlap.
-- **`prose({x,y,text,fontSize,width})`** → a wrapped paragraph. `width` defaults to `READ_W` (~60 chars);
-  text can never exceed it. This is THE body-copy primitive. Height is derived from the wrapped lines.
-- **`bullets({x,y,items,width})`** → left-aligned list; each item wraps to `width` with a hanging indent.
+- **`prose({x,y,text,fontSize,width,font,lh})`** → a wrapped paragraph. `width` defaults to `READ_W`
+  (~70 chars); text can never exceed it. This is THE body-copy primitive. Height is derived from the
+  wrapped lines. Supports inline emphasis.
+- **`bullets({x,y,items,width,gap})`** → left-aligned list. Each item is its **own** text element,
+  separated by `gap` (default 10px) and wrapped with a hanging indent — the gap is what makes a list
+  scannable rather than one grey block. `items` may be strings or `{text,color}`.
+- **`takeaway({x,y,text,width,accent,label})`** → the "in a nutshell" line: one sentence, a size up,
+  with an accent rule down its left edge. Put it at the top of a board or a section, **before** the
+  supporting detail. Optional `label:` sets a small eyebrow above it (`'IN A NUTSHELL'`, `'SO WHAT'`).
 - **`sectionTitle({x,y,text,fontSize,maxWidth})`** → big header; long titles wrap to `maxWidth`.
 - **`stack({x,y,gap,items})`** → flow blocks TOP-TO-BOTTOM. Each item is a factory `(x,y)=>els` (draws
   itself at the running cursor) or a pre-built `els` array (gets shifted down). Returns `.nextY`.
@@ -270,7 +347,24 @@ unit and the auditors treat its internals as intentional.
 | **`table({headers,rows,align})`** | a real grid — column widths derive from content, so cells never spill. A cell may be `{text,color}` |
 | **`timeline({events})`** | milestones on a track; labels alternate above/below so they can't collide |
 | **`kpi({label,value,delta,spark})`** | the metric tile: three type sizes for hierarchy, optional sparkline footer |
-| **`callout({title,text,sideTitle})`** | a titled note band. Body copy is **always** bounded to `READ_W`; a wide band puts its heading *beside* the text rather than stretching one line |
+| **`callout({title,lead,text,items})`** | a titled note band. Body copy is **always** bounded to `READ_W`; a wide band puts its heading *beside* the text rather than stretching one line |
+
+**A callout body is a SEQUENCE, not a blob** — this is the difference between a band you read and one
+you skip. Each part is its own text element with real space between:
+
+```js
+callout({
+  x, y, w: 540, color: 'green',
+  title: 'Paywall geçişi',                          // the gutter label
+  lead:  '%99,8 bir metrik değil, bir ==yönlendirme==.',  // the point, a size up
+  items: [                                           // the evidence, scannable
+    '`/checkout` email submitin arkasına ==kilitli==.',
+    '17.613 görüntüleyenin ==sadece 2\'si== lead bırakmadan ulaştı.',
+  ],
+})
+```
+`text:` still takes a string (or an array of paragraphs) for genuine prose. Use `lead` + `items` by
+default; reach for `text` only when the content really is a paragraph.
 
 **`w` is a MAXIMUM, not a target.** `callout()` sizes itself to its own wrapped text — hand it 1080px for
 620px of copy and it returns ~780px, not a band with 27% dead space. The title gutter hugs the title too.
@@ -368,7 +462,8 @@ paragraph**.
 ### Which lib?
 | file | owns | reach for it when |
 |---|---|---|
-| `lib/style.js` | house style + layout: `card`, `node`, `connector`, `hub`, `column`, `funnel`, `prose`, `bullets`, `sectionTitle`, `chip`, `divider`, **`stack`/`row`**, `READ_W`, `measureText`, `wrapToWidth`, `fitText` | diagrams, flows, any board's skeleton |
+| `lib/typography.js` | fonts, measured glyph advances, wrapping, inline emphasis (`textBlock`, `wrapLines`, `parseMarkup`, `FONT`, `LH`) | anything that renders words |
+| `lib/style.js` | house style + layout: `card`, `node`, `connector`, `hub`, `column`, `funnel`, `prose`, `bullets`, `takeaway`, `sectionTitle`, `chip`, `divider`, **`stack`/`row`**, `READ_W`, `measureText`, `wrapToWidth`, `fitText` | diagrams, flows, any board's skeleton |
 | `lib/charts.js` | data viz + copy: `lineChart`, `barChart`, `barCompare`, `stackedBar`, `gantt`, `quadrant`, `donut`/`pie`, `sparkline`, `heatmap`, `table`, `timeline`, `kpi`, `callout` | anything with numbers |
 | `lib/wireframe.js` | product UI: `device`, `appBar`, `tabBar`, `icon`, `iconButton`, `listRow`, `toggle`, `segmented`, `slider`, `searchField` (+ re-exports style.js's UI bits) | app/screen mockups |
 
@@ -379,13 +474,17 @@ composes inside `stack()`/`row()`, and everything is also a spec JSON `type`.
 - **Flow the layout with `stack()` / `row()`; never eyeball coordinates for a column or a grid.** They
   place each block after the previous one's measured size, so nothing overlaps by construction. Reserve
   hand-picked `x/y` for a handful of top-level anchors (where a funnel goes vs where a window goes).
-- **Heed the audit — all three checks.** Every build reports `overlaps=N buriedText=N longLines=N`, and
-  prints a `[excalidraw]` warning naming the offenders. Any non-zero count is a real defect:
+- **Heed the audit — all four checks.** Every build reports
+  `overlaps=N buriedText=N longLines=N wallOfText=N`, and prints a `[excalidraw]` warning naming the
+  offenders. Any non-zero count is a real defect:
   - `overlaps` — two filled boxes collide (intentional nesting like a button inside a window is ignored).
   - `buriedText` — a text LINE is >30% swallowed by a box it isn't grouped with, i.e. an unreadable
     label. Box-vs-box cannot see this: a section title eaten by a card is text-vs-box.
-  - `longLines` — body copy past the reading measure (`READ_W`, +10% tolerance; display type ≥28px is
-    exempt). This is the skill's headline rule, and it is now enforced rather than merely documented.
+  - `longLines` — a line past the reading measure. The cap is ~78 CHARACTERS, scaled by the element's
+    own font and size (a fixed pixel cap nagged at a 22px lead and let a 12px block run to 90
+    characters); display type ≥28px is exempt. `spec.measure` pins a hard pixel cap instead.
+  - `wallOfText` — a block past 5 lines or 45 words. Legally short lines, still unreadable: this is the
+    defect that ships most often. Fix it with structure (lead + items), not with a smaller font.
 
   Fix by flowing that region through `stack()`/`row()`, or by using the primitives that cap the measure
   (`prose`/`bullets`/`callout`). Opt out with `spec.audit === false` only if you *know* it's deliberate.
@@ -431,14 +530,19 @@ node examples/wireframe_board.js                          # devices (iPhone/iPad
 element with data only**, and must not throw on degenerate input (empty series, one point, all-equal
 values). Add a chart to `charts.js` but forget to register it in `COMPOSITES` and this fails. It exits
 non-zero, so it can be wired into CI.
-Each build prints `overlaps=N buriedText=N longLines=N` — a clean board reports **0 for all three**.
+Each build prints `overlaps=N buriedText=N longLines=N wallOfText=N` — a clean board reports **0 for all four**.
 
 **Then LOOK at the board.** A clean audit is necessary, not sufficient: it cannot see a mis-scaled
 axis, a sentence torn across a gap, or a layout that is simply ugly. Either open it in Obsidian
 (Excalidraw view), or render it headlessly and inspect the PNG:
 ```bash
-node scripts/diagrams/render-excalidraw.mjs <board.excalidraw.md> /tmp/out.png 1   # (in this repo)
+node scripts/diagrams/render-excalidraw.mjs <board.excalidraw.md> /tmp/out.png 1              # whole board
+node scripts/diagrams/render-excalidraw.mjs <board.excalidraw.md> /tmp/band.png 1 900 1900    # one y band
 ```
+**Use the band form on anything tall.** A finished board is routinely 8–10k px high; one PNG of that
+is unreadable, and cropping it afterwards means working in the exported image's coordinate space
+rather than the board's. The last two arguments are BOARD y coordinates — walk the board down in
+~1000px strips and actually look at each one.
 
 See `reference/format.md` for the exact `.excalidraw.md` anatomy reverse-engineered from this vault.
 

@@ -1,26 +1,42 @@
 // House style learned from the vault's presentation boards (MemoryOS High Level, Personalization
-// Module, Research). Excalifont (fontFamily 5), solid fills, always-rounded rects, 2px #1e1e1e ink,
-// Excalidraw's native pastel swatches used semantically. These helpers return ElementSpec[] for
-// build_excalidraw.js's buildExcalidraw({ elements }).
+// Module, Research): solid fills, always-rounded rects, 2px #1e1e1e ink, Excalidraw's native pastel
+// swatches used semantically. These helpers return ElementSpec[] for build_excalidraw.js's
+// buildExcalidraw({ elements }).
 //
-// Three rules keep boards clean and readable — the reason this file exists:
+// Four rules keep boards clean and readable — the reason this file exists:
 //   1. READABLE MEASURE   — body text wraps to a bounded reading width (READ_W), never the whole
 //                           board. sectionTitle/bullets/annotate/prose all cap + wrap. Long text is
 //                           unreadable when it runs edge-to-edge; keep the measure ~60 chars.
-//   2. NO OVERLAP         — lay boards out with stack()/row() (flow layout: each element is placed
+//   2. READABLE TYPE      — anything meant to be READ is set in the UI sans (Nunito) at >= 16px on a
+//                           1.6 line height; hand-drawn (Excalifont) is opt-in via `font:'hand'` and
+//                           belongs on labels and sketch annotations, not on paragraphs. See
+//                           typography.js for why, and for the measured advance tables.
+//   3. NO OVERLAP         — lay boards out with stack()/row() (flow layout: each element is placed
 //                           after the previous one's measured height/width, so boxes can't collide).
 //                           build_excalidraw also AUDITS the finished scene and warns on overlaps.
-//   3. VISUAL-FIRST       — Excalidraw's strength is pictures, not walls of text. Prefer the visual
+//   4. VISUAL-FIRST       — Excalidraw's strength is pictures, not walls of text. Prefer the visual
 //                           kit (funnel, windowFrame, button, input, textRows, imagePlaceholder,
 //                           navbar, avatar, chip) over paragraphs. Use textRows() as body-copy filler
 //                           in wireframes instead of real sentences.
 
-const INK = '#1e1e1e';
+const TYPO = require('./typography.js');
+const {
+  FONT, fontId, LH_ROLE, textH, EMPHASIS,
+  measureText, widestLine, wrapLines, wrapToWidth, textBlock, parseMarkup, hasMarkup, isWideGlyph, glyphW,
+} = Object.assign({}, TYPO, { LH_ROLE: TYPO.LH });
 
-// Comfortable reading measures (px). READ_W ≈ 60 Excalifont chars at 18px — the width past which a
-// line of text gets hard to scan. NOTE_W is for terse side-annotations. Never let prose exceed READ_W.
+const INK = '#1e1e1e';
+const MUTED = '#495057';   // secondary copy: captions, side notes, axis labels
+
+// Comfortable reading measures (px). READ_W ≈ 62 Nunito chars at 17px — the width past which a line
+// of text gets hard to scan. NOTE_W is for terse side-annotations. Never let prose exceed READ_W.
 const READ_W = 620;
 const NOTE_W = 260;
+
+// Body type. 15px handwriting on 1.25 leading was the readability bug this kit was built to stop
+// repeating: the size, the face and the leading were all working against the reader at once.
+const BODY_SIZE = 17;
+const BODY_LH = LH_ROLE.body;
 
 // semantic palette: { fill, stroke } — matches the vault's swatches and their meaning
 const PALETTE = {
@@ -53,66 +69,15 @@ const WIRE = {
 let _gc = 0;
 const newGroup = (hint) => `g${++_gc}-${hint || ''}`;
 const lines = (t) => String(t).split('\n').length;
-const LH = 1.25; // line height used everywhere height is derived from line count
+// Leading used when a height is derived from a line count. LH is the LABEL default (single-ish lines
+// inside a shape); paragraphs use BODY_LH. Whatever a builder picks it must put the SAME value on the
+// element as `lineHeight`, or Excalidraw draws lines outside the space the layout reserved.
+const LH = LH_ROLE.tight;
 
 // --- text fitting --------------------------------------------------------
-// Excalifont glyph advance, in multiples of fontSize. Latin is ~0.58; emoji, arrows, CJK and
-// combining marks render roughly square (~1.05) — the old flat 0.52 under-counted them, so wide
-// labels measured narrow and spilled out of their card. Mirrored in build_excalidraw.js sizeText().
-function isWideGlyph(code) {
-  return (
-    (code >= 0x1100 && code <= 0x115f) || // Hangul Jamo
-    (code >= 0x2190 && code <= 0x21ff) || // arrows
-    (code >= 0x2300 && code <= 0x23ff) || // misc technical (⏰ ⏳ …)
-    (code >= 0x25a0 && code <= 0x27bf) || // geometric shapes, misc symbols, dingbats (✅ ★ …)
-    (code >= 0x2b00 && code <= 0x2bff) || // extra arrows / symbols
-    (code >= 0x2e80 && code <= 0x9fff) || // CJK radicals … unified ideographs
-    (code >= 0xac00 && code <= 0xd7a3) || // Hangul syllables
-    (code >= 0xf900 && code <= 0xfaff) || // CJK compatibility ideographs
-    (code >= 0xfe30 && code <= 0xfe4f) || // CJK compatibility forms
-    (code >= 0xff00 && code <= 0xff60) || // fullwidth forms
-    (code >= 0x1f000 && code <= 0x1faff) || // emoji & pictographs
-    (code >= 0x1f1e6 && code <= 0x1f1ff)    // regional indicators (flags)
-  );
-}
-function glyphW(ch, fontSize) { return fontSize * (isWideGlyph(ch.codePointAt(0)) ? 1.05 : 0.58); }
-function measureText(s, fontSize) { let w = 0; for (const ch of String(s)) w += glyphW(ch, fontSize); return w; }
-
-// Greedy word-wrap to a pixel width, honoring existing \n and HARD-breaking any single word that is
-// itself wider than the box (e.g. a long URL). Returns the text WITH the newlines baked in — the
-// Obsidian plugin keeps them instead of re-flowing the label into one over-wide centered line.
-// A logical line's LEADING INDENT is preserved and re-applied to every line it wraps into, so a
-// hanging indent (bullets(), indented notes) survives. Mirrors wrapText() in build_excalidraw.js.
-function wrapToWidth(text, fontSize, width) {
-  const out = [];
-  for (const logical of String(text).split('\n')) {
-    const indent = (logical.match(/^[ \t]*/) || [''])[0];
-    const avail = Math.max(1, width - measureText(indent, fontSize));
-    const push = (s) => out.push(indent + s);
-    const words = logical.slice(indent.length).split(/\s+/).filter(Boolean);
-    if (!words.length) { out.push(''); continue; }
-    let cur = '';
-    for (let word of words) {
-      while (measureText(word, fontSize) > avail) {
-        let acc = '';
-        for (const ch of word) {
-          if (acc && measureText(acc + ch, fontSize) > avail) break;
-          acc += ch;
-        }
-        if (cur) { push(cur); cur = ''; }
-        push(acc);
-        word = word.slice(acc.length);
-        if (!word) break;
-      }
-      if (!word) continue;
-      const candidate = cur ? cur + ' ' + word : word;
-      if (cur && measureText(candidate, fontSize) > avail) { push(cur); cur = word; }
-      else cur = candidate;
-    }
-    if (cur) push(cur);
-  }
-  return out.join('\n');
-}
+// measureText / wrapToWidth / wrapLines now live in typography.js, backed by advance tables MEASURED
+// from the real font files (see scripts/diagrams/calibrate-excalidraw-fonts.mjs). They take an
+// optional font argument and default to the body sans.
 
 const _warned = new Set();
 function warnFit(msg) { if (!_warned.has(msg)) { _warned.add(msg); try { console.warn('[excalidraw] ' + msg); } catch (e) {} } }
@@ -242,43 +207,79 @@ function row(o) {
 }
 
 // --- readable text primitives -------------------------------------------
+// All of these go through typography.textBlock(): bounded measure, real leading, and INLINE EMPHASIS
+// (`**strong**` underlines, `==mark==` highlights, `` `code` `` chips) painted as geometry behind a
+// single clean text element — so the words stay one paragraph in `## Text Elements`.
+
 // A bounded, wrapped paragraph. Text NEVER exceeds `width` (default the reading measure) — this is
 // the antidote to edge-to-edge text. Height is derived from the wrapped line count. Visual-first
-// boards use this sparingly; prefer pictures.
+// boards use this sparingly; prefer pictures, and keep a paragraph under ~4 lines.
 function prose(o) {
-  const { x = 0, y = 0, text = '', fontSize = 18, width = READ_W, color = INK, align = 'left' } = o;
-  const w = Math.min(width, Math.max(40, measureText(String(text), fontSize)));
-  const wrapped = wrapToWidth(text, fontSize, w);
-  const lc = wrapped.split('\n').length;
-  const out = [{ type: 'text', x, y, text: wrapped, fontSize, color, width: w, align, fontFamily: 5 }];
-  return box(out, x, y, w, lc * fontSize * LH);
+  const {
+    x = 0, y = 0, text = '', fontSize = BODY_SIZE, width = READ_W, color = INK,
+    align = 'left', font = 'sans', lh = BODY_LH, markup = true,
+  } = o;
+  const b = textBlock({ x, y, text, width, fontSize, color, align, font, lh, markup });
+  return box(b.els, x, y, b.w, b.h);
 }
 
 // big plain section header (no box), like "Configuration" / "Flow". Long titles WRAP to `maxWidth`
-// instead of running off the board.
+// instead of running off the board. Display type gets tighter leading than body copy.
 function sectionTitle(o) {
-  const { x = 0, y = 0, text, fontSize = 44, color = INK, maxWidth = 1000, align = 'left' } = o;
-  const w = Math.min(maxWidth, Math.max(200, measureText(String(text), fontSize) + fontSize));
-  const wrapped = wrapToWidth(text, fontSize, w);
-  const lc = wrapped.split('\n').length;
-  const out = [{ type: 'text', x, y, text: wrapped, fontSize, color, width: w, align, fontFamily: 5 }];
-  return box(out, x, y, w, lc * fontSize * LH);
+  const {
+    x = 0, y = 0, text, fontSize = 40, color = INK, maxWidth = 1000, align = 'left',
+    font = 'sans', lh = LH_ROLE.title, markup = true,
+  } = o;
+  const b = textBlock({ x, y, text, width: maxWidth, fontSize, color, align, font, lh, markup });
+  return box(b.els, x, y, b.w, b.h);
 }
 
-// bullet list as one left-aligned block. Each item wraps to `width` (default reading measure) with a
-// hanging indent under the bullet, so long items stay readable instead of one giant line.
-function bullets(o) {
-  const { x = 0, y = 0, items = [], fontSize = 20, color = INK, bullet = '•  ', width = READ_W } = o;
-  const indent = ' '.repeat(bullet.length);
-  const bw = measureText(bullet, fontSize);
-  const outLines = [];
-  for (const it of items) {
-    const wrapped = wrapToWidth(it, fontSize, Math.max(40, width - bw)).split('\n');
-    wrapped.forEach((ln, i) => outLines.push((i === 0 ? bullet : indent) + ln));
+// The "in a nutshell" line: the ONE sentence a reader should leave with, set larger than body copy
+// with an accent rule down its left edge. Put it at the top of a board or a section, before any
+// supporting detail. Emphasis markup works here too — mark the number that carries the point.
+function takeaway(o) {
+  const {
+    x = 0, y = 0, text = '', fontSize = 22, width = READ_W, color = INK, accent = 'blue',
+    label = null, font = 'sans', lh = 1.45, markup = true,
+  } = o;
+  const g = o.group || newGroup('takeaway');
+  const p = pal(accent);
+  const padL = 18;
+  const out = [];
+  let cy = y;
+  if (label) {
+    const lb = textBlock({ x: x + padL, y: cy, text: label, width, fontSize: 12, color: p.stroke, font, lh: LH_ROLE.tight, markup: false, group: g });
+    out.push(...lb.els);
+    cy += lb.h + 4;
   }
-  const text = outLines.join('\n');
-  const out = [{ type: 'text', x, y, text, fontSize, color, width, fontFamily: 5 }];
-  return box(out, x, y, width, outLines.length * fontSize * LH);
+  const b = textBlock({ x: x + padL, y: cy, text, width: width - padL, fontSize, color, font, lh, markup, group: g });
+  out.push(...b.els);
+  const h = (cy - y) + b.h;
+  // the rule goes first so the text paints over it if they ever touch
+  out.unshift({ type: 'rectangle', x, y, width: 5, height: Math.max(fontSize, h), strokeColor: 'transparent', backgroundColor: p.stroke, fillStyle: 'solid', strokeWidth: 1, roughness: 0, roundness: true, group: g });
+  return box(out, x, y, padL + b.w, Math.max(fontSize, h));
+}
+
+// Bullet list. Each item is its OWN text element separated by `gap` — that gap is the point: a list
+// whose items are only a line-height apart reads as one grey paragraph, not as a list you can scan.
+// Items wrap to `width` with a hanging indent under the bullet, and support emphasis markup.
+function bullets(o) {
+  const {
+    x = 0, y = 0, items = [], fontSize = BODY_SIZE, color = INK, bullet = '•  ', width = READ_W,
+    gap = 10, font = 'sans', lh = BODY_LH, markup = true,
+  } = o;
+  const out = [];
+  let cy = y;
+  let usedW = 0;
+  items.forEach((it, i) => {
+    const raw = typeof it === 'string' ? it : (it && it.text) || '';
+    const c = (typeof it === 'object' && it && it.color) || color;
+    const b = textBlock({ x, y: cy, text: raw, width, fontSize, color: c, font, lh, markup, bullet });
+    out.push(...b.els);
+    usedW = Math.max(usedW, b.w);
+    cy += b.h + (i === items.length - 1 ? 0 : gap);
+  });
+  return box(out, x, y, usedW || width, cy - y);
 }
 
 // --- rounded card / flow node -------------------------------------------
@@ -295,7 +296,7 @@ function card(o) {
   const ty = y + Math.max(padY, (h - textH) / 2);
   return box([
     { type: 'rectangle', x, y, width: w, height: h, strokeColor: stroke, backgroundColor: p.fill, fillStyle: 'solid', strokeWidth, roundness, group },
-    { type: 'text', x, y: ty, text: fit.text, fontSize: fit.fontSize, color: textColor, width: w, align: 'center', fontFamily: 5, group },
+    { type: 'text', x, y: ty, text: fit.text, fontSize: fit.fontSize, color: textColor, width: w, align: 'center', fontFamily: FONT.sans, group },
   ], x, y, w, h);
 }
 // small node (flow step) — card with tighter defaults
@@ -321,7 +322,7 @@ function connector(o) {
     const el = m.vertical
       ? { x: labelSide === 'right' ? m.x + 8 : m.x - w - 8, y: m.y - fontSize * 0.62, align: labelSide === 'right' ? 'left' : 'right' }
       : { x: m.x - w / 2, y: m.y - fontSize - 4, align: 'center' };
-    out.push({ type: 'text', x: el.x, y: el.y, text: label, fontSize, color: labelColor, width: w, align: el.align, fontFamily: 5 });
+    out.push({ type: 'text', x: el.x, y: el.y, text: label, fontSize, color: labelColor, width: w, align: el.align, fontFamily: FONT.sans });
   }
   return out;
 }
@@ -333,7 +334,7 @@ function annotate(o) {
   const wrapped = wrapToWidth(text, fontSize, width);
   return [
     { type: 'arrow', points: [from, to], strokeColor: color, strokeWidth: 1.5, endArrow: 'arrow' },
-    { type: 'text', x: to[0] + 6, y: to[1] - fontSize * 0.6, text: wrapped, fontSize, color, width, align: 'left', fontFamily: 5 },
+    { type: 'text', x: to[0] + 6, y: to[1] - fontSize * 0.6, text: wrapped, fontSize, color, width, align: 'left', fontFamily: FONT.sans },
   ];
 }
 
@@ -355,7 +356,7 @@ function hub(o) {
   const out = [];
   const p = pal(color);
   out.push({ type: 'ellipse', x: cx - rx, y: cy - ry, width: rx * 2, height: ry * 2, strokeColor: p.stroke, backgroundColor: p.fill, fillStyle: 'solid', strokeWidth: 2 });
-  out.push({ type: 'text', x: cx - rx, y: cy - 10, text: label, fontSize: 16, color: INK, width: rx * 2, align: 'center', fontFamily: 5 });
+  out.push({ type: 'text', x: cx - rx, y: cy - 10, text: label, fontSize: 16, color: INK, width: rx * 2, align: 'center', fontFamily: FONT.sans });
   const n = spokes.length;
   spokes.forEach((s, i) => {
     const a = startAngle + (i / Math.max(1, n)) * Math.PI * 2;
@@ -365,7 +366,7 @@ function hub(o) {
     const sp = pal(c);
     out.push({ type: 'arrow', points: [[cx + Math.cos(a) * rx, cy + Math.sin(a) * ry], [sx - Math.cos(a) * spokeRx, sy - Math.sin(a) * spokeRy]], strokeColor: INK, strokeWidth: 2, endArrow: 'arrow' });
     out.push({ type: 'ellipse', x: sx - spokeRx, y: sy - spokeRy, width: spokeRx * 2, height: spokeRy * 2, strokeColor: sp.stroke, backgroundColor: sp.fill, fillStyle: 'solid', strokeWidth: 2 });
-    out.push({ type: 'text', x: sx - spokeRx, y: sy - 8, text: t, fontSize: 14, color: INK, width: spokeRx * 2, align: 'center', fontFamily: 5 });
+    out.push({ type: 'text', x: sx - spokeRx, y: sy - 8, text: t, fontSize: 14, color: INK, width: spokeRx * 2, align: 'center', fontFamily: FONT.sans });
   });
   return out;
 }
@@ -403,14 +404,14 @@ function funnel(o) {
     const lw = Math.max(60, Math.min(wt, wb) - 24);
     const fit = fitText({ text: s.label, w: lw + 24, h: stageH, fontSize, minFont: 12 });
     const th = fit.lineCount * fit.fontSize * LH;
-    out.push({ type: 'text', x: cx - lw / 2, y: cy + (stageH - th) / 2, text: fit.text, fontSize: fit.fontSize, color: labelColor, width: lw, align: 'center', fontFamily: 5 });
+    out.push({ type: 'text', x: cx - lw / 2, y: cy + (stageH - th) / 2, text: fit.text, fontSize: fit.fontSize, color: labelColor, width: lw, align: 'center', fontFamily: FONT.sans });
     if (hasNotes && s.note) {
       const edgeX = cx + ((wt + wb) / 2) / 2; // right edge at the band's vertical middle
       const midY = cy + stageH / 2;
       const nx = x + w + noteGap;
       out.push({ type: 'arrow', points: [[edgeX, midY], [nx - 6, midY]], strokeColor: noteColor, strokeWidth: 1.5, endArrow: 'arrow' });
       const wrapped = wrapToWidth(s.note, 15, NOTE_W);
-      out.push({ type: 'text', x: nx, y: midY - 15 * 0.6 * lines(wrapped), text: wrapped, fontSize: 15, color: noteColor, width: NOTE_W, align: 'left', fontFamily: 5 });
+      out.push({ type: 'text', x: nx, y: midY - 15 * 0.6 * lines(wrapped), text: wrapped, fontSize: 15, color: noteColor, width: NOTE_W, align: 'left', fontFamily: FONT.sans });
     }
     cy += stageH + gap;
   });
@@ -434,9 +435,9 @@ function windowFrame(o) {
   if (kind === 'browser') {
     const ux = x + 80, uw = w - 96;
     out.push({ type: 'rectangle', x: ux, y: y + 7, width: uw, height: bar - 14, strokeColor: WIRE.line, backgroundColor: WIRE.paper, fillStyle: 'solid', strokeWidth: 1, roundness: true });
-    if (url) out.push({ type: 'text', x: ux + 12, y: y + bar / 2 - 7, text: url, fontSize: 12, color: WIRE.text, width: uw - 24, fontFamily: 3 });
+    if (url) out.push({ type: 'text', x: ux + 12, y: y + bar / 2 - 7, text: url, fontSize: 12, color: WIRE.text, width: uw - 24, fontFamily: FONT.code });
   } else if (title) {
-    out.push({ type: 'text', x: x + 80, y: y + bar / 2 - 8, text: title, fontSize: 13, color: WIRE.strong, width: w - 160, align: 'center', fontFamily: 5 });
+    out.push({ type: 'text', x: x + 80, y: y + bar / 2 - 8, text: title, fontSize: 13, color: WIRE.strong, width: w - 160, align: 'center', fontFamily: FONT.sans });
   }
   G(out, 'window');
   box(out, x, y, w, h);
@@ -454,7 +455,7 @@ function button(o) {
   const g = newGroup('button');
   return box([
     { type: 'rectangle', x, y, width: w, height: h, strokeColor: p.stroke, backgroundColor: solid ? p.stroke : WIRE.paper, fillStyle: 'solid', strokeWidth: 2, roundness: true, group: g },
-    { type: 'text', x, y: y + (h - th) / 2, text: fit.text, fontSize: fit.fontSize, color: solid ? textColor : p.stroke, width: w, align: 'center', fontFamily: 5, group: g },
+    { type: 'text', x, y: y + (h - th) / 2, text: fit.text, fontSize: fit.fontSize, color: solid ? textColor : p.stroke, width: w, align: 'center', fontFamily: FONT.sans, group: g },
   ], x, y, w, h);
 }
 
@@ -462,9 +463,9 @@ function button(o) {
 function input(o) {
   const { x = 0, y = 0, w = 260, h = 42, placeholder = '', label = null, fontSize = 14 } = o;
   const out = []; let yy = y;
-  if (label) { out.push({ type: 'text', x, y: yy, text: label, fontSize: 12, color: WIRE.text, width: w, fontFamily: 5 }); yy += 12 * LH + 6; }
+  if (label) { out.push({ type: 'text', x, y: yy, text: label, fontSize: 12, color: WIRE.text, width: w, fontFamily: FONT.sans }); yy += 12 * LH + 6; }
   out.push({ type: 'rectangle', x, y: yy, width: w, height: h, strokeColor: WIRE.edge, backgroundColor: WIRE.paper, fillStyle: 'solid', strokeWidth: 1.5, roundness: true });
-  if (placeholder) out.push({ type: 'text', x: x + 12, y: yy + h / 2 - fontSize * 0.6, text: placeholder, fontSize, color: WIRE.hint, width: w - 24, fontFamily: 5 });
+  if (placeholder) out.push({ type: 'text', x: x + 12, y: yy + h / 2 - fontSize * 0.6, text: placeholder, fontSize, color: WIRE.hint, width: w - 24, fontFamily: FONT.sans });
   return box(G(out, 'input'), x, y, w, (yy - y) + h);
 }
 
@@ -488,7 +489,7 @@ function imagePlaceholder(o) {
     { type: 'line', points: [[x, y], [x + w, y + h]], strokeColor: stroke, strokeWidth: 1.5 },
     { type: 'line', points: [[x + w, y], [x, y + h]], strokeColor: stroke, strokeWidth: 1.5 },
   ];
-  if (label) out.push({ type: 'text', x, y: y + h / 2 - 8, text: label, fontSize: 13, color: WIRE.text, width: w, align: 'center', fontFamily: 5 });
+  if (label) out.push({ type: 'text', x, y: y + h / 2 - 8, text: label, fontSize: 13, color: WIRE.text, width: w, align: 'center', fontFamily: FONT.sans });
   return box(G(out, 'imgph'), x, y, w, h);
 }
 
@@ -502,11 +503,11 @@ function avatar(o) {
 function navbar(o) {
   const { x = 0, y = 0, w = 800, h = 54, brand = '', items = [], cta = null, fill = WIRE.paper, stroke = WIRE.line, color = WIRE.strong } = o;
   const out = [{ type: 'rectangle', x, y, width: w, height: h, strokeColor: stroke, backgroundColor: fill, fillStyle: 'solid', strokeWidth: 1.5, roundness: false }];
-  if (brand) out.push({ type: 'text', x: x + 22, y: y + h / 2 - 11, text: brand, fontSize: 18, color: INK, fontFamily: 5 });
+  if (brand) out.push({ type: 'text', x: x + 22, y: y + h / 2 - 11, text: brand, fontSize: 18, color: INK, fontFamily: FONT.sans });
   let rx = x + w - 22 - (cta ? 132 : 0);
   for (let i = items.length - 1; i >= 0; i--) {
     const t = items[i]; const tw = measureText(t, 14) + 20; rx -= tw;
-    out.push({ type: 'text', x: rx, y: y + h / 2 - 9, text: t, fontSize: 14, color, width: tw, align: 'center', fontFamily: 5 });
+    out.push({ type: 'text', x: rx, y: y + h / 2 - 9, text: t, fontSize: 14, color, width: tw, align: 'center', fontFamily: FONT.sans });
   }
   if (cta) out.push(...button({ x: x + w - 22 - 120, y: y + (h - 34) / 2, w: 120, h: 34, text: cta, fontSize: 13 }));
   return box(G(out, 'navbar'), x, y, w, h);
@@ -520,7 +521,7 @@ function chip(o) {
   const g = newGroup('chip');
   return box([
     { type: 'rectangle', x, y, width: w, height: h, strokeColor: p.stroke, backgroundColor: p.fill, fillStyle: 'solid', strokeWidth: 1.5, roundness: true, group: g },
-    { type: 'text', x, y: y + (h - fontSize * LH) / 2, text, fontSize, color: p.stroke, width: w, align: 'center', fontFamily: 5, group: g },
+    { type: 'text', x, y: y + (h - fontSize * LH) / 2, text, fontSize, color: p.stroke, width: w, align: 'center', fontFamily: FONT.sans, group: g },
   ], x, y, w, h);
 }
 
@@ -541,9 +542,12 @@ const bottomOf = (x, y, w, h) => [x + w / 2, y + h];
 const topOf = (x, y, w, h) => [x + w / 2, y];
 
 module.exports = {
-  INK, PALETTE, WIRE, READ_W, NOTE_W, pal,
+  INK, MUTED, PALETTE, WIRE, READ_W, NOTE_W, pal,
+  // typography (re-exported so callers have one import for the house style)
+  FONT, fontId, LH, BODY_SIZE, BODY_LH, LH_ROLE, textH, EMPHASIS, textBlock, wrapLines, widestLine,
+  parseMarkup, hasMarkup, isWideGlyph, glyphW,
   // text + layout
-  measureText, fitText, wrapToWidth, prose, sectionTitle, bullets, annotate,
+  measureText, fitText, wrapToWidth, prose, sectionTitle, bullets, takeaway, annotate,
   box, bbox, translate, stack, row,
   // structure
   card, node, connector, column, hub, funnel,

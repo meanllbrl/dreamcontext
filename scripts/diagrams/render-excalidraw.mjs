@@ -37,8 +37,21 @@ export async function withRenderer(fn) {
   await page.evaluate(async () => { try { await document.fonts.ready; } catch {} });
   await page.waitForTimeout(600);
 
-  const render = async (boardMd, outPng, scale = 2) => {
-    const scene = sceneFromBoard(boardMd);
+  // `band` = [y0, y1] in BOARD coordinates: render only the elements whose vertical extent overlaps
+  // that strip. A finished board is often 10,000px tall, and the skill's "render it and LOOK at it"
+  // step is unusable on one 10k-tall PNG — you cannot see anything, and cropping after the fact needs
+  // the exported image's own coordinate space, which is not the board's. Slicing by board y is what
+  // makes inspecting a tall board a normal thing to do.
+  const render = async (boardMd, outPng, scale = 2, band = null) => {
+    let scene = sceneFromBoard(boardMd);
+    if (band) {
+      const [y0, y1] = band;
+      const kept = scene.elements.filter((e) => {
+        const top = e.y, bot = e.y + (e.height || 0);
+        return bot >= y0 && top <= y1;
+      });
+      scene = { ...scene, elements: kept };
+    }
     const dataUrl = await page.evaluate(async ({ scene, scale }) => {
       const { exportToBlob } = window.ExcalidrawLib;
       const blob = await exportToBlob({
@@ -62,7 +75,7 @@ export async function withRenderer(fn) {
       });
     }, { scene, scale });
     writeFileSync(outPng, Buffer.from(String(dataUrl).split(',')[1], 'base64'));
-    console.log(`  rendered ${outPng}  (${scene.elements.length} elements, scale ${scale})`);
+    console.log(`  rendered ${outPng}  (${scene.elements.length} elements, scale ${scale}${band ? `, band y ${band[0]}..${band[1]}` : ''})`);
   };
 
   // Single-page PDF sized exactly to the diagram: export the same PNG blob, read its
@@ -127,10 +140,13 @@ export async function withRenderer(fn) {
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const [, , boardPath, outPath, scaleArg] = process.argv;
+  const [, , boardPath, outPath, scaleArg, y0, y1] = process.argv;
   if (!boardPath || !outPath) {
-    console.error('usage: render-excalidraw.mjs <board.excalidraw.md> <out.png> [scale]');
+    console.error('usage: render-excalidraw.mjs <board.excalidraw.md> <out.png> [scale] [y0 y1]');
+    console.error('  y0/y1 (optional) render only the horizontal band of the board between those');
+    console.error('  BOARD y coordinates — the way to inspect a tall board section by section.');
     process.exit(1);
   }
-  await withRenderer(async (render) => { await render(boardPath, outPath, Number(scaleArg) || 2); });
+  const band = y0 != null && y1 != null ? [Number(y0), Number(y1)] : null;
+  await withRenderer(async (render) => { await render(boardPath, outPath, Number(scaleArg) || 2, band); });
 }

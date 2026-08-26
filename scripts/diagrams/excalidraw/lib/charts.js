@@ -15,12 +15,15 @@
 //   - degrades sanely on empty/1-point data instead of dividing by zero
 
 const {
-  INK, PALETTE, WIRE, READ_W, pal,
+  INK, MUTED, PALETTE, WIRE, READ_W, BODY_SIZE, pal,
   measureText, wrapToWidth, fitText, box, bbox, translate,
+  bullets: STYLE_BULLETS,
 } = require('./style.js');
+const { FONT: FONTS, LH: LH_ROLE, textBlock, widestLine, emphasisOn } = require('./typography.js');
 
-const LH = 1.25;
-const FONT = 5; // Excalifont — matches the house style
+const LH = LH_ROLE.tight;   // chart furniture: ticks, labels, legends — single lines
+const BODY_LH = LH_ROLE.body; // anything a reader actually reads (callout copy)
+const FONT = FONTS.sans;    // charts are read, not sketched — numbers and axis labels go in the sans
 
 // default series color cycle (semantic palette, in a visually distinguishable order)
 const CYCLE = ['blue', 'red', 'green', 'purple', 'yellow', 'mint', 'gray'];
@@ -709,55 +712,82 @@ function kpi(o) {
 // A titled note band. Body copy is ALWAYS bounded to <= READ_W: a wide band puts its heading beside
 // the text (label | body) rather than stretching one line edge-to-edge. Never splits short copy into
 // columns — a 1-line "column" reads as a torn sentence, which is worse than a long line.
-// `w` is a MAXIMUM, not a target: the band shrinks to hug its own wrapped text. A callout handed 1080px
-// for 620px of copy used to pad the difference with dead space (~27% on a real board — an empty title
-// gutter plus a right margin). Sizing to content is what makes the primitive atomic: the caller says
-// "at most this wide" and the builder works out the rest. Pass `fit: false` for a deliberate full-width
-// band, or pin `titleW` to align the title gutters of several stacked callouts.
+// `w` is a MAXIMUM, not a target: the band shrinks to hug its own wrapped text. Pass `fit: false` for
+// a deliberate full-width band, or pin `titleW` to align the title gutters of several stacked bands.
+//
+// STRUCTURE IS THE READABILITY FIX. The old callout took one `text` blob and set it as nine tight
+// lines of 15px handwriting — technically inside the measure, and completely unscannable. The body is
+// now a SEQUENCE of blocks, each its own text element with real space between them:
+//
+//   lead    one sentence, a size up, in ink — the point, before any evidence
+//   text    supporting paragraph(s); a string, or an array for several
+//   items   bullets, which is what most callout bodies actually wanted to be
+//
+// All of them take inline emphasis: `**strong**`, `==mark==`, `` `code` ``. Mark the number that
+// carries the argument and the eye lands there first — that is what makes a band scannable rather
+// than merely short.
 function callout(o) {
   const {
-    x = 0, y = 0, w = 660, title = null, text = '', color = 'gray',
-    fontSize = 15, titleSize = 16, minH = 0, sideTitle = null, titleW = null,
-    padX = 16, padY = 14, gap = 40, fit = true, minW = 0,
+    x = 0, y = 0, w = 660, title = null, lead = null, text = '', items = null, color = 'gray',
+    fontSize = BODY_SIZE, titleSize = 17, leadSize = null, minH = 0, sideTitle = null, titleW = null,
+    padX = 20, padY = 18, gap = 36, fit = true, minW = 0, blockGap = 12, lh = BODY_LH, markup = true,
+    font = 'sans',
   } = o;
   const p = pal(color);
+  // A highlight the colour of the band it sits on is not an emphasis, it is a no-op — and a silent
+  // one. Pick marks that read against THIS band's fill (a yellow callout gets a peach highlighter).
+  const emph = emphasisOn(p.fill);
   const avail = w - padX * 2;
   // auto: a band with room for a title column AND a full measure beside it uses the side layout
   const side = sideTitle == null ? (!!title && avail >= READ_W + 200) : (sideTitle && !!title);
-  const widest = (s, fs) => Math.max(0, ...String(s).split('\n').map((l) => measureText(l, fs)));
-  const parts = [];
+  const paras = text == null || text === '' ? [] : (Array.isArray(text) ? text : [text]);
+
+  // Lay the body column out at `cap`, returning its blocks and measured size.
+  const bodyAt = (bx, by, cap) => {
+    const els = [];
+    let cy = by, used = 0;
+    const put = (b) => { els.push(...b.els); used = Math.max(used, b.w); cy += b.h; };
+    if (lead) {
+      const b = textBlock({ x: bx, y: cy, text: lead, width: cap, fontSize: leadSize || fontSize + 3, color: INK, lh: 1.45, markup, font, ...emph });
+      put(b); cy += blockGap;
+    }
+    paras.forEach((t, i) => {
+      const b = textBlock({ x: bx, y: cy, text: t, width: cap, fontSize, color: INK, lh, markup, font, ...emph });
+      put(b);
+      if (i < paras.length - 1 || (items && items.length)) cy += blockGap;
+    });
+    if (items && items.length) {
+      const bl = STYLE_BULLETS({ x: bx, y: cy, items, width: cap, fontSize, color: INK, lh, markup, font, ...emph });
+      els.push(...bl); used = Math.max(used, bl.w); cy += bl.h;
+    }
+    return { els, w: used, h: cy - by };
+  };
+
+  const els = [];
   let h, natural;
   if (side) {
     const tCap = titleW != null ? titleW : Math.min(300, Math.max(80, avail - READ_W - gap));
-    const tWrap = wrapToWidth(String(title), titleSize, tCap);
-    const tW = titleW != null ? titleW : Math.min(tCap, Math.max(40, widest(tWrap, titleSize)));
-    const bCap = Math.min(avail - tW - gap, READ_W);
-    const bWrap = wrapToWidth(String(text), fontSize, bCap);
-    const bW = Math.min(bCap, Math.max(40, widest(bWrap, fontSize)));
-    parts.push({ text: tWrap, size: titleSize, dy: padY, color: p.stroke, x: x + padX, w: tW });
-    parts.push({ text: bWrap, size: fontSize, dy: padY, color: INK, x: x + padX + tW + gap, w: bW });
-    h = Math.max(tWrap.split('\n').length * titleSize * LH, bWrap.split('\n').length * fontSize * LH) + padY * 2;
-    natural = padX + tW + gap + bW + padX;
+    const tb = textBlock({ x: x + padX, y: y + padY, text: title, width: tCap, fontSize: titleSize, color: p.stroke, lh: 1.35, markup: false, font });
+    const tW = titleW != null ? titleW : tb.w;
+    const body = bodyAt(x + padX + tW + gap, y + padY, Math.min(avail - tW - gap, READ_W));
+    els.push(...tb.els, ...body.els);
+    h = Math.max(tb.h, body.h) + padY * 2;
+    natural = padX + tW + gap + body.w + padX;
   } else {
     const colW = Math.min(avail, READ_W);
-    h = padY;
-    let used = 0;
+    let cy = y + padY, used = 0;
     if (title) {
-      const t = wrapToWidth(String(title), titleSize, colW);
-      parts.push({ text: t, size: titleSize, dy: h, color: p.stroke, x: x + padX, w: colW });
-      h += t.split('\n').length * titleSize * LH + 6;
-      used = Math.max(used, widest(t, titleSize));
+      const tb = textBlock({ x: x + padX, y: cy, text: title, width: colW, fontSize: titleSize, color: p.stroke, lh: 1.35, markup: false, font });
+      els.push(...tb.els); used = Math.max(used, tb.w); cy += tb.h + 8;
     }
-    const b = wrapToWidth(String(text), fontSize, colW);
-    parts.push({ text: b, size: fontSize, dy: h, color: INK, x: x + padX, w: colW });
-    h += b.split('\n').length * fontSize * LH + padY;
-    used = Math.max(used, widest(b, fontSize));
+    const body = bodyAt(x + padX, cy, colW);
+    els.push(...body.els); used = Math.max(used, body.w); cy += body.h;
+    h = cy - y + padY;
     natural = padX + Math.max(40, used) + padX;
   }
   h = Math.max(h, minH);
   const width = fit ? Math.max(minW, Math.min(w, Math.ceil(natural))) : w;
-  const els = [{ type: 'rectangle', x, y, width, height: h, strokeColor: p.stroke, backgroundColor: p.fill, fillStyle: 'solid', strokeWidth: 2, roundness: true }];
-  for (const pp of parts) els.push(txt({ x: pp.x, y: y + pp.dy, text: pp.text, fontSize: pp.size, color: pp.color, width: pp.w, align: 'left' }));
+  els.unshift({ type: 'rectangle', x, y, width, height: h, strokeColor: p.stroke, backgroundColor: p.fill, fillStyle: 'solid', strokeWidth: 2, roundness: true });
   return G(box(els, x, y, width, h), 'callout');
 }
 

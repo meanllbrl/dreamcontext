@@ -17,7 +17,9 @@ const {
 } = require('./style.js');
 
 const LH = 1.25;
-const FONT = 5;
+// A mockup is imitating a real interface, and real interfaces are set in a UI sans — handwriting on a
+// simulated screen reads as a sketch OF a screen rather than as the screen.
+const FONT = require('./typography.js').FONT.sans;
 const txt = (o) => Object.assign({ type: 'text', fontFamily: FONT, color: INK }, o);
 let _gc = 0;
 function G(els, hint) {

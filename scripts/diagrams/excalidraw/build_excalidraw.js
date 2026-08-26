@@ -29,6 +29,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { generateNKeysBetween } = require('./lib/fractional-indexing.js');
 const { imageSize } = require('./lib/imagesize.js');
+const TYPO = require('./lib/typography.js');
 const STYLE = require('./lib/style.js');
 const CHARTS = require('./lib/charts.js');
 const WF = require('./lib/wireframe.js');
@@ -48,6 +49,7 @@ const COMPOSITES = {
   funnel: STYLE.funnel, card: STYLE.card, node: STYLE.node, column: STYLE.column, hub: STYLE.hub,
   connector: STYLE.connector, annotate: STYLE.annotate, chip: STYLE.chip, divider: STYLE.divider,
   prose: STYLE.prose, bullets: STYLE.bullets, sectionTitle: STYLE.sectionTitle,
+  takeaway: STYLE.takeaway,
   // wireframe kit
   windowFrame: STYLE.windowFrame, navbar: STYLE.navbar, button: STYLE.button, input: STYLE.input,
   textRows: STYLE.textRows, imagePlaceholder: STYLE.imagePlaceholder, avatar: STYLE.avatar,
@@ -123,71 +125,38 @@ function findVaultRoot(startDir) {
 }
 
 // ---------- text sizing ----------
-// Excalifont glyph advance (multiples of fontSize): latin ~0.58, emoji/arrows/CJK/combining ~1.05.
-// A flat factor under-counted wide glyphs, so emoji labels measured narrow and overflowed their box.
-// This mirrors glyphW() in scripts/lib/style.js so card() pre-wrapping and on-board height agree.
-function isWideGlyph(code) {
-  return (
-    (code >= 0x1100 && code <= 0x115f) || (code >= 0x2190 && code <= 0x21ff) ||
-    (code >= 0x2300 && code <= 0x23ff) || (code >= 0x25a0 && code <= 0x27bf) ||
-    (code >= 0x2b00 && code <= 0x2bff) || (code >= 0x2e80 && code <= 0x9fff) ||
-    (code >= 0xac00 && code <= 0xd7a3) || (code >= 0xf900 && code <= 0xfaff) ||
-    (code >= 0xfe30 && code <= 0xfe4f) || (code >= 0xff00 && code <= 0xff60) ||
-    (code >= 0x1f000 && code <= 0x1faff) || (code >= 0x1f1e6 && code <= 0x1f1ff)
-  );
-}
-function glyphW(ch, fontSize) { return fontSize * (isWideGlyph(ch.codePointAt(0)) ? 1.05 : 0.58); }
-function measureText(s, fontSize) { let w = 0; for (const ch of String(s)) w += glyphW(ch, fontSize); return w; }
-
-// Greedy word-wrap to a pixel width. Honors existing \n and HARD-breaks any single word wider than
-// the box (e.g. a long URL). Returns the text WITH newlines baked in — mirrors wrapToWidth() in
-// scripts/lib/style.js. Baking is what actually fixes over-wide text: a width-set text element with no
-// hard newlines is re-flowed by the renderer into ONE line wider than its box (captions then overlap
-// their neighbours). Baking the breaks makes every wrapped label render at the intended measure.
-// A logical line's LEADING INDENT is preserved and re-applied to every line it wraps into — that is
-// what keeps a hanging indent (bullets(), indented notes) intact through the bake. Without it the
-// wrap would collapse the author's indentation and continuation lines would snap to the left margin.
-function wrapText(text, fontSize, width) {
-  const out = [];
-  for (const logical of String(text).split('\n')) {
-    const indent = (logical.match(/^[ \t]*/) || [''])[0];
-    const avail = Math.max(1, width - measureText(indent, fontSize));
-    const push = (s) => out.push(indent + s);
-    const words = logical.slice(indent.length).split(/\s+/).filter(Boolean);
-    if (!words.length) { out.push(''); continue; }
-    let cur = '';
-    for (let word of words) {
-      while (measureText(word, fontSize) > avail) {
-        let acc = '';
-        for (const ch of word) { if (acc && measureText(acc + ch, fontSize) > avail) break; acc += ch; }
-        if (cur) { push(cur); cur = ''; }
-        push(acc); word = word.slice(acc.length); if (!word) break;
-      }
-      if (!word) continue;
-      const cand = cur ? cur + ' ' + word : word;
-      if (cur && measureText(cand, fontSize) > avail) { push(cur); cur = word; }
-      else cur = cand;
-    }
-    if (cur) push(cur);
-  }
-  return out.join('\n');
-}
+// Measuring and wrapping live in lib/typography.js, on advance tables measured from the real font
+// files (scripts/diagrams/calibrate-excalidraw-fonts.mjs) rather than a single guessed constant.
+const { isWideGlyph, glyphW, measureText, wrapToWidth: wrapText } = TYPO;
 
 // When a fixedWidth is given the text WRAPS to it (autoResize off) and the wrapped text is baked with
-// newlines, so it renders at the intended measure and its height reflects the real line count.
+// newlines, so it renders at the intended measure and its height reflects the real line count. Baking
+// is what actually fixes over-wide text: a width-set text element with no hard newlines is re-flowed
+// by the renderer into ONE line wider than its box (captions then overlap their neighbours).
 // Returns { width, height, text } — `text` carries the baked newlines when a width was given.
-function sizeText(text, fontSize, fixedWidth) {
+function sizeText(text, fontSize, fixedWidth, lineHeight, font) {
+  const lh = lineHeight || TYPO.LH.tight;
   if (fixedWidth != null) {
-    const wrapped = wrapText(text, fontSize, fixedWidth);
+    const wrapped = wrapText(text, fontSize, fixedWidth, font);
     const lc = wrapped.split('\n').length;
-    return { width: fixedWidth, height: Math.max(Math.round(fontSize * 1.25), Math.round(lc * fontSize * 1.25)), text: wrapped };
+    return { width: fixedWidth, height: Math.max(Math.round(fontSize * lh), Math.round(lc * fontSize * lh)), text: wrapped };
   }
   const rawLines = String(text).split('\n');
-  const maxW = rawLines.reduce((m, l) => Math.max(m, measureText(l, fontSize)), 0);
-  return { width: Math.max(10, Math.round(maxW)), height: Math.round(rawLines.length * fontSize * 1.25), text: String(text) };
+  const maxW = rawLines.reduce((m, l) => Math.max(m, measureText(l, fontSize, font)), 0);
+  return { width: Math.max(10, Math.round(maxW)), height: Math.round(rawLines.length * fontSize * lh), text: String(text) };
 }
 
 // ---------- element factory ----------
+// `roughness` was hardcoded to 1 for every element, so a spec asking for a CLEAN edge silently got a
+// sketchy one. That is invisible on a card outline and very visible on a 40px underline: rough.js
+// overshoots a wobbly line's endpoints, so an emphasis rule drawn to a phrase's exact width rendered
+// several pixels past it — reading as though the punctuation after the phrase were underlined too.
+// 0 = precise, 1 = the hand-drawn default, 2 = loose.
+function withRoughness(spec, el) {
+  if (spec && spec.roughness != null) el.roughness = spec.roughness;
+  return el;
+}
+
 function baseEl(rng, type, x, y, w, h, overrides) {
   return Object.assign({
     id: idFrom(rng),
@@ -286,10 +255,10 @@ function auditTextCollisions(elements) {
     // scores ~18% element-wide and would slip through, yet that line is just as unreadable. A line is
     // also only as wide as its glyphs — measuring the full `width` box would over-report centered text.
     const lines = String(t.text).split('\n');
-    const lh = (t.fontSize || 20) * 1.25;
+    const lh = (t.fontSize || 20) * (t.lineHeight || 1.25);
     let worst = null;
     for (let i = 0; i < lines.length; i++) {
-      const lw = measureText(lines[i], t.fontSize || 20);
+      const lw = measureText(lines[i], t.fontSize || 20, t.fontFamily);
       if (lw <= 0) continue;
       const align = t.textAlign || 'left';
       const lx = align === 'center' ? t.x + (t.width - lw) / 2 : align === 'right' ? t.x + t.width - lw : t.x;
@@ -311,9 +280,9 @@ function auditTextCollisions(elements) {
         if (grp(t) && grp(t) === grp(u)) continue;
         if (zOf.get(u) < zOf.get(t)) continue;            // report the pair once, from the lower element
         const ulines = String(u.text).split('\n');
-        const ulh = (u.fontSize || 20) * 1.25;
+        const ulh = (u.fontSize || 20) * (u.lineHeight || 1.25);
         for (let k = 0; k < ulines.length; k++) {
-          const uw = measureText(ulines[k], u.fontSize || 20);
+          const uw = measureText(ulines[k], u.fontSize || 20, u.fontFamily);
           if (uw <= 0) continue;
           const ua = u.textAlign || 'left';
           const ux = ua === 'center' ? u.x + (u.width - uw) / 2 : ua === 'right' ? u.x + u.width - uw : u.x;
@@ -342,20 +311,55 @@ function auditTextCollisions(elements) {
 // Body copy that runs past the reading measure. This is the skill's headline rule and it was, until
 // now, unenforced — a board could ship 1400px lines reporting a clean audit. Display type (>= 28px)
 // is scanned, not read, so it is exempt; a 10% tolerance keeps borderline headings quiet.
+// The measure is a count of CHARACTERS (typography puts the comfortable ceiling around 70), not a
+// count of pixels — so the cap has to scale with the font size and the font's own advance. A flat
+// pixel cap flagged a 22px lead sentence that was only 62 characters long, while letting a 12px block
+// run to 90 characters unchallenged. `spec.measure` still pins a hard pixel cap when a board wants one.
+const MEASURE_CHARS = 78; // classic ceiling is ~75; the extra few keep borderline lines quiet
+const REF = 'abcdefghijklmnopqrstuvwxyz ';
 function auditMeasure(elements, limit) {
-  const cap = (limit || STYLE.READ_W) * 1.1;
+  const capFor = (e) => (limit != null
+    ? limit * 1.1
+    : (STYLE.measureText(REF, e.fontSize || 20, e.fontFamily) / REF.length) * MEASURE_CHARS);
   const hits = [];
   for (const e of elements) {
     if (e.type !== 'text' || !e.text || e.fontSize >= 28) continue;
+    const cap = capFor(e);
     let longest = 0;
-    for (const line of String(e.text).split('\n')) longest = Math.max(longest, STYLE.measureText(line, e.fontSize));
-    if (longest > cap) hits.push({ e, longest });
+    for (const line of String(e.text).split('\n')) longest = Math.max(longest, STYLE.measureText(line, e.fontSize, e.fontFamily));
+    if (longest > cap) hits.push({ e, longest, cap });
   }
   if (hits.length) {
-    hits.sort((a, b) => b.longest - a.longest);
-    const sample = hits.slice(0, 5).map((h) => `  ${Math.round(h.longest)}px  ${JSON.stringify(String(h.e.text).split('\n')[0].slice(0, 36))}`).join('\n');
+    hits.sort((a, b) => b.longest / b.cap - a.longest / a.cap);
+    const cap = Math.round(hits[0].cap);
+    const sample = hits.slice(0, 5).map((h) => `  ${Math.round(h.longest)}px / cap ${Math.round(h.cap)}px  ${JSON.stringify(String(h.e.text).split('\n')[0].slice(0, 36))}`).join('\n');
     try {
       console.warn(`[excalidraw] ${hits.length} text block(s) exceed the reading measure (${Math.round(cap)}px) — long lines are the #1 readability killer.\n${sample}${hits.length > 5 ? '\n  …' : ''}\n  Fix: use prose()/bullets()/callout() (they cap at READ_W), or set an explicit \`width\` on the text element.`);
+    } catch (e) {}
+  }
+  return hits.length;
+}
+
+// A block of body copy long enough that nobody will read it. The measure audit above only asks
+// whether a line is too WIDE; this one asks whether the block is too MUCH — which is the defect that
+// actually shipped: nine tight lines of unbroken prose inside a callout, every line legally short.
+// A board is a picture with labels. If a point needs more than a few lines, it needs to become
+// structure: a lead sentence, bullets, a chart, or its own band.
+const MAX_BLOCK_LINES = 5;
+const MAX_BLOCK_WORDS = 45;
+function auditBlockLength(elements) {
+  const hits = [];
+  for (const e of elements) {
+    if (e.type !== 'text' || !e.text || e.fontSize >= 28) continue;
+    const lc = String(e.text).split('\n').length;
+    const words = String(e.text).trim().split(/\s+/).filter(Boolean).length;
+    if (lc > MAX_BLOCK_LINES || words > MAX_BLOCK_WORDS) hits.push({ e, lc, words });
+  }
+  if (hits.length) {
+    hits.sort((a, b) => b.words - a.words);
+    const sample = hits.slice(0, 5).map((h) => `  ${h.lc} lines / ${h.words} words  ${JSON.stringify(String(h.e.text).split('\n')[0].slice(0, 36))}`).join('\n');
+    try {
+      console.warn(`[excalidraw] ${hits.length} wall(s) of text — a block past ${MAX_BLOCK_LINES} lines or ${MAX_BLOCK_WORDS} words gets skimmed, not read.\n${sample}${hits.length > 5 ? '\n  …' : ''}\n  Fix: lead with the conclusion (takeaway()/callout lead), move the evidence into bullets/items, and mark the number that carries the point with ==…==.`);
     } catch (e) {}
   }
   return hits.length;
@@ -442,23 +446,30 @@ function buildExcalidraw(spec) {
     const type = e.type;
     if (type === 'text') {
       const fontSize = e.fontSize || 20;
-      const { width, height, text: baked } = sizeText(e.text, fontSize, e.width);
+      // `font:` accepts the aliases ('sans' | 'hand' | 'code'); `fontFamily:` still takes a raw
+      // Excalidraw id. Unset ⇒ the readable sans, not the hand-drawn face.
+      const fontFamily = e.fontFamily != null ? e.fontFamily : TYPO.fontId(e.font);
+      // Leading. Body copy needs ~1.6; a label inside a shape wants the 1.25 Excalidraw default. The
+      // SAME value has to reach both the height math and the element, or the lines land outside the
+      // box the layout reserved for them.
+      const lineHeight = e.lineHeight || TYPO.LH.tight;
+      const { width, height, text: baked } = sizeText(e.text, fontSize, e.width, lineHeight, fontFamily);
       const el = baseEl(rng, 'text', e.x || 0, e.y || 0, width, height, {
         strokeColor: e.color || '#1e1e1e',
         text: baked,
         rawText: baked,
         originalText: baked,
         fontSize,
-        fontFamily: e.fontFamily || 5,
+        fontFamily,
         textAlign: e.align || 'left',
         verticalAlign: e.verticalAlign || 'top',
         containerId: null,
-        lineHeight: 1.25,
+        lineHeight,
         // width given ⇒ wrap to it (autoResize off); width omitted ⇒ size to content (single line)
         autoResize: e.width == null,
         backgroundColor: 'transparent',
       });
-      elements.push(el);
+      elements.push(withRoughness(e, el));
       textEntries.push({ text: el.text, id: el.id });
     } else if (type === 'image') {
       const { sha, dims, link } = placeImage(e.path);
@@ -473,7 +484,7 @@ function buildExcalidraw(spec) {
         status: 'pending',
         crop: null,
       });
-      elements.push(el);
+      elements.push(withRoughness(e, el));
     } else if (type === 'rectangle' || type === 'ellipse' || type === 'diamond') {
       const el = baseEl(rng, type, e.x || 0, e.y || 0, e.width || 100, e.height || 100, {
         strokeColor: e.strokeColor || '#1e1e1e',
@@ -483,7 +494,7 @@ function buildExcalidraw(spec) {
         strokeStyle: e.strokeStyle || 'solid',
         roundness: e.roundness ? { type: 3 } : null,
       });
-      elements.push(el);
+      elements.push(withRoughness(e, el));
     } else if (type === 'line' || type === 'arrow') {
       const pts = (e.points && e.points.length ? e.points : [[0, 0], [100, 0]]);
       const xs = pts.map((p) => p[0]); const ys = pts.map((p) => p[1]);
@@ -507,12 +518,12 @@ function buildExcalidraw(spec) {
         startArrowhead: e.startArrow || null,
         endArrowhead: type === 'arrow' ? (e.endArrow || 'arrow') : (e.endArrow || null),
       });
-      elements.push(el);
+      elements.push(withRoughness(e, el));
     } else if (type === 'frame') {
       const el = baseEl(rng, 'frame', e.x || 0, e.y || 0, e.width || 600, e.height || 400, {
         strokeColor: '#bbb', backgroundColor: 'transparent', name: e.name || 'Frame', roundness: null,
       });
-      elements.push(el);
+      elements.push(withRoughness(e, el));
     } else {
       throw new Error('unknown element type: ' + type);
     }
@@ -527,14 +538,16 @@ function buildExcalidraw(spec) {
   const keys = generateNKeysBetween(null, null, elements.length);
   elements.forEach((el, i) => { el.index = keys[i]; });
 
-  // Catch the three ways a board ships broken (opt out with spec.audit === false):
+  // Catch the four ways a board ships broken (opt out with spec.audit === false):
   //   overlaps       — two opaque boxes stacked
   //   buriedText     — a label swallowed by a foreign box (box-vs-box audit is blind to this)
-  //   longLines      — body copy past the reading measure
+  //   longLines      — body copy past the reading measure (too WIDE)
+  //   wallOfText     — a block of copy too LONG to be read at all
   const doAudit = spec.audit !== false;
   const overlaps = doAudit ? auditOverlaps(elements) : 0;
   const buriedText = doAudit ? auditTextCollisions(elements) : 0;
   const longLines = doAudit ? auditMeasure(elements, spec.measure) : 0;
+  const wallOfText = doAudit ? auditBlockLength(elements) : 0;
 
   const scene = {
     type: 'excalidraw',
@@ -574,7 +587,7 @@ function buildExcalidraw(spec) {
   fs.mkdirSync(boardDir, { recursive: true });
   fs.writeFileSync(outPath, md, 'utf8');
 
-  return { outPath, elements: elements.length, images: embedded.size, texts: textEntries.length, overlaps, buriedText, longLines, vaultRoot };
+  return { outPath, elements: elements.length, images: embedded.size, texts: textEntries.length, overlaps, buriedText, longLines, wallOfText, vaultRoot };
 }
 
 // ---------- layout helpers (JS API) ----------
@@ -657,5 +670,5 @@ if (require.main === module) {
   const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
   if (out) spec.out = out;
   const res = buildExcalidraw(spec);
-  console.log(`OK  ${res.outPath}\n    elements=${res.elements} images=${res.images} texts=${res.texts} overlaps=${res.overlaps} buriedText=${res.buriedText} longLines=${res.longLines}\n    vaultRoot=${res.vaultRoot}`);
+  console.log(`OK  ${res.outPath}\n    elements=${res.elements} images=${res.images} texts=${res.texts} overlaps=${res.overlaps} buriedText=${res.buriedText} longLines=${res.longLines} wallOfText=${res.wallOfText}\n    vaultRoot=${res.vaultRoot}`);
 }

@@ -71,8 +71,13 @@ Minimal is fine: `{"gridSize":null,"gridStep":5,"gridModeEnabled":false,"viewBac
 
 ## House style (measured from MemoryOS High Level / Personalization Module / Research)
 The vault's presentation boards share one fingerprint — `scripts/lib/style.js` encodes it:
-- **Font:** Excalifont, `fontFamily: 5`, for ~100% of text. Sizes form a scale: ~16 labels, ~20 body,
-  ~28 sub-headers, ~44–50 section titles (scaled up on large zoomed-out canvases).
+- **Font:** the vault's older boards used Excalifont (`fontFamily: 5`) for ~100% of text. The kit now
+  defaults to **Nunito (`fontFamily: 6`) at 17px on `lineHeight: 1.6`** for anything meant to be READ,
+  and keeps Excalifont as an opt-in (`font:'hand'`) for sketch annotations; identifiers go to Cascadia
+  (`fontFamily: 3`). Sizes form a scale: ~13–15 captions, ~17 body, ~20–22 leads, ~24–28 sub-headers,
+  ~40–50 section titles (scaled up on large zoomed-out canvases).
+- **`lineHeight` is a real element property** and must match the height the layout reserved: body 1.6,
+  compact 1.4, in-shape labels 1.25, display 1.2.
 - **Fills:** `fillStyle: "solid"` exclusively (never hachure). **Every rectangle is rounded.**
 - **Ink:** `strokeColor: "#1e1e1e"`, `strokeWidth: 2` dominant (1 for fine/secondary).
 - **Semantic palette** (Excalidraw native swatches): green `#b2f2bb`/`#2f9e44` (benefit/go),

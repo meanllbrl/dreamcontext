@@ -66,7 +66,7 @@ P(tiles);
 P(sectionTitle({ x: 60, y: 600, text: 'Readable measure', fontSize: 20, color: '#868e96' }));
 P(prose({
   x: 60, y: 646, width: 620, fontSize: 18,
-  text: 'Body text wraps to a bounded reading width (~60 characters) instead of stretching across the whole board. Long passages stay in a comfortable column, so the eye never has to travel the full width of a wide canvas to find the start of the next line — that is what keeps a text block legible.',
+  text: 'Body copy wraps to a ==bounded measure== (~70 characters), never the full canvas. The eye finds the next line without travelling the whole board — which is the entire job of a measure.',
 }));
 P(bullets({
   x: 60, y: 792, width: 620, fontSize: 18,

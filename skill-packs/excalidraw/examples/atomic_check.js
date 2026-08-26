@@ -26,6 +26,10 @@ const CASES = {
   timeline:   { type: 'timeline', w: 800, events: [{ label: 'başladı', at: '2026-07-03' }, { label: 'review', at: '2026-07-16' }] },
   kpi:        { type: 'kpi', w: 260, label: 'DAU', value: '32', delta: '−%57' },
   callout:    { type: 'callout', w: 600, title: 'not', text: 'metin hep ölçüde kalır.' },
+  'callout(lead+items)': { type: 'callout', w: 600, title: 'bulgu', lead: '==%99,8== bir metrik değil.', items: ['`/checkout` **kilitli**.', 'sadece ==2== kullanıcı ulaştı.'] },
+  takeaway:   { type: 'takeaway', width: 520, label: 'ÖZET', text: 'Tek cümlelik ==sonuç==, detaydan **önce**.' },
+  prose:      { type: 'prose', width: 400, text: 'Sınırlı ölçüde, okunur bir paragraf.' },
+  bullets:    { type: 'bullets', width: 400, items: ['ilk madde', 'ikinci ==madde=='] },
   funnel:     { type: 'funnel', w: 300, stages: [{ label: 'Landing' }, { label: 'Sub' }] },
   // device + product-UI kit
   'device(iphone)': { type: 'device', kind: 'iphone', x: 0, y: 0 },
@@ -58,6 +62,9 @@ const EDGE = {
   'segmented (tek)':        { type: 'segmented', w: 200, items: ['A'], active: 0 },
   'icon (bilinmeyen ad)':   { type: 'icon', name: 'yok-boyle-bir-sey', size: 20 },
   'listRow (başlıksız)':    { type: 'listRow', w: 300, title: '' },
+  'takeaway (boş)':         { type: 'takeaway', width: 300, text: '' },
+  'bullets (madde yok)':    { type: 'bullets', width: 300, items: [] },
+  'callout (kapanmamış **)':{ type: 'callout', w: 400, text: 'yarım **vurgu ve ==işaret' },
 };
 
 const tmp = path.join(os.tmpdir(), 'excalidraw-atomic-check');
