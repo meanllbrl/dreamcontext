@@ -40,10 +40,14 @@ export type Granularity = 'daily' | 'weekly' | 'monthly';
  *  the dashboard's chart registry (mirrored + drift-tested) all derive from it.
  *  Adding a render = one entry here + one component + one registry entry.
  *
- *  All of them read the cached `Series[]` (`funnel` and `breakdown` read their
- *  own typed cache entries — `cache.funnel` / `cache.matrix` — with the series
- *  as synthesized fallback); `funnel` is the one multi-page render (its card
- *  routes to `/lab/<slug>` overview + `/lab/<slug>/f/<id>`). */
+ *  All of them read the cached `Series[]` (`funnel`/`breakdown`/`app` read
+ *  their own typed cache entries — `cache.funnel` / `cache.matrix` /
+ *  `cache.app`+`cache.datasets` — with the series as synthesized fallback);
+ *  `funnel` and `app` are multi-page renders (`funnel`'s card routes to
+ *  `/lab/<slug>` overview + `/lab/<slug>/f/<id>`; `app`'s to `/lab/<slug>` +
+ *  `/lab/<slug>/p/<pageId>`). `breakdown` (matrix/v1) is DEPRECATED as an
+ *  authoring path in favor of `app` + dataset/v1 — existing breakdown
+ *  insights are grandfathered and keep rendering (tasks-and-features.md). */
 export const RENDERS = [
   'number',
   'line',
@@ -56,6 +60,7 @@ export const RENDERS = [
   'table',
   'heatmap',
   'breakdown',
+  'app',
 ] as const;
 export type Render = (typeof RENDERS)[number];
 
@@ -340,6 +345,106 @@ export interface MatrixCacheEntry {
   range: { fromISO: string; toISO: string };
 }
 
+// ─── Dataset bundle (`dataset/v1`) ──────────────────────────────────────────
+//
+// The plural successor to `matrix/v1`: N named tables instead of one, so a
+// multi-page app can give each page (or `lab.data(key)` / `lab query
+// --dataset`) its own dimensional dataset. Each dataset carries the SAME
+// grammar as a matrix/v1 set (dims/rows/total) — dataset.ts delegates each
+// one to `parseMatrixSet` (matrix.ts) rather than re-implementing the
+// dimensional contract, so there is one grammar and one cap set for both the
+// singular (matrix/v1, grandfathered) and plural (dataset/v1) shapes.
+
+/** One named table in a dataset bundle — identical grammar to `MatrixSet`. */
+export interface Dataset {
+  key: string;
+  /** Display label (else the key is prettified, same as MatrixDim). */
+  label?: string;
+  dims: MatrixDim[];
+  rows: MatrixRow[];
+  total?: MatrixTotal;
+  /** Value unit override (else the manifest's `unit`). */
+  unit?: string;
+}
+
+/** The versioned dataset-bundle payload: an adapter's `data` may be one (any
+ *  render), and an `app/v1` page may name one via `AppPage.dataset`. */
+export interface DatasetBundle {
+  kind: 'dataset/v1';
+  /** Dataset key `lab.data()` / `lab query` resolve to when none is named. */
+  primary?: string;
+  datasets: Dataset[];
+}
+
+/** A compact per-sync dataset-bundle snapshot kept for the date axis
+ *  (bounded — see dataset.ts). The app's time axis, the same role
+ *  `matrixHistory` plays for a single matrix/v1 set. */
+export interface DatasetSnapshot {
+  at: string;
+  range: { fromISO: string; toISO: string };
+  bundle: DatasetBundle;
+}
+
+/** What `cache.datasets` stores after a successful sync whose `data` (or an
+ *  `app`-paired dataset) is a dataset/v1 bundle. */
+export interface DatasetCacheEntry {
+  bundle: DatasetBundle;
+  /** Cap/coercion notices from validation — surfaced, never silent. */
+  notices: string[];
+  /** The resolved date window this bundle covers (from range tweaks). */
+  range: { fromISO: string; toISO: string };
+}
+
+// ─── App payload (`render: app`) ────────────────────────────────────────────
+//
+// An adapter for a multi-page insight returns `{ data, app }` (never `app`
+// bare — `data` stays mandatory, see the html/v1 hybrid envelope below, which
+// `app` extends the same way `html` does). `app` is ONE app/v1 object: an
+// ordered list of pages, each a sandboxed html fragment wired to the host via
+// a postMessage bridge (dashboard-side — see labAppRuntime.ts). The engine
+// validates + caps the SHAPE (see app.ts) and stores it in `cache.app`; it
+// never substitutes for `data`, which keeps feeding `latest`, KR bindings,
+// `lab show`/`lab query` and the Rule-13 read ladder exactly as it does today.
+
+/** One page of an app/v1 body. `id` is the route segment
+ *  (`/lab/<slug>/p/<id>`) and the bridge `navigate` target. */
+export interface AppPage {
+  id: string;
+  title: string;
+  /** The page's sandboxed markup — drawn exactly like an html/v1 body. */
+  html: string;
+  /** Dataset key (from the paired `dataset/v1` bundle) this page's
+   *  `lab.data()` resolves to when the author calls it with no key. */
+  dataset?: string;
+}
+
+/** Markup/script appended around the runtime shim — CSS after the kit
+ *  (override-wins-by-order, the labHtmlKit precedent), JS after the shim. */
+export interface AppShell {
+  style?: string;
+  script?: string;
+}
+
+/** The versioned app payload an adapter returns for `render: app`. */
+export interface AppSpec {
+  kind: 'app/v1';
+  /** Page id shown at `/lab/<slug>` and, absent `card`, on the board card. */
+  entry: string;
+  /** Page id override for the CARD body only (defaults to `entry`). */
+  card?: string;
+  pages: AppPage[];
+  shell?: AppShell;
+}
+
+/** What `cache.app` stores after a successful app sync. */
+export interface AppCacheEntry {
+  spec: AppSpec;
+  /** Cap/coercion notices from validation — surfaced, never silent. */
+  notices: string[];
+  /** The resolved date window this spec was built under (from range tweaks). */
+  range: { fromISO: string; toISO: string };
+}
+
 /** The cached, post-rollup snapshot written after each successful sync. */
 export interface InsightCache {
   slug: string;
@@ -368,6 +473,13 @@ export interface InsightCache {
   matrix?: MatrixCacheEntry;
   /** Bounded per-sync matrix snapshots (the breakdown's time axis), oldest→newest. */
   matrixHistory?: MatrixSnapshot[];
+  /** App spec (`render: app` with an app/v1 payload only). */
+  app?: AppCacheEntry;
+  /** Dataset bundle (a `dataset/v1` data payload — typically an `app`
+   *  insight's data half, but the shape is render-agnostic like matrix/v1). */
+  datasets?: DatasetCacheEntry;
+  /** Bounded per-sync dataset-bundle snapshots (the app's time axis), oldest→newest. */
+  datasetHistory?: DatasetSnapshot[];
   /** Optional script-authored card body (html/v1 hybrid) — drawn in a
    *  network-less sandboxed iframe; NEVER a substitute for the typed data. */
   html?: string;
@@ -416,35 +528,69 @@ export function isRawMatrixSet(result: unknown): result is RawMatrixSet {
   );
 }
 
-// ─── html/v1 hybrid envelope ────────────────────────────────────────────────
+/** A raw (pre-validation) dataset-bundle payload passed through by an adapter.
+ *  The engine validates + caps it via `parseDatasetBundle` (dataset.ts). */
+export type RawDatasetBundle = { kind: 'dataset/v1' } & Record<string, unknown>;
+
+/** Is this adapter result a dataset-bundle payload (vs legacy RawSeries[])? */
+export function isRawDatasetBundle(result: unknown): result is RawDatasetBundle {
+  return (
+    typeof result === 'object' && result !== null && !Array.isArray(result)
+    && (result as { kind?: unknown }).kind === 'dataset/v1'
+  );
+}
+
+// ─── html/v1 hybrid + app/v1 envelope ───────────────────────────────────────
 //
-// A script may return `{ data, html? }` instead of a bare payload. `data` is
-// MANDATORY and is exactly what a bare return would have been (RawSeries[],
-// funnel-set, or matrix) — the numbers keep feeding snapshots, KR bindings,
-// deltas, reports and `lab show`. `html` is an OPTIONAL card body, drawn by the
-// dashboard in a network-less sandboxed iframe; it never replaces the data.
+// A script may return `{ data, html? }` OR `{ data, app? }` instead of a bare
+// payload — never both `html` and `app` (one body contract per insight; the
+// sync engine rejects the combination loudly). `data` is MANDATORY either way
+// and is exactly what a bare return would have been (RawSeries[], funnel-set,
+// matrix, or dataset bundle) — the numbers keep feeding snapshots, KR
+// bindings, deltas, reports and `lab show`. `html` is an OPTIONAL single card
+// body; `app` is an OPTIONAL multi-page body — both are drawn by the
+// dashboard in a network-less sandboxed iframe and never replace `data`.
 
 /** Byte cap on a script's optional `html` body — over-cap is a LOUD sync error. */
 export const MAX_HTML_BYTES = 300_000;
 
-/** A `{ data, html? }` envelope from a script (pre-validation). */
-export interface RawPayloadEnvelope {
-  data: RawSeries[] | RawFunnelSet | RawMatrixSet;
-  html?: string;
+/** A raw (pre-validation) app-spec payload, passed through inside an
+ *  envelope's `app` field. The engine validates + caps it via `parseAppSpec`
+ *  (app.ts). */
+export type RawAppSpec = { kind: 'app/v1' } & Record<string, unknown>;
+
+/** Is this an app/v1 payload (bare, or as an envelope's `app` field)? */
+export function isRawAppSpec(result: unknown): result is RawAppSpec {
+  return (
+    typeof result === 'object' && result !== null && !Array.isArray(result)
+    && (result as { kind?: unknown }).kind === 'app/v1'
+  );
 }
 
-/** Is this adapter result a `{ data, html? }` envelope (vs a bare payload)?
- *  An object carrying `data` or `html` without a payload `kind` is one — a
- *  bare typed payload always has `kind`, a legacy return is an array. */
+/** A `{ data, html?, app? }` envelope from a script (pre-validation). */
+export interface RawPayloadEnvelope {
+  data: RawSeries[] | RawFunnelSet | RawMatrixSet | RawDatasetBundle;
+  html?: string;
+  app?: RawAppSpec;
+}
+
+/** Is this adapter result a `{ data, html?, app? }` envelope (vs a bare
+ *  payload)? An object carrying `data`, `html`, OR `app` without a payload
+ *  `kind` is one — a bare typed payload always has `kind`, a legacy return is
+ *  an array. `app` MUST be checked here too: `{ app }` alone also has no
+ *  `kind`, and without this arm it is never recognised as an envelope at all
+ *  — the data-is-mandatory reject below can't fire for a shape it never sees
+ *  (see sync.ts, which calls this before either reject runs). */
 export function isRawPayloadEnvelope(result: unknown): result is RawPayloadEnvelope {
   if (typeof result !== 'object' || result === null || Array.isArray(result)) return false;
-  const r = result as { kind?: unknown; data?: unknown; html?: unknown };
-  return r.kind === undefined && ('data' in r || 'html' in r);
+  const r = result as { kind?: unknown; data?: unknown; html?: unknown; app?: unknown };
+  return r.kind === undefined && ('data' in r || 'html' in r || 'app' in r);
 }
 
-/** What an adapter may return: time series, one funnel-set, one matrix payload,
- *  or a `{ data, html? }` envelope wrapping one of those. */
-export type AdapterResult = RawSeries[] | RawFunnelSet | RawMatrixSet | RawPayloadEnvelope;
+/** What an adapter may return: time series, one funnel-set, one matrix
+ *  payload, one dataset bundle, or a `{ data, html?, app? }` envelope
+ *  wrapping one of those. */
+export type AdapterResult = RawSeries[] | RawFunnelSet | RawMatrixSet | RawDatasetBundle | RawPayloadEnvelope;
 
 /** The adapter contract. Implementations return RAW data; the engine rolls up
  *  series and validates/caps funnel-sets. */
