@@ -198,6 +198,42 @@ describe('skill/references lab doc markers', () => {
     expect(cli).toContain("don't write your own CSS");
   });
 
+  // App insights (render: app) shipped in the SAME change as the multi-page
+  // bridge code (T1-T7) — the 2026-07-06 lesson (matrix/v1) applies again:
+  // skill docs lagging the code is how agents keep missing a capability that
+  // already ships. lab body / lab query are the CLI half an agent needs to
+  // read a body it did not author.
+  it('documents App insights (render: app) — the bridge, multi-page routing, full screen', () => {
+    const tf = readFileSync(join(ROOT, 'skill', 'references', 'tasks-and-features.md'), 'utf-8');
+    expect(tf).toContain('App insights (`render: app`');
+    expect(tf).toContain('dataset/v1');
+    expect(tf).toContain('lab.navigate');
+    expect(tf).toContain('lab.data');
+    expect(tf).toContain('lab.onRoute');
+    expect(tf).toContain('/lab/<slug>/p/<pageId>');
+    expect(tf).toContain('?fs=1');
+    expect(tf).toContain('dropped entirely, not cut short');
+    const skill = readFileSync(join(ROOT, 'skill', 'SKILL.md'), 'utf-8');
+    expect(skill).toContain('let the script build its own UI, don\'t write me a component');
+    expect(skill).toContain('--render app');
+  });
+
+  it('cli-reference.md documents lab body and lab query for reading a body an agent did not author', () => {
+    const cli = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
+    expect(cli).toContain('`lab body <slug>`');
+    expect(cli).toContain('`lab query <slug>`');
+    expect(cli).toContain('never fetches');
+  });
+
+  it('marks matrix/v1 (render: breakdown) DEPRECATED — grandfathered, no migration forced, no new scaffold', () => {
+    const tf = readFileSync(join(ROOT, 'skill', 'references', 'tasks-and-features.md'), 'utf-8');
+    expect(tf).toContain('DEPRECATED as an authoring path');
+    expect(tf).toContain('no migration is forced');
+    const cli = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
+    expect(cli).toContain('DEPRECATED for new insights');
+    expect(cli).toContain('no longer scaffolds a script template');
+  });
+
   it('documents reports: the entity-router row, the CLI verbs, and date honesty', () => {
     const skill = readFileSync(join(ROOT, 'skill', 'SKILL.md'), 'utf-8');
     expect(skill).toContain('**Report** — `lab/reports/<slug>.md`');

@@ -177,8 +177,9 @@ An **insight** is a named, curated **metric backed by an external source** — "
 
 1. **Snapshot.** The SessionStart hook renders a **Lab** section (title / latest value / staleness / group). "What's our MRR?" is answered from it with **zero tool calls**.
 2. **`dreamcontext lab show <slug>`** — the manifest plus the **full cached series** (and per-funnel step tables for `render: funnel`), and it **never fetches**. This is the right call the moment the question needs more than the latest number: a breakdown, a trend, a month-over-month comparison, "which step leaks". The snapshot only carries the latest value, so *not knowing the series is not a reason to go outside* — it is a reason to run `lab show`.
-3. **Don't know the slug?** `dreamcontext lab list [--json]` (every insight + latest value + staleness) or `dreamcontext memory recall "<meaning phrase>" --types insight` — this is what the `## Meaning` section exists for.
-4. **Stale only:** `dreamcontext lab sync <slug>` when the cache is past TTL (`--force` to refetch a fresh one).
+3. **`render: app` (or any dimensional data): `dreamcontext lab query <slug> [--where][--group-by][--top]`** to slice the cached `dataset/v1` numbers, or **`dreamcontext lab body <slug> [--page][--format text|md|html]`** to read what a script-authored page actually shows — both cache-only, both never fetch. This is how you answer "what does this card show?" or "what's this insight broken down by X?" without opening the dashboard, on a body you did not author.
+4. **Don't know the slug?** `dreamcontext lab list [--json]` (every insight + latest value + staleness) or `dreamcontext memory recall "<meaning phrase>" --types insight` — this is what the `## Meaning` section exists for.
+5. **Stale only:** `dreamcontext lab sync <slug>` when the cache is past TTL (`--force` to refetch a fresh one).
 
 **An MCP tool, a raw API call, or a hand-written script is the LAST resort.** If `lab/insights/` already holds the metric, fetching it another way bypasses the manifest, cache, tweaks and KR binding — and produces a number the next session cannot reproduce. A real past failure: an agent asked for revenue reached for a billing MCP while the synced Paddle series was already cached, and the project had to hand-write a memory note to stop it. When you genuinely must go outside (the insight doesn't exist, or the question needs a dimension the manifest doesn't carry), say so explicitly — and offer to `lab create` it if the user will want it again. Full rule: SKILL.md Operational Rule 13.
 
@@ -210,6 +211,7 @@ dreamcontext lab credentials list           # key NAMES only — values are neve
 | `heatmap` | Week × weekday grid (daily buckets) | Rhythm — which days carry the metric |
 | `raw` | The numbers, unstyled | Debugging an adapter |
 | `funnel` | Routed multi-page funnel view (below) | Step-by-step conversion analysis |
+| `app` | Routed, multi-page, full-screen-capable view the SCRIPT builds itself (below) | Dimensional/drill-down data, or any multi-screen interactive story — without writing a component |
 
 **`size: s\|m\|l`** (optional manifest field, `--size` on create) overrides the card's board footprint: `s`/`m` = one column, `l` = two. Absent, the render decides — `table` and `funnel` ask for two columns because they draw tables; everything else takes one. The board grants a 2-column span only where two columns actually exist, so a narrow window degrades instead of overflowing.
 
@@ -250,7 +252,80 @@ For funnel analysis (comparative across funnels + sequential across steps), an i
 
 The engine validates + caps the payload (max 40 funnels, 64 steps — over-cap keeps first 63 + the final step, 8 dimensions; per-dimension values beyond the top 8 collapse into "Other"; 64 segment cells; 400 KB — every cap is a loud notice, never silent), synthesizes legacy `series` from step users (so `latest`, KR binding, and the snapshot keep working), and records a bounded per-sync snapshot trail. **Δ vs previous period:** an adapter-provided `prev` wins; otherwise the engine compares against the best equal-length history snapshot ending at/before the current window — and shows NOTHING when no honest comparison exists. `lab create <slug> --render funnel --adapter script` scaffolds the `range` tweak (7d/28d/90d presets) plus a fully documented script template; `lab show <slug>` prints per-funnel step tables with the worst drop highlighted. Legacy `Series[]` payloads under `render: funnel` still render (compact bar list). Data FEEDING stays out of Lab scope — sleep never syncs funnels either.
 
-### Breakdown insights (`render: breakdown` — the `matrix/v1` contract)
+### App insights (`render: app` — a script builds its own multi-page, interactive, full-screen body)
+
+The `funnel` render above is hand-written React — the ONE multi-page view the platform built for a specific analysis shape. `app` generalizes that: **a script author builds a multi-page, interactive, full-screen-capable body itself, with no React component written for them.** If the user wants "the funnel insight's shape, but for my own data", this is the render — never a hand-built dashboard, never a request to platform-engineer a new insight type.
+
+**How it's created, end to end:**
+
+```bash
+dreamcontext lab create <slug> --title "…" --render app --adapter script
+```
+
+This scaffolds `lab/insights/<slug>.md` (with the `range` tweak pre-declared, same as `funnel`/the old `breakdown`) and a fully documented `lab/scripts/<slug>.mjs` template. Edit the template's real query, then `dreamcontext lab sync <slug>`. The script returns **`{ data, app }`** — two independent halves, never conflated:
+
+- **`data`** — MANDATORY, the queryable numbers. Typically a `dataset/v1` bundle (below); may also be plain `Series[]`, a `funnel-set/v1`, or a `matrix/v1` payload — whatever shape the numbers actually are. Feeds `latest`, KR bindings, `lab show`, `lab query`, and the Rule-13 read ladder exactly like a bare return would. `{ app }` with no `data` fails the sync loudly — a body is never a substitute for the numbers, same rule `html/v1` has always enforced.
+- **`app`** — OPTIONAL-shaped-as-mandatory-for-this-render: `{ kind: 'app/v1', entry, pages: [...], card?, shell? }`. `entry` names the page shown at `/lab/<slug>`; `card` (optional) names a different page for the board card preview, defaulting to `entry`; `shell` (optional) is CSS/JS that wraps every page (`shell.style`, `shell.script`). Each page is `{ id, title, html, dataset? }` — `id` is URL-safe (`[a-z0-9][a-z0-9-]*`, unique), `dataset` names which of `data`'s datasets `lab.data()` defaults to on that page. Caps: ≤12 pages, ≤300 KB for the whole spec (host-served data means the html itself should not need to embed numbers) — every violation is a loud sync-time reject, never a silent truncation (a missing/colliding page id would break a real route and every deep link into it, so there is nothing safe to collapse the way a matrix row is).
+
+**`dataset/v1` — the plural successor to `matrix/v1`, for the numbers:**
+
+```jsonc
+{ "kind": "dataset/v1",
+  "primary": "breakdown",                // the key lab.data()/lab query resolve to with no key given
+  "datasets": [{
+    "key": "breakdown",
+    "dims": [                            // 1-3 dims — SAME grammar as matrix/v1: [0]=rows, [1]=cols, [2]=filter chips
+      { "key": "funnel", "label": "Funnel" },
+      { "key": "language" }
+    ],
+    "rows": [{ "d": { "funnel": "F3000", "language": "TR" }, "v": 119000, "n": 4200 }],
+    "total": { "v": 255000, "n": 9100 }  // optional — feeds the card value + KR binding
+  }]
+}
+```
+
+An app can carry several named datasets (≤12), one per page or shared — each validated by the exact same dimensional grammar and caps `matrix/v1` uses (per-dim values beyond top-8 collapse to "Other", ≤400 rows per dataset, notices are loud never silent). **Never bake dimension values into series names** — the anti-pattern this whole lineage (matrix/v1 → dataset/v1) exists to kill.
+
+**Interactivity already works — it always has.** Every `app/v1` (and `html/v1`) page is drawn in a network-less sandboxed iframe (`sandbox="allow-scripts"`, no `allow-same-origin`, srcdoc CSP `default-src 'none'`), and an inline `<script>` tag inside that html **runs**. This has been true since the very first `html/v1` card shipped; it was never written down, so nobody built on it. Write real `<script>` — buttons, `fetch`-free client-side computation, DOM updates — against the page's own data. What the sandbox forbids is reaching the network (fetch/XHR/beacon/remote image all die silently) or the parent page; it does not forbid the page from being alive.
+
+**How it goes multi-page.** Declare more than one entry in `app.pages`; each becomes a route:
+
+- `/lab/<slug>` — the `entry` page.
+- `/lab/<slug>/p/<pageId>` — any other declared page, deep-linkable and Back-button-safe (real history entries, same as funnel's `/f/<funnelId>`).
+
+From inside a page's own script, `lab.navigate('otherPageId', { optionalParam: 'value' })` switches pages — the host pushes the new URL, and the previous page's iframe is torn down and a fresh one mounted for the new page (a page never mutates in place; switching pages is always a remount, which is also what keeps the security model in the pattern doc sound). `lab.onRoute(callback)` fires when the CURRENT page's params change without a page switch (in-page navigation).
+
+**How it goes full screen.** Append `?fs=1` to the insight's URL (or click "⛶ Full screen" in the page toolbar) — the whole page becomes the app body, no dashboard chrome. **Escape** exits (there's also a visible "Exit full screen" button, because a sandboxed iframe's own key events never bubble to the host page once focus is inside it — Escape only works when focus is still on the host). This is a URL-driven CSS overlay, not the browser's native Fullscreen API, specifically so it deep-links, survives a reload, and is scriptable/testable.
+
+**The author API — the host injects it, you don't build any of it:**
+
+| Call | Does |
+|---|---|
+| `lab.page` | This page's own id (string) |
+| `lab.params` | This page's current params (object) |
+| `lab.navigate(pageId, params?)` | Switch to a declared page, optionally with params |
+| `lab.data(datasetKey?)` | `Promise` resolving to the named `Dataset` from `data` — omit the key to get the page's declared `dataset`, else the bundle's `primary`, else the first. Numbers come from the HOST (embedded at sync time) — this is never a network fetch. |
+| `lab.onRoute(callback)` | Fires `(pageId, params)` on in-page navigation |
+
+**Height is automatic — the author does nothing.** The page's own content height is measured and reported to the host continuously (a `ResizeObserver` plus a load/click re-check for late-loading fonts or images); the host resizes the card/page/full-screen frame to match. There is no height to set, no fixed card size to fight — write the page like a normal document and it fits.
+
+**`lab.navigate` params are capped, and a bad value is DROPPED, never truncated.** Params can reach the real, shareable browser URL (Copy-link included), so: ≤8 params, keys matching `[a-z0-9_-]{1,24}`, values ≤64 chars, ≤256 chars total. A value over the cap is **dropped entirely, not cut short** — a truncated value would silently show the wrong view (e.g. a truncated filter id that happens to match some OTHER real value) with no sign anything was wrong; a dropped one is visibly absent. Every drop logs a console warning naming the key. Design params to stay well under these caps — they are for "which tab/filter is open", not for carrying data (`lab.data()` is what carries data).
+
+**Reading a body you did not author, from the terminal:**
+
+```bash
+dreamcontext lab show <slug>                  # page list (entry marked) + one pivot per dataset
+dreamcontext lab body <slug> [--page <id>] [--format text|md|html]   # what a page actually renders
+dreamcontext lab query <slug> [--dataset <key>] [--where k=v] [--group-by <dim>] [--top <n>]  # slice the numbers
+```
+
+None of these fetch — all three read the cache. This is how an agent answers "what does this card show?" or debugs/reviews a body written by someone (or something) else, without opening the dashboard. `--json` on all three for machine consumption.
+
+`lab create <slug> --render app --adapter script` scaffolds the `range` tweak + the documented `{ data, app }` template above. Best-practice pattern (the security model, the bridge contract, why it's safe without relaxing the sandbox) → the `sandboxed-app-bridge-pattern` knowledge pattern.
+
+### Breakdown insights (`render: breakdown` — the `matrix/v1` contract, DEPRECATED for new insights)
+
+> **DEPRECATED as an authoring path (2026-08-26).** `lab create --render breakdown` no longer scaffolds a script template, and the render decision table no longer routes new dimensional work here — use `app` + `dataset/v1` instead (above), which carries the identical dims/rows/total grammar in a plural, multi-page-ready shape. **Existing `breakdown` insights are grandfathered: they keep rendering exactly as before, and no migration is forced.** This section is kept for reference against those existing insights, not as a guide for new ones.
 
 For DIMENSIONAL data — a value broken down over 1-3 dimensions (funnel × language, plan × country) — the adapter returns ONE matrix object instead of `Series[]`. **Never bake dimension values into series names** ("F3000 · TR · 119k" is the anti-pattern this contract exists to kill):
 
@@ -271,9 +346,9 @@ For DIMENSIONAL data — a value broken down over 1-3 dimensions (funnel × lang
 
 The engine validates + caps it (≤3 dims; per-dim values beyond the top 8 collapse into "Other"; ≤400 rows, the tail merges into one all-Other row; 200 KB hard reject — every cap is a loud notice, and `doctor` re-flags a stored cache that violates one), synthesizes legacy `series` from the rows, and — the important part — **appends a DATED snapshot to `matrixHistory` on every successful sync** (count cap 60 AND a byte cap together). The matrix itself is a snapshot, not a time series: **the history trail IS the time axis**, so a daily sync cadence is what makes a report date-navigable. Δ vs previous period: a row's `prev` wins; else the equal-length (±25%) history snapshot; no honest comparison → no Δ shown. `lab create <slug> --render breakdown --adapter script` scaffolds the `range` tweak + a documented script template; `lab show <slug>` prints the pivot; legacy `Series[]` under `render: breakdown` still renders (bar-list fallback).
 
-### HTML card bodies (`html/v1` hybrid — typed renders first)
+### HTML card bodies (`html/v1` hybrid — typed renders first, single-page)
 
-A script may return `{ data, html? }`: **`data` is MANDATORY** (exactly what a bare return would be — the numbers keep feeding `latest`, KR bindings, Δ, reports, `lab show` and the Rule-13 read ladder; `{ html }` alone fails the sync loudly), `html` is an OPTIONAL card body, ≤300 KB (over-cap = loud sync failure, never truncated). The dashboard draws it in a **network-less sandboxed iframe** (`sandbox="allow-scripts"` with NO same-origin grant + a `default-src 'none'` CSP — it can animate and compute against the data embedded at sync time, but it cannot fetch, beacon, or touch the parent origin), and the detail panel always shows the typed data TWIN next to it, so a screen reader is never locked to the iframe. **Rule: reach for a typed render first; write html only when the render vocabulary cannot express the card — and use the `lab-html-kit.css` classes instead of your own CSS** (`lk-title`, `lk-value`, `lk-label`, `lk-muted`, `lk-delta--up/down`, `lk-stat`, `lk-chip`, `lk-table`, `lk-bar`/`lk-bar-fill--N`, `lk-low-sample`, `lk-empty`): the kit ships embedded with the current theme's design tokens, so a kit-classed card looks native dreamcontext in light and dark and repaints on theme change. A run whose script returns no `html` clears any prior body — stale presentation is worse than none.
+A script may return `{ data, html? }`: **`data` is MANDATORY** (exactly what a bare return would be — the numbers keep feeding `latest`, KR bindings, Δ, reports, `lab show` and the Rule-13 read ladder; `{ html }` alone fails the sync loudly), `html` is an OPTIONAL card body, ≤300 KB (over-cap = loud sync failure, never truncated). The dashboard draws it in a **network-less sandboxed iframe** (`sandbox="allow-scripts"` with NO same-origin grant + a `default-src 'none'` CSP — it can animate and compute against the data embedded at sync time, but it cannot fetch, beacon, or touch the parent origin), and the detail panel always shows the typed data TWIN next to it, so a screen reader is never locked to the iframe. **Rule: reach for a typed render first; write `html` only when the render vocabulary cannot express the card in ONE screen — reach for `app` (above) the moment it needs more than one page** — and use the `lab-html-kit.css` classes instead of your own CSS (`lk-title`, `lk-value`, `lk-label`, `lk-muted`, `lk-delta--up/down`, `lk-stat`, `lk-chip`, `lk-table`, `lk-bar`/`lk-bar-fill--N`, `lk-low-sample`, `lk-empty`): the kit ships embedded with the current theme's design tokens, so a kit-classed card looks native dreamcontext in light and dark and repaints on theme change. A run whose script returns no `html` clears any prior body — stale presentation is worse than none. `app/v1` pages draw against the SAME kit and the SAME sandbox/CSP guarantee — `html/v1` is simply the one-page, no-bridge case of it.
 
 ### Reports (My Reports — `lab/reports/<slug>.md`)
 
