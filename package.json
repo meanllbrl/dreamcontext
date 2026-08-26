@@ -46,6 +46,7 @@
     "verify:dream-actions": "node scripts/verify/dream-actions.mjs",
     "verify:chat-shelf-ui": "node scripts/verify/chat-shelf-ui.mjs",
     "verify:chat-composer": "node scripts/verify/chat-composer-ui.mjs",
+    "verify:meeting-room": "node scripts/verify/meeting-room-ui.mjs",
     "verify:chat-shelf": "node scripts/verify/chat-shelf.mjs",
     "verify:automation-run-chat": "node scripts/verify/automation-run-chat.mjs",
     "verify:delegate-modes": "node scripts/verify/delegate-modes.mjs",

@@ -144,6 +144,7 @@ import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleAgentSessionsGet, handleAgentSessionsPut } from './routes/agent-sessions.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
+import { handleMeetingState, handleMeetingThread, handleMeetingPost, handleMeetingReply, handleMeetingClose } from './routes/meeting.js';
 import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
 import { handlePacksGet } from './routes/packs.js';
 import { handlePackInstall, handlePackUninstall } from './routes/packs-install.js';
@@ -413,6 +414,15 @@ export function buildRouter(): Router {
   router.post('/api/connections', handleConnectionsCreate);
   router.delete('/api/connections/:vault', handleConnectionsDelete);
 
+  // Meeting room — the hidden all-agents surface behind the launcher's core
+  // logo. Vault-agnostic (the room is owned by no vault; its store lives under
+  // ~/.dreamcontext/meeting-room). See routes/meeting.ts.
+  router.get('/api/meeting/state', handleMeetingState);
+  router.get('/api/meeting/thread/:id', handleMeetingThread);
+  router.post('/api/meeting/post', handleMeetingPost);
+  router.post('/api/meeting/reply', handleMeetingReply);
+  router.post('/api/meeting/close', handleMeetingClose);
+
   // Federation inbox (read-only) + sync PREVIEW (dry-run by construction, P3.8).
   router.get('/api/federation/inbox', handleFederationInboxGet);
   router.post('/api/federation/sync', handleFederationSyncPost);
@@ -568,7 +578,7 @@ export function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team', '/api/meeting'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

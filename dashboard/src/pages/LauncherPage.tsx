@@ -13,6 +13,7 @@ import { VaultDot } from '../components/layout/VaultDot';
 import { VaultSyncChip } from '../components/brain/VaultSyncChip';
 import { OnboardingWizard } from './OnboardingWizard';
 import { SpaceLauncher } from './space/SpaceLauncher';
+import { MeetingRoom } from '../components/meeting/MeetingRoom';
 import './LauncherPage.css';
 
 /**
@@ -52,6 +53,8 @@ export function LauncherPage() {
   const [search, setSearch] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  /** The hidden Meeting Room — reachable ONLY through the Space core's click. */
+  const [meetingOpen, setMeetingOpen] = useState(false);
   const [view, setView] = useState<View>(readStoredView);
   /** How many projects `Update all` has got through, for the button's counter. */
   const [updateAllDone, setUpdateAllDone] = useState(0);
@@ -228,6 +231,7 @@ export function LauncherPage() {
         <SpaceLauncher
           query={search}
           onAddProject={() => setWizardOpen(true)}
+          onOpenMeetingRoom={() => setMeetingOpen(true)}
           onError={setActionError}
         />
       )}
@@ -320,6 +324,8 @@ export function LauncherPage() {
           </div>
         </>
       )}
+
+      {meetingOpen && <MeetingRoom onClose={() => setMeetingOpen(false)} />}
 
       {wizardOpen && (
         <OnboardingWizard

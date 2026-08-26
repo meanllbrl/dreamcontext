@@ -96,6 +96,12 @@ export interface SpaceLauncherProps {
   query: string;
   /** Open the add-project wizard (the centre core and the empty state call this). */
   onAddProject: () => void;
+  /**
+   * Open the hidden Meeting Room — the core's click when projects EXIST. An
+   * empty sky keeps the wizard: there is no one to convene, and first-run users
+   * need the front door, not an easter egg.
+   */
+  onOpenMeetingRoom: () => void;
   /** Surface an action failure in the launcher's error banner. */
   onError: (message: string | null) => void;
 }
@@ -115,7 +121,7 @@ export interface SpaceLauncherProps {
  * search dims non-matches instead of re-laying out the sky, rings absorb new
  * projects without crowding, and the whole thing spins, zooms, and pans.
  */
-export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherProps) {
+export function SpaceLauncher({ query, onAddProject, onOpenMeetingRoom, onError }: SpaceLauncherProps) {
   const { data, isLoading, isError, error } = useFederationGraph();
   const { data: teamVaults } = useTeamUpdates();
   const createConn = useCreateConnection();
@@ -775,13 +781,15 @@ export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherPro
           })}
         </div>
 
-        {/* The core never rotates — it is the fixed thing everything orbits. */}
+        {/* The core never rotates — it is the fixed thing everything orbits.
+            With projects in the sky its click convenes them (the hidden Meeting
+            Room); an empty sky keeps the add-project door. */}
         <button
           type="button"
           className="space-core"
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={onAddProject}
-          title="Add a project"
+          onClick={layout.bodies.length > 0 ? onOpenMeetingRoom : onAddProject}
+          title={layout.bodies.length > 0 ? undefined : 'Add a project'}
         >
           <span className="space-core-halo" aria-hidden="true" />
           <BrandMark size={92} glow />
