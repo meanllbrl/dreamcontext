@@ -25,12 +25,18 @@ export interface LabSyncJobState {
   attempt: number;
   startedAt: number;
   finishedAt: number | null;
-  /** Every insight's latest outcome, newest write wins (manifest order). */
+  /** Every insight's latest outcome, newest write wins (manifest order).
+   *  Filled LIVE as each insight settles — the report page's progressive
+   *  section fill reads this mid-run, not only at the end. */
   results: SyncResult[];
   /** Slugs still failing after the last pass. */
   failed: string[];
   /** Set only when the job itself broke (not when individual insights failed). */
   error: string | null;
+  /** The slugs this run is scoped to (a report's subset), or null = the board. */
+  slugs: string[] | null;
+  /** The insight that settled most recently ("now syncing …" copy). */
+  current: string | null;
 }
 
 /** Failures get exactly one more pass — enough for a transient 429/blip,
@@ -66,10 +72,13 @@ export function _resetLabSyncJobs(): void {
  */
 export function startLabSyncJob(
   contextRoot: string,
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; slugs?: string[] } = {},
 ): { job: LabSyncJobState; started: boolean } {
   pruneSettledJobs();
   const existing = jobs.get(contextRoot);
+  // Adopt semantics are unchanged for a SCOPED request too: the running job is
+  // already writing cache files, and its results feed the same poll endpoint —
+  // a report page that adopts a board-wide run still sees its insights settle.
   if (existing?.status === 'running') return { job: existing, started: false };
 
   const job: LabSyncJobState = {
@@ -83,6 +92,8 @@ export function startLabSyncJob(
     results: [],
     failed: [],
     error: null,
+    slugs: opts.slugs && opts.slugs.length > 0 ? [...opts.slugs] : null,
+    current: null,
   };
   jobs.set(contextRoot, job);
   void runLabSyncJob(contextRoot, job, opts.force !== false);
@@ -108,9 +119,15 @@ async function runLabSyncJob(
     const onProgress = (ev: LabSyncProgress): void => {
       job.done = ev.done;
       job.total = ev.total;
+      job.current = ev.slug;
+      // Live per-insight results — the report page flips a section from
+      // skeleton to content the moment ITS insight settles, mid-run.
+      job.results = mergeLabResults(job.results, [
+        { slug: ev.slug, status: ev.status, ...(ev.error !== undefined ? { error: ev.error } : {}) },
+      ]);
     };
 
-    let pass = await syncAll(contextRoot, { force, onProgress });
+    let pass = await syncAll(contextRoot, { force, only: job.slugs ?? undefined, onProgress });
     job.results = pass.results;
     job.failed = pass.failed.map((r) => r.slug);
     job.total = pass.results.length;
@@ -134,6 +151,7 @@ async function runLabSyncJob(
     // tile with their own message, and the run itself did its job. The job is
     // only `error` when the engine could not run at all.
     job.status = 'success';
+    job.current = null;
   } catch (err) {
     job.status = 'error';
     job.error = (err as Error).message ?? String(err);

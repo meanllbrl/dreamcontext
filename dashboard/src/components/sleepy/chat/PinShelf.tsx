@@ -487,7 +487,7 @@ function TagChip({
       : null;
 
   return (
-    <span className={cls.join(' ')} data-pin-tag title={tag.url ? tag.url : undefined}>
+    <span className={cls.join(' ')} data-pin-tag title={tag.url || tag.note || undefined}>
       {tag.icon === 'worktree' ? (
         // Both spellings ship; the container query at 470px swaps which one is on screen, so
         // the marker survives a narrow pane as its bracket glyph instead of wrapping the line.

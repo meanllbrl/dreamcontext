@@ -1,0 +1,123 @@
+/**
+ * lab-html-kit.css — the curated class kit a script's `html` card body writes
+ * against (html/v1 hybrid). Embedded into the sandboxed iframe's srcdoc together
+ * with a :root block of RESOLVED design-token values (CSS variables do not cross
+ * the iframe document boundary, so labHtmlKit.ts inlines the current theme's
+ * values and re-injects on theme change).
+ *
+ * The rule for script authors: don't write your own CSS — use these classes and
+ * the card looks native dreamcontext by default. Classes are prefixed `lk-`.
+ *
+ * Typography follows the NATIVE renders, not generic dashboard tropes: big
+ * values are the display face (NumberCard idiom — mono is for table cells and
+ * aligned columns only), chips are the .lab-badge pair (subtle background +
+ * toned text, no border), and tinted surfaces follow the tinted-surface-not-
+ * filled-swatch pattern so text on them stays body-contrast in both themes.
+ */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 2px;
+  font-family: var(--font-family);
+  font-size: 13px;
+  color: var(--color-text);
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Typography ── */
+.lk-title { font-size: 13px; font-weight: 600; color: var(--color-text); margin: 0 0 6px; }
+.lk-label { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
+.lk-muted { font-size: 12px; color: var(--color-text-tertiary); }
+/* The NumberCard idiom: display face, tight tracking, tabular digits. */
+.lk-value {
+  font-family: var(--font-family-display);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+.lk-value--lg { font-size: 32px; }
+.lk-value--sm { font-size: 17px; }
+.lk-unit { font-size: 13px; font-weight: 500; color: var(--color-text-tertiary); margin-left: 3px; }
+/* Mono belongs to ALIGNED COLUMNS (table cells, bar values) — never headlines. */
+.lk-num { font-family: var(--font-mono); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* ── Deltas (the NumberCard/MetricTable pair: plain toned text, no box) ── */
+.lk-delta { font-size: 12.5px; font-weight: 600; }
+.lk-delta--up { color: var(--color-success); }
+.lk-delta--down { color: var(--color-error); }
+.lk-delta--flat { color: var(--color-text-tertiary); }
+
+/* ── Layout ── */
+.lk-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.lk-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+.lk-spacer { flex: 1; }
+.lk-divider { border: none; border-top: 1px solid var(--color-border); margin: 10px 0; }
+
+/* ── Stat tile — a lighter surface than the chips inside it, so the toned
+     chips keep their separation instead of sinking into the same grey. ── */
+.lk-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-secondary);
+}
+
+/* ── Chip / badge (the .lab-badge pair: subtle background + toned text) ── */
+.lk-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+}
+.lk-chip--accent { color: var(--color-accent); background: var(--color-accent-soft); }
+.lk-chip--good { color: var(--color-success); background: var(--color-success-subtle); }
+.lk-chip--bad { color: var(--color-error); background: var(--color-error-subtle); }
+
+/* ── Callout — reader-facing emphasis box: tinted SURFACE, body text on top
+     (tinted-surface-not-filled-swatch — never a solid accent fill for prose). ── */
+.lk-callout {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-tertiary));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+  color: var(--color-text);
+  font-size: 12.5px;
+}
+
+/* ── Table (the MetricTable idiom) ── */
+.lk-table { width: 100%; border-collapse: collapse; font-size: 12.5px; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
+.lk-table th { text-align: left; padding: 6px 10px; font-weight: 600; font-size: 12px; color: var(--color-text-secondary); background: var(--color-bg-tertiary); }
+.lk-table th.lk-num, .lk-table td.lk-num { text-align: right; }
+.lk-table td { padding: 5px 10px; border-top: 1px solid var(--color-border); color: var(--color-text); }
+
+/* ── Bar row (the BarList idiom) ── */
+.lk-bar { display: flex; align-items: center; gap: 8px; font-size: 12.5px; min-width: 0; }
+.lk-bar-label { flex: 0 0 34%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); }
+.lk-bar-track { flex: 1; min-width: 0; height: 8px; border-radius: 4px; background: var(--color-bg-tertiary); overflow: hidden; }
+.lk-bar-fill { display: block; height: 100%; border-radius: 4px; background: var(--chart-1); }
+.lk-bar-fill--2 { background: var(--chart-2); }
+.lk-bar-fill--3 { background: var(--chart-3); }
+.lk-bar-fill--4 { background: var(--chart-4); }
+.lk-bar-fill--5 { background: var(--chart-5); }
+.lk-bar-fill--6 { background: var(--chart-6); }
+.lk-bar-fill--7 { background: var(--chart-7); }
+.lk-bar-fill--8 { background: var(--chart-8); }
+.lk-bar-value { flex-shrink: 0; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--color-text); }
+
+/* ── Honesty helpers ── */
+.lk-low-sample { opacity: 0.45; }
+.lk-empty { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; }

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseChatActions } from './chatActions';
 import {
-  foldViews, layoutShelf, type ShelfEntry, type ShelfFact, type ShelfLayout,
+  checkoutFact, foldViews, layoutShelf,
+  type ShelfEntry, type ShelfFact, type ShelfLayout,
 } from '../../../lib/shelfModel';
 import { readPins, writePins } from '../../../lib/pinStore';
 import { newlyTicked } from '../../../lib/progressModel';
@@ -151,17 +152,15 @@ export function useShelf(session: ChatSession, vault: string | null): ShelfHandl
   // vault-wide cache entry showed every pane whichever checkout answered last.
   const factsQuery = useSessionFacts(connected, conversationId || null);
   const factsData = factsQuery.data;
+  // ONE chip, not two. This used to push a branch chip AND a worktree chip, which in the
+  // ordinary case printed the same word twice (`worktree-run-progress-live` beside
+  // `run-progress-live`) — the owner's "iki branch gösterimi saçma", 2026-08-25. The
+  // composition rules are `checkoutFact`'s, in shelfModel.ts, so they are unit-testable:
+  // logic that lives in a hook is logic this repo's plain-Node vitest cannot reach.
   const facts = useMemo<ShelfFact[]>(() => {
-    if (!factsData?.isRepo) return [];
-    const out: ShelfFact[] = [];
-    if (factsData.branch) out.push({ label: factsData.branch, icon: 'branch' });
-    // The NAME when the server knows it, the bare word otherwise. "worktree" answers a
-    // question nobody with one open is asking; "which one" is the useful fact, and a
-    // pre-`worktreeName` server (or an unnamed root) still gets the marker it had.
-    if (factsData.worktree) {
-      out.push({ label: factsData.worktreeName || 'worktree', marker: true, icon: 'worktree' });
-    }
-    return out;
+    if (!factsData) return [];
+    const fact = checkoutFact(factsData);
+    return fact ? [fact] : [];
   }, [factsData]);
 
   const layout = useMemo(() => layoutShelf(entries, facts), [entries, facts]);

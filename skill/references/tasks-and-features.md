@@ -250,6 +250,35 @@ For funnel analysis (comparative across funnels + sequential across steps), an i
 
 The engine validates + caps the payload (max 40 funnels, 64 steps — over-cap keeps first 63 + the final step, 8 dimensions; per-dimension values beyond the top 8 collapse into "Other"; 64 segment cells; 400 KB — every cap is a loud notice, never silent), synthesizes legacy `series` from step users (so `latest`, KR binding, and the snapshot keep working), and records a bounded per-sync snapshot trail. **Δ vs previous period:** an adapter-provided `prev` wins; otherwise the engine compares against the best equal-length history snapshot ending at/before the current window — and shows NOTHING when no honest comparison exists. `lab create <slug> --render funnel --adapter script` scaffolds the `range` tweak (7d/28d/90d presets) plus a fully documented script template; `lab show <slug>` prints per-funnel step tables with the worst drop highlighted. Legacy `Series[]` payloads under `render: funnel` still render (compact bar list). Data FEEDING stays out of Lab scope — sleep never syncs funnels either.
 
+### Breakdown insights (`render: breakdown` — the `matrix/v1` contract)
+
+For DIMENSIONAL data — a value broken down over 1-3 dimensions (funnel × language, plan × country) — the adapter returns ONE matrix object instead of `Series[]`. **Never bake dimension values into series names** ("F3000 · TR · 119k" is the anti-pattern this contract exists to kill):
+
+```jsonc
+{ "kind": "matrix/v1",
+  "dims": [                              // 1-3, ORDER MATTERS: [0]=pivot rows, [1]=columns, [2]=filter chips
+    { "key": "funnel", "label": "Funnel" },
+    { "key": "language" }
+  ],
+  "rows": [                              // one row per dim-value combination
+    { "d": { "funnel": "F3000", "language": "TR" }, "v": 119000, "n": 4200, "prev": 101000 }
+  ],                                     // v = the value; n (optional) = sample size (n<30 renders de-emphasized);
+                                         // prev (optional) = previous equal-length period — wins over history-derived Δ
+  "total": { "v": 286000, "n": 9125 },   // optional grand total — feeds the card value + KR binding (loud warn if bound and absent)
+  "unit": "USD"                          // optional unit override
+}
+```
+
+The engine validates + caps it (≤3 dims; per-dim values beyond the top 8 collapse into "Other"; ≤400 rows, the tail merges into one all-Other row; 200 KB hard reject — every cap is a loud notice, and `doctor` re-flags a stored cache that violates one), synthesizes legacy `series` from the rows, and — the important part — **appends a DATED snapshot to `matrixHistory` on every successful sync** (count cap 60 AND a byte cap together). The matrix itself is a snapshot, not a time series: **the history trail IS the time axis**, so a daily sync cadence is what makes a report date-navigable. Δ vs previous period: a row's `prev` wins; else the equal-length (±25%) history snapshot; no honest comparison → no Δ shown. `lab create <slug> --render breakdown --adapter script` scaffolds the `range` tweak + a documented script template; `lab show <slug>` prints the pivot; legacy `Series[]` under `render: breakdown` still renders (bar-list fallback).
+
+### HTML card bodies (`html/v1` hybrid — typed renders first)
+
+A script may return `{ data, html? }`: **`data` is MANDATORY** (exactly what a bare return would be — the numbers keep feeding `latest`, KR bindings, Δ, reports, `lab show` and the Rule-13 read ladder; `{ html }` alone fails the sync loudly), `html` is an OPTIONAL card body, ≤300 KB (over-cap = loud sync failure, never truncated). The dashboard draws it in a **network-less sandboxed iframe** (`sandbox="allow-scripts"` with NO same-origin grant + a `default-src 'none'` CSP — it can animate and compute against the data embedded at sync time, but it cannot fetch, beacon, or touch the parent origin), and the detail panel always shows the typed data TWIN next to it, so a screen reader is never locked to the iframe. **Rule: reach for a typed render first; write html only when the render vocabulary cannot express the card — and use the `lab-html-kit.css` classes instead of your own CSS** (`lk-title`, `lk-value`, `lk-label`, `lk-muted`, `lk-delta--up/down`, `lk-stat`, `lk-chip`, `lk-table`, `lk-bar`/`lk-bar-fill--N`, `lk-low-sample`, `lk-empty`): the kit ships embedded with the current theme's design tokens, so a kit-classed card looks native dreamcontext in light and dark and repaints on theme change. A run whose script returns no `html` clears any prior body — stale presentation is worse than none.
+
+### Reports (My Reports — `lab/reports/<slug>.md`)
+
+A report is a **composed, date-navigable document over insights you already track** — it OWNS NO DATA and has no sync path; it reads insight caches and their dated history snapshots. Frontmatter: `title`, `description`, `date_nav: none|daily|weekly|monthly`, `sections: [{ title, prose?, items: [{ insight, view?, breakdown?: { rows, cols, filter? } }] }]`; body = `## Notes` prose. Create with `lab report create <slug> --title "…" --insights a,b,c`; read with `lab report show <slug> [--date YYYY-MM-DD]` or the dashboard's **My Reports** page (`/lab/reports/<slug>` — toolbar → Reports). Date honesty is the contract: a chosen date shows the **latest sync at/before the end of that day**, stamped "as of <sync time>"; no qualifying snapshot → an explicit empty state, never an interpolation. The date axis only exists where syncs exist — a daily report needs a daily sync cadence (an automation is the right scheduler; sleep never runs lab sync). A report referencing a deleted insight shows a warning for that item and keeps rendering. Opening the report page starts one scoped sync job (`slugs[]`) and sections fill progressively as each insight settles.
+
 ### Insight capture (in-session — ASK, never auto-create)
 
 Mirrors proactive objective capture. When the user states or implies a recurring metric need ("I keep checking MRR by hand", "we should watch signups", "create an insight for DAU"):

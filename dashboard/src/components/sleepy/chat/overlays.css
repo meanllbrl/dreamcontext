@@ -284,6 +284,51 @@
 .chat-banner-error-sub { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-sm); }
 .chat-banner-error .chat-btn { margin-left: auto; flex: 0 0 auto; }
 
+/* The fresh-session branch notice. Quieter than `.chat-banner-error` by design: it reports
+   something that WORKED (or was safely declined), so it reads as a note, not an alarm. */
+.chat-banner-branch {
+  align-self: stretch;
+  width: 100%;
+  max-width: var(--chat-line-width, 100%);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+}
+.chat-banner-branch.is-warn {
+  background: var(--color-warning-subtle);
+  border-color: var(--color-warning);
+}
+.chat-banner-branch-mark {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+  line-height: 1.35;
+}
+.chat-banner-branch.is-warn .chat-banner-branch-mark { color: var(--color-warning); }
+.chat-banner-branch-sub {
+  margin: 0;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+}
+.chat-banner-branch-x {
+  margin-left: auto;
+  flex: 0 0 auto;
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-base);
+  line-height: 1;
+}
+.chat-banner-branch-x:hover { color: var(--color-text-primary); }
+
 .chat-banner-reconnecting {
   align-self: flex-start;
   display: inline-flex;

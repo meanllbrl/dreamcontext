@@ -8,6 +8,7 @@ import { countCheckboxes, firstUnticked, listCheckboxes, readSection } from '../
 import { isSafeTaskSlug } from '../../lib/task-backend/local.js';
 import { readSessionFacts, UNKNOWN_SESSION_FACTS } from '../../lib/session-facts.js';
 import { sessionCheckout } from '../../lib/session-cwd.js';
+import { transcriptCheckout } from '../../lib/session-transcript-cwd.js';
 
 /**
  * The two reads behind the chat's PINNED SHELF — the surface docked to the composer's top
@@ -271,5 +272,33 @@ export async function handleAgentSessionFacts(
   } catch { /* unparseable URL — falls back to the project root, same as no id */ }
 
   const projectRoot = projectRootOf(contextRoot);
-  sendJson(res, 200, readSessionFacts(sessionCheckout(session || null, projectRoot)));
+  sendJson(res, 200, readSessionFacts(resolveSessionDir(session || null, projectRoot)));
+}
+
+/**
+ * WHICH directory this session's facts are read from — the transcript's answer, then the tool
+ * frames', then the project root.
+ *
+ * The order is the point. `sessionCheckout` (src/lib/session-cwd.ts) is fed by the harness's
+ * `EnterWorktree`/`ExitWorktree` frames on the stdout stream, so it is precise about the moves
+ * it can see and BLIND to every other one. `transcriptCheckout` reads the conversation's own
+ * `cwd`, which the CLI rewrites on every entry, so it sees all of them — a manual
+ * `git worktree add` + `cd`, a plain `git checkout -b`, and a `cd` back OUT of a worktree the
+ * override registry is still holding. Where the two disagree the transcript is the one that
+ * observed the session rather than one tool call inside it, so it wins.
+ *
+ * The registry is not now redundant: it is written the instant the tool result crosses the
+ * stream, while the transcript entry is a file the CLI has yet to flush. So it remains the
+ * answer for the window between those two, and the fallback whenever a conversation has no
+ * transcript at all (a pane opened and never used).
+ *
+ * Exported, with a `home` TEST SEAM, because the ORDER is the behaviour worth pinning and the
+ * handler's own signature is fixed by the router. Production callers pass no options.
+ */
+export function resolveSessionDir(
+  session: string | null,
+  projectRoot: string,
+  opts: { home?: string } = {},
+): string {
+  return transcriptCheckout(session, projectRoot, opts) ?? sessionCheckout(session, projectRoot);
 }

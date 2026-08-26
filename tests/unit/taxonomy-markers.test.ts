@@ -166,6 +166,50 @@ describe('skill/references lab doc markers', () => {
     expect(skill).toContain('which funnel is underperforming');
     expect(skill).toContain('Funnel analysis is an insight too');
   });
+
+  // The breakdown contract + render decision guidance shipped with the code in
+  // the SAME change (the 2026-07-06 lesson: skill docs lagging the code is how
+  // agents kept smuggling dimensions into series names and shipping `raw`).
+  it('documents the matrix/v1 payload contract (render: breakdown)', () => {
+    const tf = readFileSync(join(ROOT, 'skill', 'references', 'tasks-and-features.md'), 'utf-8');
+    expect(tf).toContain('matrix/v1');
+    expect(tf).toContain('Breakdown insights (`render: breakdown`');
+    expect(tf).toContain('Never bake dimension values into series names');
+    expect(tf).toContain('the history trail IS the time axis');
+    const cli = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
+    expect(cli).toContain('--render breakdown');
+  });
+
+  it('cli-reference.md carries the render DECISION TABLE with raw as the last resort', () => {
+    const cli = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
+    expect(cli).toContain('Render DECISION TABLE');
+    expect(cli).toContain('treat `raw` as the LAST RESORT');
+    expect(cli).toContain('NEVER dimension values baked into series names');
+  });
+
+  it('documents the html/v1 hybrid: data mandatory, kit classes, typed renders first', () => {
+    const tf = readFileSync(join(ROOT, 'skill', 'references', 'tasks-and-features.md'), 'utf-8');
+    expect(tf).toContain('HTML card bodies (`html/v1` hybrid');
+    expect(tf).toContain('`data` is MANDATORY');
+    expect(tf).toContain('lab-html-kit.css');
+    expect(tf).toContain('sandbox="allow-scripts"');
+    const cli = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
+    expect(cli).toContain('html/v1');
+    expect(cli).toContain("don't write your own CSS");
+  });
+
+  it('documents reports: the entity-router row, the CLI verbs, and date honesty', () => {
+    const skill = readFileSync(join(ROOT, 'skill', 'SKILL.md'), 'utf-8');
+    expect(skill).toContain('**Report** — `lab/reports/<slug>.md`');
+    expect(skill).toContain('thirteen distinct entity types');
+    const cli = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
+    expect(cli).toContain('lab report create');
+    expect(cli).toContain('lab report show');
+    const tf = readFileSync(join(ROOT, 'skill', 'references', 'tasks-and-features.md'), 'utf-8');
+    expect(tf).toContain('Reports (My Reports');
+    expect(tf).toContain('OWNS NO DATA');
+    expect(tf).toContain('never an interpolation');
+  });
 });
 
 // ── skill/references/knowledge-and-recall.md markers ─────────────────────────

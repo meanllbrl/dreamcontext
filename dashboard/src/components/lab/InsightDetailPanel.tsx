@@ -6,6 +6,7 @@ import { useOverlayId } from '../../lib/useOverlayId';
 import { TweakEditor } from './TweakEditor';
 import { RangeControl, nonWindowTweaks } from './RangeControl';
 import { chartEntry, detailBodyFor } from './chartRegistry';
+import { HtmlInsightBody } from './HtmlInsightBody';
 import { humanizeTweakKey, humanizeTweakValue } from './tweakLabels';
 import { useI18n } from '../../context/I18nContext';
 import './InsightDetailPanel.css';
@@ -209,7 +210,18 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
             <div className="idp-columns">
               <div className="idp-col-main">
                 {/* `full`: the panel is the whole story — the registry body
-                    draws its large variant (no capped legends, taller canvas). */}
+                    draws its large variant (no capped legends, taller canvas).
+                    An html/v1 body renders ABOVE the typed twin, never instead
+                    of it (funnel F8 a11y-twin idiom): the numbers stay readable
+                    and a screen reader is never locked to the iframe. */}
+                {cache?.html && (
+                  <div className="idp-chart" style={{ marginBottom: 12 }}>
+                    <HtmlInsightBody html={cache.html} title={summary.title} full />
+                    <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
+                      Script-rendered body (sandboxed) — the typed data below is the same numbers.
+                    </div>
+                  </div>
+                )}
                 <div className="idp-chart">
                   <DetailBody
                     summary={summary}

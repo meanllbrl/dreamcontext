@@ -14,8 +14,18 @@ import {
   parseFunnelSet,
 } from './funnel.js';
 import {
+  appendMatrixHistory,
+  makeMatrixSnapshot,
+  matrixLatest,
+  matrixToSeries,
+  parseMatrixSet,
+} from './matrix.js';
+import {
   isRawFunnelSet,
+  isRawMatrixSet,
+  isRawPayloadEnvelope,
   LabError,
+  MAX_HTML_BYTES,
   type Agg,
   type Binding,
   type FunnelCacheEntry,
@@ -23,6 +33,11 @@ import {
   type Granularity,
   type InsightCache,
   type InsightManifest,
+  type MatrixCacheEntry,
+  type MatrixSnapshot,
+  type RawFunnelSet,
+  type RawMatrixSet,
+  type RawSeries,
   type Series,
   type SyncEvent,
 } from './types.js';
@@ -243,18 +258,38 @@ export async function syncInsight(
 
   try {
     const adapter = getAdapter(manifest);
-    const result = await adapter.fetch({
+    const fetched = await adapter.fetch({
       manifest,
       resolvedTweaks,
       credentials,
       fetchImpl: opts.fetchImpl,
     });
 
+    // ── html/v1 hybrid: unwrap the optional envelope. `data` carries the
+    // numbers exactly as a bare return would; `html` is an optional capped
+    // card body — over-cap fails the sync LOUDLY, never truncates. ──
+    let html: string | undefined;
+    let result: RawSeries[] | RawFunnelSet | RawMatrixSet;
+    if (isRawPayloadEnvelope(fetched)) {
+      if (typeof fetched.html === 'string' && fetched.html.length > 0) {
+        const bytes = Buffer.byteLength(fetched.html, 'utf-8');
+        if (bytes > MAX_HTML_BYTES) {
+          throw new LabError(`Script html body is ${bytes} bytes — over the ${MAX_HTML_BYTES}-byte cap. Slim the markup (the data is cached separately; html is presentation only).`);
+        }
+        html = fetched.html;
+      }
+      result = fetched.data;
+    } else {
+      result = fetched;
+    }
+
     let series: Series[];
     let granularity: Granularity;
     let latest: number | null;
     let funnel: FunnelCacheEntry | undefined;
     let funnelHistory: FunnelSnapshot[] | undefined;
+    let matrix: MatrixCacheEntry | undefined;
+    let matrixHistory: MatrixSnapshot[] | undefined;
 
     if (isRawFunnelSet(result)) {
       // ── Funnel-set payload: validate + cap; NO time rollup (steps aren't a
@@ -272,6 +307,27 @@ export async function syncInsight(
       funnelHistory = appendFunnelHistory(
         prior?.funnelHistory,
         makeFunnelSnapshot(parsed.set, resolvedTweaks.range, new Date(nowMs).toISOString()),
+      );
+    } else if (isRawMatrixSet(result)) {
+      // ── Matrix payload: validate + cap; NO time rollup (the set is a
+      // dimensional snapshot). Legacy series are synthesized from the rows;
+      // the time axis is the DATED matrixHistory trail, one entry per sync. ──
+      if (manifest.render !== 'breakdown') {
+        console.warn(`[lab] ${slug}: adapter returned a matrix but render is "${manifest.render}" — set \`render: breakdown\` in the manifest for the pivot UI.`);
+      }
+      const parsed = parseMatrixSet(result);
+      for (const notice of parsed.notices) console.warn(`[lab] ${slug}: ${notice}`);
+      series = matrixToSeries(parsed.set);
+      granularity = 'daily';
+      // `latest` comes from total.v ONLY — finite or null, never a fabrication.
+      latest = matrixLatest(parsed.set);
+      if (latest === null && manifest.binding) {
+        console.warn(`[lab] ${slug}: matrix payload has no finite \`total.v\` — the KR binding to "${manifest.binding.objective}" gets nothing this sync (return a \`total\` to feed it).`);
+      }
+      matrix = { set: parsed.set, notices: parsed.notices, range: resolvedTweaks.range };
+      matrixHistory = appendMatrixHistory(
+        prior?.matrixHistory,
+        makeMatrixSnapshot(parsed.set, resolvedTweaks.range, new Date(nowMs).toISOString()),
       );
     } else {
       const rolled = rollupSeries(result, resolvedTweaks.spanDays, aggFor(manifest));
@@ -304,6 +360,14 @@ export async function syncInsight(
       cache.funnel = funnel;
       cache.funnelHistory = funnelHistory;
     }
+    if (matrix) {
+      cache.matrix = matrix;
+      cache.matrixHistory = matrixHistory;
+    }
+    // The html body is written ALONGSIDE the data (never instead of it), and a
+    // run without one clears any prior body — stale presentation is worse than
+    // none. TTL/history/latest semantics are untouched by its presence.
+    if (html !== undefined) cache.html = html;
     writeCache(contextRoot, slug, cache);
 
     if (manifest.binding) writeBinding(contextRoot, slug, manifest.binding, latest);
@@ -336,9 +400,12 @@ export async function syncInsight(
         error: message,
       }),
     };
-    // Preserve the prior funnel snapshot + trail — same keep-prior contract as series.
+    // Preserve the prior funnel/matrix snapshots + trails — same keep-prior contract as series.
     if (prior?.funnel) failCache.funnel = prior.funnel;
     if (prior?.funnelHistory) failCache.funnelHistory = prior.funnelHistory;
+    if (prior?.matrix) failCache.matrix = prior.matrix;
+    if (prior?.matrixHistory) failCache.matrixHistory = prior.matrixHistory;
+    if (prior?.html !== undefined) failCache.html = prior.html;
     writeCache(contextRoot, slug, failCache);
 
     return { slug, status: 'failed', error: message };

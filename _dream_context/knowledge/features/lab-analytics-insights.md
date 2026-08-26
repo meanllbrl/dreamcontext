@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-08-10'
+updated: '2026-08-25'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -22,6 +22,7 @@ related_tasks:
   - >-
     insights-sync-all-make-bulk-insight-sync-a-background-job-with-bounded-concurrency
   - insights-board-redesign-plug-and-play-charts
+  - insights-breakdown-contract-matrix-v1-native-reports-layer
 type: feature
 name: lab-analytics-insights
 description: >-
@@ -29,12 +30,12 @@ description: >-
   sources (generic HTTP or custom script) into the brain: manifest + bounded
   cache with sync history, TTL sync, secret-redacting credential layer, roadmap
   KR binding, SessionStart/recall surfacing, dashboard Lab page whose cards
-  resolve through a plug-and-play chart registry (ten renders: number/line/pie/
-  raw/funnel/bar/bar_compare/stacked/table/heatmap), a universal date-range
+  resolve through a plug-and-play chart registry (eleven renders: number/line/pie/
+  raw/funnel/bar/bar_compare/stacked/table/heatmap/breakdown), a universal date-range
   control on every windowed insight, size-aware cards, and an
-  InsightDetailPanel slide-over. NEW (in_review): funnel analytics —
-  multi-page routed insights with comparison tables, node lanes, arc gestures,
-  filters, breakdowns, and multi-funnel compare.
+  InsightDetailPanel slide-over. NEW (in_review): matrix/v1 breakdown contract for
+  multi-dimensional analytics, html/v1 hybrid (script-authored card bodies with design-
+  token injection), and My Reports (native date-navigable composition layer).
 pinned: false
 date: '2026-07-05'
 ---
@@ -82,6 +83,25 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [ ] As a teammate, I can **open a link someone sent me** and see exactly their view — funnel, date range, filters, breakdown, pinned arcs are all in the URL.
 - [ ] As a screen-reader / keyboard user, every reading of the graph is available as a **step table twin**, and nodes/arcs are focusable and operable by keyboard, so the graph is not the only path to the data.
 - [x] As an insight author, I can scaffold a funnel insight with `dreamcontext lab create <slug> --render funnel`, return the documented funnel payload from a script or HTTP adapter, and `lab show <slug>` prints the step table with the worst drop highlighted in the terminal. *(Shipped 2026-07-21: A1, A12)*
+
+### Breakdown insights (matrix/v1 — multi-dimensional analytics, in_review 2026-08-25)
+
+- [x] As an insight author, flat Series[] cannot carry dimensions — a 2D breakdown (funnel × language) must encode as series NAMES ('F3000 · TR · 119k'), which renders as unreadable raw tables.
+- [x] As an insight author, I can return a matrix/v1 payload from a script with 1-3 dimensions, and the dashboard renders it as a pivot table (1 dim → bar list, 2 dims → heat-tinted grid, 3rd dim → filter chips) instead of forcing raw render.
+- [x] As a metric operator, snapshot breakdowns store dated matrixHistory entries so I can see Δ vs previous period even though the matrix itself has no time axis.
+- [x] As a user, the CLI `lab show <slug>` prints a breakdown as a readable pivot (not a raw JSON dump), and `doctor` flags cap violations in stored matrix caches.
+
+### HTML card bodies (html/v1 hybrid — script-authored presentation, in_review 2026-08-25)
+
+- [x] As an insight author whose data shape doesn't fit any typed render, I can return `{data, html}` from a script — the html draws in a sandboxed iframe styled by dreamcontext's own design tokens, and the typed data twin always appears in the detail panel.
+- [x] As a user, html card bodies render with dreamcontext's visual language (colors, spacing, typography) by default via an injected CSS kit (`lab-html-kit.css`), so custom insights feel native without hand-rolling design.
+- [x] As a security-conscious user, html bodies execute in a network-isolated sandbox (no allow-same-origin, CSP default-src 'none') so a script cannot exfiltrate data or phone home.
+
+### My Reports (native composition layer, in_review 2026-08-25)
+
+- [x] As a report consumer, I can define a My Report (`lab/reports/<slug>.md`) that composes existing insights into sections, navigate it by date (daily/weekly/monthly), and see every insight's as-of timestamp — honest-nothing when no snapshot exists for that date.
+- [x] As a report consumer, opening a report triggers a scoped sync-job (only the insights that report uses) with progressive section fill, so I'm not waiting for the whole board to sync before seeing my daily report.
+- [x] As a report consumer, I can print a report to PDF or export it as single-file HTML (with inlined CSS and data) or copy the whole thing as Markdown.
 
 ## Acceptance Criteria
 
@@ -141,6 +161,41 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] **Automated:** unit/integration tests for all criteria above (91 new tests) + dashboard `tsc -b` clean.
 - [x] **Manual dashboard checklist** (8 items): Lab page opens; insights render collapsible grouped sections; number shows latest+unit+staleness; line renders interactive SVG with date axis + crosshair tooltip; pie renders slices+legend with hover tooltips; raw toggles table⇄JSON; per-insight Refresh updates on success and toasts loud error on failure; Sync all refreshes every insight with one deliberate failure still updating the others; edit tweak (range last_30_days → last_1_year), Save, reload → still set, refresh re-fetches and granularity coarsens; bound insight shows "feeds <objective>" provenance chip. *(Verified v0.13.0)*
 
+### Breakdown insights (matrix/v1 contract, in_review 2026-08-25)
+
+- [x] A1. `MatrixSet` type (`src/lib/lab/types.ts`): `{kind:'matrix/v1', dims:[{key,label?}] (1-3), rows:[{d:{dimKey:value}, v, n?, prev?}], total?:{v,n?,prev?}, unit?}`. `RENDERS` gained `'breakdown'`; `toRender`/`validateManifestForWrite` accept it.
+- [x] A2. `parseMatrixSet` (`src/lib/lab/matrix.ts`): validation + caps (≤3 dims, top-8 values+Other per dim, ≤400 rows, ≤200KB). Cap violations → doctor flags, not silent truncation. Unit-tested at boundaries.
+- [x] A3. `syncInsight` matrix branch: `kind==='matrix/v1'` payload → `cache.matrix` written; `latest` = `total.v` (binding warns loud when absent + non-finite never written); each successful sync appends a dated `matrixHistory` snapshot (count cap 60 AND byte cap 1MB together).
+- [x] A4. CLI: `lab create --render breakdown --adapter script` scaffolds matrix template; `lab show <slug>` prints terminal pivot; `doctor` validates matrix cache shape + flags cap violations.
+- [x] A5. Dashboard `breakdown` render: `chartRegistry.ts` entry (defaultSpan 2, supportsWindow true) + `BreakdownPivot.tsx`. 1 dim → shared `BarList`; 2 dims → pivot table (heat-tinted cells via `--chart-n`, n chips, n<30 low-sample fade); 3rd dim → filter chips. Detail: dim swap, sort, Δ vs guarded equal-window snapshot, copy-as-Markdown. `lab-render-registry.test.ts` drift guard green.
+- [x] A6. Snapshot honesty fixes (existing renders): `RawDataView` drops Time column when all points share one date (caption 'Snapshot · <date>'); `MetricTable` hides Δ/Trend when no series has ≥2 points.
+- [x] A7. Range control on breakdown follows "data follows the control" rule (PATCH → sync chain); `lab-tweak-resync.test.ts` extended.
+
+### HTML card bodies (html/v1 hybrid, in_review 2026-08-25)
+
+- [x] C1. Script payload contract: `{data: RawSeries[]|MatrixSet, html?: string}` (bare `RawSeries[]` still works). **`data` MANDATORY, `html` optional**. `html` byte cap ≤300KB, over-cap → loud sync error.
+- [x] C2. `cache.html` field: written alongside data on successful sync; ok run without html clears stale body; failure keeps prior html. TTL/history/latest semantics unchanged.
+- [x] C3. Card body: `cache.html` present → sandboxed iframe (`sandbox="allow-scripts"`, no allow-same-origin; CSP `default-src 'none'`). `lab-html-kit.css` injected with RESOLVED design tokens (CSS vars don't cross iframe boundary) + curated class kit (`lk-*` classes: title/value/delta/stat/chip/table/bar-row). Re-injected on theme flip.
+- [x] C4. Typed twin: detail panel shows typed data twin (table/chart) ABOVE html body with 'same numbers' caption. Card falls back to typed body when html absent. Board never crashes on missing/malformed html.
+- [x] C5. Security proof: unit tests pin sandbox/CSP/srcdoc attrs (13/13); runtime verify (`scripts/verify/lab-breakdown-reports.mjs`) proves fixture html's fetch + img beacons produce ZERO network requests in real Chromium while inline script demonstrably runs (kit usable).
+- [x] C6. Skill docs: html/v1 contract + "typed-first, html when vocabulary doesn't fit" rule + `lab-html-kit.css` class-kit reference. Marker tests green.
+
+### My Reports (native composition layer, in_review 2026-08-25)
+
+- [x] B1. `lab/reports/<slug>.md` entity: frontmatter `{title, description, date_nav: none|daily|weekly|monthly, sections:[{title, prose?, items:[{insight, view?, breakdown?}]}]}` + `## Notes`. `reports-store.ts` (lenient read / strict write). Report owns NO data — composes existing insight caches + dated matrix snapshots.
+- [x] B2. API: `GET /api/lab/reports`, `GET /api/lab/reports/:slug?date=YYYY-MM-DD` (resolves as-of = newest snapshot at/before end of date per source; honest empty when none qualifies). CLI: `lab report create|list|show`.
+- [x] B3. Dashboard: "My Reports" menu in Lab toolbar (hidden when no reports); report pages route via `labRoute.ts` pushState (`/lab/reports/<slug>`); date navigator (prev/next + calendar, capped at today + Live button); sections render full-width via chartRegistry.
+- [x] B4. Date honesty: selected date → last sync snapshot at/before that date, stamped "as of <sync time>". No snapshot → explicit "No snapshot at or before <date>", no interpolation.
+- [x] B5. Print stylesheet (@media print) + whole-report copy-as-Markdown + single-file HTML export (kit CSS + resolved tokens inlined, zero external refs, XSS-escaped data, same as-of/no-snapshot honesty).
+- [x] B6. Missing-insight leniency: report references deleted insight → section shows role=alert warning, board doesn't crash.
+- [x] B7. Skill docs (SAME change as code): SKILL.md entity router gained Report row (13 entity types); cli-reference.md gained render DECISION TABLE (shape → render; raw = last resort; 'NEVER dimensions in series names'); tasks-and-features.md gained § Breakdown insights (matrix/v1 contract + caps), § HTML card bodies (data mandatory, kit classes), § Reports (owns-no-data, as-of honesty). `taxonomy-markers.test.ts` +5 → 56/56.
+- [x] B8. Progressive section fill: report page start → scoped sync-job (`POST /api/lab/sync-jobs` now accepts `slugs[]` subset); sections fill as insights settle (shimmer skeleton until slug in job.results); header "n/m section(s) ready · syncing <slug>". Adopt idiom survives navigation.
+
+### Validation (breakdown + html + reports)
+
+- [x] Full suite 433 files passed, 7717 tests passed, 0 failures. `npm run build` clean. Dashboard + CLI `tsc` clean.
+- [x] Runtime proof: `scripts/verify/lab-breakdown-reports.mjs` (29/29 in real Chromium on scratch vault): pivot render (dims→rows/cols, n chips, low-sample fade, total), raw snapshot with NO Time column, sandboxed html card + typed twin in panel (fetch/img beacons produce 0 network requests, inline script runs), breakdown detail swap/copy, Reports menu → routed page, full-width pivot in section, as-of stamps, pre-history date → honest empty + back to Live restores.
+
 ### Funnel analytics (in_review, 2026-07-21)
 
 - [x] F1 — **Funnel payload contract + cache schema** written and versioned: adapter returns a funnel-set (funnels → meta/metrics/steps/segments + declared dimensions; `funnel-set/v1` shape); engine validates, caps (max 40 funnels, max 64 steps — over-cap keeps first 63 + the final step so Finish always survives, max 8 dimensions with top-8 values→Other, max 64 segment cells, max 400KB), and stores history snapshots per sync for deltas/trends. Legacy `Series[]` payloads under `render: funnel` still render (compact bar fallback) — no breakage of existing insights.
@@ -180,6 +235,15 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 ### Data follows the control — a saved tweak always re-fetches (2026-07-27, issue #235)
 
 A tweak is not a preference, it is part of the QUESTION the tile answers: change the range enum and the number on the card is computed over a different window. So a surface that PATCHes `/lab/:slug/tweaks` and stops there leaves the tile rendering the pre-tweak cache — the control moved, the number didn't, and the tile says nothing about it. That is how "day filters don't work" got reported against 30+ tiles: the save had worked perfectly, and only the refresh was missing. The funnel views had always chained PATCH → `POST /lab/sync` for exactly this reason; the generic card and the detail panel only toasted "tweaks saved." Rule for every future Lab surface: **a control that changes what the data MEANS must re-fetch, or say out loud that it hasn't** (a stale badge). The toast now distinguishes the two failure modes — "could not save tweaks" vs "tweaks saved, but the refresh failed" — because those need different next actions from the user. Pinned by `tests/unit/lab-tweak-resync.test.ts`, which fails if any Lab surface saves tweaks without chaining the sync.
+
+### Breakdown insights + HTML hybrid + Reports (2026-08-25, in_review)
+
+- **[2026-08-25] Root cause: flat Series[] cannot carry dimensions.** kitUP board: 54 insights, 22 rendering as raw tables. Kırılımlı data (funnel × language) seri ismine string gömülü ('F3000 · TR · 119k'); Time column pure noise (single-date snapshots); render seçimi manifest author'a ait, veri şeklinden çıkarım yok. Solution: matrix/v1 typed payload contract (1-3 dims, rows with dimension coordinates, total, prev), breakdown pivot render, and matrixHistory as the time axis for dimensional snapshots.
+- **[2026-08-25] HTML hybrid pivot (owner).** Original request: "direkt html ↔ script bağlı küçük kartlar, her şey mümkün olsun." Decision: **HYBRID** — `data` mandatory (agents/binding/reports/Rule 13 need numbers), `html` optional card body. Pure-HTML rejected (html-only card would be blind to agents). Security model: html generated at sync, cached, drawn in network-isolated sandbox (`allow-scripts` only, no allow-same-origin, CSP `default-src 'none'`). Injected CSS = dreamcontext's own design system (`lab-html-kit.css`) so cards look native by default.
+- **[2026-08-25] Contract-level solution (owner).** matrix/v1 payload + breakdown pivot render chosen over (a) adding dims to Series[], (b) render-only improvements. Report = native entity (not HTML iframe or automation-markdown). Scope = platform (this repo) + kitUP migration (separate task, in kitUP vault — 22 raw insights migrate to matrix/v1, "Günlük Ürün Raporu" set up).
+- **[2026-08-25] Funnel precedent followed.** Typed payload (funnel-set/v1 idiom), caps (dim top-8+Other, 400 rows, 200KB), history snapshots, routed pages (pushState contract), low-sample honesty (n<30 de-emphasis). No new framework/chart lib — hand-rolled SVG/div, colors only via `--chart-n` tokens.
+- **[2026-08-25] Report owns no data.** No sync path of its own; composes insight caches + matrixHistory. "Script-fed" stays in insight sync — single fetch path. Known limit: report date navigator depends on sync cadence (no daily sync → no daily points); UI states this via "as of" stamp, doesn't hide it.
+- **[2026-08-25] Dashboard RENDERS mirror drift-tested.** `lab-render-registry.test.ts` parses `types.ts` RENDERS and chartRegistry entries; drift = test fails. Registry entry missing → compile error (CardBody required).
 
 ### Funnel analytics (2026-07-21, in_review)
 
@@ -304,8 +368,65 @@ A tweak is not a preference, it is part of the QUESTION the tile answers: change
 
 **Phasing:** F1-F8 = P0 (table + lane + arcs, no breakdowns). F9-F11 = P1 (filters + breakdowns + compare). F12-F14 = P2 (CLI + benchmarks + exports). Each milestone independently shippable. Status: F1-F13 shipped (2026-07-21), F14 partial (PNG export slipped).
 
+### Breakdown insights (matrix/v1 + html/v1 + Reports, in_review 2026-08-25)
+
+**Matrix payload contract (`matrix/v1`).** New adapter payload kind for `render: breakdown`; scripts/HTTP extract return:
+
+```jsonc
+{
+  "kind": "matrix/v1",
+  "dims": [                                 // 1-3 ordered dimensions (rows, cols, filter)
+    { "key": "funnel", "label": "Funnel" },
+    { "key": "language", "label": "Language" }
+  ],
+  "rows": [                                 // cells: dimension coordinates + value
+    { "d": { "funnel": "F3000", "language": "TR" }, "v": 119000, "n": 145, "prev": 112000 },
+    { "d": { "funnel": "F3000", "language": "EN" }, "v": 87000, "n": 98 }
+  ],
+  "total": { "v": 206000, "n": 243, "prev": 198000 },  // optional aggregate
+  "unit": "usd"
+}
+```
+
+**Engine (`src/lib/lab/matrix.ts`):** schema validation + caps (MAX_DIMS=3, per-dim top-8 values + Other collapse, MAX_ROWS=400, MAX_MATRIX_BYTES=200KB — every cap produces a loud notice for doctor), `parseMatrixSet` lenient row parse + dedupe-merge, cache versioning (`cache.matrix` field + `matrixHistory` bounded trail of dated snapshots — count cap 60 AND byte cap 1MB together; history IS the breakdown's time axis). Synthesizes legacy `series` from rows for backward compat; `matrixLatest` = `total.v` (card binding, never non-finite). Reuses tweak mechanism (range tweaks work), credential layer, TTL/staleness.
+
+**HTML hybrid envelope (`html/v1`).** A script may return `{ data: RawSeries[] | RawFunnelSet | RawMatrixSet, html?: string }` instead of bare payload. **`data` MANDATORY** (agents/binding/reports/`lab show` read the numbers; Rule 13 snapshot/recall need structured data). `html` is an OPTIONAL card body (MAX_HTML_BYTES=300KB, over-cap → loud sync error, no truncation). Written to `cache.html` alongside numbers; an ok run without html clears a stale body (stale presentation worse than none). Dashboard: sandboxed iframe (`sandbox="allow-scripts"`, no `allow-same-origin`, srcdoc CSP `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">` — iframe cannot phone home or exfiltrate). `labHtmlKit.ts` builds srcdoc = CSP meta FIRST + :root block of RESOLVED tokens (CSS vars don't cross iframe boundary; `resolveKitTokens` reads computed styles) + LAB_HTML_KIT_CSS injected (curated `lk-*` class kit: title/value/delta/stat/chip/table/bar-row/low-sample); rebuilt on theme flip. Kit lives as TS string (`labHtmlKit.ts`) with `lab-html-kit.css` as byte-identical reference (drift-tested) because vitest 4 stubs `.css?raw` to `''`. Detail panel always shows typed data twin ABOVE html body (F8 a11y idiom) with 'same numbers' caption; card falls back to typed body when html absent.
+
+**My Reports (`lab/reports/<slug>.md`).** Native entity for date-navigable insight composition. Frontmatter: `{title, description, date_nav: none|daily|weekly|monthly, sections: [{title, prose?, items: [{insight, view?, breakdown?}]}]}` + `## Notes` prose. **Report owns NO data** — composes existing insight caches (`cache.{series,funnel,matrix,html}`) + dated snapshots (`{funnel,matrix}History`). `reports-store.ts` mirrors `store.ts` (lenient read — malformed section/item skipped, unknown date_nav → none; strict write — kebab slug, title required, insights must EXIST). Resolution (`resolveReportItem(date|null)`): dated mode = newest snapshot at/before END of date per source (matrixHistory → funnelHistory → ok sync events from cache.history; failed events never count), stamped `asOf`; nothing at/before → `asOf: null` honest empty, NO interpolation; live mode = current cache stamped `fetchedAt`. Dashboard (`ReportPage.tsx` + `reportModel.ts`): date navigator (prev/next stepped by date_nav granularity + `<input type=date>` capped at today + Live button; date rides `?date=` query param); sections render full-width via chartRegistry; dated matrix snapshots re-render through real `BreakdownPivot` via `snapshotToSet` (engine carries dims in `makeMatrixSnapshot` now — old snapshots derive dims from row keys). Progressive section fill: page start = ONE scoped sync-job (`POST /api/lab/sync-jobs` now accepts `slugs[]` → job.slugs → `syncAll` subset; job.results fill live per settle; job.current names syncing insight) guarded by `startedRef`, adopt idiom survives navigation; sections shimmer skeleton until slug settles; header "n/m section(s) ready · syncing <slug>". @media print stylesheet (chrome hidden, break-inside avoid) + Print button; copy-as-Markdown + single-file HTML export (`reportModel.ts` pure builders — kit CSS + resolved tokens inlined, zero src/href/http refs, data XSS-escaped, exports carry same as-of/no-snapshot honesty as page). Missing insight → role=alert warning strip, board never crashes.
+
+**Backend files (new):**
+- `src/lib/lab/matrix.ts` — `parseMatrixSet` (validation, caps, notices), `matrixToSeries` (legacy synth), `matrixLatest`, `makeMatrixSnapshot`.
+- `src/lib/lab/reports-store.ts` — mirrors `store.ts`: `{readReportFile, listReports, getReport, createReport, resolveReportItem}`.
+- `src/lib/lab/adapters/script-child.ts` — extended to handle `{data, html?}` envelope; `data` extraction mandatory.
+- `dashboard/src/components/lab/BreakdownPivot.tsx` (12891 bytes) + `matrixModel.ts` (pure pivot math: dimValues weight-order w/ Other/Unknown last, pivotCell honest-null aggregation, prev only when complete, equal-window ±25% snapshot guard, pivotToMarkdown).
+- `dashboard/src/components/lab/HtmlInsightBody.tsx` + `labHtmlKit.ts` (kit builder: srcdoc = CSP + resolved tokens + LAB_HTML_KIT_CSS class kit injection).
+- `dashboard/src/pages/ReportPage.tsx` + `reportModel.ts` (export builders: markdown/html/print).
+- `dashboard/src/lib/labRoute.ts` — extended grammar: `/lab/reports/<slug>` (reports reserved first segment).
+
+**Backend edits:**
+- `src/lib/lab/types.ts` — +MatrixSet, MatrixDim, MatrixRow, MatrixTotal, MatrixSnapshot, MatrixCacheEntry, RawMatrixSet, RawPayloadEnvelope, isRawPayloadEnvelope, MAX_HTML_BYTES, 'breakdown' in RENDERS.
+- `src/lib/lab/sync.ts` — matrix branch: `kind==='matrix/v1'` → `parseMatrixSet` → `cache.matrix` + `matrixToSeries` synth + `matrixLatest` binding + `appendMatrixHistory` (count+byte cap); envelope detection + `html` extraction + MAX_HTML_BYTES loud cap.
+- `src/lib/lab/store.ts` — `toRender` accepts 'breakdown', `validateManifestForWrite` same.
+- `src/cli/commands/lab.ts` — `lab create --render breakdown` scaffolds matrix template; `lab show` prints pivot (1-dim list / 2-dim grid / 3rd-dim sections, low-sample asterisk); `report` verbs (create, list, show --date --json).
+- `src/cli/commands/doctor.ts` — `checkLab` re-parses stored matrix + flags cap/byte-cap violations.
+- `src/server/routes/lab.ts` — +`handleLabReports`/`handleLabReportShow` (registered BEFORE `/api/lab/:slug` — first-match-wins); sync-jobs extended to accept `slugs[]`.
+- `dashboard/src/components/lab/chartRegistry.ts` — +breakdown entry (CardBody: BreakdownPivot, defaultSpan 2, supportsWindow true).
+- `dashboard/src/components/lab/RawDataView.tsx` — drops Time column when all points share one date ('Snapshot · <date>' caption).
+- `dashboard/src/components/lab/MetricTable.tsx` — hides Δ/Trend when no series has ≥2 points.
+
+**Tests (tests/unit/):** `lab-matrix` (37), `lab-breakdown-model` (12), `lab-html-body` (13), `lab-reports` (15), `lab-reports-ui` (12), plus extensions to `lab-tweak-resync` and `taxonomy-markers`. Runtime: `scripts/verify/lab-breakdown-reports.mjs` (29/29).
+
+**Size.** 89+ new unit tests across 5 new test files. Backend +5 files, +6 edits. Dashboard +6 files, +4 edits. Full suite 433 files passed, 7717 tests passed, 0 failures.
+
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-08-25 — Breakdown insights (matrix/v1) + HTML card bodies (html/v1) + My Reports shipped (in_review)
+
+- **Report (owner, 08-25):** kitUP board: 54 insights, 22 rendering as unreadable raw tables ('F3000 · TR · 119k' seri names, Time column pure noise). Root cause: flat `Series[]` model cannot carry dimensions — kırılımlar ancak seri ismine string gömülerek ifade edilebiliyor. Script'ler kırılımlı snapshot üretiyor, Lab yalnızca zaman serisi konuşuyor. Rapor ihtiyacı (günlük, kırılımlı) hiçbir yüzeyde karşılanmıyor.
+- **Shipped in 6 waves.** (1) Matrix engine: `MatrixSet` type (1-3 dims, rows with d/v/n/prev, total, unit), `parseMatrixSet` validation+caps (≤3 dims, dim top-8+Other, ≤400 rows, ≤200KB), `syncInsight` matrix branch → `cache.matrix` + `matrixHistory` dated snapshots (count cap 60 AND byte cap 1MB), `lab create --render breakdown` scaffolds matrix template, `lab show` prints pivot, `doctor` validates + flags cap violations. (2) Dashboard breakdown: `BreakdownPivot.tsx` + `matrixModel.ts` — 1 dim → shared `BarList`, 2 dims → heat-tinted pivot (`--chart-1` via color-mix, n chips, n<30 fade), 3rd dim → filter chips; detail: swap dims, sort, Δ vs equal-window snapshot guard, copy-as-Markdown; A6 snapshot honesty fixes (RawDataView drops Time when single-date, MetricTable hides Δ/Trend without history); A7 range-control PATCH→sync pinned in resync test. (3) HTML hybrid: `{data, html?}` envelope (data MANDATORY, html ≤300KB loud cap), `cache.html` written alongside (ok run without html clears stale body), sandboxed iframe (`allow-scripts` only, CSP `default-src 'none'`) styled by `lab-html-kit.css` with resolved theme tokens + curated `lk-*` class kit, re-injected on theme flip; detail panel always shows typed twin, card falls back when html absent. (4) Reports engine: `lab/reports/<slug>.md` entity (owns NO data — composes insight caches+history), lenient/strict reports-store, `resolveReportItem(date|null)` (as-of = latest snapshot at/before end of date, honest empty when none), `GET /api/lab/reports[/:slug?date=]`, `lab report create|list|show`, sync-jobs extended `slugs[]` subset. (5) Reports UI: toolbar Reports ▾ menu → `/lab/reports/<slug>` routed page, date navigator (prev/next + calendar + Live, `?date=` param), sections render full-width via chartRegistry, dated snapshots via real BreakdownPivot (`snapshotToSet` — engine carries dims now), progressive fill (scoped sync-job, shimmer skeleton → settle, header "n/m ready · syncing <slug>"), @media print + Print button, copy-as-Markdown + single-file HTML export (kit CSS+tokens inlined, zero external refs, XSS-escaped, same as-of honesty), missing-insight warning (lenient, board doesn't crash). (6) Skill docs in SAME change: SKILL.md entity router Report row (13 types), cli-reference.md render DECISION TABLE (shape → render, raw = LAST RESORT, 'NEVER dimensions in series names'), matrix/v1 contract + report verbs; tasks-and-features.md § Breakdown/HTML/Reports; taxonomy-markers +5 → 56/56.
+- **Evidence:** 89+ new unit tests across 5 new files (lab-matrix 37, lab-breakdown-model 12, lab-html-body 13, lab-reports 15, lab-reports-ui 12) + extensions to lab-tweak-resync + taxonomy-markers. Full suite 433 files passed, 7717 tests passed, 0 failures. `npm run build` + dashboard/CLI tsc clean. Runtime verify `scripts/verify/lab-breakdown-reports.mjs` 29/29 in real Chromium on scratch vault: pivot render (dims→rows/cols, n chips, low-sample fade, total), raw snapshot NO Time column + 'Snapshot · date' caption, sandboxed html card (fetch/img beacons produce ZERO network requests while inline script runs → kit usable) + typed twin in panel, breakdown detail swap/copy, Reports menu → routed page, full-width pivot in section, as-of stamps, pre-history date → honest 'No snapshot at or before' + back to Live restores data. Found+fixed by verify itself: Reports menu was right-anchored over sidebar — scroll clip made it unclickable; now left-anchored.
+- **Task `insights-breakdown-contract-matrix-v1-native-reports-layer`** status in_review (all 24 acceptance criteria ticked with evidence; visual QA pending). PRD `updated` → 2026-08-25, `description` reflects matrix/html/Reports, `related_tasks` += insights-breakdown-contract-matrix-v1-native-reports-layer. Skill installed copy already up to date (docs shipped in same change).
 
 ### 2026-08-09 — The funnel overview gets a column picker (task `insights-board-redesign-plug-and-play-charts`, phase 5)
 

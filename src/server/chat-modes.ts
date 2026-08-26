@@ -91,19 +91,27 @@ You are building to a task's acceptance criteria.
 /**
  * The sentence both arms end with.
  *
- * The shelf's branch tag is SERVER-derived, and the server can only follow a move it has a
- * frame for — the harness's own `EnterWorktree`. A manual `git worktree add` + `cd` leaves
- * the tag reporting the checkout the session STARTED in, which is the failure the owner
- * photographed on 2026-08-24: a whole run in a worktree under a tag that still said `main`.
- * So: prefer the tool, and when you cannot, say so.
+ * ── What this used to say, and why it stopped ─────────────────────────────────────────
+ * It used to end "say so, and pin the checkout as a tag", because the server followed only the
+ * harness's `EnterWorktree`/`ExitWorktree` frames and a manual `git worktree add` + `cd` left
+ * the tag reporting the checkout the session STARTED in (photographed 2026-08-24). Asking the
+ * agent to paper over that produced the NEXT defect, photographed 2026-08-25: three chips
+ * reading `main` + `wt: eur-multicurrency` + `branch: feat/eur-multicurrency` — one branch
+ * stated twice, and the server's copy of it wrong.
+ *
+ * The server now reads the checkout from the conversation's own transcript
+ * (src/lib/session-transcript-cwd.ts), which the CLI rewrites on every entry, so EVERY move is
+ * followed — the tool, a manual one, and a plain `git checkout -b`. There is nothing left for
+ * the agent to declare, and `layoutShelf` drops a pin that restates the chip anyway. So the
+ * paragraph keeps only the half that is still true: prefer the tool, because it is the move the
+ * shelf can attribute instantly rather than on the next transcript flush.
  *
  * Appended to the FORBIDDEN arm too, deliberately. That arm forbids CREATING a worktree; it
- * does not stop a session being driven from one that already exists, and a wrong tag is
- * exactly as wrong there.
+ * does not stop a session being driven from one that already exists.
  */
-const WORKTREE_DECLARE = `Moving checkout? Use the EnterWorktree tool — the shelf's branch tag
-follows it. Any other move (a manual \`git worktree add\` + \`cd\`) is invisible to the shelf:
-say so, and pin the checkout as a tag.`;
+const WORKTREE_DECLARE = `Moving checkout? Prefer the EnterWorktree tool. The shelf reads the
+checkout from the transcript, so it follows any move — do not pin the branch or worktree
+yourself; a pin restating it is dropped.`;
 
 /** Appended when the project's dreamcontext brain is ISOLATED, so a second checkout cannot
  *  fork it. */

@@ -14,13 +14,14 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { handleAgentSessionFacts } from '../../src/server/routes/agent-shelf.js';
+import { handleAgentSessionFacts, resolveSessionDir } from '../../src/server/routes/agent-shelf.js';
 import type { SessionFacts } from '../../src/lib/session-facts.js';
 import { resetSessionFactsCaches } from '../../src/lib/session-facts.js';
 import { enterSessionCheckout, resetSessionCheckouts } from '../../src/lib/session-cwd.js';
+import { resetTranscriptCheckoutCaches } from '../../src/lib/session-transcript-cwd.js';
 
 function gitAvailable(): boolean {
   try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
@@ -86,6 +87,7 @@ describe.skipIf(!HAS_GIT)('GET /api/agent/session-facts', () => {
     process.env.DREAMCONTEXT_DESKTOP = '1';
     resetSessionCheckouts();
     resetSessionFactsCaches();
+    resetTranscriptCheckoutCaches();
   });
 
   it('with NO session id, answers for the project root — the pre-existing behaviour', async () => {
@@ -154,5 +156,87 @@ describe.skipIf(!HAS_GIT)('GET /api/agent/session-facts', () => {
   it('a contextRoot that is already the project root is handled too (full-repo layout)', async () => {
     const { root } = makeProject('full-repo', 'main');
     expect((await get(root)).branch).toBe('main');
+  });
+});
+
+/**
+ * WHICH source wins — the ORDER, which is the whole behaviour of `resolveSessionDir`.
+ *
+ * The tool-frame registry (`session-cwd.ts`) is precise about the moves it can see and blind to
+ * every other one: a manual `git worktree add` + `cd`, a plain `git checkout -b`, and a `cd`
+ * back OUT of a worktree it is still holding. The transcript sees all of them, so it wins where
+ * the two disagree. Every case below is one of those disagreements.
+ */
+describe.skipIf(!HAS_GIT)('resolveSessionDir — the transcript outranks the tool frames', () => {
+  beforeEach(() => {
+    resetSessionCheckouts();
+    resetSessionFactsCaches();
+    resetTranscriptCheckoutCaches();
+  });
+
+  function makeHome(name: string): string {
+    const home = join(SCRATCH, name);
+    mkdirSync(join(home, '.claude', 'projects', 'p'), { recursive: true });
+    return home;
+  }
+  function writeTranscript(home: string, id: string, cwd: string): void {
+    writeFileSync(
+      join(home, '.claude', 'projects', 'p', `${id}.jsonl`),
+      JSON.stringify({ type: 'assistant', cwd, message: { content: [] } }) + '\n',
+      'utf-8',
+    );
+  }
+
+  it('follows a move the registry NEVER SAW — the manual `git worktree add` + `cd`', () => {
+    // The owner's 2026-08-25 screenshot: a whole run in `eur-multicurrency` under a tag that
+    // still read `main`, because no EnterWorktree frame was ever emitted.
+    const { root } = makeProject('order-manual', 'main');
+    const wt = addWorktree(root, 'order-manual-wt', 'feat/eur-multicurrency');
+    const home = makeHome('order-manual-home');
+    writeTranscript(home, SESSION_A, wt);
+
+    expect(resolveSessionDir(SESSION_A, root, { home })).toBe(realpathSync(wt));
+  });
+
+  it('follows a `cd` back OUT of a worktree the registry is still holding', () => {
+    const { root } = makeProject('order-back-out', 'main');
+    const wt = addWorktree(root, 'order-back-out-wt', 'feat/left');
+    expect(enterSessionCheckout(SESSION_A, wt, root)).toBe(true);
+    const home = makeHome('order-back-out-home');
+    writeTranscript(home, SESSION_A, root);
+
+    // The registry says the worktree; the transcript says the session came home. The transcript
+    // is the one that observed the session rather than one tool call inside it.
+    expect(resolveSessionDir(SESSION_A, root, { home })).toBe(realpathSync(root));
+  });
+
+  it('falls back to the REGISTRY when the transcript has nothing to say', () => {
+    // The window between a tool result crossing the stream and the CLI flushing its transcript,
+    // and the standing case of a conversation with no transcript at all.
+    const { root } = makeProject('order-fallback', 'main');
+    const wt = addWorktree(root, 'order-fallback-wt', 'feat/registry-only');
+    expect(enterSessionCheckout(SESSION_A, wt, root)).toBe(true);
+    const home = makeHome('order-fallback-home');
+
+    expect(resolveSessionDir(SESSION_A, root, { home })).toBe(wt);
+  });
+
+  it('falls back to the PROJECT ROOT when neither source knows anything', () => {
+    const { root } = makeProject('order-nothing', 'main');
+    const home = makeHome('order-nothing-home');
+    expect(resolveSessionDir(SESSION_B, root, { home })).toBe(root);
+    expect(resolveSessionDir(null, root, { home })).toBe(root);
+  });
+
+  it('refuses a transcript pointing at a FOREIGN repo and keeps the registry answer', () => {
+    const { root } = makeProject('order-foreign', 'main');
+    const wt = addWorktree(root, 'order-foreign-wt', 'feat/mine');
+    expect(enterSessionCheckout(SESSION_A, wt, root)).toBe(true);
+    const foreign = makeProject('order-foreign-other', 'main');
+    const home = makeHome('order-foreign-home');
+    writeTranscript(home, SESSION_A, foreign.root);
+
+    // A refused transcript degrades to the previous answer, never to a wrong new one.
+    expect(resolveSessionDir(SESSION_A, root, { home })).toBe(wt);
   });
 });

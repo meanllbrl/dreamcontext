@@ -55,11 +55,8 @@ related_tasks:
     chat-opens-a-pdf-in-the-app-and-every-file-panel-offers-open-on-computer-reveal-in-finder
   - agent-tab-right-click-menu-rename-the-auto-rename-switch-from-settings
   - >-
-    two-new-agent-actions-pinned-session-facts-that-stay-put-and-progress-read-from-the-task-file
-  - >-
-    chat-density-shrink-chrome-and-demote-the-context-meter-so-more-conversation-fits
-  - >-
-    chat-names-the-branch-and-worktree-it-acts-on-backend-done-placement-waits-on-chat-density
+    switching-mode-or-permission-in-the-chat-composer-must-not-eat-the-half-typed-message
+  - a-claude-account-switch-reaches-the-sessions-already-open
 type: feature
 name: in-app-agent-terminal
 description: ''
