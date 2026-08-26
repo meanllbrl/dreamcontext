@@ -1,5 +1,19 @@
 [
   {
+    "id": "v0-25-0",
+    "date": "2026-08-26",
+    "version": "0.25.0",
+    "title": "The conversation grows a cockpit",
+    "summary": "The chat composer is rebuilt end to end. Modes become real behaviour — Basic, Plan (interviews you, ends by creating a task), Develop (implements in waves, with evidence) — and the same menu carries a never-escalating permission posture. Model and reasoning effort share one trigger with an effort slider and a set-as-default. The session pins what it knows above where you type: the exact git checkout it acts on, agent-pinned facts that stay put, and task progress read from the acceptance criteria themselves. Plus a usage ring fed by Claude Code's own limits cache, and closed tabs finally reap their claude processes.",
+    "tags": [
+      "chat",
+      "composer",
+      "modes",
+      "desktop"
+    ],
+    "story": "v0-25-0.json"
+  },
+  {
     "id": "v0-24-0",
     "date": "2026-08-17",
     "version": "0.24.0",

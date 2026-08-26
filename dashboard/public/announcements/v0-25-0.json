@@ -1,0 +1,68 @@
+{
+  "hero": {
+    "eyebrow": "v0.25.0  ·  26 August 2026",
+    "headline": "The conversation grows a cockpit",
+    "sub": "The chat composer is rebuilt end to end: one trigger says how the agent is briefed to work and what it may do without asking, one names the model and how hard it thinks, and the session pins what it knows — starting with the exact checkout it is acting on — right above where you type.",
+    "shot": {
+      "src": "shots/v0-25-0/chat-surface.png",
+      "alt": "A fresh chat session in the desktop app: the empty conversation invites you to say something to start, and the composer at the bottom carries the Basic/auto mode trigger, the attach button, the Opus/Xhigh model trigger — with the session's git branch pinned as a chip just above it",
+      "caption": "A fresh session — mode, permission, model, effort and the checkout it acts on, all visible before you type a word."
+    }
+  },
+  "blocks": [
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "Modes are behaviour, not vibes",
+      "body": "Basic is plain Claude. Plan interviews you and ends by creating a real dreamcontext task with a develop handoff. Develop implements in waves and must show evidence. The same menu carries the session's permission — Auto or Bypass — with the honest note that switching mode reloads the conversation and keeps your transcript and draft. A handoff or respawn pins the session's own mode: the posture never escalates behind your back.",
+      "shot": {
+        "src": "shots/v0-25-0/mode-menu.png",
+        "alt": "The mode menu open above the composer: Basic selected, Plan ('asks the questions, ends with a task'), Develop ('implements in waves, with evidence'), J.A.R.V.I.S marked SOON, and below a divider the PERMISSION segment with Auto active and Bypass beside it",
+        "caption": "One menu answers both questions: how it works, and what it may do without asking.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "split",
+      "side": "left",
+      "title": "Pick the brain and how hard it thinks",
+      "body": "Model and reasoning effort share one trigger: Opus or Sonnet with honest per-token prices, and a five-stop effort slider from Low to Max. Found the setting you like? Set as default and every new session starts there.",
+      "shot": {
+        "src": "shots/v0-25-0/model-effort.png",
+        "alt": "The model menu open: Opus marked RECOMMENDED at $5/M in, Sonnet at $3/M in, an OTHER MODELS disclosure, and a REASONING EFFORT slider set to Xhigh with a Set as default button",
+        "caption": "Opus at Xhigh for the hard refactor, Sonnet at Medium for the everyday loop — one slider away.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "The session says where it stands",
+      "body": "A chip above the composer names the git checkout this session is actually acting on — and it follows every move the agent makes. Agents can pin more: session facts that stay put instead of scrolling away, and task progress that reads itself from the acceptance criteria on disk. The shelf belongs to the composer, so what matters is always exactly one glance above where you type.",
+      "shot": {
+        "src": "shots/v0-25-0/shelf.png",
+        "alt": "The pinned shelf strip above the composer showing a git branch chip reading feat/chat-checkout-chip-and-fresh-start",
+        "caption": "The checkout, stated by the session itself — not guessed from a terminal prompt.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "points",
+      "title": "Also in this release",
+      "items": [
+        {
+          "title": "Usage you can see",
+          "text": "The composer wears a usage ring: context, the 5-hour window and the weekly limit, read from Claude Code's own cache — no more guessing when the session will hit a wall."
+        },
+        {
+          "title": "Closed means closed",
+          "text": "Closing a chat tab now reaps its claude process. No more immortal ~300MB children stacking up behind closed tabs."
+        },
+        {
+          "title": "Sync that keeps its hands off",
+          "text": "GitHub task-sync pull no longer wipes the local-only objectives field, and the watermark/exit-code path is hardened."
+        }
+      ]
+    }
+  ]
+}
