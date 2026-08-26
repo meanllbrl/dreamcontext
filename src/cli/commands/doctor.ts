@@ -15,6 +15,8 @@ import { dirname } from 'node:path';
 import { listInsights, isSafeInsightSlug, getInsight, readCache } from '../../lib/lab/store.js';
 import { parseFunnelSet, FUNNEL_HISTORY_MAX } from '../../lib/lab/funnel.js';
 import { parseMatrixSet, MATRIX_HISTORY_MAX, MATRIX_HISTORY_MAX_BYTES } from '../../lib/lab/matrix.js';
+import { parseAppSpec } from '../../lib/lab/app.js';
+import { parseDatasetBundle, DATASET_HISTORY_MAX, DATASET_HISTORY_MAX_BYTES } from '../../lib/lab/dataset.js';
 import { RENDERS } from '../../lib/lab/types.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
 import { inspectJsonArray } from '../../lib/json-file.js';
@@ -612,6 +614,50 @@ export function checkLab(root: string): CheckResult[] {
             results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: matrixHistory is ${bytes} bytes (cap ${MATRIX_HISTORY_MAX_BYTES})` });
           }
         }
+      }
+    }
+    // App cache shape: same contract as the funnel/matrix blocks — a stored
+    // app spec and dataset bundle must each re-validate cleanly, and the
+    // dataset history must honor BOTH caps. The app+html cross-check below is
+    // RENDER-AGNOSTIC (not gated on `m.render === 'app'`): sync.ts rejects a
+    // script returning both bodies going forward, so a stored cache with both
+    // predates that guard or was hand-edited — either way it's worth a warn
+    // regardless of what the manifest's `render` currently says.
+    {
+      const cache = readCache(root, m.slug);
+      if (m.render === 'app') {
+        if (cache?.app) {
+          try {
+            const reparsed = parseAppSpec(cache.app.spec);
+            for (const notice of reparsed.notices) {
+              results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: app cache violates a cap — ${notice} Re-run \`dreamcontext lab sync ${m.slug} --force\`.` });
+            }
+          } catch (err) {
+            results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: app cache is not a valid app/v1 spec (${(err as Error).message})` });
+          }
+        }
+        if (cache?.datasets) {
+          try {
+            const reparsed = parseDatasetBundle(cache.datasets.bundle);
+            for (const notice of reparsed.notices) {
+              results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: dataset cache violates a cap — ${notice} Re-run \`dreamcontext lab sync ${m.slug} --force\`.` });
+            }
+          } catch (err) {
+            results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: dataset cache is not a valid dataset/v1 bundle (${(err as Error).message})` });
+          }
+          if (Array.isArray(cache.datasetHistory)) {
+            if (cache.datasetHistory.length > DATASET_HISTORY_MAX) {
+              results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: datasetHistory has ${cache.datasetHistory.length} snapshots (cap ${DATASET_HISTORY_MAX})` });
+            }
+            const bytes = JSON.stringify(cache.datasetHistory).length;
+            if (bytes > DATASET_HISTORY_MAX_BYTES) {
+              results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: datasetHistory is ${bytes} bytes (cap ${DATASET_HISTORY_MAX_BYTES})` });
+            }
+          }
+        }
+      }
+      if (cache?.app && cache?.html) {
+        results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: cache carries BOTH an \`app\` body and an \`html\` body — one insight declares one body contract. Re-run \`dreamcontext lab sync ${m.slug} --force\`.` });
       }
     }
     // A manifest that declares credentials_used but whose key is absent from

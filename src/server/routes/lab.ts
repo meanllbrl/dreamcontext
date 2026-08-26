@@ -108,17 +108,23 @@ export async function handleLabList(
 }
 
 /**
- * The cache as the DASHBOARD needs it — everything except `funnelHistory`.
+ * The cache as the DASHBOARD needs it — everything except the bounded
+ * per-sync HISTORY TRAILS (`funnelHistory`, `datasetHistory`).
  *
- * The trail is the INPUT to `computeFunnelPrev`, which `handleLabShow` runs
- * before calling this; no client reads the trail itself. Left in, it dominated
- * the response: measured on a live 6-funnel insight, 191,234 of 226,232 bytes
- * (84.5%) were 40 snapshots nobody opened, re-shipped on every window change
- * and every board invalidation.
+ * `funnelHistory` is the INPUT to `computeFunnelPrev`, which `handleLabShow`
+ * runs before calling this; no client of this route reads the trail itself.
+ * Left in, it dominated the response: measured on a live 6-funnel insight,
+ * 191,234 of 226,232 bytes (84.5%) were 40 snapshots nobody opened, re-shipped
+ * on every window change and every board invalidation. `datasetHistory` is
+ * the same shape of cost for an `app` insight's dated trail — nothing in this
+ * route (or the dashboard bridge, which reads `cache.datasets` for the CURRENT
+ * bundle) needs it either; Reports reads it straight off disk via
+ * `resolveReportItem` → `readCache`, never through this route.
  */
-function withoutFunnelHistory(cache: InsightCache | null): InsightCache | null {
-  if (!cache || cache.funnelHistory === undefined) return cache ?? null;
-  const { funnelHistory: _drop, ...rest } = cache;
+function withoutHistoryTrails(cache: InsightCache | null): InsightCache | null {
+  if (!cache) return null;
+  if (cache.funnelHistory === undefined && cache.datasetHistory === undefined) return cache;
+  const { funnelHistory: _dropFunnelHistory, datasetHistory: _dropDatasetHistory, ...rest } = cache;
   return rest;
 }
 
@@ -144,7 +150,7 @@ export async function handleLabShow(
       insight: toPublicManifest(manifest),
       meaning: manifest.body,
       resolvedTweaks: resolveTweaks(manifest).values,
-      cache: withoutFunnelHistory(cache),
+      cache: withoutHistoryTrails(cache),
       funnelPrev,
     });
   } catch (err) {

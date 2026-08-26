@@ -147,6 +147,64 @@ describe('GET /api/lab/:slug — show', () => {
     expect(body().cache.slug).toBe('wau');
     expect(body().funnelPrev).toBeNull();
   });
+
+  // Same cost profile as funnelHistory (T7): datasetHistory is an app insight's
+  // dated trail — bounded, but nobody past this route reads it (the bridge
+  // reads `cache.datasets` for the CURRENT bundle; Reports reads history
+  // straight off disk via `readCache`, never through this route).
+  it('omits datasetHistory but still serves the current dataset bundle', async () => {
+    createInsight(root, { slug: 'breakdown-app', title: 'Breakdown app', render: 'app' });
+    const bundle = {
+      kind: 'dataset/v1' as const,
+      primary: 'usage',
+      datasets: [{ key: 'usage', dims: [{ key: 'plan' }], rows: [{ d: { plan: 'pro' }, v: 42 }] }],
+    };
+    writeCache(root, 'breakdown-app', {
+      slug: 'breakdown-app', fetchedAt: new Date().toISOString(), tweaks: {}, granularity: 'daily',
+      unit: null, series: [], latest: 42, error: null, errorAt: null, scriptHash: null,
+      datasets: { bundle, notices: [], range: { fromISO: '2026-02-08', toISO: '2026-02-15' } },
+      datasetHistory: [{
+        at: '2026-02-08T00:00:00.000Z',
+        range: { fromISO: '2026-02-01', toISO: '2026-02-08' },
+        bundle,
+      }],
+    });
+
+    const { res, status, body } = makeRes();
+    await handleLabShow(makeReq('GET'), res, { slug: 'breakdown-app' }, root);
+
+    expect(status()).toBe(200);
+    expect(body().cache.datasetHistory).toBeUndefined();
+    expect(JSON.stringify(body())).not.toContain('datasetHistory');
+    // The trail is dropped, not the CURRENT bundle.
+    expect(body().cache.datasets.bundle.datasets[0].rows[0].v).toBe(42);
+  });
+
+  it('strips BOTH funnelHistory and datasetHistory off the same cache in one pass', async () => {
+    createInsight(root, { slug: 'both', title: 'Both trails', render: 'app' });
+    const funnelSet = {
+      kind: 'funnel-set/v1' as const,
+      funnels: [{ id: 'f1', name: 'One', metrics: {}, steps: [{ key: 'a', label: 'A', users: 1 }] }],
+    };
+    const bundle = { kind: 'dataset/v1' as const, datasets: [{ key: 'usage', dims: [], rows: [] }] };
+    writeCache(root, 'both', {
+      slug: 'both', fetchedAt: new Date().toISOString(), tweaks: {}, granularity: 'daily',
+      unit: null, series: [], latest: null, error: null, errorAt: null, scriptHash: null,
+      funnel: { set: funnelSet as any, notices: [], range: { fromISO: '2026-02-08', toISO: '2026-02-15' } },
+      funnelHistory: [{ at: '2026-02-08T00:00:00.000Z', range: { fromISO: '2026-02-01', toISO: '2026-02-08' }, funnels: [] }],
+      datasets: { bundle, notices: [], range: { fromISO: '2026-02-08', toISO: '2026-02-15' } },
+      datasetHistory: [{ at: '2026-02-08T00:00:00.000Z', range: { fromISO: '2026-02-01', toISO: '2026-02-08' }, bundle }],
+    });
+
+    const { res, body } = makeRes();
+    await handleLabShow(makeReq('GET'), res, { slug: 'both' }, root);
+
+    const json = JSON.stringify(body());
+    expect(json).not.toContain('funnelHistory');
+    expect(json).not.toContain('datasetHistory');
+    expect(body().cache.funnel).toBeDefined();
+    expect(body().cache.datasets).toBeDefined();
+  });
 });
 
 describe('POST /api/lab/sync — runs the same engine as the CLI', () => {
