@@ -10,6 +10,7 @@ import { StackedBody } from './StackedChart';
 import { TableBody } from './MetricTable';
 import { HeatmapBody } from './HeatmapChart';
 import { FunnelBody } from './funnel/FunnelCardPreview';
+import { BreakdownBody } from './BreakdownPivot';
 
 /**
  * The chart registry — the ONE place a render type is wired up. The card and the
@@ -32,6 +33,7 @@ export const RENDERS = [
   'stacked',
   'table',
   'heatmap',
+  'breakdown',
 ] as const;
 
 export type Render = (typeof RENDERS)[number];
@@ -134,6 +136,14 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
     defaultSpan: 1,
     supportsWindow: true,
     emptyHint: 'No data yet.',
+    openHint: DETAIL_HINT,
+  },
+  breakdown: {
+    // A pivot needs room for its column axis before it wraps.
+    CardBody: BreakdownBody,
+    defaultSpan: 2,
+    supportsWindow: true,
+    emptyHint: 'No breakdown data yet — sync to fetch.',
     openHint: DETAIL_HINT,
   },
 };

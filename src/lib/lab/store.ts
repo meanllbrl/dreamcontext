@@ -310,6 +310,61 @@ export default async function fetchFunnels(ctx) {
 `;
 }
 
+/** The documented matrix-payload script scaffold (`lab create --render breakdown --adapter script`). */
+export function matrixScriptTemplate(slug: string): string {
+  return `/**
+ * Matrix adapter for the "${slug}" insight.
+ *
+ * Return ONE \`matrix/v1\` object (not Series[]): a DIMENSIONAL snapshot — a
+ * pivot over 1-3 dims, one row per dim-value combination. The engine validates
+ * it, applies caps (≤3 dims, top-8 values per dim + "Other", ≤400 rows, ≤200KB
+ * — every truncation is a loud notice, and doctor flags surviving violations),
+ * synthesizes legacy series from the rows, and appends a DATED snapshot to the
+ * history trail on every sync — that trail is the breakdown's time axis, so a
+ * daily sync cadence gives you a daily-navigable report. Runs LOCALLY with your
+ * credentials (ctx.credentials) — same trust level as the repo; the script-hash
+ * tripwire warns when this file changes.
+ *
+ * ctx = { manifest, resolvedTweaks: { values, range: { fromISO, toISO }, spanDays },
+ *         credentials }
+ * Use ctx.resolvedTweaks.range to scope your query — the dashboard's date-range
+ * control writes the \`range\` tweak and re-syncs.
+ */
+export default async function fetchMatrix(ctx) {
+  const { fromISO, toISO } = ctx.resolvedTweaks.range;
+  void fromISO; void toISO; // scope your real query with these
+
+  return {
+    kind: 'matrix/v1',
+
+    // 1-3 dimensions, ORDER MATTERS: dims[0] = pivot rows, dims[1] = columns,
+    // dims[2] = filter chips.
+    dims: [
+      { key: 'funnel', label: 'Funnel' },
+      { key: 'language', label: 'Language' },
+    ],
+
+    // One row per dim-value combination. v = the metric value; n (optional) =
+    // the sample size behind it (rows with n < 30 render de-emphasized);
+    // prev (optional) = previous equal-length period value — wins over the
+    // engine's history-derived delta.
+    rows: [
+      { d: { funnel: 'F3000', language: 'TR' }, v: 119000, n: 4200 },
+      { d: { funnel: 'F3000', language: 'EN' }, v: 84000, n: 3100 },
+      { d: { funnel: 'F4000', language: 'TR' }, v: 52000, n: 1800 },
+    ],
+
+    // Optional grand total — feeds the card value and any KR binding. Without
+    // it the insight has no \`latest\` (you'll get a loud warning if bound).
+    total: { v: 255000, n: 9100 },
+
+    // Optional value unit override (else the manifest's \`unit\`).
+    // unit: 'USD',
+  };
+}
+`;
+}
+
 export interface CreateInsightInput {
   slug: string;
   title: string;
@@ -371,9 +426,10 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
         },
       };
 
-  // Funnel insights ship with the overview date-range control pre-declared —
-  // the presets the dashboard's range picker offers (custom = from/to tweaks).
-  const tweaks: TweakDecl[] = render === 'funnel'
+  // Funnel/breakdown insights ship with the overview date-range control pre-
+  // declared — the presets the dashboard's range picker offers (custom = from/to
+  // tweaks).
+  const tweaks: TweakDecl[] = render === 'funnel' || render === 'breakdown'
     ? [{
         key: 'range',
         type: 'enum',
@@ -410,13 +466,14 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
 
   mkdirSync(insightsDir(contextRoot), { recursive: true });
   writeFrontmatter(path, frontmatter, body);
-  // Funnel + script: scaffold a documented payload template so the author starts
-  // from the contract, not a blank file. Never overwrites an existing script.
-  if (render === 'funnel' && adapter === 'script') {
+  // Funnel/breakdown + script: scaffold a documented payload template so the
+  // author starts from the contract, not a blank file. Never overwrites an
+  // existing script.
+  if ((render === 'funnel' || render === 'breakdown') && adapter === 'script') {
     const scriptPath = join(labDir(contextRoot), 'scripts', `${slug}.mjs`);
     if (!existsSync(scriptPath)) {
       mkdirSync(join(labDir(contextRoot), 'scripts'), { recursive: true });
-      writeFileSync(scriptPath, funnelScriptTemplate(slug), 'utf-8');
+      writeFileSync(scriptPath, render === 'funnel' ? funnelScriptTemplate(slug) : matrixScriptTemplate(slug), 'utf-8');
     }
   }
   // Keep the tracked lab/credentials.example.json current with the new

@@ -209,6 +209,99 @@ describe('parseViewBlock — type: pin', () => {
   });
 });
 
+/**
+ * The RETIREMENT half of the pin contract. Update-in-place alone left the agent able to
+ * correct a pin forever but never to take one down, so a fact that had stopped being true
+ * (a port that moved, a blocker that cleared) stood on the shelf until the user pressed `×`
+ * — the defect the owner reported on 2026-08-25 with a tag line full of resolved conditions.
+ *
+ * The asymmetry worth reading twice: a drop that ALSO carries facts is honoured as a drop.
+ * A payload saying both "remove this" and "show that" is an agent contradicting itself, and
+ * the half worth keeping is the removal — the failure mode this field exists to end is a pin
+ * that cannot die, and it must not be resurrected by a leftover key.
+ */
+describe('parseViewBlock — type: pin, the drop', () => {
+  it('accepts a drop carrying only an id', () => {
+    const r = pin({ drop: true });
+    const view = r.view as PinViewSpec;
+    expect(view).toEqual({ type: 'pin', id: 'p', weight: 'tag', facts: [], drop: true });
+    expect(r.notices).toEqual([]);
+  });
+
+  it('says nothing about a weight that rode along — a weight is not content', () => {
+    const r = pin({ drop: true, weight: 'row' });
+    expect((r.view as PinViewSpec).drop).toBe(true);
+    expect(r.notices).toEqual([]);
+  });
+
+  it('is still a drop when content rode along, and names what it ignored', () => {
+    for (const [key, value] of [
+      ['facts', [{ label: ':5173' }]],
+      ['lede', 'the server is up'],
+      ['detail', 'a paragraph nobody asked for'],
+    ] as const) {
+      const r = pin({ drop: true, [key]: value });
+      const view = r.view as PinViewSpec;
+      expect(view.drop, `${key} defeated the drop`).toBe(true);
+      expect(view.facts).toEqual([]);
+      expect(view.lede).toBeUndefined();
+      expect(view.detail).toBeUndefined();
+      expect(r.notices.join(' ')).toContain(key);
+      expect(r.notices.join(' ')).toMatch(/dropped/);
+    }
+  });
+
+  it('never lets a dropping pin claim the shelf clamped it', () => {
+    const r = pin({ drop: true, detail: 'x'.repeat(MAX_PIN_DETAIL_CHARS + 10), ledeClamped: true });
+    expect(r.view).not.toHaveProperty('ledeClamped');
+  });
+
+  it('reads drop:false as an ordinary pin, silently', () => {
+    const r = pin({ drop: false, weight: 'tag', facts: [{ label: ':5173' }] });
+    const view = r.view as PinViewSpec;
+    expect(view.drop).toBeUndefined();
+    expect(view.facts).toEqual([{ label: ':5173' }]);
+    expect(r.notices).toEqual([]);
+  });
+
+  it('ignores a drop that is neither true nor false, loudly', () => {
+    for (const value of ['true', 1, {}, [], null]) {
+      const r = pin({ drop: value, weight: 'tag', facts: [{ label: ':5173' }] });
+      const view = r.view as PinViewSpec;
+      expect(view, `drop ${JSON.stringify(value)} removed a pin`).not.toBeNull();
+      expect(view.drop).toBeUndefined();
+      expect(view.facts).toEqual([{ label: ':5173' }]);
+      expect(r.notices.join(' '), `drop ${JSON.stringify(value)} passed silently`).toMatch(/neither true nor false/);
+    }
+  });
+
+  it('a truthy-looking drop with nothing else is still skipped as an empty pin', () => {
+    // The two rules compose: the bad `drop` is ignored, and what is left has nothing to show.
+    const r = pin({ drop: 'yes' });
+    expect(r.view).toBeNull();
+    expect(r.notices.join(' ')).toMatch(/neither true nor false/);
+    expect(r.notices.join(' ')).toMatch(/no facts, lede or detail/);
+  });
+
+  it('needs a valid id like any other pin — a drop is not a way past the id gate', () => {
+    for (const id of ['', '   ', 'a b', 'a/b', '#x', 'x'.repeat(65)]) {
+      const r = parse({ type: 'pin', id, drop: true });
+      expect(r.view, `id ${JSON.stringify(id)} was accepted`).toBeNull();
+      expect(r.notices[0]).toContain('id');
+    }
+  });
+
+  it('never throws on a hostile drop payload', () => {
+    for (const payload of [
+      { type: 'pin', id: 'p', drop: true, facts: 'not-an-array' },
+      { type: 'pin', id: 'p', drop: { true: true } },
+      { type: 'pin', id: 'p', drop: true, lede: 7, detail: [] },
+    ]) {
+      expect(() => parse(payload)).not.toThrow();
+    }
+  });
+});
+
 describe('parseViewBlock — type: progress', () => {
   it('accepts a bare slug', () => {
     const r = parse({ type: 'progress', task: 'my-task-slug' });

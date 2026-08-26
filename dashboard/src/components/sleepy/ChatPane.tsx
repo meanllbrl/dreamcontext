@@ -38,7 +38,8 @@ import {
 import type { ChatAction } from './chat/chatActions';
 import { openExternalUrl } from '../../lib/desktop';
 import {
-  EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, SignInBanner, WorkingIndicator,
+  BranchStartBanner, EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner,
+  SignInBanner, WorkingIndicator,
 } from './chat/Banners';
 import { Composer } from './chat/Composer';
 import { readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
@@ -1637,6 +1638,13 @@ export function ChatPane({
                 is this conversation waiting on right now", and a question the run itself
                 raised belongs in the same spot as one the CLI's own turn raised. */}
             {automation && <AutomationQuestionSlot automation={automation} onPendingChange={setHitlPending} />}
+            {conv.branchNotice && (
+              <BranchStartBanner
+                tone={conv.branchNotice.tone}
+                message={conv.branchNotice.message}
+                onDismiss={session.dismissBranchNotice}
+              />
+            )}
             {conv.lastError && <StreamErrorBanner message={conv.lastError} onRetry={retryLastMessage} />}
             {working && (
               <WorkingIndicator

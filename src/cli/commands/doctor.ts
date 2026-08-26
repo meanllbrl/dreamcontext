@@ -14,6 +14,7 @@ import { listVaults, type Vault } from '../../lib/vaults.js';
 import { dirname } from 'node:path';
 import { listInsights, isSafeInsightSlug, getInsight, readCache } from '../../lib/lab/store.js';
 import { parseFunnelSet, FUNNEL_HISTORY_MAX } from '../../lib/lab/funnel.js';
+import { parseMatrixSet, MATRIX_HISTORY_MAX, MATRIX_HISTORY_MAX_BYTES } from '../../lib/lab/matrix.js';
 import { RENDERS } from '../../lib/lab/types.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
 import { inspectJsonArray } from '../../lib/json-file.js';
@@ -586,6 +587,30 @@ export function checkLab(root: string): CheckResult[] {
         }
         if (Array.isArray(cache.funnelHistory) && cache.funnelHistory.length > FUNNEL_HISTORY_MAX) {
           results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: funnelHistory has ${cache.funnelHistory.length} snapshots (cap ${FUNNEL_HISTORY_MAX})` });
+        }
+      }
+    }
+    // Matrix cache shape: same contract as the funnel block — a stored matrix
+    // must re-validate cleanly, and its history must honor BOTH caps.
+    if (m.render === 'breakdown') {
+      const cache = readCache(root, m.slug);
+      if (cache?.matrix) {
+        try {
+          const reparsed = parseMatrixSet(cache.matrix.set);
+          for (const notice of reparsed.notices) {
+            results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: matrix cache violates a cap — ${notice} Re-run \`dreamcontext lab sync ${m.slug} --force\`.` });
+          }
+        } catch (err) {
+          results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: matrix cache is not a valid matrix/v1 payload (${(err as Error).message})` });
+        }
+        if (Array.isArray(cache.matrixHistory)) {
+          if (cache.matrixHistory.length > MATRIX_HISTORY_MAX) {
+            results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: matrixHistory has ${cache.matrixHistory.length} snapshots (cap ${MATRIX_HISTORY_MAX})` });
+          }
+          const bytes = JSON.stringify(cache.matrixHistory).length;
+          if (bytes > MATRIX_HISTORY_MAX_BYTES) {
+            results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: matrixHistory is ${bytes} bytes (cap ${MATRIX_HISTORY_MAX_BYTES})` });
+          }
         }
       }
     }

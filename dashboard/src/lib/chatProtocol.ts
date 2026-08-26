@@ -198,6 +198,9 @@ export type ChatEvent =
   | { kind: 'prompt-echo'; text: string }
   | { kind: 'meta-exit'; code: number | null }
   | { kind: 'meta-error'; message: string }
+  /** The server's fresh-session branch guard reporting what it did to the working tree.
+   *  `warn` for a refusal, `info` for a move it made. See `fromMeta`. */
+  | { kind: 'branch-start'; tone: 'info' | 'warn'; message: string }
   | { kind: 'ignored'; rawType: string };
 
 // ─── Render urgency ───────────────────────────────────────────────────────────────
@@ -817,6 +820,18 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
   // `restart` and `loggedIn` are read STRICTLY: anything that is not a literal `true` /
   // boolean is the conservative answer, because the fallback for both is "do nothing to a
   // running session", and a malformed frame must never be the thing that kills one.
+  // What the fresh-session branch guard did to the working tree, or declined to do
+  // (src/lib/session-start-branch.ts). Only the outcomes that are NEWS are sent, so anything
+  // that arrives here is worth putting in front of the user: `switched` mutated their checkout,
+  // `blocked-dirty` left them somewhere they were told new sessions would not start.
+  if (subtype === 'branch_start') {
+    const message = str(obj.message);
+    if (!message) return ignored('_meta:branch_start');
+    // Read strictly, and default to the non-alarming tone: an unrecognised kind from a newer
+    // server must not paint an ordinary message as a refusal.
+    const kind = obj.kind === 'blocked-dirty' || obj.kind === 'failed' ? 'warn' : 'info';
+    return { kind: 'branch-start', tone: kind, message };
+  }
   if (subtype === 'auth_changed') {
     return {
       kind: 'auth-changed',

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
-import type { FunnelCacheEntry, FunnelPrev } from '../components/lab/funnel/funnelModel';
+import type { FunnelCacheEntry, FunnelPrev, FunnelSnapshot } from '../components/lab/funnel/funnelModel';
+import type { MatrixCacheEntry, MatrixSnapshot } from '../components/lab/matrixModel';
 import type { InsightSize, Render } from '../components/lab/chartRegistry';
 
 /** Tweak kinds. No `range` type — a relative range is an `enum` tweak keyed `range`. */
@@ -75,6 +76,13 @@ export interface InsightCache {
   history?: SyncEvent[];
   /** Funnel-set snapshot (`render: funnel` with a funnel-set payload only). */
   funnel?: FunnelCacheEntry;
+  /** Matrix snapshot (`render: breakdown` with a matrix/v1 payload only). */
+  matrix?: MatrixCacheEntry;
+  /** Bounded per-sync matrix snapshots (the breakdown's time axis), oldest→newest. */
+  matrixHistory?: MatrixSnapshot[];
+  /** Optional script-authored card body (html/v1 hybrid) — drawn in a
+   *  network-less sandboxed iframe; never a substitute for the typed data. */
+  html?: string;
 }
 
 export interface PublicManifest {
@@ -176,9 +184,14 @@ export interface LabSyncJob {
   attempt: number;
   startedAt: number;
   finishedAt: number | null;
+  /** Filled LIVE as insights settle — the report page's progressive fill feed. */
   results: SyncResult[];
   failed: string[];
   error: string | null;
+  /** The slugs the run is scoped to (a report's subset), or null = whole board. */
+  slugs: string[] | null;
+  /** The insight that settled most recently ("now syncing …" copy). */
+  current: string | null;
 }
 
 export function useLabSyncJob() {
@@ -194,18 +207,89 @@ export function useLabSyncJob() {
   });
 }
 
-/** Start (or adopt) the bulk sync job. Returns immediately — watch `useLabSyncJob`. */
+/** Start (or adopt) the bulk sync job — the whole board, or a `slugs` subset
+ *  (the report page's progressive fill). Returns immediately — watch `useLabSyncJob`. */
 export function useStartLabSyncJob() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    mutationFn: (force: boolean = true) =>
-      api.post<{ job: LabSyncJob; started: boolean }>('/lab/sync-jobs', { force }),
+    mutationFn: (opts: { force?: boolean; slugs?: string[] } = {}) =>
+      api.post<{ job: LabSyncJob; started: boolean }>('/lab/sync-jobs', {
+        force: opts.force !== false,
+        ...(opts.slugs ? { slugs: opts.slugs } : {}),
+      }),
     onSuccess: (d) => {
       // Seed the poll cache so the progress chip appears immediately (no 800ms gap).
       queryClient.setQueryData(['lab-sync-job'], { job: d.job });
       queryClient.invalidateQueries({ queryKey: ['lab-sync-job'] });
     },
+  });
+}
+
+// ─── Reports ("My Reports") ─────────────────────────────────────────────────
+
+export interface ReportSummary {
+  slug: string;
+  title: string;
+  description: string | null;
+  date_nav: 'none' | 'daily' | 'weekly' | 'monthly';
+  sections: number;
+  items: number;
+}
+
+/** One resolved report item (see src/lib/lab/reports-store.ts). */
+export interface ResolvedReportItem {
+  insight: string;
+  missing: boolean;
+  title: string | null;
+  render: string | null;
+  unit: string | null;
+  view: string | null;
+  breakdown: { rows?: string; cols?: string; filter?: Record<string, string> } | null;
+  /** ISO sync time the shown data was taken at, or null = honest empty. */
+  asOf: string | null;
+  latest: number | null;
+  matrixSnapshot: MatrixSnapshot | null;
+  funnelSnapshot: FunnelSnapshot | null;
+  /** Live cache — only when resolving WITHOUT a date. */
+  cache: InsightCache | null;
+}
+
+export interface ResolvedReportSection {
+  title: string;
+  prose: string | null;
+  items: ResolvedReportItem[];
+}
+
+export interface ReportDetail {
+  report: {
+    slug: string;
+    title: string;
+    description: string | null;
+    date_nav: ReportSummary['date_nav'];
+    notes: string;
+  };
+  /** The resolved-to date, or null = live. */
+  date: string | null;
+  sections: ResolvedReportSection[];
+}
+
+export function useLabReports() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['lab-reports'],
+    queryFn: () => api.get<{ reports: ReportSummary[] }>('/lab/reports').then((r) => r.reports),
+    retry: 0,
+  });
+}
+
+export function useLabReport(slug: string | null, date: string | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['lab-report', slug, date],
+    queryFn: () => api.get<ReportDetail>(`/lab/reports/${slug}${date ? `?date=${date}` : ''}`),
+    enabled: !!slug,
+    retry: 0,
   });
 }
 

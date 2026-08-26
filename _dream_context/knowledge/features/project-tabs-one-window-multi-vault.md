@@ -9,7 +9,7 @@ pinned: false
 date: '2026-08-10'
 status: in_review
 created: '2026-08-10'
-updated: '2026-08-17'
+updated: '2026-08-24'
 released_version: null
 product: desktop
 tags:
@@ -19,6 +19,8 @@ tags:
   - 'topic:agents'
 related_tasks:
   - one-window-holds-every-open-project-as-a-live-chip-strip
+  - >-
+    a-project-chip-says-how-many-chats-it-holds-and-how-many-are-working-one-counted-bubble-per-status
 ---
 
 ## Why

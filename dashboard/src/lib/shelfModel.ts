@@ -49,6 +49,14 @@ export interface ShelfFact {
   marker?: boolean;
   /** Which glyph the chip draws, when it draws one. */
   icon?: 'branch' | 'worktree' | 'link';
+  /** The chip's hover title — the full sentence a 48-character label had to abbreviate. Set
+   *  only on server-derived facts, where the label is a compression of a state the user may
+   *  want spelled out ("the main checkout is on X, not Y"). */
+  note?: string;
+  /** The raw values this fact ALREADY states, for {@link layoutShelf}'s duplicate suppression.
+   *  A branch name and a worktree name, not the composed label — an agent pin that restates
+   *  either of them is the same information twice. See `restates`. */
+  claims?: string[];
 }
 
 /**
@@ -77,6 +85,8 @@ export interface ShelfTag {
   url?: string;
   marker?: boolean;
   icon?: ShelfFact['icon'];
+  /** The chip's hover title. See {@link ShelfFact.note}. */
+  note?: string;
   /** This tag is a row that lost the slot: it carries `⌃` and clicking promotes it back. */
   demoted?: boolean;
   /** Server-derived session facts are NOT dismissable — a polled fact would return on the
@@ -153,6 +163,107 @@ export function clampLede(text: string): { lede: string; clamped: boolean } {
 }
 
 // ---------------------------------------------------------------------------------------
+// The checkout — ONE fact, never two
+// ---------------------------------------------------------------------------------------
+
+/** The half of the server's `SessionFacts` the chip is composed from. Declared structurally
+ *  rather than imported so this file keeps its no-dependencies-but-chatViewSpec shape. */
+export interface CheckoutFacts {
+  branch: string | null;
+  defaultBranch: string | null;
+  worktree: boolean;
+  worktreeName: string | null;
+  isRepo: boolean;
+}
+
+/** `worktree-run-progress-live` for `run-progress-live`, and the bare name — the two spellings
+ *  `EnterWorktree` and a hand-rolled `git worktree add` produce. Either means the branch tells
+ *  the user nothing the worktree's name has not already told them. */
+function branchImpliedBy(branch: string, worktreeName: string): boolean {
+  return branch === worktreeName || branch === `worktree-${worktreeName}`;
+}
+
+function cap(label: string): string {
+  return label.length > MAX_TAG_LABEL_CHARS
+    ? `${label.slice(0, MAX_TAG_LABEL_CHARS - 1)}…`
+    : label;
+}
+
+/**
+ * The ONE chip that says which checkout this session is acting on, or `null` when there is
+ * nothing to say (not a repo, or a detached/unborn HEAD outside a worktree).
+ *
+ * ── Why this is one fact and used to be two ───────────────────────────────────────────
+ * The shelf used to push a branch chip AND a worktree chip, which in the ordinary case is the
+ * same word twice: `⑂ worktree-run-progress-live` beside `⊞ run-progress-live`. The owner's
+ * verdict on 2026-08-25 was "iki branch gösterimi saçma" — two branch displays is silly — and
+ * it was silly before any agent pinned anything. So the composition is:
+ *
+ *   linked worktree, branch implied  → `run-progress-live`            (worktree glyph, marker)
+ *   linked worktree, branch its own  → `eur-multicurrency · feat/eur-multicurrency`
+ *   main checkout, on the default    → `main`                         (branch glyph)
+ *   main checkout, off the default   → `feat/shelf-pin-drop`          (branch glyph, MARKER)
+ *
+ * ── Why the last row carries the marker ───────────────────────────────────────────────
+ * That is the state the owner MISREAD: shown a bare `feat/shelf-pin-drop`, they read "you are
+ * in a different worktree" — because a branch name alone does not say which checkout it belongs
+ * to, and a leftover feature branch on the main checkout looks exactly like a worktree's. The
+ * marker distinguishes "this is the resting state" from "somebody left this here", the glyph
+ * distinguishes main checkout from worktree, and `note` spells out in words what a 48-character
+ * label cannot. When `defaultBranch` is unknown there is no marker: an unprovable warning is
+ * worse than none.
+ */
+export function checkoutFact(f: CheckoutFacts): ShelfFact | null {
+  if (!f.isRepo) return null;
+
+  if (f.worktree) {
+    const name = f.worktreeName || 'worktree';
+    const implied = !f.branch || branchImpliedBy(f.branch, name);
+    const fact: ShelfFact = {
+      label: cap(implied ? name : `${name} · ${f.branch}`),
+      marker: true,
+      icon: 'worktree',
+      note: f.branch
+        ? `Linked worktree "${name}", on branch ${f.branch}. This is not the main checkout.`
+        : `Linked worktree "${name}", on a detached HEAD. This is not the main checkout.`,
+      claims: [name, ...(f.branch ? [f.branch] : [])],
+    };
+    return fact;
+  }
+
+  if (!f.branch) return null;
+  const offDefault = !!f.defaultBranch && f.branch !== f.defaultBranch;
+  const fact: ShelfFact = {
+    label: cap(f.branch),
+    icon: 'branch',
+    note: offDefault
+      ? `The main checkout is on ${f.branch}, not ${f.defaultBranch}. This is not a worktree — the branch was left here.`
+      : `The main checkout, on ${f.branch}.`,
+    claims: [f.branch],
+  };
+  if (offDefault) fact.marker = true;
+  return fact;
+}
+
+/**
+ * Does an agent tag's label merely restate something a server fact already says?
+ *
+ * The labels this catches are the ones the briefing used to ASK for — `wt: eur-multicurrency`,
+ * `branch: feat/eur-multicurrency` — pinned by an agent because the server's tag was stale and
+ * it had been told to say so itself. The server now follows every move
+ * (src/lib/session-transcript-cwd.ts), so those pins are pure duplication, and the owner's
+ * screenshot of three chips stating one branch twice is what they cost.
+ *
+ * Suppression is NOT a silent drop of information: it fires only when the agent's label carries
+ * nothing the chip beside it is not already showing, so the fact stays on screen — once. A
+ * label with anything else in it (`branch: feat/x (rebasing)`) is left alone.
+ */
+export function restates(label: string, claims: Set<string>): boolean {
+  const bare = label.trim().replace(/^(wt|worktree|branch|checkout)\s*[:=]\s*/i, '').trim();
+  return bare.length > 0 && claims.has(bare.toLowerCase());
+}
+
+// ---------------------------------------------------------------------------------------
 // Layout — the ceiling, the demotion order, the count cap
 // ---------------------------------------------------------------------------------------
 
@@ -200,12 +311,21 @@ export function layoutShelf(entries: ShelfEntry[], facts: ShelfFact[]): ShelfLay
     if (f.url) tag.url = f.url;
     if (f.marker) tag.marker = true;
     if (f.icon) tag.icon = f.icon;
+    if (f.note) tag.note = f.note;
     return tag;
   });
 
+  // Everything the server facts already state, casefolded once for the whole pass.
+  const claimed = new Set(
+    facts.flatMap((f) => f.claims ?? []).map((c) => c.trim().toLowerCase()).filter(Boolean),
+  );
+
   const agentTags: ShelfTag[] = byAge
     .filter((e) => effectiveWeight(e) === 'tag' && e.kind === 'pin')
-    .flatMap((e) => (e.kind === 'pin' ? e.facts.map((f, i) => factTag(e.id, f, i)) : []));
+    .flatMap((e) => (e.kind === 'pin' ? e.facts.map((f, i) => factTag(e.id, f, i)) : []))
+    // A tag that says only what the checkout chip beside it says is not shown twice. See
+    // `restates` for why this is a dedup rather than a silent cap.
+    .filter((t) => !(claimed.size > 0 && !t.url && restates(t.label, claimed)));
 
   const demotedTags: ShelfTag[] = demoted.map((e) => ({
     id: e.id, label: demotedLabel(e), demoted: true, dismissable: true,
@@ -267,6 +387,12 @@ function entryFromView(view: ChatViewSpec, at: number): ShelfEntry | null {
  * (so the tag line doesn't reshuffle under the cursor) but takes the new `updatedAt`, which
  * is what lets it win the row slot.
  *
+ * A pin carrying `drop` is the other half of that contract: it REMOVES `id`. Update alone was
+ * not enough, because a shelf fact has no expiry — the agent could correct "the port is 5173"
+ * forever but could never say "there is no server any more", and the stale chip stood until
+ * the user pressed `×`. Retired ids are RETURNED rather than swallowed, so the caller can
+ * close a panel that was open on one (`useShelf`), exactly as a user dismissal does.
+ *
  * Past `MAX_PINS_PER_CONVERSATION` the oldest entries are evicted and COUNTED — the caller
  * reports the number, so a conversation that pinned 200 things says so instead of quietly
  * forgetting 176 of them.
@@ -275,23 +401,30 @@ export function foldViews(
   prev: ShelfEntry[],
   views: ChatViewSpec[],
   at: number,
-): { entries: ShelfEntry[]; evicted: number } {
-  const entries = [...prev];
-  const indexById = new Map(entries.map((e, i) => [e.id, i]));
+): { entries: ShelfEntry[]; evicted: number; retired: string[] } {
+  // A Map rather than an array plus an index map: `set` on a key it already holds keeps that
+  // key's POSITION (which is the update-in-place rule, unchanged) and `delete` removes one
+  // without invalidating every index after it (which is what a drop needs). Insertion order
+  // IS the list order, so a dropped-then-re-sent id correctly comes back as the newest.
+  const byId = new Map(prev.map((e) => [e.id, e]));
+  const retired: string[] = [];
 
   for (const view of views) {
+    if (view.type === 'pin' && view.drop) {
+      if (byId.delete(view.id)) retired.push(view.id);
+      // An id the shelf isn't holding is a NO-OP, and deliberately a silent one: the user may
+      // have dismissed that pin already, or the cap may have evicted it, and neither is a
+      // state the agent can observe. A notice here would report the agent's ignorance to the
+      // very person who caused it.
+      continue;
+    }
     const next = entryFromView(view, at);
     if (!next) continue;
-    const existing = indexById.get(next.id);
-    if (existing === undefined) {
-      indexById.set(next.id, entries.length);
-      entries.push(next);
-    } else {
-      entries[existing] = next;
-    }
+    byId.set(next.id, next);
   }
 
-  if (entries.length <= MAX_PINS_PER_CONVERSATION) return { entries, evicted: 0 };
+  const entries = [...byId.values()];
+  if (entries.length <= MAX_PINS_PER_CONVERSATION) return { entries, evicted: 0, retired };
   const evicted = entries.length - MAX_PINS_PER_CONVERSATION;
-  return { entries: entries.slice(evicted), evicted };
+  return { entries: entries.slice(evicted), evicted, retired };
 }

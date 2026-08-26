@@ -20,6 +20,7 @@ import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
 import { modeBriefing, type ChatMode } from '../chat-modes.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
 import { clearSessionCheckout, enterSessionCheckout, exitSessionCheckout } from '../../lib/session-cwd.js';
+import { describeFreshStart, freshSessionOnDefaultBranch } from '../../lib/session-start-branch.js';
 import { createWorktreeWatcher } from '../worktree-frames.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
@@ -477,6 +478,23 @@ export function startChatSession(
     if (heldConversation) liveConversations.delete(heldConversation);
   };
 
+  // ── A FRESH session starts on the default branch ──────────────────────────────────────
+  //
+  // Nothing else returns the main checkout to its default branch, so a `git checkout -b` a
+  // previous session ran there stands forever and every session opened afterwards inherits it
+  // (owner, 2026-08-25: shown a chip reading `feat/shelf-pin-drop`, they read "you are in a
+  // different worktree"). Run BEFORE the spawn, so the child is born on the right branch
+  // rather than being told about a move under its feet.
+  //
+  // `!resumeTarget` is the guard this module cannot check for itself: a resumed conversation's
+  // whole transcript assumes a branch, and moving it out from under that history would be
+  // worse than the defect. Every other guard — dirty tree, linked worktree, no resolvable
+  // default — lives in `freshSessionOnDefaultBranch`, and the OUTCOME is reported below rather
+  // than swallowed. A `git checkout` on the user's tree is not something to do quietly, and
+  // the refusal arm matters even more than the success one: in this repo `_dream_context/`
+  // rides the working tree, so "staying put, the tree is dirty" is the common answer.
+  const freshStart = resumeTarget ? null : freshSessionOnDefaultBranch(projectRoot);
+
   // Deferred initial prompt ("the user speaks first"): mirrors
   // agent-terminal.ts's parking pattern exactly. A non-deferred prompt is instead sent as
   // the first USER stdin frame IMMEDIATELY after spawn — empirically (CLI 2.1.218), in
@@ -613,6 +631,15 @@ export function startChatSession(
   // later in this stream carries the same field and simply supersedes this.
   const cachedSlash = readSlashCache(contextRoot);
   if (cachedSlash) sendMeta({ subtype: 'slash_commands', commands: cachedSlash });
+
+  // What the fresh-start branch guard did, in one sentence — sent only for the outcomes that
+  // are actually news (`describeFreshStart` returns null for "already on it", for a worktree
+  // root, and for a repo with no resolvable default). The kind rides along so the client can
+  // tone a refusal differently from a move it did not ask for.
+  if (freshStart) {
+    const message = describeFreshStart(freshStart);
+    if (message) sendMeta({ subtype: 'branch_start', kind: freshStart.kind, message });
+  }
 
   // Echo the auto-submitted opening prompt back to the client so the chat transcript SHOWS
   // it as the first user message. The terminal surface gets this for free (the prompt is

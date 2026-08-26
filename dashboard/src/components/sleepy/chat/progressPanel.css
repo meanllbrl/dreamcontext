@@ -9,7 +9,9 @@
  * construction rather than by care.
  *
  * Imported by `PinShelf.tsx` immediately AFTER `pinShelf.css` — the one rule here that overrides
- * that file (`.pin-pop`'s max-height) needs the later sheet to win at equal specificity.
+ * that file (`.pin-pop`'s max-height) needs the later sheet to win at equal specificity. The type
+ * ladder this file also re-declares on `.pin-pop` does NOT depend on that order: a custom property
+ * resolves against the nearest declaring ANCESTOR, and `.pin-pop` is a descendant of `.pin-shelf`.
  */
 
 /* ── The row: a clock, and a pulse that means the turn is running ───────────────────── */
@@ -23,7 +25,7 @@
   margin-left: auto;
   padding-left: 10px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--pin-num);
   color: var(--color-text-tertiary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -40,6 +42,19 @@
 }
 
 /* ── The panel: every criterion, under its own milestone heading ────────────────────── */
+
+/* The panel reads one rung ABOVE the row, and it is the only place on this surface that does.
+   The row is a one-line strip you glance at, where every extra px is spent out of the
+   criterion's ellipsis budget; the panel is a LIST of full sentences you actually read, and it
+   was the specific thing the owner called too small (2026-08-25, second screenshot: criteria
+   wrapping to four lines at 12px next to a 15px conversation). Redeclaring the ladder's two
+   text rungs here moves the head, the in-flight strip, the group heads, every criterion and
+   the foot together — nothing in this file names a size of its own. */
+.pin-pop {
+  --pin-text: calc(14.5px * var(--zoom, 1));
+  --pin-text-sm: calc(13px * var(--zoom, 1));
+  --pin-num: calc(12.5px * var(--zoom, 1));
+}
 
 /* Taller than the 34vh this panel had when it held two lines. It floats above the shelf and is
    absolutely positioned, so height here costs the composer and the tag line nothing — and a
@@ -105,7 +120,7 @@
 .pin-group-name {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--pin-text-sm);
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--color-text-secondary);

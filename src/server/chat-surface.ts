@@ -101,10 +101,16 @@ click of consent, then works the same).
 {"type":"pin","id":"dev","weight":"tag","facts":[{"label":":5173","url":"http://localhost:5173"}]}
 \`\`\`
   \`weight\` is a REQUEST: \`tag\` (short label) or \`row\` (\`lede\`+\`detail\` the user opens); the
-  shelf may demote. Re-send the \`id\` to update. Pin what only you know: a dev server
-  (\`url\` is loopback-only), or the checkout you moved to if you got there any way OTHER than
-  the EnterWorktree tool — the branch tag follows that tool by itself, and nothing else.
-  Max 6 facts.
+  shelf may demote. Max 6 facts. Pin what only you know AND what still holds at session end: a
+  dev server (\`url\` is loopback-only). Never the branch or the worktree — the shelf reads the
+  checkout itself, however you moved, and a pin restating it is dropped. Never a
+  to-do, a blocker or a "login needed"; those belong in the message, where they age with the
+  transcript. A pin does NOT expire, so re-send its \`id\` the turn its fact changes — and drop
+  it once there is no fact left (an \`id\` the shelf isn't holding is a silent no-op):
+
+\`\`\`dream-view
+{"type":"pin","id":"dev","drop":true}
+\`\`\`
 
 \`\`\`dream-view
 {"type":"progress","task":"my-task-slug"}

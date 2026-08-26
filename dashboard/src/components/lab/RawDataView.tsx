@@ -6,6 +6,11 @@ import type { ChartBodyProps } from './chartBody';
 export function RawDataView({ series }: { series: Series[] }) {
   const [mode, setMode] = useState<'table' | 'json'>('table');
 
+  // Snapshot honesty: when EVERY point shares one date the Time column is pure
+  // noise (a snapshot, not a series) — say the date once in a caption instead.
+  const dates = new Set(series.flatMap((s) => s.points.map((p) => p.t)));
+  const snapshotDate = dates.size === 1 ? [...dates][0] : null;
+
   return (
     <div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
@@ -30,25 +35,32 @@ export function RawDataView({ series }: { series: Series[] }) {
       </div>
 
       {mode === 'table' ? (
-        <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 8 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
-            <thead>
-              <tr style={{ background: 'var(--color-bg-tertiary)' }}>
-                <th style={{ textAlign: 'left', padding: '6px 10px' }}>Series</th>
-                <th style={{ textAlign: 'left', padding: '6px 10px' }}>Time</th>
-                <th style={{ textAlign: 'right', padding: '6px 10px' }}>Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {series.flatMap((s) => s.points.map((p, i) => (
-                <tr key={`${s.name}-${p.t}-${i}`} style={{ borderTop: '1px solid var(--color-border)' }}>
-                  <td style={{ padding: '5px 10px', color: 'var(--color-text-secondary)' }}>{s.name}</td>
-                  <td style={{ padding: '5px 10px' }}>{p.t}</td>
-                  <td style={{ padding: '5px 10px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{p.v}</td>
+        <div>
+          {snapshotDate !== null && (
+            <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>
+              Snapshot · {snapshotDate}
+            </div>
+          )}
+          <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 8 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: 'var(--color-bg-tertiary)' }}>
+                  <th style={{ textAlign: 'left', padding: '6px 10px' }}>Series</th>
+                  {snapshotDate === null && <th style={{ textAlign: 'left', padding: '6px 10px' }}>Time</th>}
+                  <th style={{ textAlign: 'right', padding: '6px 10px' }}>Value</th>
                 </tr>
-              )))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {series.flatMap((s) => s.points.map((p, i) => (
+                  <tr key={`${s.name}-${p.t}-${i}`} style={{ borderTop: '1px solid var(--color-border)' }}>
+                    <td style={{ padding: '5px 10px', color: 'var(--color-text-secondary)' }}>{s.name}</td>
+                    {snapshotDate === null && <td style={{ padding: '5px 10px' }}>{p.t}</td>}
+                    <td style={{ padding: '5px 10px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{p.v}</td>
+                  </tr>
+                )))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         <pre style={{

@@ -102,14 +102,24 @@ describe('modeBriefing', () => {
     }
   });
 
-  // The shelf's branch tag is server-derived and can only follow a move it has a FRAME for.
-  // Both arms therefore have to say it: the forbidden arm bans CREATING a worktree, it does
-  // not stop a session being driven from one that already exists.
-  it('BOTH arms name EnterWorktree and ask for a pin when the shelf cannot see the move', () => {
+  // Both arms have to name the tool: the forbidden arm bans CREATING a worktree, it does not
+  // stop a session being driven from one that already exists.
+  //
+  // The second assertion is a REVERSAL, and it is the point of this change. This paragraph used
+  // to end "say so, and pin the checkout as a tag", because the server followed only the
+  // EnterWorktree/ExitWorktree frames and was blind to every other move. Asking the agent to
+  // paper over that produced the defect the owner photographed on 2026-08-25: three chips
+  // reading `main` + `wt: eur-multicurrency` + `branch: feat/eur-multicurrency`. The server now
+  // reads the checkout from the transcript (src/lib/session-transcript-cwd.ts), so the briefing
+  // must ask for the OPPOSITE — and this test is what keeps the old instruction from drifting
+  // back in.
+  it('BOTH arms name EnterWorktree and forbid pinning the checkout by hand', () => {
     for (const worktreeAllowed of [true, false]) {
       const brief = modeBriefing('basic', { worktreeAllowed });
       expect(brief, `worktreeAllowed=${worktreeAllowed}`).toContain('EnterWorktree');
-      expect(brief, `worktreeAllowed=${worktreeAllowed}`).toMatch(/pin the checkout as a tag/);
+      expect(brief, `worktreeAllowed=${worktreeAllowed}`)
+        .toMatch(/do not pin the branch or worktree/i);
+      expect(brief, `worktreeAllowed=${worktreeAllowed}`).not.toMatch(/pin the checkout as a tag/);
     }
   });
 

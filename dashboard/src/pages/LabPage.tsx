@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { LabBoard } from '../components/lab/LabBoard';
 import { FunnelOverviewPage } from '../components/lab/funnel/FunnelOverviewPage';
 import { FunnelDetailPage } from '../components/lab/funnel/FunnelDetailPage';
+import { ReportPage } from '../components/lab/reports/ReportPage';
 import {
   clearLabPath,
   flushBufferedRoute,
@@ -61,7 +62,15 @@ export function LabPage({ focus }: LabPageProps = {}) {
   });
 
   let content;
-  if (route.slug && route.funnelId) {
+  if (route.report) {
+    content = (
+      <ReportPage
+        slug={route.report}
+        onBack={() => pushLabPath(null, null, bus)}
+        onToast={setToast}
+      />
+    );
+  } else if (route.slug && route.funnelId) {
     content = (
       <FunnelDetailPage
         slug={route.slug}
@@ -86,7 +95,7 @@ export function LabPage({ focus }: LabPageProps = {}) {
   return (
     <div style={{ height: '100%', minHeight: 0 }}>
       {content}
-      {toast && route.slug && <div className="lab-toast">{toast}</div>}
+      {toast && (route.slug || route.report) && <div className="lab-toast">{toast}</div>}
     </div>
   );
 }

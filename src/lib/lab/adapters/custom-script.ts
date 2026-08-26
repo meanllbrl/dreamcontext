@@ -1,7 +1,7 @@
 import { dirname, resolve, sep } from 'node:path';
 import { redactSecrets } from '../credentials.js';
 import { runScriptInChild } from './script-child.js';
-import { isRawFunnelSet, LabError, type AdapterContext, type AdapterResult, type InsightManifest, type LabAdapter, type RawSeries, type SeriesPoint } from '../types.js';
+import { isRawFunnelSet, isRawMatrixSet, isRawPayloadEnvelope, LabError, type AdapterContext, type AdapterResult, type InsightManifest, type LabAdapter, type RawPayloadEnvelope, type RawSeries, type SeriesPoint } from '../types.js';
 
 /**
  * Custom-script adapter — the escape hatch for anything the declarative HTTP
@@ -37,7 +37,7 @@ export function scriptFilePath(manifest: InsightManifest): string {
 
 function coerceSeries(result: unknown): RawSeries[] {
   if (!Array.isArray(result)) {
-    throw new LabError('Custom script must return an array of { name, points } series, or a { kind: "funnel-set/v1", … } funnel payload for `render: funnel`.');
+    throw new LabError('Custom script must return an array of { name, points } series, a { kind: "funnel-set/v1", … } funnel payload for `render: funnel`, or a { kind: "matrix/v1", … } matrix payload for `render: breakdown`.');
   }
   return result.map((s, i) => {
     const r = s as { name?: unknown; points?: unknown };
@@ -62,9 +62,29 @@ export const customScriptAdapter: LabAdapter = {
       // A fresh process per run — the ONLY way a shared `lab/scripts/lib-*.mjs`
       // edit is guaranteed to be seen (GitHub #242; see script-child.ts).
       const result = await runScriptInChild(abs, ctx, file);
-      // A funnel-set payload passes through raw — the ENGINE validates + caps it
-      // (parseFunnelSet), keeping the trust/validation boundary in one place.
-      if (isRawFunnelSet(result)) return result;
+      // A funnel-set/matrix payload passes through raw — the ENGINE validates +
+      // caps it (parseFunnelSet/parseMatrixSet), keeping the trust/validation
+      // boundary in one place.
+      if (isRawFunnelSet(result) || isRawMatrixSet(result)) return result;
+      // `{ data, html? }` envelope (html/v1 hybrid): `data` is MANDATORY — html
+      // never replaces the numbers. The inner payload gets the same treatment a
+      // bare return would; the html cap is the engine's (sync.ts).
+      if (isRawPayloadEnvelope(result)) {
+        if (!('data' in result) || result.data === undefined || result.data === null) {
+          throw new LabError('Custom script returned { html } without `data` — data is mandatory: the html body is a presentation of the numbers, never a substitute for them.');
+        }
+        const data = result.data;
+        const envelope: RawPayloadEnvelope = {
+          data: isRawFunnelSet(data) || isRawMatrixSet(data) ? data : coerceSeries(data),
+        };
+        if (result.html !== undefined) {
+          if (typeof result.html !== 'string') {
+            throw new LabError('Custom script envelope `html` must be a string.');
+          }
+          envelope.html = result.html;
+        }
+        return envelope;
+      }
       return coerceSeries(result);
     } catch (err) {
       if (err instanceof LabError) throw new LabError(redactSecrets(err.message, secretValues));

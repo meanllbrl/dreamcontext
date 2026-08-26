@@ -1130,6 +1130,40 @@
       "args": []
     },
     {
+      "path": "lab report",
+      "desc": "My Reports: composed, date-navigable views over existing insight caches",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "lab report create",
+      "desc": "Scaffold a new report in lab/reports/<slug>.md",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--title",
+        "--description",
+        "--date-nav",
+        "--insights"
+      ]
+    },
+    {
+      "path": "lab report list",
+      "desc": "List reports",
+      "args": []
+    },
+    {
+      "path": "lab report show",
+      "desc": "Show a report with every item resolved (optionally as of a date)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--date"
+      ]
+    },
+    {
       "path": "lab show",
       "desc": "Show the cached snapshot for one insight (no fetch)",
       "args": [

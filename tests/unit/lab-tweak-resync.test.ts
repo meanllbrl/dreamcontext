@@ -133,6 +133,21 @@ describe('the RangeControl hands off to a save that re-syncs', () => {
         .toMatch(/but the re-?fetch failed|but the refresh failed/);
     }
   });
+
+  // Breakdown rides the SAME chain: the generic card/panel mount the
+  // RangeControl off the registry's `supportsWindow`, so "data follows the
+  // control" for a breakdown insight reduces to its entry declaring the window.
+  // A future entry edit that drops the flag would silently detach the pivot
+  // from the date-range pills — pin it.
+  it('the breakdown registry entry declares supportsWindow (data follows the control)', () => {
+    const source = readFileSync(join(ROOT, 'chartRegistry.ts'), 'utf-8');
+    const entry = /breakdown: \{([\s\S]*?)\n  \},/.exec(source);
+    expect(entry, 'chartRegistry.ts must have a breakdown entry').toBeTruthy();
+    expect(entry![1]).toContain('supportsWindow: true');
+    // And it stays a slide-over render: no `routed` flag means the guarded
+    // InsightCard/InsightDetailPanel are the ONLY surfaces that save its tweaks.
+    expect(entry![1]).not.toContain('routed');
+  });
 });
 
 describe('a failed window is visible on the page, not only in a toast', () => {

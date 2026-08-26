@@ -4,6 +4,7 @@ import { useApplyTweaks, useLabInsight, useSyncInsight } from '../../hooks/useLa
 import { TweakEditor } from './TweakEditor';
 import { RangeControl, nonWindowTweaks } from './RangeControl';
 import { cardSpan, chartEntry } from './chartRegistry';
+import { HtmlInsightBody } from './HtmlInsightBody';
 import './InsightCard.css';
 
 /** Staleness badge: fresh / stale(Nh) / never synced / error. */
@@ -159,14 +160,20 @@ export function InsightCard({
       )}
 
       {/* The card body keeps its own hover layer (chart tooltips) — clicks
-          still bubble to the card and open the panel. */}
+          still bubble to the card and open the panel. A script-authored html
+          body (html/v1 hybrid) replaces the typed CARD body only; the detail
+          panel always shows the typed twin next to it (a11y). */}
       <div className="lab-card-body">
-        <CardBody
-          summary={summary}
-          cache={cache ?? null}
-          series={series}
-          emptyHint={entry.emptyHint}
-        />
+        {cache?.html ? (
+          <HtmlInsightBody html={cache.html} title={summary.title} />
+        ) : (
+          <CardBody
+            summary={summary}
+            cache={cache ?? null}
+            series={series}
+            emptyHint={entry.emptyHint}
+          />
+        )}
       </div>
 
       {editableTweaks.length > 0 && (

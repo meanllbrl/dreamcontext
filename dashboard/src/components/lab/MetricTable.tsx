@@ -66,6 +66,10 @@ export function TableBody({ summary, series, full = false, emptyHint }: ChartBod
 
   if (rows.length === 0) return <ChartEmpty hint={emptyHint} />;
 
+  // Snapshot honesty: single-point series have no move and no trend — a column
+  // of '—' and flat sparklines reads as "broken", so those columns step aside.
+  const hasHistory = series.some((s) => s.points.length >= 2);
+
   const sorted = sort === null ? rows : [...rows].sort((a, b) => {
     const desc = sort.key === 'name'
       ? b.name.localeCompare(a.name)
@@ -109,8 +113,10 @@ export function TableBody({ summary, series, full = false, emptyHint }: ChartBod
           <tr style={{ background: 'var(--color-bg-tertiary)' }}>
             {header('name', 'Series', 'left')}
             {header('latest', 'Latest', 'right')}
-            {header('delta', 'Δ', 'right')}
-            <th scope="col" style={{ textAlign: 'right', padding: '6px 10px', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Trend</th>
+            {hasHistory && header('delta', 'Δ', 'right')}
+            {hasHistory && (
+              <th scope="col" style={{ textAlign: 'right', padding: '6px 10px', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Trend</th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -120,17 +126,21 @@ export function TableBody({ summary, series, full = false, emptyHint }: ChartBod
                 {row.name}
               </td>
               <td style={{ ...NUM_CELL, color: 'var(--color-text)' }}>{formatValue(row.latest, summary.unit)}</td>
-              <td style={{ ...NUM_CELL, color: deltaColor(row.delta), fontWeight: 600 }}>{deltaLabel(row.delta)}</td>
-              <td style={{ ...NUM_CELL, width: 1 }}>
-                <span style={{ display: 'inline-flex', verticalAlign: 'middle' }}>
-                  <Sparkline points={row.points.slice(-24)} width={56} height={16} color={row.color} />
-                </span>
-              </td>
+              {hasHistory && (
+                <td style={{ ...NUM_CELL, color: deltaColor(row.delta), fontWeight: 600 }}>{deltaLabel(row.delta)}</td>
+              )}
+              {hasHistory && (
+                <td style={{ ...NUM_CELL, width: 1 }}>
+                  <span style={{ display: 'inline-flex', verticalAlign: 'middle' }}>
+                    <Sparkline points={row.points.slice(-24)} width={56} height={16} color={row.color} />
+                  </span>
+                </td>
+              )}
             </tr>
           ))}
           {hidden > 0 && (
             <tr style={{ borderTop: '1px solid var(--color-border)' }}>
-              <td colSpan={4} style={{ padding: '5px 10px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+              <td colSpan={hasHistory ? 4 : 2} style={{ padding: '5px 10px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
                 +{hidden} more — open to see every series
               </td>
             </tr>

@@ -1,0 +1,205 @@
+/* My Reports page — full-width sections over chartRegistry bodies, honest
+   date navigation, and a print stylesheet (browser print → PDF is the export). */
+
+.report-page {
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px 24px 48px;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.report-loading,
+.report-empty {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: 18px 0;
+}
+
+.report-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.report-spacer { flex: 1; }
+
+.report-back,
+.report-action {
+  padding: 4px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+.report-back:hover,
+.report-action:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border-hover);
+}
+.report-action:disabled { opacity: 0.45; cursor: default; }
+
+.report-sync-status {
+  font-size: 12px;
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.report-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 4px 0 2px;
+}
+
+.report-desc {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-bottom: 10px;
+}
+
+.report-datenav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 16px;
+}
+
+.report-date-input {
+  padding: 3px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.report-date-hint {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+}
+
+.report-section { margin: 18px 0; }
+
+.report-section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.report-section-prose {
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  margin: 0 0 10px;
+}
+
+.report-item {
+  margin: 12px 0 18px;
+}
+
+.report-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 6px;
+}
+
+.report-item--missing {
+  padding: 10px 12px;
+  border: 1px solid var(--color-error-subtle, var(--color-border));
+  border-radius: 8px;
+  color: var(--color-error);
+  font-size: 12.5px;
+}
+.report-item--missing code {
+  font-family: var(--font-mono);
+}
+
+.report-asof {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.report-skeleton {
+  height: 96px;
+  border-radius: 8px;
+  background: linear-gradient(
+    100deg,
+    var(--color-bg-tertiary) 40%,
+    var(--color-bg-secondary) 50%,
+    var(--color-bg-tertiary) 60%
+  );
+  background-size: 200% 100%;
+  animation: report-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes report-shimmer {
+  from { background-position: 120% 0; }
+  to { background-position: -80% 0; }
+}
+
+.report-big-number {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.report-funnel-snap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.report-mini-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.report-mini-table th {
+  text-align: left;
+  padding: 5px 10px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+}
+.report-mini-table td {
+  padding: 4px 10px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+.report-num { text-align: right; font-family: var(--font-mono); }
+
+.report-notes {
+  border-top: 1px solid var(--color-border);
+  padding-top: 10px;
+}
+.report-notes-body {
+  white-space: pre-wrap;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+}
+
+/* ── Print (browser print → PDF is the report's PDF export) ── */
+@media print {
+  .report-noprint { display: none !important; }
+  .report-page {
+    overflow: visible;
+    height: auto;
+    max-width: none;
+    padding: 0;
+  }
+  .report-section { break-inside: avoid; }
+  .report-skeleton { display: none; }
+}

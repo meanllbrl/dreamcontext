@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useLabInsights, useLabSyncJob, useStartLabSyncJob } from '../../hooks/useLab';
+import { useLabInsights, useLabReports, useLabSyncJob, useStartLabSyncJob } from '../../hooks/useLab';
 import { useLabPrefs } from '../../hooks/useLabPrefs';
 import { InsightCard } from './InsightCard';
 import { InsightDetailPanel } from './InsightDetailPanel';
-import { pushLabPath } from './funnel/labRoute';
+import { pushLabPath, pushLabReportPath } from './funnel/labRoute';
 import { isRoutedRender } from './chartRegistry';
 import { LabCredentialsBanner } from './LabCredentialsBanner';
 import { LabEmptyState } from './LabEmptyState';
@@ -110,6 +110,28 @@ interface LabBoardProps {
 export function LabBoard({ focus }: LabBoardProps = {}) {
   const { data: insights, isLoading, isError, error } = useLabInsights();
   const { data: syncJob } = useLabSyncJob();
+  const { data: reports } = useLabReports();
+  const [reportsOpen, setReportsOpen] = useState(false);
+  const reportsRef = useRef<HTMLDivElement | null>(null);
+
+  // The menu closes on outside-click or Escape — the idiom a real mouse can
+  // live with (a mouseleave-close died the moment the pointer crossed the gap
+  // between the trigger and the panel).
+  useEffect(() => {
+    if (!reportsOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (reportsRef.current && !reportsRef.current.contains(e.target as Node)) setReportsOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setReportsOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [reportsOpen]);
   const startSyncAll = useStartLabSyncJob();
   const queryClient = useQueryClient();
   const { prefs, toggleCollapsed, setGroupOrder, setCategory, setCategoryOrder } = useLabPrefs();
@@ -196,7 +218,7 @@ export function LabBoard({ focus }: LabBoardProps = {}) {
 
   const handleSyncAll = () => {
     if (syncRunning) return;
-    startSyncAll.mutate(true, {
+    startSyncAll.mutate({ force: true }, {
       onError: (err) => setToast(`Sync all failed to start: ${(err as Error).message}`),
     });
   };
@@ -339,6 +361,46 @@ export function LabBoard({ focus }: LabBoardProps = {}) {
               </button>
             ))}
           </nav>
+        )}
+        {/* My Reports — the routed report pages' entry, docked in the toolbar's
+            RIGHT cluster next to Sync all. Only when reports exist (created via
+            `dreamcontext lab report create`); an empty menu would just be
+            furniture. Click-toggled, closed by outside-click/Escape — NEVER by
+            mouseleave: the pointer crossing the 4px gap between trigger and
+            panel was closing the menu before a real mouse could reach it. */}
+        {(reports?.length ?? 0) > 0 && (
+          <div className="lab-board-reports" ref={reportsRef}>
+            <button
+              className="lab-board-reports-toggle"
+              onClick={() => setReportsOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={reportsOpen}
+              title="Open a report — a composed, date-navigable view over these insights"
+            >
+              <span className="lab-board-reports-toggle-glyph" aria-hidden>▤</span>
+              Reports
+              <span className="lab-board-reports-count">{reports!.length}</span>
+            </button>
+            {reportsOpen && (
+              <div className="lab-board-reports-menu" role="menu">
+                <div className="lab-board-reports-head">My Reports</div>
+                {reports!.map((r) => (
+                  <button
+                    key={r.slug}
+                    role="menuitem"
+                    className="lab-board-reports-item"
+                    onClick={() => { setReportsOpen(false); pushLabReportPath(r.slug); }}
+                    title={r.description ?? undefined}
+                  >
+                    <span className="lab-board-reports-item-title">{r.title}</span>
+                    <span className="lab-board-reports-item-meta">
+                      {r.items} insight(s){r.date_nav !== 'none' ? ` · ${r.date_nav}` : ''}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         {/* One button, three states. While the server-owned job runs it becomes a
             determinate chip (n/total + a mini bar) — the run outlives this page,

@@ -11,6 +11,7 @@ import { resolveTweaks } from '../../lib/lab/tweaks.js';
 import { computeFunnelPrev } from '../../lib/lab/funnel.js';
 import { bindInsight, syncInsight, syncAll } from '../../lib/lab/sync.js';
 import { currentLabSyncJob, startLabSyncJob } from '../lab-sync-job.js';
+import { getReport, listReports, resolveReport } from '../../lib/lab/reports-store.js';
 import { readCredentials, redactSecrets, writeCredential } from '../../lib/lab/credentials.js';
 import { requiredCredentialKeys } from '../../lib/lab/required-credentials.js';
 import { LabError, type Binding, type InsightCache, type InsightManifest } from '../../lib/lab/types.js';
@@ -176,12 +177,93 @@ export async function handleLabSyncJobStart(
     return;
   }
   try {
+    // Optional `slugs[]` scopes the run to a subset (the report page's
+    // progressive fill); absent = the whole board, as always.
+    let slugs: string[] | undefined;
+    if (body.slugs !== undefined) {
+      if (!Array.isArray(body.slugs) || body.slugs.some((s: unknown) => typeof s !== 'string')) {
+        sendError(res, 400, 'invalid_slugs', '`slugs` must be an array of insight slugs.');
+        return;
+      }
+      slugs = (body.slugs as string[]).map((s) => s.trim()).filter(Boolean);
+      if (slugs.length === 0) {
+        sendError(res, 400, 'invalid_slugs', '`slugs` must name at least one insight.');
+        return;
+      }
+    }
     // Default force:true — pressing Sync all IS the explicit "refetch now".
-    const { job, started } = startLabSyncJob(contextRoot, { force: body.force !== false });
+    const { job, started } = startLabSyncJob(contextRoot, { force: body.force !== false, slugs });
     sendJson(res, 200, { job, started });
   } catch (err) {
     console.error('[lab] sync job start failed:', err);
     sendError(res, 500, 'sync_failed', 'Failed to start the insight sync.');
+  }
+}
+
+// ─── Reports ("My Reports" — composition over insight caches, no data owned) ──
+
+/** GET /api/lab/reports — report list (slug/title/description/date_nav/section+item counts). */
+export async function handleLabReportsList(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const reports = listReports(contextRoot).map((r) => ({
+      slug: r.slug,
+      title: r.title,
+      description: r.description,
+      date_nav: r.date_nav,
+      sections: r.sections.length,
+      items: r.sections.reduce((a, s) => a + s.items.length, 0),
+    }));
+    sendJson(res, 200, { reports });
+  } catch (err) {
+    console.error('[lab] reports list failed:', err);
+    sendError(res, 500, 'reports_failed', 'Failed to read reports.');
+  }
+}
+
+/** GET /api/lab/reports/:slug?date=YYYY-MM-DD — the report with every item
+ *  resolved to the latest snapshot AT OR BEFORE the end of that date (omit
+ *  `date` for live data). Honest: no snapshot → asOf:null, never interpolated. */
+export async function handleLabReportShow(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const report = getReport(contextRoot, params.slug);
+    if (!report) {
+      sendError(res, 404, 'not_found', `Report not found: ${params.slug}`);
+      return;
+    }
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const rawDate = url.searchParams.get('date');
+    let date: string | null = null;
+    if (rawDate !== null && rawDate !== '') {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate) || Number.isNaN(Date.parse(`${rawDate}T00:00:00Z`))) {
+        sendError(res, 400, 'invalid_date', '`date` must be a valid YYYY-MM-DD date.');
+        return;
+      }
+      date = rawDate;
+    }
+    sendJson(res, 200, {
+      report: {
+        slug: report.slug,
+        title: report.title,
+        description: report.description,
+        date_nav: report.date_nav,
+        notes: report.notes,
+      },
+      date,
+      sections: resolveReport(contextRoot, report, date),
+    });
+  } catch (err) {
+    console.error('[lab] report show failed:', err);
+    sendError(res, 500, 'report_failed', 'Failed to read the report.');
   }
 }
 
