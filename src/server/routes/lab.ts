@@ -14,7 +14,7 @@ import { currentLabSyncJob, startLabSyncJob } from '../lab-sync-job.js';
 import { getReport, listReports, resolveReport } from '../../lib/lab/reports-store.js';
 import { readCredentials, redactSecrets, writeCredential } from '../../lib/lab/credentials.js';
 import { requiredCredentialKeys } from '../../lib/lab/required-credentials.js';
-import { LabError, type Binding, type InsightManifest } from '../../lib/lab/types.js';
+import { LabError, type Binding, type InsightCache, type InsightManifest } from '../../lib/lab/types.js';
 
 /**
  * Lab HTTP API — mirrors objectives.ts. Thin wrappers over the same sync engine
@@ -107,6 +107,21 @@ export async function handleLabList(
   }
 }
 
+/**
+ * The cache as the DASHBOARD needs it — everything except `funnelHistory`.
+ *
+ * The trail is the INPUT to `computeFunnelPrev`, which `handleLabShow` runs
+ * before calling this; no client reads the trail itself. Left in, it dominated
+ * the response: measured on a live 6-funnel insight, 191,234 of 226,232 bytes
+ * (84.5%) were 40 snapshots nobody opened, re-shipped on every window change
+ * and every board invalidation.
+ */
+function withoutFunnelHistory(cache: InsightCache | null): InsightCache | null {
+  if (!cache || cache.funnelHistory === undefined) return cache ?? null;
+  const { funnelHistory: _drop, ...rest } = cache;
+  return rest;
+}
+
 /** GET /api/lab/:slug — full manifest + cached series. */
 export async function handleLabShow(
   _req: IncomingMessage,
@@ -129,7 +144,7 @@ export async function handleLabShow(
       insight: toPublicManifest(manifest),
       meaning: manifest.body,
       resolvedTweaks: resolveTweaks(manifest).values,
-      cache: cache ?? null,
+      cache: withoutFunnelHistory(cache),
       funnelPrev,
     });
   } catch (err) {

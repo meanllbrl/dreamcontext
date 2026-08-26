@@ -208,6 +208,24 @@
   gap: 2px;
 }
 
+/* A failed fetch is not a warning — the table below is answering for a window
+   the user no longer selected, which is the one thing they must not miss. */
+.funnel-ovw-notices--error {
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+}
+
+.funnel-ovw-notices-sub {
+  opacity: 0.85;
+}
+
+/* The data window lags the control during a re-fetch — dim it rather than let
+   the two read as if they agree. */
+.funnel-ovw-window--applying {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
 .funnel-ovw-deltasrc {
   font-size: 11px;
   color: var(--color-text-tertiary);

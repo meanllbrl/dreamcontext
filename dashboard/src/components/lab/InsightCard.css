@@ -105,6 +105,23 @@
   color: var(--color-error);
 }
 
+/* In flight: the numbers on screen are not yet the ones the control asks for. */
+.lab-badge--loading {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .lab-badge--loading {
+    animation: lab-badge-pulse 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes lab-badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 .lab-badge--muted {
   background: var(--color-bg-tertiary);
   color: var(--color-text-tertiary);

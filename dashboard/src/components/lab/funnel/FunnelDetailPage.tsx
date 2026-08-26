@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLabInsight, useSyncInsight, useUpdateTweaks } from '../../../hooks/useLab';
+import { useApplyTweaks, useLabInsight, useSyncInsight } from '../../../hooks/useLab';
 import { copyPreservingUnicode } from '../../../lib/clipboard';
 import {
   applyClientFilters,
@@ -45,7 +45,7 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
 }) {
   const detail = useLabInsight(slug);
   const sync = useSyncInsight();
-  const updateTweaks = useUpdateTweaks();
+  const applyTweaks = useApplyTweaks();
   const [params, updateParams] = useLabSearchParams();
   const view = useMemo(() => readViewState(params), [params]);
   const [anchor, setAnchor] = useState<string | null>(null);
@@ -58,7 +58,8 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
 
   const setView = (next: FunnelViewState) => updateParams((p) => writeViewState(p, next));
 
-  const entry = detail.data?.cache?.funnel;
+  const cache = detail.data?.cache;
+  const entry = cache?.funnel;
   const set = entry?.set;
   const funnel = set?.funnels.find((f) => f.id === funnelId) ?? null;
   const prev = detail.data?.funnelPrev ?? null;
@@ -177,27 +178,35 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
     }));
   }, [breakdownDim, lanes]);
 
+  /** True while the lane on screen does not yet answer for the chosen window. */
+  const applying = applyTweaks.isPending;
+
   const applyRefetchDim = (dim: FunnelDimension, value: string | null) => {
     const tweakKey = dim.tweak ?? dim.key;
     if (!tweaks.some((t) => t.key === tweakKey)) {
       onToast(`Dimension "${dim.label}" points at tweak "${tweakKey}", which this insight does not declare.`);
       return;
     }
-    updateTweaks.mutate({ slug, tweaks: { [tweakKey]: value ?? '' } }, {
-      onSuccess: () => sync.mutate(slug, { onError: (e) => onToast(`Re-fetch failed — ${(e as Error).message}`) }),
+    applyTweaks.mutate({ slug, tweaks: { [tweakKey]: value ?? '' } }, {
+      onSuccess: ({ synced, error }) => {
+        if (!synced) onToast(`${dim.label} filter saved, but the re-fetch failed — ${error}`);
+      },
       onError: (e) => onToast(`Filter failed — ${(e as Error).message}`),
     });
   };
 
-  /** The step lane answers for a window too, so this page owns the same control
-   *  as the overview: URL (the crumb back re-reads it) → PATCH → sync (#235). */
+  /**
+   * The step lane answers for a window too, so this page owns the same control
+   * as the overview: URL (the crumb back re-reads it) → PATCH → sync (#235).
+   * The outcome is NAMED — `/lab/sync` returns 200 with `failed[]`, so a success
+   * arm that never reads the body claims a window it did not load.
+   */
   const applyRange = (values: Record<string, string>, label: string) => {
     updateParams((p) => writeRangeParams(p, values));
-    updateTweaks.mutate({ slug, tweaks: values }, {
-      onSuccess: () => sync.mutate(slug, {
-        onSuccess: () => onToast(`${label} applied.`),
-        onError: (e) => onToast(`Re-fetch failed — ${(e as Error).message}`),
-      }),
+    applyTweaks.mutate({ slug, tweaks: values }, {
+      onSuccess: ({ synced, error }) => onToast(
+        synced ? `${label} applied.` : `${label} saved, but the re-fetch failed — ${error}`,
+      ),
       onError: (e) => onToast(`${label} failed — ${(e as Error).message}`),
     });
   };
@@ -262,20 +271,29 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
     <div className="funnel-det">
       <Crumbs onBackToBoard={onBackToBoard} onBack={onBack} title={title} name={funnel.name} />
 
+      {cache?.error && (
+        <div className="funnel-det-notices funnel-det-notices--error" role="alert">
+          <strong>Last fetch failed{cache.errorAt ? ` · ${new Date(cache.errorAt).toLocaleString()}` : ''}</strong>
+          {' — '}{cache.error}
+          {' '}The lane below is the last window that DID load ({entry.range.fromISO} → {entry.range.toISO}).
+        </div>
+      )}
+
       <div className="funnel-det-toolbar">
         <RangeControl
           tweaks={tweaks}
           compact
-          disabled={updateTweaks.isPending || sync.isPending}
+          disabled={applying || sync.isPending}
           onApply={applyRange}
         />
+        {applying && <span className="lab-badge lab-badge--loading">loading…</span>}
         <FunnelFilterBar
           set={set}
           filters={view.filters}
           refetchValues={refetchValues}
           onChange={(filters) => setView({ ...view, filters })}
           onApplyRefetch={applyRefetchDim}
-          syncing={sync.isPending || updateTweaks.isPending}
+          syncing={sync.isPending || applying}
         />
         <div className="funnel-det-toolbar-spacer" />
         <label className="funnel-det-bd">

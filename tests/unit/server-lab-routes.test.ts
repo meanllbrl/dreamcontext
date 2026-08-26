@@ -92,6 +92,61 @@ describe('GET /api/lab/:slug — show', () => {
     await handleLabShow(makeReq('GET'), res, { slug: 'nope' }, root);
     expect(status()).toBe(404);
   });
+
+  /**
+   * The funnel snapshot trail is the INPUT to `computeFunnelPrev`, which this
+   * route already ran. No client reads it, and left in it DOMINATED the
+   * response: measured on a live 6-funnel insight, 191,234 of 226,232 bytes
+   * (84.5%) were 40 snapshots nobody opened — re-shipped on every window change
+   * and every board invalidation.
+   */
+  it('omits funnelHistory but still serves the deltas derived from it', async () => {
+    createInsight(root, { slug: 'funnels', title: 'Funnels' });
+    const funnelSet = {
+      kind: 'funnel-set/v1' as const,
+      primary: 'users',
+      funnels: [{
+        id: 'f1',
+        name: 'One',
+        metrics: { users: { v: 120, format: 'count' } },
+        steps: [{ key: 'a', label: 'A', users: 120 }],
+      }],
+    };
+    writeCache(root, 'funnels', {
+      slug: 'funnels', fetchedAt: new Date().toISOString(), tweaks: {}, granularity: 'daily',
+      unit: null, series: [], latest: 120, error: null, errorAt: null, scriptHash: null,
+      funnel: { set: funnelSet as any, notices: [], range: { fromISO: '2026-02-08', toISO: '2026-02-15' } },
+      funnelHistory: [{
+        at: '2026-02-08T00:00:00.000Z',
+        range: { fromISO: '2026-02-01', toISO: '2026-02-08' },
+        funnels: [{ id: 'f1', metrics: { users: 100 }, steps: [{ key: 'a', users: 100 }] }],
+      }],
+    });
+
+    const { res, status, body } = makeRes();
+    await handleLabShow(makeReq('GET'), res, { slug: 'funnels' }, root);
+
+    expect(status()).toBe(200);
+    expect(body().cache.funnelHistory).toBeUndefined();
+    expect(JSON.stringify(body())).not.toContain('funnelHistory');
+    // The trail is dropped, not its VALUE: the previous period still resolves.
+    expect(body().funnelPrev.metrics.f1.users).toBe(100);
+    expect(body().funnelPrev.source.range).toEqual({ fromISO: '2026-02-01', toISO: '2026-02-08' });
+    // Everything the dashboard actually reads survives.
+    expect(body().cache.funnel.set.funnels[0].metrics.users.v).toBe(120);
+  });
+
+  it('leaves a cache with no funnel trail untouched', async () => {
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    writeCache(root, 'wau', {
+      slug: 'wau', fetchedAt: new Date().toISOString(), tweaks: {}, granularity: 'daily',
+      unit: null, series: [], latest: 1, error: null, errorAt: null, scriptHash: null,
+    });
+    const { res, body } = makeRes();
+    await handleLabShow(makeReq('GET'), res, { slug: 'wau' }, root);
+    expect(body().cache.slug).toBe('wau');
+    expect(body().funnelPrev).toBeNull();
+  });
 });
 
 describe('POST /api/lab/sync — runs the same engine as the CLI', () => {

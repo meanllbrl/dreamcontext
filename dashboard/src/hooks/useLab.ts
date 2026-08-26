@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
 import type { FunnelCacheEntry, FunnelPrev, FunnelSnapshot } from '../components/lab/funnel/funnelModel';
 import type { MatrixCacheEntry, MatrixSnapshot } from '../components/lab/matrixModel';
@@ -76,8 +76,6 @@ export interface InsightCache {
   history?: SyncEvent[];
   /** Funnel-set snapshot (`render: funnel` with a funnel-set payload only). */
   funnel?: FunnelCacheEntry;
-  /** Bounded per-sync funnel snapshots (deltas/trends), oldest→newest. */
-  funnelHistory?: FunnelSnapshot[];
   /** Matrix snapshot (`render: breakdown` with a matrix/v1 payload only). */
   matrix?: MatrixCacheEntry;
   /** Bounded per-sync matrix snapshots (the breakdown's time axis), oldest→newest. */
@@ -122,6 +120,21 @@ export interface SyncResult {
   error?: string;
 }
 
+/**
+ * Every Lab query lives under the `['lab', …]` prefix, so ONE invalidation
+ * reaches the board list AND the open insight.
+ *
+ * Invalidating both keys is not belt-and-braces — it costs a duplicate request.
+ * `invalidateQueries` refetches with `cancelRefetch: true`, so the second call
+ * ABORTS the fetch the first one started and issues another; the funnel
+ * insight's response is the biggest in the app, and it was being fetched, killed
+ * and re-fetched on every window change. Measured in `verify:lab-board`:
+ * 2 × `GET /api/lab/:slug` per range change, now 1.
+ */
+function invalidateLab(queryClient: QueryClient): void {
+  queryClient.invalidateQueries({ queryKey: ['lab'] });
+}
+
 /** List every insight (for the board). Empty on an older backend / no route. */
 export function useLabInsights() {
   const api = useApi();
@@ -150,10 +163,7 @@ export function useSyncInsight() {
   return useMutation({
     mutationFn: (slug: string) =>
       api.post<{ results: SyncResult[]; failed: SyncResult[] }>('/lab/sync', { slug, force: true }),
-    onSuccess: (_data, slug) => {
-      queryClient.invalidateQueries({ queryKey: ['lab'] });
-      queryClient.invalidateQueries({ queryKey: ['lab', slug] });
-    },
+    onSuccess: () => invalidateLab(queryClient),
   });
 }
 
@@ -293,9 +303,8 @@ export function useUpdateBinding() {
   return useMutation({
     mutationFn: ({ slug, binding }: { slug: string; binding: Binding | null }) =>
       api.patch<{ insight: PublicManifest; unbound: string[]; seededCurrent: number | null }>(`/lab/${slug}/binding`, { binding }),
-    onSuccess: (_data, { slug }) => {
-      queryClient.invalidateQueries({ queryKey: ['lab'] });
-      queryClient.invalidateQueries({ queryKey: ['lab', slug] });
+    onSuccess: () => {
+      invalidateLab(queryClient);
       queryClient.invalidateQueries({ queryKey: ['objectives'] });
       queryClient.invalidateQueries({ queryKey: ['roadmap'] });
     },
@@ -335,16 +344,55 @@ export function useSetLabCredential() {
   });
 }
 
-/** Persist edited tweak values for one insight. */
-export function useUpdateTweaks() {
+/**
+ * What an apply actually did. Reaching here at all means the value was SAVED — a
+ * save failure rejects, so the caller's `onError` owns that case. `synced` says
+ * whether the re-fetch that has to follow succeeded, and `error` carries the
+ * adapter's own words when it did not.
+ */
+export interface ApplyTweaksResult {
+  synced: boolean;
+  error: string | null;
+}
+
+/**
+ * Save tweak values for one insight AND re-fetch, as ONE mutation (#235).
+ *
+ * The chain was open-coded on four surfaces — card, detail panel, funnel
+ * overview, funnel detail — and two of them drifted: `POST /lab/sync` answers
+ * **200 with a populated `failed[]`** when the adapter throws, so an `onSuccess`
+ * that never inspects the body reports "Custom range applied." over numbers from
+ * the window the user just left. Fusing the two calls makes that divergence
+ * unrepresentable: there is one success path and it has already read `results[0]`.
+ *
+ * It also removes the wasted pair of round trips. Invalidating after the PATCH
+ * refetched the whole board plus the insight while the cache still held the OLD
+ * window — two requests whose only visible effect was to paint the new range
+ * label over the old numbers. Only the sync invalidates now.
+ */
+export function useApplyTweaks() {
   const queryClient = useQueryClient();
   const api = useApi();
-  return useMutation({
-    mutationFn: ({ slug, tweaks }: { slug: string; tweaks: Record<string, string> }) =>
-      api.patch<{ insight: PublicManifest }>(`/lab/${slug}/tweaks`, { tweaks }),
-    onSuccess: (_data, { slug }) => {
-      queryClient.invalidateQueries({ queryKey: ['lab'] });
-      queryClient.invalidateQueries({ queryKey: ['lab', slug] });
+  return useMutation<ApplyTweaksResult, Error, { slug: string; tweaks: Record<string, string> }>({
+    mutationFn: async ({ slug, tweaks }) => {
+      // A rejection here means the value never landed — the caller says "could
+      // not save", not "saved but stale".
+      await api.patch<{ insight: PublicManifest }>(`/lab/${slug}/tweaks`, { tweaks });
+      const data = await api.post<{ results: SyncResult[]; failed: SyncResult[] }>(
+        '/lab/sync',
+        { slug, force: true },
+      );
+      const result = data.results[0];
+      return result?.status === 'failed'
+        ? { synced: false, error: result.error ?? 'unknown error' }
+        : { synced: true, error: null };
     },
+    // `onSettled`, not `onSuccess`: a rejection here can still mean the PATCH
+    // landed and only the sync POST died on the wire, and the surface must not
+    // keep rendering the pre-save tweak values. (A failed sync is not a
+    // rejection — it resolves with `synced: false` — but it too rewrites the
+    // cache, stamping `error`/`errorAt` while keeping the prior data.) The one
+    // wasted refetch is the rejected-PATCH path, which is the rare one.
+    onSettled: () => invalidateLab(queryClient),
   });
 }

@@ -1,21 +1,30 @@
 /**
- * Structural guard for issue #235: saving a tweak must RE-FETCH.
+ * Structural guard for issue #235 and its sequel: saving a tweak must RE-FETCH,
+ * and the surface must report what the re-fetch actually DID.
  *
- * A tweak can change the window a metric is computed over, so a surface that PATCHes
- * `/lab/:slug/tweaks` and stops there leaves the tile rendering the pre-tweak cache — the
- * control moved, the number didn't, and nothing on screen says so. The funnel views always
- * chained PATCH → sync; the generic card and the detail panel only PATCHed and toasted
- * "tweaks saved.", which is how "day filters don't work" got reported.
+ * A tweak can change the window a metric is computed over, so a surface that
+ * PATCHes `/lab/:slug/tweaks` and stops there leaves the tile rendering the
+ * pre-tweak cache — the control moved, the number didn't, and nothing on screen
+ * says so. That was #235.
  *
- * This is a source-shape test rather than a render test (this repo runs no DOM harness): for
- * every Lab surface that saves tweaks, the mutation's success path has to reach `sync.mutate`.
- * It fails loudly if a new surface adds a save without the re-fetch.
+ * The sequel, reported 2026-08-26 on the funnel overview ("custom range yükleme
+ * kısmı çok verimsiz ve çalışmıyor"): `POST /lab/sync` answers **200 with a
+ * populated `failed[]`** when the adapter throws. Two of the four surfaces
+ * chained the sync but never read the body, so a window that failed to load
+ * toasted "Custom range applied." over the numbers from the window the user had
+ * just left. Fixed by fusing the two calls into ONE mutation (`useApplyTweaks`),
+ * which makes the divergence unrepresentable — there is a single success path
+ * and it has already read `results[0]`.
+ *
+ * These are source-shape tests rather than render tests (this repo runs no DOM
+ * harness). They fail loudly if a new surface re-opens either gap.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dirname, '../../dashboard/src/components/lab');
+const HOOKS = join(import.meta.dirname, '../../dashboard/src/hooks/useLab.ts');
 
 const TWEAK_SAVERS = [
   'InsightCard.tsx',
@@ -24,15 +33,19 @@ const TWEAK_SAVERS = [
   'funnel/FunnelOverviewPage.tsx',
 ];
 
-/** The text from a `updateTweaks.mutate(` call to the end of its options object. Crude but
- *  sufficient: every call site in this codebase passes the options inline. */
+function read(file: string): string {
+  return readFileSync(join(ROOT, file), 'utf-8');
+}
+
+/** The text from an `applyTweaks.mutate(` call to the end of its options object.
+ *  Crude but sufficient: every call site in this codebase passes them inline. */
 function mutationBlocks(source: string): string[] {
   const out: string[] = [];
   let from = 0;
   for (;;) {
-    const at = source.indexOf('updateTweaks.mutate(', from);
+    const at = source.indexOf('applyTweaks.mutate(', from);
     if (at === -1) return out;
-    // Walk to the matching close paren so a second call site can't bleed into this block.
+    // Walk to the matching close paren so a second call site can't bleed in.
     let depth = 0;
     let i = source.indexOf('(', at);
     for (; i < source.length; i++) {
@@ -44,22 +57,43 @@ function mutationBlocks(source: string): string[] {
   }
 }
 
-describe('Lab tweak saves re-sync (#235)', () => {
+describe('the save and the re-fetch are ONE mutation (#235)', () => {
+  it('useApplyTweaks PATCHes then syncs inside a single mutationFn', () => {
+    const source = readFileSync(HOOKS, 'utf-8');
+    const at = source.indexOf('export function useApplyTweaks()');
+    expect(at, 'useLab must export useApplyTweaks').toBeGreaterThan(-1);
+    const body = source.slice(at, at + 2000);
+    expect(body).toContain('api.patch');
+    expect(body).toContain("'/lab/sync'");
+    // The mutation itself reads the per-insight row, so no caller can skip it.
+    expect(body).toContain("status === 'failed'");
+  });
+
+  it('no Lab surface can PATCH tweaks without the sync riding along', () => {
+    for (const file of TWEAK_SAVERS) {
+      const source = read(file);
+      // The old split hook is gone; a reintroduced bare PATCH is the regression.
+      expect(source, `${file} must not reach for the split tweak hook`).not.toContain('useUpdateTweaks');
+      expect(source, `${file} must not PATCH /tweaks directly`).not.toMatch(/api\.patch\([^)]*tweaks/);
+      expect(source, `${file} must save through useApplyTweaks`).toContain('useApplyTweaks');
+    }
+  });
+
   for (const file of TWEAK_SAVERS) {
-    it(`${file}: every updateTweaks.mutate chains a sync on success`, () => {
-      const source = readFileSync(join(ROOT, file), 'utf-8');
+    it(`${file}: every applyTweaks.mutate reads the sync OUTCOME`, () => {
+      const source = read(file);
       const blocks = mutationBlocks(source);
-      expect(blocks.length).toBeGreaterThan(0);
+      expect(blocks.length, `${file} saves no tweaks at all`).toBeGreaterThan(0);
       for (const block of blocks) {
         expect(block).toContain('onSuccess');
-        // Either the sync is inline in the success arm, or it is a named helper whose whole
-        // job is to run it (`runSync` / `applyTweaksAndSync`) — both are the same chain.
-        const chains = /sync\.mutate\(/.test(block) || /runSync\(/.test(block);
-        expect(chains, `no re-fetch after saving tweaks in ${file}`).toBe(true);
+        // Claiming success without destructuring `synced` is exactly the bug.
+        expect(block, `a save in ${file} claims success without reading \`synced\``).toContain('synced');
       }
     });
   }
+});
 
+describe('the RangeControl hands off to a save that re-syncs', () => {
   /** The `onApply={...}` handler a surface hands to its RangeControl. */
   function rangeHandler(source: string): string | null {
     const at = source.indexOf('<RangeControl');
@@ -79,25 +113,24 @@ describe('Lab tweak saves re-sync (#235)', () => {
 
   // The RangeControl writes nothing itself — it hands the tweak patch back to the
   // surface. That indirection is exactly where a "the pills don't refresh the
-  // chart" regression would hide, so the walk follows the handoff: every mount
-  // must name a handler, and that handler must be one of the saves checked above.
+  // chart" regression would hide, so the walk follows the handoff.
   for (const file of TWEAK_SAVERS) {
-    it(`${file}: the RangeControl hands off to a tweak save that re-syncs`, () => {
-      const source = readFileSync(join(ROOT, file), 'utf-8');
+    it(`${file}: the mount names a handler that applies`, () => {
+      const source = read(file);
       expect(source, `${file} must mount the shared RangeControl`).toContain('<RangeControl');
       const handler = rangeHandler(source);
       expect(handler, `${file}: RangeControl needs an onApply={handler}`).toBeTruthy();
       const body = handlerBody(source, handler!);
       expect(body, `${file}: onApply handler "${handler}" is not defined in this file`).not.toBe('');
-      const saves = /updateTweaks\.mutate\(/.test(body) || /applyTweaksAndSync\(/.test(body);
-      expect(saves, `${file}: a range change must PATCH the tweaks (#235)`).toBe(true);
+      const saves = /applyTweaks\.mutate\(/.test(body) || /applyTweaksAndSync\(/.test(body) || /applyAndReport\(/.test(body);
+      expect(saves, `${file}: a range change must apply the tweaks (#235)`).toBe(true);
     });
   }
 
-  it('the shared helper names the outcome instead of claiming a refresh that failed', () => {
-    for (const file of ['InsightCard.tsx', 'InsightDetailPanel.tsx']) {
-      const source = readFileSync(join(ROOT, file), 'utf-8');
-      expect(source).toContain('tweaks saved, but the refresh failed');
+  it('every surface names the outcome instead of claiming a refresh that failed', () => {
+    for (const file of TWEAK_SAVERS) {
+      expect(read(file), `${file} needs a distinct message for a failed re-fetch`)
+        .toMatch(/but the re-?fetch failed|but the refresh failed/);
     }
   });
 
@@ -114,5 +147,34 @@ describe('Lab tweak saves re-sync (#235)', () => {
     // And it stays a slide-over render: no `routed` flag means the guarded
     // InsightCard/InsightDetailPanel are the ONLY surfaces that save its tweaks.
     expect(entry![1]).not.toContain('routed');
+  });
+});
+
+describe('a failed window is visible on the page, not only in a toast', () => {
+  // `syncInsight`'s failure path KEEPS the prior funnel payload, so the table
+  // keeps answering for a window the control no longer shows. A toast fades; the
+  // mismatch does not.
+  for (const file of ['funnel/FunnelOverviewPage.tsx', 'funnel/FunnelDetailPage.tsx']) {
+    it(`${file} renders cache.error`, () => {
+      const source = read(file);
+      expect(source).toContain('cache?.error');
+      expect(source).toContain('Last fetch failed');
+    });
+  }
+});
+
+describe('clearing a custom window returns to the preset it MASKED', () => {
+  // Writing from/to does not clear the `range` enum, so the manifest still holds
+  // the user's preset. Hardcoding a fallback (`last_30_days`) instead threw
+  // `Tweak "range" must be one of: …` on every curated enum that omits it — the
+  // Clear button was dead and the custom window could not be escaped.
+  it('RangeControl clears with active.masked, never a hardcoded range', () => {
+    const source = read('RangeControl.tsx');
+    const at = source.indexOf('const clearCustom = ');
+    expect(at, 'RangeControl must define clearCustom').toBeGreaterThan(-1);
+    const body = source.slice(at, source.indexOf('\n\n', at));
+    expect(body).toContain('active.masked');
+    expect(body, 'clearCustom must not hardcode a preset the manifest may reject')
+      .not.toContain('ENGINE_FALLBACK_RANGE');
   });
 });

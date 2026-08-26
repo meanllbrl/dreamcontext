@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { InsightSummary } from '../../hooks/useLab';
-import { useLabInsight, useSyncInsight, useUpdateTweaks } from '../../hooks/useLab';
+import { useApplyTweaks, useLabInsight, useSyncInsight } from '../../hooks/useLab';
 import { TweakEditor } from './TweakEditor';
 import { RangeControl, nonWindowTweaks } from './RangeControl';
 import { cardSpan, chartEntry } from './chartRegistry';
@@ -48,7 +48,7 @@ export function InsightCard({
   const [showTweaks, setShowTweaks] = useState(false);
   const detail = useLabInsight(summary.slug);
   const sync = useSyncInsight();
-  const updateTweaks = useUpdateTweaks();
+  const applyTweaks = useApplyTweaks();
 
   const cache = detail.data?.cache;
   const series = cache?.series ?? [];
@@ -68,26 +68,28 @@ export function InsightCard({
 
   const handleRefresh = () => runSync('refreshed.', 'refresh failed');
 
-  const handleSaveTweaks = (values: Record<string, string>) => {
-    updateTweaks.mutate({ slug: summary.slug, tweaks: values }, {
-      // Data follows the control (#235). A tweak can change the WINDOW the number is
-      // computed over, so saving it and leaving the tile on the pre-tweak cache shows a
-      // number that no longer answers the question the card is now asking — and nothing on
-      // the tile says so. The funnel views have always chained PATCH → sync for this reason;
-      // the generic card only PATCHed and toasted "saved".
-      onSuccess: () => runSync('tweaks saved, refreshed.', 'tweaks saved, but the refresh failed'),
+  /**
+   * Data follows the control (#235). A tweak can change the WINDOW the number is
+   * computed over, so saving it and leaving the tile on the pre-tweak cache shows
+   * a number that no longer answers the question the card is now asking — and
+   * nothing on the tile says so. `useApplyTweaks` fuses the save and the
+   * re-fetch so the two cannot come apart on any surface.
+   */
+  const applyAndReport = (values: Record<string, string>, okMessage: string, failPrefix: string) => {
+    applyTweaks.mutate({ slug: summary.slug, tweaks: values }, {
+      onSuccess: ({ synced, error }) => onToast(
+        synced ? `${summary.title}: ${okMessage}` : `${summary.title}: ${failPrefix} — ${error}`,
+      ),
       onError: (err) => onToast(`${summary.title}: could not save tweaks — ${(err as Error).message}`),
     });
   };
 
-  /** The RangeControl changes the WINDOW the number is computed over — the same
-   *  PATCH → sync chain the tweak editor uses (#235). */
-  const handleApplyRange = (values: Record<string, string>, label: string) => {
-    updateTweaks.mutate({ slug: summary.slug, tweaks: values }, {
-      onSuccess: () => runSync(`${label} applied.`, `${label} saved, but the refresh failed`),
-      onError: (err) => onToast(`${summary.title}: ${label} failed — ${(err as Error).message}`),
-    });
-  };
+  const handleSaveTweaks = (values: Record<string, string>) =>
+    applyAndReport(values, 'tweaks saved, refreshed.', 'tweaks saved, but the refresh failed');
+
+  /** The RangeControl changes the WINDOW the number is computed over — same chain. */
+  const handleApplyRange = (values: Record<string, string>, label: string) =>
+    applyAndReport(values, `${label} applied.`, `${label} saved, but the refresh failed`);
 
   const editableTweaks = nonWindowTweaks(summary.tweaks);
 
@@ -151,7 +153,7 @@ export function InsightCard({
           <RangeControl
             tweaks={summary.tweaks}
             compact
-            disabled={updateTweaks.isPending || sync.isPending}
+            disabled={applyTweaks.isPending || sync.isPending}
             onApply={handleApplyRange}
           />
         </div>
@@ -182,7 +184,7 @@ export function InsightCard({
           {showTweaks && (
             <TweakEditor
               tweaks={editableTweaks}
-              saving={updateTweaks.isPending}
+              saving={applyTweaks.isPending}
               onSave={handleSaveTweaks}
             />
           )}

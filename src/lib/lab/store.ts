@@ -612,6 +612,18 @@ export function writeInsightTweaks(
     }
   }
 
+  // An inverted custom window is not a window. `resolveTweaks` clamps spanDays
+  // to 0 and hands `from > to` straight to the adapter, where every source
+  // answers differently — empty rows, a provider error, or (worst) a silently
+  // swapped range. Reject it at the one place a window is written, and judge the
+  // MERGED pair: a PATCH may carry only one half.
+  const stored = (key: 'from' | 'to'): string => String(byKey.get(key)?.value ?? '').trim();
+  const mergedFrom = next.has('from') ? next.get('from')!.trim() : stored('from');
+  const mergedTo = next.has('to') ? next.get('to')!.trim() : stored('to');
+  if (mergedFrom && mergedTo && mergedFrom > mergedTo) {
+    throw new LabError(`Tweak window is inverted: "from" (${mergedFrom}) is after "to" (${mergedTo}).`);
+  }
+
   const nextTweaks: TweakDecl[] = manifest.tweaks.map((t) =>
     next.has(t.key) ? { ...t, value: next.get(t.key)! } : t,
   );

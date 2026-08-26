@@ -176,6 +176,11 @@ export default async function (ctx) {
   },
   {
     slug: 'activation-funnels', title: 'Activation funnels', render: 'funnel',
+    // `lab create --render funnel` seeds a CURATED range enum of its own —
+    // 7/28/90, which omits the engine's `last_30_days` default. That omission is
+    // load-bearing for check 5b: a control that clears a custom window with a
+    // hardcoded default throws `Tweak "range" must be one of: …` on exactly this
+    // shape, which is what the real CalBuddy funnels insight hit.
     script: `export default async function (ctx) {
   const { fromISO, toISO } = ctx.resolvedTweaks.range;
   void fromISO; void toISO;
@@ -458,6 +463,88 @@ async function main() {
     ok('no raw range key leaks into the funnel page either',
       !/last_\d+_(day|week|month|year)s?/.test(await page.locator('.funnel-ovw').innerText()));
     await shoot('funnel-overview');
+
+    // ── 5b. CLEAR returns to the preset the custom window MASKED ────────────
+    // The reported break: `clearCustom` wrote a hardcoded `last_30_days`, which
+    // this insight's curated enum rejects — Clear threw, and because from/to
+    // out-rank the enum the custom window could not be escaped at all.
+    const CURATED = ['last_7_days', 'last_28_days', 'last_90_days'];
+    await page.locator('.funnel-ovw-toolbar .lab-range-pill').last().click();
+    await page.waitForTimeout(300);
+    ok('a custom window offers a Clear', await page.locator('.lab-range-pop-clear').count() === 1);
+    await page.locator('.lab-range-pop-clear').click();
+    await page.waitForTimeout(2500);
+    const clearToast = await page.locator('.lab-toast').count() ? await page.locator('.lab-toast').innerText() : '';
+    ok('clearing a custom window reports it applied, not rejected',
+      /applied/i.test(clearToast) && !/must be one of/i.test(clearToast), clearToast);
+    const clearedRange = manifestTweak('activation-funnels', 'range');
+    ok('Clear writes a preset the curated enum ACCEPTS', CURATED.includes(clearedRange), clearedRange);
+    ok('Clear un-pins the custom window in the manifest',
+      manifestTweak('activation-funnels', 'from') === '' && manifestTweak('activation-funnels', 'to') === '',
+      `${manifestTweak('activation-funnels', 'from')} → ${manifestTweak('activation-funnels', 'to')}`);
+    const clearedParams = new URL(page.url()).searchParams;
+    ok('Clear drops from/to from the URL and states the preset',
+      clearedParams.get('from') === null && clearedParams.get('to') === null && clearedParams.get('range') === clearedRange,
+      page.url());
+
+    // ── 5c. A quick window loads in ONE click ───────────────────────────────
+    await page.locator('.funnel-ovw-toolbar .lab-range-pill').last().click();
+    await page.waitForTimeout(300);
+    const quick = page.locator('.lab-range-pop-quick .lab-range-pill');
+    ok('the custom popover offers quick windows', await quick.count() === 4, String(await quick.count()));
+    await shoot('range-popover');
+    await quick.filter({ hasText: 'This month' }).click();
+    await page.waitForTimeout(2500);
+    const quickParams = new URL(page.url()).searchParams;
+    ok('one click on a quick window applies a custom from→to',
+      !!quickParams.get('from') && !!quickParams.get('to') && quickParams.get('range') === null, page.url());
+    ok('the quick window starts on the 1st of the month',
+      /-01$/.test(quickParams.get('from') ?? ''), quickParams.get('from'));
+
+    // ── 5d. An INVERTED window is never offered ─────────────────────────────
+    // The engine rejects from > to, so Apply must not hand one over.
+    await page.locator('.funnel-ovw-toolbar .lab-range-pill').last().click();
+    await page.waitForTimeout(300);
+    await page.locator('.lab-range-input input').first().fill('2026-03-20');
+    await page.locator('.lab-range-input input').nth(1).fill('2026-03-01');
+    await page.waitForTimeout(200);
+    ok('Apply is disabled on an inverted window', await page.locator('.lab-range-pop-apply').isDisabled());
+    ok('the popover says WHY', /after the end date/i.test(await page.locator('.lab-range-pop-hint').innerText()),
+      await page.locator('.lab-range-pop-hint').innerText());
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+
+    // ── 5e. The apply costs ONE board read and ONE insight read ─────────────
+    // It used to cost two of each: the PATCH invalidated the cache before the
+    // sync had written anything, so the wasted pair only repainted the new range
+    // label over the old numbers.
+    const calls = [];
+    const countCalls = (req) => {
+      if (req.method() !== 'GET') return;
+      // Exact paths only: /api/lab/credentials and /api/lab/sync-jobs/current
+      // are different queries and must not be miscounted as the insight read.
+      const path = new URL(req.url()).pathname;
+      if (path === '/api/lab' || path === '/api/lab/activation-funnels') calls.push(path);
+    };
+    page.on('request', countCalls);
+    await page.locator('.funnel-ovw-toolbar .lab-range-pill', { hasText: 'Last 7 days' }).click();
+    await page.waitForTimeout(3000);
+    page.off('request', countCalls);
+    const listReads = calls.filter((c) => c === '/api/lab').length;
+    const showReads = calls.filter((c) => c === '/api/lab/activation-funnels').length;
+    // The insight read is the expensive one — it was fetched TWICE, and it is the
+    // response that used to carry the snapshot trail.
+    ok('one range change reads the insight exactly once', showReads === 1, `${showReads} × /api/lab/:slug`);
+    ok('one range change reads the board list at most once', listReads <= 1, `${listReads} × /api/lab`);
+
+    // ── 5f. The insight payload carries no snapshot trail ───────────────────
+    const showBody = await page.evaluate(async () => {
+      const r = await fetch('/api/lab/activation-funnels');
+      return await r.text();
+    });
+    ok('GET /api/lab/:slug ships no funnelHistory', !showBody.includes('funnelHistory'),
+      `${Math.round(showBody.length / 1024)}KB`);
+    ok('…but still ships the deltas derived from it', showBody.includes('funnelPrev'));
 
     // ── 6. funnel overview: the column picker (derived step columns) ────────
     const headers = () => page.locator('.funnel-ovw-table thead th');
