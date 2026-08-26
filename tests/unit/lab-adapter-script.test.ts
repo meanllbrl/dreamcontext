@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { customScriptAdapter, scriptFilePath } from '../../src/lib/lab/adapters/custom-script.js';
-import { LabError, type AdapterContext, type InsightManifest, type RawSeries } from '../../src/lib/lab/types.js';
+import { LabError, type AdapterContext, type InsightManifest, type RawPayloadEnvelope, type RawSeries } from '../../src/lib/lab/types.js';
 
 let root: string;
 
@@ -195,5 +195,94 @@ describe('custom-script adapter — host isolation (#242)', () => {
     const err = await customScriptAdapter.fetch(ctx(scriptManifest('scripts/bigint.mjs'))).catch((e) => e);
     expect(err).toBeInstanceOf(LabError);
     expect((err as Error).message).toContain('not JSON-serializable');
+  });
+});
+
+// ── app/v1 + dataset/v1 gatekeeping (T2) ────────────────────────────────────
+//
+// custom-script.ts is the ONLY place that hands a script's raw return value
+// to the engine — without these checks `fetched.app` is always undefined for
+// script-authored insights (the envelope was rebuilt by hand, dropping any
+// field it didn't name) and the app/v1 bridge is dead on arrival.
+describe('custom-script adapter — app/v1 + dataset/v1 gatekeeping (T2)', () => {
+  it('rejects a bare { kind: "app/v1" } return before the generic array error can steal it', async () => {
+    writeFileSync(
+      join(root, 'lab', 'scripts', 'bare-app.mjs'),
+      'export default async () => ({ kind: "app/v1", entry: "a", pages: [{ id: "a", title: "A", html: "<div>x</div>" }] });\n',
+      'utf-8',
+    );
+    const err = await customScriptAdapter.fetch(ctx(scriptManifest('scripts/bare-app.mjs'))).catch((e) => e);
+    expect(err).toBeInstanceOf(LabError);
+    expect((err as Error).message).toMatch(/data is mandatory/);
+    expect((err as Error).message).toContain('{ data, app }');
+  });
+
+  it('passes a bare dataset/v1 payload through unchanged, beside funnel/matrix', async () => {
+    writeFileSync(
+      join(root, 'lab', 'scripts', 'bare-dataset.mjs'),
+      'export default async () => ({ kind: "dataset/v1", datasets: [{ key: "a", dims: [{ key: "x" }], rows: [{ d: { x: "1" }, v: 1 }] }] });\n',
+      'utf-8',
+    );
+    const result = await customScriptAdapter.fetch(ctx(scriptManifest('scripts/bare-dataset.mjs')));
+    expect(result).toEqual({
+      kind: 'dataset/v1',
+      datasets: [{ key: 'a', dims: [{ key: 'x' }], rows: [{ d: { x: '1' }, v: 1 }] }],
+    });
+  });
+
+  it('copies the envelope `app` field through after a shape check — this is the fix', async () => {
+    writeFileSync(
+      join(root, 'lab', 'scripts', 'envelope-app.mjs'),
+      'export default async () => ({'
+      + ' data: [{ name: "m", points: [{ t: "2026-01-01", v: 1 }] }],'
+      + ' app: { kind: "app/v1", entry: "overview", pages: [{ id: "overview", title: "Overview", html: "<div>x</div>" }] },'
+      + ' });\n',
+      'utf-8',
+    );
+    const result = await customScriptAdapter.fetch(ctx(scriptManifest('scripts/envelope-app.mjs'))) as RawPayloadEnvelope;
+    expect(result.data).toEqual([{ name: 'm', points: [{ t: '2026-01-01', v: 1 }] }]);
+    expect(result.app).toEqual({
+      kind: 'app/v1',
+      entry: 'overview',
+      pages: [{ id: 'overview', title: 'Overview', html: '<div>x</div>' }],
+    });
+  });
+
+  it('accepts a dataset/v1 `data` half in the envelope without coercing it to series', async () => {
+    writeFileSync(
+      join(root, 'lab', 'scripts', 'envelope-dataset-data.mjs'),
+      'export default async () => ({'
+      + ' data: { kind: "dataset/v1", datasets: [{ key: "a", dims: [{ key: "x" }], rows: [{ d: { x: "1" }, v: 1 }] }] },'
+      + ' });\n',
+      'utf-8',
+    );
+    const result = await customScriptAdapter.fetch(ctx(scriptManifest('scripts/envelope-dataset-data.mjs'))) as RawPayloadEnvelope;
+    expect(result.data).toEqual({
+      kind: 'dataset/v1',
+      datasets: [{ key: 'a', dims: [{ key: 'x' }], rows: [{ d: { x: '1' }, v: 1 }] }],
+    });
+  });
+
+  it('rejects a non-app-shaped envelope `app` field', async () => {
+    writeFileSync(
+      join(root, 'lab', 'scripts', 'bad-app-shape.mjs'),
+      'export default async () => ({ data: [{ name: "m", points: [] }], app: { foo: 1 } });\n',
+      'utf-8',
+    );
+    const err = await customScriptAdapter.fetch(ctx(scriptManifest('scripts/bad-app-shape.mjs'))).catch((e) => e);
+    expect(err).toBeInstanceOf(LabError);
+    expect((err as Error).message).toContain('`app` must be a { kind: "app/v1", … } object');
+  });
+
+  it('coerceSeries names dataset/v1 and { data, app? } in its error message', async () => {
+    writeFileSync(
+      join(root, 'lab', 'scripts', 'not-a-series.mjs'),
+      'export default async () => ({ foo: 1 });\n',
+      'utf-8',
+    );
+    const err = await customScriptAdapter.fetch(ctx(scriptManifest('scripts/not-a-series.mjs'))).catch((e) => e);
+    expect(err).toBeInstanceOf(LabError);
+    expect((err as Error).message).toContain('dataset/v1');
+    expect((err as Error).message).toContain('{ data, app? }');
   });
 });

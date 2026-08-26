@@ -20,14 +20,26 @@ import {
   matrixToSeries,
   parseMatrixSet,
 } from './matrix.js';
+import { parseAppSpec } from './app.js';
 import {
+  appendDatasetHistory,
+  datasetLatest,
+  datasetToSeries,
+  makeDatasetSnapshot,
+  parseDatasetBundle,
+} from './dataset.js';
+import {
+  isRawDatasetBundle,
   isRawFunnelSet,
   isRawMatrixSet,
   isRawPayloadEnvelope,
   LabError,
   MAX_HTML_BYTES,
   type Agg,
+  type AppCacheEntry,
   type Binding,
+  type DatasetCacheEntry,
+  type DatasetSnapshot,
   type FunnelCacheEntry,
   type FunnelSnapshot,
   type Granularity,
@@ -35,6 +47,7 @@ import {
   type InsightManifest,
   type MatrixCacheEntry,
   type MatrixSnapshot,
+  type RawDatasetBundle,
   type RawFunnelSet,
   type RawMatrixSet,
   type RawSeries,
@@ -265,11 +278,16 @@ export async function syncInsight(
       fetchImpl: opts.fetchImpl,
     });
 
-    // ── html/v1 hybrid: unwrap the optional envelope. `data` carries the
-    // numbers exactly as a bare return would; `html` is an optional capped
-    // card body — over-cap fails the sync LOUDLY, never truncates. ──
+    // ── html/v1 hybrid + app/v1: unwrap the optional envelope. `data` carries
+    // the numbers exactly as a bare return would; `html` is an optional capped
+    // single-page card body (over-cap fails the sync LOUDLY, never truncates);
+    // `app` is an optional capped multi-page body — ONE body contract per
+    // insight, never both. `app`'s caps/rejects live in `parseAppSpec`
+    // (app.ts) — this is just the wiring point, mirroring how matrix/funnel
+    // parsing is called from here rather than reimplemented here. ──
     let html: string | undefined;
-    let result: RawSeries[] | RawFunnelSet | RawMatrixSet;
+    let app: AppCacheEntry | undefined;
+    let result: RawSeries[] | RawFunnelSet | RawMatrixSet | RawDatasetBundle;
     if (isRawPayloadEnvelope(fetched)) {
       if (typeof fetched.html === 'string' && fetched.html.length > 0) {
         const bytes = Buffer.byteLength(fetched.html, 'utf-8');
@@ -277,6 +295,17 @@ export async function syncInsight(
           throw new LabError(`Script html body is ${bytes} bytes — over the ${MAX_HTML_BYTES}-byte cap. Slim the markup (the data is cached separately; html is presentation only).`);
         }
         html = fetched.html;
+      }
+      if (fetched.app !== undefined) {
+        if (html !== undefined) {
+          throw new LabError('An insight declares ONE body contract — `app` or `html`, not both. Drop whichever body the insight is migrating away from.');
+        }
+        if (manifest.render !== 'app') {
+          console.warn(`[lab] ${slug}: adapter returned an app spec but render is "${manifest.render}" — set \`render: app\` in the manifest for the routed multi-page UI.`);
+        }
+        const parsedApp = parseAppSpec(fetched.app);
+        for (const notice of parsedApp.notices) console.warn(`[lab] ${slug}: ${notice}`);
+        app = { spec: parsedApp.spec, notices: parsedApp.notices, range: resolvedTweaks.range };
       }
       result = fetched.data;
     } else {
@@ -290,6 +319,8 @@ export async function syncInsight(
     let funnelHistory: FunnelSnapshot[] | undefined;
     let matrix: MatrixCacheEntry | undefined;
     let matrixHistory: MatrixSnapshot[] | undefined;
+    let datasets: DatasetCacheEntry | undefined;
+    let datasetHistory: DatasetSnapshot[] | undefined;
 
     if (isRawFunnelSet(result)) {
       // ── Funnel-set payload: validate + cap; NO time rollup (steps aren't a
@@ -329,6 +360,27 @@ export async function syncInsight(
         prior?.matrixHistory,
         makeMatrixSnapshot(parsed.set, resolvedTweaks.range, new Date(nowMs).toISOString()),
       );
+    } else if (isRawDatasetBundle(result)) {
+      // ── Dataset-bundle payload: validate + cap; NO time rollup (a bundle is
+      // a dimensional snapshot, like matrix/v1). No render-mismatch warning —
+      // unlike funnel/matrix, dataset/v1 is RENDER-AGNOSTIC (types.ts): it is
+      // typically an `app` insight's data half, but any render may return one
+      // and get its legacy series synthesized from the primary dataset. ──
+      const parsed = parseDatasetBundle(result);
+      for (const notice of parsed.notices) console.warn(`[lab] ${slug}: ${notice}`);
+      series = datasetToSeries(parsed.bundle);
+      granularity = 'daily';
+      // `latest` comes from the PRIMARY dataset's total.v ONLY — finite or
+      // null, never a fabrication (matrixLatest's contract, one level up).
+      latest = datasetLatest(parsed.bundle);
+      if (latest === null && manifest.binding) {
+        console.warn(`[lab] ${slug}: dataset bundle has no finite primary \`total.v\` — the KR binding to "${manifest.binding.objective}" gets nothing this sync (return a \`total\` on the primary dataset to feed it).`);
+      }
+      datasets = { bundle: parsed.bundle, notices: parsed.notices, range: resolvedTweaks.range };
+      datasetHistory = appendDatasetHistory(
+        prior?.datasetHistory,
+        makeDatasetSnapshot(parsed.bundle, resolvedTweaks.range, new Date(nowMs).toISOString()),
+      );
     } else {
       const rolled = rollupSeries(result, resolvedTweaks.spanDays, aggFor(manifest));
       series = rolled.series;
@@ -364,10 +416,16 @@ export async function syncInsight(
       cache.matrix = matrix;
       cache.matrixHistory = matrixHistory;
     }
-    // The html body is written ALONGSIDE the data (never instead of it), and a
-    // run without one clears any prior body — stale presentation is worse than
-    // none. TTL/history/latest semantics are untouched by its presence.
+    if (datasets) {
+      cache.datasets = datasets;
+      cache.datasetHistory = datasetHistory;
+    }
+    // The html/app body is written ALONGSIDE the data (never instead of it),
+    // and a run without one clears any prior body — stale presentation is
+    // worse than none. TTL/history/latest semantics are untouched by its
+    // presence (the html/v1 rule, extended to app/v1 the same way).
     if (html !== undefined) cache.html = html;
+    if (app) cache.app = app;
     writeCache(contextRoot, slug, cache);
 
     if (manifest.binding) writeBinding(contextRoot, slug, manifest.binding, latest);
@@ -400,12 +458,16 @@ export async function syncInsight(
         error: message,
       }),
     };
-    // Preserve the prior funnel/matrix snapshots + trails — same keep-prior contract as series.
+    // Preserve the prior funnel/matrix/dataset snapshots + trails, and the
+    // prior html/app body — same keep-prior contract as series.
     if (prior?.funnel) failCache.funnel = prior.funnel;
     if (prior?.funnelHistory) failCache.funnelHistory = prior.funnelHistory;
     if (prior?.matrix) failCache.matrix = prior.matrix;
     if (prior?.matrixHistory) failCache.matrixHistory = prior.matrixHistory;
+    if (prior?.datasets) failCache.datasets = prior.datasets;
+    if (prior?.datasetHistory) failCache.datasetHistory = prior.datasetHistory;
     if (prior?.html !== undefined) failCache.html = prior.html;
+    if (prior?.app) failCache.app = prior.app;
     writeCache(contextRoot, slug, failCache);
 
     return { slug, status: 'failed', error: message };

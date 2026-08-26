@@ -310,56 +310,143 @@ export default async function fetchFunnels(ctx) {
 `;
 }
 
-/** The documented matrix-payload script scaffold (`lab create --render breakdown --adapter script`). */
-export function matrixScriptTemplate(slug: string): string {
+/** The documented app-payload script scaffold (`lab create --render app --adapter script`). */
+export function appScriptTemplate(slug: string): string {
+  // Every page's `html` below is written as an ESCAPED backtick template
+  // literal (\` ... \`) so it survives into the generated .mjs file AS a
+  // template literal — that lets the embedded <script> use single- AND
+  // double-quoted JS strings freely (e.g. HTML attributes) with no nested
+  // escaping at all. Only backticks and `${` need escaping here; everything
+  // else in the page bodies is copied through verbatim.
   return `/**
- * Matrix adapter for the "${slug}" insight.
+ * App adapter for the "${slug}" insight.
  *
- * Return ONE \`matrix/v1\` object (not Series[]): a DIMENSIONAL snapshot — a
- * pivot over 1-3 dims, one row per dim-value combination. The engine validates
- * it, applies caps (≤3 dims, top-8 values per dim + "Other", ≤400 rows, ≤200KB
- * — every truncation is a loud notice, and doctor flags surviving violations),
- * synthesizes legacy series from the rows, and appends a DATED snapshot to the
- * history trail on every sync — that trail is the breakdown's time axis, so a
- * daily sync cadence gives you a daily-navigable report. Runs LOCALLY with your
- * credentials (ctx.credentials) — same trust level as the repo; the script-hash
- * tripwire warns when this file changes.
+ * Return { data, app } — TWO INDEPENDENT halves, never conflate them:
+ *
+ *   data — a \`dataset/v1\` bundle (or Series[] / a funnel-set / a matrix): the
+ *          QUERYABLE numbers. MANDATORY. Feeds \`latest\`, KR bindings,
+ *          \`lab show\`, \`lab query\`, and the Rule-13 read ladder.
+ *   app  — an \`app/v1\` spec: an ordered list of PAGES, each a sandboxed html
+ *          fragment. The dashboard draws every page in a network-less
+ *          sandboxed iframe (no fetch, no beacon — see labHtmlKit.ts) and
+ *          wires it to the host over a postMessage bridge, so a page's own
+ *          inline script can call:
+ *
+ *            lab.navigate(pageId, params)   // switch page / deep-link
+ *            lab.data(datasetKey)           // ask the HOST for a named
+ *                                            // dataset from \`data\` above —
+ *                                            // never embed numbers twice
+ *            lab.onRoute(callback)          // react to navigation
+ *            lab.page / lab.params          // this page's id + params
+ *
+ * Style with the lk-* class kit (lk-title/value/label/stat/chip/table/bar-row/
+ * low-sample) — don't write your own CSS; the kit resolves the current
+ * theme's tokens for you, light and dark. Runs LOCALLY with your credentials
+ * (ctx.credentials) — same trust level as the repo; the script-hash tripwire
+ * warns when this file changes.
  *
  * ctx = { manifest, resolvedTweaks: { values, range: { fromISO, toISO }, spanDays },
  *         credentials }
  * Use ctx.resolvedTweaks.range to scope your query — the dashboard's date-range
  * control writes the \`range\` tweak and re-syncs.
  */
-export default async function fetchMatrix(ctx) {
+export default async function fetchApp(ctx) {
   const { fromISO, toISO } = ctx.resolvedTweaks.range;
   void fromISO; void toISO; // scope your real query with these
 
   return {
-    kind: 'matrix/v1',
+    data: {
+      kind: 'dataset/v1',
 
-    // 1-3 dimensions, ORDER MATTERS: dims[0] = pivot rows, dims[1] = columns,
-    // dims[2] = filter chips.
-    dims: [
-      { key: 'funnel', label: 'Funnel' },
-      { key: 'language', label: 'Language' },
-    ],
+      // Dataset key lab.data() / lab query resolve to when a page or call
+      // names no key. Give every page its own dataset key when they differ.
+      primary: 'breakdown',
+      datasets: [
+        {
+          key: 'breakdown',
+          // 1-3 dimensions, same grammar as matrix/v1: dims[0] = pivot rows,
+          // dims[1] = columns, dims[2] = filter chips.
+          dims: [
+            { key: 'funnel', label: 'Funnel' },
+            { key: 'language', label: 'Language' },
+          ],
+          // One row per dim-value combination. v = the metric value; n
+          // (optional) = the sample size behind it (rows with n < 30 render
+          // de-emphasized).
+          rows: [
+            { d: { funnel: 'F3000', language: 'TR' }, v: 119000, n: 4200 },
+            { d: { funnel: 'F3000', language: 'EN' }, v: 84000, n: 3100 },
+            { d: { funnel: 'F4000', language: 'TR' }, v: 52000, n: 1800 },
+          ],
+          // Optional grand total — feeds the card value and any KR binding.
+          total: { v: 255000, n: 9100 },
+        },
+      ],
+    },
 
-    // One row per dim-value combination. v = the metric value; n (optional) =
-    // the sample size behind it (rows with n < 30 render de-emphasized);
-    // prev (optional) = previous equal-length period value — wins over the
-    // engine's history-derived delta.
-    rows: [
-      { d: { funnel: 'F3000', language: 'TR' }, v: 119000, n: 4200 },
-      { d: { funnel: 'F3000', language: 'EN' }, v: 84000, n: 3100 },
-      { d: { funnel: 'F4000', language: 'TR' }, v: 52000, n: 1800 },
-    ],
+    app: {
+      kind: 'app/v1',
+      entry: 'overview', // page shown at /lab/${slug}
+      // card: 'overview', // optional — the CARD body's page, defaults to entry
 
-    // Optional grand total — feeds the card value and any KR binding. Without
-    // it the insight has no \`latest\` (you'll get a loud warning if bound).
-    total: { v: 255000, n: 9100 },
-
-    // Optional value unit override (else the manifest's \`unit\`).
-    // unit: 'USD',
+      pages: [
+        {
+          id: 'overview',
+          title: 'Overview',
+          dataset: 'breakdown', // this page's lab.data() default
+          html: \`
+            <div class="lk-stat">
+              <span class="lk-label">Total</span>
+              <span class="lk-value" id="total">—</span>
+            </div>
+            <button class="lk-chip" id="open-detail" type="button" style="margin-top:8px;cursor:pointer;border:none;">
+              View breakdown →
+            </button>
+            <script>
+              lab.data().then(function (ds) {
+                document.getElementById('total').textContent = ds.total ? String(ds.total.v) : '—';
+              });
+              document.getElementById('open-detail').addEventListener('click', function () {
+                lab.navigate('detail');
+              });
+            </script>
+          \`,
+        },
+        {
+          id: 'detail',
+          title: 'Breakdown',
+          dataset: 'breakdown',
+          html: \`
+            <table class="lk-table" id="rows"></table>
+            <p class="lk-muted" style="margin-top:10px;"><a href="#" id="back">← Overview</a></p>
+            <script>
+              lab.data().then(function (ds) {
+                var rows = ds.rows.map(function (r) {
+                  return '<tr><td>' + r.d.funnel + '</td><td>' + r.d.language + '</td><td class="lk-num">' + r.v + '</td></tr>';
+                }).join('');
+                document.getElementById('rows').innerHTML =
+                  '<tr><th>Funnel</th><th>Language</th><th class="lk-num">Value</th></tr>' + rows;
+              });
+              document.getElementById('back').addEventListener('click', function (e) {
+                e.preventDefault();
+                lab.navigate('overview');
+              });
+            </script>
+          \`,
+        },
+        {
+          id: 'about',
+          title: 'About',
+          html: \`
+            <div class="lk-callout">
+              This app has three pages — edit lab/scripts/${slug}.mjs to change them.
+              Every page reads data via lab.data(); nothing is fetched from the network
+              inside the sandboxed body.
+            </div>
+          \`,
+        },
+      ],
+    },
   };
 }
 `;
@@ -413,6 +500,13 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
 
   const adapter = input.adapter ?? 'http';
   const render = input.render ?? 'number';
+  // matrix/v1 is DEPRECATED as an authoring path (2026-08-26): existing
+  // `breakdown` insights keep rendering — this is docs/scaffold steering
+  // only, never a hard block, so a grandfathered manifest can still be
+  // recreated or edited without erroring.
+  if (render === 'breakdown') {
+    console.warn('[lab] matrix/v1 is deprecated — existing breakdown insights keep rendering; new dimensional insights should use --render app. No script template scaffolded.');
+  }
   const source: Record<string, unknown> = adapter === 'script'
     ? { adapter: 'script', script: { file: `scripts/${slug}.mjs` } }
     : {
@@ -426,10 +520,10 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
         },
       };
 
-  // Funnel/breakdown insights ship with the overview date-range control pre-
-  // declared — the presets the dashboard's range picker offers (custom = from/to
-  // tweaks).
-  const tweaks: TweakDecl[] = render === 'funnel' || render === 'breakdown'
+  // Funnel/breakdown/app insights ship with the overview date-range control
+  // pre-declared — the presets the dashboard's range picker offers (custom =
+  // from/to tweaks).
+  const tweaks: TweakDecl[] = render === 'funnel' || render === 'breakdown' || render === 'app'
     ? [{
         key: 'range',
         type: 'enum',
@@ -466,14 +560,16 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
 
   mkdirSync(insightsDir(contextRoot), { recursive: true });
   writeFrontmatter(path, frontmatter, body);
-  // Funnel/breakdown + script: scaffold a documented payload template so the
-  // author starts from the contract, not a blank file. Never overwrites an
-  // existing script.
-  if ((render === 'funnel' || render === 'breakdown') && adapter === 'script') {
+  // Funnel/app + script: scaffold a documented payload template so the author
+  // starts from the contract, not a blank file. Never overwrites an existing
+  // script. breakdown (matrix/v1) is deprecated and no longer scaffolded —
+  // grandfathered insights still sync and render, they just start from a
+  // blank script file now (the manifest itself is unaffected).
+  if ((render === 'funnel' || render === 'app') && adapter === 'script') {
     const scriptPath = join(labDir(contextRoot), 'scripts', `${slug}.mjs`);
     if (!existsSync(scriptPath)) {
       mkdirSync(join(labDir(contextRoot), 'scripts'), { recursive: true });
-      writeFileSync(scriptPath, render === 'funnel' ? funnelScriptTemplate(slug) : matrixScriptTemplate(slug), 'utf-8');
+      writeFileSync(scriptPath, render === 'funnel' ? funnelScriptTemplate(slug) : appScriptTemplate(slug), 'utf-8');
     }
   }
   // Keep the tracked lab/credentials.example.json current with the new

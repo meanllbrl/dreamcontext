@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -449,14 +449,20 @@ describe('matrix sync integration', () => {
     expect(readCache(root, 'legacy')!.matrix).toBeUndefined();
   });
 
-  it('lab create --render breakdown scaffolds the range tweak + documented matrix template', () => {
-    createInsight(root, { slug: 'scaffold', title: 'Scaffold', render: 'breakdown', adapter: 'script' });
-    const manifest = readInsightFile(join(root, 'lab', 'insights', 'scaffold.md'));
-    const range = manifest.tweaks.find((t) => t.key === 'range');
-    expect(range?.type).toBe('enum');
-    const script = join(root, 'lab', 'scripts', 'scaffold.mjs');
-    expect(existsSync(script)).toBe(true);
-    expect(readFileSync(script, 'utf-8')).toContain("kind: 'matrix/v1'");
+  it('lab create --render breakdown is DEPRECATED (2026-08-26): still creates the manifest + range tweak, warns loudly, but scaffolds NO script', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const manifest = createInsight(root, { slug: 'scaffold', title: 'Scaffold', render: 'breakdown', adapter: 'script' });
+      expect(manifest.render).toBe('breakdown'); // grandfathered — still a valid manifest
+      const read = readInsightFile(join(root, 'lab', 'insights', 'scaffold.md'));
+      const range = read.tweaks.find((t) => t.key === 'range');
+      expect(range?.type).toBe('enum'); // the date-range control is still pre-declared
+      const script = join(root, 'lab', 'scripts', 'scaffold.mjs');
+      expect(existsSync(script)).toBe(false); // no script scaffolded — the authoring path is deprecated
+      expect(warn.mock.calls.some(([msg]) => typeof msg === 'string' && msg.includes('matrix/v1 is deprecated'))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('doctor flags a hand-edited over-cap matrix cache and history over the caps', async () => {

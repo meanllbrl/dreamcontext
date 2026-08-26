@@ -1,7 +1,21 @@
 import { dirname, resolve, sep } from 'node:path';
 import { redactSecrets } from '../credentials.js';
 import { runScriptInChild } from './script-child.js';
-import { isRawFunnelSet, isRawMatrixSet, isRawPayloadEnvelope, LabError, type AdapterContext, type AdapterResult, type InsightManifest, type LabAdapter, type RawPayloadEnvelope, type RawSeries, type SeriesPoint } from '../types.js';
+import {
+  isRawAppSpec,
+  isRawDatasetBundle,
+  isRawFunnelSet,
+  isRawMatrixSet,
+  isRawPayloadEnvelope,
+  LabError,
+  type AdapterContext,
+  type AdapterResult,
+  type InsightManifest,
+  type LabAdapter,
+  type RawPayloadEnvelope,
+  type RawSeries,
+  type SeriesPoint,
+} from '../types.js';
 
 /**
  * Custom-script adapter — the escape hatch for anything the declarative HTTP
@@ -37,7 +51,7 @@ export function scriptFilePath(manifest: InsightManifest): string {
 
 function coerceSeries(result: unknown): RawSeries[] {
   if (!Array.isArray(result)) {
-    throw new LabError('Custom script must return an array of { name, points } series, a { kind: "funnel-set/v1", … } funnel payload for `render: funnel`, or a { kind: "matrix/v1", … } matrix payload for `render: breakdown`.');
+    throw new LabError('Custom script must return an array of { name, points } series, a { kind: "funnel-set/v1", … } funnel payload for `render: funnel`, a { kind: "matrix/v1", … } matrix payload for `render: breakdown`, a { kind: "dataset/v1", … } dataset bundle, or a { data, app? } envelope for `render: app`.');
   }
   return result.map((s, i) => {
     const r = s as { name?: unknown; points?: unknown };
@@ -62,26 +76,44 @@ export const customScriptAdapter: LabAdapter = {
       // A fresh process per run — the ONLY way a shared `lab/scripts/lib-*.mjs`
       // edit is guaranteed to be seen (GitHub #242; see script-child.ts).
       const result = await runScriptInChild(abs, ctx, file);
-      // A funnel-set/matrix payload passes through raw — the ENGINE validates +
-      // caps it (parseFunnelSet/parseMatrixSet), keeping the trust/validation
-      // boundary in one place.
-      if (isRawFunnelSet(result) || isRawMatrixSet(result)) return result;
-      // `{ data, html? }` envelope (html/v1 hybrid): `data` is MANDATORY — html
-      // never replaces the numbers. The inner payload gets the same treatment a
-      // bare return would; the html cap is the engine's (sync.ts).
+      // A bare `{ kind: "app/v1" }` return has NO `data` half — reject it here,
+      // by name, before it ever reaches `isRawPayloadEnvelope` (which returns
+      // false for it: a `kind` is present, so it reads as a bare typed payload,
+      // not an envelope) and falls into `coerceSeries`'s generic array error.
+      // `app` is presentation only and never substitutes for the numbers,
+      // exactly like `html` — the fix is to return `{ data, app }`.
+      if (isRawAppSpec(result)) {
+        throw new LabError('Custom script returned a bare { kind: "app/v1" } body without `data` — data is mandatory: return { data, app } (the app body is a presentation of the numbers, never a substitute for them).');
+      }
+      // A funnel-set/matrix/dataset-bundle payload passes through raw — the
+      // ENGINE validates + caps it (parseFunnelSet/parseMatrixSet/
+      // parseDatasetBundle), keeping the trust/validation boundary in one place.
+      if (isRawFunnelSet(result) || isRawMatrixSet(result) || isRawDatasetBundle(result)) return result;
+      // `{ data, html? }` / `{ data, app? }` envelope (html/v1 hybrid, app/v1):
+      // `data` is MANDATORY — html/app never replace the numbers. The inner
+      // payload gets the same treatment a bare return would; the html byte cap
+      // and the app spec's own caps are the engine's (sync.ts / app.ts).
       if (isRawPayloadEnvelope(result)) {
         if (!('data' in result) || result.data === undefined || result.data === null) {
-          throw new LabError('Custom script returned { html } without `data` — data is mandatory: the html body is a presentation of the numbers, never a substitute for them.');
+          throw new LabError('Custom script returned { html } or { app } without `data` — data is mandatory: the html/app body is a presentation of the numbers, never a substitute for them.');
         }
         const data = result.data;
         const envelope: RawPayloadEnvelope = {
-          data: isRawFunnelSet(data) || isRawMatrixSet(data) ? data : coerceSeries(data),
+          data: isRawFunnelSet(data) || isRawMatrixSet(data) || isRawDatasetBundle(data) ? data : coerceSeries(data),
         };
         if (result.html !== undefined) {
           if (typeof result.html !== 'string') {
             throw new LabError('Custom script envelope `html` must be a string.');
           }
           envelope.html = result.html;
+        }
+        // Shape check ONLY — caps (page count/id/bytes) are parseAppSpec's job
+        // (sync.ts), keeping validation in one place, same as funnel/matrix.
+        if (result.app !== undefined) {
+          if (!isRawAppSpec(result.app)) {
+            throw new LabError('Custom script envelope `app` must be a { kind: "app/v1", … } object.');
+          }
+          envelope.app = result.app;
         }
         return envelope;
       }
