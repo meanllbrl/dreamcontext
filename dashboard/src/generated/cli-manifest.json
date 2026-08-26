@@ -1087,6 +1087,17 @@
       ]
     },
     {
+      "path": "lab body",
+      "desc": "Read a script-authored card/app body from the cache (never fetches)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--page",
+        "--format"
+      ]
+    },
+    {
       "path": "lab create",
       "desc": "Scaffold a new insight manifest in lab/insights/<slug>.md",
       "args": [
@@ -1128,6 +1139,20 @@
       "path": "lab list",
       "desc": "List insights with their latest value and staleness",
       "args": []
+    },
+    {
+      "path": "lab query",
+      "desc": "Query a cached dataset (dimensional slice/aggregate) — never fetches",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--dataset",
+        "--where",
+        "--group-by",
+        "--top",
+        "--date"
+      ]
     },
     {
       "path": "lab report",

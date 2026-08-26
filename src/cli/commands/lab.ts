@@ -10,16 +10,21 @@ import { ProgressBar } from '../../lib/progress.js';
 import { writeCredential, listCredentialNames } from '../../lib/lab/credentials.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
 import { computeFunnelPrev, computeStepRows, worstDropIndex } from '../../lib/lab/funnel.js';
-import { dimLabel, dimValues, pivotCell, MATRIX_LOW_SAMPLE_THRESHOLD } from '../../lib/lab/matrix.js';
+import { dimLabel, dimValues, pivotCell, MATRIX_LOW_SAMPLE_THRESHOLD, MATRIX_SET_KIND } from '../../lib/lab/matrix.js';
 import { createReport, getReport, listReports, resolveReport, DATE_NAVS, type DateNav } from '../../lib/lab/reports-store.js';
+import { findAppPage } from '../../lib/lab/app.js';
+import { queryDataset, resolveDatasetAsOf, type DatasetQuery } from '../../lib/lab/datasetQuery.js';
+import { htmlToText } from '../../lib/lab/htmlText.js';
 import {
   INSIGHT_SIZES,
   LabError,
   RENDERS,
+  type DatasetCacheEntry,
   type FunnelCacheEntry,
   type InsightCache,
   type InsightSize,
   type MatrixCacheEntry,
+  type MatrixSet,
   type Render,
 } from '../../lib/lab/types.js';
 
@@ -78,13 +83,14 @@ function fmtV(v: number | null, unit?: string): string {
   return unit ? `${s} ${unit}` : s;
 }
 
-/** `lab show` breakdown view: the pivot the dashboard draws, in text. 1 dim →
- *  a value list; 2 dims → rows=dim1 × cols=dim2; a 3rd dim → one pivot per
- *  value. Low-sample cells (n < 30) are marked, mirroring the F4 idiom. */
-function printMatrixSet(matrix: MatrixCacheEntry): void {
-  const { set, notices, range } = matrix;
-  console.log(`  range: ${range.fromISO} → ${range.toISO}`);
-  for (const notice of notices) warn(notice);
+/** The pivot table itself (rows/cols from dims, n chips, low-sample marks,
+ *  total) — the ONE table style every dimensional render shares: `lab show`
+ *  on a matrix/v1 insight (printMatrixSet), an app/v1 insight's datasets
+ *  (printDatasetBundle) and `lab query`'s result all call this rather than
+ *  inventing their own layout. 1 dim → a value list; 2 dims → rows=dim1 ×
+ *  cols=dim2; a 3rd dim → one pivot per value. Low-sample cells (n < 30) are
+ *  marked, mirroring the F4 idiom. */
+function printMatrixPivot(set: MatrixSet): void {
   const unit = set.unit ?? undefined;
 
   const [dim1, dim2, dim3] = set.dims;
@@ -130,6 +136,35 @@ function printMatrixSet(matrix: MatrixCacheEntry): void {
     console.log();
     console.log(`  total: ${fmtV(set.total.v, unit)}${set.total.n !== null && set.total.n !== undefined ? chalk.dim(` n=${set.total.n}`) : ''}`);
   }
+}
+
+/** `lab show` breakdown view: the pivot the dashboard draws, in text. */
+function printMatrixSet(matrix: MatrixCacheEntry): void {
+  const { set, notices, range } = matrix;
+  console.log(`  range: ${range.fromISO} → ${range.toISO}`);
+  for (const notice of notices) warn(notice);
+  printMatrixPivot(set);
+}
+
+/** `lab show` app view: one pivot per named dataset in the bundle, reusing
+ *  the SAME table style `printMatrixSet` draws (a dataset carries the exact
+ *  matrix/v1 grammar — dataset.ts delegates its validation to
+ *  `parseMatrixSet`, so there is no second table style to invent here). */
+function printDatasetBundle(entry: DatasetCacheEntry): void {
+  const { bundle, notices, range } = entry;
+  console.log(`  range: ${range.fromISO} → ${range.toISO}`);
+  for (const notice of notices) warn(notice);
+  for (const dataset of bundle.datasets) {
+    console.log();
+    const primaryTag = dataset.key === bundle.primary ? chalk.dim(' (primary)') : '';
+    console.log(`  ${chalk.magentaBright(dataset.key)}${dataset.label ? ` — ${dataset.label}` : ''}${primaryTag}`);
+    printMatrixPivot({ kind: MATRIX_SET_KIND, dims: dataset.dims, rows: dataset.rows, total: dataset.total, unit: dataset.unit });
+  }
+}
+
+/** Repeatable-option accumulator (commander's pattern for `--where a=1 --where b=2`). */
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 function handleLabError(err: unknown): void {
@@ -253,9 +288,168 @@ export function registerLabCommand(program: Command): void {
         if (cache.error) console.log(chalk.red(`  error: ${cache.error}`));
         if (cache.funnel) printFunnelSet(cache.funnel, cache.funnelHistory);
         if (cache.matrix) printMatrixSet(cache.matrix);
+        if (cache.app) {
+          console.log();
+          const pageList = cache.app.spec.pages
+            .map((p) => (p.id === cache.app!.spec.entry ? `${p.id} (entry)` : p.id))
+            .join(' · ');
+          console.log(`  app: ${cache.app.spec.pages.length} page(s) — ${pageList}`);
+          for (const notice of cache.app.notices) warn(notice);
+          console.log(chalk.dim(`  → dreamcontext lab body ${slug} [--page <id>] for the html/text/markdown source.`));
+        }
+        if (cache.datasets) {
+          console.log();
+          console.log('  datasets:');
+          printDatasetBundle(cache.datasets);
+        }
       } else {
         console.log(chalk.dim('  (no cache yet — run `dreamcontext lab sync ' + slug + '`)'));
       }
+    });
+
+  lab
+    .command('body')
+    .argument('<slug>', 'Insight slug')
+    .description('Read a script-authored card/app body from the cache (never fetches)')
+    .option('--page <id>', 'Page id (app/v1 insights only; default: the entry page)')
+    .option('--format <format>', 'text|md|html (default text)')
+    .option('--json', 'Emit as JSON: { pages, page, html, text }')
+    .action((slug: string, opts: { page?: string; format?: string; json?: boolean }) => {
+      const root = ensureContextRoot();
+      const manifest = getInsight(root, slug);
+      if (!manifest) {
+        error(`Insight not found: ${slug}`);
+        process.exitCode = 1;
+        return;
+      }
+      const format = opts.format ?? 'text';
+      if (format !== 'text' && format !== 'md' && format !== 'html') {
+        error(`--format must be text|md|html (got "${format}").`);
+        process.exitCode = 1;
+        return;
+      }
+      const cache = readCache(root, slug);
+      if (!cache || (!cache.app && !cache.html)) {
+        error(`${slug}: no script-authored body cached yet — run \`dreamcontext lab sync ${slug}\`.`);
+        process.exitCode = 1;
+        return;
+      }
+
+      let pages: { id: string; title: string }[] = [];
+      let pageId: string | null = null;
+      let html: string;
+
+      if (cache.app) {
+        const page = findAppPage(cache.app.spec, opts.page ?? null);
+        // findAppPage always falls back to the entry page — parseAppSpec
+        // guarantees `entry` names a declared page, so this is unreachable
+        // except via a hand-corrupted cache; treated as a hard miss.
+        if (!page) {
+          error(`${slug}: app cache has no pages (corrupt cache — re-run \`dreamcontext lab sync ${slug} --force\`).`);
+          process.exitCode = 1;
+          return;
+        }
+        if (opts.page && page.id !== opts.page) {
+          warn(`page "${opts.page}" not found — showing the entry page "${page.id}".`);
+        }
+        pages = cache.app.spec.pages.map((p) => ({ id: p.id, title: p.title }));
+        pageId = page.id;
+        html = page.html;
+      } else {
+        if (opts.page) warn(`${slug} is a single-body (html/v1) insight — --page is ignored.`);
+        html = cache.html!;
+      }
+
+      const text = htmlToText(html, { format: format === 'md' ? 'md' : 'text' });
+
+      if (opts.json) {
+        console.log(JSON.stringify({ pages, page: pageId, html, text }, null, 2));
+        return;
+      }
+      console.log(format === 'html' ? html : text);
+    });
+
+  lab
+    .command('query')
+    .argument('<slug>', 'Insight slug')
+    .description('Query a cached dataset (dimensional slice/aggregate) — never fetches')
+    .option('--dataset <key>', "Dataset key (default: the bundle's primary, else the first)")
+    .option('--where <kv>', 'Exact-match filter key=value (repeatable)', collect, [] as string[])
+    .option('--group-by <dim>', 'Aggregate rows by one dimension key')
+    .option('--top <n>', 'Keep only the top N rows by value')
+    .option('--date <date>', 'Resolve to the dataset snapshot at/before this YYYY-MM-DD date (default: live)')
+    .option('--json', 'Emit as JSON')
+    .action((slug: string, opts: { dataset?: string; where: string[]; groupBy?: string; top?: string; date?: string; json?: boolean }) => {
+      const root = ensureContextRoot();
+      const manifest = getInsight(root, slug);
+      if (!manifest) {
+        error(`Insight not found: ${slug}`);
+        process.exitCode = 1;
+        return;
+      }
+      const date = opts.date ?? null;
+      if (date !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`)))) {
+        error(`--date must be a valid YYYY-MM-DD date (got "${date}").`);
+        process.exitCode = 1;
+        return;
+      }
+      const where: Record<string, string> = {};
+      for (const kv of opts.where) {
+        const i = kv.indexOf('=');
+        if (i <= 0) {
+          error(`--where must be key=value (got "${kv}").`);
+          process.exitCode = 1;
+          return;
+        }
+        where[kv.slice(0, i)] = kv.slice(i + 1);
+      }
+
+      const cache = readCache(root, slug);
+      if (!cache) {
+        error(`${slug}: no cache yet — run \`dreamcontext lab sync ${slug}\`.`);
+        process.exitCode = 1;
+        return;
+      }
+      const resolved = resolveDatasetAsOf(cache, date);
+      if (!resolved) {
+        if (opts.json) {
+          console.log(JSON.stringify({ slug, date, asOf: null, result: null }, null, 2));
+          return;
+        }
+        console.log(header(`Query: ${slug}`));
+        console.log(date
+          ? `  No dataset snapshot at or before ${date} — nothing to show (no interpolation).`
+          : '  No cached data yet.');
+        return;
+      }
+
+      const query: DatasetQuery = {
+        dataset: opts.dataset ?? null,
+        where,
+        groupBy: opts.groupBy ?? null,
+        top: opts.top !== undefined ? Number(opts.top) : null,
+      };
+      const result = queryDataset(resolved.bundle, query);
+
+      if (opts.json) {
+        console.log(JSON.stringify({ slug, date, asOf: resolved.at, result }, null, 2));
+        return;
+      }
+      console.log(header(`Query: ${slug}${manifest.title ? ` — ${manifest.title}` : ''}`));
+      console.log(`  dataset: ${result.dataset}${result.label ? ` — ${result.label}` : ''}`);
+      console.log(`  as of: ${resolved.at}`);
+      for (const notice of result.notices) warn(notice);
+      if (result.rows.length === 0) {
+        console.log(chalk.dim('  (no rows matched)'));
+        return;
+      }
+      printMatrixPivot({
+        kind: MATRIX_SET_KIND,
+        dims: result.dims.map((key) => ({ key })),
+        rows: result.rows,
+        total: result.total ?? undefined,
+        unit: result.unit ?? undefined,
+      });
     });
 
   lab
