@@ -56,7 +56,8 @@
     "verify:project-chip-status": "node scripts/verify/project-chip-status.mjs",
     "verify:automations": "node scripts/verify/automations.mjs",
     "verify:task-delete": "node scripts/verify/task-delete-confirm.mjs",
-    "verify:task-backlog": "node scripts/verify/task-backlog-and-tags.mjs"
+    "verify:task-backlog": "node scripts/verify/task-backlog-and-tags.mjs",
+    "verify:lab-app": "node scripts/verify/lab-app-insight.mjs"
   },
   "keywords": [
     "ai",
