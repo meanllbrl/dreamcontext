@@ -435,6 +435,26 @@ dreamcontext memory recall "<query>" --all-vaults            # Span this vault +
 
 > **Copy-based sync is parked on the roadmap.** Earlier builds pushed lossy digests into peers at sleep; copies went stale and bred duplicates, so those verbs are now inert no-ops (`federation purge` clears leftovers). A redesigned opt-in offline-mirror mode may return — its one genuine advantage is surviving a peer going offline, which live read can't.
 
+#### Peer mail — asking a project, not just reading it
+
+Everything above is the READ half: recall surfaces what a peer already wrote down. Peer mail is the write half. It **addresses** a peer — the message is answered by an agent running in that project's directory with that project's brain loaded, so the answer is reasoned from its code rather than retrieved from its notes.
+
+```bash
+dreamcontext peer ask <vault> "<question>"      # Wake the peer now, answer reasoned from its own code
+dreamcontext peer send <vault> "<message>"      # Leave a note in its inbox — no spawn, no cost
+dreamcontext peer send <vault> "<work>" --kind command   # Hand over work
+dreamcontext peer inbox                          # What is waiting for this vault
+dreamcontext peer reply <id> "<answer>" / peer done <id>
+```
+
+Three kinds, three costs. A **note** costs nothing and waits. A **question** wakes the other project now. A **command** hands over work — and can never grant itself more than auto permissions, so a peer that hits a wall reports itself blocked instead of working around it. In the desktop app, typing `@` in the chat composer lists every project you are connected to, each with the one-line identity read from its own soul.
+
+#### The Meeting Room — one announcement, every agent
+
+Peer mail addresses one project. The Meeting Room addresses all of them: post once and every registered vault's agent wakes **in its own directory**, reads with its own brain, and answers for itself. An agent with nothing to add passes — it shows in the presence strip and never posts, which is what keeps a room of ten projects readable. Two projects naming a third wake it once, not twice.
+
+It is **deliberately hidden and has no CLI verb**: it wakes every project you have registered, which is a real cost, so it stays something you go looking for. The only door is the core logo in the launcher's Space view.
+
 ### Linked Repos
 
 One brain can **govern the bare code repos it points at** — products or services in their *own* GitHub repos, with no `_dream_context/` of their own, cloned to different paths on each teammate's machine (or not cloned at all). The brain becomes a control tower over a family of repos, decoupled from where any of them physically lives.
