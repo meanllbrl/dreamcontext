@@ -15,12 +15,14 @@
  *      a frame that made no requests because it never executed proves nothing.
  *   2. HEIGHT FOLLOWS CONTENT. The frame is sized to the body — not the Lab's hardcoded
  *      232px — and it RESIZES when a click inside the iframe grows the content.
- *   3. FULLSCREEN. From a deliberately narrowed pane, ⛶ covers the whole WINDOW (the
+ *   3. HOVER IS THE KIT'S. A `.dc-tip` inside a `.dc-hit` is hidden, then revealed by a real
+ *      pointer — in HTML and inside an `<svg>` — with no script anywhere near that markup.
+ *   4. FULLSCREEN. From a deliberately narrowed pane, ⛶ covers the whole WINDOW (the
  *      `contain: layout paint` clipping trap), and the deck's slides become viewport pages.
- *   4. BRAND OVERRIDE. `_dream_context/overrides/chat-html-kit.css` reaches inside the
+ *   5. BRAND OVERRIDE. `_dream_context/overrides/chat-html-kit.css` reaches inside the
  *      sandbox and wins over the base kit.
- *   5. INSIGHT BY ID. A `{"type":"insight"}` block draws the REAL Lab card — no HTML.
- *   6. BOTH THEMES. Dark does not paint the white slab the color-scheme mismatch used to.
+ *   6. INSIGHT BY ID. A `{"type":"insight"}` block draws the REAL Lab card — no HTML.
+ *   7. BOTH THEMES. Dark does not paint the white slab the color-scheme mismatch used to.
  *
  * Same harness contract as scripts/verify/dream-actions.mjs: the real server, the real
  * `/ws/agent-chat`, a scripted stand-in for `claude` in an isolated fake HOME so no tokens
@@ -82,6 +84,17 @@ const htmlBlock = (loopback) => [
   '  <h2 class="dc-h2">Rendered answer</h2>',
   '  <div class="dc-stat"><span class="dc-stat-label">Ran</span>',
   '    <span class="dc-value" id="ran">no</span></div>',
+  // The hover idiom, in BOTH forms it has to work in. Deliberately placed OUTSIDE the
+  // <script> below: if either tip reveals, it reveals on the kit's CSS alone.
+  '  <p class="dc-p">Conversion <span class="dc-hit" id="hit">14.2%',
+  '    <span class="dc-tip" id="tip">3,204 of 22,560</span></span></p>',
+  '  <svg class="dc-svg" viewBox="0 0 200 70" role="img" aria-label="One point">',
+  '    <g class="dc-hit" id="svghit"><circle class="dc-f1" cx="100" cy="40" r="12"/>',
+  '      <g class="dc-tip" id="svgtip" transform="translate(100,40)">',
+  '        <rect class="dc-tip-box" x="-40" y="-34" width="80" height="22" rx="5"/>',
+  '        <text class="dc-tip-text" x="0" y="-19" text-anchor="middle">DP1</text>',
+  '      </g></g>',
+  '  </svg>',
   '  <button class="dc-btn" id="grow">Show detail</button>',
   '  <div id="more" style="display:none">',
   // 24 rows is comfortably taller than any plausible collapsed default, so a height that
@@ -328,13 +341,41 @@ async function runTheme(base, theme, report) {
   ok('a click INSIDE the sandbox that grows the content resizes the frame',
     grew, `${Math.round(h0)}px → ${Math.round(h1)}px`);
 
-  // ── 3 — the brand override ────────────────────────────────────────────────────────
+  // ── 3 — hover, the kit's own reveal ───────────────────────────────────────────────
+  //
+  // The point of these four: a chart point that ANSWERS a pointer must cost the author a
+  // class name, not a hand-rolled <style> block — and it must work the same in HTML and
+  // inside an <svg>, which is why both forms are exercised. Neither tip is touched by the
+  // body's script, so a reveal here is the kit's CSS and nothing else.
+  console.log('── hover: a mark answers the pointer, on the kit alone');
+  const opacityOf = (sel) => inner.locator(sel).evaluate((el) => getComputedStyle(el).opacity);
+
+  const tipHidden = await inner.locator('#tip').evaluate((el) => {
+    const s = getComputedStyle(el);
+    return `${s.opacity}/${s.visibility}`;
+  });
+  ok('a .dc-tip is hidden until it is asked for', tipHidden === '0/hidden', tipHidden);
+
+  await inner.locator('#hit').hover();
+  ok('…hovering its .dc-hit reveals it — no script in that markup',
+    await until(async () => (await opacityOf('#tip')) === '1', 4000), await opacityOf('#tip'));
+
+  const tipBg = await inner.locator('#tip').evaluate((el) => getComputedStyle(el).backgroundColor);
+  ok('…and the bubble is painted from a token, not a hardcoded surface',
+    tipBg !== 'rgba(0, 0, 0, 0)' && tipBg !== 'transparent', tipBg);
+
+  ok('the same idiom inside an <svg> starts hidden too', (await opacityOf('#svgtip')) === '0');
+  await inner.locator('#svghit').hover();
+  ok('…and reveals on hover, which is what makes a chart point hoverable at all',
+    await until(async () => (await opacityOf('#svgtip')) === '1', 4000), await opacityOf('#svgtip'));
+
+  // ── 4 — the brand override ────────────────────────────────────────────────────────
   console.log('── the brand override reaches inside the sandbox');
   const h2color = await inner.locator('.dc-h2').first().evaluate((el) => getComputedStyle(el).color);
   ok('overrides/chat-html-kit.css wins over the base kit',
     h2color.replace(/\s/g, '') === 'rgb(255,0,128)', h2color);
 
-  // ── 4 — theme honesty ─────────────────────────────────────────────────────────────
+  // ── 5 — theme honesty ─────────────────────────────────────────────────────────────
   console.log('── theme: no white slab under a dark app');
   const scheme = await inner.locator('body').evaluate(() => getComputedStyle(document.documentElement).colorScheme);
   ok(`the srcdoc declares color-scheme: ${theme}`, scheme.includes(theme), scheme);
@@ -347,7 +388,7 @@ async function runTheme(base, theme, report) {
 
   await page.screenshot({ path: join(SHOTS, `chat-html-${theme}.png`), fullPage: false });
 
-  // ── 5 — the insight block ─────────────────────────────────────────────────────────
+  // ── 6 — the insight block ─────────────────────────────────────────────────────────
   console.log('── insight by id: the real card, no HTML');
   ok('the {"type":"insight"} block drew a real Lab card',
     await until(async () => (await vis('.chat-insightcard').count()) > 0, 15000));
@@ -357,7 +398,7 @@ async function runTheme(base, theme, report) {
   ok('…and it is NOT an iframe — this path renders natively',
     (await vis('.chat-insightcard iframe').count()) === 0);
 
-  // ── 6 — fullscreen, from a deliberately NARROW pane ───────────────────────────────
+  // ── 7 — fullscreen, from a deliberately NARROW pane ───────────────────────────────
   console.log('── fullscreen: the window, not the pane');
   // Narrow the pane first: an un-portaled `position: fixed` overlay would be clipped by
   // `.agent-surface`'s `contain: layout paint` and would only ever cover this width.

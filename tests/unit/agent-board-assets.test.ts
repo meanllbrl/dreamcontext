@@ -251,9 +251,20 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * covers 7512 actual. The rule above is unchanged and now matters more: compress prose
    * before raising this again, and if the class list is what grows, ask first whether the KIT
    * should shrink.
+   *
+   * Raised 8000 → 8200 on 2026-08-26 (same day, second pass) for two owner rules the first
+   * draft left unsaid, both traced to one real block: a 15KB static wall the owner opened and
+   * said "interactive değil" to. (1) INTERACTION IS THE DEFAULT WHEN THERE ARE TWO VIEWS —
+   * the old line ("use them when interaction helps, not for decoration") read as a hedge and
+   * the agent stacked every cut down one page instead of letting the reader switch. (2) "IN A
+   * NUTSHELL, NOT A REPORT" — there was no length ceiling at all, so a 15KB block was within
+   * spec. They are one rule from two sides: switching is what makes a block short. The prose
+   * was compressed FIRST, per the rule above — six passes (the intro, the decision bullet,
+   * the copy/click bullet, the kit paragraph, the sandbox paragraph, the closing line) paid
+   * back ~250 characters before this number moved. The 8200 covers 7960 actual.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(8000);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(8200);
   });
 
   /**

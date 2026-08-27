@@ -422,6 +422,70 @@ body {
 .dc-btn[aria-pressed="true"], .dc-btn--on { color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border)); background: var(--color-accent-soft); }
 .dc-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
+/* ═══ Hover — the kit's own reveal, so a chart point or a number can ANSWER a pointer
+     without the author writing a line of CSS. Pure CSS, no script.
+
+     The reveal is opacity+visibility rather than `display`, because that is the one pair
+     that behaves identically in HTML and inside an <svg> — an SVG element has no box to
+     un-display. Wrap the hovered thing in `.dc-hit`, put a `.dc-tip` inside it:
+
+       <span class="dc-hit">%14,2<span class="dc-tip">3.204 / 22.560</span></span>
+
+     In an <svg> the hit is a <g> and the tip is a <g class="dc-tip"> the author places at
+     the point — the kit paints its surface and type, the author owns the coordinates,
+     since nothing else can know them:
+
+       <g class="dc-hit"><circle class="dc-f1" cx="80" cy="40" r="9"/>
+         <g class="dc-tip" transform="translate(80,40)">
+           <rect class="dc-tip-box" x="-46" y="-34" width="92" height="23" rx="5"/>
+           <text class="dc-tip-text" x="0" y="-18" text-anchor="middle">DP1 · %3,39</text>
+         </g></g>
+
+     A tip on the top row would clip at the frame's edge — `.dc-tip--below` flips it under.
+     Give the `.dc-hit` a `tabindex="0"` and the tip also shows on keyboard focus, so the
+     number is never mouse-only. ═══ */
+
+.dc-hit { position: relative; }
+.dc-hit:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+.dc-tip {
+  opacity: 0;
+  visibility: hidden;
+  /* Never steal the hover from the mark that reveals it. */
+  pointer-events: none;
+  transition: opacity 90ms ease-out;
+}
+.dc-hit:hover > .dc-tip,
+.dc-hit:focus-visible > .dc-tip,
+.dc-hit:focus-within > .dc-tip { opacity: 1; visibility: visible; }
+
+/* The HTML bubble. `position` does not apply inside an <svg>, so the SVG form uses
+   .dc-tip-box / .dc-tip-text below and positions itself with a transform instead. */
+span.dc-tip, div.dc-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  box-shadow: var(--shadow-md);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+span.dc-tip--below, div.dc-tip--below { bottom: auto; top: calc(100% + 6px); }
+
+.dc-tip-box { fill: var(--color-bg-elevated); stroke: var(--color-border); }
+.dc-tip-text { fill: var(--color-text); font-size: 11px; font-family: var(--font-family); }
+
+/* Free feedback on the two things a pointer lands on most — no class to remember. */
+.dc-table tbody tr:hover td { background: var(--color-bg-tertiary); }
+.dc-bar:hover .dc-bar-track { background: var(--color-border); }
+
 /* ═══ Media ═══ */
 
 .dc-img { max-width: 100%; border-radius: var(--radius-md); display: block; }
