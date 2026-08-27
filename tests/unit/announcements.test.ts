@@ -411,6 +411,16 @@ describe('the shipped feed carries nothing personal', () => {
  * which still exempts the NEXT planning bucket (a version nobody has built yet
  * must not demand a story) and exempts `superseded` (folded elsewhere by
  * definition).
+ *
+ * `superseded` now carries TWO shapes, and the exemption is only safe for one of
+ * them. The old shape is 0.22.0: cut locally, never published, payload never
+ * reached anyone — nothing to announce. The new shape is 0.25.0 and 0.26.0:
+ * never their own registry version, but every line of their payload reached
+ * users inside the 0.26.1 publish. Those DO have something to announce, and
+ * 0.25.0 keeps its own story while 0.26.0 rides v0-26-1's `covers`. The gate
+ * cannot tell the two apart from a status string, so if you ever mark a
+ * delivered release `superseded`, check the feed still names it by hand — the
+ * exemption will not do it for you.
  */
 describe('the feed skips no release it should cover', () => {
   const feed = parseAnnouncements(
