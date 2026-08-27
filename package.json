@@ -1,6 +1,6 @@
 {
   "name": "dreamcontext",
-  "version": "0.26.0",
+  "version": "0.26.1",
   "description": "dreamcontext \u2014 the persistent brain for your AI agents. Remembers what you built, knows how your project works.",
   "type": "module",
   "bin": {
@@ -46,6 +46,7 @@
     "verify:dream-actions": "node scripts/verify/dream-actions.mjs",
     "verify:chat-shelf-ui": "node scripts/verify/chat-shelf-ui.mjs",
     "verify:chat-composer": "node scripts/verify/chat-composer-ui.mjs",
+    "verify:peer-mail": "node scripts/verify/peer-mail-ui.mjs",
     "verify:meeting-room": "node scripts/verify/meeting-room-ui.mjs",
     "verify:chat-shelf": "node scripts/verify/chat-shelf.mjs",
     "verify:automation-run-chat": "node scripts/verify/automation-run-chat.mjs",
