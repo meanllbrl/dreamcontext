@@ -281,6 +281,10 @@ your work in the app):
   renders as input.
 - `video` — a full-width clip with optional `title`/`body`. `{ kind, title?, body?, clip }`.
 - `note` — one highlighted sentence. The punchline or the caveat.
+  `{ kind: "note", text }` — **`text`, not `body`.** It is the one block that
+  breaks the pattern, and getting it wrong is invisible: the block is dropped at
+  parse time, so the punchline simply is not on the page. The v0.25.0 and v0.26.1
+  stories both shipped with every `note` silently missing for exactly this reason.
 
 **Shots**: `{ src, alt, caption?, frame? }`. `src` is relative to
 `/announcements/` and may not escape it (no URLs, no `..` — the parser rejects
@@ -389,6 +393,11 @@ under it.
   feed. Edit the existing story instead.
 - **Don't reintroduce a `board` field.** The renderer reads `story`; a `board`
   entry fails validation and vanishes from the feed with no error.
+- **The app does NOT serve `dashboard/public/`.** It serves the build-time copy
+  under `dashboard/dist/announcements/`. Editing a story and restarting the
+  server shows you the OLD one, so a verification pass can come back green
+  against markup you already replaced. `npm run build:dashboard` is what copies
+  it across — re-run it after every story edit, before you look.
 - **A story with no screenshots is legal** (a CLI release — use `terminal` +
   `points`), but it renders no teaser in the feed. Don't make it the newest
   entry unless you mean it.

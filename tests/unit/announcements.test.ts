@@ -400,6 +400,17 @@ describe('the shipped feed carries nothing personal', () => {
  * were never going to be backfilled. The rule is "once the feed has begun, it does
  * not skip" — every release at or after its oldest entry is either announced or
  * explicitly folded into another story via `covers`.
+ *
+ * CUT, NOT `released`, IS THE TRIGGER. The first version of this gate filtered on
+ * `status === 'released'`, and that filter is why it never fired: this project
+ * deliberately holds a record at `planning` until npm confirms the version, so
+ * 0.25.0, 0.26.0 and 0.26.1 were all built, all shipped into the desktop bundle,
+ * and all invisible to a check that only looked at `released`. 0.26.0 fell out of
+ * the feed entirely and the suite stayed green. A record is CUT once the version
+ * surfaces have reached it — so the ceiling is `package.json`, not the registry —
+ * which still exempts the NEXT planning bucket (a version nobody has built yet
+ * must not demand a story) and exempts `superseded` (folded elsewhere by
+ * definition).
  */
 describe('the feed skips no release it should cover', () => {
   const feed = parseAnnouncements(
@@ -413,7 +424,7 @@ describe('the feed skips no release it should cover', () => {
       .map((n) => Number.parseInt(n, 10) || 0)
       .reduce((acc, n) => acc * 1000 + n, 0);
 
-  it('announces or explicitly folds every release since its oldest entry', () => {
+  it('announces or explicitly folds every release the version surfaces have reached', () => {
     const releasesPath = join(__dirname, '../../_dream_context/core/RELEASES.json');
     if (!existsSync(releasesPath)) return; // consumer checkouts have no brain to read
 
@@ -423,9 +434,18 @@ describe('the feed skips no release it should cover', () => {
       status?: unknown;
     }[];
 
-    const released = records
-      .filter((r) => r.status === 'released' && typeof r.version === 'string')
-      .map((r) => bare(r.version as string));
+    // The ceiling: what this checkout actually IS. A record at or below it has been
+    // cut — its code is in the tree and in anything built from it — whatever the
+    // registry has caught up to.
+    const current = rank(
+      (JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf8')) as { version: string })
+        .version,
+    );
+
+    const cut = records
+      .filter((r) => typeof r.version === 'string' && r.status !== 'superseded')
+      .map((r) => bare(r.version as string))
+      .filter((v) => rank(v) <= current);
 
     const spokenFor = new Set<string>();
     for (const a of feed) {
@@ -435,9 +455,9 @@ describe('the feed skips no release it should cover', () => {
 
     // The feed's own floor — never demand pages for releases that predate it.
     const floor = Math.min(...feed.map((a) => rank(a.version)));
-    const missing = released.filter((v) => rank(v) >= floor && !spokenFor.has(v));
+    const missing = cut.filter((v) => rank(v) >= floor && !spokenFor.has(v));
 
-    expect(missing, 'released, and named nowhere on the feed').toEqual([]);
+    expect(missing, 'cut, and named nowhere on the feed').toEqual([]);
   });
 });
 
