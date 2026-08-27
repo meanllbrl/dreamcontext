@@ -61,7 +61,10 @@
     "verify:task-delete": "node scripts/verify/task-delete-confirm.mjs",
     "verify:task-backlog": "node scripts/verify/task-backlog-and-tags.mjs",
     "verify:lab-app": "node scripts/verify/lab-app-insight.mjs",
-    "verify:chat-segments": "node scripts/verify/chat-segments.mjs"
+    "verify:chat-segments": "node scripts/verify/chat-segments.mjs",
+    "announce:shots:meeting": "node e2e/announce-shots-meeting-room.mjs",
+    "announce:shots:gap": "node e2e/announce-shots-gap.mjs",
+    "announce:shots:chat-html": "node e2e/announce-shots-chat-html.mjs"
   },
   "keywords": [
     "ai",

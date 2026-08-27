@@ -1,0 +1,1298 @@
+{
+  "slug": "demo-acquisition-app",
+  "fetchedAt": "2026-08-27T14:20:30.541Z",
+  "tweaks": {
+    "range": "last_28_days"
+  },
+  "granularity": "daily",
+  "unit": "signups",
+  "series": [
+    {
+      "name": "Organic search",
+      "points": [
+        {
+          "t": "signups",
+          "v": 4820
+        },
+        {
+          "t": "spend",
+          "v": 0
+        }
+      ]
+    },
+    {
+      "name": "Paid social",
+      "points": [
+        {
+          "t": "signups",
+          "v": 3140
+        },
+        {
+          "t": "spend",
+          "v": 27900
+        }
+      ]
+    },
+    {
+      "name": "Referral",
+      "points": [
+        {
+          "t": "signups",
+          "v": 1980
+        },
+        {
+          "t": "spend",
+          "v": 4200
+        }
+      ]
+    },
+    {
+      "name": "Partners",
+      "points": [
+        {
+          "t": "signups",
+          "v": 1260
+        },
+        {
+          "t": "spend",
+          "v": 11800
+        }
+      ]
+    },
+    {
+      "name": "Newsletter",
+      "points": [
+        {
+          "t": "signups",
+          "v": 640
+        },
+        {
+          "t": "spend",
+          "v": 900
+        }
+      ]
+    },
+    {
+      "name": "Events",
+      "points": [
+        {
+          "t": "signups",
+          "v": 84
+        },
+        {
+          "t": "spend",
+          "v": 9600
+        }
+      ]
+    }
+  ],
+  "latest": 11924,
+  "error": null,
+  "errorAt": null,
+  "scriptHash": "e086a3abe0f7e9c10d2ee1dd160633e4c66c1d41f13fa64e1f9a2bd6e6f681d3",
+  "history": [
+    {
+      "at": "2026-08-27T14:09:57.960Z",
+      "status": "ok",
+      "latest": 11924,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-08-27T14:13:07.839Z",
+      "status": "ok",
+      "latest": 11924,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-08-27T14:14:25.857Z",
+      "status": "failed",
+      "latest": null,
+      "granularity": null,
+      "error": "Custom script scripts/demo-acquisition-app.mjs threw: Unexpected identifier 'lk'"
+    },
+    {
+      "at": "2026-08-27T14:15:29.165Z",
+      "status": "ok",
+      "latest": 11924,
+      "granularity": "daily",
+      "error": null
+    },
+    {
+      "at": "2026-08-27T14:20:30.541Z",
+      "status": "ok",
+      "latest": 11924,
+      "granularity": "daily",
+      "error": null
+    }
+  ],
+  "datasets": {
+    "bundle": {
+      "kind": "dataset/v1",
+      "datasets": [
+        {
+          "key": "channels",
+          "dims": [
+            {
+              "key": "channel",
+              "label": "Channel"
+            },
+            {
+              "key": "metric",
+              "label": "Metric"
+            }
+          ],
+          "rows": [
+            {
+              "d": {
+                "channel": "Organic search",
+                "metric": "signups"
+              },
+              "v": 4820,
+              "n": 4820
+            },
+            {
+              "d": {
+                "channel": "Organic search",
+                "metric": "spend"
+              },
+              "v": 0,
+              "n": 4820
+            },
+            {
+              "d": {
+                "channel": "Paid social",
+                "metric": "signups"
+              },
+              "v": 3140,
+              "n": 3140
+            },
+            {
+              "d": {
+                "channel": "Paid social",
+                "metric": "spend"
+              },
+              "v": 27900,
+              "n": 3140
+            },
+            {
+              "d": {
+                "channel": "Referral",
+                "metric": "signups"
+              },
+              "v": 1980,
+              "n": 1980
+            },
+            {
+              "d": {
+                "channel": "Referral",
+                "metric": "spend"
+              },
+              "v": 4200,
+              "n": 1980
+            },
+            {
+              "d": {
+                "channel": "Partners",
+                "metric": "signups"
+              },
+              "v": 1260,
+              "n": 1260
+            },
+            {
+              "d": {
+                "channel": "Partners",
+                "metric": "spend"
+              },
+              "v": 11800,
+              "n": 1260
+            },
+            {
+              "d": {
+                "channel": "Newsletter",
+                "metric": "signups"
+              },
+              "v": 640,
+              "n": 640
+            },
+            {
+              "d": {
+                "channel": "Newsletter",
+                "metric": "spend"
+              },
+              "v": 900,
+              "n": 640
+            },
+            {
+              "d": {
+                "channel": "Events",
+                "metric": "signups"
+              },
+              "v": 84,
+              "n": 84
+            },
+            {
+              "d": {
+                "channel": "Events",
+                "metric": "spend"
+              },
+              "v": 9600,
+              "n": 84
+            }
+          ],
+          "total": {
+            "v": 11924,
+            "n": 11924
+          }
+        },
+        {
+          "key": "cohorts",
+          "dims": [
+            {
+              "key": "cohort",
+              "label": "Cohort"
+            },
+            {
+              "key": "week",
+              "label": "Week"
+            }
+          ],
+          "rows": [
+            {
+              "d": {
+                "cohort": "2026-07-06",
+                "week": "w1"
+              },
+              "v": 0.61,
+              "n": 2410
+            },
+            {
+              "d": {
+                "cohort": "2026-07-06",
+                "week": "w2"
+              },
+              "v": 0.44,
+              "n": 2410
+            },
+            {
+              "d": {
+                "cohort": "2026-07-06",
+                "week": "w3"
+              },
+              "v": 0.38,
+              "n": 2410
+            },
+            {
+              "d": {
+                "cohort": "2026-07-06",
+                "week": "w4"
+              },
+              "v": 0.35,
+              "n": 2410
+            },
+            {
+              "d": {
+                "cohort": "2026-07-13",
+                "week": "w1"
+              },
+              "v": 0.64,
+              "n": 2680
+            },
+            {
+              "d": {
+                "cohort": "2026-07-13",
+                "week": "w2"
+              },
+              "v": 0.47,
+              "n": 2680
+            },
+            {
+              "d": {
+                "cohort": "2026-07-13",
+                "week": "w3"
+              },
+              "v": 0.41,
+              "n": 2680
+            },
+            {
+              "d": {
+                "cohort": "2026-07-13",
+                "week": "w4"
+              },
+              "v": 0.37,
+              "n": 2680
+            },
+            {
+              "d": {
+                "cohort": "2026-07-20",
+                "week": "w1"
+              },
+              "v": 0.66,
+              "n": 2905
+            },
+            {
+              "d": {
+                "cohort": "2026-07-20",
+                "week": "w2"
+              },
+              "v": 0.5,
+              "n": 2905
+            },
+            {
+              "d": {
+                "cohort": "2026-07-20",
+                "week": "w3"
+              },
+              "v": 0.43,
+              "n": 2905
+            },
+            {
+              "d": {
+                "cohort": "2026-07-27",
+                "week": "w1"
+              },
+              "v": 0.63,
+              "n": 3120
+            },
+            {
+              "d": {
+                "cohort": "2026-07-27",
+                "week": "w2"
+              },
+              "v": 0.46,
+              "n": 3120
+            },
+            {
+              "d": {
+                "cohort": "2026-08-03",
+                "week": "w1"
+              },
+              "v": 0.68,
+              "n": 2840
+            }
+          ]
+        }
+      ],
+      "primary": "channels"
+    },
+    "notices": [],
+    "range": {
+      "fromISO": "2026-07-30",
+      "toISO": "2026-08-27"
+    }
+  },
+  "datasetHistory": [
+    {
+      "at": "2026-08-27T14:09:57.960Z",
+      "range": {
+        "fromISO": "2026-07-30",
+        "toISO": "2026-08-27"
+      },
+      "bundle": {
+        "kind": "dataset/v1",
+        "datasets": [
+          {
+            "key": "channels",
+            "dims": [
+              {
+                "key": "channel",
+                "label": "Channel"
+              }
+            ],
+            "rows": [
+              {
+                "d": {
+                  "channel": "Organic search"
+                },
+                "v": 4820,
+                "n": 4820
+              },
+              {
+                "d": {
+                  "channel": "Paid social"
+                },
+                "v": 3140,
+                "n": 3140
+              },
+              {
+                "d": {
+                  "channel": "Referral"
+                },
+                "v": 1980,
+                "n": 1980
+              },
+              {
+                "d": {
+                  "channel": "Partners"
+                },
+                "v": 1260,
+                "n": 1260
+              },
+              {
+                "d": {
+                  "channel": "Newsletter"
+                },
+                "v": 640,
+                "n": 640
+              },
+              {
+                "d": {
+                  "channel": "Events"
+                },
+                "v": 84,
+                "n": 84
+              }
+            ],
+            "total": {
+              "v": 11924,
+              "n": 11924
+            }
+          },
+          {
+            "key": "cohorts",
+            "dims": [
+              {
+                "key": "cohort",
+                "label": "Cohort"
+              }
+            ],
+            "rows": [
+              {
+                "d": {
+                  "cohort": "2026-07-06"
+                },
+                "v": 0.61,
+                "n": 2410
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-13"
+                },
+                "v": 0.64,
+                "n": 2680
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-20"
+                },
+                "v": 0.66,
+                "n": 2905
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-27"
+                },
+                "v": 0.63,
+                "n": 3120
+              },
+              {
+                "d": {
+                  "cohort": "2026-08-03"
+                },
+                "v": 0.68,
+                "n": 2840
+              }
+            ]
+          }
+        ],
+        "primary": "channels"
+      }
+    },
+    {
+      "at": "2026-08-27T14:13:07.839Z",
+      "range": {
+        "fromISO": "2026-07-30",
+        "toISO": "2026-08-27"
+      },
+      "bundle": {
+        "kind": "dataset/v1",
+        "datasets": [
+          {
+            "key": "channels",
+            "dims": [
+              {
+                "key": "channel",
+                "label": "Channel"
+              },
+              {
+                "key": "metric",
+                "label": "Metric"
+              }
+            ],
+            "rows": [
+              {
+                "d": {
+                  "channel": "Organic search",
+                  "metric": "signups"
+                },
+                "v": 4820,
+                "n": 4820
+              },
+              {
+                "d": {
+                  "channel": "Organic search",
+                  "metric": "spend"
+                },
+                "v": 0,
+                "n": 4820
+              },
+              {
+                "d": {
+                  "channel": "Paid social",
+                  "metric": "signups"
+                },
+                "v": 3140,
+                "n": 3140
+              },
+              {
+                "d": {
+                  "channel": "Paid social",
+                  "metric": "spend"
+                },
+                "v": 27900,
+                "n": 3140
+              },
+              {
+                "d": {
+                  "channel": "Referral",
+                  "metric": "signups"
+                },
+                "v": 1980,
+                "n": 1980
+              },
+              {
+                "d": {
+                  "channel": "Referral",
+                  "metric": "spend"
+                },
+                "v": 4200,
+                "n": 1980
+              },
+              {
+                "d": {
+                  "channel": "Partners",
+                  "metric": "signups"
+                },
+                "v": 1260,
+                "n": 1260
+              },
+              {
+                "d": {
+                  "channel": "Partners",
+                  "metric": "spend"
+                },
+                "v": 11800,
+                "n": 1260
+              },
+              {
+                "d": {
+                  "channel": "Newsletter",
+                  "metric": "signups"
+                },
+                "v": 640,
+                "n": 640
+              },
+              {
+                "d": {
+                  "channel": "Newsletter",
+                  "metric": "spend"
+                },
+                "v": 900,
+                "n": 640
+              },
+              {
+                "d": {
+                  "channel": "Events",
+                  "metric": "signups"
+                },
+                "v": 84,
+                "n": 84
+              },
+              {
+                "d": {
+                  "channel": "Events",
+                  "metric": "spend"
+                },
+                "v": 9600,
+                "n": 84
+              }
+            ],
+            "total": {
+              "v": 11924,
+              "n": 11924
+            }
+          },
+          {
+            "key": "cohorts",
+            "dims": [
+              {
+                "key": "cohort",
+                "label": "Cohort"
+              },
+              {
+                "key": "week",
+                "label": "Week"
+              }
+            ],
+            "rows": [
+              {
+                "d": {
+                  "cohort": "2026-07-06",
+                  "week": "w1"
+                },
+                "v": 0.61,
+                "n": 2410
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-06",
+                  "week": "w2"
+                },
+                "v": 0.44,
+                "n": 2410
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-06",
+                  "week": "w3"
+                },
+                "v": 0.38,
+                "n": 2410
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-06",
+                  "week": "w4"
+                },
+                "v": 0.35,
+                "n": 2410
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-13",
+                  "week": "w1"
+                },
+                "v": 0.64,
+                "n": 2680
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-13",
+                  "week": "w2"
+                },
+                "v": 0.47,
+                "n": 2680
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-13",
+                  "week": "w3"
+                },
+                "v": 0.41,
+                "n": 2680
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-13",
+                  "week": "w4"
+                },
+                "v": 0.37,
+                "n": 2680
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-20",
+                  "week": "w1"
+                },
+                "v": 0.66,
+                "n": 2905
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-20",
+                  "week": "w2"
+                },
+                "v": 0.5,
+                "n": 2905
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-20",
+                  "week": "w3"
+                },
+                "v": 0.43,
+                "n": 2905
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-27",
+                  "week": "w1"
+                },
+                "v": 0.63,
+                "n": 3120
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-27",
+                  "week": "w2"
+                },
+                "v": 0.46,
+                "n": 3120
+              },
+              {
+                "d": {
+                  "cohort": "2026-08-03",
+                  "week": "w1"
+                },
+                "v": 0.68,
+                "n": 2840
+              }
+            ]
+          }
+        ],
+        "primary": "channels"
+      }
+    },
+    {
+      "at": "2026-08-27T14:15:29.165Z",
+      "range": {
+        "fromISO": "2026-07-30",
+        "toISO": "2026-08-27"
+      },
+      "bundle": {
+        "kind": "dataset/v1",
+        "datasets": [
+          {
+            "key": "channels",
+            "dims": [
+              {
+                "key": "channel",
+                "label": "Channel"
+              },
+              {
+                "key": "metric",
+                "label": "Metric"
+              }
+            ],
+            "rows": [
+              {
+                "d": {
+                  "channel": "Organic search",
+                  "metric": "signups"
+                },
+                "v": 4820,
+                "n": 4820
+              },
+              {
+                "d": {
+                  "channel": "Organic search",
+                  "metric": "spend"
+                },
+                "v": 0,
+                "n": 4820
+              },
+              {
+                "d": {
+                  "channel": "Paid social",
+                  "metric": "signups"
+                },
+                "v": 3140,
+                "n": 3140
+              },
+              {
+                "d": {
+                  "channel": "Paid social",
+                  "metric": "spend"
+                },
+                "v": 27900,
+                "n": 3140
+              },
+              {
+                "d": {
+                  "channel": "Referral",
+                  "metric": "signups"
+                },
+                "v": 1980,
+                "n": 1980
+              },
+              {
+                "d": {
+                  "channel": "Referral",
+                  "metric": "spend"
+                },
+                "v": 4200,
+                "n": 1980
+              },
+              {
+                "d": {
+                  "channel": "Partners",
+                  "metric": "signups"
+                },
+                "v": 1260,
+                "n": 1260
+              },
+              {
+                "d": {
+                  "channel": "Partners",
+                  "metric": "spend"
+                },
+                "v": 11800,
+                "n": 1260
+              },
+              {
+                "d": {
+                  "channel": "Newsletter",
+                  "metric": "signups"
+                },
+                "v": 640,
+                "n": 640
+              },
+              {
+                "d": {
+                  "channel": "Newsletter",
+                  "metric": "spend"
+                },
+                "v": 900,
+                "n": 640
+              },
+              {
+                "d": {
+                  "channel": "Events",
+                  "metric": "signups"
+                },
+                "v": 84,
+                "n": 84
+              },
+              {
+                "d": {
+                  "channel": "Events",
+                  "metric": "spend"
+                },
+                "v": 9600,
+                "n": 84
+              }
+            ],
+            "total": {
+              "v": 11924,
+              "n": 11924
+            }
+          },
+          {
+            "key": "cohorts",
+            "dims": [
+              {
+                "key": "cohort",
+                "label": "Cohort"
+              },
+              {
+                "key": "week",
+                "label": "Week"
+              }
+            ],
+            "rows": [
+              {
+                "d": {
+                  "cohort": "2026-07-06",
+                  "week": "w1"
+                },
+                "v": 0.61,
+                "n": 2410
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-06",
+                  "week": "w2"
+                },
+                "v": 0.44,
+                "n": 2410
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-06",
+                  "week": "w3"
+                },
+                "v": 0.38,
+                "n": 2410
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-06",
+                  "week": "w4"
+                },
+                "v": 0.35,
+                "n": 2410
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-13",
+                  "week": "w1"
+                },
+                "v": 0.64,
+                "n": 2680
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-13",
+                  "week": "w2"
+                },
+                "v": 0.47,
+                "n": 2680
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-13",
+                  "week": "w3"
+                },
+                "v": 0.41,
+                "n": 2680
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-13",
+                  "week": "w4"
+                },
+                "v": 0.37,
+                "n": 2680
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-20",
+                  "week": "w1"
+                },
+                "v": 0.66,
+                "n": 2905
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-20",
+                  "week": "w2"
+                },
+                "v": 0.5,
+                "n": 2905
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-20",
+                  "week": "w3"
+                },
+                "v": 0.43,
+                "n": 2905
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-27",
+                  "week": "w1"
+                },
+                "v": 0.63,
+                "n": 3120
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-27",
+                  "week": "w2"
+                },
+                "v": 0.46,
+                "n": 3120
+              },
+              {
+                "d": {
+                  "cohort": "2026-08-03",
+                  "week": "w1"
+                },
+                "v": 0.68,
+                "n": 2840
+              }
+            ]
+          }
+        ],
+        "primary": "channels"
+      }
+    },
+    {
+      "at": "2026-08-27T14:20:30.541Z",
+      "range": {
+        "fromISO": "2026-07-30",
+        "toISO": "2026-08-27"
+      },
+      "bundle": {
+        "kind": "dataset/v1",
+        "datasets": [
+          {
+            "key": "channels",
+            "dims": [
+              {
+                "key": "channel",
+                "label": "Channel"
+              },
+              {
+                "key": "metric",
+                "label": "Metric"
+              }
+            ],
+            "rows": [
+              {
+                "d": {
+                  "channel": "Organic search",
+                  "metric": "signups"
+                },
+                "v": 4820,
+                "n": 4820
+              },
+              {
+                "d": {
+                  "channel": "Organic search",
+                  "metric": "spend"
+                },
+                "v": 0,
+                "n": 4820
+              },
+              {
+                "d": {
+                  "channel": "Paid social",
+                  "metric": "signups"
+                },
+                "v": 3140,
+                "n": 3140
+              },
+              {
+                "d": {
+                  "channel": "Paid social",
+                  "metric": "spend"
+                },
+                "v": 27900,
+                "n": 3140
+              },
+              {
+                "d": {
+                  "channel": "Referral",
+                  "metric": "signups"
+                },
+                "v": 1980,
+                "n": 1980
+              },
+              {
+                "d": {
+                  "channel": "Referral",
+                  "metric": "spend"
+                },
+                "v": 4200,
+                "n": 1980
+              },
+              {
+                "d": {
+                  "channel": "Partners",
+                  "metric": "signups"
+                },
+                "v": 1260,
+                "n": 1260
+              },
+              {
+                "d": {
+                  "channel": "Partners",
+                  "metric": "spend"
+                },
+                "v": 11800,
+                "n": 1260
+              },
+              {
+                "d": {
+                  "channel": "Newsletter",
+                  "metric": "signups"
+                },
+                "v": 640,
+                "n": 640
+              },
+              {
+                "d": {
+                  "channel": "Newsletter",
+                  "metric": "spend"
+                },
+                "v": 900,
+                "n": 640
+              },
+              {
+                "d": {
+                  "channel": "Events",
+                  "metric": "signups"
+                },
+                "v": 84,
+                "n": 84
+              },
+              {
+                "d": {
+                  "channel": "Events",
+                  "metric": "spend"
+                },
+                "v": 9600,
+                "n": 84
+              }
+            ],
+            "total": {
+              "v": 11924,
+              "n": 11924
+            }
+          },
+          {
+            "key": "cohorts",
+            "dims": [
+              {
+                "key": "cohort",
+                "label": "Cohort"
+              },
+              {
+                "key": "week",
+                "label": "Week"
+              }
+            ],
+            "rows": [
+              {
+                "d": {
+                  "cohort": "2026-07-06",
+                  "week": "w1"
+                },
+                "v": 0.61,
+                "n": 2410
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-06",
+                  "week": "w2"
+                },
+                "v": 0.44,
+                "n": 2410
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-06",
+                  "week": "w3"
+                },
+                "v": 0.38,
+                "n": 2410
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-06",
+                  "week": "w4"
+                },
+                "v": 0.35,
+                "n": 2410
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-13",
+                  "week": "w1"
+                },
+                "v": 0.64,
+                "n": 2680
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-13",
+                  "week": "w2"
+                },
+                "v": 0.47,
+                "n": 2680
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-13",
+                  "week": "w3"
+                },
+                "v": 0.41,
+                "n": 2680
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-13",
+                  "week": "w4"
+                },
+                "v": 0.37,
+                "n": 2680
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-20",
+                  "week": "w1"
+                },
+                "v": 0.66,
+                "n": 2905
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-20",
+                  "week": "w2"
+                },
+                "v": 0.5,
+                "n": 2905
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-20",
+                  "week": "w3"
+                },
+                "v": 0.43,
+                "n": 2905
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-27",
+                  "week": "w1"
+                },
+                "v": 0.63,
+                "n": 3120
+              },
+              {
+                "d": {
+                  "cohort": "2026-07-27",
+                  "week": "w2"
+                },
+                "v": 0.46,
+                "n": 3120
+              },
+              {
+                "d": {
+                  "cohort": "2026-08-03",
+                  "week": "w1"
+                },
+                "v": 0.68,
+                "n": 2840
+              }
+            ]
+          }
+        ],
+        "primary": "channels"
+      }
+    }
+  ],
+  "app": {
+    "spec": {
+      "kind": "app/v1",
+      "entry": "overview",
+      "pages": [
+        {
+          "id": "overview",
+          "title": "Overview",
+          "html": "\n            <div class=\"lk-grid\">\n              <div class=\"lk-stat\">\n                <span class=\"lk-label\">Signups</span>\n                <span class=\"lk-value lk-value--lg\" id=\"signups\">—</span>\n                <span class=\"lk-delta lk-delta--up\">▲ 12.4%</span>\n              </div>\n              <div class=\"lk-stat\">\n                <span class=\"lk-label\">Spend</span>\n                <span class=\"lk-value\" id=\"spend\">—</span>\n                <span class=\"lk-delta lk-delta--up\">▲ 6.1%</span>\n              </div>\n              <div class=\"lk-stat\">\n                <span class=\"lk-label\">Blended CAC</span>\n                <span class=\"lk-value\" id=\"cac\">—</span>\n                <span class=\"lk-delta lk-delta--down\">▼ 5.6%</span>\n              </div>\n            </div>\n\n            <div class=\"lk-spacer\"></div>\n            <div class=\"lk-title\">Signups by channel</div>\n            <div id=\"bars\"></div>\n\n            <div class=\"lk-spacer\"></div>\n            <button class=\"lk-chip lk-chip--accent\" id=\"to-cohorts\" type=\"button\"\n                    style=\"cursor:pointer;border:none;\">\n              Retention by cohort →\n            </button>\n            <script>\n              // NAME THE DATASET EXPLICITLY. The page's own \"dataset\" field is\n              // documented as lab.data()'s default, but the runtime does not wire it\n              // through: an argument-less call posts dataset:null and the host\n              // resolves that to bundle.primary (appModel.ts findDataset), so a page\n              // whose dataset is not the primary one silently gets the wrong numbers.\n              lab.data('channels').then(function (ds) {\n                var fmt = function (n) { return n.toLocaleString('en-US'); };\n                var pick = function (metric) {\n                  return ds.rows.filter(function (r) { return r.d.metric === metric; });\n                };\n                var signupRows = pick('signups');\n                var spend = pick('spend').reduce(function (a, r) { return a + r.v; }, 0);\n                var signups = signupRows.reduce(function (a, r) { return a + r.v; }, 0);\n\n                document.getElementById('signups').textContent = fmt(signups);\n                document.getElementById('spend').textContent = '$' + fmt(spend);\n                document.getElementById('cac').textContent = '$' + (spend / signups).toFixed(2);\n\n                var max = Math.max.apply(null, signupRows.map(function (r) { return r.v; }));\n                document.getElementById('bars').innerHTML = signupRows.map(function (r, i) {\n                  var pct = Math.round((r.v / max) * 100);\n                  var weak = r.v < 300 ? ' lk-low-sample' : '';\n                  // The kit's row wrapper is lk-bar — the flex row that gives the\n                  // label, the track and the value their shares. Without it the three\n                  // spans just stack as text and the chart reads as a list.\n                  // (No backticks in here: this whole page body IS a template literal.)\n                  return '<div class=\"lk-bar' + weak + '\">' +\n                    '<span class=\"lk-bar-label\">' + r.d.channel + '</span>' +\n                    '<span class=\"lk-bar-track\"><span class=\"lk-bar-fill lk-bar-fill--' +\n                      ((i % 8) + 1) + '\" style=\"width:' + pct + '%\"></span></span>' +\n                    '<span class=\"lk-bar-value\">' + fmt(r.v) + '</span>' +\n                  '</div>';\n                }).join('');\n              });\n              document.getElementById('to-cohorts').addEventListener('click', function () {\n                lab.navigate('cohorts');\n              });\n            </script>\n          ",
+          "dataset": "channels"
+        },
+        {
+          "id": "cohorts",
+          "title": "Retention",
+          "html": "\n            <div class=\"lk-title\">Week-on-week retention by signup cohort</div>\n            <table class=\"lk-table\" id=\"grid\"></table>\n            <p class=\"lk-muted\" style=\"margin-top:10px;\">\n              A blank cell is a week that has not happened yet, not a zero.\n            </p>\n            <div class=\"lk-spacer\"></div>\n            <button class=\"lk-chip\" id=\"back\" type=\"button\" style=\"cursor:pointer;border:none;\">\n              ← Overview\n            </button>\n            <script>\n              // Explicit key — see the note on the overview page. This is the page\n              // that PROVED the bug: with an argument-less call it rendered a single\n              // \"undefined\" row carrying the channels total.\n              lab.data('cohorts').then(function (ds) {\n                // Pivot the long rows back into a grid. An absent (cohort, week)\n                // pair stays absent — that is the \"·\" the caption promises.\n                var byCohort = {};\n                ds.rows.forEach(function (r) {\n                  var c = byCohort[r.d.cohort] || (byCohort[r.d.cohort] = { n: r.n });\n                  c[r.d.week] = r.v;\n                });\n                var pc = function (x) {\n                  return x === undefined\n                    ? '<td class=\"lk-muted\">·</td>'\n                    : '<td class=\"lk-num\">' + Math.round(x * 100) + '%</td>';\n                };\n                var body = Object.keys(byCohort).sort().map(function (k) {\n                  var c = byCohort[k];\n                  return '<tr><td>' + k + '</td>' +\n                    '<td class=\"lk-num\">' + c.n.toLocaleString('en-US') + '</td>' +\n                    pc(c.w1) + pc(c.w2) + pc(c.w3) + pc(c.w4) + '</tr>';\n                }).join('');\n                document.getElementById('grid').innerHTML =\n                  '<tr><th>Cohort</th><th class=\"lk-num\">Size</th><th class=\"lk-num\">W1</th>' +\n                  '<th class=\"lk-num\">W2</th><th class=\"lk-num\">W3</th><th class=\"lk-num\">W4</th></tr>' +\n                  body;\n              });\n              document.getElementById('back').addEventListener('click', function () {\n                lab.navigate('overview');\n              });\n            </script>\n          ",
+          "dataset": "cohorts"
+        },
+        {
+          "id": "about",
+          "title": "About",
+          "html": "\n            <div class=\"lk-callout\">\n              A demo fixture. Every figure on these pages is invented — it exists so the\n              <code>render: app</code> surface can be driven and photographed without\n              anyone's real analytics. The pages are written by\n              <code>lab/scripts/demo-acquisition-app.mjs</code> and drawn in a sandbox\n              with no network access; the numbers arrive over the host bridge via\n              <code>lab.data()</code>.\n            </div>\n          "
+        }
+      ]
+    },
+    "notices": [],
+    "range": {
+      "fromISO": "2026-07-30",
+      "toISO": "2026-08-27"
+    }
+  }
+}
