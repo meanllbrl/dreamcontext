@@ -73,8 +73,37 @@ body {
 .dc-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 .dc-list li { color: var(--color-text); }
 
-/* The marker stroke, matching the transcript's own ==highlight==. */
-.dc-mark { background: var(--color-accent-soft); color: var(--color-accent-text); padding: 0 3px; border-radius: 3px; }
+/* The marker stroke — the SAME pen as the transcript's own ==highlight== (styles/global.css):
+   ink that stops short of the ascender line and of the baseline gap, over INHERITED text
+   colour. It used to be an accent-tinted box with `--color-accent-text` on top — which is
+   white — so the marked phrase was the one phrase in the block you could not read (owner
+   report 08-27). Same class of bug as ChatPane's context chip and composer's slash row:
+   `--color-accent-text` belongs on a SOLID accent fill, never on a tint of it.
+   A bare `mark` is in the selector because the iframe never sees global.css, and the UA
+   stylesheet repaints <mark> black-on-yellow — a contrast failure in the dark theme. */
+.dc-mark, mark {
+  /* One pair of variables, so a coloured pen re-inks the stroke instead of redescribing it. */
+  --dc-mark-ink: var(--color-highlight);
+  --dc-mark-edge: var(--color-highlight-edge);
+  background: linear-gradient(
+    to bottom,
+    transparent 8%,
+    var(--dc-mark-ink) 8%,
+    var(--dc-mark-ink) 88%,
+    var(--dc-mark-edge) 88%,
+    var(--dc-mark-edge) 94%,
+    transparent 94%
+  );
+  color: inherit;
+  padding: 0 0.22em;
+  /* Pulled back so the stroke overhangs the phrase without adding width and re-wrapping
+     the line under it. */
+  margin: 0 -0.1em;
+  border-radius: 0.15em;
+  /* A highlight that wraps is TWO strokes, one per line. */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
 
 .dc-code {
   font-family: var(--font-mono);

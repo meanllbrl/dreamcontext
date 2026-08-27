@@ -41,6 +41,10 @@ if (!existsSync(join(REPO, 'dist'))) {
   process.exit(0);
 }
 
-rmSync(TARGET, { recursive: true, force: true });
+// `maxRetries` because this rm competes with a RUNNING server: the app serves out of
+// dist/dashboard, and a rebuild while it is open threw ENOTEMPTY here (2026-08-27) —
+// after the walk had already emptied most of the tree, leaving the served dashboard
+// gutted until the sync was re-run by hand. Node retries exactly this errno class.
+rmSync(TARGET, { recursive: true, force: true, maxRetries: 5, retryDelay: 120 });
 cpSync(SOURCE, TARGET, { recursive: true });
 console.log('sync-dashboard-dist: dist/dashboard now matches dashboard/dist.');

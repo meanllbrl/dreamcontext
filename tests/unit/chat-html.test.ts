@@ -281,6 +281,37 @@ describe('the kit', () => {
     expect(colors).toEqual(['#fff']);
   });
 
+  it('reads no token the host does not resolve — an unresolved var paints NOTHING', () => {
+    // CSS variables do not cross the iframe boundary: whatever `CHAT_KIT_TOKENS` omits
+    // arrives as an empty value inside the frame, and the property it fed silently drops.
+    // That is how `.dc-mark`'s stroke would vanish if its highlight pair went unlisted, so
+    // the coverage is checked exhaustively rather than spot-checked. `--dc-*` are the kit's
+    // OWN locals, declared in the same sheet that reads them.
+    const used = new Set(
+      [...CHAT_HTML_KIT_CSS.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]),
+    );
+    for (const token of used) {
+      if (token.startsWith('--dc-')) {
+        expect(CHAT_HTML_KIT_CSS, token).toMatch(new RegExp(`${token}:`));
+        continue;
+      }
+      expect(CHAT_KIT_TOKENS, token).toContain(token);
+    }
+  });
+
+  it('never paints `--color-accent-text` — it is white, and belongs on a SOLID fill', () => {
+    // The bug this pins: `.dc-mark` was `--color-accent-text` (white) on `--color-accent-soft`
+    // (a ~16% accent tint), so the one phrase an author marked as load-bearing was the one
+    // phrase in the block that could not be read (owner report 08-27). The token stays in
+    // CHAT_KIT_TOKENS for a brand override that does paint a solid accent fill; the kit
+    // itself must not, because every accent surface it owns is a TINT.
+    // (The kit's own comment NAMES the token, to keep the reason next to the fix — so the
+    // assertion is on the reference, not the mention.)
+    expect(CHAT_HTML_KIT_CSS).not.toContain('var(--color-accent-text)');
+    // And the marker keeps the text colour it inherited, exactly like the app's own <mark>.
+    expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-mark, mark \{[^}]*color: inherit/);
+  });
+
   it('keeps html and body at auto height, or the bridge would chase the frame it sets', () => {
     expect(CHAT_HTML_KIT_CSS).toMatch(/html,\s*body\s*\{[^}]*height:\s*auto/);
   });

@@ -5,7 +5,7 @@ description: "An accent token validated on chips and buttons is not thereby vali
 tags: ["design", "topic:frontend", "domain:dashboard"]
 pinned: false
 date: "2026-08-01"
-updated: "2026-08-01"
+updated: "2026-08-27"
 ---
 
 ## Why This Exists
@@ -26,6 +26,7 @@ That is the worst possible place to lose contrast. Assistant output is read once
 | Status pill, counter | short | Glanced at | Solid or tinted, either reads |
 | **Reader-owned prose** (their message, their note, their draft) | **paragraphs** | **Re-read, quoted, edited** | **Tinted surface + body text** |
 | Assistant / system prose | paragraphs | Read once | Plain canvas, no fill needed |
+| **Inline marker** (`==highlight==`, `.dc-mark`) | a phrase | **Read THROUGH, mid-sentence** | **Pen stroke + `color: inherit`** (§5) |
 
 The axis is not "is this important" — the accent fill is often chosen *because* the block is important. The axis is **length × re-read frequency**.
 
@@ -58,6 +59,31 @@ The objection to this change is always "it won't read as *mine* anymore". It doe
 
 Saturation was the one identity signal that also cost readability, and it is the one worth spending.
 
+### 5. An inline MARKER is prose, not a chip
+
+The `dream-html` kit's `.dc-mark` — the highlighter an author paints over the load-bearing
+phrase in a block — shipped as `--color-accent-text` on `--color-accent-soft`: a filled
+lavender swatch with white text. It looked like the kit's chips because it was written next
+to them, and it failed on the light theme the way this pattern predicts (owner report
+2026-08-27, with a screenshot): the one phrase marked as *the phrase to read* was the only
+phrase in the block that could not be read.
+
+A marker is not a short glanced-at element even though it is short. It sits INSIDE a
+sentence, in the sentence's own type and color, and the reader's eye lands on it first and
+then keeps reading — so it must not restate the foreground at all:
+
+```css
+/* Ink a STROKE, inherit the text. `--color-highlight` / `--color-highlight-edge`. */
+background: linear-gradient(to bottom, transparent 8%, var(--ink) 8%, var(--ink) 88%,
+                            var(--edge) 88%, var(--edge) 94%, transparent 94%);
+color: inherit;
+box-decoration-break: clone;   /* a wrapped highlight is two strokes, one per line */
+```
+
+The give-away in review: **a rule that sets both `background` and `color` on something the
+reader reads THROUGH is already wrong.** Fill and foreground together make a badge; a pen
+sets only the ink.
+
 ## When NOT to Apply This
 
 - **Short glanced-at elements.** A button that says "Save" should stay a solid accent fill; desaturating it costs affordance and buys nothing.
@@ -68,6 +94,7 @@ Saturation was the one identity signal that also cost readability, and it is the
 
 - `dashboard/src/components/sleepy/SleepDebtTracker.css` — the debt/level pills, where the recipe originated.
 - `dashboard/src/components/sleepy/chat/cards.css` `.chat-msg-user-bubble` — commit `fa06c2a`, the occurrence that turned the recipe into a rule.
+- `dashboard/src/components/sleepy/chat/chat-html-kit.css` `.dc-mark` — the inline marker above, re-inked as the same pen `styles/global.css` gives the transcript's own `==highlight==`. Pinned by `tests/unit/chat-html.test.ts`, which now refuses `var(--color-accent-text)` anywhere in the kit and checks every token the kit reads is one the sandbox actually resolves.
 
 ## Related
 
