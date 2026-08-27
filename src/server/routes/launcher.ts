@@ -943,6 +943,32 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
   };
 }
 
+/**
+ * The app-global model/effort pick, read off disk — the ONE place a spawn that has no
+ * live chat session behind it can learn what the user chose.
+ *
+ * `chatDefaultModel` / `chatDefaultEffort` were already app-global (one blob, every project
+ * window), which is what makes them the right source for the MEETING ROOM: the room's
+ * composer has no session to scope a model to, so its pick IS this file, and every headless
+ * run the room fans out — in every project — is spawned with it. One selection, all
+ * projects, no second store.
+ *
+ * Both values come back already through `sanitizeModel` / `sanitizeEffort` (see
+ * {@link coerceAgentSettings}), so they are safe to interpolate into a `claude` command
+ * string. `''` is the documented resting value: omit the flag, inherit the CLI's own default.
+ * Never throws — an unreadable or corrupt blob reads as "nothing pinned".
+ */
+export function readAgentUiChatDefaults(): { model: string; effort: string } {
+  try {
+    const p = agentSettingsPath();
+    if (!existsSync(p)) return { model: '', effort: '' };
+    const s = coerceAgentSettings(JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>);
+    return { model: s.chatDefaultModel, effort: s.chatDefaultEffort };
+  } catch {
+    return { model: '', effort: '' };
+  }
+}
+
 /** GET /api/launcher/agent-settings — persisted Agents-surface prefs (defaults if absent). */
 export async function handleAgentSettingsGet(
   _req: IncomingMessage,
@@ -982,6 +1008,81 @@ export async function handleAgentSettingsSet(
   } catch (err) {
     console.error('[launcher] agent-settings write failed:', err);
     sendError(res, 500, 'write_failed', 'Failed to persist Agent settings.');
+  }
+}
+
+// ─── Launcher UI preferences (~/.dreamcontext/launcher-ui.json) ────────────────
+//
+// Same rationale as sleepy.json / agent-ui.json: the app picks a FRESH loopback
+// port every launch, so the webview's origin changes and `localStorage` starts
+// empty — a launcher preference kept only client-side is forgotten on every
+// restart. That is exactly what happened to the Space/List choice: you pick
+// Space, quit, reopen, and you are back in List.
+//
+// App-global, never vault-scoped: the launcher has no project pinned, so this
+// cannot live in a vault's `state/`. Vault-agnostic route (`/api/launcher/*`).
+
+/** Which surface the launcher window opens on. */
+type LauncherView = 'space' | 'list';
+
+interface LauncherUiSettings {
+  view: LauncherView;
+}
+
+/** List leads until Space has been CHOSEN — mirrors dashboard/src/lib/launcherPrefs.ts. */
+const LAUNCHER_UI_DEFAULTS: LauncherUiSettings = { view: 'list' };
+
+function launcherUiPath(): string {
+  return join(homedir(), '.dreamcontext', 'launcher-ui.json');
+}
+
+/**
+ * Coerce an untrusted blob to valid settings. STRICT-PICK boundary for
+ * `POST /api/launcher/ui-settings`: nothing is spread through from the caller.
+ */
+function coerceLauncherUi(raw: Record<string, unknown>): LauncherUiSettings {
+  return { view: raw.view === 'space' ? 'space' : LAUNCHER_UI_DEFAULTS.view };
+}
+
+/** GET /api/launcher/ui-settings — persisted { view } (defaults if absent). */
+export async function handleLauncherUiGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  let settings = { ...LAUNCHER_UI_DEFAULTS };
+  try {
+    const p = launcherUiPath();
+    if (existsSync(p)) {
+      settings = coerceLauncherUi(JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>);
+    }
+  } catch {
+    /* unreadable / corrupt — fall back to defaults */
+  }
+  sendJson(res, 200, settings);
+}
+
+/** POST /api/launcher/ui-settings — persist { view }. STRICT-PICK. */
+export async function handleLauncherUiSet(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  const settings = coerceLauncherUi(body as Record<string, unknown>);
+  try {
+    mkdirSync(join(homedir(), '.dreamcontext'), { recursive: true });
+    writeFileSync(launcherUiPath(), JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+    sendJson(res, 200, settings);
+  } catch (err) {
+    console.error('[launcher] ui-settings write failed:', err);
+    sendError(res, 500, 'write_failed', 'Failed to persist launcher preferences.');
   }
 }
 

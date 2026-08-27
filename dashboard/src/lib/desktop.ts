@@ -41,6 +41,17 @@ function windowApi(): Promise<typeof import('@tauri-apps/api/window')> {
 }
 
 /**
+ * Pre-load the window module without needing it yet. Call on pointer-DOWN in any
+ * surface that may hand off to `dragWindowNow()` later in the same gesture:
+ * `startDragging()` only works while the button is still held, and a cold dynamic
+ * import can lose that race on a quick flick.
+ */
+export function warmWindowApi(): void {
+  if (!isDesktop()) return;
+  void windowApi().catch(() => { /* retried on the next gesture */ });
+}
+
+/**
  * Start dragging the current window from a title-bar mousedown.
  *
  * Why this exists instead of `data-tauri-drag-region`: our windows are created
@@ -56,6 +67,23 @@ export async function startWindowDrag(target: EventTarget | null): Promise<void>
   if (!isDesktop()) return;
   // Never hijack a click meant for a control (buttons, inputs, links, etc.).
   if (isDragExempt(target)) return;
+  await dragWindowNow();
+}
+
+/**
+ * Hand the current pointer-down straight to the native window drag, WITHOUT the
+ * `[data-no-drag]` check.
+ *
+ * For surfaces that opt out of the page-wide drag handle because they own their
+ * own pointer gestures, but that can still tell — from the gesture itself — that
+ * this particular drag was meant for the window. The Space launcher is the case
+ * this exists for: its sky spins on horizontal drag, so a vertical drag on empty
+ * sky means nothing to it and moves the window instead (the Space covers the
+ * whole launcher below the top bar, so without this there is almost nothing left
+ * to grab). Callers own the "is this really a window drag?" decision.
+ */
+export async function dragWindowNow(): Promise<void> {
+  if (!isDesktop()) return;
   try {
     const { getCurrentWindow } = await windowApi();
     await getCurrentWindow().startDragging();
@@ -126,7 +154,7 @@ export function startTitleBarDrag(e: DragMouseEvent): void {
   // Warm the Tauri module NOW, while the pointer is still inside the 4px
   // threshold — by the time the drag actually starts the import is a cache hit,
   // so a fast flick can't out-race the module load.
-  void windowApi().catch(() => { /* retried on next gesture */ });
+  warmWindowApi();
   const sx = e.clientX;
   const sy = e.clientY;
   const onMove = (me: MouseEvent) => {

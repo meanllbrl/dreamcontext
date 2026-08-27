@@ -9,7 +9,7 @@ import {
   type VaultStatus,
 } from '../../hooks/useLauncher';
 import { useTeamUpdates } from '../../hooks/useBrainStatus';
-import { confirmAction, openVaultWindow } from '../../lib/desktop';
+import { confirmAction, dragWindowNow, openVaultWindow, warmWindowApi } from '../../lib/desktop';
 import { BrandMark } from '../../components/brand/BrandMark';
 import { VaultLogo, useVaultLogoPicker, useVaultLogoMenu } from '../../components/layout/VaultLogo';
 import { layoutSpace, bodyPoint, type SpaceBody } from './spaceLayout';
@@ -23,6 +23,11 @@ const ZOOM_MIN = 0.42;
 const ZOOM_MAX = 1.7;
 /** Pointer travel (px) before a chip press becomes a wire drag instead of a click. */
 const WIRE_SLOP = 7;
+/** Pointer travel (px) before a background press commits to an axis (spin vs. move window). */
+const GESTURE_SLOP = 4;
+/** How much a background drag must out-vertical its horizontal travel to move the
+ *  window instead of spinning the sky. >1 keeps a sloppy diagonal on the sky. */
+const WINDOW_DRAG_BIAS = 1.5;
 
 type Status = 'ok' | 'stale' | 'gone';
 
@@ -429,24 +434,57 @@ export function SpaceLauncher({ query, onAddProject, onOpenMeetingRoom, onError 
     return out;
   }
 
-  // ─── Sky gestures: drag to spin, wheel to zoom ────────────────────────────
+  // ─── Sky gestures: drag to spin, wheel to zoom, drag DOWN to move the window ──
+  //
+  // The Space fills the whole launcher below the top bar and opts out of the
+  // page-wide window-drag handle (`data-no-drag`) because it owns its own pointer
+  // gestures — which left a ~44px strip as the only place to grab the window.
+  // Spinning only ever reads the HORIZONTAL delta, so a vertical drag on empty
+  // sky was dead space: it now moves the window instead. The axis is locked once,
+  // at the slop threshold, and biased toward spin so a sloppy diagonal still
+  // spins the sky rather than surprising you with a moving window.
   function onBackgroundPointerDown(e: React.PointerEvent) {
     if (e.button !== 0) return;
     const startX = e.clientX;
+    const startY = e.clientY;
     const startSpin = spinRef.current;
     let moved = false;
+    let axis: 'undecided' | 'spin' | 'window' = 'undecided';
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture(e.pointerId);
+    // Warm the Tauri window module NOW, while the pointer is still inside the
+    // slop: `startDragging()` only works while the button is down, and a cold
+    // dynamic import can lose that race on a quick flick.
+    warmWindowApi();
     const move = (ev: PointerEvent) => {
       const dx = ev.clientX - startX;
-      if (Math.abs(dx) > 3) moved = true;
+      const dy = ev.clientY - startY;
+      if (axis === 'undecided') {
+        if (Math.hypot(dx, dy) < GESTURE_SLOP) return;
+        moved = true;
+        axis = Math.abs(dy) > Math.abs(dx) * WINDOW_DRAG_BIAS ? 'window' : 'spin';
+        if (axis === 'window') {
+          // Hand the still-held pointer to the OS. Detach first: once the native
+          // drag takes over, the webview stops seeing this gesture entirely.
+          detach();
+          void dragWindowNow();
+          return;
+        }
+      }
       spinRef.current = startSpin + dx * DRAG_DEG_PER_PX;
       rotorRef.current?.style.setProperty('--spin', `${spinRef.current.toFixed(3)}deg`);
     };
-    const up = () => {
-      el.releasePointerCapture?.(e.pointerId);
+    const detach = () => {
+      try {
+        el.releasePointerCapture?.(e.pointerId);
+      } catch {
+        /* capture already lost — nothing to release */
+      }
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+    };
+    const up = () => {
+      detach();
       // A press that never moved is a click on empty space: dismiss.
       if (!moved) {
         setFocus(null);

@@ -14,6 +14,12 @@ import { VaultLogo, useVaultLogoPicker, useVaultLogoMenu } from '../components/l
 import { VaultSyncChip } from '../components/brain/VaultSyncChip';
 import { OnboardingWizard } from './OnboardingWizard';
 import { SpaceLauncher } from './space/SpaceLauncher';
+import {
+  initLauncherViewFromServer,
+  readLauncherViewLocal,
+  writeLauncherView,
+  type LauncherView,
+} from '../lib/launcherPrefs';
 import { MeetingRoom } from '../components/meeting/MeetingRoom';
 import './LauncherPage.css';
 
@@ -24,26 +30,14 @@ import './LauncherPage.css';
  * is gone: its wiring now lives in the Space, so there is ONE surface answering
  * both "where are my projects" and "how are they related" instead of two that
  * had to be kept in sync.
+ *
+ * The choice is persisted SERVER-side (`lib/launcherPrefs.ts`), not just in
+ * localStorage: the desktop shell picks a new loopback port every launch, so a
+ * localStorage-only pick was wiped on every restart.
  */
-type View = 'space' | 'list';
-
-const VIEW_STORAGE_KEY = 'dreamcontext.launcher.view';
 
 /** How often the launcher checks every project's brain repo for team pushes (background, cache-friendly). */
 const TEAM_FETCH_INTERVAL_MS = 5 * 60 * 1000;
-
-/**
- * List leads for now — Space is the new surface and has to be CHOSEN before it
- * becomes someone's launcher. But the choice is sticky in both directions: pick
- * Space once and every later launch opens in Space, until you pick List again.
- */
-function readStoredView(): View {
-  try {
-    return window.localStorage.getItem(VIEW_STORAGE_KEY) === 'space' ? 'space' : 'list';
-  } catch {
-    return 'list';
-  }
-}
 
 export function LauncherPage() {
   const { data, isLoading, isError, error } = useLauncherStatus();
@@ -56,7 +50,13 @@ export function LauncherPage() {
   const [wizardOpen, setWizardOpen] = useState(false);
   /** The hidden Meeting Room — reachable ONLY through the Space core's click. */
   const [meetingOpen, setMeetingOpen] = useState(false);
-  const [view, setView] = useState<View>(readStoredView);
+  /**
+   * `null` until we know the answer. On a fresh launch the origin is new, so the
+   * localStorage mirror is empty and only the server file knows what was picked —
+   * rendering List in the meantime would flash the wrong surface, so the body is
+   * withheld for the one localhost round-trip it takes to find out.
+   */
+  const [view, setView] = useState<LauncherView | null>(readLauncherViewLocal);
   /** How many projects `Update all` has got through, for the button's counter. */
   const [updateAllDone, setUpdateAllDone] = useState(0);
   /** One hidden file input + the right-click menu that opens it — see VaultLogo.tsx.
@@ -79,6 +79,20 @@ export function LauncherPage() {
     teamFetch.mutate(undefined);
     const id = setInterval(() => teamFetch.mutate(undefined), TEAM_FETCH_INTERVAL_MS);
     return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Resolve the remembered surface. Only when the local mirror is empty, which
+  // means this is the first window of a fresh launch (new port → new origin →
+  // empty localStorage) — once it is seeded, the mirror IS the server's answer
+  // and re-reading would only race the user's own click.
+  useEffect(() => {
+    if (view !== null) return;
+    let cancelled = false;
+    void initLauncherViewFromServer().then((v) => {
+      if (!cancelled) setView((prev) => prev ?? v);
+    });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -150,13 +164,9 @@ export function LauncherPage() {
     );
   }
 
-  function pickView(v: View) {
+  function pickView(v: LauncherView) {
     setView(v);
-    try {
-      window.localStorage.setItem(VIEW_STORAGE_KEY, v);
-    } catch {
-      /* private mode — the choice just won't persist */
-    }
+    writeLauncherView(v);
   }
 
   return (
@@ -228,7 +238,7 @@ export function LauncherPage() {
       {logoPicker.input}
       {logoMenu.element}
 
-      {isLoading && <div className="launcher-status">Loading vaults…</div>}
+      {(isLoading || view === null) && <div className="launcher-status">Loading vaults…</div>}
       {isError && (
         <div className="launcher-error">
           {error instanceof Error ? error.message : 'Failed to load vaults.'}

@@ -58,6 +58,8 @@ import {
   handleSleepyConfigSet,
   handleAgentSettingsGet,
   handleAgentSettingsSet,
+  handleLauncherUiGet,
+  handleLauncherUiSet,
 } from './routes/launcher.js';
 import { handleBrainSettingsGet, handleBrainSettingsPut, handleRoadmapPrefsGet, handleRoadmapPrefsPut, handleLabPrefsGet, handleLabPrefsPut } from './routes/ui-settings.js';
 import {
@@ -327,6 +329,10 @@ export function buildRouter(): Router {
   router.post('/api/launcher/sleepy-config', handleSleepyConfigSet);
   router.get('/api/launcher/agent-settings', handleAgentSettingsGet);
   router.post('/api/launcher/agent-settings', handleAgentSettingsSet);
+  // Launcher window preferences (Space vs List) — kept out of localStorage
+  // because the desktop app's loopback port, and so its origin, changes every launch.
+  router.get('/api/launcher/ui-settings', handleLauncherUiGet);
+  router.post('/api/launcher/ui-settings', handleLauncherUiSet);
   // Launcher project status (green/yellow/red) + per-project update + the
   // cross-vault federation "reads" graph (nodes, edges, connect/disconnect).
   router.get('/api/launcher/status', handleLauncherStatus);
