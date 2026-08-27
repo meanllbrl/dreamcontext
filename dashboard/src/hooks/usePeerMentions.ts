@@ -13,12 +13,17 @@ import type { PeerMention } from '../lib/agentComposer';
  *
  * Never throws and never surfaces an error: no peers simply means no `@` menu,
  * which is the correct rendering for a project with no connections anyway.
+ *
+ * `enabled: false` skips the request entirely and stays at `[]` — for a caller that supplies
+ * its own mention list (the meeting room's roster) or has no vault to ask about. Hooks cannot
+ * be conditional, so the gate lives here rather than at the call site.
  */
-export function usePeerMentions(): PeerMention[] {
+export function usePeerMentions(enabled = true): PeerMention[] {
   const api = useApi();
   const [peers, setPeers] = useState<PeerMention[]>([]);
 
   useEffect(() => {
+    if (!enabled) return;
     let alive = true;
     api
       .get<{ peers: PeerMention[] }>('/peer/peers')
@@ -31,7 +36,7 @@ export function usePeerMentions(): PeerMention[] {
     return () => {
       alive = false;
     };
-  }, [api]);
+  }, [api, enabled]);
 
   return peers;
 }

@@ -11,6 +11,7 @@ import { UpgradeRelaunchBanner } from './components/layout/UpgradeRelaunchBanner
 import { ProjectSwitcher } from './components/search/ProjectSwitcher';
 import { WindowChrome } from './components/layout/WindowChrome';
 import { ChecklistWindow } from './components/checklist/ChecklistWindow';
+import { MeetingRoom } from './components/meeting/MeetingRoom';
 import './styles/global.css';
 
 /**
@@ -64,6 +65,7 @@ const initialVault = params.get('vault');
 const captureMode = params.get('capture') === '1';
 const perchMode = params.get('perch') === '1';
 const checklistId = params.get('checklist');
+const meetingMode = params.get('meeting') === '1';
 
 /**
  * Owns the Sleepy global hotkey from the persistent launcher window. Registers on
@@ -116,6 +118,35 @@ export function App() {
       <ErrorBoundary>
         <ThemeProvider>
           <ChecklistWindow id={checklistId} vault={params.get('vault')} />
+        </ThemeProvider>
+      </ErrorBoundary>
+    );
+  }
+
+  /*
+   * The Meeting Room window (`?meeting=1`) — the machine-wide all-agents thread, which used to
+   * be a modal over the launcher.
+   *
+   * NO `VaultProvider`, and that absence is the design rather than an omission: the room is
+   * owned by no project (its store is `~/.dreamcontext/meeting-room/`, its routes are
+   * vault-agnostic), so `useVault()` resolves to `DEFAULT_VAULT_CONTEXT` — `vault: null` — and
+   * every surface it mounts reads that correctly. It is what makes the shared composer drop
+   * its Attach control (no project temp dir to upload a pasted image into) and skip the
+   * per-vault peer fetch in favour of the roster the room supplies.
+   *
+   * `QueryClientProvider` IS required: the composer's model/effort menu and its usage popover
+   * are react-query reads (`/api/agent/model-config`, `/api/agent/usage-limits`), and both of
+   * those routes are vault-agnostic, so they answer for a window with no project.
+   */
+  if (meetingMode) {
+    return (
+      <ErrorBoundary>
+        <ThemeProvider>
+          <QueryClientProvider client={windowQueryClient}>
+            <I18nProvider>
+              <MeetingRoom />
+            </I18nProvider>
+          </QueryClientProvider>
         </ThemeProvider>
       </ErrorBoundary>
     );

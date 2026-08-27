@@ -27,13 +27,22 @@ import {
 import { Popover } from '../SkillPickerPopover';
 import { ModeMenu, ModelMenu, UsageMenu } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
-import type { ChatSession } from '../chatSession';
+import type { ComposerHost } from './composerHost';
 import './composer.css';
 
 /**
  * The redesigned Agent Chat (beta) composer (task T6, plan rev.3) — replaced the inline
  * `ChatComposer` and is mounted by the `ChatPane` orchestrator against the pinned
  * contract C8.
+ *
+ * ── THREE SURFACES, ONE COMPOSER ────────────────────────────────────────────────────
+ * `ChatPane` (a live session), `PeerSessionCard` (a live session in another project) and
+ * `MeetingWindow` (no session at all — a post is an HTTP write and the answers come from N
+ * headless runs). They differ in what they HAVE, not in what a composer is, so the difference
+ * is carried by props rather than by a second implementation: `session` is the structural
+ * {@link ComposerHost} (a `ChatSession` satisfies it unchanged), and three `show*` flags
+ * below draw a control only where something sits behind it. The room's own textarea-plus-Post
+ * box is what this replaced; see composerHost.ts for why that was worth doing.
  *
  * ── Draft discipline (preserved EXACTLY from the current `ChatComposer`) ────────────
  * The textarea's text is LOCAL React state, not derived from `session.getModel().draft`
@@ -116,11 +125,12 @@ function PlusIcon() {
 
 export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
-  quote, onClearQuote, onOpenTaskPicker, permissionMode, projectPermissionMode,
+  quote, onClearQuote, onOpenTaskPicker, permissionMode = 'auto', projectPermissionMode,
   onPermissionModeChange, onSignIn, onPeerMessage,
   mode = DEFAULT_CHAT_MODE, onModeChange, onSetModelDefault, shelved = false,
+  mentions, modelScope = 'session', idlePlaceholder,
 }: {
-  session: ChatSession;
+  session: ComposerHost;
   model: string;
   effort: string;
   modelConfig: ModelConfig;
@@ -139,8 +149,13 @@ export function Composer({
    * `ChatPane` owns the resolution (the CLI's own `conv.permissionMode`, falling back to
    * `session.bypass`); this composer renders what it is handed, verbatim, and reports a
    * change.
+   *
+   * OPTIONAL only because a surface with no mode trigger has no session whose permission it
+   * could report (the meeting room's agents are headless runs under a fixed `auto`, set by the
+   * delivery path and not by this control). A surface that DOES draw the trigger must pass it —
+   * the fallback below exists to keep the type honest, not as a value worth rendering.
    */
-  permissionMode: 'auto' | 'bypass';
+  permissionMode?: 'auto' | 'bypass';
   /**
    * The PROJECT's remembered permission default — what `onPermissionModeChange` actually
    * writes, as opposed to what `permissionMode` above DISPLAYS.
@@ -151,7 +166,9 @@ export function Composer({
    * rather than the default.
    */
   projectPermissionMode?: 'auto' | 'bypass';
-  onPermissionModeChange: (mode: 'auto' | 'bypass') => void;
+  /** OPTIONAL for the same reason as {@link onModeChange}, and the two travel together:
+   *  they are the two halves of one trigger, so a surface that offers neither draws none. */
+  onPermissionModeChange?: (mode: 'auto' | 'bypass') => void;
   /** The quoted-reply text (state 11's ↩ Quote-reply), or `null` when nothing is queued.
    *  Owned by the orchestrator (`ChatPane`, wave 4) — this composer only renders/consumes it. */
   quote: string | null;
@@ -160,14 +177,18 @@ export function Composer({
   onClearQuote: () => void;
   /** Open the task picker (state 7's "📋 Task" attachment). The picker itself, and how a
    *  chosen task reaches this composer as an attachment chip, is a later wave's concern —
-   *  no such channel exists yet, so this composer only ever fires the request to open one. */
-  onOpenTaskPicker: () => void;
+   *  no such channel exists yet, so this composer only ever fires the request to open one.
+   *
+   *  OPTIONAL: without it the Attach menu drops its "Attach task…" row and keeps the other
+   *  two — a task belongs to one project's board, so a surface that is not in a project has
+   *  no board to pick from. */
+  onOpenTaskPicker?: () => void;
   /** Take over a submitted `/login` (or `/logout`): this engine is headless and answers both
    *  with "isn't available in this environment", so sending them would spend a turn to be told
    *  nothing. The handler opens an interactive terminal Claude tab that CAN run the flow. */
   onSignIn: () => void;
   /**
-   * Take over a message ADDRESSED to a connected project (`@Tilki …`). Like `onSignIn`, this
+   * Take over a message ADDRESSED to a connected project (`@acme-payments …`). Like `onSignIn`, this
    * is a message this session must not send: it belongs to another project's agent, and
    * forwarding it here would get a confident answer from the wrong brain — the worst possible
    * failure, because it looks exactly like a right one.
@@ -205,6 +226,44 @@ export function Composer({
   /** The pinned shelf has an open row docked to this card's top edge, so the card squares its
    *  top corners and the two read as one object. Off until the shelf exists. */
   shelved?: boolean;
+  /**
+   * WHO the `@` menu offers, supplied by the caller instead of fetched.
+   *
+   * Absent (the chat) = this vault's CONNECTED PROJECTS, fetched by `usePeerMentions`. Supplied
+   * (the meeting room) = the room's roster, every registered vault, which no per-vault endpoint
+   * can answer for and which the room already has in the state it polls.
+   *
+   * One picker, two sources — the alternative was the room keeping its own `@` menu, and it
+   * did: a second mention parser, a second keyboard handler, a second caret-restore trick, all
+   * of which had to be right twice. `PeerMention` is the shape both speak, so a roster entry
+   * arrives as one (`vault` = the registered name) and everything downstream — the filter, the
+   * token rewrite, the highlight mirror — is the code the chat already ships.
+   *
+   * NOTE the deliberate asymmetry with `onPeerMessage`: supplying `mentions` says "these names
+   * are addressable", not "route to them". The room sends `@Name` as TEXT (its server routes
+   * the delivery), so it passes no `onPeerMessage` and nothing is intercepted.
+   */
+  mentions?: PeerMention[];
+  /**
+   * What a model/effort change APPLIES to — which decides whether "Set as default" is offered.
+   *
+   * `'session'` (the chat, the default): the pick affects this conversation from its next turn,
+   * and the menu's footer offers the separate app-global write.
+   * `'global'` (the meeting room): there is no session to scope to. The pick IS the app-global
+   * default (`chatDefaultModel`/`chatDefaultEffort`), written by the caller's own
+   * `onModelChange`/`onEffortChange`, and every project the room wakes runs on it — so a
+   * "Set as default" button would offer to do the thing that just happened.
+   */
+  modelScope?: 'session' | 'global';
+  /**
+   * Replaces the IDLE placeholder only — the busy and connecting arms are saying something
+   * more urgent than where to find a feature and are never overridden.
+   *
+   * The default names the `/` menu, which is the right pointer for a surface that HAS one. The
+   * room has no slash commands (no CLI reported any), so pointing at them there would be
+   * advertising a menu that never opens.
+   */
+  idlePlaceholder?: string;
 }) {
   // Which project a pasted image is uploaded into. From THIS subtree, never a module global:
   // with several projects live in one window the bytes would otherwise land in the temp dir of
@@ -215,6 +274,31 @@ export function Composer({
   const conv = session.getModel();
   const [draft, setDraft] = useState(() => conv.draft);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // ── Caret after a PROGRAMMATIC draft replacement ─────────────────────────────────
+  //
+  // Applied in the SAME commit the new value lands, not a frame later. An `rAF` loses the
+  // race against fast typing and splices the following keystrokes into the middle of what was
+  // just inserted — measured, not theorised: picking `@alpha` from the menu and immediately
+  // typing "just you: ping" produced `@alpha  pingjust you:` (meeting-room verify §5, which
+  // is where this surfaced because a scripted keyboard types faster than a hand).
+  //
+  // This is the fix the MEETING ROOM's own composer carried, in this exact shape, before it
+  // was retired in favour of this one. Porting it here rather than leaving it behind is the
+  // whole dividend of there being a single composer: the better of two implementations wins
+  // once, for every surface. It covers all three replacement paths — the `@` menu, the `/`
+  // menu, and a prompt recalled with ↑ (whose caret goes to the end, so it also asks the field
+  // to scroll there).
+  const pendingCaret = useRef<{ pos: number; scrollToEnd?: boolean } | null>(null);
+  useLayoutEffect(() => {
+    const want = pendingCaret.current;
+    const ta = taRef.current;
+    if (!want || !ta) return;
+    pendingCaret.current = null;
+    ta.focus();
+    ta.setSelectionRange(want.pos, want.pos);
+    if (want.scrollToEnd) ta.scrollTop = ta.scrollHeight;
+  }, [draft]);
 
   // ── Prompt history (↑/↓) ─────────────────────────────────────────────────────────
   // The terminal pane gets this from the CLI's own readline; a headless chat has to build it,
@@ -234,13 +318,10 @@ export function Composer({
     session.syncDraft(text);
     // Caret to the END of the recalled text: you recall a prompt to extend or re-send it, and
     // a caret parked at 0 would also mean the next ↑ is read as "recall again" (see
-    // canRecallHistory) when the user meant to move within the line.
-    requestAnimationFrame(() => {
-      const ta = taRef.current;
-      if (!ta) return;
-      ta.setSelectionRange(text.length, text.length);
-      ta.scrollTop = ta.scrollHeight;
-    });
+    // canRecallHistory) when the user meant to move within the line. Synchronous, via
+    // `pendingCaret` — a recall is entered from an empty draft with the caret at 0, so losing
+    // the race here PREPENDS the next keystrokes instead of appending them.
+    pendingCaret.current = { pos: text.length, scrollToEnd: true };
   };
   const recall = (dir: 'back' | 'forward'): boolean => {
     const stepped = stepHistory(historyEntries, nav, dir, draft);
@@ -376,12 +457,18 @@ export function Composer({
   }, [slashOpen, slashIndex]);
 
   // ── `@peer` autocomplete ─────────────────────────────────────────────────────────
-  // The twin of the slash menu above, for addressing a CONNECTED PROJECT. Same caret-
-  // derived query, same key handling, same "replace only the token" rewrite — a user who
-  // has learned `/` has already learned this. The peer list is fetched once per vault
-  // (see usePeerMentions): it changes only on connect/disconnect, and a picker that has
-  // to load is a picker the user has already typed past.
-  const peers = usePeerMentions();
+  // The twin of the slash menu above, for addressing ANOTHER PROJECT. Same caret-derived
+  // query, same key handling, same "replace only the token" rewrite — a user who has learned
+  // `/` has already learned this. The peer list is fetched once per vault (see
+  // usePeerMentions): it changes only on connect/disconnect, and a picker that has to load is
+  // a picker the user has already typed past.
+  //
+  // A caller may supply the list instead (`mentions` — the meeting room's roster). The fetch
+  // is then disabled rather than raced: the hook keeps being CALLED (a hook cannot be
+  // conditional) but does no request, which also keeps a room window — where there is no vault
+  // to ask about — from firing a per-vault peer lookup at all.
+  const fetchedPeers = usePeerMentions(mentions === undefined);
+  const peers = mentions ?? fetchedPeers;
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const mentionMatches = mentionQuery === null ? [] : filterPeerMentions(peers, mentionQuery);
@@ -416,10 +503,7 @@ export function Composer({
     setDraft(next.text);
     session.syncDraft(next.text);
     setMentionQuery(null);
-    requestAnimationFrame(() => {
-      ta?.focus();
-      ta?.setSelectionRange(next.caret, next.caret);
-    });
+    pendingCaret.current = { pos: next.caret };
   };
 
   const acceptSlash = (command: string) => {
@@ -429,11 +513,8 @@ export function Composer({
     setDraft(next.text);
     session.syncDraft(next.text);
     setSlashQuery(null);
-    // Put the caret after the inserted "/command " so arguments can be typed straight away.
-    requestAnimationFrame(() => {
-      ta?.focus();
-      ta?.setSelectionRange(next.caret, next.caret);
-    });
+    // Caret after the inserted "/command " so arguments can be typed straight away.
+    pendingCaret.current = { pos: next.caret };
   };
 
   // ── Composer height: auto-grow, with the drag handle as a floor (state 7) ──────────
@@ -601,7 +682,7 @@ export function Composer({
     // A message addressed to a peer is the OTHER thing this session must not send. It opens a
     // live session in that project instead (PeerSessionCard). The draft is cleared here rather
     // than in the handler because from the user's side this WAS a send — it just landed
-    // somewhere else. A bare "@Tilki" with nothing after it is someone mid-sentence, so it
+    // somewhere else. A bare "@acme-payments" with nothing after it is someone mid-sentence, so it
     // falls through untouched rather than opening a session with an empty prompt.
     const addressed = onPeerMessage ? addressedPeer(message, peers) : null;
     if (addressed && addressed.body) {
@@ -692,6 +773,24 @@ export function Composer({
     setSavedDefault(true);
   };
 
+  // ── Which controls this surface HAS ──────────────────────────────────────────────
+  //
+  // One rule, applied three times: a control is drawn when there is something behind it.
+  //
+  // MODE + PERMISSION — a live process to brief and a permission gate to set. The meeting
+  // room has neither: its agents are headless runs under a fixed `auto`, briefed by the room's
+  // own prompt. `onModeChange` is the tell, and the peer panel passes an inert one deliberately
+  // (see PeerSessionCard) rather than losing the trigger it has always shown.
+  const showMode = !!onModeChange;
+  // ATTACH — a project to put bytes in. Every attachment reaches the agent as a PATH, and a
+  // pasted image's bytes go to `uploadAgentFile(vault, …)` first; with no vault there is
+  // nowhere to write them and nothing to name. So this follows the vault, not a flag: every
+  // project window has one, the room has none.
+  const showAttach = !!vault;
+  // "SET AS DEFAULT" — a scope to promote FROM. Under `modelScope: 'global'` the pick already
+  // went to the app-global default, so the footer would offer to repeat what just happened.
+  const showModelDefault = modelScope === 'session';
+
   // The gauge, as a ring. `ctx.pct` drives an arc over a 6.5px-radius circle; the full
   // reading stays reachable as the button's title (a hover) and as `aria-valuetext` (a
   // screen reader) — demoted, never deleted.
@@ -765,14 +864,14 @@ export function Composer({
 
       {/* The toolbar's three menus. Siblings of the CARD, not children: the card clips its own
           overflow, and these open upward out of it (see useAnchoredMenu.ts). */}
-      {menu.open === 'mode' && (
+      {menu.open === 'mode' && showMode && (
         <div ref={menu.menuRef}>
           <ModeMenu
             mode={mode}
             onModeChange={(m) => onModeChange?.(m)}
             permission={permissionMode}
             projectPermission={projectPermissionMode}
-            onPermissionChange={onPermissionModeChange}
+            onPermissionChange={(m) => onPermissionModeChange?.(m)}
             close={menu.close}
           />
         </div>
@@ -785,7 +884,7 @@ export function Composer({
             effort={effortValue}
             onModelChange={(id) => { onModelChange(id); setSavedDefault(false); }}
             onEffortChange={(lvl) => { onEffortChange(lvl); setSavedDefault(false); }}
-            onSetDefault={saveModelDefault}
+            onSetDefault={showModelDefault ? saveModelDefault : undefined}
             savedDefault={savedDefault}
             close={menu.close}
           />
@@ -874,7 +973,7 @@ export function Composer({
             // popover is gone and the `/` menu (already here, already listing every command
             // this session reported) is the whole affordance. Only the IDLE arm — the other
             // two are saying something more urgent than where to find a feature.
-            placeholder={!connected ? 'Connecting…' : busy ? 'Claude is working — ⏎ queues your next message…' : 'Message Claude…   ·   "/" for skills'}
+            placeholder={!connected ? 'Connecting…' : busy ? 'Claude is working — ⏎ queues your next message…' : idlePlaceholder ?? 'Message Claude…   ·   "/" for skills'}
             value={draft}
             disabled={disabled}
             onChange={(e) => {
@@ -964,45 +1063,54 @@ export function Composer({
       <div className="chat-cmp-toolbar">
         {/* Leading control, and it answers two questions in one word each: how is this agent
             briefed to WORK, and what may it do without asking. Everything after it is about
-            composing the message; this is about who you are talking to. */}
-        <div className="chat-cmp-perm-wrap">
-          <button
-            type="button"
-            {...{ [MENU_TRIGGER_ATTR]: '' }}
-            className="chat-cmp-modeltrigger"
-            onClick={() => menu.toggle('mode')}
-            title={`Mode: ${modeRow.name} · Permission: ${permissionMode}`}
-            aria-haspopup="menu"
-            aria-expanded={menu.open === 'mode'}
-          >
-            <span className="chat-cmp-modeltrigger-model">{modeRow.name}</span>
-            {/* THIS SESSION's permission, handed down already resolved — see the prop's doc. */}
-            <span className="chat-cmp-modeltrigger-effort">{permissionMode}</span>
-            <span className="chat-cmp-caret" aria-hidden>▾</span>
-          </button>
-        </div>
+            composing the message; this is about who you are talking to. Absent on a surface
+            with no mode and no permission gate to set — see `showMode`. */}
+        {showMode && (
+          <div className="chat-cmp-perm-wrap">
+            <button
+              type="button"
+              {...{ [MENU_TRIGGER_ATTR]: '' }}
+              className="chat-cmp-modeltrigger"
+              onClick={() => menu.toggle('mode')}
+              title={`Mode: ${modeRow.name} · Permission: ${permissionMode}`}
+              aria-haspopup="menu"
+              aria-expanded={menu.open === 'mode'}
+            >
+              <span className="chat-cmp-modeltrigger-model">{modeRow.name}</span>
+              {/* THIS SESSION's permission, handed down already resolved — see the prop's doc. */}
+              <span className="chat-cmp-modeltrigger-effort">{permissionMode}</span>
+              <span className="chat-cmp-caret" aria-hidden>▾</span>
+            </button>
+          </div>
+        )}
 
         {/* One control for every kind of attachment — files, folders and (once a picker
             exists) a task. A bare `+` now that its labelled Skills neighbour is gone: it is
             the only icon control on this side of the row, so there is nothing for it to read
             as a loose part OF. Still a `Popover` (not one of the three panels above): its
-            menu is a short list that clamps to its trigger rather than spanning the card. */}
-        <Popover
-          align="left"
-          trigger={(open, toggle) => (
-            <button type="button" className="chat-cmp-iconbtn" onClick={toggle} title="Attach files, folders or a task" aria-label="Attach" aria-haspopup="menu" aria-expanded={open}>
-              <PlusIcon />
-            </button>
-          )}
-        >
-          {(close) => (
-            <div className="chat-cmp-menu-list">
-              <button type="button" role="menuitem" onClick={() => { void pickPaths('files', close); }}>Attach files…</button>
-              <button type="button" role="menuitem" onClick={() => { void pickPaths('folders', close); }}>Attach folders…</button>
-              <button type="button" role="menuitem" onClick={() => { onOpenTaskPicker(); close(); }}>Attach task…</button>
-            </div>
-          )}
-        </Popover>
+            menu is a short list that clamps to its trigger rather than spanning the card.
+            Drawn only inside a project (`showAttach`) — every attachment becomes a path, and
+            a pasted image's bytes need that project's temp dir. */}
+        {showAttach && (
+          <Popover
+            align="left"
+            trigger={(open, toggle) => (
+              <button type="button" className="chat-cmp-iconbtn" onClick={toggle} title="Attach files, folders or a task" aria-label="Attach" aria-haspopup="menu" aria-expanded={open}>
+                <PlusIcon />
+              </button>
+            )}
+          >
+            {(close) => (
+              <div className="chat-cmp-menu-list">
+                <button type="button" role="menuitem" onClick={() => { void pickPaths('files', close); }}>Attach files…</button>
+                <button type="button" role="menuitem" onClick={() => { void pickPaths('folders', close); }}>Attach folders…</button>
+                {onOpenTaskPicker && (
+                  <button type="button" role="menuitem" onClick={() => { onOpenTaskPicker(); close(); }}>Attach task…</button>
+                )}
+              </div>
+            )}
+          </Popover>
+        )}
 
         <div className="chat-cmp-spacer" />
 

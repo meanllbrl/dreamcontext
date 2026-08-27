@@ -217,11 +217,16 @@ interface HeadlessJson {
  * the same guarantee the terminal and chat spawns rely on. `claudeAwarePath()`
  * is required because `claude` installs into `~/.local/bin`, which no default
  * PATH contains.
+ *
+ * `model` / `effort` are interpolated into the shell command string UNQUOTED, so
+ * both MUST arrive already through `sanitizeModel` / `sanitizeEffort` — the
+ * caller's gate, not this function's. Absent (or gated to '') means "omit the
+ * flag and let the CLI pick its own default", which is the resting state.
  */
 export function runPeerHeadless(
   peer: PeerTarget,
   prompt: string,
-  opts: { timeoutMs?: number; model?: string } = {},
+  opts: { timeoutMs?: number; model?: string; effort?: string } = {},
 ): Promise<LiveRunResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_DELIVERY_TIMEOUT_MS;
   const argv = [
@@ -229,6 +234,7 @@ export function runPeerHeadless(
     '--output-format', 'json',
     '--permission-mode', PEER_PERMISSION_MODE,
     ...(opts.model ? ['--model', opts.model] : []),
+    ...(opts.effort ? ['--effort', opts.effort] : []),
   ];
   const script = `exec claude ${argv.join(' ')}`;
   const shell = process.env.SHELL || '/bin/zsh';

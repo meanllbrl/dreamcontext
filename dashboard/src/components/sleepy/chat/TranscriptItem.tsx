@@ -9,7 +9,7 @@ import {
 import { parseChatActions, type ChatAction } from './chatActions';
 import { ActionRow } from './ActionRow';
 import { BoardEmbed } from './BoardEmbed';
-import { ChatViews } from './ChatViews';
+import { ChatBlockSegment, ChatViewNotices } from './ChatViews';
 import { IconButton } from './atoms';
 import { HoverActions, ConfirmPrompt, ThinkingPill } from './molecules';
 import { ToolCard } from './ToolCard';
@@ -155,6 +155,44 @@ function UserMessage({
   );
 }
 
+/**
+ * ONE prose run of an assistant answer — the grey bubble, and the three decorating passes
+ * that make its markdown clickable.
+ *
+ * A component per run, rather than one container for the whole message, because the runs are
+ * no longer contiguous: a card can sit between two of them. Each instance therefore owns its
+ * own ref, which NARROWS what the decorators walk to exactly the prose they are for — a
+ * single message-wide root would also have swept the block cards rendered between the runs,
+ * and `useInlineMedia` rewriting an `<a>` inside a view card is not a hazard worth carrying
+ * for a refactor that was about order.
+ *
+ * The three hooks keep their missing dependency lists, deliberately: they decorate the HTML
+ * `MarkdownPreview` wrote into the DOM, and that subtree can be re-written out from under
+ * them by any commit. See the section header in chatEntities.ts — keying them to the text is
+ * what once let a whole answer revert to raw markdown, `<a href="…mp4">` and all, on
+ * somebody else's re-render.
+ */
+function ProseSegment({ text, onOpenFile, caret }: {
+  text: string;
+  onOpenFile?: (path: string) => void;
+  /** The blinking cursor. Only the run that is currently being typed gets one. */
+  caret?: boolean;
+}) {
+  const api = useApi();
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
+  useCopyableCodeBlocks(bodyRef);
+  useInlineMedia(bodyRef, { onOpen: onOpenFile, onReveal: (path) => revealPath(api, path), onGrant: (path) => grantFile(api, path) });
+  useClickablePaths(bodyRef, (path) => onOpenFile?.(path));
+
+  return (
+    <div className="chat-msg-assistant-body" ref={bodyRef}>
+      <MarkdownPreview content={text} />
+      {caret && <span className="chat-msg-caret" aria-hidden />}
+    </div>
+  );
+}
+
 // ─── Assistant message (full-width, NO avatar) ─────────────────────────────────────
 
 function AssistantMessage({
@@ -166,37 +204,78 @@ function AssistantMessage({
   /** Click-through for an inline image the answer rendered — same lightbox a tool
    *  card's image reference opens. Also backs the clickable backticked paths. */
   onOpenFile?: (path: string) => void;
-  /** Open a board's own full-height panel (the "bigger" affordance under an embed). */
+  /** Open a board's own full-height panel (the "bigger" affordance under an embed). Absent
+   *  means the board is NOTICED rather than drawn — reading one needs a project. */
   onOpenBoard?: (path: string) => void;
-  /** Run one of the buttons the answer asked for — `ChatPane` decides what each does. */
+  /** Run one of the buttons the answer asked for — `ChatPane` decides what each does. Absent
+   *  means the buttons are NOTICED rather than offered; it no longer gates `dream-html`. */
   onAction?: (action: ChatAction) => void;
-  /** This conversation's id — required by `ChatViews` (a checklist's Submit has to land
-   *  somewhere). Omitted for a read-only drill-in (SlideOver's sub-agent transcript), which
-   *  is why it's optional here rather than on `ChatViews` itself: `<ChatViews>` only ever
-   *  renders under `{onAction && conversationId && …}`, so a drill-in — which passes no
-   *  `onAction` either — renders no views, exactly like it renders no `ActionRow` today. */
+  /**
+   * This conversation's id — what a `dream-view` needs and nothing else does: a checklist's
+   * Submit has to land somewhere, and an insight has to resolve against a project.
+   *
+   * Absent on the two hosts that have no conversation: the read-only drill-in (SlideOver's
+   * sub-agent transcript) and the Meeting Room. Both still render the agent's `dream-html`,
+   * which asks the host for nothing — see `viewsAllowed` below for why that stopped being one
+   * gate with `onAction`.
+   */
   conversationId?: string;
   readOnly: boolean;
 }) {
-  const api = useApi();
   const [confirming, setConfirming] = useState(false);
-  const bodyRef = useRef<HTMLDivElement | null>(null);
 
   // What the answer asked the view to render (buttons, boards, rendered HTML, insight
   // cards, checklists) versus what it asked it to READ. Re-derived per token while
   // streaming — parseChatActions is pure and cheap, and hides a half-written fence rather
   // than flashing raw markup.
-  const { body, actions, boards, blocks, notices, pendingView } = useMemo(
+  const { segments, actions, boards, notices } = useMemo(
     () => parseChatActions(item.text), [item.text],
   );
 
-  // No dependency list on purpose: these decorate the HTML `MarkdownPreview` wrote, and that
-  // subtree can be re-written out from under them by any commit. See the section header in
-  // chatEntities.ts — keying them to the message's own text is what let a whole answer revert
-  // to raw markdown, `<a href="…mp4">` and all, on somebody else's re-render.
-  useCopyableCodeBlocks(bodyRef);
-  useInlineMedia(bodyRef, { onOpen: onOpenFile, onReveal: (path) => revealPath(api, path), onGrant: (path) => grantFile(api, path) });
-  useClickablePaths(bodyRef, (path) => onOpenFile?.(path));
+  // ONE GATE WAS TWO CAPABILITIES, and conflating them cost the surface its main expressive
+  // channel on any host without a conversation.
+  //
+  //   `dream-html` asks NOTHING of the host. It is a sandboxed, network-less render: no
+  //   callback to fire, nothing to submit, no path to resolve. It needs a screen.
+  //   `dream-view` asks for two real things — a conversation for a checklist's Submit to land
+  //   in, and a project for an insight to resolve against.
+  //
+  // The old `blocksAllowed = !!onAction && !!conversationId` charged HTML for both. The
+  // MEETING ROOM has neither (its store is machine-wide, its window holds no project), so an
+  // agent that answered the room with a drawn block had that block DROPPED — and dropped in
+  // silence, because the notices below rode the same gate. That is the one failure this
+  // surface documents that it must never have.
+  const viewsAllowed = !!conversationId;
+
+  // What this host could not draw, said out loud. The degradation contract is that a dropped
+  // block stays VISIBLE — and a capability the host lacks is as much a drop as a payload that
+  // failed validation, so it earns the same strip rather than a silent `null`.
+  const hostNotices = useMemo(() => {
+    const out: string[] = [];
+    if (!viewsAllowed) {
+      for (const seg of segments) {
+        if (seg.kind !== 'view') continue;
+        out.push(`A "${seg.view.type}" card was written here but not drawn — this surface has no project or conversation to resolve it against.`);
+      }
+    }
+    if (!onAction && actions.length > 0) {
+      out.push(actions.length === 1
+        ? 'A button was written here but not offered — this surface has nothing to run it against.'
+        : `${actions.length} buttons were written here but not offered — this surface has nothing to run them against.`);
+    }
+    if (!onOpenBoard && boards.length > 0) {
+      out.push('A board was referenced here but not drawn — this surface has no project to read it from.');
+    }
+    return out;
+  }, [viewsAllowed, segments, onAction, actions.length, onOpenBoard, boards.length]);
+
+  // The blinking caret belongs to the LAST prose run, and only when that run is the last
+  // thing in the message. A message currently ending in a block (or in the slot one is
+  // about to fill) shows no caret: its own placeholder is the liveness signal, and a caret
+  // stranded in the paragraph above a card is exactly the "the stream went somewhere else"
+  // reading this refactor exists to remove.
+  const lastProse = segments.reduce((acc, seg, i) => (seg.kind === 'prose' ? i : acc), -1);
+  const caretAt = !item.done && lastProse === segments.length - 1 ? lastProse : -1;
 
   // Nothing left to show: an empty finished text block, or one that was ONLY a fence/board
   // reference/view whose rendering is handled below. A degraded block that produced only a
@@ -204,24 +283,31 @@ function AssistantMessage({
   // degradation contract requires every drop to stay visible, never silently vanish with
   // the rest of an otherwise-empty message.
   if (!item.text && item.done) return null;
-  if (item.done && !body && !actions.length && !boards.length && !blocks.length && !notices.length && !pendingView) {
+  if (item.done && !segments.length && !actions.length && !boards.length && !notices.length) {
     return null;
   }
 
   return (
     <div className="chat-msg-assistant-row" data-done={item.done}>
-      <div className="chat-msg-assistant-body" ref={bodyRef}>
-        <MarkdownPreview content={body || (item.done ? '' : '…')} />
-        {!item.done && <span className="chat-msg-caret" aria-hidden />}
-      </div>
-      {onAction && conversationId && (
-        <ChatViews
-          blocks={blocks}
-          notices={notices}
-          pendingView={pendingView}
-          conversationId={conversationId}
-        />
-      )}
+      {/* WRITTEN ORDER. Prose runs and blocks are siblings in the row's own flex column, so
+          a card sits between the paragraph that introduces it and the one that says what to
+          notice — which is how the answer was written and, before 2026-08-27, not how it
+          was drawn. The row's tight gap is what keeps several bubbles reading as one
+          message rather than as several. */}
+      {segments.length === 0 && !item.done && <ProseSegment text="…" onOpenFile={onOpenFile} caret />}
+      {segments.map((segment, i) => (
+        segment.kind === 'prose'
+          ? <ProseSegment key={i} text={segment.text} onOpenFile={onOpenFile} caret={i === caretAt} />
+          // A `view` this host cannot resolve renders nothing HERE and a notice below — see
+          // `hostNotices`. Everything else (html, and the pending slot for either fence) is
+          // drawn wherever it was written.
+          : segment.kind === 'view' && !viewsAllowed
+            ? null
+            : <ChatBlockSegment key={i} segment={segment} conversationId={conversationId} />
+      ))}
+      {/* UNGATED, on purpose: the strip is what makes a drop honest, so it cannot itself be
+          conditional on the capability that caused the drop. */}
+      <ChatViewNotices notices={[...notices, ...hostNotices]} />
       {/* Drawn, not linked: the board the answer just made, in the conversation. Only once
           it has stopped streaming — a path still being typed points at nothing. */}
       {item.done && onOpenBoard && boards.map((path) => (

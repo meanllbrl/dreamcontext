@@ -1,14 +1,12 @@
-/* ChatViews — the view host: `.chat-view-notice` strip, the "Building a view…" pending
-   pill, and the checklist card. Tokens only, same convention as ChartView.css/PageView.css,
-   so light/dark theming is automatic. */
+/* ChatViews — the `.chat-view-notice` strip, the "Building a view…" pending pill, and the
+   checklist card. Tokens only, same convention as HtmlView.css, so light/dark theming is
+   automatic.
 
-.chat-views {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-self: stretch;
-  width: 100%;
-}
+   There is no wrapper class here any more. Blocks used to be collected into a single
+   `.chat-views` column rendered after the message's whole prose; since 2026-08-27 each one
+   is a direct child of `.chat-msg-assistant-row` (cards.css), sitting between the prose runs
+   it was written between. The row is already the flex column these need, and its tighter
+   gap is what keeps a prose-card-prose message reading as ONE answer. */
 
 /* ── shared view-card chrome — the checklist card's box (chart/page bring their own) ──── */
 
@@ -142,6 +140,12 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* Held at the transcript's measure explicitly. It used to inherit this from the
+     `.chat-views` wrapper; as a direct child of a `align-items: flex-start` row it would
+     otherwise hug its longest line and read as a chip rather than as a strip. */
+  align-self: stretch;
+  width: 100%;
+  max-width: var(--chat-line-width, 100%);
 }
 .chat-view-notice li {
   padding: var(--space-1) var(--space-2);

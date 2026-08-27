@@ -2,14 +2,24 @@
  * Capture the v0.26.1 announcement screenshots — the release where a project stops
  * being alone.
  *
- * Run against a dashboard serving the cut's own build, over the REAL vault, in
- * desktop mode (the launcher's Space view and the vault logos only exist there):
+ * Run against a dashboard serving the cut's own build in desktop mode (the launcher's
+ * Space view and the vault logos only exist there) over the DEMO VAULT SET — never
+ * over the author's real registry:
  *   npm run build
- *   DREAMCONTEXT_DESKTOP=1 node dist/index.js dashboard --no-open -p 45777
- *   node e2e/announce-shots-0-26.mjs
+ *   node e2e/announce-demo-vaults.mjs
+ *   HOME=$(node e2e/announce-demo-vaults.mjs --print-home) \
+ *     DREAMCONTEXT_DESKTOP=1 node dist/index.js dashboard --no-open -p 45778
+ *   BASE=http://127.0.0.1:45778 node e2e/announce-shots-0-26.mjs
  *
- * Back up `_dream_context/state/.agent-sessions.json` before running and restore it
- * after — opening tabs rewrites the saved roster (the skill's first hard rule).
+ * The demo home is not a nicety. Every scene below frames the PROJECT LIST — the
+ * orbit, the `@` picker, the peer rows — so shooting it on a real machine publishes
+ * the author's client work inside the npm tarball. It did: the first cut of this
+ * story shipped five private project names and a peer product's business description.
+ * `announce-demo-vaults.mjs` gives `listVaults()` a synthetic registry via $HOME, so
+ * there is nothing real on screen to leak.
+ *
+ * Because the demo home is isolated, there is no `.agent-sessions.json` of the
+ * author's to protect — opening tabs here rewrites a throwaway roster.
  *
  * Deterministic scenes ONLY. Every shot here is a surface at rest or one click deep:
  * no message is sent, no peer is woken, no announcement is posted. Waking every vault
@@ -32,12 +42,18 @@ const page = await b.newPage({ viewport: { width: 1600, height: 1000 }, deviceSc
 const captured = [];
 const vis = (sel) => page.locator(sel).locator('visible=true');
 
-async function shot(name) {
+/** Shoot a NAMED page — needed since the Meeting Room became its own window, which in a
+ *  browser arrives as a second page rather than an overlay on this one. */
+async function shotOf(target, name) {
   const path = join(ROOT, ID, `${name}.png`);
   mkdirSync(dirname(path), { recursive: true });
-  await page.screenshot({ path });
+  await target.screenshot({ path });
   captured.push(name);
   console.log('  ✓', name);
+}
+
+async function shot(name) {
+  await shotOf(page, name);
 }
 
 async function crop(name, selector, opts = {}) {
@@ -101,12 +117,18 @@ try {
 }
 
 // ─── The Meeting Room: the hidden surface behind the core logo ───────────────
-// The single entrance, by design — no CLI verb, no menu item.
+// The single entrance, by design — no CLI verb, no menu item. Since 0.26.2 the core
+// opens the room in its OWN window, which in a browser is a new PAGE — so the shot has
+// to be taken on the page the click produced, not on the launcher that stays behind.
 try {
+  const opened = page.context().waitForEvent('page', { timeout: 12000 });
   await vis('.space-core').first().click();
-  await page.waitForSelector('.meeting-room, .meeting-rail', { timeout: 12000 });
-  await page.waitForTimeout(1800);
-  await shot('meeting-room');
+  const room = await opened;
+  await room.setViewportSize(page.viewportSize());
+  await room.waitForSelector('.meeting-window', { timeout: 12000 });
+  await room.waitForTimeout(1800);
+  await shotOf(room, 'meeting-room');
+  await room.close();
   // No roster crop: an empty room has no participant strip to shoot, and a claim
   // whose picture cannot be taken is dropped rather than illustrated with a stand-in.
 } catch (err) {
@@ -114,7 +136,11 @@ try {
 }
 
 // ─── The composer's @ menu: a peer you can address, wearing its own logo ─────
-await page.goto(`${BASE}/?vault=dreamcontext`, { waitUntil: 'networkidle' });
+// A demo vault that HAS peers — `acme-storefront` is wired to acme-payments and
+// acme-design, so the `@` picker has rows to draw. Pointing this at the real vault
+// is what put a client product's description in the shipped story.
+const PEER_VAULT = process.env.PEER_VAULT ?? 'acme-storefront';
+await page.goto(`${BASE}/?vault=${PEER_VAULT}`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(2500);
 await dismissScrims();
 // NOTE the ordering: the dock is hidden AFTER the surface is expanded, not before.
@@ -123,17 +149,25 @@ await dismissScrims();
 
 // The surface starts DOCKED: its composer is in the DOM but has no box, so a bare
 // `.chat-cmp-input` wait passes on something the camera can't see while a `:visible`
-// wait hangs forever. The dock CHIP is the expander (`.agent-surface` itself is not
-// clickable-to-expand — clicking it does nothing and the run burns its timeout).
+// wait hangs forever. `.agent-surface` itself is not clickable-to-expand — clicking
+// it does nothing and the run burns its timeout.
+//
+// TWO expanders, and which one exists depends on the vault's session history: a vault
+// with sessions docks them as `.agent-dock-chip`s, a vault with NONE docks a single
+// `.agent-fab`. The demo vault is always the second case, so a chip-only wait is what
+// made this scene time out at 90s and ship the old, leaking crop unchanged.
 if (!(await page.locator('.agent-surface.expanded').count())) {
-  await page.locator('.agent-dock-chip').first().click({ force: true }).catch(() => {});
+  const expander = (await page.locator('.agent-dock-chip').count())
+    ? page.locator('.agent-dock-chip')
+    : page.locator('.agent-fab');
+  await expander.first().click({ force: true }).catch(() => {});
   await page.waitForTimeout(3000);
 }
-// Deliberately NOT "New chat": a fresh session spends 90s+ on the SessionStart brain
-// preload before its composer paints, and the shot we want here is a CROP of the `@`
-// picker, so whatever sits behind it never reaches the frame.
+// A fresh session CAN spend 90s+ on the SessionStart brain preload before its composer
+// paints — on a mature vault. The demo brain is small, so this returns in about a
+// second; the wait below is sized for the slow case either way.
 if (!(await vis('.chat-cmp-input').count())) {
-  await page.getByRole('button', { name: /Start chat/ }).click().catch(() => {});
+  await page.getByRole('button', { name: /Start chat/ }).first().click().catch(() => {});
 }
 
 try {

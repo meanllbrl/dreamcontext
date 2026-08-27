@@ -1,44 +1,79 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   useMeetingRoom,
   type MeetingMessage,
   type MeetingParticipant,
   type MeetingThread,
 } from '../../hooks/useMeetingRoom';
-import { MarkdownPreview } from '../core/MarkdownPreview';
+import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
+import { FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
+import {
+  initAgentSettingsFromServer, patchAgentSettings, readAgentSettings,
+} from '../../lib/agentSettings';
+import { startTitleBarDrag } from '../../lib/desktop';
+import { ItemView } from '../sleepy/chat/TranscriptItem';
+import { Composer } from '../sleepy/chat/Composer';
+import { meetingChatItem, rosterMention, useMeetingComposerHost } from './meetingHost';
+// The chat's own three stylesheets, in the order ChatPane imports them. `ChatPane.css` is
+// here for its TOKENS, not its shell: `--chat-text`, `--chat-lh`, `--chat-line-width` and
+// `--chat-card-width` are declared on `.chat-pane` and read by `cards.css`, so a transcript
+// rendered without them would set its prose at the app's UI size instead of the chat's
+// reading size. meetingRoom.css loads last and overrides the one shell rule that does not
+// transfer (see `.meeting-main.chat-pane`).
+import '../sleepy/ChatPane.css';
+import '../sleepy/chat/cards.css';
+import '../sleepy/chat/composer.css';
 import './meetingRoom.css';
 
 /**
- * THE MEETING ROOM — the hidden all-agents surface behind the launcher's core
- * logo. One Slack-like thread at a time: the user posts an announcement, every
- * project's agent wakes headless in its own directory and replies or PASSes,
- * and agents may pull each other in with an @mention (bounded server-side).
+ * THE MEETING ROOM — the machine-wide all-agents surface, in its OWN window.
  *
- * Deliberately a THIN feed + composer, not the chat's Composer/ItemView: those
- * mount on a live ChatSession, and the room has no session — a post is a store
- * write and replies arrive by polling (see the task's Constraints). What IS
- * reused: the chat markdown pipeline (`MarkdownPreview`, over markdownBlocks)
- * for every message body, and the design tokens for every color and measure.
+ * One thread at a time: the user posts an announcement, every project's agent wakes headless
+ * in its own directory and replies or PASSes, and agents may pull each other in with an
+ * @mention (bounded server-side, one answer per agent per round).
+ *
+ * ── IT IS A CHAT, SO IT IS BUILT OUT OF THE CHAT ────────────────────────────────────
+ * The feed is `ItemView` and the composer is `Composer` — the same two components the chat
+ * pane and the peer-session panel render. This REPLACED the room's own thin feed and its
+ * textarea-plus-Post box, which is the version that shipped and the reason for the change:
+ * a hand-rolled composer meant a second mention parser, a second keyboard handler, a second
+ * caret-restore trick, no prompt history, no auto-grow, no drag handle, no model control —
+ * every one of them a thing to get right twice and to drift the moment the real one moved.
+ * `PeerSessionCard` had already made this argument for a session in another project; the
+ * room is the case with no session at all, which is what `composerHost.ts` exists for.
+ *
+ * What the room still owns is what only the room has: the thread rail, the presence strip,
+ * and the mapping from a polled thread to transcript items (`meetingHost.ts`).
+ *
+ * ── A WINDOW, NOT A MODAL ───────────────────────────────────────────────────────────
+ * It was an overlay over the launcher. A modal is wrong for a surface you leave running for
+ * ten minutes while N agents think: dismissing it to look at anything — including the very
+ * projects it is talking to — was the only way to use the app. `openMeetingWindow` gives it
+ * a real window, at a real size, with the app's header as its title bar.
+ *
+ * ── MODEL AND EFFORT ARE GLOBAL HERE, AND THAT IS THE HONEST SCOPE ──────────────────
+ * The room has no session to scope a model to: one post wakes N projects. So the control
+ * writes `chatDefaultModel` / `chatDefaultEffort` — the app-global blob every project window
+ * already shares (`~/.dreamcontext/agent-ui.json`) — and the server reads it back per run
+ * (`readAgentUiChatDefaults` → every `claude -p` the room spawns). One pick, every project.
+ * That is why the model menu offers no "Set as default": the pick already IS the default.
  */
-
-interface Props {
-  onClose: () => void;
-}
 
 /** Sentinel selection: the composer starts a NEW announcement. */
 const NEW_THREAD = '__new__';
 
-export function MeetingRoom({ onClose }: Props) {
+export function MeetingRoom() {
   const { state, error, busy, post, reply, fetchThread } = useMeetingRoom(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [archived, setArchived] = useState<MeetingThread | null>(null);
-  const [draft, setDraft] = useState('');
+  const [quote, setQuote] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const feedRef = useRef<HTMLDivElement | null>(null);
 
   const active = state?.active ?? null;
-  // Default selection: the active thread, else the newest archived one. The
-  // sentinel NEW_THREAD is the composer's "start fresh" mode — no thread shown,
-  // posting archives the active one (the store's invariant does the archiving).
+  // Default selection: the active thread, else the newest archived one. The sentinel
+  // NEW_THREAD is the composer's "start fresh" mode — no thread shown, and posting archives
+  // the active one (the store's one-active invariant does the archiving).
   const composingNew = selectedId === NEW_THREAD;
   const effectiveId = composingNew ? null : selectedId ?? active?.id ?? state?.threads[0]?.id ?? null;
   const viewingActive = active !== null && effectiveId === active.id;
@@ -62,30 +97,75 @@ export function MeetingRoom({ onClose }: Props) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messageCount, effectiveId]);
 
-  const send = async () => {
-    const body = draft.trim();
-    if (!body || busy) return;
+  // ── Model + effort: the app-global pick, seeded from the server ──────────────────
+  // Seeded rather than read straight from localStorage because this window can be the FIRST
+  // one opened on a fresh launch origin, where localStorage is empty and a bare read would
+  // report "nothing pinned" over a model the user chose weeks ago.
+  const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
+  const [model, setModel] = useState(() => readAgentSettings().chatDefaultModel);
+  const [effort, setEffort] = useState(() => readAgentSettings().chatDefaultEffort);
+  useEffect(() => {
+    let alive = true;
+    void initAgentSettingsFromServer().then((cfg) => {
+      if (!alive) return;
+      setModel(cfg.chatDefaultModel);
+      setEffort(cfg.chatDefaultEffort);
+    });
+    return () => { alive = false; };
+  }, []);
+
+  // ── The composer's host ─────────────────────────────────────────────────────────
+  const items = (thread?.messages ?? [])
+    .map((m, i) => meetingChatItem(m, i))
+    .filter((it): it is NonNullable<typeof it> => it !== null);
+
+  // The text arrives ALREADY assembled by the composer — quote prefix, attachment paths and
+  // all — so there is nothing to fold in here. Which thread it lands in is this window's only
+  // decision: into the active one as a reply, or as a new announcement that archives it.
+  const send = useCallback(async (text: string) => {
+    if (!text.trim()) return;
+    setNotice(null);
     if (viewingActive) {
-      await reply(body);
+      await reply(text);
     } else {
-      const t = await post(body);
+      const t = await post(text);
       if (t) setSelectedId(t.id);
     }
-    setDraft('');
-  };
+  }, [viewingActive, reply, post]);
+
+  const { host, focusComposer } = useMeetingComposerHost(items, (text) => { void send(text); });
+
+  // Selecting a thread hands the caret back to the composer — the only reason this window
+  // keeps the focus handle the composer registers.
+  const selectThread = (id: string) => { setSelectedId(id); focusComposer(); };
+
+  // `ItemView` is memoized on referentially-stable callbacks (see its header), so both of
+  // these are `useCallback`ed even though one does nothing.
+  const onQuote = useCallback((text: string) => setQuote(text), []);
+  // The room has no project to resolve a path against — `/api/agent/file` and `/reveal` are
+  // vault-scoped, and there is no vault here. So an agent's answer that names a file is text
+  // in this window, deliberately: a click that 400s against a vault that does not exist would
+  // be worse than one that does nothing.
+  const onOpenFile = useCallback(() => {}, []);
+
+  const roster = state?.roster ?? [];
 
   return (
-    <div className="meeting-overlay" data-no-drag>
-      <div className="meeting-room" role="dialog" aria-label="Meeting room">
+    <div className="meeting-window">
+      {/* No `data-tauri-drag-region` — this window is created with `dragDropEnabled: false`,
+          which also disables Tauri's built-in drag handler, so the drag is the same manual
+          4px-threshold gesture the vault Header and the checklist window use. */}
+      <div className="meeting-titlebar" onMouseDown={startTitleBarDrag}>
+        <span className="meeting-titlebar-title">Meeting Room</span>
+        <span className="meeting-titlebar-sub">every agent, one thread</span>
+      </div>
+
+      <div className="meeting-body">
         <aside className="meeting-rail">
-          <div className="meeting-rail-head">
-            <span className="meeting-rail-title">Meeting Room</span>
-            <span className="meeting-rail-sub">every agent, one thread</span>
-          </div>
           <button
             type="button"
             className="meeting-rail-new"
-            onClick={() => setSelectedId(NEW_THREAD)}
+            onClick={() => selectThread(NEW_THREAD)}
           >
             + New announcement
           </button>
@@ -95,7 +175,7 @@ export function MeetingRoom({ onClose }: Props) {
                 key={t.id}
                 type="button"
                 className={`meeting-rail-item${t.id === effectiveId ? ' is-selected' : ''}${t.closedAt === null ? ' is-active' : ''}`}
-                onClick={() => setSelectedId(t.id)}
+                onClick={() => selectThread(t.id)}
               >
                 <span className="meeting-rail-item-title">{t.title || 'Untitled'}</span>
                 <span className="meeting-rail-item-date">
@@ -109,14 +189,15 @@ export function MeetingRoom({ onClose }: Props) {
           </div>
         </aside>
 
-        <section className="meeting-main">
+        {/* `chat-pane` is not decoration: `composerHeight.ts` finds the pane whose half-height
+            is the auto-grow ceiling with `closest('.chat-pane')`, so this column wearing the
+            class is what makes the composer grow to half the CONVERSATION rather than half the
+            viewport. One class instead of a second sizing rule. */}
+        <section className="meeting-main chat-pane">
           <header className="meeting-head">
             <div className="meeting-head-title">
               {thread ? thread.title || 'Untitled' : 'Convene your agents'}
             </div>
-            <button type="button" className="meeting-close" onClick={onClose} aria-label="Close">
-              ✕
-            </button>
           </header>
 
           {thread && <PresenceStrip participants={thread.participants} />}
@@ -128,23 +209,45 @@ export function MeetingRoom({ onClose }: Props) {
                 directory, answers from its own brain, or passes.
               </div>
             )}
-            {thread?.messages.map((m) => <Message key={m.id} message={m} />)}
+            {thread?.messages.map((m, i) => (
+              <MessageRow key={m.id} message={m} index={i} onQuote={onQuote} onOpenFile={onOpenFile} />
+            ))}
           </div>
 
-          {error && <div className="meeting-error">{error}</div>}
+          {(error || notice) && <div className="meeting-error">{error ?? notice}</div>}
 
           <Composer
-            key={viewingActive ? 'reply' : 'post'}
-            roster={(state?.roster ?? []).map((r) => r.name)}
-            draft={draft}
-            setDraft={setDraft}
-            disabled={busy}
-            placeholder={
+            session={host}
+            model={model}
+            effort={effort}
+            modelConfig={modelConfig}
+            // Written straight to the app-global blob, which is the room's whole scope — see
+            // the header. Local state moves too so the trigger reads the new value at once
+            // rather than waiting for a settings round-trip.
+            onModelChange={(id) => { setModel(id); patchAgentSettings({ chatDefaultModel: id }); }}
+            onEffortChange={(lvl) => { setEffort(lvl); patchAgentSettings({ chatDefaultEffort: lvl }); }}
+            modelScope="global"
+            // FALSE on purpose, even while agents think. `busy` means "a turn is running and ⏎
+            // steers into it" — there is no turn here, and a reply posted while three agents
+            // are thinking is a normal, useful act (it wakes the engaged set). Who is working
+            // is the presence strip's job, which says it per agent instead of once for all.
+            busy={false}
+            // Until the first poll lands there is genuinely nothing to post into.
+            connected={state !== null && !busy}
+            quote={quote}
+            onClearQuote={() => setQuote(null)}
+            // Every registered project is addressable here — the room's roster, which no
+            // per-vault peer endpoint can answer for. No `onPeerMessage`: `@Name` is TEXT in
+            // this window and the server routes the delivery.
+            mentions={roster.map(rosterMention)}
+            idlePlaceholder={
               viewingActive
-                ? 'Reply — @Name to address one agent'
-                : 'New announcement — this archives the previous thread'
+                ? 'Reply to the room…   ·   "@" to address one project'
+                : 'New announcement — archives the previous thread   ·   "@" to address one project'
             }
-            onSend={() => void send()}
+            onSignIn={() => setNotice(
+              'Signing in belongs to a project session — open a project window and run /login there.',
+            )}
           />
         </section>
       </div>
@@ -182,136 +285,43 @@ function stateLabel(state: MeetingParticipant['state']): string {
   }
 }
 
-// ─── Messages ─────────────────────────────────────────────────────────────────
+// ─── One message ──────────────────────────────────────────────────────────────
 
-function Message({ message }: { message: MeetingMessage }) {
+/**
+ * The author line the chat has no need for, plus the chat's own renderer underneath.
+ *
+ * `AssistantMessage` is deliberately faceless in a two-party conversation (hard rule 1 of the
+ * chat design: full-width, no avatar). In a room of eight projects, WHICH agent is speaking is
+ * the single most load-bearing fact on screen — so the name goes above the block rather than
+ * into it, and `ItemView` renders the body exactly as it does everywhere else.
+ */
+function MessageRow({
+  message, index, onQuote, onOpenFile,
+}: {
+  message: MeetingMessage;
+  index: number;
+  onQuote: (text: string) => void;
+  onOpenFile: (path: string) => void;
+}) {
   if (message.authorKind === 'system') {
     return <div className="meeting-msg-system">{message.body}</div>;
   }
-  const label = message.authorKind === 'user' ? 'you' : message.author;
+  const item = meetingChatItem(message, index);
+  if (!item) return null;
+  // `is-root` carries no styling of its own any more (the announcement is the first message,
+  // and the rail already titles the thread after it) — it stays as the DOM marker, and as the
+  // hook a later treatment would use.
   return (
     <div className={`meeting-msg${message.root ? ' is-root' : ''} kind-${message.authorKind}`}>
-      <div className="meeting-msg-head">
-        <span className="meeting-msg-author">{label}</span>
-        <span className="meeting-msg-time">{formatTime(message.createdAt)}</span>
-      </div>
-      <div className="meeting-msg-body">
-        <MarkdownPreview content={message.body} />
-      </div>
-    </div>
-  );
-}
-
-// ─── Composer (thin, with the roster-driven @ menu) ───────────────────────────
-
-interface ComposerProps {
-  roster: string[];
-  draft: string;
-  setDraft: (v: string) => void;
-  disabled: boolean;
-  placeholder: string;
-  onSend: () => void;
-}
-
-/** The active `@token` under the caret, or null. Opens on `@` at a word start. */
-function mentionQuery(text: string, caret: number): { start: number; query: string } | null {
-  const at = text.lastIndexOf('@', caret - 1);
-  if (at === -1) return null;
-  if (at > 0 && /[\p{L}\p{N}_]/u.test(text[at - 1])) return null; // glued: an email
-  const between = text.slice(at + 1, caret);
-  if (between.includes('\n')) return null;
-  return { start: at, query: between };
-}
-
-function Composer({ roster, draft, setDraft, disabled, placeholder, onSend }: ComposerProps) {
-  const [caret, setCaret] = useState(0);
-  const [menuIndex, setMenuIndex] = useState(0);
-  const [menuClosed, setMenuClosed] = useState(false);
-  const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  /** Caret to apply after a mention insert — in the SAME commit the new value
-   *  lands, not a frame later: an rAF loses the race against fast typing and
-   *  splices the next keystrokes into the middle of the inserted name. */
-  const pendingCaret = useRef<number | null>(null);
-
-  useLayoutEffect(() => {
-    const pos = pendingCaret.current;
-    const el = inputRef.current;
-    if (pos === null || !el) return;
-    pendingCaret.current = null;
-    el.focus();
-    el.setSelectionRange(pos, pos);
-    setCaret(pos);
-  }, [draft]);
-
-  const mention = menuClosed ? null : mentionQuery(draft, caret);
-  const matches = useMemo(() => {
-    if (!mention) return [];
-    const q = mention.query.toLowerCase();
-    return roster.filter((n) => n.toLowerCase().startsWith(q));
-  }, [mention, roster]);
-  const menuOpen = mention !== null && matches.length > 0;
-
-  const insertMention = (name: string) => {
-    if (!mention) return;
-    const before = draft.slice(0, mention.start);
-    const after = draft.slice(caret);
-    const next = `${before}@${name} ${after}`;
-    setDraft(next);
-    setMenuClosed(true);
-    pendingCaret.current = before.length + name.length + 2;
-  };
-
-  return (
-    <div className="meeting-composer">
-      {menuOpen && (
-        <div className="meeting-mention-menu" role="listbox">
-          {matches.map((name, i) => (
-            <button
-              key={name}
-              type="button"
-              role="option"
-              aria-selected={i === menuIndex}
-              className={`meeting-mention-item${i === menuIndex ? ' is-focused' : ''}`}
-              onMouseDown={(e) => { e.preventDefault(); insertMention(name); }}
-            >
-              @{name}
-            </button>
-          ))}
+      {message.authorKind === 'agent' && (
+        <div className="meeting-msg-head">
+          <span className="meeting-msg-author">{message.author}</span>
+          <span className="meeting-msg-time">{formatTime(message.createdAt)}</span>
         </div>
       )}
-      <textarea
-        ref={inputRef}
-        className="meeting-input"
-        value={draft}
-        placeholder={placeholder}
-        disabled={disabled}
-        rows={3}
-        onChange={(e) => {
-          setDraft(e.target.value);
-          setCaret(e.target.selectionStart ?? e.target.value.length);
-          setMenuClosed(false);
-          setMenuIndex(0);
-        }}
-        onSelect={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
-        onKeyDown={(e) => {
-          if (menuOpen) {
-            if (e.key === 'ArrowDown') { e.preventDefault(); setMenuIndex((i) => (i + 1) % matches.length); return; }
-            if (e.key === 'ArrowUp') { e.preventDefault(); setMenuIndex((i) => (i + matches.length - 1) % matches.length); return; }
-            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); insertMention(matches[menuIndex]); return; }
-            if (e.key === 'Escape') { e.preventDefault(); setMenuClosed(true); return; }
-          }
-          // Enter posts; Shift+Enter is a newline (announcements are multiline).
-          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); }
-        }}
-      />
-      <button
-        type="button"
-        className="meeting-send"
-        disabled={disabled || !draft.trim()}
-        onClick={onSend}
-      >
-        Post
-      </button>
+      {/* No `session`: nothing in this window can rewind or retry a headless run, so the
+          hover bar reduces itself to Copy and Quote-reply — the two that mutate nothing. */}
+      <ItemView item={item} onQuote={onQuote} onOpenFile={onOpenFile} />
     </div>
   );
 }

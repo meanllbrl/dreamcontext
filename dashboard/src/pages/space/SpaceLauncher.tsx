@@ -106,6 +106,10 @@ export interface SpaceLauncherProps {
    * Open the hidden Meeting Room — the core's click when projects EXIST. An
    * empty sky keeps the wizard: there is no one to convene, and first-run users
    * need the front door, not an easter egg.
+   *
+   * It opens its OWN window now (`openMeetingWindow`), not an overlay over this
+   * sky — so this launcher stays exactly where it was, which is the point: the
+   * room talks about the projects in view here.
    */
   onOpenMeetingRoom: () => void;
   /** Surface an action failure in the launcher's error banner. */

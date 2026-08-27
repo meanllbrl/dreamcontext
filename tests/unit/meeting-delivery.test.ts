@@ -40,18 +40,20 @@ const ok = (reply: string): LiveRunResult => ({ ok: true, reply, sessionId: null
 interface RecordedRun {
   target: string;
   prompt: string;
+  /** The spawn flags the orchestrator chose for this run — `model` / `effort` / `timeoutMs`. */
+  opts: { timeoutMs?: number; model?: string; effort?: string };
 }
 
 /** An orchestrator whose runner answers from a per-vault script and records every run. */
 function makeOrchestrator(
   script: (target: string, prompt: string) => LiveRunResult | Promise<LiveRunResult>,
-  opts: { concurrency?: number } = {},
+  opts: { concurrency?: number; chatDefaults?: () => { model: string; effort: string } } = {},
 ) {
   const runs: RecordedRun[] = [];
   let inFlight = 0;
   let maxInFlight = 0;
-  const runner: HeadlessRunner = async (peer, prompt) => {
-    runs.push({ target: peer.name, prompt });
+  const runner: HeadlessRunner = async (peer, prompt, runOpts) => {
+    runs.push({ target: peer.name, prompt, opts: runOpts });
     inFlight += 1;
     maxInFlight = Math.max(maxInFlight, inFlight);
     await new Promise((r) => setTimeout(r, 5));
@@ -66,6 +68,7 @@ function makeOrchestrator(
     runner,
     resolveTarget: fakeTarget,
     concurrency: opts.concurrency,
+    chatDefaults: opts.chatDefaults,
   });
   return { orch, runs, maxInFlight: () => maxInFlight };
 }
@@ -82,20 +85,20 @@ function seedThread(names: string[], body = 'Hello room'): MeetingThread {
 // ─── parseMentions ────────────────────────────────────────────────────────────
 
 describe('parseMentions — roster-driven, longest-name-first', () => {
-  const roster = ['alpha', 'beta', 'Tilki', 'Tilki Ogretmen'];
+  const roster = ['alpha', 'beta', 'Acme', 'Acme Payments'];
 
   it('finds plain mentions in first-occurrence order, deduped', () => {
     expect(parseMentions('@beta then @alpha then @beta again', roster)).toEqual(['beta', 'alpha']);
   });
 
   it('resolves names WITH SPACES via longest-name-first', () => {
-    expect(parseMentions('ask @Tilki Ogretmen about payouts', roster)).toEqual(['Tilki Ogretmen']);
-    expect(parseMentions('ask @Tilki about payouts', roster)).toEqual(['Tilki']);
+    expect(parseMentions('ask @Acme Payments about payouts', roster)).toEqual(['Acme Payments']);
+    expect(parseMentions('ask @Acme about payouts', roster)).toEqual(['Acme']);
   });
 
   it('a consumed span never re-matches a shorter name inside it', () => {
-    const hits = parseMentions('@Tilki Ogretmen and @Tilki', roster);
-    expect(hits).toEqual(['Tilki Ogretmen', 'Tilki']);
+    const hits = parseMentions('@Acme Payments and @Acme', roster);
+    expect(hits).toEqual(['Acme Payments', 'Acme']);
   });
 
   it('an email address is not a mention', () => {
@@ -107,7 +110,7 @@ describe('parseMentions — roster-driven, longest-name-first', () => {
   });
 
   it('is case-insensitive but returns the registered casing', () => {
-    expect(parseMentions('@ALPHA and @tilki ogretmen', roster)).toEqual(['alpha', 'Tilki Ogretmen']);
+    expect(parseMentions('@ALPHA and @acme payments', roster)).toEqual(['alpha', 'Acme Payments']);
   });
 
   it('empty roster or no @ yields nothing', () => {
@@ -318,6 +321,144 @@ describe('MeetingOrchestrator', () => {
     expect(sys[0].body).toContain('Mention cap reached');
     expect(sys[0].body).toContain('@beta');
     expect(after.participants.find((p) => p.name === 'beta')!.state).toBe('idle');
+  });
+
+  // ── One run per agent per wave (owner report 08-27) ─────────────────────────
+  //
+  // The bug: one announcement, and `dreamcontext` posted three answers — two of them
+  // re-answering the same cross-project question, because two different agents had each
+  // written `@dreamcontext` into their own reply and each mention spawned its own directed
+  // run on top of the announcement run it had already done.
+
+  it('two agents mentioning the SAME third one in a wave wake it ONCE, not twice', async () => {
+    const t = seedThread(['alpha', 'beta', 'target']);
+    const { orch, runs } = makeOrchestrator((name) => {
+      if (name === 'alpha') return ok('@target what do you think?');
+      if (name === 'beta') return ok('agreed — @target this is yours');
+      return ok('here is my answer');
+    });
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    await orch.idle();
+
+    // target ran exactly once, for the announcement — NOT again per mention.
+    expect(runs.filter((r) => r.target === 'target')).toHaveLength(1);
+    const after = readThread(t.id, home)!;
+    expect(after.messages.filter((m) => m.author === 'target' && m.authorKind === 'agent'))
+      .toHaveLength(1);
+    expect(after.participants.find((p) => p.name === 'target')!.runs).toBe(1);
+  });
+
+  it('a coalesced mention is VISIBLE — it names the asker and says no second run started', async () => {
+    const t = seedThread(['alpha', 'target']);
+    const { orch } = makeOrchestrator((name) =>
+      (name === 'alpha' ? ok('@target over to you') : ok('my answer')));
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    await orch.idle();
+
+    const sys = readThread(t.id, home)!.messages.filter((m) => m.authorKind === 'system');
+    expect(sys).toHaveLength(1);
+    expect(sys[0].body).toContain('@target');
+    expect(sys[0].body).toContain('@alpha');
+    expect(sys[0].body).toContain('already answering this round');
+  });
+
+  it('a mention still WAKES an agent the wave skipped (the chain keeps working)', async () => {
+    // Only alpha is routed by the announcement, so beta has not been woken this wave.
+    const t = seedThread(['alpha', 'beta'], '@alpha you first');
+    const { orch, runs } = makeOrchestrator((name) =>
+      (name === 'alpha' ? ok('@beta can you confirm?') : ok('confirmed')));
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    await orch.idle();
+
+    // alpha (announcement) → beta (directed) → alpha (follow-up, its OWN budget).
+    expect(runs.map((r) => r.target)).toEqual(['alpha', 'beta', 'alpha']);
+    expect(readThread(t.id, home)!.messages.filter((m) => m.authorKind === 'system')).toHaveLength(0);
+  });
+
+  it('an agent gets at most ONE follow-up per wave, however many it mentioned', async () => {
+    const t = seedThread(['alpha', 'beta', 'gamma'], '@alpha open it');
+    const { orch, runs } = makeOrchestrator((name, prompt) => {
+      if (name === 'alpha' && prompt.includes('FOLLOW-UP')) return ok('noted, thanks both');
+      if (name === 'alpha') return ok('@beta and @gamma, both of you please weigh in');
+      return ok(`${name} weighing in`);
+    });
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    await orch.idle();
+
+    // Both mentions are delivered (neither was woken by the announcement), but the two
+    // answers coming back collapse into ONE follow-up rather than two.
+    expect(runs.filter((r) => r.target === 'beta')).toHaveLength(1);
+    expect(runs.filter((r) => r.target === 'gamma')).toHaveLength(1);
+    expect(runs.filter((r) => r.target === 'alpha')).toHaveLength(2); // announcement + 1 follow-up
+    const sys = readThread(t.id, home)!.messages.filter((m) => m.authorKind === 'system');
+    expect(sys).toHaveLength(1);
+    expect(sys[0].body).toContain('already had its follow-up');
+  });
+
+  it('a NEW user message opens a new wave, so the same agent answers again', async () => {
+    const t = seedThread(['alpha', 'target']);
+    const { orch, runs } = makeOrchestrator((name) =>
+      (name === 'alpha' ? ok('@target thoughts?') : ok('my answer')));
+
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    await orch.idle();
+    expect(runs.filter((r) => r.target === 'target')).toHaveLength(1);
+
+    const reply = appendMessage(t.id, { author: 'user', authorKind: 'user', body: 'and now?' }, home)!;
+    orch.deliverUserMessage(t.id, reply.id);
+    await orch.idle();
+
+    // The ledger is per WAVE, not per thread: a second question is a second answer.
+    expect(runs.filter((r) => r.target === 'target')).toHaveLength(2);
+  });
+
+  it('a delivery the CAPS refused does not consume the wave slot', async () => {
+    // beta is at its 3-run cap, so the announcement delivery to it is dropped. A mention of
+    // beta later in the same wave must hit the cap line too — never the coalescing line,
+    // which would claim a run is in flight when none is.
+    const t = seedThread(['alpha', 'beta']);
+    mutateThread(t.id, (th) => {
+      th.participants.find((p) => p.name === 'beta')!.runs = 3;
+    }, home);
+    const { orch, runs } = makeOrchestrator(() => ok('@beta are you there?'));
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    await orch.idle();
+
+    expect(runs.map((r) => r.target)).toEqual(['alpha']);
+    const sys = readThread(t.id, home)!.messages.filter((m) => m.authorKind === 'system');
+    expect(sys).toHaveLength(2);
+    expect(sys.every((m) => m.body.includes('3-run cap'))).toBe(true);
+  });
+
+  // ── Global model/effort ────────────────────────────────────────────────────
+
+  it('every run is spawned with the app-global model/effort, read PER RUN', async () => {
+    const t = seedThread(['alpha', 'beta']);
+    let picked = { model: 'opus', effort: 'xhigh' };
+    const { orch, runs } = makeOrchestrator(() => ok('done'), {
+      concurrency: 1,
+      chatDefaults: () => picked,
+    });
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    // Changed while the fan-out is in flight: the agents that have not woken yet get the
+    // new pick, which is what "global, applied from now on" has to mean.
+    await new Promise((r) => setTimeout(r, 1));
+    picked = { model: 'sonnet', effort: 'low' };
+    await orch.idle();
+
+    expect(runs).toHaveLength(2);
+    expect(runs[runs.length - 1].opts.model).toBe('sonnet');
+    expect(runs[runs.length - 1].opts.effort).toBe('low');
+  });
+
+  it('with nothing pinned, no model/effort flag is chosen — the CLI keeps its own default', async () => {
+    const t = seedThread(['alpha']);
+    const { orch, runs } = makeOrchestrator(() => ok('done'));
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    await orch.idle();
+
+    expect(runs[0].opts.model).toBe('');
+    expect(runs[0].opts.effort).toBe('');
   });
 
   it('in-flight runs of an ARCHIVED thread still land their answers there', async () => {

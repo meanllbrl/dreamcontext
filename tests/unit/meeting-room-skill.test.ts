@@ -125,6 +125,23 @@ describe('meeting room — the docs quote the real constants, not a stale copy',
     expect(section.toLowerCase()).toContain('never silently');
   });
 
+  it('documents the one-answer-per-agent-per-message rule, and that a mention coalesces', () => {
+    // The rule an agent reading these docs would otherwise get wrong in the other direction:
+    // it must not expect a second run for every mention of it in one round.
+    const flat = flatSection();
+    expect(flat).toContain('One answer per agent per user message');
+    expect(flat.toLowerCase()).toContain('coalesces into the run in flight');
+    expect(flat.toLowerCase()).toContain('follow-up keeps a separate budget');
+  });
+
+  it('documents that the room-wide model/effort pick is the app-global one', () => {
+    const flat = flatSection();
+    expect(flat).toContain('chatDefaultModel');
+    expect(flat).toContain('agent-ui.json');
+    // The resting state, which is the half an agent would otherwise invent a default for.
+    expect(flat.toLowerCase()).toContain('nothing pinned means no `--model` / `--effort` flag');
+  });
+
   it('the thread path the docs name IS the path threadsDir() builds', () => {
     const rel = threadsDir('<home>').replace('<home>/', '');
     expect(rel).toBe(join('.dreamcontext', 'meeting-room', 'threads'));

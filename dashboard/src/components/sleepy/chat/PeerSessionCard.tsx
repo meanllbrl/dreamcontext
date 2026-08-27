@@ -14,7 +14,7 @@ import './peerSession.css';
 /**
  * A LIVE SESSION IN ANOTHER PROJECT, reachable from this conversation.
  *
- * When a message is addressed to a peer (`@Tilki …`), it does not go to the local agent and
+ * When a message is addressed to a peer (`@acme-payments …`), it does not go to the local agent and
  * it does not go through the mailbox — it opens a real chat session rooted in the PEER's
  * directory (`/api/agent/chat?vault=<peer>`), the same socket the main pane uses. That is
  * what makes the peer answer with its own brain instead of this one guessing on its behalf.
@@ -387,6 +387,12 @@ function PeerSessionPanel({
             onOpenTaskPicker={() => {}}
             permissionMode="auto"
             projectPermissionMode="auto"
+            // Inert on purpose, and now explicit on both halves: the composer draws its
+            // mode+permission trigger only for a surface that hands it one (a room with no
+            // session gets none), and this panel wants the READ-OUT — a peer session really
+            // does run under `auto`, and saying so is the point — with the menu inert, exactly
+            // as it has been since this panel shipped.
+            onModeChange={() => {}}
             onPermissionModeChange={() => {}}
             onSignIn={chrome.onSignIn}
           />

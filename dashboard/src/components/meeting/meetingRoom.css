@@ -1,27 +1,49 @@
-/* THE MEETING ROOM — hidden overlay in the launcher window. Design tokens only. */
+/* THE MEETING ROOM — its own OS window. Design tokens only.
+ *
+ * What this file styles is what only the room has: the window shell, the thread rail, the
+ * presence strip and the author line above each answer. The message BODIES and the whole
+ * composer are the chat's (`cards.css`, `composer.css`, imported by MeetingRoom.tsx) — there
+ * are deliberately no bubble, input, send-button or mention-menu rules left here. */
 
-.meeting-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
+.meeting-window {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-6);
-  background: color-mix(in srgb, var(--color-bg) 72%, transparent);
-  backdrop-filter: blur(6px);
+  flex-direction: column;
+  height: 100vh;
+  background: var(--color-bg);
+  overflow: hidden;
   box-sizing: border-box;
 }
 
-.meeting-room {
+/* The window's own title bar — created with `titleBarStyle: 'overlay'`, so the left inset is
+ * the gutter the macOS traffic lights float in (same measure the vault Header reserves). */
+.meeting-titlebar {
   display: flex;
-  width: min(1080px, 100%);
-  height: min(720px, 100%);
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-xl);
-  overflow: hidden;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  height: 38px;
+  padding: 0 var(--space-4) 0 84px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  user-select: none;
+  cursor: default;
+}
+
+.meeting-titlebar-title {
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.meeting-titlebar-sub {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.meeting-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 /* ── history rail ── */
@@ -33,25 +55,6 @@
   flex-shrink: 0;
   border-right: 1px solid var(--color-border);
   background: var(--color-bg-secondary);
-}
-
-.meeting-rail-head {
-  padding: var(--space-4);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.meeting-rail-title {
-  display: block;
-  font-weight: var(--font-weight-semibold);
-  font-size: var(--font-size-base);
-  color: var(--color-text);
-}
-
-.meeting-rail-sub {
-  display: block;
-  margin-top: var(--space-1);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
 }
 
 .meeting-rail-new {
@@ -136,6 +139,17 @@
   min-width: 0;
 }
 
+/* The one rule `.chat-pane` brings that must NOT transfer. In a project window the pane fills
+ * an absolutely-positioned box; here the same element is a flex child of `.meeting-body`
+ * beside the rail, and `position: absolute; inset: 0` would lift it out of that row and lay it
+ * over the rail. Everything else the class carries — the reading size, the leading, the card
+ * and line measures, the background — is exactly what is wanted, which is why the class is
+ * worn rather than the tokens copied. */
+.meeting-main.chat-pane {
+  position: relative;
+  inset: auto;
+}
+
 .meeting-head {
   display: flex;
   align-items: center;
@@ -150,22 +164,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.meeting-close {
-  flex-shrink: 0;
-  background: transparent;
-  border: none;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-base);
-  cursor: pointer;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-}
-
-.meeting-close:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text);
 }
 
 /* ── presence strip ── */
@@ -262,9 +260,15 @@
   background: var(--color-bg);
 }
 
-.meeting-msg.is-root {
-  border-color: var(--color-accent);
-  background: var(--color-accent-soft);
+/* The user's own message wears NO room chrome. The card exists to bind an author line to a
+ * body — which is what an agent's answer needs in a room of eight projects. A user message has
+ * no author line (there is one user) and the chat already gives it its own right-aligned,
+ * tinted bubble, so the card around it was a second treatment of the same message: a
+ * full-width bordered box holding one small pill. */
+.meeting-msg.kind-user {
+  border: none;
+  background: none;
+  padding: 0;
 }
 
 .meeting-msg-head {
@@ -288,11 +292,6 @@
   color: var(--color-text-secondary);
 }
 
-.meeting-msg-body {
-  font-size: var(--font-size-sm);
-  min-width: 0;
-}
-
 .meeting-msg-system {
   align-self: center;
   font-size: var(--font-size-xs);
@@ -311,82 +310,13 @@
   font-size: var(--font-size-sm);
 }
 
-/* ── composer ── */
+/* ── the chat's composer, docked ── */
 
-.meeting-composer {
-  position: relative;
-  display: flex;
-  gap: var(--space-2);
-  align-items: flex-end;
-  padding: var(--space-3) var(--space-4) var(--space-4);
-  border-top: 1px solid var(--color-border);
-}
-
-.meeting-input {
-  flex: 1;
-  resize: none;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  color: var(--color-text);
-  font-family: var(--font-family);
-  font-size: var(--font-size-sm);
-  line-height: 1.5;
-  padding: var(--space-2) var(--space-3);
-  box-sizing: border-box;
-}
-
-.meeting-input:focus {
-  outline: none;
-  border-color: var(--color-border-focus);
-}
-
-.meeting-send {
-  flex-shrink: 0;
-  background: var(--gradient-brand);
-  color: var(--color-snow);
-  border: none;
-  border-radius: var(--radius-md);
-  padding: var(--space-2) var(--space-4);
-  font-weight: var(--font-weight-medium);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-
-.meeting-send:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.meeting-mention-menu {
-  position: absolute;
-  bottom: calc(100% - var(--space-1));
-  left: var(--space-4);
-  min-width: 220px;
-  max-height: 220px;
-  overflow-y: auto;
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  padding: var(--space-1);
-  z-index: 5;
-}
-
-.meeting-mention-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: var(--space-2) var(--space-3);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-
-.meeting-mention-item:hover,
-.meeting-mention-item.is-focused {
-  background: var(--color-bg-tertiary);
-}
+/* Nothing to style. `.chat-cmp` brings its own padding, hairline and `flex: 0 0 auto`, so the
+ * composer docks at the bottom of the column by itself.
+ *
+ * The one thing the room DOES owe it is an ancestor carrying `.chat-pane`: the auto-grow
+ * ceiling is "half the pane" and `composerHeight.ts` finds that pane with
+ * `closest('.chat-pane')`. `.meeting-main` wears the class (see MeetingRoom.tsx) so the
+ * ceiling means the same thing here as in a project window — half the conversation area —
+ * instead of falling back to half the viewport. */

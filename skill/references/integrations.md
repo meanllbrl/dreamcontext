@@ -461,13 +461,19 @@ when it was addressed finds out.
 ### Meeting Room — one announcement, EVERY agent (hidden launcher surface)
 
 Peer mail addresses ONE vault. The **Meeting Room** addresses ALL of them at once: a hidden,
-Slack-like thread in the desktop launcher where the user posts an announcement and **every
-registered vault's agent** wakes headless in its own project directory (same
+Slack-like thread in **its own desktop window** where the user posts an announcement and
+**every registered vault's agent** wakes headless in its own project directory (same
 `runPeerHeadless` spawn as peer mail: `--permission-mode auto`, 10-min timeout, 3 runs in
 parallel) and decides for itself whether the message concerns it. **UI-only, deliberately
 hidden**: the single entrance is clicking the dreamcontext core logo in the launcher's Space
 view (with projects in the sky; an empty sky keeps the add-project wizard). No CLI verbs,
 no menu item.
+
+**One model and effort for the whole room.** The room's composer has no session to scope a
+model to — one post wakes N projects — so its model/effort pick writes the **app-global**
+default (`chatDefaultModel` / `chatDefaultEffort` in `~/.dreamcontext/agent-ui.json`, the same
+blob every project window shares) and every headless run the room spawns is started with it.
+Nothing pinned means no `--model` / `--effort` flag at all: the CLI keeps its own default.
 
 **Not peer mail.** The room is a single global place owned by no vault — threads live in
 `~/.dreamcontext/meeting-room/threads/<id>.json`, never in any vault's `state/`. No
@@ -496,9 +502,20 @@ message. Relevance is the agent's call, not the user's routing burden.
 **Agent-to-agent mentions, bounded.** If agent A's reply mentions participant B, B gets ONE
 directed run (fencing A's reply), and when B answers with substance, A gets ONE follow-up run
 carrying that answer. Chain depth is 1: mentions inside B's answer (or the follow-up) render
-as text and deliver nothing. Hard caps, enforced at enqueue: **max 8 mention-triggered runs
-per thread, max 3 total runs per agent per thread** — a delivery dropped by a cap is recorded
-in the thread as a visible system line, never silently.
+as text and deliver nothing.
+
+**One answer per agent per user message.** A mention wakes an agent this round has not woken;
+for one it already has, the mention COALESCES into the run in flight instead of starting a
+second. Nothing is lost — every prompt is built at dequeue time from the thread as it stands,
+so a mention written while its target is still queued is in that target's transcript when it
+wakes. The follow-up keeps a separate budget (one per agent per round), so the worst case per
+agent per user message is two runs — a constant, rather than something that grows with the
+size of the room. Without this, N agents each naming the same project woke it N times and it
+posted the same answer twice.
+
+Hard caps, enforced at enqueue: **max 8 mention-triggered runs per thread, max 3 total runs
+per agent per thread** — a delivery dropped by a cap, or coalesced by the rule above, is
+recorded in the thread as a visible system line, never silently.
 
 Same permission posture as peer mail: headless runs execute under `auto` with nobody to
 answer a prompt, so an agent that hits a permission wall reports itself blocked in its reply

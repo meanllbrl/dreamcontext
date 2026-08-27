@@ -2,48 +2,72 @@ import { useVault } from '../../../context/VaultContext';
 import { isDesktop, openChecklistWindow } from '../../../lib/desktop';
 import { writeEnvelope } from '../../../lib/checklistStore';
 import type { ChatViewSpec, ChecklistViewSpec } from '../../../lib/chatViewSpec';
-import type { ChatBlock } from './chatActions';
-import { HtmlView } from './HtmlView';
+import type { ChatSegment } from './chatActions';
+import { HtmlView, HtmlPending } from './HtmlView';
 import { InsightView } from './InsightView';
 import './ChatViews.css';
 
 /**
- * The block host — the seam between what `parseChatActions` extracted from an answer
- * (`blocks`/`notices`/`pendingView`, see `chatActions.ts`) and the actual rich objects.
+ * ONE non-prose segment of an answer — the seam between what `parseChatActions` extracted
+ * (see `ChatSegment` in `chatActions.ts`) and the actual rich objects.
  *
- * `blocks` is rendered in WRITTEN order and mixes two kinds: the agent's own HTML
- * (`dream-html`, the surface's main expressive channel since 2026-08-26) and the typed
- * `dream-view` payloads that survived the retirement of `chart`/`page` — the three things
- * HTML cannot be (a tracked metric's canonical rendering, an OS window, a shelf row).
+ * A SEGMENT, not a list, and that is the change of 2026-08-27. This used to be `ChatViews`:
+ * a host that rendered every block of a message together, below the message's whole prose.
+ * That shape could not put a card between two paragraphs, so the sentence written under a
+ * card rendered above it and the card read as an attachment. `TranscriptItem` now walks the
+ * segments itself and calls this once per block, in written order.
  *
- * Per the degradation contract: the prose this sits below ALWAYS survives — `notices` are
- * additive, never a replacement for it — and nothing here ever throws, since every block
- * arrived pre-validated from `lib/chatViewSpec.ts` (views) or capped by byte size (html).
+ * Three kinds reach here: the agent's own HTML (`dream-html`, the surface's main expressive
+ * channel since 2026-08-26), the typed `dream-view` payloads that survived the retirement of
+ * `chart`/`page` (a tracked metric's canonical rendering, an OS window, a shelf row), and a
+ * fence that hasn't closed yet — which now holds its own slot instead of trailing the
+ * message as a pill.
+ *
+ * Nothing here throws: every block arrived pre-validated from `lib/chatViewSpec.ts` (views)
+ * or capped by byte size (html).
  */
-export function ChatViews({
-  blocks, notices, pendingView, conversationId,
-}: {
-  blocks: ChatBlock[];
-  notices: string[];
-  pendingView: boolean;
-  conversationId: string;
+export function ChatBlockSegment({ segment, conversationId }: {
+  segment: Exclude<ChatSegment, { kind: 'prose' }>;
+  /**
+   * OPTIONAL because two of the three segment kinds have no use for it: `html` is a sandboxed
+   * render and `pending` is a skeleton. Only a `view` needs a conversation — a checklist's
+   * Submit has to land somewhere — and a host that has none does not reach this component with
+   * one (`TranscriptItem` renders a notice in its place instead). So the absent case is
+   * unreachable here rather than handled, and this stays a type-level statement of which
+   * blocks cost the host anything.
+   */
+  conversationId?: string;
 }) {
-  if (blocks.length === 0 && notices.length === 0 && !pendingView) return null;
+  switch (segment.kind) {
+    case 'html':
+      return <HtmlView html={segment.html} />;
+    case 'view':
+      return conversationId
+        ? <ChatViewItem view={segment.view} conversationId={conversationId} />
+        : null;
+    // A `dream-html` gets the block-sized slot it is about to fill; a `dream-view` keeps the
+    // pill, because what IT resolves into is a small card and a card-sized skeleton would
+    // promise more than arrives. Proportion, not inconsistency.
+    case 'pending':
+      return segment.fence === 'html'
+        ? <HtmlPending partial={segment.partial} />
+        : <PendingViewPill />;
+  }
+}
 
+/**
+ * The degradation strip — a dropped widget, an unknown view type, a block over its byte
+ * cap. Per the degradation contract these are ADDITIVE: the prose always survives, and a
+ * block that vanished silently would be the one failure this surface must never have.
+ * Rendered once per message, after every segment, because a notice is about the answer
+ * rather than about a position in it.
+ */
+export function ChatViewNotices({ notices }: { notices: string[] }) {
+  if (notices.length === 0) return null;
   return (
-    <div className="chat-views">
-      {blocks.map((block, i) => (
-        block.kind === 'html'
-          ? <HtmlView key={i} html={block.html} />
-          : <ChatViewItem key={i} view={block.view} conversationId={conversationId} />
-      ))}
-      {pendingView && <PendingViewPill />}
-      {notices.length > 0 && (
-        <ul className="chat-view-notice">
-          {notices.map((n, i) => <li key={i}>{n}</li>)}
-        </ul>
-      )}
-    </div>
+    <ul className="chat-view-notice">
+      {notices.map((n, i) => <li key={i}>{n}</li>)}
+    </ul>
   );
 }
 
@@ -66,10 +90,11 @@ function ChatViewItem({ view, conversationId }: {
   }
 }
 
-/** A still-open `dream-view` or `dream-html` fence hasn't closed yet — either can run
- *  10-20KB and take seconds to stream, so this stands in for it rather than showing
- *  nothing. Same dots-and-pill shape as `WorkingIndicator`'s `.chat-working`
- *  (`overlays.css`), duplicated locally so this file has no cross-file class dependency. */
+/** A still-open `dream-view` fence — its JSON payload has nothing legible to show
+ *  mid-stream, so this stands in for it rather than showing nothing. (A `dream-html` gets
+ *  `HtmlPending` instead, which can read the titles already written into its markup.) Same
+ *  dots-and-pill shape as `WorkingIndicator`'s `.chat-working` (`overlays.css`), duplicated
+ *  locally so this file has no cross-file class dependency. */
 function PendingViewPill() {
   return (
     <div className="chat-view-pending" role="status" aria-live="polite">

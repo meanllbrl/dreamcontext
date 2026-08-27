@@ -8,7 +8,9 @@ import {
   type VaultStatus,
 } from '../hooks/useLauncher';
 import { useTeamUpdates, useTeamFetch } from '../hooks/useBrainStatus';
-import { confirmAction, openVaultWindow, startTitleBarDrag, toggleMaximizeWindow } from '../lib/desktop';
+import {
+  confirmAction, openMeetingWindow, openVaultWindow, startTitleBarDrag, toggleMaximizeWindow,
+} from '../lib/desktop';
 import { VaultDot } from '../components/layout/VaultDot';
 import { VaultLogo, useVaultLogoPicker, useVaultLogoMenu } from '../components/layout/VaultLogo';
 import { VaultSyncChip } from '../components/brain/VaultSyncChip';
@@ -20,7 +22,6 @@ import {
   writeLauncherView,
   type LauncherView,
 } from '../lib/launcherPrefs';
-import { MeetingRoom } from '../components/meeting/MeetingRoom';
 import './LauncherPage.css';
 
 /**
@@ -48,8 +49,6 @@ export function LauncherPage() {
   const [search, setSearch] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
-  /** The hidden Meeting Room — reachable ONLY through the Space core's click. */
-  const [meetingOpen, setMeetingOpen] = useState(false);
   /**
    * `null` until we know the answer. On a fresh launch the origin is new, so the
    * localStorage mirror is empty and only the server file knows what was picked —
@@ -249,7 +248,7 @@ export function LauncherPage() {
         <SpaceLauncher
           query={search}
           onAddProject={() => setWizardOpen(true)}
-          onOpenMeetingRoom={() => setMeetingOpen(true)}
+          onOpenMeetingRoom={() => void openMeetingWindow()}
           onError={setActionError}
         />
       )}
@@ -348,8 +347,6 @@ export function LauncherPage() {
           </div>
         </>
       )}
-
-      {meetingOpen && <MeetingRoom onClose={() => setMeetingOpen(false)} />}
 
       {wizardOpen && (
         <OnboardingWizard

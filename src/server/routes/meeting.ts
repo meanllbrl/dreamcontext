@@ -14,6 +14,7 @@ import {
   meetingRoster,
   readThread,
 } from '../../lib/meeting-room.js';
+import { readAgentUiChatDefaults } from './launcher.js';
 
 /**
  * MEETING ROOM ROUTES — the launcher window's view of the machine-wide room.
@@ -30,10 +31,17 @@ import {
  * ten-minute headless runs would be a hung request, not an API.
  */
 
-/** One orchestrator per server process, created on first use with default home. */
+/**
+ * One orchestrator per server process, created on first use with default home.
+ *
+ * `chatDefaults` is what makes the room's model/effort pick GLOBAL: the composer writes it to
+ * `~/.dreamcontext/agent-ui.json` (the same app-global blob every project window already
+ * shares) and this reads it back per run, so one selection covers every project the room
+ * wakes. No room-specific store, and no per-project override to keep in sync.
+ */
 let orchestrator: MeetingOrchestrator | null = null;
 function getOrchestrator(): MeetingOrchestrator {
-  if (!orchestrator) orchestrator = new MeetingOrchestrator();
+  if (!orchestrator) orchestrator = new MeetingOrchestrator({ chatDefaults: readAgentUiChatDefaults });
   return orchestrator;
 }
 

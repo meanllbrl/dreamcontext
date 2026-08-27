@@ -39,11 +39,11 @@ import { join } from 'node:path';
 
 /**
  * Roster-driven mention parse — never a bare `@(\w+)` regex, because vault
- * names are arbitrary registered strings ("Tilki Ogretmen" has a space) and
+ * names are arbitrary registered strings ("Acme Payments" has a space) and
  * only the roster knows them.
  *
- * Longest name first, so a roster holding both "Tilki" and "Tilki Ogretmen"
- * resolves "@Tilki Ogretmen" to the long name and "@Tilki" to the short one.
+ * Longest name first, so a roster holding both "Acme" and "Acme Payments"
+ * resolves "@Acme Payments" to the long name and "@Acme" to the short one.
  * Matched spans are consumed — a shorter name never re-matches inside a longer
  * match. Boundaries: the `@` must not be glued to a word character (an email
  * address is not a mention), and the name must not continue into a longer word
@@ -186,6 +186,18 @@ export function buildMeetingPrompt(input: MeetingPromptInput): string {
 
 export type MeetingTrigger = 'announcement' | 'user-reply' | 'mention' | 'follow-up';
 
+/**
+ * Which BUDGET a run spends in its wave — the two the one-run-per-agent rule counts
+ * separately (see {@link MeetingOrchestrator.enqueue}).
+ *
+ * 'answer' is "this agent is speaking to the question", whoever asked: the user directly, or
+ * another agent pulling it in. Those are the same act and an agent does it once per wave.
+ * 'follow-up' is the distinct act of closing the loop on an answer it asked for.
+ */
+function runClass(kind: MeetingTrigger): 'answer' | 'follow-up' {
+  return kind === 'follow-up' ? 'follow-up' : 'answer';
+}
+
 interface RunTask {
   threadId: string;
   /** The vault being woken. */
@@ -193,6 +205,12 @@ interface RunTask {
   kind: MeetingTrigger;
   /** Id of the message this run answers (prompt is built at dequeue time). */
   triggerId: string;
+  /**
+   * The USER message that started this fan-out — the wave every run in it belongs to,
+   * carried unchanged through mentions and follow-ups. This is the key the one-run-per-agent
+   * rule counts against ({@link MeetingOrchestrator.enqueue}).
+   */
+  wave: string;
   /** On a 'mention' run: who asked, so the answer can spawn their follow-up. */
   asker?: string;
   followUp?: { mentioned: string; answer: string };
@@ -201,7 +219,7 @@ interface RunTask {
 export type HeadlessRunner = (
   peer: PeerTarget,
   prompt: string,
-  opts: { timeoutMs?: number },
+  opts: { timeoutMs?: number; model?: string; effort?: string },
 ) => Promise<LiveRunResult>;
 
 export interface OrchestratorDeps {
@@ -213,6 +231,20 @@ export interface OrchestratorDeps {
   /** Parallel headless runs (default 3). */
   concurrency?: number;
   timeoutMs?: number;
+  /**
+   * The app-global model/effort pick every run in the room is spawned with — read fresh per
+   * run, so a change made in the room's composer applies to the next agent that wakes rather
+   * than to the next thread.
+   *
+   * Injected rather than read here because this module is a pure lib and the blob it comes
+   * from (`~/.dreamcontext/agent-ui.json`) has exactly one owner — the launcher route that
+   * writes it (`readAgentUiChatDefaults`). Absent → no flags, i.e. every agent runs on the
+   * CLI's own default, which is what the room did before this existed.
+   *
+   * Both values must arrive already gated (`sanitizeModel` / `sanitizeEffort`): they are
+   * interpolated into a `claude` command string by {@link runPeerHeadless}.
+   */
+  chatDefaults?: () => { model: string; effort: string };
 }
 
 /** Parallel headless runs at any moment. */
@@ -224,9 +256,22 @@ export class MeetingOrchestrator {
   private readonly resolveTarget: (name: string, home?: string) => PeerTarget;
   private readonly concurrency: number;
   private readonly timeoutMs: number;
+  private readonly chatDefaults: () => { model: string; effort: string };
   private readonly queue: RunTask[] = [];
   private active = 0;
   private idleResolvers: Array<() => void> = [];
+  /**
+   * Who has already been woken in the CURRENT wave, per thread — the one-run-per-agent rule's
+   * ledger. Keyed by thread id and replaced wholesale when a new user message opens a new
+   * wave, so it can never grow without bound. Entries are `<class>:<agent>` (see
+   * {@link runClass}), because the two classes carry separate budgets.
+   *
+   * In MEMORY rather than on the thread file on purpose: it describes an in-flight fan-out,
+   * not the conversation. A server restart mid-wave loses it, and the correct behaviour then
+   * is exactly what the per-thread `runs` cap already gives — the persisted counters survive,
+   * the coalescing does not.
+   */
+  private wave = new Map<string, { id: string; woken: Set<string> }>();
 
   constructor(deps: OrchestratorDeps = {}) {
     this.home = deps.home;
@@ -234,6 +279,7 @@ export class MeetingOrchestrator {
     this.resolveTarget = deps.resolveTarget ?? resolvePeer;
     this.concurrency = deps.concurrency ?? MEETING_CONCURRENCY;
     this.timeoutMs = deps.timeoutMs ?? DEFAULT_DELIVERY_TIMEOUT_MS;
+    this.chatDefaults = deps.chatDefaults ?? (() => ({ model: '', effort: '' }));
   }
 
   /** Resolves once no run is active and nothing is queued. For tests + close. */
@@ -245,6 +291,10 @@ export class MeetingOrchestrator {
   /**
    * Fan a USER message out (the root announcement or a thread reply). Routing
    * per {@link routeUserMessage}; every delivery passes the per-agent cap gate.
+   *
+   * This message OPENS A WAVE: it is the unit the one-run-per-agent rule counts against, so
+   * the ledger is reset here and every run this fan-out spawns — including the mention runs
+   * an agent's own reply triggers, however deep — is stamped with this message's id.
    */
   deliverUserMessage(threadId: string, messageId: string): void {
     const thread = readThread(threadId, this.home);
@@ -252,6 +302,7 @@ export class MeetingOrchestrator {
     const msg = thread.messages.find((m) => m.id === messageId);
     if (!msg || msg.authorKind !== 'user') return;
     const isRoot = msg.root === true;
+    this.wave.set(threadId, { id: msg.id, woken: new Set() });
     const targets = routeUserMessage(thread, msg.body, isRoot);
     for (const target of targets) {
       this.enqueue({
@@ -259,6 +310,7 @@ export class MeetingOrchestrator {
         target,
         kind: isRoot ? 'announcement' : 'user-reply',
         triggerId: msg.id,
+        wave: msg.id,
       });
     }
     this.pump();
@@ -268,9 +320,44 @@ export class MeetingOrchestrator {
    * Reserve capacity and queue one run. ALL cap checks live here, at enqueue
    * time, so ordering is deterministic; a dropped delivery is always recorded
    * as a visible system line in the thread, never silently.
+   *
+   * THE FIRST GATE IS ONE ANSWER PER AGENT PER WAVE, and it is the answer to the owner's
+   * 08-27 report — one announcement, and `dreamcontext` replied three times (11:59, 12:02,
+   * 12:03), the last two re-answering the same cross-project question. The mechanism: two
+   * different agents each wrote `@dreamcontext` into their own reply, and each of those
+   * mentions spawned its own directed run on top of the announcement run it had already
+   * done. Nothing was broken — the per-agent cap (3) was doing its job — but "N agents may
+   * each wake the same agent again" multiplies runs by the size of the room, and the user
+   * reads the result as the same project answering the same question twice.
+   *
+   * So a mention now reaches an agent that this wave has not woken, and coalesces into the
+   * run already in flight for one that it has. That is not information lost: every prompt is
+   * built at DEQUEUE time from the thread as it stands ({@link MeetingOrchestrator.runOne}),
+   * so a mention written while its target is still queued is in that target's transcript when
+   * it wakes. The mention chain therefore survives exactly where it adds an answer nobody
+   * would otherwise get — a passed agent, or one the user's own routing skipped — and dies
+   * where it only restated one.
+   *
+   * The FOLLOW-UP keeps its own budget (one per agent per wave) rather than counting against
+   * the answer above, because it is a different act: closing the loop on an answer this agent
+   * asked for, not restating its own. Worst case per agent per user message is therefore
+   * two runs — a constant, where before it grew with the size of the room.
    */
   private enqueue(task: RunTask): void {
     const isMentionRun = task.kind === 'mention' || task.kind === 'follow-up';
+    const wave = this.wave.get(task.threadId);
+    const ledgerKey = `${runClass(task.kind)}:${task.target}`;
+    if (wave && wave.id === task.wave && wave.woken.has(ledgerKey)) {
+      // Coalesced, not dropped — and said once, because a dropped delivery is never silent.
+      mutateThread(task.threadId, (t) => {
+        t.messages.push(systemLine(
+          task.kind === 'follow-up'
+            ? `@${task.target} has already had its follow-up this round — no second one.`
+            : `@${task.target} is already answering this round — ${task.asker ? `@${task.asker}'s mention` : 'a second delivery'} was folded into that run rather than starting another.`,
+        ));
+      }, this.home);
+      return;
+    }
     let accepted = false;
     mutateThread(task.threadId, (t) => {
       const p = t.participants.find((x) => x.name === task.target);
@@ -293,7 +380,11 @@ export class MeetingOrchestrator {
       delete p.error;
       accepted = true;
     }, this.home);
-    if (accepted) this.queue.push(task);
+    if (!accepted) return;
+    // Recorded only for a run that was actually accepted: a delivery the caps refused has not
+    // woken anybody, so it must not block a later mention of the same agent in this wave.
+    if (wave && wave.id === task.wave) wave.woken.add(ledgerKey);
+    this.queue.push(task);
   }
 
   private pump(): void {
@@ -327,7 +418,12 @@ export class MeetingOrchestrator {
         trigger,
         followUp: task.followUp,
       });
-      result = await this.runner(peer, prompt, { timeoutMs: this.timeoutMs });
+      // Read per RUN, not per thread: the room's model/effort control is app-global, so a
+      // change made while a fan-out is in flight applies to the agents that have not woken
+      // yet. `''` on either means "no flag" — the CLI's own default, which is the resting
+      // state and what every run did before this was wired.
+      const { model, effort } = this.chatDefaults();
+      result = await this.runner(peer, prompt, { timeoutMs: this.timeoutMs, model, effort });
     } catch (err) {
       result = { ok: false, reply: '', sessionId: null, error: String(err) };
     }
@@ -373,6 +469,7 @@ export class MeetingOrchestrator {
           target: mentioned,
           kind: 'mention',
           triggerId: message.id,
+          wave: task.wave,
           asker: task.target,
         });
       }
@@ -386,6 +483,7 @@ export class MeetingOrchestrator {
         target: task.asker,
         kind: 'follow-up',
         triggerId: message.id,
+        wave: task.wave,
         followUp: { mentioned: task.target, answer: message.body },
       });
     }
