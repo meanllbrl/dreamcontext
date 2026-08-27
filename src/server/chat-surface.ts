@@ -78,7 +78,8 @@ And two things that stay OUT of it, because drawing them makes the answer worse:
 
 **In a nutshell, not a report** — one block, one idea, about one screen. A long stack of
 sections reads as work shown, not as an answer. The block carries the explanation; the prose
-around it says what to notice and what you want back.
+around it says what to notice and what you want back — and a block renders exactly where you
+wrote it, so a sentence you put under one lands under it.
 
 ## \`dream-html\` — you write the HTML, we render it safely
 

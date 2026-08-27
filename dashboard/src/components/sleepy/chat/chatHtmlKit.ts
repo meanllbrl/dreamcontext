@@ -96,6 +96,22 @@ export const MIN_HTML_HEIGHT = 40;
 export const MAX_HTML_HEIGHT = 20000;
 
 /**
+ * The height a block occupies BEFORE its first measurement lands — and, not coincidentally,
+ * the floor of the placeholder that held the slot while the markup was still streaming.
+ *
+ * One number for both, because they are the same box a fraction of a second apart. Mounting
+ * the frame at `MIN_HTML_HEIGHT` instead (the old behaviour) made every block arrive as a
+ * 40px sliver that then jumped to its real height: the placeholder collapsed, the card
+ * snapped open, and everything below it moved twice. Starting where the placeholder ended
+ * means the frame only ever GROWS from here, and the `transition: height` in HtmlView.css
+ * animates that growth.
+ *
+ * Deliberately NOT the measured floor: a genuinely tiny block is still allowed to settle at
+ * `MIN_HTML_HEIGHT` once it has actually reported a size.
+ */
+export const HTML_PENDING_HEIGHT = 96;
+
+/**
  * The one channel out of the sandbox: the body's own height, as a number, to the parent —
  * volunteered when it changes, and re-sent on demand when the host says it never heard it.
  *
@@ -175,6 +191,64 @@ export function buildChatSrcdoc(input: ChatSrcdocInput): string {
   // The mode rides on <html> so the kit's `html[data-dc-mode="full"]` slide rules can see
   // it. Written here rather than in the shared builder: it is this surface's concept.
   return doc.replace('<!doctype html><html>', `<!doctype html><html data-dc-mode="${mode}">`);
+}
+
+/** The kit classes that MEAN "this is a title". Deliberately narrow: a placeholder that
+ *  echoed every `dc-p` would be the half-drawn layout this design rejected, in text form. */
+const OUTLINE_CLASS_RE = /\bdc-(?:h[123]|card-title|option-title|stat-label|tab)\b/;
+/** Any opening tag carrying a class attribute. Matching the OPENING tag only — and stepping
+ *  the scan past just that tag — is load-bearing: a regex that also demanded the matching
+ *  close tag would swallow the wrapper `<div class="dc-doc">…</div>` whole on its first
+ *  match and never see a single title inside it. */
+const OUTLINE_OPEN_RE = /<([a-z][a-z0-9]*)\b[^>]*\bclass\s*=\s*["']([^"']*)["'][^>]*>/gi;
+/** How many title lines a placeholder shows before it stops growing. Past this it is no
+ *  longer a hint that something is being drawn, it is a second copy of the answer. */
+const OUTLINE_MAX = 6;
+const OUTLINE_MAX_CHARS = 80;
+const ENTITIES: Record<string, string> = {
+  nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", apos: "'",
+};
+
+/** A title element's text, or null while it is still being written. */
+function outlineText(partial: string, tag: string, from: number): string | null {
+  const close = partial.toLowerCase().indexOf(`</${tag.toLowerCase()}`, from);
+  // Not closed yet — so not shown. The whole argument against drawing partial markup,
+  // applied to its placeholder: half a heading is noise, not progress.
+  if (close === -1) return null;
+  const text = partial.slice(from, close)
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&(nbsp|amp|lt|gt|quot|apos|#39);/g, (_m, e: string) => ENTITIES[e] ?? ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return null;
+  return text.length > OUTLINE_MAX_CHARS ? `${text.slice(0, OUTLINE_MAX_CHARS - 1)}…` : text;
+}
+
+/**
+ * The titles already written into a still-streaming `dream-html` body, in order.
+ *
+ * This is what turns dead air into legible work. A 2KB block is ~600 tokens, so the reader
+ * spends 10-20 seconds watching a placeholder; one that merely pulses says only "wait",
+ * while one that fills in "Two ways to ship this" and then "Behind a flag" says WHAT is
+ * being drawn — without ever showing a half-drawn layout, which was the reason the live
+ * progressive iframe was rejected in favour of this.
+ *
+ * Returns plain text. The caller renders it as TEXT through React, never as innerHTML: this
+ * is unsanitized agent markup, and the iframe sandbox that makes the real block safe is not
+ * in play for a placeholder living in the host document.
+ */
+export function htmlOutline(partial: string): string[] {
+  if (!partial) return [];
+  const out: string[] = [];
+  OUTLINE_OPEN_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = OUTLINE_OPEN_RE.exec(partial)) !== null) {
+    if (!OUTLINE_CLASS_RE.test(m[2])) continue;
+    const text = outlineText(partial, m[1], OUTLINE_OPEN_RE.lastIndex);
+    if (text) out.push(text);
+    if (out.length >= OUTLINE_MAX) break;
+  }
+  return out;
 }
 
 /** A height off the wire, or null when it is not a number we should act on. */

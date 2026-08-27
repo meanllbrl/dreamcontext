@@ -20,9 +20,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseChatActions, MAX_HTML_BYTES, MAX_HTMLS_PER_MESSAGE } from '../../dashboard/src/components/sleepy/chat/chatActions.js';
 import {
-  buildChatSrcdoc, readHeightMessage, HEIGHT_BRIDGE, HEIGHT_MESSAGE_KEY, HEIGHT_REQUEST_KEY,
+  buildChatSrcdoc, readHeightMessage, htmlOutline, HEIGHT_BRIDGE, HEIGHT_MESSAGE_KEY, HEIGHT_REQUEST_KEY,
   CHAT_HTML_CSP, CHAT_HTML_SANDBOX, CHAT_HTML_KIT_CSS, CHAT_KIT_TOKENS,
-  MIN_HTML_HEIGHT, MAX_HTML_HEIGHT,
+  MIN_HTML_HEIGHT, MAX_HTML_HEIGHT, HTML_PENDING_HEIGHT,
 } from '../../dashboard/src/components/sleepy/chat/chatHtmlKit.js';
 import { handleChatHtmlKitGet } from '../../src/server/routes/chat-html-kit.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -494,5 +494,195 @@ describe('GET /api/chat/html-kit — the brand override', () => {
 
   it('names the path it looked at, so a user can find the file to create', async () => {
     expect((await call(root)).body?.path).toBe('overrides/chat-html-kit.css');
+  });
+});
+
+// -----------------------------------------------------------------------------------------
+// WRITTEN ORDER -- `segments`
+//
+// The defect these lock down is not cosmetic. Before 2026-08-27 the parser returned prose as
+// ONE merged string and blocks as a separate list, so an answer written "here is the shape /
+// [card] / here is what to notice" rendered BOTH sentences and then the card: the words that
+// frame a drawing landed above it, every time, and the card read as an attachment rather than
+// as part of the answer. `segments` is the fix, and the tests below are mostly about the two
+// ways it could quietly come undone -- a lost position, and a leaked slot marker.
+// -----------------------------------------------------------------------------------------
+
+/** The character that delimits a slot marker inside the parser. Built rather than typed: a
+ *  literal NUL in a source file is invisible to every reviewer who would need to see it. */
+const NUL = String.fromCharCode(0);
+
+const kinds = (text: string) => parseChatActions(text).segments.map((s) => s.kind);
+const proseOf = (text: string) => parseChatActions(text).segments
+  .flatMap((s) => (s.kind === 'prose' ? [s.text] : []));
+
+describe('parseChatActions -- segments keep written order', () => {
+  it('puts the prose written AFTER a block after it, not above it', () => {
+    const r = parseChatActions(`Here is the shape.\n\n${fence('<p>x</p>')}\n\nWhat do you think?`);
+    expect(r.segments).toEqual([
+      { kind: 'prose', text: 'Here is the shape.' },
+      { kind: 'html', html: '<p>x</p>' },
+      { kind: 'prose', text: 'What do you think?' },
+    ]);
+  });
+
+  it('interleaves several blocks of both kinds with the prose between them', () => {
+    const view = '```dream-view\n{"type":"insight","id":"weekly-active-users"}\n```';
+    const text = `One.\n\n${fence('<p>a</p>')}\n\nTwo.\n\n${view}\n\nThree.`;
+    expect(kinds(text)).toEqual(['prose', 'html', 'prose', 'view', 'prose']);
+  });
+
+  it('is one segment when the answer is nothing but a block', () => {
+    expect(parseChatActions(fence('<p>x</p>')).segments).toEqual([{ kind: 'html', html: '<p>x</p>' }]);
+  });
+
+  it('leaves `body` byte-identical to the pre-segment behaviour', () => {
+    const r = parseChatActions(`Here is the shape.\n\n${fence('<p>x</p>')}\n\nWhat do you think?`);
+    expect(r.body).toBe('Here is the shape.\n\nWhat do you think?');
+  });
+
+  it('never leaks a slot marker into the prose -- neither into `body` nor into a segment', () => {
+    const text = `A.\n\n${fence('<p>x</p>')}\n\nB.`;
+    expect(parseChatActions(text).body).not.toContain(NUL);
+    expect(proseOf(text)).toEqual(['A.', 'B.']);
+  });
+
+  it('cannot be tricked into a phantom block by a NUL the answer wrote itself', () => {
+    // NUL is scrubbed on entry precisely so the marker channel cannot be forged. Were it
+    // not, this would resolve to blocks[0] and draw a second copy of a card the answer
+    // only drew once.
+    const r = parseChatActions(`A.${NUL}dcblock0${NUL}B.\n\n${fence('<p>x</p>')}`);
+    expect(r.segments).toEqual([
+      { kind: 'prose', text: 'A.dcblock0B.' },
+      { kind: 'html', html: '<p>x</p>' },
+    ]);
+  });
+
+  it('gives a DROPPED block no position -- an oversized body leaves prose only', () => {
+    const r = parseChatActions(`Real answer.\n\n${fence('<p>' + 'a'.repeat(MAX_HTML_BYTES) + '</p>')}`);
+    expect(r.segments).toEqual([{ kind: 'prose', text: 'Real answer.' }]);
+    expect(r.notices).toHaveLength(1);
+  });
+
+  it('drops the blocks past the per-message cap without shifting the ones that stayed', () => {
+    const text = Array.from(
+      { length: MAX_HTMLS_PER_MESSAGE + 2 },
+      (_v, i) => `p${i}\n\n${fence(`<p>${i}</p>`)}`,
+    ).join('\n\n');
+    const html = parseChatActions(text).segments
+      .flatMap((s) => (s.kind === 'html' ? [s.html] : []));
+    expect(html).toEqual(Array.from({ length: MAX_HTMLS_PER_MESSAGE }, (_v, i) => `<p>${i}</p>`));
+  });
+
+  it('produces no empty prose segment where an action fence or a board reference was', () => {
+    const text = 'Look:\n\n![board](docs/a.excalidraw.md)\n\n```dream-actions\n[]\n```\n\n'
+      + fence('<p>x</p>');
+    expect(kinds(text)).toEqual(['prose', 'html']);
+  });
+});
+
+describe('parseChatActions -- a still-open fence holds its own slot', () => {
+  it('lands a `pending` segment AFTER the prose already written, carrying the markup so far', () => {
+    const r = parseChatActions('Building it now.\n\n```dream-html\n<div class="dc-doc"><h2 class="dc-h2">Half a');
+    expect(r.segments).toEqual([
+      { kind: 'prose', text: 'Building it now.' },
+      { kind: 'pending', fence: 'html', partial: '\n<div class="dc-doc"><h2 class="dc-h2">Half a' },
+    ]);
+    expect(r.pendingView).toBe(true);
+  });
+
+  it('carries no partial for a `dream-view` -- its payload is JSON, illegible mid-stream', () => {
+    const r = parseChatActions('One sec.\n\n```dream-view\n{"type":"insi');
+    expect(r.segments.at(-1)).toEqual({ kind: 'pending', fence: 'view', partial: '' });
+  });
+
+  it('gives a still-open `dream-actions` fence no segment at all -- it never had a placeholder', () => {
+    const r = parseChatActions('Done.\n\n```dream-actions');
+    expect(r.segments).toEqual([{ kind: 'prose', text: 'Done.' }]);
+    expect(r.pendingView).toBe(false);
+  });
+
+  it('replaces the pending segment with the block in the SAME position once the fence closes', () => {
+    expect(kinds('A.\n\n```dream-html\n<p>x')).toEqual(['prose', 'pending']);
+    expect(kinds('A.\n\n```dream-html\n<p>x</p>\n```')).toEqual(['prose', 'html']);
+    expect(kinds('A.\n\n```dream-html\n<p>x</p>\n```\n\nB.')).toEqual(['prose', 'html', 'prose']);
+  });
+});
+
+describe('parseChatActions -- the link-reference bail-out', () => {
+  // Inherited from lib/markdownBlocks.ts, for the same reason one level up: a definition is
+  // document state the lexer resolves against the WHOLE text. Split the prose and a
+  // definition on one side of a block no longer reaches a use on the other.
+  const withDef = `See [the docs][d].\n\n${fence('<p>x</p>')}\n\n[d]: https://example.com`;
+
+  it('falls back to prose-then-blocks rather than splitting a document it cannot split', () => {
+    expect(kinds(withDef)).toEqual(['prose', 'html']);
+  });
+
+  it('keeps the definition and its use in the SAME prose segment, which is the point', () => {
+    expect(proseOf(withDef)[0]).toContain('[the docs][d]');
+    expect(proseOf(withDef)[0]).toContain('[d]: https://example.com');
+  });
+
+  it('still appends a pending segment last when a fence is open', () => {
+    expect(kinds('[d]: https://example.com\n\nDrawing.\n\n```dream-html\n<p>'))
+      .toEqual(['prose', 'pending']);
+  });
+});
+
+// -----------------------------------------------------------------------------------------
+// The placeholder's outline -- `htmlOutline`
+// -----------------------------------------------------------------------------------------
+
+describe('htmlOutline', () => {
+  it('finds titles NESTED inside the kit wrapper -- the whole reason it scans opening tags', () => {
+    // A regex that also demanded the matching close tag would consume
+    // `<div class="dc-doc">...</div>` whole on its first match and report zero titles for
+    // every well-formed block.
+    const partial = '<div class="dc-doc"><h2 class="dc-h2">Two ways to ship this</h2>'
+      + '<div class="dc-card"><span class="dc-card-title">Behind a flag</span></div>';
+    expect(htmlOutline(partial)).toEqual(['Two ways to ship this', 'Behind a flag']);
+  });
+
+  it('shows nothing for a title still being written -- half a heading is noise, not progress', () => {
+    expect(htmlOutline('<div class="dc-doc"><h2 class="dc-h2">Two ways to shi')).toEqual([]);
+  });
+
+  it('grows as the markup does, and only ever gains rows', () => {
+    const head = '<div class="dc-doc"><h2 class="dc-h2">Plan</h2>';
+    expect(htmlOutline(head)).toEqual(['Plan']);
+    expect(htmlOutline(`${head}<h3 class="dc-h3">Step one</h3>`)).toEqual(['Plan', 'Step one']);
+  });
+
+  it('ignores classes that are not titles', () => {
+    expect(htmlOutline('<p class="dc-p">A whole paragraph of body copy.</p>')).toEqual([]);
+    expect(htmlOutline('<span class="dc-chip dc-chip--accent">recommended</span>')).toEqual([]);
+  });
+
+  it('strips inner markup, decodes entities and collapses whitespace', () => {
+    expect(htmlOutline('<h2 class="dc-h2">A\n  <strong>bold</strong>&nbsp;&amp; brave</h2>'))
+      .toEqual(['A bold & brave']);
+  });
+
+  it('caps the number of lines and the length of one', () => {
+    const many = Array.from({ length: 12 }, (_v, i) => `<h3 class="dc-h3">T${i}</h3>`).join('');
+    expect(htmlOutline(many)).toHaveLength(6);
+    const long = htmlOutline(`<h2 class="dc-h2">${'x'.repeat(200)}</h2>`)[0];
+    expect(long).toHaveLength(80);
+    expect(long.endsWith('…')).toBe(true);
+  });
+
+  it('is empty for empty input and never throws on junk', () => {
+    expect(htmlOutline('')).toEqual([]);
+    expect(htmlOutline('<<<>>> class="dc-h2" unclosed')).toEqual([]);
+  });
+});
+
+describe('HTML_PENDING_HEIGHT', () => {
+  it('sits above the measured floor, so a block only ever GROWS out of its placeholder', () => {
+    // If this ever dropped to MIN_HTML_HEIGHT the old jump returns: the placeholder collapses
+    // to a 40px sliver the moment the card mounts, then snaps open to its real height.
+    expect(HTML_PENDING_HEIGHT).toBeGreaterThan(MIN_HTML_HEIGHT);
+    expect(HTML_PENDING_HEIGHT).toBeLessThan(MAX_HTML_HEIGHT);
   });
 });

@@ -48,6 +48,7 @@
     "verify:chat-composer": "node scripts/verify/chat-composer-ui.mjs",
     "verify:peer-mail": "node scripts/verify/peer-mail-ui.mjs",
     "verify:meeting-room": "node scripts/verify/meeting-room-ui.mjs",
+    "verify:composer-shared": "node scripts/verify/composer-shared.mjs",
     "verify:chat-shelf": "node scripts/verify/chat-shelf.mjs",
     "verify:automation-run-chat": "node scripts/verify/automation-run-chat.mjs",
     "verify:delegate-modes": "node scripts/verify/delegate-modes.mjs",
@@ -59,7 +60,8 @@
     "verify:automations": "node scripts/verify/automations.mjs",
     "verify:task-delete": "node scripts/verify/task-delete-confirm.mjs",
     "verify:task-backlog": "node scripts/verify/task-backlog-and-tags.mjs",
-    "verify:lab-app": "node scripts/verify/lab-app-insight.mjs"
+    "verify:lab-app": "node scripts/verify/lab-app-insight.mjs",
+    "verify:chat-segments": "node scripts/verify/chat-segments.mjs"
   },
   "keywords": [
     "ai",

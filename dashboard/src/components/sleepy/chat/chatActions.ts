@@ -33,6 +33,9 @@
 import {
   parseViewBlock, MAX_VIEWS_PER_MESSAGE, type ChatViewSpec,
 } from '../../../lib/chatViewSpec';
+// The one markdown construct that cannot survive a document being split — see
+// `buildSegments`. Imported rather than re-typed: the rule has one home.
+import { LINK_DEF_RE } from '../../../lib/markdownBlocks';
 
 export type ChatActionKind = 'task' | 'knowledge' | 'core' | 'file' | 'board' | 'reveal' | 'ask' | 'url' | 'develop';
 
@@ -56,8 +59,40 @@ export type ChatBlock =
   | { kind: 'view'; view: ChatViewSpec }
   | { kind: 'html'; html: string };
 
+/**
+ * One renderable RUN of an answer, in the order it was written — the unit the transcript
+ * actually renders.
+ *
+ * This exists because `body` + `blocks` could not express what the surface briefing asks
+ * the agent to write. Prose was merged into a single string and blocks handed back as a
+ * separate list, so "here is the diagram, and here is what to notice about it" rendered as
+ * both sentences THEN the diagram: the words that frame a card landed above it, and the
+ * card read as an attachment rather than as part of the answer (owner report 2026-08-27 —
+ * "kopuk bir şeymiş gibi hissettiriyor").
+ *
+ * `pending` is a segment too, and that is the whole reason it lives here instead of staying
+ * a boolean: an open fence is always the LAST thing in the text, so a pending segment lands
+ * exactly where the finished block will, and its placeholder can hold that slot instead of
+ * sitting as a pill at the bottom of the message.
+ */
+export type ChatSegment =
+  | { kind: 'prose'; text: string }
+  | { kind: 'view'; view: ChatViewSpec }
+  | { kind: 'html'; html: string }
+  /** A fence that hasn't closed yet. `partial` is the markup written so far — empty for a
+   *  `view`, whose payload is JSON and has nothing legible to show mid-stream. */
+  | { kind: 'pending'; fence: 'html' | 'view'; partial: string };
+
 export interface ParsedAnswer {
-  /** The prose to render, with every fence and board reference removed. */
+  /**
+   * Every prose run and block, interleaved in WRITTEN order — what the transcript renders.
+   * Prefer this over `body` + `blocks`: those are the same content flattened, and a flat
+   * body can no longer say where a block sat relative to the prose around it.
+   */
+  segments: ChatSegment[];
+  /** The prose to render, with every fence and board reference removed — `segments`' prose
+   *  runs joined back together. Kept for the consumers that only want text (and for the
+   *  link-reference fallback, which renders exactly this). */
   body: string;
   actions: ChatAction[];
   /** Board paths, in the order the answer named them, de-duplicated. */
@@ -76,7 +111,8 @@ export interface ParsedAnswer {
    *  always survives a malformed block. */
   notices: string[];
   /** A `dream-view` or `dream-html` fence is open at the end of the text and hasn't closed
-   *  yet — render a "Building a view…" placeholder instead of nothing. */
+   *  yet. `segments` carries the same fact positionally (a trailing `pending` segment) plus
+   *  the fence kind and the markup so far; this stays as the cheap boolean. */
   pendingView: boolean;
 }
 
@@ -90,6 +126,25 @@ export const MAX_HTML_BYTES = 256 * 1024;
  *  should have been one page. */
 export const MAX_HTMLS_PER_MESSAGE = 5;
 
+
+/**
+ * How a block's POSITION survives the replace pipeline.
+ *
+ * The fences are lifted out of the prose by `String.replace`, which knows where it is but
+ * cannot report it. Rather than rewrite the pipeline into an offset-tracking scanner — and
+ * re-derive every cap, every degradation notice and every ordering guarantee it already
+ * gets right — each lifted fence leaves a marker naming its index, and the prose is split
+ * back apart on those markers at the very end.
+ *
+ * NUL delimits them because NUL is stripped from the input first (see `parseChatActions`),
+ * so an answer cannot forge one, and because it is not whitespace — a marker therefore
+ * survives the blank-run collapse and the trim that follow it untouched.
+ */
+const blockSlot = (index: number) => `\n\u0000dcblock${index}\u0000\n`;
+/** With a capture group, for `split` — yields [prose, index, prose, index, …]. */
+const BLOCK_SLOT_RE = /\u0000dcblock(\d+)\u0000/;
+/** Global and captureless, for flattening the markers back out of `body`. */
+const BLOCK_SLOT_RE_G = /\u0000dcblock\d+\u0000/g;
 
 /** Closed ```dream-actions fence. Tolerates ~~~ and a trailing language-line space. */
 const ACTION_FENCE_RE = /^([ \t]*)(```|~~~)[ \t]*dream-actions[ \t]*\r?\n([\s\S]*?)\r?\n?\1\2[ \t]*$/gim;
@@ -106,7 +161,7 @@ const BLOCK_FENCE_RE = /^([ \t]*)(```|~~~)[ \t]*dream-(view|html)[ \t]*\r?\n([\s
  *  One alternation covers all three names so a still-writing `dream-view` or `dream-html`
  *  (either can run 10-20KB before it closes) is hidden exactly like a still-writing
  *  `dream-actions` always has been — half-written markup must never flash on screen. */
-const OPEN_FENCE_RE = /^[ \t]*(```|~~~)[ \t]*dream-(?:actions|view|html)[ \t]*(\r?\n[\s\S]*)?$/im;
+const OPEN_FENCE_RE = /^[ \t]*(```|~~~)[ \t]*dream-(actions|view|html)[ \t]*(\r?\n[\s\S]*)?$/im;
 /** `![alt](x.excalidraw.md)` or `[alt](x.excalidraw)` — the board form. */
 const BOARD_REF_RE = /!?\[[^\]]*\]\(\s*<?([^)\s>]+\.excalidraw(?:\.md)?)>?\s*\)/gi;
 
@@ -187,8 +242,15 @@ export function parseActionBlock(json: string): ChatAction[] {
  * the message — it is dropped and reported via `notices`, and the surrounding prose survives
  * untouched.
  */
-export function parseChatActions(text: string): ParsedAnswer {
-  if (!text) return { body: '', actions: [], boards: [], blocks: [], views: [], notices: [], pendingView: false };
+export function parseChatActions(raw: string): ParsedAnswer {
+  if (!raw) {
+    return { segments: [], body: '', actions: [], boards: [], blocks: [], views: [], notices: [], pendingView: false };
+  }
+
+  // NUL goes first, before any marker can be planted: block positions ride through the
+  // pipeline as NUL-delimited slot markers (`blockSlot`), so a NUL arriving in the answer
+  // itself is the one way to forge one. Nothing legitimate in a message contains it.
+  const text = raw.replace(/\u0000/g, '');
 
   const actions: ChatAction[] = [];
   const blocks: ChatBlock[] = [];
@@ -213,8 +275,11 @@ export function parseChatActions(text: string): ParsedAnswer {
       viewCount++;
       const { view, notices: blockNotices } = parseViewBlock(payload);
       notices.push(...blockNotices);
-      if (view) blocks.push({ kind: 'view', view });
-      return '';
+      // A block that survived validation leaves a slot marking where it was written; one
+      // that didn't leaves nothing, exactly as before — a dropped block has no position.
+      if (!view) return '';
+      blocks.push({ kind: 'view', view });
+      return blockSlot(blocks.length - 1);
     }
 
     if (htmlCount >= MAX_HTMLS_PER_MESSAGE) {
@@ -227,17 +292,23 @@ export function parseChatActions(text: string): ParsedAnswer {
       notices.push(`An HTML block was skipped — it is ${bytes} bytes, over the ${MAX_HTML_BYTES / 1024}KB limit.`);
       return '';
     }
-    if (payload.trim()) blocks.push({ kind: 'html', html: payload });
-    return '';
+    if (!payload.trim()) return '';
+    blocks.push({ kind: 'html', html: payload });
+    return blockSlot(blocks.length - 1);
   });
 
   // Still being written: hide it until it closes, so the JSON never renders as prose. Only
   // a trailing open fence qualifies — an unclosed one earlier in the text would mean the
   // markdown is malformed anyway, and cutting from there would eat the real answer. Read
-  // BEFORE stripping so we can tell which fence name was left open (only a `dream-view`
-  // gets the "Building a view…" placeholder — `dream-actions` has never shown one).
+  // BEFORE stripping, because two things are needed out of it: which fence name was left
+  // open (`dream-actions` has never shown a placeholder), and for a `dream-html`, the
+  // markup written so far — the placeholder reads the titles already in it, which is what
+  // makes it look like something is being DRAWN there rather than stalled.
   const openMatch = OPEN_FENCE_RE.exec(body);
-  const pendingView = !!openMatch && /dream-(?:view|html)/i.test(openMatch[0]);
+  const openName = openMatch?.[2]?.toLowerCase();
+  const pendingFence: 'html' | 'view' | null =
+    openName === 'html' ? 'html' : openName === 'view' ? 'view' : null;
+  const pendingPartial = pendingFence === 'html' ? (openMatch?.[3] ?? '') : '';
   body = body.replace(OPEN_FENCE_RE, '');
 
   const boards: string[] = [];
@@ -247,9 +318,68 @@ export function parseChatActions(text: string): ParsedAnswer {
   });
 
   // Collapse the blank runs the removals left behind, so the prose doesn't gain a hole
-  // where a fence used to be.
-  body = body.replace(/\n{3,}/g, '\n\n').trim();
+  // where a fence used to be. Applied to the slotted string and the flattened one alike:
+  // a slot marker is not whitespace, so it survives both untouched.
+  const slotted = tidyProse(body);
+  const flatBody = tidyProse(body.replace(BLOCK_SLOT_RE_G, ''));
 
   const views = blocks.flatMap((b) => (b.kind === 'view' ? [b.view] : []));
-  return { body, actions: actions.slice(0, MAX_ACTIONS), boards, blocks, views, notices, pendingView };
+  return {
+    segments: buildSegments(slotted, flatBody, blocks, pendingFence, pendingPartial),
+    body: flatBody,
+    actions: actions.slice(0, MAX_ACTIONS),
+    boards,
+    blocks,
+    views,
+    notices,
+    pendingView: pendingFence !== null,
+  };
+}
+
+/** One prose run, with the holes the lifted fences left in it closed up. */
+function tidyProse(s: string): string {
+  return s.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * The slotted prose split back apart into segments — prose runs and blocks, interleaved in
+ * the order they were written.
+ *
+ * ONE bail-out, and it is inherited rather than invented: a link reference definition
+ * (`[id]: https://…`) is document state the markdown lexer resolves against the WHOLE text
+ * (see `lib/markdownBlocks.ts`, which bails out of block-level rendering for the same
+ * reason). Split the prose and a definition written on one side of a block no longer reaches
+ * a use on the other — `[text][id]` renders as literal brackets. A message containing one
+ * therefore falls back to the pre-2026-08-27 layout: all the prose, then the blocks. A worse
+ * ORDER, never a broken link.
+ */
+function buildSegments(
+  slotted: string,
+  flatBody: string,
+  blocks: ChatBlock[],
+  pendingFence: 'html' | 'view' | null,
+  pendingPartial: string,
+): ChatSegment[] {
+  const segments: ChatSegment[] = [];
+
+  if (LINK_DEF_RE.test(flatBody)) {
+    if (flatBody) segments.push({ kind: 'prose', text: flatBody });
+    segments.push(...blocks);
+  } else {
+    // `split` with a capture group yields [prose, index, prose, index, …] — the odd
+    // positions are a slot's block index, the even ones the prose around it.
+    slotted.split(BLOCK_SLOT_RE).forEach((part, i) => {
+      if (i % 2 === 1) {
+        const block = blocks[Number(part)];
+        if (block) segments.push(block);
+        return;
+      }
+      const prose = tidyProse(part);
+      if (prose) segments.push({ kind: 'prose', text: prose });
+    });
+  }
+
+  // Always last, because an open fence is by definition the last thing in the text.
+  if (pendingFence) segments.push({ kind: 'pending', fence: pendingFence, partial: pendingPartial });
+  return segments;
 }

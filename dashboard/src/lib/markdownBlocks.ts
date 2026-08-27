@@ -47,8 +47,13 @@ const MARKER_PREFIX = 'md:';
  * document — the definition is not a block of its own, it is state. A block parsed in
  * isolation would render `[text][id]` as literal brackets, so a message containing one is
  * rendered whole. Rare in an answer, and correctness beats the optimization.
+ *
+ * Exported because the Chat transcript splits one answer's prose into several runs around
+ * the blocks it drew (`chat/chatActions.ts`), which is the same hazard one level up: a
+ * definition on one side of a block and its use on the other would land in different
+ * `MarkdownPreview` documents. Same rule, same bail-out, one regex.
  */
-const LINK_DEF_RE = /^ {0,3}\[[^\]\n]+\]:\s/m;
+export const LINK_DEF_RE = /^ {0,3}\[[^\]\n]+\]:\s/m;
 
 /**
  * The top-level markdown blocks of `content`, as source strings — the unit of re-rendering.

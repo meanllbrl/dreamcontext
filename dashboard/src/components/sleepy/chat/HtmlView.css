@@ -100,3 +100,99 @@
   height: 100%;
   padding: 0 clamp(16px, 6vw, 96px);
 }
+
+/* ── the pending slot — `HtmlPending`, the block's own box before the block exists ──────
+
+   It reuses `.chat-htmlview` for the box itself (border, radius, measure, canvas surface),
+   so only the CONTENTS are described here. That reuse is the design: the finished card must
+   land in the footprint the placeholder was already holding, or the reader watches the slot
+   collapse and the card snap open — which is the jump this whole placeholder exists to
+   remove. `HTML_PENDING_HEIGHT` (chatHtmlKit.ts) is the shared floor, applied inline here
+   and as the frame's pre-measurement height there. ─────────────────────────────────────── */
+
+.chat-htmlpending {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  justify-content: center;
+}
+
+.chat-htmlpending-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+/* Same dots as the `dream-view` pill (ChatViews.css) and the working indicator
+   (overlays.css) — duplicated locally, per this folder's convention, so this file carries
+   no cross-file class dependency. */
+.chat-htmlpending-dots { display: inline-flex; align-items: center; gap: 4px; }
+.chat-htmlpending-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  animation: chat-htmlpending-bounce 1.05s ease-in-out infinite;
+}
+.chat-htmlpending-dots span:nth-child(2) { animation-delay: 0.14s; }
+.chat-htmlpending-dots span:nth-child(3) { animation-delay: 0.28s; }
+@keyframes chat-htmlpending-bounce {
+  0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
+}
+
+/* The growing part. Each line is a title the markup has already CLOSED, so the list only
+   ever gains rows — it never rewrites one, and a reader watching it sees the answer being
+   assembled rather than a spinner insisting that something is happening. */
+.chat-htmlpending-outline {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.chat-htmlpending-outline li {
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.4;
+  /* Lands rather than appears: a row that pops in at full contrast reads as a layout jump
+     at this size, and there is one every few hundred milliseconds. */
+  animation: chat-htmlpending-line-in 220ms ease-out both;
+}
+@keyframes chat-htmlpending-line-in {
+  from { opacity: 0; transform: translateY(-3px); }
+}
+
+/* What has NOT been written yet. Three bars, decreasing — enough to say "there is more
+   coming" without pretending to know the shape of it. */
+.chat-htmlpending-bars { display: flex; flex-direction: column; gap: var(--space-2); }
+.chat-htmlpending-bars span {
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-tertiary) 25%,
+    var(--color-bg-elevated) 37%,
+    var(--color-bg-tertiary) 63%
+  );
+  background-size: 400% 100%;
+  animation: chat-htmlpending-shimmer 1.4s ease infinite;
+}
+.chat-htmlpending-bars span:nth-child(1) { width: 100%; }
+.chat-htmlpending-bars span:nth-child(2) { width: 82%; }
+.chat-htmlpending-bars span:nth-child(3) { width: 46%; }
+@keyframes chat-htmlpending-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-htmlpending-dots span,
+  .chat-htmlpending-bars span,
+  .chat-htmlpending-outline li { animation: none; }
+}

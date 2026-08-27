@@ -4,8 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../../../context/VaultContext';
 import { FullscreenOverlay } from '../../layout/FullscreenOverlay';
 import {
-  buildChatSrcdoc, resolveChatKitTokens, readHeightMessage,
-  CHAT_HTML_SANDBOX, MIN_HTML_HEIGHT, HEIGHT_REQUEST_KEY,
+  buildChatSrcdoc, resolveChatKitTokens, readHeightMessage, htmlOutline,
+  CHAT_HTML_SANDBOX, HTML_PENDING_HEIGHT, HEIGHT_REQUEST_KEY,
 } from './chatHtmlKit';
 import './HtmlView.css';
 
@@ -171,7 +171,10 @@ function HtmlFrame({ html, overrideCss, mode, title }: {
       srcDoc={srcdoc}
       onLoad={mode === 'card' ? askForHeight : undefined}
       style={{
-        height: mode === 'full' ? '100%' : (height ?? MIN_HTML_HEIGHT),
+        // Pre-measurement the frame stands exactly where the placeholder stood, so a block
+        // arriving GROWS out of the slot it was already holding instead of collapsing to a
+        // 40px sliver and snapping open. See HTML_PENDING_HEIGHT.
+        height: mode === 'full' ? '100%' : (height ?? HTML_PENDING_HEIGHT),
         colorScheme: theme,
       }}
     />
@@ -194,6 +197,47 @@ function HtmlFullscreen({ html, overrideCss, onClose }: {
       </div>
     </FullscreenOverlay>,
     document.body,
+  );
+}
+
+/**
+ * The slot a `dream-html` block holds while it is still being written.
+ *
+ * It wears `.chat-htmlview` — the finished block's OWN chrome — on purpose: same box, same
+ * measure, same surface, so the card that replaces it does not appear to arrive from
+ * somewhere else. What it stands in for is a real absence: the markup is hidden until the
+ * fence closes (half-written HTML must never reach the screen), and at ~600 tokens for a
+ * 2KB block that is 10-20 seconds of nothing. The old placeholder was a small pill at the
+ * BOTTOM of the message, which told the reader neither what was coming nor where — the
+ * owner's report of the whole block feeling "kopuk" starts here.
+ *
+ * So it does two things a pill cannot: it occupies the block's real position (its segment
+ * sits exactly where the finished block will — see `ChatSegment`), and it GROWS, filling in
+ * each title as the markup closes it. Nothing half-written is ever shown.
+ */
+export function HtmlPending({ partial }: { partial: string }) {
+  const outline = useMemo(() => htmlOutline(partial), [partial]);
+
+  return (
+    <div className="chat-htmlview chat-htmlpending" style={{ minHeight: HTML_PENDING_HEIGHT }}>
+      <p className="chat-htmlpending-head">
+        <span className="chat-htmlpending-dots" aria-hidden>
+          <span /><span /><span />
+        </span>
+        {/* The one thing announced, once. The outline below is aria-hidden: it changes every
+            few hundred milliseconds, and a live region that re-reads a growing list of
+            headings is worse than silence — the finished block announces itself. */}
+        <span role="status">Drawing the answer…</span>
+      </p>
+      {outline.length > 0 && (
+        <ul className="chat-htmlpending-outline" aria-hidden>
+          {outline.map((line, i) => <li key={`${i}:${line}`}>{line}</li>)}
+        </ul>
+      )}
+      <span className="chat-htmlpending-bars" aria-hidden>
+        <span /><span /><span />
+      </span>
+    </div>
   );
 }
 

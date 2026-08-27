@@ -1,6 +1,23 @@
 [
   {
     "date": "2026-08-27",
+    "type": "fix",
+    "scope": "chat",
+    "description": "The Chat block read as detached from the answer around it, and the cause was render order rather than stream pacing: chatActions.ts collapsed every prose run into one body string and returned blocks as a separate list, and TranscriptItem printed body THEN ChatViews — so the sentence written under a card rendered above it. parseChatActions now returns an ordered segment list (prose | html | view | pending), with block positions carried through the existing replace pipeline as NUL-delimited slot markers so every cap and degradation notice keeps its tested behaviour; NUL is scrubbed on entry so an answer cannot forge one. A message containing a link reference definition falls back to the old layout — document state the lexer resolves whole cannot survive a split. The pending fence became a segment, so it holds the block's real slot: HtmlPending wears the finished card's own chrome and fills in each title as the markup closes it, turning 10-20 seconds of hidden markup into legible work without ever drawing half a layout. HTML_PENDING_HEIGHT is both that slot's floor and the frame's pre-measurement height, so the card grows out of the slot instead of collapsing to the 40px measured floor and snapping open. Rendering moved into TranscriptItem: each prose run is a ProseSegment owning its own ref, which narrows the three decorator passes to prose alone, and blocks are direct children of the assistant row, which already had the flex column. Proved with 29 new unit tests, a new verify:chat-segments (46/46 in real Chromium across both themes, geometry sampled per animation frame), and a mutation run that reproduced the exact defect and failed 5 of the order checks.",
+    "breaking": false,
+    "summary": "A dream-html block renders where it was written, and grows out of a skeleton in its own slot",
+    "references": [
+      "task:a-dream-html-block-renders-where-it-was-written-and-grows-out-of-a-skeleton-in-its-own-slot",
+      "file:dashboard/src/components/sleepy/chat/chatActions.ts",
+      "file:dashboard/src/components/sleepy/chat/HtmlView.tsx",
+      "file:scripts/verify/chat-segments.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-27",
     "type": "feat",
     "scope": "chat",
     "description": "dc-hit wraps a mark, dc-tip inside it reveals on hover/focus (dc-tip--below flips under; in SVG the tip is a <g> painted by dc-tip-box/dc-tip-text), plus free hover feedback on table rows and bars. The surface prompt teaches the idiom. The CHAT_HTML_KIT_CSS constant is now emitted by scripts/gen-chat-html-kit-mirror.mjs from the .css — never hand-edited — and verify:chat-html asserts a tip actually appears on hover in a real browser. This closes the gap between what an agent can express in prose and what it can show in structured markup: a table cell can now carry a hover explanation, a bar chart row can reveal its raw number on hover, and a comparison option can carry a tooltip without breaking the grid.",
