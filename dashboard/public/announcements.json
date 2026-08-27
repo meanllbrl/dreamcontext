@@ -4,7 +4,7 @@
     "date": "2026-08-27",
     "version": "0.26.1",
     "title": "Your projects stop being alone",
-    "summary": "A brain could already read its siblings; now it can address them. Peer mail asks a connected project a question and gets an answer reasoned from its own code, and the Meeting Room puts one announcement in front of every agent you have. Lab answers with a report rather than a number — two-dimensional breakdowns, sortable columns, honest low-sample flags. And chat retired its fixed chart types for HTML the agent writes itself, in a sandbox wearing the app's own theme.",
+    "summary": "A brain could already read its siblings; now it can address them. Peer mail asks a connected project a question and gets an answer reasoned from its own code, and the Meeting Room — its own window now, one answer per agent — puts one announcement in front of every agent you have. Lab answers with a report rather than a number, or with a small multi-page app its own script writes. And chat retired its fixed chart types for HTML the agent writes itself, in a sandbox wearing the app's own theme.",
     "tags": [
       "federation",
       "agent",
@@ -12,14 +12,17 @@
       "chat",
       "desktop"
     ],
-    "story": "v0-26-1.json"
+    "story": "v0-26-1.json",
+    "covers": [
+      "0.26.0"
+    ]
   },
   {
     "id": "v0-25-0",
     "date": "2026-08-26",
     "version": "0.25.0",
     "title": "The conversation grows a cockpit",
-    "summary": "The chat composer is rebuilt end to end. Modes become real behaviour — Basic, Plan (interviews you, ends by creating a task), Develop (implements in waves, with evidence) — and the same menu carries a never-escalating permission posture. Model and reasoning effort share one trigger with an effort slider and a set-as-default. The session pins what it knows above where you type: the exact git checkout it acts on, agent-pinned facts that stay put, and task progress read from the acceptance criteria themselves. Plus a usage ring fed by Claude Code's own limits cache, and closed tabs finally reap their claude processes.",
+    "summary": "The chat composer is rebuilt end to end. Modes become real behaviour — Basic, Plan (interviews you, ends by creating a task), Develop (implements in waves, with evidence) — and the same menu carries a never-escalating permission posture. Model and reasoning effort share one trigger with an effort slider and a set-as-default. The session pins what it knows above where you type: the exact git checkout it acts on, agent-pinned facts that stay put, and task progress read from the acceptance criteria themselves. Plus a usage ring fed by Claude Code's own limits cache, closed tabs that finally reap their claude processes, and four silent-failure fixes — a vault that lost its own history to doctor, migrations that never fired on the desktop app's first run, an update that could not report a no-op, and a task sync that stripped local-only fields.",
     "tags": [
       "chat",
       "composer",

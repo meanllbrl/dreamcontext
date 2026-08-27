@@ -2,19 +2,19 @@
   "hero": {
     "eyebrow": "v0.26.1  ·  27 August 2026",
     "headline": "Your projects stop being alone",
-    "sub": "Until now a brain could read its siblings. Now it can address them: ask one a question and get an answer reasoned from its own code, or put one message in front of every agent you have. And Lab stops being a wall of cards.",
+    "sub": "Every project you have already had a brain of its own. Now they can talk to each other — one to one, or all at once. And Lab stops being a wall of numbers: an insight can be a full report, or a small app.",
     "shot": {
       "src": "shots/v0-26-1/launcher.png",
       "alt": "The launcher's Space view: five projects orbiting the dreamcontext core, each chip wearing its own logo, dashed wires drawn between the ones that are connected.",
-      "caption": "Five projects, wired. Each one wears its own logo now, so you recognise a vault before you read its name."
+      "caption": "Five projects, wired together. Each one wears its own logo, so you recognise a vault before you read its name."
     }
   },
   "blocks": [
     {
       "kind": "split",
       "side": "left",
-      "title": "Ask a project, don't just search it",
-      "body": "Reading a connected project returns what it wrote down. Peer mail returns an answer reasoned from its code, by an agent with that project's brain loaded. Type @ in the composer and every project you are connected to is there, each with the one-line identity read from its own soul file.",
+      "title": "Ask a project. Get a real answer.",
+      "body": "Connecting two projects used to mean one could read what the other had written down. Useful — but only ever as good as the notes. Now you can just ask. The project you asked wakes up in its own folder, with its own brain loaded, reads its own code, and answers the question you actually asked. Type @ in the composer and everything you are connected to is right there, each one describing itself in a line it wrote, not one you typed.",
       "shot": {
         "src": "shots/v0-26-1/peer-mention.png",
         "alt": "The chat composer with @ typed, and a picker above it listing two connected projects, each with its own logo and the first line of that project's own description.",
@@ -24,7 +24,7 @@
     },
     {
       "kind": "terminal",
-      "title": "The same thing from the terminal",
+      "title": "Or ask without leaving the terminal",
       "lines": [
         "$ dreamcontext peer ask acme-payments \"where does a refund get stamped idempotent?\"",
         "  → waking acme-payments (auto permissions, never bypass)…",
@@ -43,59 +43,109 @@
     },
     {
       "kind": "note",
-      "body": "A note costs nothing and waits. A question wakes the other project now. A command hands over work — and can never grant itself more than auto permissions, so a peer that hits a wall reports itself blocked instead of working around it."
+      "text": "Three ways to reach a project, and they cost different things. A note is free and waits in the inbox. A question wakes the other project right now. A command hands over actual work — and it can never give itself more permission than you have, so a project that hits a wall tells you it is blocked instead of finding a way around it."
     },
     {
       "kind": "split",
       "side": "right",
-      "title": "One announcement, every agent",
-      "body": "Peer mail addresses one project. The Meeting Room addresses all of them: post once, and every registered vault's agent wakes in its own directory, reads with its own brain, and decides for itself whether the message concerns it. The ones with nothing to add say PASS and never clutter the thread.",
+      "title": "Say it once. Everyone hears it.",
+      "body": "Peer mail is for one project. The Meeting Room is for all of them. Post a message and every project you have registered wakes up in its own folder, reads it with its own brain, and decides for itself whether it has something to say. It lives in its own window now and uses the same composer as chat, so one model choice covers the whole room. And each project answers once per message — if two of them call on a third, it wakes up once and folds both into the same reply rather than answering twice.",
       "shot": {
         "src": "shots/v0-26-1/meeting-room.png",
-        "alt": "The Meeting Room overlay: a thread rail on the left reading 'every agent, one thread', an empty feed explaining that every project's agent wakes in its own directory, and a composer at the bottom.",
-        "caption": "Hidden on purpose. The only way in is clicking the dreamcontext core in the launcher's Space view."
+        "alt": "The Meeting Room window: the question 'Monday we move checkout onto the new payments API. Anything I should know before I start?' with three projects answering underneath — acme-storefront taking the work, acme-payments warning that refund idempotency keys belong to the gateway, acme-design naming a moved token — and a notice reading that acme-design's mention of acme-storefront was folded into the run already in flight.",
+        "caption": "One question. Three answers, each from a different codebase — and the fourth project had nothing to add."
+      }
+    },
+    {
+      "kind": "shot",
+      "title": "Silence is an answer too",
+      "body": "A room where every project feels obliged to reply is a room nobody reads. So a project that reads the message and decides it is not involved simply says so, and never posts. You still see that it showed up and thought about it — it just does not cost you a message. That is the difference between a room with four projects in it and a room with twenty.",
+      "shot": {
+        "src": "shots/v0-26-1/meeting-presence.png",
+        "alt": "The Meeting Room presence strip: acme-storefront replied, acme-payments replied, acme-design replied, atlas-mobile passed.",
+        "caption": "atlas-mobile passed. The thread above it stays three messages long, not four.",
+        "frame": "plain"
       }
     },
     {
       "kind": "split",
       "side": "left",
-      "title": "Lab answers with a report, not a number",
-      "body": "The same window rebuilt the analytics side. A metric can now break down along two dimensions at once and render as the table that comparison actually wants — every column sortable, the weak cells shaded, a sample too small to trust labelled instead of quietly averaged in. My Reports is native, the range applies once and clears cleanly, and an insight can carry a hand-written HTML body when the built-in renders are the wrong shape for it.",
+      "title": "A number was never the answer",
+      "body": "\"Signups are up 12%\" is where the question starts, not where it ends. Up for whom? On which channel? So an insight can now break itself down two ways at once and come back as the table you were going to build anyway. Sort by any column. Weak cells are shaded so the problem finds you. And a row with 28 people behind it is labelled as such instead of being quietly averaged in with the rest.",
       "shot": {
         "src": "shots/v0-26-1/lab-funnel.png",
         "alt": "A funnel insight open as a report: five funnels as rows, with users, spend, CPM, trial rate, finish rate and CAC as columns, each cell carrying its change against the previous period, weak cells shaded red and strong ones green, and one row flagged LOW SAMPLE.",
-        "caption": "Five funnels, six metrics, every delta against the last period — and the row with 28 users says so rather than pretending."
+        "caption": "Five funnels, six metrics, every change measured against the period before — and the row with 28 users says so."
+      }
+    },
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "Or make it a small app",
+      "body": "Some questions need more than one view. So an insight can now be a set of pages that its own script writes — an overview here, the detail a click away, the caveats on a third page. The numbers live in one place and the pages ask for them, so a figure is never typed twice and never drifts. Each page runs sealed off with no way to reach the network, and takes its type and colours from your theme, so it looks like the rest of the app instead of like something pasted in.",
+      "shot": {
+        "src": "shots/v0-26-1/lab-app.png",
+        "alt": "A Lab insight titled Demo: Acquisition Report, with a page rail reading Overview, Retention and About; the Overview page shows signups, spend and blended CAC as headline figures above a coloured bar chart of six acquisition channels, the smallest of which is dimmed as a low sample.",
+        "caption": "Overview, Retention, About — three pages of one insight, written by the script behind it.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "shot",
+      "title": "The second page, same insight",
+      "body": "A page can hand you to another one and take you straight to the right spot. And when a week has not happened yet, the grid leaves it blank rather than filling it with a zero — because a zero is a claim, and \"we don't know yet\" is the truth.",
+      "shot": {
+        "src": "shots/v0-26-1/lab-app-page2.png",
+        "alt": "The Retention page of the same insight: a week-on-week retention grid by signup cohort, five cohorts down and W1 to W4 across, with the not-yet-elapsed weeks shown as dots and a caption explaining that a blank cell is a week that has not happened yet.",
+        "caption": "The triangle is honest: the newest cohort has only lived one week.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "split",
+      "side": "left",
+      "title": "The agent draws its own answer",
+      "body": "Chat used to offer a fixed menu of charts, which meant the answer had to be bent into whichever one came closest. That menu is gone. The agent now draws the answer itself, in your theme, in a sandbox with no way out — so a figure it makes matches the window around it instead of looking imported. Anything holding a number will tell you the number when you hover it.",
+      "shot": {
+        "src": "shots/v0-26-1/chat-dream-html.png",
+        "alt": "An agent's answer in chat, drawn as a checkout funnel: four steps as coloured bars with their drop-offs beside them, a tooltip open over the first bar reading '12,480 carts opened', and a callout underneath stating that Address to Payment is the wall.",
+        "caption": "The agent wrote this. The type and the colours are the app's, not the answer's.",
+        "frame": "plain"
       }
     },
     {
       "kind": "points",
-      "title": "Also in this release",
+      "title": "And a few more things",
       "items": [
         {
-          "title": "The agent draws its own answer",
-          "text": "Chat retired its fixed chart and page types for HTML the agent writes itself, rendered in a sandbox that carries the app's own theme. A figure it draws can answer a hover with the number behind it."
+          "title": "Every project wears its own mark",
+          "text": "Drop a logo on a vault and it follows the project everywhere — the chip strip, the orbit, the @ picker, the peer rows. After the third or fourth project, you recognise the mark long before you have read the name."
         },
         {
-          "title": "Every vault wears its logo",
-          "text": "Project chips, the orbit, the @ picker and the peer rows all read the vault's own mark, so you recognise a project before you read its name."
+          "title": "A peer answers in the room you are in",
+          "text": "Ask a connected project something from the composer and its session opens right there in the same window — the real conversation, the real permission prompts. Not a summary of something that happened somewhere else."
         },
         {
-          "title": "A peer answers in place",
-          "text": "A peer you addressed from the composer opens as a live session in the same window — the real transcript, the real permission cards, not a summary of what happened elsewhere."
+          "title": "The launcher stays where you put it",
+          "text": "The window has a proper area to grab instead of a few dead pixels of chrome, and it remembers whether you left it on the Space view or the List — even after you quit the app."
         },
         {
-          "title": "Boards you can read",
-          "text": "Excalidraw output was re-typeset: a real UI sans on a readable measure, inline bold and highlight drawn as geometry, and a build that audits its own scene for buried labels and walls of text."
+          "title": "An agent can take a pin back",
+          "text": "Facts an agent pins above the composer used to stay pinned forever. Now the one that put a fact up can take it down again when it stops being true, so the shelf holds what is current rather than a history of what once was."
+        },
+        {
+          "title": "Boards you can actually read",
+          "text": "Excalidraw output was re-typeset from scratch — a real interface typeface, a line length built for reading, bold and highlight drawn as shapes so they survive. The build now checks its own boards for buried labels and walls of text before handing them over."
         }
       ]
     },
     {
       "kind": "note",
-      "body": "The room is deliberately hidden and has no CLI verb: it wakes every project you have registered, which is a real cost, so it stays a thing you go looking for rather than a button you hit by accident."
+      "text": "The Meeting Room is hidden on purpose, and there is no command for it. Posting to it wakes up every project you have registered, and that is real work and real cost — so it stays something you go and find, behind the core logo in the launcher's Space view, rather than a button you hit by accident."
     }
   ],
   "closer": {
     "title": "Where to start",
-    "body": "Connect two projects, then type @ in the composer. The Meeting Room is behind the core logo in the launcher's Space view."
+    "body": "Connect two projects, then type @ in the composer and ask one of them something only it would know. When that lands, go find the Meeting Room behind the core logo in the launcher's Space view."
   }
 }
