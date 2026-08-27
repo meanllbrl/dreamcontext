@@ -66,9 +66,14 @@ function Block({ block, onShotClick }: { block: StoryBlock; onShotClick?: (shot:
         </section>
       );
 
+    // `side` is deliberately ignored. It used to float the shot left or right of a
+    // ~380px copy column; alternating that down the page is what made the story
+    // unreadable, so both kinds now render as one centred column — heading, copy,
+    // then the picture full width. The field stays in the schema so already-written
+    // stories keep parsing.
     case 'split':
       return (
-        <section className={`ann-story-split${block.side === 'left' ? ' shot-left' : ''}`}>
+        <section className="ann-story-split">
           <div className="ann-story-split-copy">
             <h2 className="ann-story-block-title">{block.title}</h2>
             <p className="ann-story-block-body">{block.body}</p>

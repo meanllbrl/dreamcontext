@@ -1,16 +1,25 @@
-/* An announcement story — a landing page rendered inside the app, in the app's
-   own tokens. One measure, one rhythm: every block is centred on a 920px column
-   and separated by a single vertical step, so the page reads as one document
-   however many blocks an author stacks. */
+/* An announcement story — a product page rendered inside the app, in the app's
+   own tokens.
+
+   THE REGISTER IS A PRODUCT PAGE, NOT A CHANGELOG. The reader is skimming
+   headlines to find out what they got; only the ones that catch them earn a
+   paragraph. So the heading carries the claim on its own and is set large enough
+   to read at a glance, the body sits under it on a comfortable measure rather
+   than beside it in a narrow column, and the screenshot runs full width
+   underneath. One idea per section, one column, lots of air between them.
+
+   The previous version put copy in a ~380px column NEXT TO the shot at 24px
+   headings. That is a magazine spread: it reads at three widths at once, the
+   copy wraps every five words, and nothing is scannable. */
 
 .ann-story {
-  --ann-measure: 920px;
+  --ann-measure: 980px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-8, 40px);
+  gap: var(--space-12, 88px);
   max-width: var(--ann-measure);
   margin: 0 auto;
-  padding: var(--space-4) 0 var(--space-8);
+  padding: var(--space-6) 0 var(--space-12, 88px);
   color: var(--color-text-primary);
 }
 
@@ -36,19 +45,23 @@
 
 .ann-story-headline {
   margin: 0;
-  max-width: 18ch;
-  font-size: clamp(28px, 3.4vw, 46px);
+  max-width: 20ch;
+  font-size: clamp(38px, 5vw, 68px);
   font-weight: var(--font-weight-bold);
-  line-height: 1.1;
-  letter-spacing: -0.02em;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
 }
 
+/* The hero's sub IS short enough to centre — it is the one paragraph written to a
+   three-line budget, and centring it under the headline is what makes the top of
+   the page read as a cover rather than as the first section. */
 .ann-story-sub {
   margin: 0;
-  max-width: 62ch;
-  font-size: clamp(15px, 1.3vw, 18px);
-  line-height: 1.6;
+  max-width: 54ch;
+  font-size: clamp(17px, 1.6vw, 21px);
+  line-height: 1.55;
   color: var(--color-text-secondary);
+  text-wrap: pretty;
 }
 
 /* The hero shot gets more air above it than the copy it follows. */
@@ -138,52 +151,61 @@
 
 /* ── Block copy ───────────────────────────────────────────────────────────── */
 
+/* THE HEADING IS THE PRODUCT PAGE. Set big enough that scrolling the story with
+   your eyes half-open still tells you everything that shipped — the body under it
+   is for the ones you stop at. */
 .ann-story-block-title {
-  margin: 0 0 var(--space-2);
-  font-size: clamp(19px, 1.8vw, 24px);
+  margin: 0 0 var(--space-3);
+  max-width: 24ch;
+  font-size: clamp(27px, 3.1vw, 40px);
   font-weight: var(--font-weight-bold);
-  line-height: 1.25;
-  letter-spacing: -0.01em;
+  line-height: 1.12;
+  letter-spacing: -0.025em;
 }
 
+/* CENTRED BLOCK, LEFT-ALIGNED TEXT. The heading above is centred and short, so it
+   reads fine ragged on both sides. A five-line paragraph does not: centring it
+   moves the left edge on every line, and the eye has to hunt for the start of the
+   next one. That is the single biggest readability cost in a long story, and it
+   is why the body keeps a straight left edge inside its centred column. */
 .ann-story-block-body {
   margin: 0;
   max-width: 62ch;
-  font-size: var(--font-size-sm);
-  line-height: 1.65;
+  font-size: clamp(16px, 1.35vw, 18px);
+  line-height: 1.7;
   color: var(--color-text-secondary);
+  text-align: left;
+  text-wrap: pretty;
 }
 
-/* ── Split ────────────────────────────────────────────────────────────────── */
+/* ── Split / shot: one column, copy then picture ──────────────────────────── */
 
-.ann-story-split {
-  display: grid;
-  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
-  align-items: center;
-  gap: var(--space-6, 28px);
-}
-
-.ann-story-split.shot-left {
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
-}
-
-/* The shot is the second child in the DOM in both directions (copy always comes
-   first for a screen reader); `shot-left` only moves it visually. */
-.ann-story-split.shot-left > .ann-story-shot,
-.ann-story-split.shot-left > .ann-story-shot-btn {
-  order: -1;
-}
-
-.ann-story-split-copy {
-  min-width: 0;
-}
-
-/* ── Full-width shot block ────────────────────────────────────────────────── */
-
+/* `split` and `shot` render IDENTICALLY, and `side` is ignored. The distinction
+   only ever described geometry, and the geometry is gone: alternating a 380px
+   text column left and right down the page was the single biggest reason this
+   was unreadable. Both kinds stay in the schema so existing stories keep
+   parsing — they just stopped meaning two different layouts. */
+.ann-story-split,
 .ann-story-shotblock {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  align-items: center;
+  gap: var(--space-5, 24px);
+  text-align: center;
+}
+
+.ann-story-split-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+
+.ann-story-split > .ann-story-shot,
+.ann-story-split > .ann-story-shot-btn,
+.ann-story-shotblock > .ann-story-shot,
+.ann-story-shotblock > .ann-story-shot-btn {
+  width: 100%;
 }
 
 .ann-story-shotblock .ann-story-block-title {
@@ -229,49 +251,74 @@
 
 /* ── Points ───────────────────────────────────────────────────────────────── */
 
+.ann-story-points {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+/* TWO COLUMNS, NOT FOUR. A `points` block is the tail of a release — the things
+   that get a sentence rather than a screenshot — and at four across each one
+   became a 220px card of 12px text, which is where the eye gives up. Two columns
+   of real prose read as content; four columns of chips read as a spec sheet. */
 .ann-story-points-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: var(--space-3);
-  margin-top: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--space-5, 24px) var(--space-7, 32px);
+  margin-top: var(--space-5, 24px);
+  width: 100%;
+  text-align: left;
 }
 
 .ann-story-point {
-  padding: var(--space-4);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-secondary);
+  padding: var(--space-5, 24px) 0 0;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  border-radius: 0;
+  background: none;
 }
 
 .ann-story-point-title {
-  margin: 0 0 6px;
-  font-size: var(--font-size-sm);
+  margin: 0 0 var(--space-2);
+  font-size: clamp(17px, 1.5vw, 20px);
   font-weight: var(--font-weight-bold);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
 }
 
 .ann-story-point-text {
   margin: 0;
-  font-size: var(--font-size-xs);
-  line-height: 1.6;
+  font-size: clamp(15px, 1.25vw, 16px);
+  line-height: 1.65;
   color: var(--color-text-secondary);
 }
 
 /* ── Terminal ─────────────────────────────────────────────────────────────── */
 
+.ann-story-terminal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
 .ann-story-terminal-box {
   display: flex;
   flex-direction: column;
-  margin: var(--space-3) 0 0;
-  padding: var(--space-4);
+  margin: var(--space-5, 24px) 0 0;
+  padding: var(--space-5, 24px) var(--space-6, 28px);
+  width: 100%;
   overflow-x: auto;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg, 12px);
   background: var(--color-bg-tertiary);
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.75;
+  font-size: 13px;
+  line-height: 1.85;
   color: var(--color-text-secondary);
   white-space: pre;
+  text-align: left;
 }
 
 .ann-story-terminal-line.input {
@@ -281,55 +328,56 @@
 
 /* ── Note ─────────────────────────────────────────────────────────────────── */
 
+/* A note is the punchline or the caveat — it is meant to interrupt the rhythm,
+   so it is the one block that is NOT centred and NOT the same width as the rest. */
 .ann-story-note {
-  padding: var(--space-4) var(--space-5);
+  align-self: center;
+  max-width: 74ch;
+  padding: var(--space-5, 24px) var(--space-6, 28px);
   border-left: 3px solid var(--color-accent);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--color-accent-soft);
 }
 
 .ann-story-note p {
   margin: 0;
-  max-width: 68ch;
-  font-size: var(--font-size-sm);
-  line-height: 1.6;
+  font-size: clamp(16px, 1.35vw, 18px);
+  line-height: 1.65;
   color: var(--color-text-primary);
 }
 
 /* ── Closer ───────────────────────────────────────────────────────────────── */
 
 .ann-story-closer {
-  padding-top: var(--space-6, 28px);
+  padding-top: var(--space-8, 40px);
   border-top: 1px solid var(--color-border);
   text-align: center;
 }
 
 .ann-story-closer-title {
-  margin: 0 0 var(--space-2);
-  font-size: clamp(18px, 1.7vw, 22px);
+  margin: 0 0 var(--space-3);
+  font-size: clamp(22px, 2.2vw, 30px);
   font-weight: var(--font-weight-bold);
+  letter-spacing: -0.02em;
 }
 
 .ann-story-closer-body {
   margin: 0 auto;
-  max-width: 60ch;
-  font-size: var(--font-size-sm);
-  line-height: 1.65;
+  max-width: 56ch;
+  font-size: clamp(16px, 1.35vw, 18px);
+  line-height: 1.7;
   color: var(--color-text-secondary);
+  text-wrap: pretty;
 }
 
 /* ── Narrow ───────────────────────────────────────────────────────────────── */
 
 @media (max-width: 780px) {
-  .ann-story-split,
-  .ann-story-split.shot-left {
-    grid-template-columns: minmax(0, 1fr);
+  .ann-story {
+    gap: var(--space-10, 64px);
   }
 
-  /* Stacked, the shot always follows its copy — the visual swap only makes
-     sense while the two sit side by side. */
-  .ann-story-split.shot-left > .ann-story-shot,
-  .ann-story-split.shot-left > .ann-story-shot-btn {
-    order: 0;
+  .ann-story-points-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

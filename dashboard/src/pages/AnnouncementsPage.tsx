@@ -1,28 +1,40 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useI18n } from '../context/I18nContext';
 import { useAnnouncementInbox } from '../hooks/useAnnouncements';
-import { AnnouncementStoryTeaser } from '../components/announcements/AnnouncementStoryTeaser';
-import { AnnouncementReader } from '../components/announcements/AnnouncementReader';
-import { formatVersion, type Announcement } from '../lib/announcements';
+import { AnnouncementVersionSection } from '../components/announcements/AnnouncementVersionSection';
+import { storyAssetUrl, type StoryShot } from '../lib/announcementStory';
+import { ImageViewer } from '../components/layout/ImageViewer';
+import type { Announcement } from '../lib/announcements';
 import './AnnouncementsPage.css';
 
 interface Props {
-  /** Navigation focus target (modal "Read the full story", ⌘K): an announcement id to open in the reader. */
+  /** Navigation focus target (modal "Read the full story", ⌘K): an announcement id to open. */
   focus?: { id: string | null; nonce: number };
 }
 
 /**
- * Version-history model: one story per release, newest first. The current
- * version is a hero card showing its cover screenshot; every release before it
- * is a row on a version rail. The version — not the date — is what the eye lands
- * on, because the feed answers "what did 0.18 give me?" rather than "what got
- * built lately". Clicking any release opens the full-screen AnnouncementReader,
- * where the landing page — hero, screenshots, proof — gets the whole viewport.
+ * What's New — the release history as one document.
+ *
+ * Every version is a section. The newest one is open when you arrive; every
+ * release before it is collapsed to its version number, title and one-line
+ * summary, and opens in place. There is no separate reader and nothing
+ * navigates: the question this page answers is "what have I been given", and
+ * answering it should never cost you your scroll position.
+ *
+ * Opening a second version does NOT close the first. Releases get compared —
+ * "when did the composer change?" is answered by having two of them open — and
+ * an accordion that allows only one panel makes that impossible. Only the
+ * DEFAULT is one-open.
+ *
+ * Any screenshot can be clicked into the full-window `ImageViewer` and zoomed to
+ * the pixel, because a shot scaled into a 980px column can still hide the detail
+ * the section is about.
  */
 export function AnnouncementsPage({ focus }: Props): React.ReactElement {
   const { t } = useI18n();
   const { all, unread, loading, markAllRead } = useAnnouncementInbox();
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openIds, setOpenIds] = useState<ReadonlySet<string> | null>(null);
+  const [zoomed, setZoomed] = useState<StoryShot | null>(null);
   // Snapshot of what was unread when the user ARRIVED — markAllRead clears the
   // live unread set immediately (that's what kills the sidebar badge), but the
   // "New" pills should keep marking this visit's fresh stories, not vanish on
@@ -35,24 +47,43 @@ export function AnnouncementsPage({ focus }: Props): React.ReactElement {
     markAllRead();
   }, [loading, unread, newIds, markAllRead]);
 
-  // Deep-link focus: open the requested story once the feed is loaded. The
+  // The newest release opens itself, once, as soon as the feed lands. Guarded on
+  // `openIds === null` rather than on a mount effect so a user who has already
+  // collapsed everything doesn't get it reopened under them by a refetch.
+  useEffect(() => {
+    if (loading || openIds !== null || all.length === 0) return;
+    setOpenIds(new Set([all[0].id]));
+  }, [loading, all, openIds]);
+
+  // Deep-link focus: open the requested release and bring it into view. The
   // nonce re-triggers when the same id is navigated to twice.
   useEffect(() => {
-    if (focus?.id && all.some((a) => a.id === focus.id)) setOpenId(focus.id);
+    const id = focus?.id;
+    if (!id || !all.some((a) => a.id === id)) return;
+    setOpenIds((prev) => new Set([...(prev ?? []), id]));
+    // The section has to exist before it can be scrolled to, and it only mounts
+    // its panel on the render that follows the state change above.
+    const raf = requestAnimationFrame(() => {
+      document.getElementById(`ann-head-${id}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(raf);
   }, [focus?.id, focus?.nonce, all]);
+
+  const toggle = useCallback((id: string) => {
+    setOpenIds((prev) => {
+      const next = new Set(prev ?? []);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const closeZoom = useCallback(() => setZoomed(null), []);
 
   if (loading) return <div className="loading">{t('common.loading')}</div>;
 
-  const [hero, ...rest] = all;
-  const open = openId ? (all.find((a) => a.id === openId) ?? null) : null;
   const isNew = (a: Announcement) => newIds?.has(a.id) ?? false;
-
-  const meta = (a: Announcement) => (
-    <div className="announcement-meta">
-      <span className="announcement-meta-date">{a.date}</span>
-      {isNew(a) && <span className="announcement-meta-new">{t('announcements.new')}</span>}
-    </div>
-  );
+  const zoomUrl = zoomed ? storyAssetUrl(zoomed.src) : null;
 
   return (
     <div className="announcements-page">
@@ -64,55 +95,26 @@ export function AnnouncementsPage({ focus }: Props): React.ReactElement {
       {all.length === 0 ? (
         <div className="announcements-empty">{t('announcements.empty')}</div>
       ) : (
-        <>
-          <article className="announcements-hero">
-            <div className="announcements-hero-head">
-              <span className="announcements-hero-version">{formatVersion(hero.version)}</span>
-              {meta(hero)}
-            </div>
-            <button type="button" className="announcements-hero-title" onClick={() => setOpenId(hero.id)}>
-              {hero.title}
-            </button>
-            <p className="announcements-hero-summary">{hero.summary}</p>
-            <AnnouncementStoryTeaser
-              story={hero.story}
-              label={hero.title}
-              onOpen={() => setOpenId(hero.id)}
+        <div className="ann-versions">
+          {all.map((a) => (
+            <AnnouncementVersionSection
+              key={a.id}
+              announcement={a}
+              expanded={openIds?.has(a.id) ?? false}
+              isNew={isNew(a)}
+              onToggle={() => toggle(a.id)}
+              onShotClick={setZoomed}
             />
-          </article>
-
-          {rest.length > 0 && (
-            <div className="announcements-archive">
-              <h2 className="announcements-archive-label">{t('announcements.earlierReleases')}</h2>
-              {rest.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  className="announcement-row"
-                  onClick={() => setOpenId(a.id)}
-                >
-                  <span className="announcement-row-version">{formatVersion(a.version)}</span>
-                  <span className="announcement-row-body">
-                    {meta(a)}
-                    <span className="announcement-row-title">{a.title}</span>
-                    <span className="announcement-row-summary">{a.summary}</span>
-                    <span className="announcement-row-open" aria-hidden="true">
-                      {t('announcements.readStory')} →
-                    </span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </>
+          ))}
+        </div>
       )}
 
-      {open && (
-        <AnnouncementReader
-          announcement={open}
-          all={all}
-          onNavigate={setOpenId}
-          onClose={() => setOpenId(null)}
+      {zoomed && zoomUrl && (
+        <ImageViewer
+          src={zoomUrl}
+          alt={zoomed.alt}
+          caption={zoomed.caption ?? zoomed.alt}
+          onClose={closeZoom}
         />
       )}
     </div>

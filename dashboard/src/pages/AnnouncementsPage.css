@@ -1,14 +1,16 @@
-/* Version-history layout: the current release as a hero (with its cover
-   screenshot) followed by earlier releases as rows on a version rail. The
-   version number is the anchor of every entry. Nothing in the scroll path
-   captures the wheel. */
+/* What's New — the release history as one document.
+
+   Every version is a section with an always-visible header and a panel that
+   opens in place. The version number sits on a rail down the left so the page
+   scans as a history at a glance, and the open panel gets the full width for its
+   story. Nothing in the scroll path captures the wheel. */
 .announcements-page {
-  max-width: 1080px;
+  max-width: 1180px;
   margin: 0 auto;
 }
 
 .announcements-header {
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-8, 40px);
 }
 
 .announcements-header .page-title {
@@ -16,7 +18,7 @@
 }
 
 .announcements-subtitle {
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-base);
   color: var(--color-text-secondary);
 }
 
@@ -27,22 +29,151 @@
   text-align: center;
 }
 
-/* ─── Shared meta strip (hero + rows) ─── */
+/* ─── The version list ─── */
 
-.announcement-meta {
+.ann-versions {
+  display: flex;
+  flex-direction: column;
+}
+
+.ann-version {
+  border-top: 1px solid var(--color-border);
+}
+
+.ann-version:last-child {
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* An open release is lifted off the list so its story reads as a page rather
+   than as a very tall row. */
+.ann-version.is-open {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-xl);
+  border-top-color: transparent;
+  margin: var(--space-3) 0;
+}
+
+.ann-version.is-open + .ann-version {
+  border-top-color: transparent;
+}
+
+.ann-version.is-open:last-child {
+  border-bottom-color: transparent;
+}
+
+/* The h2 exists for the document outline; the button inside it is the control.
+   No box of its own. */
+.ann-version-heading {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.ann-version-head {
+  display: grid;
+  /* chevron | version rail | title+summary | date. The rail keeps every version
+     number on one vertical line. */
+  grid-template-columns: 22px 92px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-5, 24px) var(--space-5, 24px);
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  border-radius: var(--radius-xl);
+  transition: background var(--transition-fast);
+}
+
+.ann-version-head:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.ann-version.is-open .ann-version-head:hover {
+  background: transparent;
+}
+
+.ann-version-head:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.ann-version-chevron {
+  width: 10px;
+  height: 10px;
+  margin-top: 7px;
+  border-right: 2px solid var(--color-text-tertiary);
+  border-bottom: 2px solid var(--color-text-tertiary);
+  transform: rotate(-45deg);
+  transition: transform var(--transition-fast), border-color var(--transition-fast);
+}
+
+.ann-version.is-open .ann-version-chevron {
+  transform: rotate(45deg);
+  border-color: var(--color-accent);
+}
+
+.ann-version-num {
+  padding-top: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.01em;
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+
+.ann-version-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ann-version-title {
+  font-family: var(--font-family-display);
+  font-size: clamp(18px, 1.7vw, 22px);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  color: var(--color-text);
+}
+
+.ann-version-summary {
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  /* Collapsed, the summary is a teaser — clamp it so the list scans as
+     headlines rather than as paragraphs. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Open, the story's own hero says all of this better and at full size. */
+.ann-version.is-open .ann-version-summary {
+  display: none;
+}
+
+.ann-version-meta {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: var(--space-2);
+  padding-top: 4px;
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: var(--font-weight-bold);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-text-tertiary);
+  white-space: nowrap;
 }
 
-.announcement-meta-new {
+.ann-version-new {
   padding: 2px 8px;
   border-radius: var(--radius-full);
   background: var(--color-accent);
@@ -50,157 +181,37 @@
   box-shadow: var(--shadow-glow);
 }
 
-/* ─── Hero: the current release ─── */
+/* ─── The open panel ─── */
 
-.announcements-hero {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-6);
-  margin-bottom: var(--space-8);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-sm);
-  --story-teaser-h: clamp(320px, 44vh, 480px);
+.ann-version-panel {
+  padding: 0 var(--space-6, 28px) var(--space-4);
 }
 
-.announcements-hero-head {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
-/* The version, not the date, is the headline object of a release entry. */
-.announcements-hero-version {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-bold);
-  letter-spacing: -0.01em;
-  color: var(--color-accent);
-}
-
-.announcements-hero-title {
-  padding: 0;
-  border: 0;
-  background: none;
-  text-align: left;
-  cursor: pointer;
-  font-family: var(--font-family-display);
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
-  letter-spacing: -0.01em;
-  line-height: 1.25;
-  color: var(--color-text);
-  transition: color var(--transition-fast);
-}
-
-.announcements-hero-title:hover {
-  color: var(--color-accent);
-}
-
-.announcements-hero-summary {
-  margin: 0;
-  max-width: 760px;
+.ann-version-loading,
+.ann-version-fallback {
+  padding: var(--space-8) 0;
   font-size: var(--font-size-sm);
-  line-height: 1.6;
-  color: var(--color-text-secondary);
-}
-
-/* ─── Earlier releases: one row per version, on a version rail ─── */
-
-.announcements-archive {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.announcements-archive-label {
-  margin: 0 0 var(--space-1);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: var(--font-weight-bold);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--color-text-tertiary);
+  text-align: center;
 }
 
-.announcement-row {
-  position: relative;
-  display: grid;
-  /* Version rail | story. The rail keeps every version number on one vertical
-     line, so the archive scans as a release history at a glance. */
-  grid-template-columns: 84px 1fr;
-  gap: var(--space-4);
-  align-items: start;
-  width: 100%;
-  padding: var(--space-4) var(--space-5);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.announcement-row:hover,
-.announcement-row:focus-visible {
-  border-color: var(--color-accent);
-  box-shadow: var(--shadow-md);
-}
-
-.announcement-row-version {
-  padding-top: 1px;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-accent);
-  white-space: nowrap;
-}
-
-.announcement-row-body {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-@media (max-width: 640px) {
-  .announcement-row {
-    grid-template-columns: 1fr;
-    gap: var(--space-2);
+@media (max-width: 780px) {
+  .ann-version-head {
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: var(--space-3);
   }
-}
 
-.announcement-row-title {
-  font-size: var(--font-size-base);
-  font-weight: var(--font-weight-semibold);
-  line-height: 1.35;
-  color: var(--color-text);
-}
+  /* The date/New strip moves under the title rather than fighting it for width. */
+  .ann-version-num {
+    grid-column: 2;
+  }
 
-.announcement-row-summary {
-  font-size: var(--font-size-sm);
-  line-height: 1.55;
-  color: var(--color-text-secondary);
-  /* Rows are teasers — clamp the summary so the archive scans like headlines. */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
+  .ann-version-text,
+  .ann-version-meta {
+    grid-column: 2;
+  }
 
-.announcement-row-open {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-accent);
-  opacity: 0;
-  transition: opacity var(--transition-fast);
-}
-
-.announcement-row:hover .announcement-row-open,
-.announcement-row:focus-visible .announcement-row-open {
-  opacity: 1;
+  .ann-version-panel {
+    padding: 0 var(--space-3) var(--space-4);
+  }
 }
