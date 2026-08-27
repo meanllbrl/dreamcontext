@@ -1,10 +1,11 @@
 ---
 id: federation-cross-vault
 name: "Cross-Vault Federation — When & What Two Vaults Read"
-description: "End-to-end model of dreamcontext federation: current read-only live-reference model (crossVaultRecall default-on for connected peers, per-prompt hook, zero copies) + the parked copy-based PUSH half (sleep-driven sync/drain, disabled) kept as history. Covers the consent + watermark + transitive-leak gates, federation purge, and why there is no 'when X read Y' trigger."
+description: "End-to-end model of dreamcontext federation: live-reference READ (crossVaultRecall default-on for connected peers, per-prompt hook, zero copies) + peer mail WRITE (addressed agent-to-agent correspondence, headless delivery, v0.25.0) + the parked copy-based PUSH half (sleep-driven sync/drain, disabled) kept as history. Covers consent gates, delivery modes, and why correspondence is not derived copies."
 tags: ["topic:federation", "architecture", "domain:knowledge", "topic:recall", "decisions"]
 pinned: false
 date: "2026-06-15"
+updated: "2026-08-26"
 ---
 
 ## The question this answers
@@ -15,30 +16,21 @@ The honest answer: **there is no such rule to set, because federation is not eve
 
 See the figure: `public/image/diagram-federation.png` (PDF: `public/image/diagram-federation.pdf`). Board source: `_dream_context/knowledge/diagrams/system/federation/federation.board.cjs`.
 
-## STATUS: federation is READ-ONLY (single-source-of-truth)
+## STATUS: federation has both READ and WRITE again (but the write half is new)
 
-> **Changed (read-only pivot).** Federation now does ONE thing: **live read**. A
-> connection means "this vault may READ a shareable peer's CANONICAL docs at recall
-> time." Nothing is ever copied across a vault boundary. Each vault remains the sole
-> source of truth for its own knowledge.
+> **Changed (v0.25.0 — peer mail ships).** Federation now has BOTH halves:
 >
-> The old **copy-based PUSH** (sleep `federation sync` → peer inbox → `federation
-> drain` → `knowledge/<slug>--from-<vault>.md` with `federated:true`) is **disabled
-> and parked on the roadmap.** It produced lossy (title + ~280-char summary +
-> provenance), write-once-**stale** duplicates — a re-edited source did not refresh
-> the copy; it spawned a `--from-<vault>` duplicate + a conflict-note bookmark. That
-> broke SSoT, so it was removed from the active surface pending a redesign.
+> **READ** (unchanged): live recall across vault boundaries. A connection means "this vault may READ a peer's canonical docs at recall time." `crossVaultRecall` searches live; nothing is copied. Each vault remains the sole source of truth for its own knowledge.
 >
-> - `federation sync` / `federation drain` are now **inert** (print a roadmap note,
->   write nothing). The `sleep-federation` specialist is **no longer dispatched**.
-> - Leftover `federated:true` copies from the old path are removed with
->   `dreamcontext federation purge [--all | --vault <name>]` (deliberate, never auto-run).
-> - The lib code (`federation-digest.ts`, `federation-ingest.ts`, `federation-inbox.ts`)
->   stays in-tree but **unreferenced by any live path** — the seed for the eventual
->   redesigned sync.
+> **WRITE** (new): **peer mail** — addressed agent-to-agent correspondence. One vault can send a note/question/command to a connected peer; the peer answers from its OWN brain via a headless `claude` run rooted in its own directory. Messages live at `state/.peer-mail/` and are duplicated on both ends of a thread (correspondence is SUPPOSED to be duplicated — both sides hold the full conversation locally). Mail never materializes as knowledge files.
 >
-> Everything below the line about PUSH/digest/drain is **historical** — it documents
-> the parked mechanism, not current behaviour.
+> **Why mail is not the parked digest:** the old **copy-based PUSH** (sleep `federation sync` → peer inbox → `federation drain` → `knowledge/<slug>--from-<vault>.md` with `federated:true`) carried *derived knowledge copies* — a write-once snapshot of someone else's knowledge that went stale the moment the source changed. That broke SSoT and was retired. Peer mail carries *addressed messages* instead: a question gets an answer, a note surfaces in the peer's next snapshot, and the thread lives in a mailbox that is not the knowledge corpus. Same disk neighborhood (`state/.peer-mail/` vs `state/.federation-inbox/`), different contract, separate directory.
+>
+> - The parked digest path (`federation sync` / `federation drain`) remains **disabled** — those commands print a roadmap note and write nothing. The `sleep-federation` specialist is **no longer dispatched**.
+> - Leftover `federated:true` copies from the old path are removed with `dreamcontext federation purge [--all | --vault <name>]` (deliberate, never auto-run).
+> - The lib code (`federation-digest.ts`, `federation-ingest.ts`, `federation-inbox.ts`) stays in-tree but **unreferenced by any live path** — the seed for a future redesigned sync if one is ever warranted.
+>
+> Everything below the line about PUSH/digest/drain is **historical** — it documents the parked mechanism, not current behavior.
 
 ## The live-read path (current behaviour)
 
@@ -86,6 +78,32 @@ each peer's most important docs without a live recall. Titles only — content s
 from recall (`--vault <name>`). Built by `readPinnedTitles` in
 `src/lib/federation-peer-summary.ts`; refreshed on the same off-hot-path cadence as the
 rest of the summary, so a newly-pinned peer doc surfaces on the next refresh.
+
+## The write path — peer mail (v0.25.0)
+
+**Peer mail** is agent-to-agent messaging across connected vaults: one vault addresses another with a note, question, or command, and the peer answers from its OWN brain.
+
+**Three message kinds:**
+- `note` — FYI. Deferred: surfaces in the peer's next SessionStart snapshot. No spawn, no token cost.
+- `question` — Wants an answer. Delivered LIVE: spawns a headless `claude -p --permission-mode auto` run rooted in the PEER's project directory. The peer's SessionStart hook fires, so it answers from its own soul/memory/knowledge. The answer comes back as a reply on the same thread.
+- `command` — Wants work done. Live, and the ONLY kind that may modify the peer's repo — always under `auto` permissions, never bypass.
+
+**Storage:** `state/.peer-mail/<id>.json`, one file per message, with `archive/` for closed threads. Messages live in the vault they were addressed TO; replies are written back into the sender's dir on the same thread. Both sides therefore hold the full thread locally — this is correspondence, which is SUPPOSED to be duplicated. It never materializes as knowledge files.
+
+**Consent gate (same rule as read):** an active, non-stale connection is sufficient consent. Drawing the connection IS the consent — the v0.23.0 precedent (commit 6bf9871) that retired the separate `shareable` opt-in. A peer may ask; what it may DO is held by `PEER_PERMISSION_MODE = 'auto'` (a constant — no caller-supplied path to bypass).
+
+**Surfaces:**
+- **CLI:** `dreamcontext peer send|ask|inbox|read|thread|reply|done`
+- **Snapshot:** "Peer mail" section with pending count (never evicts — a peer waiting is load-bearing)
+- **Dashboard Chat (v0.25.0):** `@` mention picker lists connected peers; addressing one opens a live session panel with the peer's transcript (ItemView), permissions (PermissionCard), and a real Composer — the app's own chat components mounted on the peer's session object. The panel is a VIEW; the session (WebSocket + child process in the peer's directory) stays mounted in a holder so it survives close→reopen.
+
+**Envoy sub-agents:** each active connection generates `.claude/agents/peer-<vault>.md` carrying the peer's identity, routing rule ("ask when the answer must be reasoned, or when recall came back empty"), and real path. Retracted on disconnect.
+
+**Permission asymmetry:** in a HEADLESS delivery (CLI), a permission prompt has nobody to answer it — the peer reports itself blocked. In the DASHBOARD peer session, the socket is two-way and the holder stays mounted, so there IS somebody to ask: the permission renders in the panel and answering it unblocks the peer. This is by design.
+
+**Why this is not the digest inbox:** the parked `federation sync/drain` path carried *derived knowledge copies* — a lossy snapshot of someone else's knowledge that went stale instantly. Peer mail carries *addressed messages*: a question → reasoned answer, a note → surfaces in snapshot, a thread lives in a mailbox that is not the knowledge corpus. Correspondence vs derived copies; separate contracts, separate directories.
+
+See the feature PRD: `knowledge/features/peer-mail.md`. Implementation: `src/lib/peer-mail.ts`, `src/lib/peer-delivery.ts`, `src/lib/peer-agent-gen.ts`, `src/cli/commands/peer.ts`, `src/server/routes/peer.ts`, `dashboard/src/components/sleepy/chat/PeerSessionCard.tsx`.
 
 ---
 

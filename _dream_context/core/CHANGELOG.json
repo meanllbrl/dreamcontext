@@ -1,6 +1,44 @@
 [
   {
     "date": "2026-08-26",
+    "type": "chore",
+    "scope": "release",
+    "description": "Bumped 0.26.0 to 0.26.1 across all five version surfaces (package.json, desktop/package.json, tauri.conf.json, Cargo.toml, and Cargo.lock matched BY CRATE NAME per the scar) and rolled it out LOCALLY ONLY — the registry stays 0.24.1, no tag, no GitHub Release, RELEASES untouched. Gates: build clean, tsc x2 clean, full suite 7978 passed / 0 failed. The global CLI is an npm link to this checkout so the rebuild IS the install (both PATH entries resolve to the same dist — no duplicate); all six registered vaults refreshed to setupVersion 0.26.1; desktop app rebuilt from source, deep ad-hoc signed with entitlements exactly as desktop-release.yml does, codesign --verify --deep --strict passed, installed at 0.26.1 with the bundled CLI reporting 0.26.1 (the 0.0.0 sentinel scar stays clean) and no quarantine attribute. Also distilled the standing publish checklist out of the per-release task into knowledge/patterns/release-publish-checklist.md so a future agent knows publishing is an action it can take and offer — agent-runnable gates split from the four user-gated steps, plus the four scars that produced the ordering.",
+    "breaking": false,
+    "summary": "0.26.0 → 0.26.1 across all five surfaces; local-only rollout (registry stays 0.24.1) + the standing publish checklist distilled into a pattern",
+    "references": [
+      "knowledge:patterns/release-publish-checklist",
+      "task:pre-publish-checklist-v0-25-0"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-26",
+    "type": "feat",
+    "scope": "federation",
+    "description": "A federation connection stops being read-only. Peer mail delivers a note/question/command to a connected vault via headless 'claude -p --permission-mode auto' rooted in the PEER's project root, so the peer's SessionStart hook fires and it answers with ITS brain. Backend store (peer-mail.ts, peer-delivery.ts, peer-agent-gen.ts) with note/question/command types, threads, archive; CLI commands (peer send|ask|inbox|read|thread|reply|done); per-peer envoy agent generation (.claude/agents/peer-<slug>.md, created on connect, retracted on disconnect); snapshot 'Peer mail' section + 'Connected projects' ask guidance; @ mention picker in chat composer; docked peer row + slide-over panel UI mounting the chat's own components (ItemView/PermissionCard/Composer) on the peer session object; server routes /api/peer/*; 43-assertion runtime verification suite. Consent rule follows v0.23.0 precedent — drawing the connection IS the consent, no receiver link-back gate (repeating the retired 'shareable' mistake). PEER_PERMISSION_MODE is a constant, never a parameter, so no caller-supplied path to bypassPermissions exists. Verified live against a real peer vault.",
+    "breaking": false,
+    "summary": "Peer mail — federation's write half: send note/question/command to a connected vault, answered by its own brain",
+    "references": [
+      "commit:none-yet",
+      "file:src/lib/peer-mail.ts",
+      "file:src/lib/peer-delivery.ts",
+      "file:src/lib/peer-agent-gen.ts",
+      "file:src/cli/commands/peer.ts",
+      "file:src/server/routes/peer.ts",
+      "file:dashboard/src/components/sleepy/chat/PeerSessionCard.tsx",
+      "file:dashboard/src/hooks/usePeerMentions.ts",
+      "file:scripts/verify/peer-mail-ui.mjs",
+      "task:peer-mail-cross-vault-agent-messaging"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-26",
     "type": "feat",
     "scope": "lab",
     "description": "Script authors can now build multi-page, interactive, full-screen-capable insight bodies without platform React work — the thing the hand-written funnel insight is — by returning {data: dataset/v1, app: app/v1}. The host serves data over a postMessage bridge (lab.data(key)), handles navigation (lab.navigate(pageId, params?)), and routes to /lab/<slug>/p/<pageId> with real history. Typed data stays MANDATORY and queryable: dataset/v1 (src/lib/lab/dataset.ts) is the plural successor to matrix/v1, using the same dimension-coordinate row grammar, validated by delegating each dataset to parseMatrixSet. app/v1 (src/lib/lab/app.ts) declares pages[{id,title,html,dataset?}] with optional card preview and shell{style,script}. The sandbox is unchanged (allow-scripts, NO allow-same-origin, CSP default-src 'none') — the bridge uses event.source === iframeRef.current?.contentWindow as the identity gate, not origin (the frame is opaque-origin). Security hardening: detect-and-cut teardown with per-instance nonce protects against self-navigation exfiltration (a sandboxed frame can always navigate itself; the host watches load events and tears down the bridge on navigation-away, verified in the verify script). URL params are sanitized on BOTH write (pushLabAppPath) and read (readAppParams) paths — a cold deep-link bypasses the write path, so the read-side guard is load-bearing; capped at ≤8 params, ≤64 chars per value, ≤256 total query growth. CLI: lab body <slug> [--page] [--format text|md|html] reads what a page renders (htmlToText extractor, dependency-free); lab query <slug> [--dataset] [--where k=v] [--group-by] [--top] [--date] slices cached numbers without fetching. Dashboard: LabAppFrame/LabAppPage/LabRoutedInsight/labAppRuntime; height is content-driven (ResizeObserver in the injected shim) with per-mode clamps; full-screen via ?fs=1 (CSS overlay, not native Fullscreen API — deep-linkable and survives reload). matrix/v1 is DEPRECATED for NEW insights (lab create --render breakdown removed from scaffold; existing breakdown insights grandfathered and keep rendering). Skill docs updated: entity router grew Report, cli-reference.md gained render decision table, tasks-and-features.md gained § App insights. New pattern: knowledge/patterns/sandboxed-app-bridge-pattern.md. Verified: scripts/verify/lab-app-insight.mjs proves sandbox network-less (zero requestfinished on fetch+img while inline script runs), height growth, bridge round-trip, multi-page routing, cold deep-links, ?fs=1, navigation teardown (frame reaches stopped state, host posts nothing after), and malicious-params cap on both write and read paths.",
