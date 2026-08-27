@@ -11,6 +11,7 @@ import {
 } from '../../lib/connections.js';
 import { VaultError } from '../../lib/vaults.js';
 import { refreshPeerSummaries } from '../../lib/federation-peer-summary.js';
+import { syncPeerAgents } from '../../lib/peer-agent-gen.js';
 import { header, success, error, info, formatTable } from '../../lib/format.js';
 
 const DIRECTIONS: ConnectionDirection[] = ['out', 'in', 'both'];
@@ -18,14 +19,26 @@ const DIRECTIONS: ConnectionDirection[] = ['out', 'in', 'both'];
 /**
  * Refresh the ambient peer-summary cache after a read relationship changes, so a
  * freshly-drawn (or removed) connection updates the snapshot's "Connected
- * projects" section immediately. NEVER throws — a refresh failure must not fail
- * the connect/disconnect that just succeeded.
+ * projects" section immediately, then regenerate the per-peer envoy subagents so
+ * `.claude/agents/peer-*.md` matches the connection list exactly.
+ *
+ * Order matters: the agents are RENDERED FROM the summary cache, so refreshing
+ * the cache first is what makes a brand-new connection's agent carry that peer's
+ * real identity instead of a bare name.
+ *
+ * NEVER throws — neither side effect may fail the connect/disconnect that just
+ * succeeded.
  */
 function refreshPeerSummariesQuietly(contextRoot: string): void {
   try {
     refreshPeerSummaries(contextRoot);
   } catch {
     // Best-effort: ambient awareness refresh must never break the command.
+  }
+  try {
+    syncPeerAgents(contextRoot);
+  } catch {
+    // Best-effort: a missing envoy agent must never break the command.
   }
 }
 

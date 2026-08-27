@@ -1793,6 +1793,76 @@
       ]
     },
     {
+      "path": "peer",
+      "desc": "Talk to a connected project: send notes, ask questions, hand over commands",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "peer ask",
+      "desc": "Ask a connected peer a question and wait for its answer (live)",
+      "args": [
+        "<vault>",
+        "[question...]"
+      ],
+      "valueFlags": [
+        "--model",
+        "--timeout"
+      ]
+    },
+    {
+      "path": "peer done",
+      "desc": "Close a message and move it out of the inbox",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "peer inbox",
+      "desc": "Show messages waiting in this vault",
+      "args": []
+    },
+    {
+      "path": "peer read",
+      "desc": "Read one message in full (marks it read)",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "peer reply",
+      "desc": "Reply to a message, back to whoever sent it",
+      "args": [
+        "<id>",
+        "[message...]"
+      ],
+      "valueFlags": [
+        "--model"
+      ]
+    },
+    {
+      "path": "peer send",
+      "desc": "Send a message to a connected peer (note | question | command)",
+      "args": [
+        "<vault>",
+        "[message...]"
+      ],
+      "valueFlags": [
+        "-k",
+        "--kind",
+        "--thread",
+        "--model",
+        "--timeout"
+      ]
+    },
+    {
+      "path": "peer thread",
+      "desc": "Show a whole conversation (accepts a thread id or any message id in it)",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
       "path": "people",
       "desc": "Who works in this vault — roster, per-person constitutions, and the active person",
       "args": [],

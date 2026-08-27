@@ -278,9 +278,59 @@
    ~3.7:1 in the light theme, which is fine for a decorative chip (the skill chip above, the
    objective chip in ChatPane.css) but not for the one label a keyboard-driven picker is
    asking you to read. The tint plus the outline already say "this is the row". */
+/* The `@peer` picker reuses `.chat-cmp-slash`'s shell and active-row treatment wholesale —
+   same position, same escape from the card's overflow, same tint-plus-outline — because it
+   is the same gesture pointed at a different namespace, and two pickers that looked
+   different in the same textarea would read as two unrelated features.
+
+   The one departure is the row: a project gets TWO lines, name over its one-liner. A slash
+   command's name IS its meaning, so one line is complete; a project name is a label the
+   user chose months ago, and "which one is Tilki again" is exactly the recall the summary
+   line answers. It is clamped to one line so a long soul sentence cannot turn the picker
+   into a wall. */
+.chat-cmp-mention-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+.chat-cmp-mention-what {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--font-size-xs, 12px);
+  color: var(--color-text-secondary, var(--color-text-muted));
+}
+/* The peer's face on its picker row — its vault logo when it ships one, the `◈`
+   federation glyph when it doesn't. Same recall job as the one-liner underneath. */
+.chat-cmp-mention-row .chat-cmp-slash-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-cmp-mention-logo {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  object-fit: cover;
+  outline: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+.chat-cmp-mention-glyph { color: var(--color-accent); }
+
+/* The field's positioning context — exists for the mention highlight mirror below, and is
+   otherwise a layout no-op: it takes the textarea's old flex slot and the textarea fills it. */
+.chat-cmp-field {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
 /* No chrome of its own — the CARD is the input surface, so the textarea is just the text
    sitting on it (that is what makes the toolbar read as part of the same field). */
 .chat-cmp-input {
+  /* Positioned so it paints OVER the absolutely-positioned mention mirror behind it. */
+  position: relative;
   flex: 1 1 auto;
   height: 100%;
   min-height: 0;
@@ -294,6 +344,33 @@
   line-height: 1.45;
   resize: none;
   overflow-y: auto;
+}
+
+/* The mention highlight MIRROR — the same text at the same metrics, painted behind the
+   textarea with everything transparent except a tinted pill under each `@peer` token
+   (a textarea cannot color a span of itself; see Composer.tsx). Every metric here must
+   match `.chat-cmp-input` exactly or the pill drifts off its word. */
+.chat-cmp-hl {
+  position: absolute;
+  inset: 0;
+  padding: 4px 2px;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: transparent;
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-md, 14px);
+  line-height: 1.45;
+  pointer-events: none;
+  user-select: none;
+}
+.chat-cmp-hl-mention {
+  color: transparent;
+  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 32%, transparent);
+  border-radius: 5px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 .chat-cmp-input:focus { outline: none; }
 .chat-cmp-input:disabled { opacity: 0.6; }

@@ -858,6 +858,16 @@ video.chat-msg-user-media-el { cursor: default; }
   transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
 .chat-subagents-row:last-child { border-bottom: none; }
+
+/* A peer envoy run is ANOTHER PROJECT working, and its row says so the way the docked
+   peer-session row does: the accent, on the badge that names the vault. The avatar slot
+   already carries the vault's logo (SubAgentCard.tsx). */
+.chat-subagents-row[data-peer] .chat-a-typebadge {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+.chat-subagents-peer-mark { margin-right: 4px; }
+.chat-subagents-rail-chip[data-peer] .chat-subagents-rail-chip-label { color: var(--color-accent); }
 /* The tint marks the row you are POINTING at, not the ones that happen to be running —
    a live run already says so through its sweeping bar and its accent-colored line. */
 .chat-subagents-row:hover,

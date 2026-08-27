@@ -11,6 +11,7 @@ import {
 import { useTeamUpdates } from '../../hooks/useBrainStatus';
 import { confirmAction, openVaultWindow } from '../../lib/desktop';
 import { BrandMark } from '../../components/brand/BrandMark';
+import { VaultLogo, useVaultLogoPicker, useVaultLogoMenu } from '../../components/layout/VaultLogo';
 import { layoutSpace, bodyPoint, type SpaceBody } from './spaceLayout';
 import './SpaceLauncher.css';
 
@@ -129,6 +130,10 @@ export function SpaceLauncher({ query, onAddProject, onOpenMeetingRoom, onError 
   const updateProject = useUpdateProject();
   const unregister = useUnregisterVault();
   const touch = useTouchVault();
+  /** One hidden file input + the right-click menu that opens it — see VaultLogo.tsx.
+   *  The setter deliberately has NO visible button: right-click a chip or its card. */
+  const logoPicker = useVaultLogoPicker(onError);
+  const logoMenu = useVaultLogoMenu(logoPicker.pick);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const rotorRef = useRef<HTMLDivElement>(null);
@@ -568,6 +573,9 @@ export function SpaceLauncher({ query, onAddProject, onOpenMeetingRoom, onError 
       onWheel={onWheel}
       onPointerDown={onBackgroundPointerDown}
     >
+      {/* The hidden file input + the right-click menu that opens it — rendered once. */}
+      {logoPicker.input}
+      {logoMenu.element}
       <div className="space-stage" style={{ ['--zoom' as string]: String(zoom) }}>
         <div className="space-rotor" ref={rotorRef} style={{ ['--spin' as string]: '0deg' }}>
           <svg
@@ -699,12 +707,15 @@ export function SpaceLauncher({ query, onAddProject, onOpenMeetingRoom, onError 
                     onPointerDown={(e) => onChipPointerDown(e, v.name)}
                     onClick={() => onChipClick(v.name)}
                     onDoubleClick={() => void open(v.name)}
+                    // The logo setter lives behind right-click — same menu as the List cards.
+                    onContextMenu={v.exists ? (e) => logoMenu.open(e, v.name, v.logo) : undefined}
                     onMouseEnter={() => setHover(v.name)}
                     onMouseLeave={() => setHover((h) => (h === v.name ? null : h))}
                     onFocus={() => setHover(v.name)}
                     onBlur={() => setHover((h) => (h === v.name ? null : h))}
                   >
                     <span className="space-chip-dot" aria-hidden="true" />
+                    <VaultLogo name={v.name} hasLogo={v.logo} stamp={v.logoStamp} size={16} className="space-chip-logo" />
                     <span className="space-chip-name">{v.name}</span>
                     {v.needsUpdate && <span className="space-chip-flag">update</span>}
                   </button>
@@ -717,9 +728,11 @@ export function SpaceLauncher({ query, onAddProject, onOpenMeetingRoom, onError 
                       ['--card-dy' as string]: `${cardNudge.y}px`,
                     }}
                     onPointerDown={(e) => e.stopPropagation()}
+                    onContextMenu={v.exists ? (e) => logoMenu.open(e, v.name, v.logo) : undefined}
                   >
                     <div className="space-card-head">
                       <span className="space-chip-dot" aria-hidden="true" />
+                      <VaultLogo name={v.name} hasLogo={v.logo} stamp={v.logoStamp} size={18} className="space-chip-logo" />
                       <span className="space-card-name">{v.name}</span>
                       <button
                         type="button"

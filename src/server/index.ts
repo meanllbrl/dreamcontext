@@ -35,6 +35,8 @@ import {
   handleLauncherCapture,
   handleLauncherCaptureStatus,
   handleLauncherStatus,
+  handleLauncherLogo,
+  handleLauncherLogoSet,
   handleLauncherTouch,
   handleLauncherUnregister,
   handleLauncherUpdate,
@@ -144,6 +146,7 @@ import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleAgentSessionsGet, handleAgentSessionsPut } from './routes/agent-sessions.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
+import { handlePeerList, handlePeerLogo, handlePeerMailList, handlePeerSend, handlePeerMailStatus } from './routes/peer.js';
 import { handleMeetingState, handleMeetingThread, handleMeetingPost, handleMeetingReply, handleMeetingClose } from './routes/meeting.js';
 import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
 import { handlePacksGet } from './routes/packs.js';
@@ -327,6 +330,12 @@ export function buildRouter(): Router {
   // Launcher project status (green/yellow/red) + per-project update + the
   // cross-vault federation "reads" graph (nodes, edges, connect/disconnect).
   router.get('/api/launcher/status', handleLauncherStatus);
+  // `<img src>`-fetched vault logo for the launcher cards / Space chips —
+  // registration is the only gate (the user's own registry, not a peer's file).
+  router.get('/api/launcher/logo', handleLauncherLogo);
+  // SET a vault's logo from the launcher (magic-byte-verified raster → assets/logo.<ext>).
+  // Mutation; behind the CSRF guard like every launcher POST.
+  router.post('/api/launcher/logo', handleLauncherLogoSet);
   router.post('/api/launcher/touch', handleLauncherTouch);
   router.post('/api/launcher/unregister', handleLauncherUnregister);
   router.post('/api/launcher/update', handleLauncherUpdate);
@@ -414,6 +423,10 @@ export function buildRouter(): Router {
   router.post('/api/connections', handleConnectionsCreate);
   router.delete('/api/connections/:vault', handleConnectionsDelete);
 
+  // Peer mail — the write half of federation (see routes/peer.ts on why a mail
+  // write is allowed in a route where a digest write is not). The LIVE path is
+  // not here: it runs over /api/agent/chat?vault=<peer>.
+  router.get('/api/peer/peers', handlePeerList);
   // Meeting room — the hidden all-agents surface behind the launcher's core
   // logo. Vault-agnostic (the room is owned by no vault; its store lives under
   // ~/.dreamcontext/meeting-room). See routes/meeting.ts.
@@ -422,6 +435,12 @@ export function buildRouter(): Router {
   router.post('/api/meeting/post', handleMeetingPost);
   router.post('/api/meeting/reply', handleMeetingReply);
   router.post('/api/meeting/close', handleMeetingClose);
+  // `<img src>`-fetched (browser sends no headers), so the self vault rides the
+  // standard GET `?vault=` param and the peer's name in `?peer=`.
+  router.get('/api/peer/logo', handlePeerLogo);
+  router.get('/api/peer/mail', handlePeerMailList);
+  router.post('/api/peer/send', handlePeerSend);
+  router.post('/api/peer/mail/:id/status', handlePeerMailStatus);
 
   // Federation inbox (read-only) + sync PREVIEW (dry-run by construction, P3.8).
   router.get('/api/federation/inbox', handleFederationInboxGet);

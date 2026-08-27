@@ -7,7 +7,11 @@ import {
   effortLabel, modelLabelFor, quotePath, isSignInCommand, contextLimitFor, usageLimits,
   fmtTokens, CONTEXT_TIGHT_PCT,
   slashQueryAt, filterSlashCommands, applySlashCommand, type ModelConfig,
+  mentionQueryAt, filterPeerMentions, applyPeerMention, addressedPeer, mentionSegments,
+  type PeerMention,
 } from '../../../lib/agentComposer';
+import { peerLogoUrl } from '../../../api/client';
+import { usePeerMentions } from '../../../hooks/usePeerMentions';
 import { chatModeRow, DEFAULT_CHAT_MODE, type ChatMode } from '../../../lib/chatModes';
 import { patchAgentSettings } from '../../../lib/agentSettings';
 import {
@@ -113,7 +117,7 @@ function PlusIcon() {
 export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
   quote, onClearQuote, onOpenTaskPicker, permissionMode, projectPermissionMode,
-  onPermissionModeChange, onSignIn,
+  onPermissionModeChange, onSignIn, onPeerMessage,
   mode = DEFAULT_CHAT_MODE, onModeChange, onSetModelDefault, shelved = false,
 }: {
   session: ChatSession;
@@ -162,6 +166,17 @@ export function Composer({
    *  with "isn't available in this environment", so sending them would spend a turn to be told
    *  nothing. The handler opens an interactive terminal Claude tab that CAN run the flow. */
   onSignIn: () => void;
+  /**
+   * Take over a message ADDRESSED to a connected project (`@Tilki …`). Like `onSignIn`, this
+   * is a message this session must not send: it belongs to another project's agent, and
+   * forwarding it here would get a confident answer from the wrong brain — the worst possible
+   * failure, because it looks exactly like a right one.
+   *
+   * The handler opens a live session in that peer (see PeerSessionCard). OPTIONAL: without it
+   * the mention is just text and reaches the local agent as written, which is the correct
+   * degradation for a surface that has not wired peer sessions.
+   */
+  onPeerMessage?: (peer: PeerMention, body: string) => void;
   /**
    * How this conversation's agent is briefed to WORK (plain / plan / develop). OPTIONAL with a
    * default so this file compiles and renders the moment it lands: `ChatPane` wires the real
@@ -347,6 +362,11 @@ export function Composer({
     const q = navRef.current.index !== null ? null : slashQueryAt(text, caret);
     setSlashQuery(q);
     setSlashIndex(0);
+    // The `@` menu rides the same caret sync — one `onSelect`/`onChange` pass keeps both
+    // menus honest, and they can never both be open (the caret is in at most one token).
+    const mq = navRef.current.index !== null ? null : mentionQueryAt(text, caret);
+    setMentionQuery(mq);
+    setMentionIndex(0);
   };
 
   // Keep the active row in view when arrowing past the visible window.
@@ -354,6 +374,53 @@ export function Composer({
     if (!slashOpen) return;
     slashListRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [slashOpen, slashIndex]);
+
+  // ── `@peer` autocomplete ─────────────────────────────────────────────────────────
+  // The twin of the slash menu above, for addressing a CONNECTED PROJECT. Same caret-
+  // derived query, same key handling, same "replace only the token" rewrite — a user who
+  // has learned `/` has already learned this. The peer list is fetched once per vault
+  // (see usePeerMentions): it changes only on connect/disconnect, and a picker that has
+  // to load is a picker the user has already typed past.
+  const peers = usePeerMentions();
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionMatches = mentionQuery === null ? [] : filterPeerMentions(peers, mentionQuery);
+  const mentionOpen = mentionQuery !== null && mentionMatches.length > 0;
+  const mentionListRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!mentionOpen) return;
+    mentionListRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [mentionOpen, mentionIndex]);
+
+  // ── Mention highlight layer ──────────────────────────────────────────────────────
+  // A textarea cannot color a span of itself, so the picked `@peer` gets its emphasis from
+  // a MIRROR painted behind the field: same text, same metrics, everything transparent
+  // except a tinted pill under each token that names a known peer. The textarea's own text
+  // renders on top, so nothing about typing, selection or the caret changes. Rendered only
+  // while a mention exists — the common draft pays nothing.
+  const hlRef = useRef<HTMLDivElement | null>(null);
+  const hlSegments = mentionSegments(draft, peers);
+  const hlActive = hlSegments.some((s) => s.mention);
+  useEffect(() => {
+    // A mirror that just appeared (first mention completed) starts at scrollTop 0 even when
+    // the field is scrolled — align it before it is ever seen.
+    const ta = taRef.current;
+    if (hlActive && ta && hlRef.current) hlRef.current.scrollTop = ta.scrollTop;
+  }, [hlActive, draft]);
+
+  const acceptMention = (vault: string) => {
+    const ta = taRef.current;
+    const caret = ta?.selectionStart ?? draft.length;
+    const next = applyPeerMention(draft, caret, vault);
+    setDraft(next.text);
+    session.syncDraft(next.text);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      ta?.focus();
+      ta?.setSelectionRange(next.caret, next.caret);
+    });
+  };
 
   const acceptSlash = (command: string) => {
     const ta = taRef.current;
@@ -531,6 +598,24 @@ export function Composer({
     // draft: if the sign-in tab isn't what they wanted, their text is still here.
     if (isSignInCommand(message)) { onSignIn(); return; }
 
+    // A message addressed to a peer is the OTHER thing this session must not send. It opens a
+    // live session in that project instead (PeerSessionCard). The draft is cleared here rather
+    // than in the handler because from the user's side this WAS a send — it just landed
+    // somewhere else. A bare "@Tilki" with nothing after it is someone mid-sentence, so it
+    // falls through untouched rather than opening a session with an empty prompt.
+    const addressed = onPeerMessage ? addressedPeer(message, peers) : null;
+    if (addressed && addressed.body) {
+      onPeerMessage?.(addressed.peer, addressed.body);
+      setDraft('');
+      session.syncDraft('');
+      setNavBoth(NO_HISTORY_NAV);
+      setSlashQuery(null);
+      setMentionQuery(null);
+      dropSentAttachments(convId);
+      onClearQuote();
+      return;
+    }
+
     // Three deliveries, one commit — and which one it is depends on the gesture, not on luck:
     //
     //   idle,  ⏎/↑  → send. Starts a turn.
@@ -625,6 +710,38 @@ export function Composer({
       {/* Anchored to `.chat-cmp`, NOT to the row it belongs to: the card clips its own
           overflow (safe for the toolbar's menus, which are portaled — this one is not), so
           a menu opening upward out of the textarea would be cut off at the card's edge. */}
+      {/* `@peer` picker — same anchoring and the same escape from the card's overflow as the
+          slash menu below it. Two lines per row, because picking a project you have not
+          touched in a month is a recall problem: the name alone does not tell you which one
+          it is, and the one-liner underneath does. */}
+      {mentionOpen && (
+        <div className="chat-cmp-slash chat-cmp-mention" role="listbox" aria-label="Connected projects" ref={mentionListRef}>
+          {mentionMatches.map((p, i) => (
+            <button
+              key={p.vault}
+              type="button"
+              role="option"
+              aria-selected={i === mentionIndex}
+              data-active={i === mentionIndex}
+              className="chat-cmp-slash-row chat-cmp-mention-row"
+              onMouseDown={(e) => { e.preventDefault(); acceptMention(p.vault); }}
+              onMouseEnter={() => setMentionIndex(i)}
+            >
+              <span className="chat-cmp-slash-name">
+                {/* The peer's own face, when its vault ships one — picking a project you
+                    have not touched in a month is a recall problem, and a logo answers it
+                    faster than a name. The `◈` is the floor, never an empty gap. */}
+                {p.logo
+                  ? <img className="chat-cmp-mention-logo" src={peerLogoUrl(vault, p.vault)} alt="" aria-hidden />
+                  : <span className="chat-cmp-mention-glyph" aria-hidden>◈</span>}
+                @{p.vault}
+              </span>
+              {p.whatItIs && <span className="chat-cmp-mention-what">{p.whatItIs}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+
       {slashOpen && (
         <div className="chat-cmp-slash" role="listbox" aria-label="Slash commands" ref={slashListRef}>
           {slashMatches.map((cmd, i) => (
@@ -739,6 +856,17 @@ export function Composer({
         )}
 
         <div className="chat-cmp-row" ref={rowRef}>
+          <div className="chat-cmp-field">
+          {hlActive && (
+            <div className="chat-cmp-hl" ref={hlRef} aria-hidden>
+              {hlSegments.map((s, i) => (
+                // eslint-disable-next-line react/no-array-index-key -- positional split of one string
+                s.mention
+                  ? <mark className="chat-cmp-hl-mention" key={i}>{s.text}</mark>
+                  : <span key={i}>{s.text}</span>
+              ))}
+            </div>
+          )}
           <textarea
             ref={taRef}
             className="chat-cmp-input"
@@ -767,9 +895,27 @@ export function Composer({
               const el = e.currentTarget;
               syncSlash(el.value, el.selectionStart ?? el.value.length);
             }}
-            onBlur={() => setSlashQuery(null)}
+            onBlur={() => { setSlashQuery(null); setMentionQuery(null); }}
             onPaste={onPaste}
             onKeyDown={(e) => {
+              // The `@` arm sits FIRST and returns: the two menus are mutually exclusive by
+              // construction (the caret is in at most one token), so order is about intent,
+              // not conflict — an open picker owns ↑/↓/⏎ before anything else claims them.
+              if (mentionOpen) {
+                if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex((i) => (i + 1) % mentionMatches.length); return; }
+                if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIndex((i) => (i - 1 + mentionMatches.length) % mentionMatches.length); return; }
+                if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+                  e.preventDefault();
+                  acceptMention(mentionMatches[mentionIndex].vault);
+                  return;
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setMentionQuery(null);
+                  return;
+                }
+              }
               if (slashOpen) {
                 if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex((i) => (i + 1) % slashMatches.length); return; }
                 if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIndex((i) => (i - 1 + slashMatches.length) % slashMatches.length); return; }
@@ -808,7 +954,10 @@ export function Composer({
               }
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
             }}
+            // Keep the mirror aligned when the field scrolls (a draft past the height cap).
+            onScroll={(e) => { if (hlRef.current) hlRef.current.scrollTop = e.currentTarget.scrollTop; }}
           />
+          </div>
         </div>
       </div>
 

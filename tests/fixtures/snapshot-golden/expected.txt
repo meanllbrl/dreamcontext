@@ -188,3 +188,6 @@ These projects are READABLE from here (out/both connection). Recall reads their 
   Pinned docs: arch-overview
 
 Recall already spans these. To search one directly: `dreamcontext memory recall <q> --vault <name>`.
+
+You can also **ASK** a connected project, not just read it — `dreamcontext peer ask <name> "<question>"` wakes that project's own agent (it loads ITS brain and answers from ITS code, ~30-90s), and `dreamcontext peer send <name> "…" --kind note|command` leaves a note or hands over work. Each peer also has a generated envoy sub-agent (`peer-<name>`) you can dispatch instead, to keep the peer's long answer out of this context.
+Reach for ASK over recall when the answer must be REASONED rather than looked up — "where is X implemented there", "why was Y done that way", "would Z break anything on your side" — or when recall came back empty and the peer would still know.

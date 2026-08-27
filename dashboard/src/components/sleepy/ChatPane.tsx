@@ -23,6 +23,9 @@ import { BypassNoticeCard } from './chat/BypassNoticeCard';
 import { SubAgentCard, SubAgentRail } from './chat/SubAgentCard';
 import { BackgroundShellsTray } from './chat/BackgroundShellsTray';
 import { QueuedMessages } from './chat/QueuedMessages';
+import { PeerSessionHolder } from './chat/PeerSessionCard';
+import { usePeerMentions } from '../../hooks/usePeerMentions';
+import type { PeerMention } from '../../lib/agentComposer';
 import { PinShelf } from './chat/PinShelf';
 import { useShelf } from './chat/useShelf';
 import { SlideOver } from './chat/SlideOver';
@@ -546,6 +549,22 @@ export function ChatPane({
   const shelf = useShelf(session, vault);
   const hasPendingQuestion = conv.pending.some((p) => p.kind === 'question');
   const askRouting = useAskQuestionWatchdog(conv.items, hasPendingQuestion);
+
+  /**
+   * Live sessions in CONNECTED PROJECTS, opened by addressing one (`@Tilki …`).
+   *
+   * Owned by the pane rather than the transcript for the same reason the background-shells
+   * tray is: a peer session outlives the message that started it, can sit blocked on a
+   * permission prompt, and must not scroll away while it does. `key` is monotonic so
+   * addressing the same peer twice opens a SECOND session instead of remounting the first —
+   * two questions to one project are two conversations, and silently reusing the socket
+   * would throw away the first answer mid-stream.
+   */
+  const [peerSessions, setPeerSessions] = useState<Array<{ key: number; peer: PeerMention; prompt: string }>>([]);
+  const peerKeyRef = useRef(0);
+  /** Connected peers, fetched once per pane — lets a `peer-<vault>` envoy run wear that
+   *  vault's logo and name in the sub-agent card, rail and drill-in. */
+  const peers = usePeerMentions();
 
   const [slideOver, setSlideOver] = useState<SlideOverState>(null);
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
@@ -1322,7 +1341,7 @@ export function ChatPane({
       if (suppressedToolUseIds.has(item.toolUseId)) {
         if (subAgentCardShown) return null; // already represented by the one combined card
         subAgentCardShown = true;
-        return <SubAgentCard key={`subagents-${item.id}`} runs={conv.subAgents} onDrillIn={handleDrillIn} rootRef={setSubAgentCardEl} highlightRunId={jumped?.id ?? null} />;
+        return <SubAgentCard key={`subagents-${item.id}`} runs={conv.subAgents} peers={peers} onDrillIn={handleDrillIn} rootRef={setSubAgentCardEl} highlightRunId={jumped?.id ?? null} />;
       }
       // A tool that touched a board shows the BOARD, not a card about it — the same live
       // canvas an answer's own `![](x.excalidraw.md)` renders, so "I drew this" and "I
@@ -1412,7 +1431,7 @@ export function ChatPane({
   // case where the spawning tool item is simply older than the window: the group card falls
   // back to trailing the transcript instead of vanishing with the item that anchored it.
   const trailingSubAgentCard = !subAgentCardShown && conv.subAgents.length > 0
-    ? <SubAgentCard key="subagents-trailing" runs={conv.subAgents} onDrillIn={handleDrillIn} rootRef={setSubAgentCardEl} highlightRunId={jumped?.id ?? null} />
+    ? <SubAgentCard key="subagents-trailing" runs={conv.subAgents} peers={peers} onDrillIn={handleDrillIn} rootRef={setSubAgentCardEl} highlightRunId={jumped?.id ?? null} />
     : null;
 
   // A real process exit (`meta-exit`) OR the WS having dropped — either way the composer
@@ -1660,6 +1679,7 @@ export function ChatPane({
         {railPinned && (
           <SubAgentRail
             runs={conv.subAgents}
+            peers={peers}
             onJump={jumpToSubAgent}
             onWheel={forwardWheelToTranscript}
           />
@@ -1683,6 +1703,22 @@ export function ChatPane({
         onOpen={handleOpenShell}
         onStop={handleStopShell}
       />
+      {/* Live peer sessions, docked with the rows above for the same reason: a session in
+          another project can be sitting blocked on a permission prompt, and a blocking row
+          that scrolls out of view is a session that hangs for reasons the user cannot see.
+          Each holder renders one clickable line here and owns its own side panel. */}
+      {peerSessions.map((p) => (
+        <PeerSessionHolder
+          key={p.key}
+          peer={p.peer}
+          prompt={p.prompt}
+          // The peer's panel mounts the REAL Composer, so it needs the same model/effort
+          // wiring this pane's own composer has. Passed as one object rather than six props
+          // because it is one thing: the chrome a chat needs to be a chat.
+          chrome={{ modelConfig, model, effort, onModelChange, onEffortChange, onSignIn }}
+          onClose={() => setPeerSessions((list) => list.filter((x) => x.key !== p.key))}
+        />
+      ))}
       {/* Nearest the composer, and OUTSIDE the needsSignIn/ended branch below on purpose: these
           rows are the only copy of text the user has already committed to sending, so they must
           survive the composer being replaced by a banner (see QueuedMessages.tsx). */}
@@ -1748,6 +1784,12 @@ export function ChatPane({
           // composer, the composer squares the corners it would otherwise round against it.
           shelved={shelf.hasRows}
           onSignIn={onSignIn}
+          // `@Tilki …` opens a live session in that project instead of sending here — see
+          // the peerSessions note above and PeerSessionCard.
+          onPeerMessage={(peer, body) => {
+            peerKeyRef.current += 1;
+            setPeerSessions((list) => [...list, { key: peerKeyRef.current, peer, prompt: body }]);
+          }}
           // No task-picker mechanism exists anywhere in this codebase yet (there is no
           // native "pick a task" dialog — TasksPage has no picker widget to open). The
           // button stays visible (Composer.tsx is frozen T6 ownership; it has no gate to
@@ -1770,8 +1812,12 @@ export function ChatPane({
       {slideOver?.mode === 'subagent' && (
         <SlideOver
           mode="subagent"
-          run={slideOver.run}
+          // Re-read from the LIVE model (same rule as shell mode below) so the drill-in's
+          // status chip, its refetch-on-finish and its follow-the-stream behavior track the
+          // run instead of freezing at the click-time snapshot.
+          run={conv.subAgents.find((r) => r.taskId === slideOver.run.taskId) ?? slideOver.run}
           conversationId={session.claudeId}
+          peers={peers}
           onClose={() => setSlideOver(null)}
           onNavApp={handleNavApp}
         />

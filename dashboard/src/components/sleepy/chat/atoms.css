@@ -230,6 +230,18 @@
   color: var(--color-text-on-brand);
 }
 
+/* A peer vault's own logo in the avatar slot. The gradient stays underneath as the ring
+   (1px of it shows past the inset image), so the run keeps its name-derived color even
+   while wearing the project's face. */
+.chat-a-avatar[data-logo] { overflow: hidden; }
+.chat-a-avatar-img {
+  width: calc(100% - 2px);
+  height: calc(100% - 2px);
+  border-radius: var(--radius-full);
+  object-fit: cover;
+  background: var(--color-bg-secondary);
+}
+
 .chat-a-progress {
   flex: 0 0 auto;
   display: block;

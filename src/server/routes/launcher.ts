@@ -23,6 +23,8 @@ import {
 } from '../../lib/connections.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
 import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
+import { findVaultLogo, vaultLogoCandidates } from '../../lib/vault-logo.js';
+import { sniffImageType, EXT_BY_IMAGE_TYPE } from '../../lib/image-sniff.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { compareVersions } from '../../lib/version-check.js';
 import { detectTechStack } from '../../lib/tech-stack.js';
@@ -1418,6 +1420,12 @@ export interface VaultStatus {
   latestVersion: string;
   /** True iff the folder exists AND setupVersion is behind latestVersion. */
   needsUpdate: boolean;
+  /** True iff the vault ships an identity mark (`_dream_context/assets/logo.*`) —
+   *  the card builds the image URL itself via `/api/launcher/logo`. */
+  logo: boolean;
+  /** The logo file's mtime (ms), or null without one — rides the image URL as a
+   *  cache-buster so a logo REPLACED from the launcher shows without a reload. */
+  logoStamp: number | null;
   /**
    * ISO timestamp of the last launcher-initiated open, or null when the project
    * has never been opened from the launcher (or predates the field). The Space
@@ -1441,6 +1449,10 @@ function computeVaultStatus(v: Vault, latest: string): VaultStatus {
     }
   }
   const needsUpdate = exists && compareVersions(setupVersion, latest) < 0;
+  // Whether the vault ships an identity mark (`_dream_context/assets/logo.*` — the same
+  // file convention peer mail reads). A boolean, not bytes: the card builds the image URL
+  // itself (`/api/launcher/logo`), and reporting it here spares N speculative 404s.
+  const logoFile = exists ? findVaultLogo(join(resolve(v.path), '_dream_context')) : null;
   return {
     name: v.name,
     path: v.path,
@@ -1448,8 +1460,140 @@ function computeVaultStatus(v: Vault, latest: string): VaultStatus {
     setupVersion,
     latestVersion: latest,
     needsUpdate,
+    logo: logoFile !== null,
+    logoStamp: logoFile ? Math.round(logoFile.mtimeMs) : null,
     lastOpenedAt: typeof v.lastOpenedAt === 'string' ? v.lastOpenedAt : null,
   };
+}
+
+/**
+ * GET /api/launcher/logo?vault=<name> — a registered vault's logo bytes, for `<img src>`.
+ *
+ * Vault-agnostic and gated only on REGISTRATION: unlike `/api/peer/logo` (which serves
+ * ANOTHER vault's file and therefore rides the federation consent line), this serves the
+ * user their own registry — the same trust level as `/launcher/status` printing every
+ * project's path.
+ */
+export async function handleLauncherLogo(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const url = new URL(req.url ?? '', 'http://localhost');
+  const name = (url.searchParams.get('vault') ?? '').trim();
+  const vault = listVaults().find((v) => v.name === name);
+  if (!vault) {
+    sendError(res, 404, 'unknown_vault', `No registered vault "${name}".`);
+    return;
+  }
+  const logo = findVaultLogo(join(resolve(vault.path), '_dream_context'));
+  if (!logo) {
+    sendError(res, 404, 'no_logo', `${vault.name} has no logo (assets/logo.png in its vault).`);
+    return;
+  }
+  try {
+    const bytes = readFileSync(logo.path);
+    res.writeHead(200, {
+      'Content-Type': logo.mime,
+      'Content-Length': bytes.length,
+      // Same short TTL as the peer logo: a swapped file shows on the next launch,
+      // repeat renders within a session stay free.
+      'Cache-Control': 'private, max-age=300',
+    });
+    res.end(bytes);
+  } catch (err) {
+    console.error('[launcher] logo read failed:', err);
+    sendError(res, 500, 'logo_failed', 'Failed to read the logo.');
+  }
+}
+
+/** A logo is an icon, not a photo shoot — 5 MB is already generous for a 128px mark. */
+const MAX_LOGO_BYTES = 5 * 1024 * 1024;
+
+/**
+ * POST /api/launcher/logo?vault=<name> — SET a registered vault's logo from the launcher:
+ * the picked file's bytes land as `_dream_context/assets/logo.<ext>`, which IS the whole
+ * convention (`findVaultLogo`), so every surface that reads it — launcher cards, Space
+ * chips, the chat `@` picker, peer rows, envoy avatars — picks it up with zero further
+ * wiring.
+ *
+ * The image is identified by MAGIC BYTES, never the client's content-type: this route
+ * writes into a vault the user will later commit, so only a verified raster
+ * (png/jpeg/webp/gif) is accepted and it gets its canonical extension. An SVG can still be
+ * used by dropping the file in by hand; the upload path stays strict. Every other
+ * `logo.*` candidate is deleted first — a stale `logo.png` would shadow a freshly
+ * written `logo.webp` (candidate order is preference order).
+ */
+export async function handleLauncherLogoSet(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const url = new URL(req.url ?? '', 'http://localhost');
+  const name = (url.searchParams.get('vault') ?? '').trim();
+  const vault = listVaults().find((v) => v.name === name);
+  if (!vault) {
+    sendError(res, 404, 'unknown_vault', `No registered vault "${name}".`);
+    return;
+  }
+  const root = resolve(vault.path);
+  if (!existsSync(root)) {
+    sendError(res, 400, 'vault_gone', `${vault.name}'s folder no longer exists on disk.`);
+    return;
+  }
+
+  // Capped streaming read, same discipline as the agent-drop route: never buffer more
+  // than the limit, so a huge upload cannot OOM the server.
+  const buf = await new Promise<Buffer | null>((resolvePromise) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let done = false;
+    const finish = (v: Buffer | null) => { if (!done) { done = true; resolvePromise(v); } };
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_LOGO_BYTES) {
+        sendError(res, 413, 'too_large', 'Logo exceeds the 5 MB limit.');
+        req.destroy();
+        finish(null);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => finish(Buffer.concat(chunks)));
+    req.on('error', () => finish(null));
+  });
+  if (!buf) return; // 413 already sent, or read error
+  if (buf.length === 0) {
+    sendError(res, 400, 'empty', 'No image data was received.');
+    return;
+  }
+
+  const sniffed = sniffImageType(buf);
+  if (!sniffed) {
+    sendError(res, 400, 'not_an_image', 'The file is not a PNG, JPEG, WebP or GIF image.');
+    return;
+  }
+
+  const contextRoot = join(root, '_dream_context');
+  const assetsDir = join(contextRoot, 'assets');
+  try {
+    mkdirSync(assetsDir, { recursive: true });
+    // Clear every candidate BEFORE writing, so the new file cannot be shadowed by an
+    // old one earlier in the preference order.
+    for (const candidate of vaultLogoCandidates(contextRoot)) {
+      try { rmSync(candidate, { force: true }); } catch { /* a locked loser shouldn't abort the set */ }
+    }
+    writeFileSync(join(assetsDir, `logo${EXT_BY_IMAGE_TYPE[sniffed]}`), buf);
+  } catch (err) {
+    console.error('[launcher] logo write failed:', err);
+    sendError(res, 500, 'write_failed', 'Could not write the logo into the vault.');
+    return;
+  }
+
+  const logo = findVaultLogo(contextRoot);
+  sendJson(res, 200, { ok: true, logo: logo !== null, logoStamp: logo ? Math.round(logo.mtimeMs) : null });
 }
 
 /**

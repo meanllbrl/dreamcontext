@@ -181,20 +181,31 @@ export function TypeBadge({ children }: { children: ReactNode }) {
  * A sub-agent's face: Sleepy, tinted by a hue derived from the agent's name
  * ({@link avatarHue}) so the same agent is the same color everywhere, with no palette to
  * keep in sync. Eyes closed, same character as the dock mascot.
+ *
+ * `src` swaps the face for a real image — a PEER vault's own logo, so a run in another
+ * project is recognisably THAT project at a glance, not another tinted Sleepy. The hue ring
+ * stays (same derivation, so the color still matches everywhere the agent appears), and a
+ * broken image falls back to the face rather than to an empty circle.
  */
-export function AgentAvatar({ name, size = 32 }: { name: string; size?: number }) {
+export function AgentAvatar({ name, size = 32, src }: { name: string; size?: number; src?: string | null }) {
   const hue = avatarHue(name);
+  const [imgFailed, setImgFailed] = useState(false);
   return (
     <span
       className="chat-a-avatar"
+      data-logo={(src && !imgFailed) || undefined}
       style={{ width: size, height: size, '--avatar-hue': hue } as React.CSSProperties}
       aria-hidden
     >
-      <svg viewBox="0 0 32 32" width={size} height={size}>
-        <path d="M9 15 q2.5 -3 5 0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-        <path d="M18 15 q2.5 -3 5 0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-        <path d="M12 20 q4 3.5 8 0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      </svg>
+      {src && !imgFailed ? (
+        <img className="chat-a-avatar-img" src={src} alt="" onError={() => setImgFailed(true)} />
+      ) : (
+        <svg viewBox="0 0 32 32" width={size} height={size}>
+          <path d="M9 15 q2.5 -3 5 0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          <path d="M18 15 q2.5 -3 5 0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          <path d="M12 20 q4 3.5 8 0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      )}
     </span>
   );
 }

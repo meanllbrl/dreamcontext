@@ -1,0 +1,192 @@
+/* PEER SESSION — the docked ROW and the side PANEL it opens.
+
+   Deliberately SMALL. The panel's insides are the app's own components — `ItemView` for the
+   transcript, `PermissionCard` for a permission, the real `Composer` — so their styles come
+   with them and nothing is restyled here. What is left is the row (which has no equivalent
+   elsewhere) and the few rules that fit the shared slide-over shell around a live session.
+
+   Tokens only, no literal colours, so this follows the user's theme and brand override like
+   the rest of chat. */
+
+/* ── THE ROW — the message you click ───────────────────────────────────────────────
+   One line docked above the composer. It is the only always-visible trace of a session
+   running in another project, so it carries the whole state in collapsed form: who,
+   what it is doing, and the first words of the answer. */
+
+/* The holder is a layout no-op: it exists to give the row a DOM anchor for finding
+   `.chat-pane` (the panel is portaled there — see PeerSessionCard.tsx), and must not
+   introduce a box between the docked strip and the row. */
+.peer-holder { display: contents; }
+
+.peer-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  margin: 6px 12px 0;
+  border: 1px solid var(--color-border);
+  /* The accent edge is the whole "this is somewhere else" signal. */
+  border-left: 2px solid var(--color-accent);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+}
+/* A blocked session gets the warn edge, because the row IS the notification: nothing else
+   on screen will tell you that a turn in another project is stopped waiting for you. */
+.peer-row.needs-you {
+  border-left-color: var(--color-warning, var(--color-accent));
+  background: color-mix(in srgb, var(--color-warning, var(--color-accent)) 8%, var(--color-bg-elevated, var(--color-bg-secondary)));
+}
+
+.peer-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-md, 8px);
+}
+.peer-row-main:hover { background: color-mix(in srgb, var(--color-text) 5%, transparent); }
+
+.peer-row-glyph { flex: 0 0 auto; color: var(--color-accent); }
+.peer-row-name { flex: 0 0 auto; font-weight: 600; font-size: var(--font-size-sm, 13px); }
+
+/* The vault's own logo standing in for the `◈` glyph — row and panel head. The accent
+   outline keeps the "this is somewhere else" signal the glyph carried. */
+.peer-mark-logo {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  object-fit: cover;
+  outline: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+.peer-panel-mark { color: var(--color-accent); }
+img.peer-panel-mark { vertical-align: -4px; }
+
+.peer-row-chip {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-secondary, var(--color-text-muted));
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+}
+/* Busy takes the accent tint rather than an animation: a moving element in a docked strip
+   pulls the eye off the conversation the user is actually reading. */
+.peer-row-chip.is-busy {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+.peer-row-chip.is-ask {
+  color: var(--color-warning, var(--color-accent));
+  background: color-mix(in srgb, var(--color-warning, var(--color-accent)) 18%, transparent);
+}
+
+.peer-row-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs, 12px);
+  color: var(--color-text-secondary, var(--color-text-muted));
+}
+
+/* Unread marker for a permission that arrived while the panel was shut. */
+.peer-row-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--color-warning, var(--color-accent));
+}
+
+.peer-row-x {
+  flex: 0 0 auto;
+  padding: 0 9px;
+  border: none;
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--color-text-muted, var(--color-text-secondary));
+  cursor: pointer;
+}
+.peer-row-x:hover { background: color-mix(in srgb, var(--color-text) 8%, transparent); color: var(--color-text); }
+
+/* ── THE PANEL ─────────────────────────────────────────────────────────────────────
+   Built on the app's own `chat-slideover-*` shell so it IS the same drawer the file and
+   sub-agent panels are, rather than a second kind of side panel with its own manners.
+   Only the parts a live session needs are added here. */
+
+.peer-panel { display: flex; flex-direction: column; }
+
+.peer-panel-tab {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-xs, 12px);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.peer-panel-tab:hover { border-color: var(--color-accent); color: var(--color-accent); }
+
+.peer-panel-body { display: flex; flex-direction: column; gap: 10px; }
+
+.peer-panel-what {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+}
+
+/* The peer's session asking US something. Warn-tinted because it BLOCKS: that
+   session is stopped until this is answered, and a card that reads as informational
+   would be left sitting there. */
+.peer-session-ask-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--color-warning, var(--color-accent)) 12%, transparent);
+}
+.peer-session-ask-text {
+  font-size: var(--font-size-sm, 13px);
+  color: var(--color-text);
+}
+.peer-session-ask-actions {
+  display: flex;
+  gap: 6px;
+}
+/* Only the AskUserQuestion / plan fallback uses these — a permission request renders through
+   the real `PermissionCard`, which brings its own controls. */
+.peer-session-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-xs, 12px);
+  cursor: pointer;
+}
+.peer-session-btn:hover { border-color: var(--color-accent); }
+.peer-session-btn.is-primary {
+  border-color: transparent;
+  background: var(--color-accent);
+  color: var(--color-accent-text, #fff);
+}
+
+/* The panel's composer is the REAL `Composer`, so it brings its own chrome. All this
+   rule does is stop the card's top border from doubling the panel's, and keep it from
+   growing past half the panel on a long draft. There is no peer-specific composer CSS
+   because there is no peer-specific composer. */
+.peer-panel-composer { flex: 0 0 auto; min-height: 0; }
+.peer-panel-composer .chat-cmp { border-top: 1px solid var(--color-border); }
+

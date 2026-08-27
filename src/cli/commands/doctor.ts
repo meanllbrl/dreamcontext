@@ -826,6 +826,7 @@ const NEVER_EVICT_SECTIONS: Record<NeverEvictSectionId, true> = {
   'product-and-nudge': true,
   awareness: true,
   marketing: true,
+  'peer-mail': true,
   federation: true,
 };
 

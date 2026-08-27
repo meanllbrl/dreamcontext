@@ -10,6 +10,7 @@ import {
 import { useTeamUpdates, useTeamFetch } from '../hooks/useBrainStatus';
 import { confirmAction, openVaultWindow, startTitleBarDrag, toggleMaximizeWindow } from '../lib/desktop';
 import { VaultDot } from '../components/layout/VaultDot';
+import { VaultLogo, useVaultLogoPicker, useVaultLogoMenu } from '../components/layout/VaultLogo';
 import { VaultSyncChip } from '../components/brain/VaultSyncChip';
 import { OnboardingWizard } from './OnboardingWizard';
 import { SpaceLauncher } from './space/SpaceLauncher';
@@ -58,6 +59,10 @@ export function LauncherPage() {
   const [view, setView] = useState<View>(readStoredView);
   /** How many projects `Update all` has got through, for the button's counter. */
   const [updateAllDone, setUpdateAllDone] = useState(0);
+  /** One hidden file input + the right-click menu that opens it — see VaultLogo.tsx.
+   *  The setter deliberately has NO visible button: right-click the card. */
+  const logoPicker = useVaultLogoPicker(setActionError);
+  const logoMenu = useVaultLogoMenu(logoPicker.pick);
 
   const { data: teamVaults } = useTeamUpdates();
   const teamFetch = useTeamFetch();
@@ -219,6 +224,9 @@ export function LauncherPage() {
       </header>
 
       {actionError && <div className="launcher-error">{actionError}</div>}
+      {/* The hidden file input + the right-click menu that opens it — rendered once. */}
+      {logoPicker.input}
+      {logoMenu.element}
 
       {isLoading && <div className="launcher-status">Loading vaults…</div>}
       {isError && (
@@ -255,6 +263,9 @@ export function LauncherPage() {
                   // Cards keep normal pointer behaviour (text selection on the
                   // path, hover states) — only the empty background drags.
                   data-no-drag
+                  // The logo setter lives behind right-click — a once-per-project act
+                  // does not earn a permanent button on every card.
+                  onContextMenu={vault.exists ? (e) => logoMenu.open(e, vault.name, vault.logo) : undefined}
                 >
                   <div className="launcher-card-head">
                     <VaultDot
@@ -268,6 +279,9 @@ export function LauncherPage() {
                             : 'Up to date'
                       }
                     />
+                    {/* The project's own face (`assets/logo.*` in its vault), beside — not
+                        instead of — the status dot: the dot is health, the logo is identity. */}
+                    <VaultLogo name={vault.name} hasLogo={vault.logo} stamp={vault.logoStamp} />
                     <span className="launcher-card-name">{vault.name}</span>
                   </div>
                   <div className="launcher-card-path">{vault.path}</div>

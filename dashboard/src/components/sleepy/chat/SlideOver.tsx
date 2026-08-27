@@ -1,5 +1,5 @@
-import { Component, useEffect, useState, type ReactNode } from 'react';
-import { agentFileUrl } from '../../../api/client';
+import { Component, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { agentFileUrl, peerLogoUrl } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { ItemView } from './TranscriptItem';
@@ -8,6 +8,7 @@ import {
   isHeadlessAgentShell,
   type Reference, type SubAgentRun,
 } from './chatEntities';
+import { peerForAgent, type PeerMention } from '../../../lib/agentComposer';
 import { FileActions } from './FileActions';
 import type { ChatItem } from '../chatSession';
 
@@ -37,6 +38,9 @@ export interface SlideOverSubAgentProps {
   mode: 'subagent';
   run: SubAgentRun;
   conversationId: string;
+  /** Connected peers — a `peer-<vault>` envoy drill-in wears that vault's logo and name in
+   *  its header instead of the raw generated agent slug. */
+  peers?: PeerMention[];
   onClose: () => void;
   onNavApp: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
 }
@@ -222,6 +226,63 @@ function FileSlideOver({ path, reference, onClose, onNavApp, onOpenPath }: Slide
   );
 }
 
+// ─── Jump to latest (shared by the drill-in panels and the peer session panel) ──────
+
+/**
+ * Tracks whether a scrolling body has been left ABOVE its bottom edge, and hands back a
+ * one-click way down. The panels open a transcript at its top (reading order), but what
+ * the user is usually waiting on is at the END — so the way down must be atomic, not a
+ * scroll gesture through twenty minutes of tool calls.
+ *
+ * `watch` re-measures when content lands or grows: a body that was "at the bottom" stops
+ * being at the bottom the moment a streaming run appends below it, and only the content
+ * arrays know when that happened.
+ */
+export function useJumpToLatest(
+  ref: RefObject<HTMLDivElement | null>,
+  watch: ReadonlyArray<unknown>,
+): { away: boolean; jump: () => void } {
+  const [away, setAway] = useState(false);
+
+  const measure = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    setAway(el.scrollHeight - el.scrollTop - el.clientHeight > 160);
+  }, [ref]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    measure();
+    el.addEventListener('scroll', measure, { passive: true });
+    return () => el.removeEventListener('scroll', measure);
+    // `watch` spread: the caller names what makes the body grow.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ref, measure, ...watch]);
+
+  const jump = useCallback(() => {
+    const el = ref.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  }, [ref]);
+
+  return { away, jump };
+}
+
+/**
+ * The pill itself — the transcript's own "↓ Latest" affordance, inside a panel. Rendered as
+ * the LAST child of the scrolling body and stuck to its visible bottom edge: sticky needs no
+ * knowledge of what sits under the panel (the peer panel has a whole composer there), where
+ * an absolutely-anchored pill would need a per-panel offset.
+ */
+export function JumpToLatest({ away, jump }: { away: boolean; jump: () => void }) {
+  if (!away) return null;
+  return (
+    <button type="button" className="chat-slideover-jump" onClick={jump}>
+      <span aria-hidden>↓</span> Latest
+    </button>
+  );
+}
+
 // ─── Sub-agent mode ─────────────────────────────────────────────────────────────────
 
 interface DrillInHistoryEntry {
@@ -264,8 +325,9 @@ function usageLine(usage: SubAgentRun['usage']): string | null {
   return parts.length ? parts.join(' · ') : null;
 }
 
-function SubAgentSlideOver({ run, conversationId, onClose }: SlideOverSubAgentProps) {
+function SubAgentSlideOver({ run, conversationId, peers = [], onClose }: SlideOverSubAgentProps) {
   const api = useApi();
+  const { vault } = useVault();
   const [state, setState] = useState<{ loading: boolean; items: ChatItem[] }>({ loading: true, items: [] });
 
   useEffect(() => {
@@ -286,22 +348,33 @@ function SubAgentSlideOver({ run, conversationId, onClose }: SlideOverSubAgentPr
   }, [api, conversationId, run.taskId, run.status, run.endedAt]);
 
   const usage = usageLine(run.usage);
+  // The drill-in wears the PEER's identity when the run is an envoy: the vault's logo next
+  // to the breadcrumb and its name on the badge, instead of the generated `peer-<slug>`.
+  const peer = peerForAgent(run.subagentType, peers);
+  const logoSrc = peer?.logo ? peerLogoUrl(vault, peer.vault) : null;
+
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const { away, jump } = useJumpToLatest(bodyRef, [state.items.length, state.loading]);
 
   return (
     <>
       <div className="chat-slideover-head">
         <div className="chat-slideover-head-text">
           <button type="button" className="chat-slideover-breadcrumb" onClick={onClose}>
-            <span aria-hidden>←</span> Main chat <span aria-hidden>▸</span> {run.name}
+            <span aria-hidden>←</span> Main chat <span aria-hidden>▸</span>
+            {logoSrc && <img className="chat-slideover-peer-logo" src={logoSrc} alt="" aria-hidden />}
+            {' '}{run.name}
           </button>
           <span className="chat-slideover-subagent-meta">
-            {run.subagentType && <span className="chat-slideover-subagent-badge">{run.subagentType}</span>}
+            {peer
+              ? <span className="chat-slideover-subagent-badge" data-peer="1"><span aria-hidden>◈</span> {peer.vault}</span>
+              : run.subagentType && <span className="chat-slideover-subagent-badge">{run.subagentType}</span>}
             <span className="chat-slideover-subagent-status" data-status={run.status}>{run.status}</span>
           </span>
         </div>
         <button type="button" className="chat-slideover-close" onClick={onClose} aria-label="Close">✕</button>
       </div>
-      <div className="chat-slideover-body">
+      <div className="chat-slideover-body" ref={bodyRef}>
         {state.loading && <p className="chat-slideover-status">Loading transcript…</p>}
         {!state.loading && state.items.length > 0 && (
           <div className="chat-slideover-transcript">
@@ -336,6 +409,7 @@ function SubAgentSlideOver({ run, conversationId, onClose }: SlideOverSubAgentPr
             {usage && <p className="chat-slideover-usage">{usage}</p>}
           </div>
         )}
+        <JumpToLatest away={away} jump={jump} />
       </div>
     </>
   );
@@ -364,6 +438,9 @@ function ShellSlideOver({ run, conversationId, onStop, onClose }: SlideOverShell
   // would contradict the row that opened it.
   const headless = isHeadlessAgentShell(run);
   const noun = headless ? 'run' : 'shell';
+
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const { away, jump } = useJumpToLatest(bodyRef, [state.content.length, state.loading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -428,7 +505,7 @@ function ShellSlideOver({ run, conversationId, onStop, onClose }: SlideOverShell
           disabled={!state.content}
         ><span aria-hidden>⧉</span> Copy output</button>
       </div>
-      <div className="chat-slideover-body">
+      <div className="chat-slideover-body" ref={bodyRef}>
         {run.summary && <p className="chat-slideover-status">{run.summary}</p>}
         {state.truncated && (
           <p className="chat-slideover-status">Showing the tail of a large output — earlier lines are on disk.</p>
@@ -445,6 +522,7 @@ function ShellSlideOver({ run, conversationId, onStop, onClose }: SlideOverShell
           </p>
         )}
         {state.content && <pre className="chat-slideover-shellout">{state.content}</pre>}
+        <JumpToLatest away={away} jump={jump} />
       </div>
     </>
   );

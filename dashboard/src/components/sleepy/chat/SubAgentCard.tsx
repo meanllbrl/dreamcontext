@@ -4,6 +4,9 @@ import {
   useGroupCollapse, groupOutcomeNote,
   type SubAgentRun,
 } from './chatEntities';
+import { peerForAgent, type PeerMention } from '../../../lib/agentComposer';
+import { peerLogoUrl } from '../../../api/client';
+import { useVault } from '../../../context/VaultContext';
 import { AgentAvatar, TypeBadge, ProgressTrack } from './atoms';
 import { CardHeader } from './molecules';
 
@@ -70,7 +73,7 @@ function groupNoun(agents: number, total: number): string {
   return agents === total ? 'agent' : 'task';
 }
 
-export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId }: {
+export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId, peers = [] }: {
   runs: SubAgentRun[];
   onDrillIn: (run: SubAgentRun) => void;
   /** Callback ref for the card's root. ChatPane measures this element to know whether the
@@ -80,7 +83,11 @@ export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId
   /** The run a rail chip just jumped to — its row flashes for a beat so the eye lands on the
    *  right one instead of hunting through four identically-shaped rows. */
   highlightRunId?: string | null;
+  /** Connected peers, so a `peer-<vault>` envoy run wears that vault's identity — its logo
+   *  as the avatar and its NAME on the badge — instead of the generic agent look. */
+  peers?: PeerMention[];
 }) {
+  const { vault } = useVault();
   // AGENT runs only. Background shells ride the identical `task_*` frames but belong to
   // `BackgroundShellsTray`: this card's whole affordance is drilling into a sidechain
   // transcript, and a shell has none — clicking one used to open a panel that said the
@@ -127,19 +134,28 @@ export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId
       />
       {open && (
         <div className="chat-subagents-rows">
-          {runs.map((run) => (
+          {runs.map((run) => {
+            // A peer envoy run is ANOTHER PROJECT working — it wears that project's face
+            // (its vault logo, when it ships one) and its vault name on the badge, instead
+            // of reading as one more local agent named `peer-<slug>`.
+            const peer = peerForAgent(run.subagentType, peers);
+            return (
             <button
               type="button"
               key={run.taskId}
               className="chat-subagents-row"
               data-status={run.status}
+              data-peer={peer ? '1' : undefined}
               // The rail's jump target — read by ChatPane off THIS card's subtree, so a split
               // view's two panes can never scroll each other (no document-wide ids).
               data-subagent-row={run.taskId}
               data-flash={run.taskId === highlightRunId ? '1' : undefined}
               onClick={() => onDrillIn(run)}
             >
-              <AgentAvatar name={run.subagentType ?? run.name} />
+              <AgentAvatar
+                name={run.subagentType ?? run.name}
+                src={peer?.logo ? peerLogoUrl(vault, peer.vault) : undefined}
+              />
               <span className="chat-subagents-row-body">
                 <span className="chat-subagents-row-head">
                   <span className="chat-subagents-row-name">{run.name}</span>
@@ -147,9 +163,11 @@ export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId
                       line did — so the badge names its NATURE instead. Without it the row is
                       indistinguishable from an Agent-tool dispatch, and the two do not open
                       the same thing when clicked. */}
-                  {run.subagentType
-                    ? <TypeBadge>{run.subagentType}</TypeBadge>
-                    : isHeadlessAgentShell(run) && <TypeBadge>headless</TypeBadge>}
+                  {peer
+                    ? <TypeBadge><span className="chat-subagents-peer-mark" aria-hidden>◈</span>{peer.vault}</TypeBadge>
+                    : run.subagentType
+                      ? <TypeBadge>{run.subagentType}</TypeBadge>
+                      : isHeadlessAgentShell(run) && <TypeBadge>headless</TypeBadge>}
                 </span>
                 <span className="chat-subagents-row-sub">
                   <span className="chat-subagents-row-line">{runLine(run)}</span>
@@ -172,7 +190,8 @@ export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId
                 {isHeadlessAgentShell(run) ? 'output →' : 'open →'}
               </span>
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -195,14 +214,17 @@ export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId
  * belongs in the transcript where it happened — pinning it forever would spend the top of
  * every conversation on something that stopped changing.
  */
-export function SubAgentRail({ runs: allRuns, onJump, onWheel }: {
+export function SubAgentRail({ runs: allRuns, onJump, onWheel, peers = [] }: {
   runs: SubAgentRun[];
   /** Scroll the transcript to a run's row — `null` for the card as a whole. */
   onJump: (taskId: string | null) => void;
   /** An overlay is not in the scroller's ancestor chain, so a wheel gesture that starts over
    *  the rail would otherwise scroll nothing. The host forwards it to the transcript. */
   onWheel?: (e: React.WheelEvent<HTMLDivElement>) => void;
+  /** Same as {@link SubAgentCard}'s — a peer envoy chip wears its vault's logo and name. */
+  peers?: PeerMention[];
 }) {
+  const { vault } = useVault();
   const runs = allRuns.filter(isAgentRun);
   const { running, total, agents, earliestStart } = summarizeSubAgents(runs);
   const [tick, setTick] = useState(() => Date.now());
@@ -253,19 +275,26 @@ export function SubAgentRail({ runs: allRuns, onJump, onWheel }: {
           <span className="chat-subagents-spinner" aria-hidden />
         </button>
         <div className="chat-subagents-rail-chips" ref={chipsRef} data-overflow={overflowing ? '1' : undefined}>
-          {runs.map((run) => (
+          {runs.map((run) => {
+            const peer = peerForAgent(run.subagentType, peers);
+            return (
             <button
               type="button"
               key={run.taskId}
               className="chat-subagents-rail-chip"
               data-status={run.status}
+              data-peer={peer ? '1' : undefined}
               // The row truncates the name to a few words; the chip has less room still, so
               // the full name and what it is doing right now ride the tooltip.
               title={`${run.name} — ${runLine(run)}`}
               onClick={() => onJump(run.taskId)}
             >
-              <AgentAvatar name={run.subagentType ?? run.name} size={18} />
-              <span className="chat-subagents-rail-chip-label">{run.subagentType ?? run.name}</span>
+              <AgentAvatar
+                name={run.subagentType ?? run.name}
+                size={18}
+                src={peer?.logo ? peerLogoUrl(vault, peer.vault) : undefined}
+              />
+              <span className="chat-subagents-rail-chip-label">{peer ? peer.vault : (run.subagentType ?? run.name)}</span>
               {/* Only a FINISHED run is marked. Running is the rail's whole premise (it is
                   only on screen because something is running, and the group spinner says
                   so) — a `▸` on every live chip would be four glyphs that mean "normal". */}
@@ -275,7 +304,8 @@ export function SubAgentRail({ runs: allRuns, onJump, onWheel }: {
                 </span>
               )}
             </button>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

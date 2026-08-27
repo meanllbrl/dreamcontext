@@ -30,6 +30,7 @@ import {
 import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
+import { syncPeerAgents } from '../../lib/peer-agent-gen.js';
 
 // ─── Hook Constants (Claude) ───────────────────────────────────────────────
 
@@ -831,6 +832,20 @@ export async function installCoreForPlatform(
       recordIfManifest(manifest, agentRel, 'agent');
       installed.push(platformPrefixed(platform, agentRel));
     }
+  }
+
+  // Per-peer envoy agents. Unlike everything above these are GENERATED, not
+  // copied from the package: one per active federation connection, carrying that
+  // peer's identity. Not recorded in the manifest — `syncPeerAgents` owns the
+  // `peer-*.md` namespace and reconciles it on every connect/disconnect/sleep,
+  // so an uninstall manifest listing today's peers would go stale immediately.
+  try {
+    const peerAgents = syncPeerAgents(join(projectRoot, '_dream_context'));
+    for (const file of peerAgents.written) {
+      installed.push(platformPrefixed(platform, `.claude/agents/${file} ${chalk.dim('(peer envoy)')}`));
+    }
+  } catch {
+    // Best-effort: a missing envoy must never fail an install.
   }
 
   {

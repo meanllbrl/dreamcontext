@@ -78,6 +78,49 @@
   color: var(--color-text-tertiary);
   text-transform: capitalize;
 }
+/* A peer envoy drill-in wears its VAULT's identity: accent-tinted badge naming the vault,
+   and the vault's logo riding the breadcrumb. */
+.chat-slideover-subagent-badge[data-peer] {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+.chat-slideover-peer-logo {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  object-fit: cover;
+  vertical-align: -3px;
+  margin-left: 2px;
+  outline: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+/* "↓ Latest" inside a panel — the LAST child of the scrolling body, stuck to its visible
+   bottom edge. Sticky (not absolute) so it needs no knowledge of what sits under the panel:
+   the peer panel has a whole composer there, the drill-ins have nothing. Not rendered at
+   all while the reader is already at the bottom. */
+.chat-slideover-jump {
+  position: sticky;
+  bottom: 4px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 6px;
+  width: fit-content;
+  margin: 10px auto 0;
+  padding: 5px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  color: var(--color-text-secondary);
+  box-shadow: var(--shadow-md, var(--shadow-sm));
+  font-family: inherit;
+  font-size: var(--font-size-xs, 12px);
+  font-weight: 600;
+  cursor: pointer;
+}
+.chat-slideover-jump:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.chat-slideover-jump:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 .chat-slideover-subagent-status[data-status='completed'] { color: var(--color-success); }
 .chat-slideover-subagent-status[data-status='error'] { color: var(--color-error); }
 .chat-slideover-subagent-status[data-status='running'] { color: var(--color-warning); }

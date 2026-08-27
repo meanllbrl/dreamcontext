@@ -280,6 +280,12 @@ export interface VaultStatus {
   latestVersion: string;
   /** Folder exists AND setupVersion is behind latestVersion → YELLOW + Update. */
   needsUpdate: boolean;
+  /** The vault ships an identity mark (`_dream_context/assets/logo.*`) — render it via
+   *  `launcherLogoUrl(name)`. */
+  logo: boolean;
+  /** The logo file's mtime (ms), or null — rides the image URL as a cache-buster so a
+   *  logo replaced from the launcher shows without a reload. */
+  logoStamp: number | null;
   /**
    * ISO timestamp of the last launcher-initiated open, or null when never opened
    * (or registered before the field existed). The Space view turns this into
@@ -308,6 +314,37 @@ export function useLauncherStatus(enabled = true) {
     queryKey: ['launcher-status'],
     queryFn: () => api.get<StatusResponse>('/launcher/status'),
     enabled,
+  });
+}
+
+/**
+ * SET a vault's logo from the launcher: the picked file's raw bytes go up (like
+ * `uploadAgentFile`, not `api.post` — that helper JSON-encodes), the server magic-byte
+ * verifies them and writes `_dream_context/assets/logo.<ext>`, and every launcher query
+ * refetches so the new mark shows without a reload (`logoStamp` busts the image cache).
+ */
+export function useSetVaultLogo() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ name, file }: { name: string; file: File }) => {
+      const res = await fetch(`/api/launcher/logo?vault=${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: await file.arrayBuffer(),
+      });
+      if (!res.ok) {
+        let message = `Could not set the logo (${res.status}).`;
+        try {
+          const err = await res.json() as { message?: string };
+          if (err.message) message = err.message;
+        } catch { /* non-JSON error body — keep the status-code message */ }
+        throw new Error(message);
+      }
+      return await res.json() as { ok: true; logo: boolean; logoStamp: number | null };
+    },
+    onSuccess: () => {
+      invalidateLauncher(queryClient);
+    },
   });
 }
 

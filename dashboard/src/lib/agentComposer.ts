@@ -385,6 +385,143 @@ export function isSignInCommand(message: string): boolean {
   return /^\/login(\s|$)/.test(message.trim());
 }
 
+// ─── `@peer` mentions ──────────────────────────────────────────────────────────
+//
+// The same three primitives as the `/` menu above, for addressing a CONNECTED
+// PROJECT. Kept deliberately parallel — same token-boundary anchoring, same
+// prefix-then-substring ranking, same "replace only the token at the caret"
+// rewrite — because the two menus sit in the same textarea and a user who has
+// learned one has learned the other.
+
+/** One addressable peer, as the `@` menu shows it. */
+export interface PeerMention {
+  /** Registered vault name — what gets written into the message. */
+  vault: string;
+  /** Generated envoy subagent name (`peer-tilki`), for the hint line. */
+  agent: string;
+  /** One-line "what it is" from the peer-summary cache. May be ''. */
+  whatItIs: string;
+  /** Whether the peer vault ships a logo (`assets/logo.*` in ITS tree) — the client
+   *  builds the image URL itself via `peerLogoUrl`. Optional: older servers omit it. */
+  logo?: boolean;
+}
+
+/**
+ * The peer behind a dispatched sub-agent, if the run IS a peer envoy. Matched on the
+ * generated agent name (`peer-<slug>`), which is exactly what the Agent tool reports as
+ * `subagent_type` — this is what lets a peer run wear the peer's face instead of the
+ * generic agent avatar.
+ */
+export function peerForAgent(
+  subagentType: string | null | undefined,
+  peers: PeerMention[],
+): PeerMention | null {
+  if (!subagentType) return null;
+  const lc = subagentType.toLowerCase();
+  return peers.find((p) => p.agent.toLowerCase() === lc) ?? null;
+}
+
+/** One run of {@link mentionSegments} output: a slice of the draft, flagged when it is a
+ *  known peer's `@` mention. */
+export interface MentionSegment {
+  text: string;
+  mention: boolean;
+}
+
+/**
+ * The draft, split into plain slices and `@<peer>` mentions — for the composer's
+ * highlight layer, which paints ONLY the mentions and leaves the rest to the textarea.
+ *
+ * A token counts only when it names a KNOWN peer (vault or envoy-agent name,
+ * case-insensitive) at a token boundary — the same boundary rule as
+ * {@link mentionQueryAt}, so an email address's `@` never lights up.
+ */
+export function mentionSegments(text: string, peers: PeerMention[]): MentionSegment[] {
+  if (!peers.length || !text.includes('@')) return [{ text, mention: false }];
+  const names = new Set(
+    peers.flatMap((p) => [p.vault.toLowerCase(), p.agent.toLowerCase()]),
+  );
+  const out: MentionSegment[] = [];
+  const re = /(^|\s)@([^\s]+)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const start = m.index + m[1].length;
+    if (!names.has(m[2].toLowerCase())) continue;
+    if (start > last) out.push({ text: text.slice(last, start), mention: false });
+    out.push({ text: `@${m[2]}`, mention: true });
+    last = start + m[2].length + 1;
+  }
+  if (last < text.length) out.push({ text: text.slice(last), mention: false });
+  return out.length ? out : [{ text, mention: false }];
+}
+
+/**
+ * The `@…` token at the caret, or `null` when the caret isn't in one. Returns
+ * `''` for a bare `@` (offer every peer), so callers must test for `null`.
+ *
+ * Anchored at a token boundary exactly like {@link slashQueryAt}, which is what
+ * keeps an email address silent: the `@` in `mehmet@nativeminds.ai` is glued to
+ * the previous character, so it never opens the menu.
+ */
+export function mentionQueryAt(text: string, caret: number): string | null {
+  const before = text.slice(0, Math.max(0, caret));
+  const m = /(?:^|\s)@([^\s]*)$/.exec(before);
+  return m ? m[1] : null;
+}
+
+/** `peers` filtered by `query`, prefix matches first. Case-insensitive. */
+export function filterPeerMentions(peers: PeerMention[], query: string): PeerMention[] {
+  const q = query.toLowerCase();
+  if (!q) return [...peers];
+  const prefix: PeerMention[] = [];
+  const contains: PeerMention[] = [];
+  for (const p of peers) {
+    const lc = p.vault.toLowerCase();
+    if (lc.startsWith(q)) prefix.push(p);
+    else if (lc.includes(q) || p.agent.toLowerCase().includes(q)) contains.push(p);
+  }
+  return [...prefix, ...contains];
+}
+
+/**
+ * Replace the `@…` token at the caret with `@<vault> `, and report the new caret.
+ * Only that token is rewritten, so a mid-sentence pick keeps everything the user
+ * already typed.
+ */
+export function applyPeerMention(
+  text: string,
+  caret: number,
+  vault: string,
+): { text: string; caret: number } {
+  const at = Math.max(0, Math.min(caret, text.length));
+  const query = mentionQueryAt(text, at);
+  const start = query === null ? at : at - query.length - 1;
+  const head = `${text.slice(0, start)}@${vault} `;
+  return { text: head + text.slice(at), caret: head.length };
+}
+
+/**
+ * The peer a message is ADDRESSED to: a leading `@<vault>`, matched against the
+ * known peers. Returns the peer and the message with the mention stripped.
+ *
+ * Leading only, and that is the whole rule. "@Tilki nasıl yapıyor bunu" is a
+ * message FOR Tilki; "bunu @Tilki gibi yapalım" mentions it while talking to the
+ * local agent, and routing that to another project would be a surprise the user
+ * cannot undo. Same shape as {@link isSignInCommand}'s leading-form test, for
+ * the same reason.
+ */
+export function addressedPeer(
+  message: string,
+  peers: PeerMention[],
+): { peer: PeerMention; body: string } | null {
+  const m = /^@([^\s]+)\s*([\s\S]*)$/.exec(message.trim());
+  if (!m) return null;
+  const name = m[1].toLowerCase();
+  const peer = peers.find((p) => p.vault.toLowerCase() === name || p.agent.toLowerCase() === name);
+  return peer ? { peer, body: m[2].trim() } : null;
+}
+
 /** Title-case an effort level for display ("high" → "High"). */
 export function effortLabel(level: string): string {
   return level ? level.charAt(0).toUpperCase() + level.slice(1) : level;

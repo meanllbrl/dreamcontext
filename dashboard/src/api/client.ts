@@ -86,6 +86,27 @@ export function graphContentUrl(vault: string | null, path: string, opts: { raw?
 }
 
 /**
+ * The URL for a connected PEER vault's logo (`_dream_context/assets/logo.*` in the peer's
+ * own tree), for the same hand-it-to-the-browser reason as {@link agentFileUrl}: an
+ * `<img src>` carries no headers, so the requesting vault rides in `?vault=` and the peer's
+ * name in `?peer=`. The server gates on an active connection — same consent line as mail.
+ */
+export function peerLogoUrl(vault: string | null, peer: string): string {
+  const scope = vault ? `&vault=${encodeURIComponent(vault)}` : '';
+  return `${BASE_URL}/peer/logo?peer=${encodeURIComponent(peer)}${scope}`;
+}
+
+/**
+ * A REGISTERED vault's logo, for the launcher's cards and Space chips. Distinct from
+ * {@link peerLogoUrl} because the two routes have different gates: this one serves the
+ * user their own registry (registration is the only check), while the peer route serves
+ * another vault's file and rides the federation consent line.
+ */
+export function launcherLogoUrl(name: string): string {
+  return `${BASE_URL}/launcher/logo?vault=${encodeURIComponent(name)}`;
+}
+
+/**
  * One project's view of the local API. The vault is bound at CONSTRUCTION and forwarded on
  * every request as `X-Dreamcontext-Vault`, which the server resolves per-request to that
  * project's context root.

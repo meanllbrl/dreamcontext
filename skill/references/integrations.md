@@ -365,6 +365,8 @@ dreamcontext app status      # show installed version and state
 
 Most people end up with more than one dreamcontext project. Federation lets projects discover each other and **recall across each other live** — read-only, local-only, no server, and **nothing is ever copied between vaults**. Each vault stays the single source of truth for its own knowledge.
 
+Federation has two halves. **Reading** a peer (below) searches what it has written down. **Peer mail** (further down) lets you *address* it — ask its agent a question, leave it a note, hand it work — and get an answer reasoned from its own code.
+
 ### Vault registry
 ```bash
 dreamcontext vaults add <name> <path>            # register a project directory as a vault
@@ -413,6 +415,48 @@ dreamcontext federation purge --all                # remove every federated:true
 dreamcontext federation purge --vault <name>       # remove only copies from one peer
 dreamcontext federation purge --dry-run            # preview
 ```
+
+### Peer mail — ASK a connected project, don't just read it
+
+Reading a peer returns what it has **written down**. Peer mail gets an answer **reasoned** from
+its code by an agent with that project's brain loaded. Delivery runs a headless
+`claude -p` rooted in the PEER's directory, so its SessionStart hook fires and it answers as
+itself.
+
+```bash
+dreamcontext peer ask <vault> "<question>"          # wake it now, wait for the answer (~30-90s)
+dreamcontext peer send <vault> "<text>" --kind note # leave it in the inbox; no spawn, no cost
+dreamcontext peer send <vault> "<text>" --kind command   # hand over work (auto perms, never bypass)
+dreamcontext peer inbox [--all]                     # what is waiting here
+dreamcontext peer read|thread|reply|done <id>       # the correspondence
+```
+
+**When to ask instead of recall** — this is the judgement call, and getting it wrong is
+expensive in both directions:
+
+| Reach for | When |
+|---|---|
+| `memory recall --vault <name>` | You want a doc, a decision, a task — something someone wrote. Fast, free, returns source text. |
+| `peer ask` | The answer must be derived: "where is X implemented there", "why was Y done that way", "would Z break anything on your side". Also when **recall came back empty** but the peer would still know — nobody had written it down yet. |
+| `peer send --kind command` | The user actually wants work done in that project. Say so in your report. |
+
+Each active connection also generates an **envoy sub-agent** (`.claude/agents/peer-<vault>.md`,
+regenerated on connect/disconnect/install) carrying that peer's identity. Dispatch it to keep a
+long peer answer out of your own context. The envoy reports the peer's answer **attributed** —
+if the peer contradicts what this project believes, that contradiction is the finding.
+
+**Gates.** A send requires an active connection (drawing it IS the consent — same rule as
+read federation since v0.23.0). What a message may DO on arrival is held separately and
+absolutely: every peer-delivered run is `--permission-mode auto`, a constant with no
+caller-supplied path to `bypassPermissions`. A peer can always ask; it can never grant itself
+the right to act unsupervised. In a headless run a permission prompt has nobody to answer it,
+so the peer reports itself blocked rather than working around it — the dashboard's peer
+session is the surface where such a prompt CAN be answered.
+
+Mail lives in `state/.peer-mail/<id>.json` on **both** ends of a thread (correspondence is
+meant to be duplicated), never materialises as knowledge, and surfaces in the receiving
+project's SessionStart snapshot under `## Peer mail` — which is how a project that was asleep
+when it was addressed finds out.
 
 ### Meeting Room — one announcement, EVERY agent (hidden launcher surface)
 

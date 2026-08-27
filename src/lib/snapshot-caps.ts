@@ -297,6 +297,13 @@ export type DemotableSectionId =
  * render (D15) — because each of them is the same load-bearing slot. The ROSTER
  * of other people is a different thing entirely and is demotable (rank 110): who
  * else exists is inventory, not constitution.
+ *
+ * `peer-mail` is here for a reason none of the others share: it is the only
+ * section someone is WAITING on. A peer addressed this project and is holding an
+ * open thread; if the message is demoted away the agent never learns it exists
+ * and the sender gets silence that is indistinguishable from a refusal. It is
+ * also self-limiting — pending mail is a handful of short messages, and it stops
+ * rendering entirely the moment they are answered and closed.
  */
 export type NeverEvictSectionId =
   | 'header'
@@ -307,6 +314,7 @@ export type NeverEvictSectionId =
   | 'product-and-nudge'
   | 'awareness'
   | 'marketing'
+  | 'peer-mail'
   | 'federation';
 
 /**
