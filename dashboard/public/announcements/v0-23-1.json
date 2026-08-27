@@ -119,7 +119,7 @@
       "body": "The session-start preload had been growing faster than the vault it describes, until it needed a compression ladder to fit — which is a way of hiding content that should never have been sent. So the default got denser instead. Features are a name, a status and a path. Knowledge that isn't pinned is an honest count and the command to reach the rest. The warm-knowledge section is simply gone.\n\nIt now arrives whole, with no truncation banner, on a vault where it used to be cut in half.",
       "shot": {
         "src": "shots/v0-23-1/core.png",
-        "alt": "The Core page of a real vault: a PEOPLE section listing Mehmet Nuraydın as active, above the core files — soul, memory, style guide, tech stack, changelog, releases and taxonomy — with the soul document open in the reader beside them",
+        "alt": "The Core page of a vault: a PEOPLE section with the active person at the top, above the core files — soul, memory, style guide, tech stack, changelog, releases and taxonomy — with the soul document open in the reader beside them",
         "caption": "The shape of a brain after 0.23.0: a person, and a constitution-only soul."
       }
     },
@@ -129,7 +129,7 @@
       "body": "The old user file was one document trying to be a person, a roster and a junk drawer at once. It's gone. Everyone gets their own constitution now, loaded word for word when they're the one working, resolved from your git identity — with nothing about your machine written into the shared brain.\n\nYour existing vault is moved for you. The mechanical half happens on upgrade; the prose that needed judgement is handed to your agent rather than guessed at.",
       "shot": {
         "src": "shots/v0-23-1/people.png",
-        "alt": "The Core file list: a PEOPLE heading with Mehmet Nuraydın marked active, then CORE FILES listing soul, active-decisions, style-guide, tech-stack, System Flow, CHANGELOG, RELEASES and taxonomy — with no 1.user.md among them",
+        "alt": "The Core file list: a PEOPLE heading with the active person under it, then CORE FILES listing soul, active-decisions, style-guide, tech-stack, CHANGELOG, RELEASES and taxonomy — with no 1.user.md among them",
         "caption": "No user file. A person, then the core files.",
         "frame": "plain"
       },

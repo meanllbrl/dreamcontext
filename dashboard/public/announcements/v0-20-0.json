@@ -66,6 +66,24 @@
     {
       "kind": "note",
       "text": "Theses are opt-in — `dreamcontext theses enable`. Left off, the sleep cycle behaves exactly as it did before, and the Hypotheses page stays out of your way."
+    },
+    {
+      "kind": "points",
+      "title": "And in v0.20.1, the patch on top",
+      "items": [
+        {
+          "title": "A first sync that survives its own size",
+          "text": "Importing a full task backend used to mean one request per task per field. First sync now sends custom fields inline and skips the changelog backfill, so a vault with hundreds of tasks completes instead of timing out halfway and leaving half a board behind."
+        },
+        {
+          "title": "You can see it working",
+          "text": "A sync is a progress bar in the CLI and a background job in the dashboard, not a cursor that sits there. And when a run dies mid-flight, the lock knows whose it was rather than blocking the next one forever."
+        },
+        {
+          "title": "Hard refresh, when the mirror is wrong",
+          "text": "`tasks hard-refresh` backs up the local mirrors, wipes the sync ledger and re-pulls everything, for the case where the remote is right and the local copy has drifted past repair."
+        }
+      ]
     }
   ],
   "closer": {

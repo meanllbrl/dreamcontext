@@ -34,6 +34,21 @@ export interface Announcement {
    * `parseAnnouncements`. Stored bare (no `v`); render it via `formatVersion`.
    */
   version: string;
+  /**
+   * Other released versions this story ALSO speaks for, bare like `version`.
+   *
+   * The feed is a release history, so a version that shipped and is named
+   * nowhere is a hole in it — that is how 0.24.1 (npm's `latest` for ten days)
+   * came to be announced by nothing at all. But not every patch earns its own
+   * page: 0.23.1 carried the never-published 0.22.0, and folding it into one
+   * story was the honest call, not a gap.
+   *
+   * `covers` is what tells those two cases apart. A fold is a CLAIM the story
+   * makes and the coverage test checks; silence is a bug. Listing a version here
+   * means "read this page to learn what that release gave you" — so the story
+   * body has to actually cover it.
+   */
+  covers?: string[];
   tags?: string[];
 }
 
@@ -67,6 +82,9 @@ function sanitizeOptional(a: Announcement): Announcement {
     story: a.story,
     version: a.version,
   };
+  if (Array.isArray(a.covers) && a.covers.every((c) => typeof c === 'string' && c.length > 0)) {
+    out.covers = a.covers;
+  }
   if (Array.isArray(a.tags) && a.tags.every((t) => typeof t === 'string')) out.tags = a.tags;
   return out;
 }

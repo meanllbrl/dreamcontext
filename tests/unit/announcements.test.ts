@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { parseAnnouncementStory } from '../../dashboard/src/lib/announcementStory.js';
 import {
@@ -278,6 +280,164 @@ describe('the shipped announcements manifest', () => {
       );
 
     expect(onDisk.filter((f) => !referenced.has(f))).toEqual([]);
+  });
+});
+
+/**
+ * Announcements ship inside the npm tarball and the desktop bundle, so anything on
+ * an author's screen when they take the shot is PUBLISHED. That already happened:
+ * v0.24.0 shipped a client's whole task board plus four private project names,
+ * v0.23.1 shipped the owner's full name, and v0.26.1 shipped a peer product's
+ * business description and a real client file path.
+ *
+ * The denylist is READ FROM THE AUTHOR'S OWN MACHINE rather than hardcoded, which is
+ * the only way this can be both effective and safe: writing the private names into a
+ * test file in a public repo would BE the leak. `~/.dreamcontext/vaults.json` is the
+ * launcher's registry — the same list the leaked screenshots came from — and it is
+ * outside the repo. On CI, where no registry exists, those cases self-skip; the
+ * generic patterns below still run everywhere.
+ *
+ * This catches copy, not pixels. A screenshot's contents can't be asserted here, so
+ * the structural half of the rule lives in `e2e/announce-demo-vaults.mjs`: every
+ * scene that frames the project list is captured against a synthetic vault set under
+ * a fake $HOME, so there is nothing real on screen to photograph.
+ */
+describe('the shipped feed carries nothing personal', () => {
+  const root = join(__dirname, '../../dashboard/public/announcements');
+  const manifestRaw: unknown = JSON.parse(
+    readFileSync(join(__dirname, '../../dashboard/public/announcements.json'), 'utf8'),
+  );
+  const feed = parseAnnouncements(manifestRaw);
+
+  /** Every author-written string in the feed: manifest entries and story documents. */
+  const prose: string[] = (() => {
+    const out: string[] = [];
+    const walk = (v: unknown): void => {
+      if (typeof v === 'string') out.push(v);
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+    };
+    walk(manifestRaw);
+    for (const a of feed) {
+      const p = join(root, a.story);
+      if (existsSync(p)) walk(JSON.parse(readFileSync(p, 'utf8')));
+    }
+    return out;
+  })();
+
+  /** Names of the projects registered on THIS machine, minus the product itself. */
+  function localVaultNames(): string[] {
+    const registry = join(homedir(), '.dreamcontext', 'vaults.json');
+    if (!existsSync(registry)) return [];
+    try {
+      const parsed = JSON.parse(readFileSync(registry, 'utf8')) as { vaults?: { name?: unknown }[] };
+      return (parsed.vaults ?? [])
+        .map((v) => v.name)
+        .filter((n): n is string => typeof n === 'string' && n.length > 2)
+        // `dreamcontext` is the product this feed announces — naming it is the point.
+        .filter((n) => n.toLowerCase() !== 'dreamcontext');
+    } catch {
+      return [];
+    }
+  }
+
+  function gitIdentity(): string[] {
+    const out: string[] = [];
+    for (const key of ['user.name', 'user.email']) {
+      try {
+        const v = execFileSync('git', ['config', '--get', key], { encoding: 'utf8' }).trim();
+        // A one-word handle is too collision-prone to assert on ("acme", "demo");
+        // a full name or an address is not.
+        if (v.length > 4 && (v.includes(' ') || v.includes('@'))) out.push(v);
+      } catch {
+        /* no git identity configured — nothing to check */
+      }
+    }
+    return out;
+  }
+
+  function hits(needle: string): string[] {
+    const n = needle.toLowerCase();
+    return prose.filter((s) => s.toLowerCase().includes(n)).map((s) => s.slice(0, 120));
+  }
+
+  it('reads a non-empty corpus (guards against the checks passing vacuously)', () => {
+    expect(prose.length).toBeGreaterThan(50);
+  });
+
+  const vaults = localVaultNames();
+  it.skipIf(vaults.length === 0).each(vaults.map((v) => [v]))(
+    'never names the locally registered project %s',
+    (name) => {
+      expect(hits(name), `"${name}" is one of your own projects`).toEqual([]);
+    },
+  );
+
+  const identity = gitIdentity();
+  it.skipIf(identity.length === 0).each(identity.map((v) => [v]))(
+    'never names the author (%s)',
+    (who) => {
+      expect(hits(who)).toEqual([]);
+    },
+  );
+
+  // Safe to hardcode — these are shapes, not anyone's data, so they run on CI too.
+  it.each([
+    ['a home directory path', /(?:\/Users\/|\/home\/|C:\\Users\\)[A-Za-z0-9._-]+/],
+    ['an email address', /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/],
+  ])('never carries %s', (_label, pattern) => {
+    const found = prose.filter((s) => pattern.test(s)).map((s) => s.slice(0, 120));
+    expect(found).toEqual([]);
+  });
+});
+
+/**
+ * The feed is a RELEASE HISTORY, so a version that shipped and appears nowhere on it
+ * is a hole, not an omission. npm's `latest` was 0.24.1 for ten days while every
+ * surface in this repo — including this feed — said 0.24.0 was the last release.
+ *
+ * Bounded deliberately: What's New began at 0.18.0, and the 37 releases before it
+ * were never going to be backfilled. The rule is "once the feed has begun, it does
+ * not skip" — every release at or after its oldest entry is either announced or
+ * explicitly folded into another story via `covers`.
+ */
+describe('the feed skips no release it should cover', () => {
+  const feed = parseAnnouncements(
+    JSON.parse(readFileSync(join(__dirname, '../../dashboard/public/announcements.json'), 'utf8')),
+  );
+
+  const bare = (v: string): string => v.replace(/^v/i, '');
+  const rank = (v: string): number =>
+    bare(v)
+      .split('.')
+      .map((n) => Number.parseInt(n, 10) || 0)
+      .reduce((acc, n) => acc * 1000 + n, 0);
+
+  it('announces or explicitly folds every release since its oldest entry', () => {
+    const releasesPath = join(__dirname, '../../_dream_context/core/RELEASES.json');
+    if (!existsSync(releasesPath)) return; // consumer checkouts have no brain to read
+
+    const raw: unknown = JSON.parse(readFileSync(releasesPath, 'utf8'));
+    const records = (Array.isArray(raw) ? raw : (raw as { releases?: unknown[] }).releases ?? []) as {
+      version?: unknown;
+      status?: unknown;
+    }[];
+
+    const released = records
+      .filter((r) => r.status === 'released' && typeof r.version === 'string')
+      .map((r) => bare(r.version as string));
+
+    const spokenFor = new Set<string>();
+    for (const a of feed) {
+      spokenFor.add(bare(a.version));
+      for (const c of a.covers ?? []) spokenFor.add(bare(c));
+    }
+
+    // The feed's own floor — never demand pages for releases that predate it.
+    const floor = Math.min(...feed.map((a) => rank(a.version)));
+    const missing = released.filter((v) => rank(v) >= floor && !spokenFor.has(v));
+
+    expect(missing, 'released, and named nowhere on the feed').toEqual([]);
   });
 });
 

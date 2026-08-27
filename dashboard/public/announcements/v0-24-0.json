@@ -5,7 +5,7 @@
     "sub": "The desktop app stops being one window per project. Everything you have open lives in a single strip at the top, every one of them still running, and each chip tells you what its agent is doing without you going to look.",
     "shot": {
       "src": "shots/v0-24-0/chip-strip.png",
-      "alt": "The desktop app with four projects open as chips across the top of one window — dreamcontext, Genevous, Tilki and kader-matematik — the last one active and showing its task board underneath, while the other three carry live session counts and unseen-activity dots",
+      "alt": "The desktop app with four projects open as chips across the top of one window, the active one showing its task board underneath while the other three stay open beside it",
       "caption": "Four projects, one window, none of them asleep."
     }
   },
@@ -17,8 +17,8 @@
       "body": "A chip is not a bookmark to a project you left. Every open project keeps running — its chat keeps streaming, its terminal keeps its scrollback — because a project going out of view is never allowed to touch its connection. The number on a chip is how many live chats that project is holding, and the dot next to it means something happened there you haven't seen yet.",
       "shot": {
         "src": "shots/v0-24-0/chip-status.png",
-        "alt": "A close crop of the chip strip: dreamcontext with a count of 1 and a magenta unseen dot, Genevous with 2 and a dot, Tilki with 6 and no dot, and kader-matematik active with a close button",
-        "caption": "Six live chats in Tilki, two of them unread in Genevous.",
+        "alt": "A close crop of the chip strip: four projects side by side, the active one carrying a live chat count and a close button, the other three waiting with theirs",
+        "caption": "Four projects, one window. The number is how many chats that project is holding.",
         "frame": "plain"
       }
     },
@@ -155,6 +155,20 @@
     {
       "kind": "note",
       "text": "The desktop app is still a macOS beta and is not Apple-notarized, so a first launch may need right-click → Open. The chip strip's structure, its keyboard picking and its status marks are covered by automated runtime checks; the parts that need a real terminal and a live agent — a chat that keeps streaming across a switch, the notification that fires from a background project — were verified by hand, and are honestly still listed as such."
+    },
+    {
+      "kind": "points",
+      "title": "And in v0.24.1, the patch on top",
+      "items": [
+        {
+          "title": "Backlog is one click",
+          "text": "Shelving a task meant typing the word 'backlog' into a free-text box. It is now a row on the card's menu and a button in the detail panel — and it writes only the tag, letting the one rule that already defines backlog clear the dates, instead of a second copy of that rule drifting in the UI."
+        },
+        {
+          "title": "Tags are picked, not typed",
+          "text": "The tag field now offers what this vault already uses, most-used first with counts, with an unknown one still creatable. Hand-typing is how a vault ends up carrying both 'decision' and 'decisions' as live near-duplicates."
+        }
+      ]
     }
   ],
   "closer": {

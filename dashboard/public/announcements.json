@@ -4,10 +4,12 @@
     "date": "2026-08-27",
     "version": "0.26.1",
     "title": "Your projects stop being alone",
-    "summary": "A brain could already read its siblings; now it can address them. Peer mail asks a connected project a question and gets an answer reasoned from its own code, and the Meeting Room puts one announcement in front of every agent you have. Every vault also wears its own logo now, across the orbit, the composer and the peer rows.",
+    "summary": "A brain could already read its siblings; now it can address them. Peer mail asks a connected project a question and gets an answer reasoned from its own code, and the Meeting Room puts one announcement in front of every agent you have. Lab answers with a report rather than a number — two-dimensional breakdowns, sortable columns, honest low-sample flags. And chat retired its fixed chart types for HTML the agent writes itself, in a sandbox wearing the app's own theme.",
     "tags": [
       "federation",
       "agent",
+      "lab",
+      "chat",
       "desktop"
     ],
     "story": "v0-26-1.json"
@@ -38,7 +40,10 @@
       "automations",
       "hypotheses"
     ],
-    "story": "v0-24-0.json"
+    "story": "v0-24-0.json",
+    "covers": [
+      "0.24.1"
+    ]
   },
   {
     "id": "v0-23-1",
@@ -53,7 +58,10 @@
       "chat",
       "migrations"
     ],
-    "story": "v0-23-1.json"
+    "story": "v0-23-1.json",
+    "covers": [
+      "0.22.0"
+    ]
   },
   {
     "id": "v0-21-0",
@@ -73,14 +81,17 @@
     "date": "2026-07-22",
     "version": "0.20.0",
     "title": "The brain starts forming opinions — falsifiable theses, re-tested every sleep cycle",
-    "summary": "The proactive learning layer lands: claims your project makes about itself, with predictions registered before the evidence arrives, a cited evidence ledger, and a confidence derived by arithmetic rather than felt. Alongside it, funnel analytics in Lab — and What's New itself.",
+    "summary": "The proactive learning layer lands: claims your project makes about itself, with predictions registered before the evidence arrives, a cited evidence ledger, and a confidence derived by arithmetic rather than felt. Alongside it, funnel analytics in Lab — and What's New itself. The 0.20.1 patch on top of it made task sync survive a full-size backend.",
     "tags": [
       "hypotheses",
       "sleep",
       "lab",
       "announcements"
     ],
-    "story": "v0-20-0.json"
+    "story": "v0-20-0.json",
+    "covers": [
+      "0.20.1"
+    ]
   },
   {
     "id": "v0-18-0",

@@ -2,11 +2,11 @@
   "hero": {
     "eyebrow": "v0.26.1  ·  27 August 2026",
     "headline": "Your projects stop being alone",
-    "sub": "Until now a brain could read its siblings. Now it can address them: ask one a question and get an answer reasoned from its own code, or put one message in front of every agent you have.",
+    "sub": "Until now a brain could read its siblings. Now it can address them: ask one a question and get an answer reasoned from its own code, or put one message in front of every agent you have. And Lab stops being a wall of cards.",
     "shot": {
       "src": "shots/v0-26-1/launcher.png",
-      "alt": "The launcher's Space view: six projects orbiting the dreamcontext core, each chip wearing its own logo, dashed wires drawn between the ones that are connected.",
-      "caption": "Six projects, wired. Each one wears its own logo now, so you recognise a vault before you read its name."
+      "alt": "The launcher's Space view: five projects orbiting the dreamcontext core, each chip wearing its own logo, dashed wires drawn between the ones that are connected.",
+      "caption": "Five projects, wired. Each one wears its own logo now, so you recognise a vault before you read its name."
     }
   },
   "blocks": [
@@ -17,7 +17,7 @@
       "body": "Reading a connected project returns what it wrote down. Peer mail returns an answer reasoned from its code, by an agent with that project's brain loaded. Type @ in the composer and every project you are connected to is there, each with the one-line identity read from its own soul file.",
       "shot": {
         "src": "shots/v0-26-1/peer-mention.png",
-        "alt": "The chat composer with @ typed, and a picker above it showing @Tilki with a fox logo and the first line of that project's own description.",
+        "alt": "The chat composer with @ typed, and a picker above it listing two connected projects, each with its own logo and the first line of that project's own description.",
         "caption": "The description is not something you typed here. It is read from that project's soul.",
         "frame": "plain"
       }
@@ -26,17 +26,16 @@
       "kind": "terminal",
       "title": "The same thing from the terminal",
       "lines": [
-        "$ dreamcontext peer ask Tilki \"where does teacherPayout get stamped?\"",
-        "  → waking Tilki (auto permissions, never bypass)…",
+        "$ dreamcontext peer ask acme-payments \"where does a refund get stamped idempotent?\"",
+        "  → waking acme-payments (auto permissions, never bypass)…",
         "",
-        "  functions/src/triggers/lesson-payout.ts — onLessonPayoutSync.",
-        "  An onDocumentWritten trigger on lessons/{lessonId} and the sole owner",
-        "  of lesson.teacherPayout. Stamps round(price × pct / 100) on create and",
-        "  on every price change. Pair exception wins over the teacher default,",
-        "  and a deliberate 0 counts as an exception.",
+        "  src/refunds/apply.ts — applyRefund().",
+        "  The idempotency key is the gateway's own refund id, written before the",
+        "  ledger row and read back inside the same transaction, so a retried",
+        "  webhook lands on the existing row instead of a second payout.",
         "",
-        "$ dreamcontext peer send Tilki \"the payout rounding needs a second look\" --kind note",
-        "  → left in Tilki's inbox. No spawn, no cost.",
+        "$ dreamcontext peer send acme-payments \"the rounding on partial refunds needs a second look\" --kind note",
+        "  → left in acme-payments' inbox. No spawn, no cost.",
         "",
         "$ dreamcontext peer inbox",
         "  1 waiting · reply with: dreamcontext peer reply <id> \"…\""
@@ -58,9 +57,24 @@
       }
     },
     {
+      "kind": "split",
+      "side": "left",
+      "title": "Lab answers with a report, not a number",
+      "body": "The same window rebuilt the analytics side. A metric can now break down along two dimensions at once and render as the table that comparison actually wants — every column sortable, the weak cells shaded, a sample too small to trust labelled instead of quietly averaged in. My Reports is native, the range applies once and clears cleanly, and an insight can carry a hand-written HTML body when the built-in renders are the wrong shape for it.",
+      "shot": {
+        "src": "shots/v0-26-1/lab-funnel.png",
+        "alt": "A funnel insight open as a report: five funnels as rows, with users, spend, CPM, trial rate, finish rate and CAC as columns, each cell carrying its change against the previous period, weak cells shaded red and strong ones green, and one row flagged LOW SAMPLE.",
+        "caption": "Five funnels, six metrics, every delta against the last period — and the row with 28 users says so rather than pretending."
+      }
+    },
+    {
       "kind": "points",
       "title": "Also in this release",
       "items": [
+        {
+          "title": "The agent draws its own answer",
+          "text": "Chat retired its fixed chart and page types for HTML the agent writes itself, rendered in a sandbox that carries the app's own theme. A figure it draws can answer a hover with the number behind it."
+        },
         {
           "title": "Every vault wears its logo",
           "text": "Project chips, the orbit, the @ picker and the peer rows all read the vault's own mark, so you recognise a project before you read its name."
@@ -70,8 +84,8 @@
           "text": "A peer you addressed from the composer opens as a live session in the same window — the real transcript, the real permission cards, not a summary of what happened elsewhere."
         },
         {
-          "title": "Answers you can hover",
-          "text": "A number or a chart point the agent draws can now answer a pointer with the figure behind it, in the app's own type and colours."
+          "title": "Boards you can read",
+          "text": "Excalidraw output was re-typeset: a real UI sans on a readable measure, inline bold and highlight drawn as geometry, and a build that audits its own scene for buried labels and walls of text."
         }
       ]
     },
