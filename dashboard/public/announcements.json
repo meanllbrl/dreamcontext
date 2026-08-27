@@ -1,5 +1,18 @@
 [
   {
+    "id": "v0-26-1",
+    "date": "2026-08-27",
+    "version": "0.26.1",
+    "title": "Your projects stop being alone",
+    "summary": "A brain could already read its siblings; now it can address them. Peer mail asks a connected project a question and gets an answer reasoned from its own code, and the Meeting Room puts one announcement in front of every agent you have. Every vault also wears its own logo now, across the orbit, the composer and the peer rows.",
+    "tags": [
+      "federation",
+      "agent",
+      "desktop"
+    ],
+    "story": "v0-26-1.json"
+  },
+  {
     "id": "v0-25-0",
     "date": "2026-08-26",
     "version": "0.25.0",
