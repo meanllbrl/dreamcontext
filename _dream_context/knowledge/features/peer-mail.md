@@ -178,5 +178,11 @@ This is by design. The dashboard session is the surface where a blocking prompt 
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-08-27 - Logo feature verified complete
+- peer-mail.md already covers the vault logo feature comprehensively (written 10:31 today)
+- Logo convention (`assets/logo.*`), settable from launcher (right-click → OS picker → magic-byte verify), appears in @ picker, peer row/panel, envoy runs, launcher List/Space
+- logoStamp cache-busting via `&ts=` appended to image URL
+- 7dfe176 shipped both live peer sessions from @ AND the logo feature together
+
 ### 2026-08-26 - Created
 - Feature PRD created.

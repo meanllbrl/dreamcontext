@@ -1,6 +1,89 @@
 [
   {
     "date": "2026-08-27",
+    "type": "feat",
+    "scope": "meeting-room",
+    "description": "The room shipped as a modal over the launcher with a hand-rolled feed and a textarea-plus-Post box. Four things were wrong, all reported on 08-27, and the fix for each is the same move: stop having the room's own version of it. A WINDOW, NOT A MODAL: openMeetingWindow + ?meeting=1, mirroring openVaultWindow (resizable, overlay title bar, focus-if-open). A modal is the wrong shape for a conversation you leave running for ten minutes while N agents think. The window carries no VaultProvider, and that absence is load-bearing: useVault() resolving to null correctly drops the composer's Attach control and skips the per-vault peer fetch. ONE COMPOSER: new chat/composerHost.ts — a structural ComposerHost that ChatSession satisfies unchanged. meeting/meetingHost.ts supplies the room's host over its polled thread. One rule replaced a surface flag: a control is drawn where something sits behind it. Deleted from the room: its textarea, Post button, mention menu, mention parser, caret-restore trick, message bubble and ~80 lines of CSS. The feed is ItemView. AND THE CARET FIX TRAVELS BACK: the chat restored the post-insert caret in an rAF, which loses the race against fast typing. The retired room composer's pendingCaret + useLayoutEffect is now in Composer.tsx for all three paths. MODEL AND EFFORT ARE GLOBAL: the room writes chatDefaultModel/chatDefaultEffort in the app-global agent-ui.json every project window shares, read per run. ONE ANSWER PER AGENT PER USER MESSAGE: RunTask gained a wave and the orchestrator a per-thread ledger. A mention wakes a target the wave has not woken and coalesces into the run in flight for one it has, with a visible system line. The worst case per agent per message is two runs, a constant. AND THE ROOM DRAWS WHAT AN AGENT DRAWS: dream-html was being dropped in silence; TranscriptItem charged every block onAction && conversationId. Split to viewsAllowed, with the notice strip ungated.",
+    "breaking": false,
+    "summary": "The Meeting Room gets its own window, reuses the chat's composer, one global model pick, and one answer per agent per message",
+    "references": [
+      "commit:f4bbc17",
+      "file:dashboard/src/components/sleepy/chat/composerHost.ts",
+      "file:dashboard/src/components/meeting/meetingHost.ts",
+      "file:src/lib/meeting-delivery.ts",
+      "feature:meeting-room"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-27",
+    "type": "fix",
+    "scope": "announce",
+    "description": "Two defects, both silent, both already published. PRIVACY: a What's New page is built by photographing a running machine, and ships in the npm tarball and .app bundle. Five shots and nine lines of copy across three released versions published the author's private work: a client's entire task board (every card title, in Turkish), four private project names in the chip strip, five more in the launcher orbit, a peer product's positioning statement, a real client file path and an internal field name in a terminal block, and the owner's full legal name under a PEOPLE heading. All five are re-shot against a synthetic demo vault set. announce-demo-vaults.mjs builds five fictional projects under a throwaway /Users/mehmetnuraydin. listVaults() resolves under homedir() and Node honours /Users/mehmetnuraydin on POSIX, so the app reads a registry holding only the demo set. The copy half is now tested: the denylist is read from the author's machine at run time and never written into this repo. COVERAGE: npm's latest was 0.24.1 for ten days while this feed had never heard of it, and v0.26.1's story announced peer mail and the Meeting Room while the same window also shipped the Lab reporting rework and the agent-written-HTML chat surface. covers makes a fold an explicit, checkable claim. A new test diffs RELEASES.json against the feed and fails on any released version that is neither announced nor covered, floored at the feed's oldest entry. 0.20.1 and 0.24.1 are now folded into the .0 story of their line, and v0.26.1 grew the Lab block and the dream-html and excalidraw items it was missing.",
+    "breaking": false,
+    "summary": "The What's New feed carries nothing personal and skips no release",
+    "references": [
+      "commit:c020c2a",
+      "file:e2e/announce-demo-vaults.mjs",
+      "file:e2e/announce-shots-rescrub.mjs",
+      "knowledge:patterns/synthetic-fixtures-for-published-artifacts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-27",
+    "type": "fix",
+    "scope": "privacy",
+    "description": "A sweep after the announcement leak found the same defect everywhere the codebase reached for a worked example: ~300 references to the owner's private projects and ~130 to their identity — full name, slug, two real email addresses, a GitHub login, and absolute /Users/<name>/ import paths — living in code comments, CLI --help strings, test fixtures, skill docs and agent prompts. src/ and dashboard/src/ build into dist/, so a comment naming a client shipped to every npm install; the rest is public on GitHub. Everything now names the demo vault cast — the same fictional projects the announcement screenshots show, so an author reaching for 'a project name' finds one already there and a reviewer meeting an unfamiliar name knows it is a leak. The scrub preserves meaning rather than deleting facts: provenance stays provenance, a measurement stays a measurement, and a peer that needed a one-line identity still has one. scripts/recall-{ab,diag}.ts imported through absolute paths into one machine's home — now repo-relative, which fixes the leak and a portability bug. Renaming fixtures broke two assertions that were never about the spelling: the new first name sorts before lina where the old one did not, flipping a roster-order expectation; the new surname created a third member sharing it where exactly two was the point — became Çınar, which still carries the dotless ı the diacritic-folding test exists to prove. Kept deliberately: meanllbrl/dreamcontext as the functional constant.",
+    "breaking": true,
+    "summary": "Nothing this repo publishes names a real project or person — repo-wide scrub of ~430 private references",
+    "references": [
+      "commit:a6e35bf",
+      "file:scripts/recall-ab.ts",
+      "file:tests/unit/migration-0.23.0-people-first.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-27",
+    "type": "fix",
+    "scope": "chat",
+    "description": ".dc-mark painted --color-accent-text (white in BOTH themes) over --color-accent-soft (a 12-18% tint), so the phrase an author marked as the one to read was the only phrase in the block that could not be read. It is now the same pen styles/global.css gives the transcript's own ==highlight==: --color-highlight ink that stops short of the ascender line and baseline gap, color: inherit, and box-decoration-break: clone so a wrapped highlight is two strokes rather than one box with a bite. A bare mark joins the selector because the sandbox never sees global.css. --color-highlight and --color-highlight-edge added to CHAT_KIT_TOKENS (variables do not cross the iframe boundary). New tests: every token the kit reads must be one the host resolves (exhaustive), and the kit may not reference var(--color-accent-text) anywhere. The pattern file grows the case it did not yet cover: an inline marker is prose, not a chip; a rule that sets both background and color on something the reader reads THROUGH is already wrong.",
+    "breaking": false,
+    "summary": "The dream-html marker is now a pen stroke, not white text on a lavender swatch",
+    "references": [
+      "commit:c954090",
+      "file:dashboard/src/components/sleepy/chat/chat-html-kit.css",
+      "knowledge:patterns/tinted-surface-not-filled-swatch"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-27",
+    "type": "fix",
+    "scope": "launcher",
+    "description": "The 'whole background drags' fix from 0.10.7 was quietly undone by the Space: it covers everything below the top bar and opts out via data-no-drag because it owns pointer gestures, leaving only a 34px strip (72px under the floating traffic lights) as the grab zone. The title bar is now a real 44px bar with a grab cursor, and empty sky yields too: vertical drag on sky now moves the window instead of being dead space (spin only ever read the horizontal delta). The axis locks once at a 4px slop, biased 1.5x toward spin. New dragWindowNow()/warmWindowApi() let a data-no-drag surface hand a held pointer to the OS when it can tell the gesture was meant for the window. The Space/List choice was never stored anywhere that survives: the shell picks a fresh loopback port every launch so the origin changes and localStorage starts empty. Now server-side at ~/.dreamcontext/launcher-ui.json via GET/POST /api/launcher/ui-settings, with localStorage kept as the synchronous same-launch mirror.",
+    "breaking": false,
+    "summary": "Launcher window now has a real grab zone, and the Space/List view choice survives quitting",
+    "references": [
+      "commit:2bc1608",
+      "file:dashboard/src/lib/desktop.ts",
+      "file:src/server/routes/launcher.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-27",
     "type": "fix",
     "scope": "chat",
     "description": "The Chat block read as detached from the answer around it, and the cause was render order rather than stream pacing: chatActions.ts collapsed every prose run into one body string and returned blocks as a separate list, and TranscriptItem printed body THEN ChatViews — so the sentence written under a card rendered above it. parseChatActions now returns an ordered segment list (prose | html | view | pending), with block positions carried through the existing replace pipeline as NUL-delimited slot markers so every cap and degradation notice keeps its tested behaviour; NUL is scrubbed on entry so an answer cannot forge one. A message containing a link reference definition falls back to the old layout — document state the lexer resolves whole cannot survive a split. The pending fence became a segment, so it holds the block's real slot: HtmlPending wears the finished card's own chrome and fills in each title as the markup closes it, turning 10-20 seconds of hidden markup into legible work without ever drawing half a layout. HTML_PENDING_HEIGHT is both that slot's floor and the frame's pre-measurement height, so the card grows out of the slot instead of collapsing to the 40px measured floor and snapping open. Rendering moved into TranscriptItem: each prose run is a ProseSegment owning its own ref, which narrows the three decorator passes to prose alone, and blocks are direct children of the assistant row, which already had the flex column. Proved with 29 new unit tests, a new verify:chat-segments (46/46 in real Chromium across both themes, geometry sampled per animation frame), and a mutation run that reproduced the exact defect and failed 5 of the order checks.",

@@ -22,6 +22,8 @@ related_tasks:
   - meeting-room-hidden-launcher-chat-where-all-agents-convene
   - >-
     the-meeting-room-becomes-its-own-window-built-out-of-the-chat-with-one-global-model-pick-and-one-answer-per-agent
+  - >-
+    the-meeting-room-gets-its-own-byte-channel-so-a-dropped-or-pasted-file-reaches-every-agent
 ---
 
 ## Why
@@ -78,6 +80,17 @@ Cost is accepted, not solved: a PASS still costs a full context load per agent p
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-08-27 - Reconciled to f4bbc17 (its own window, built out of the chat)
+- All user stories and acceptance criteria ticked — the feature shipped as described, verified 52/52
+- The room is now a WINDOW (`openMeetingWindow`, `?meeting=1`, resizable overlay title bar), not a modal — so you can read it while working in the projects it talks about
+- ONE COMPOSER: `chat/composerHost.ts` is the structural seam — `ChatSession` satisfies it unchanged, and `meeting/meetingHost.ts` supplies the room's host over its polled thread. The room's own textarea, Post button, mention menu and message bubble are DELETED. It renders `chat/TranscriptItem`'s `ItemView` and `chat/Composer`, with the room keeping only what only it has: the thread rail, the presence strip, and the author line an eight-project room needs
+- The caret fix traveled BACK: adopting the chat's composer inherited a bug the room had already solved (the chat restored post-insert caret in an rAF, losing the race against fast typing). The retired room composer's `pendingCaret` + `useLayoutEffect` is now in `Composer.tsx`, covering @ menu, / menu and ↑ recall — so the chat and the peer panel got a fix they had carried broken since they shipped
+- Model and effort are APP-GLOBAL here (`chatDefaultModel`/`chatDefaultEffort` in `~/.dreamcontext/agent-ui.json`, read PER RUN so a change mid-fan-out reaches agents that haven't woken yet), not room-scoped and not per-project
+- ONE ANSWER PER AGENT PER USER MESSAGE: `RunTask.wave` + per-thread wave ledger — a mention wakes a target the wave has not woken and COALESCES into the run in flight for one it has. Worst case per agent per message is 2 runs (constant), not growing with room size
+- The room DRAWS `dream-html`: `TranscriptItem` split `!!onAction && !!conversationId` to `viewsAllowed = !!conversationId` (a sandboxed HTML render needs neither), with the notice strip UNGATED. Same class closed for buttons (no `onAction`) and boards (no `onOpenBoard`). Beyond the room: the sub-agent drill-in now says what it could not draw instead of dropping it silently
+- New verify:composer-shared 17/17 (atomicity claim falsifiable by comparing every chat-cmp class as a set across both surfaces)
+- Related commits: 46cb535 (hidden Meeting Room in launcher, one announcement wakes every vault's agent), e89d8ae (tests lock Meeting Room + peer-mail contracts by parsing them)
 
 ### 2026-08-26 - Created
 - Feature PRD created.

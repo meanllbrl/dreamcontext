@@ -2,7 +2,7 @@
 id: feat_OhUtxfpb
 status: in_review
 created: '2026-07-04'
-updated: '2026-07-08'
+updated: '2026-08-27'
 tags:
   - 'topic:desktop'
   - frontend
@@ -84,6 +84,7 @@ system.
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-08-27]** **A real grab zone for the window, and a Space pick that survives quitting** (2bc1608): Two launcher complaints whose roots sat a layer below the symptom. (1) **Dragging the window**: the "whole background drags" fix from 0.10.7 was quietly undone by the Space (it covers everything below the top bar and opts out via `data-no-drag`), leaving a 34px strip as the only place to grab. The bar is now a real 44px title bar with a grab cursor, and the sky yields too: spin only ever read the HORIZONTAL delta, so a vertical drag on empty sky was dead space and now moves the window instead. The axis locks once at a 4px slop, biased 1.5× toward spin. New `dragWindowNow()`/`warmWindowApi()` in `lib/desktop.ts` let a `data-no-drag` surface hand a held pointer to the OS when it can tell the gesture was meant for the window. (2) **The Space/List choice never survived**: the shell picks a fresh loopback port every launch, so the origin changes and `localStorage` starts empty. Now server-side at `~/.dreamcontext/launcher-ui.json` via `GET/POST /api/launcher/ui-settings` (the `sleepy.json`/`agent-ui.json` pattern), with `localStorage` kept as the synchronous same-launch mirror. The body is withheld for the one localhost round-trip rather than flashing List first.
 - **[2026-07-04]** **`overlayStack` is the general fix, not a `⌘K`/`⌘P`
   special-case.** The bug (⌘P opened while ⌘K was open, then `Esc` closed the
   wrong one) was fixed at the right altitude: a shared LIFO overlay stack that any
@@ -153,6 +154,11 @@ system.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-08-27 - Launcher window drag zone and persistent Space pick (2bc1608)
+- Real 44px title bar with grab cursor; sky now yields vertical drag to window movement (axis locks at 4px slop, biased 1.5× toward spin); `dragWindowNow()`/`warmWindowApi()` let `data-no-drag` surfaces hand pointer to OS
+- Space/List choice survives quit: stored server-side at `~/.dreamcontext/launcher-ui.json` via `GET/POST /api/launcher/ui-settings`, `localStorage` as synchronous same-launch mirror
+- Unit suite 7572 passed, tsc clean, fixes confirmed in served `dist/dashboard` bundle
 
 ### 2026-07-04 - Keyboard nav + window management fixes (working tree, feat/sleep-debt-header-tracker)
 - **Full keyboard navigation**: the switcher now builds a single flat `rows` array (Launcher home row + filtered projects) so ↑/↓ traverse EVERYTHING (home row included) and Enter fires the right action per row. The old code excluded the home row from keyboard nav, and the focused-row highlight (`--color-bg-secondary`) was too faint to read — so ↑/↓ felt like a no-op. Fixed: accent-color left-edge bar (`box-shadow: inset 2px 0 0 var(--color-accent)`) on the focused row makes movement unmistakable, and `scrollIntoView({ block: 'nearest' })` auto-scrolls the focused row into the viewport.
