@@ -97,23 +97,32 @@ When the source-of-truth changes:
 - The mirror is **large** (>500 lines) — consider code generation instead
 - The drift test would be **unreliable** (regex too brittle, false negatives)
 
-## Real Uses (as of 2026-08-25)
+## Real Uses (as of 2026-08-27)
 
 1. **chartRegistry RENDERS** (`tests/unit/lab-render-registry.test.ts`)
    - Source: `src/lib/lab/types.ts` RENDERS (11 render types)
    - Mirror: `dashboard/src/components/lab/chartRegistry.ts` RENDERS
    - Test: regex-parses both arrays, asserts exact match + order
+   - Maintenance: MANUAL (two files, hand-kept in sync, test catches drift)
    - Why: dashboard needs the list to build `CHART_REGISTRY: Record<Render, ...>`, cannot import from `src/`
 
 2. **lab-html-kit CSS** (`tests/unit/lab-html-body.test.ts`)
    - Source: `dashboard/src/components/lab/lab-html-kit.css` (curated class kit)
    - Mirror: `dashboard/src/components/lab/labHtmlKit.ts` LAB_HTML_KIT_CSS string
    - Test: reads both files, compares trimmed content byte-for-byte
+   - Maintenance: MANUAL (same as above)
    - Why: the kit must be injected into an iframe's srcdoc as a string; vitest stubs `.css?raw` to `''` so runtime import fails in tests
+
+3. **chat-html-kit CSS** (`tests/unit/chat-html.test.ts`, added 2026-08-27)
+   - Source: `dashboard/src/components/sleepy/chat/chat-html-kit.css` (curated class kit for dream-html blocks)
+   - Mirror: `dashboard/src/components/sleepy/chat/chatHtmlKit.ts` CHAT_HTML_KIT_CSS string
+   - Test: same byte-identical pinning as lab-html-kit
+   - Maintenance: **SCRIPT-GENERATED** via `scripts/gen-chat-html-kit-mirror.mjs` (non-ASCII escaped, regex pattern check, idempotent) — the test still pins them identical, but the HUMAN never hand-syncs the mirror; the script does
+   - Why: same as lab-html-kit (srcdoc injection + vitest `.css?raw` stub), but this one chose the code-generation alternative because the kit is larger and changes more frequently
 
 ## Alternatives Considered
 
-- **Code generation** (e.g., build script reads source → writes mirror): viable for large/complex mirrors, overkill for a 10-item enum
+- **Code generation** (e.g., build script reads source → writes mirror): viable for large/complex mirrors, overkill for a 10-item enum. **chat-html-kit chose this** (`scripts/gen-chat-html-kit-mirror.mjs`) because the CSS changes frequently and the kit is larger — the human edits the `.css`, runs the script, the test pins them identical. The drift test stays in place (belt + braces), but the script makes the manual sync step impossible to forget.
 - **Shared JSON config**: works when both sides consume the same shape; doesn't work when one side needs the raw CSS as a string
 - **Runtime validation**: catches drift, but only at runtime — the drift test catches it at build time
 

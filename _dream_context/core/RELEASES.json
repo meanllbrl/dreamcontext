@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel__YGSWdjD",
+    "version": "0.26.1",
+    "date": "",
+    "summary": "Peer mail write-half (ask/send/inbox/reply/done), Meeting Room (hidden launcher chat where all agents convene), vault logo convention, chat-html hover tooltips (dc-hit/dc-tip), Lab app insights, pre-publish agent-reach gate",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_g4LgThSu",
     "version": "0.26.0",
     "date": "",

@@ -1,5 +1,58 @@
 [
   {
+    "date": "2026-08-27",
+    "type": "feat",
+    "scope": "chat",
+    "description": "dc-hit wraps a mark, dc-tip inside it reveals on hover/focus (dc-tip--below flips under; in SVG the tip is a <g> painted by dc-tip-box/dc-tip-text), plus free hover feedback on table rows and bars. The surface prompt teaches the idiom. The CHAT_HTML_KIT_CSS constant is now emitted by scripts/gen-chat-html-kit-mirror.mjs from the .css — never hand-edited — and verify:chat-html asserts a tip actually appears on hover in a real browser. This closes the gap between what an agent can express in prose and what it can show in structured markup: a table cell can now carry a hover explanation, a bar chart row can reveal its raw number on hover, and a comparison option can carry a tooltip without breaking the grid.",
+    "breaking": false,
+    "summary": "dream-html gains hover tooltips — dc-hit wraps a mark, dc-tip inside it reveals on hover/focus, plus the TS mirror is now generated instead of hand-edited",
+    "references": [
+      "commit:7f0861b",
+      "file:dashboard/src/components/sleepy/chat/chat-html-kit.css",
+      "file:dashboard/src/components/sleepy/chat/chatHtmlKit.ts",
+      "file:scripts/gen-chat-html-kit-mirror.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-27",
+    "type": "feat",
+    "scope": "launcher",
+    "description": "Clicking the Space core logo (with projects in orbit) opens a Slack-like room owned by no vault: the announcement fans out to every registered vault as a headless run rooted in that vault's own directory, each agent replies or answers exactly PASS, and agents can pull each other in with a bounded mention chain (one directed run plus one follow-up, max 8 mention runs per thread, max 3 runs per agent, cap hits recorded as visible system lines). One thread active at a time, history kept, closed threads still accept in-flight answers. Store under ~/.dreamcontext/meeting-room, vault-agnostic /api/meeting routes, roster-driven longest-name-first mention parse, 2s/10s/stop polling. An empty sky keeps the add-project wizard; there is no other entrance. Proven by 38 unit tests and scripts/verify/meeting-room-ui.mjs (33 checks: real launcher-mode server, 3 scratch vaults under a scratch HOME, a scripted claude stand-in echoing its own cwd, measured poll cadence). Rides along: src/lib/peer-mail.ts and src/lib/peer-delivery.ts from the peer-mail work stream, because the room reuses runPeerHeadless/resolvePeer as its only spawn path.",
+    "breaking": false,
+    "summary": "Hidden Meeting Room — clicking the Space core logo opens a Slack-like room where one announcement wakes every vault's agent, bounded mention chains, one active thread at a time",
+    "references": [
+      "commit:46cb535",
+      "file:src/lib/meeting-room.ts",
+      "file:src/lib/meeting-delivery.ts",
+      "file:dashboard/src/components/meeting/MeetingRoom.tsx",
+      "feature:meeting-room"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-27",
+    "type": "fix",
+    "scope": "chat",
+    "description": "The height bridge spoke ONCE and deduped against its last value, so a single missed report was permanent. The host's listener attached in a passive effect (flushed after paint, and a streaming turn can push that flush behind the frame's parser task), and a settled body never resizes again, so nothing ever spoke a second time. The block drew its content perfectly and sat clipped at 40px for the rest of the session. Delivery is now a handshake on four fronts: the host listens in useLayoutEffect (synchronously inside the commit, before the browser can run the frame's parser task); it can ASK (__dreamHtmlMeasure) on the frame's own load and then every 250ms until answered, capped at 16; the answer is FORCED past the child's dedupe; the measurement is stored with the body it measured ({html, height}), so no reset effect can clobber a height the new document already delivered; and the bridge moved into <head> (headScript replaces bodyScript) because appended under the body it was at the mercy of the markup it measures. Mutation-checked in both directions: with the retry removed it fails at exactly frame 40px vs body 686px, the reported symptom. verify:chat-html is 61/61 in both themes, including a new section 8 that goes deaf to every height report for 2.5s and requires the block to recover anyway.",
+    "breaking": false,
+    "summary": "dream-html blocks no longer freeze at their 40px floor — height delivery is now a retry-capped handshake instead of a one-shot message",
+    "references": [
+      "commit:dd8008e",
+      "file:dashboard/src/components/sleepy/chat/HtmlView.tsx",
+      "file:dashboard/src/components/sleepy/chat/chatHtmlKit.ts",
+      "file:dashboard/src/lib/sandboxHtml.ts",
+      "knowledge:patterns/sandboxed-app-bridge-pattern"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-26",
     "type": "chore",
     "scope": "release",

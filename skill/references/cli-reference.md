@@ -359,6 +359,20 @@ Never hand-edit `core/taxonomy.json` — mutate via these commands.
 | `federation purge` | Remove leftover `federated:true` copies. `--vault`, `--all`, `--dry-run`. |
 | `federation sync` / `federation drain` | **Disabled no-ops** (copy-based sync is parked). |
 
+**Peer mail** — federation's WRITE half: address a connected project instead of only reading it. Reading returns what a peer wrote down; mail returns an answer reasoned from its code by an agent with its brain loaded. Every delivered run is `--permission-mode auto`, never bypass. Full protocol: [integrations.md](integrations.md) § Peer mail.
+
+| Command | Description |
+|---|---|
+| `peer ask <vault> "<q>"` | Wake it now and wait for the answer (~30-90s). `--model <alias>`, `--timeout <seconds>`. |
+| `peer send <vault> "<text>"` | Leave mail. `-k/--kind note\|question\|command` (default `note`), `--live` / `--deferred` to force spawn or inbox, `--thread <id>` to continue one. |
+| `peer inbox` | What is waiting here (default subcommand). `-a/--all` includes read/answered/closed. |
+| `peer read <id>` | Read one message and mark it read. |
+| `peer thread <id>` | The whole correspondence around a message. |
+| `peer reply <id> "<text>"` | Answer a peer that is waiting on the other end. |
+| `peer done <id>` | Close the thread. |
+
+Mail lives in `state/.peer-mail/<id>.json` on both ends and surfaces in the receiving project's SessionStart snapshot under `## Peer mail`. The **Meeting Room** (all vaults at once) has no CLI surface by design — it is the launcher UI only.
+
 ---
 
 ## Brain — team collaboration / shared brain repo (see [integrations.md](integrations.md))

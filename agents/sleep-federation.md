@@ -34,9 +34,18 @@ skills:
 | `state/.federation-inbox/` (drain + consume) | `core/`, tasks, features, product files |
 | `knowledge/*--from-*.md` (ingested peer docs, `federated:true`) | Body prose of any native doc (no content edits) |
 | Bookmarks for surfaced conflict-notes (alerts only) | Auto-resolving a conflict (NEVER — surface, don't decide) |
+| — | `state/.peer-mail/` (peer mail is CORRESPONDENCE, not a digest) |
 
 You run two CLI verbs and nothing else hand-edits federation state. Do NOT write
 inbox files by hand, do NOT edit a peer's vault, do NOT resolve a conflict.
+
+**Peer mail is not yours to drain.** `state/.peer-mail/` looks like an inbox and is
+not one: it is a thread between two agents, answered live by whoever is addressed,
+and it deliberately never materialises as knowledge. The federation inbox
+(`state/.federation-inbox/`) is the digest stream you consume; mail is read and
+replied to by the awake agent via `dreamcontext peer read|reply|done`. Consolidating
+a message into a knowledge file would turn one side of a conversation into a
+project fact.
 
 ## Contract (re-run safe)
 
