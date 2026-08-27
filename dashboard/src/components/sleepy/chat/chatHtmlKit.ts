@@ -5,18 +5,22 @@
  * app's CSS variables never reach it. This module builds that iframe's `srcdoc`: the
  * locked-down CSP first (shared with the Lab — see `lib/sandboxHtml.ts`), then a `:root` of
  * the CURRENT theme's resolved token values, then the `dc-` class kit, then the vault's
- * optional brand override, then the body, then the height bridge.
+ * optional brand override, then the height bridge — and only then the body, which is the one
+ * part of the document the agent wrote and therefore the one part that can break parsing.
  *
  * WHAT THIS FILE ADDS OVER THE LAB'S: two things the Lab card deliberately does without.
  *   • CONTENT-DRIVEN HEIGHT. A chat answer is not a 232px card — it is however tall the
- *     explanation is. `HEIGHT_BRIDGE` is a child->host `postMessage` carrying one number.
+ *     explanation is. `HEIGHT_BRIDGE` posts one number child->host when the body's size
+ *     changes, and re-posts it whenever the host asks (`HEIGHT_REQUEST_KEY`) — a measurement
+ *     nobody can confirm arrived is a block frozen at 40px.
  *   • A BRAND OVERRIDE. The kit is dreamcontext's, but a vault may restyle it
  *     (`_dream_context/overrides/chat-html-kit.css`), appended last so "later wins" is the
  *     whole override mechanism.
  *
  * Neither loosens the sandbox: the grant is still `allow-scripts` alone and the CSP is still
- * `default-src 'none'`. The bridge is one-way and numeric; the override is CSS text the host
- * read off local disk, not something the frame fetched.
+ * `default-src 'none'`. The bridge carries one number out and one boolean in — the host
+ * asking to be told again — and each side answers only the other; the override is CSS text
+ * the host read off local disk, not something the frame fetched.
  *
  * No React, no CSS imports — importable by root vitest with a `.js` specifier.
  */
@@ -68,6 +72,19 @@ export function resolveChatKitTokens(): Record<string, string> {
  *  (a dev-tool, an extension) can never be read as a height. */
 export const HEIGHT_MESSAGE_KEY = '__dreamHtmlHeight';
 
+/**
+ * The key the HOST asks under — the return leg, and the reason a block can no longer be
+ * stuck at 40px forever.
+ *
+ * The bridge used to be fire-and-forget: one report, deduped against the last value, with
+ * nothing on either side checking it arrived. It only had to be missed ONCE — the host's
+ * `message` listener attaching a beat after the frame's document had already parsed and
+ * spoken — and the block was frozen at its floor for the rest of the session, because the
+ * body never changes size again and a deduped bridge has nothing more to say. Delivery you
+ * cannot retry is delivery you cannot trust.
+ */
+export const HEIGHT_REQUEST_KEY = '__dreamHtmlMeasure';
+
 /** Floor and ceiling for a reported height. The floor keeps a still-empty document from
  *  collapsing to a 0px sliver; the ceiling is the backstop against a runaway layout (a
  *  `height: 100%` child chasing the frame the measurement is setting) turning into an
@@ -76,33 +93,55 @@ export const MIN_HTML_HEIGHT = 40;
 export const MAX_HTML_HEIGHT = 20000;
 
 /**
- * The one channel out of the sandbox: the body's own height, as a number, to the parent.
+ * The one channel out of the sandbox: the body's own height, as a number, to the parent —
+ * volunteered when it changes, and re-sent on demand when the host says it never heard it.
  *
  * It measures `document.body` (not `documentElement`) on purpose. The html element is
  * stretched to the iframe's own height by the viewport, so measuring it would report back
  * the height we just set — a loop that only ever grows. The body's border box is the
  * content, and the kit pins `html, body { height: auto }` so it stays that way.
  *
+ * IT RIDES IN THE HEAD, and starts on `DOMContentLoaded`. Appended after the body it was at
+ * the mercy of the markup it was measuring: one author writing `<\/script>` inside their own
+ * inline script leaves that element unclosed, and everything below it — this — becomes
+ * script text that never runs. A head script has already run before the body is parsed, and
+ * `DOMContentLoaded` fires even when the parser had to close an unclosed element at EOF.
+ *
+ * THE HOST MAY ASK AGAIN, and the answer to a request is FORCED past the dedupe. That is
+ * the difference between a report and a delivery: the body does not change size after it
+ * settles, so a deduped bridge would answer every retry with silence, and a single missed
+ * message would leave the frame at its 40px floor permanently.
+ *
  * `'*'` as the target origin is correct here and not a shortcut: a sandboxed frame without
  * `allow-same-origin` has the opaque origin "null", so it cannot name the parent's origin,
  * and the parent cannot verify one either. The host therefore authenticates by SOURCE —
- * `event.source === iframe.contentWindow` — which an unrelated frame cannot forge. The
- * payload is a single number, so there is nothing here to leak in the first place.
+ * `event.source === iframe.contentWindow` — which an unrelated frame cannot forge, and this
+ * side answers only its own parent. The payload is a single number, so there is nothing
+ * here to leak in the first place.
  */
 export const HEIGHT_BRIDGE = `(function () {
   var last = -1;
-  function report() {
+  function report(force) {
+    if (!document.body) return;
     var h = Math.ceil(document.body.getBoundingClientRect().height);
-    if (h === last) return;
+    if (h === last && !force) return;
     last = h;
     parent.postMessage({ ${HEIGHT_MESSAGE_KEY}: h }, '*');
   }
-  if (window.ResizeObserver) new ResizeObserver(report).observe(document.body);
+  window.addEventListener('message', function (event) {
+    if (event.source !== parent || !event.data) return;
+    if (event.data.${HEIGHT_REQUEST_KEY} === true) report(true);
+  });
+  function start() {
+    if (window.ResizeObserver) new ResizeObserver(function () { report(false); }).observe(document.body);
+    document.addEventListener('click', function () { setTimeout(function () { report(false); }, 0); }, true);
+    report(true);
+  }
+  if (document.body) start();
+  else document.addEventListener('DOMContentLoaded', start);
   // A late web font or an image finishing decode changes the height after the observer's
   // first callback, so the load event is a second chance rather than a duplicate.
-  window.addEventListener('load', report);
-  document.addEventListener('click', function () { setTimeout(report, 0); }, true);
-  report();
+  window.addEventListener('load', function () { report(false); });
 })();`;
 
 export interface ChatSrcdocInput {
@@ -128,7 +167,7 @@ export function buildChatSrcdoc(input: ChatSrcdocInput): string {
     tokens,
     scheme,
     overrideCss,
-    bodyScript: mode === 'card' ? HEIGHT_BRIDGE : undefined,
+    headScript: mode === 'card' ? HEIGHT_BRIDGE : undefined,
   });
   // The mode rides on <html> so the kit's `html[data-dc-mode="full"]` slide rules can see
   // it. Written here rather than in the shared builder: it is this surface's concept.

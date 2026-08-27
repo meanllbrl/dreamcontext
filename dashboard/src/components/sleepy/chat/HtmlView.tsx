@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../../../context/VaultContext';
 import { FullscreenOverlay } from '../../layout/FullscreenOverlay';
 import {
   buildChatSrcdoc, resolveChatKitTokens, readHeightMessage,
-  CHAT_HTML_SANDBOX, MIN_HTML_HEIGHT,
+  CHAT_HTML_SANDBOX, MIN_HTML_HEIGHT, HEIGHT_REQUEST_KEY,
 } from './chatHtmlKit';
 import './HtmlView.css';
 
@@ -27,7 +27,9 @@ import './HtmlView.css';
  *
  *   1. HEIGHT FOLLOWS CONTENT. The Lab hardcoded 232px and cropped anything taller. Here the
  *      body measures itself and posts the number out; until the first message arrives the
- *      frame sits at a small placeholder rather than a tall empty gap.
+ *      frame sits at a small placeholder rather than a tall empty gap. That placeholder is
+ *      also the failure mode, so the measurement is a HANDSHAKE and not an announcement —
+ *      the host asks again until it has one (`askForHeight`).
  *   2. FULLSCREEN IS A MODE, NOT A ZOOM. `mode="full"` also reaches the kit (`html[data-dc-
  *      mode]`), so a deck's slides become real viewport-height pages instead of the stacked
  *      sections they are inline.
@@ -76,6 +78,13 @@ function useChatKitOverride() {
   });
 }
 
+/** How the host recovers a measurement that never reached it: ask the frame again, on a
+ *  short beat, until one arrives. The window is deliberately finite — a frame whose bridge
+ *  genuinely never ran will never answer, and a timer that outlives the transcript to keep
+ *  asking it is worse than a clipped block. */
+const HEIGHT_RETRY_MS = 250;
+const HEIGHT_RETRIES = 16;
+
 /**
  * The iframe itself. `mode` decides both the kit's slide behaviour and who owns the height:
  * inline the CONTENT does (via the bridge), fullscreen the OVERLAY does (the frame fills it,
@@ -89,7 +98,7 @@ function HtmlFrame({ html, overrideCss, mode, title }: {
 }) {
   const theme = useDataTheme();
   const frameRef = useRef<HTMLIFrameElement | null>(null);
-  const [height, setHeight] = useState<number | null>(null);
+  const [measured, setMeasured] = useState<{ html: string; height: number } | null>(null);
 
   // Rebuilt on theme flip: same html, freshly resolved token values, and the matching
   // color-scheme (a mismatch makes Chromium paint an opaque white canvas behind the
@@ -99,7 +108,27 @@ function HtmlFrame({ html, overrideCss, mode, title }: {
     [html, theme, overrideCss, mode],
   );
 
-  useEffect(() => {
+  /**
+   * A measurement belongs to the BODY it measured, so it is stored with that body rather
+   * than reset by an effect when `html` changes. Same guarantee the reset was there for — a
+   * fresh body never inherits the old one's height, so a block that got shorter leaves no
+   * gap — without the reset's race: a passive effect runs after paint, so a height that the
+   * new document reported FIRST was clobbered back to null by it, and the bridge, having
+   * already said its piece, never spoke again.
+   *
+   * Keyed on `html` and not on `srcdoc` on purpose: a theme flip rebuilds the srcdoc around
+   * identical content, and a block that visibly collapses to 40px and grows back every time
+   * the theme changes is a worse lie than briefly holding the last true height.
+   */
+  const height = measured?.html === html ? measured.height : null;
+
+  // useLayoutEffect, NOT useEffect — this is the defect at the heart of this file. Passive
+  // effects are flushed after paint, and under a busy main thread (a streaming turn is
+  // exactly that) that flush can land AFTER the frame's document has parsed, run the bridge
+  // and posted its one height. Nobody was listening, the body never changes size again, and
+  // the block sat at its 40px floor for the rest of the session. A layout effect runs
+  // synchronously inside the commit, before the browser can run the frame's parser task.
+  useLayoutEffect(() => {
     if (mode !== 'card') return;
     function onMessage(event: MessageEvent) {
       // AUTHENTICATE BY SOURCE, NOT ORIGIN. A frame sandboxed without `allow-same-origin`
@@ -108,15 +137,30 @@ function HtmlFrame({ html, overrideCss, mode, title }: {
       // thing that actually distinguishes them.
       if (!frameRef.current || event.source !== frameRef.current.contentWindow) return;
       const next = readHeightMessage(event.data);
-      if (next !== null) setHeight(next);
+      if (next !== null) setMeasured({ html, height: next });
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [mode]);
+  }, [mode, html]);
 
-  // A fresh body re-measures from scratch — keeping the old height would leave a tall gap
-  // under a block that got shorter.
-  useEffect(() => { setHeight(null); }, [html, mode]);
+  /** "Tell me again" — answered forcibly, past the bridge's own dedupe. */
+  const askForHeight = useCallback(() => {
+    frameRef.current?.contentWindow?.postMessage({ [HEIGHT_REQUEST_KEY]: true }, '*');
+  }, []);
+
+  // Belt and braces, in that order. `load` is the host's own signal that the document is
+  // parsed and its listener installed, so this ask can't be too early; the interval covers
+  // every remaining way a single message can go missing (a ping that raced the parse, a
+  // srcdoc swapped mid-flight) and stops the moment a height lands.
+  useEffect(() => {
+    if (mode !== 'card' || height !== null) return;
+    let asked = 0;
+    const timer = window.setInterval(() => {
+      askForHeight();
+      if (++asked >= HEIGHT_RETRIES) window.clearInterval(timer);
+    }, HEIGHT_RETRY_MS);
+    return () => window.clearInterval(timer);
+  }, [mode, height, srcdoc, askForHeight]);
 
   return (
     <iframe
@@ -125,6 +169,7 @@ function HtmlFrame({ html, overrideCss, mode, title }: {
       title={title}
       sandbox={CHAT_HTML_SANDBOX}
       srcDoc={srcdoc}
+      onLoad={mode === 'card' ? askForHeight : undefined}
       style={{
         height: mode === 'full' ? '100%' : (height ?? MIN_HTML_HEIGHT),
         colorScheme: theme,

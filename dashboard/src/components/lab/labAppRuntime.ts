@@ -271,19 +271,17 @@ export interface BuildAppSrcdocInput {
  * — this function only decides WHAT goes in `html`/`css`, never how they
  * are assembled.
  *
- * ORDERING IS LOAD-BEARING. `buildSandboxSrcdoc` always places its
- * `bodyScript` param AFTER the `html` param in document order (it is built
- * for Chat's `HEIGHT_BRIDGE`, which only ever OBSERVES the page — it never
- * needs to exist before the author's own script runs). This bridge is the
- * opposite: the author's page calls `window.lab.data()`/`lab.navigate()`
- * SYNCHRONOUSLY, as the first thing its own inline `<script>` does. So the
- * config assignment, the runtime shim, and any `shell.script` are prepended
- * INTO `html`, ahead of `page.html`, rather than routed through
- * `bodyScript` — `window.lab` must exist before the page's own script tag
- * is even parsed, or every statement after its first `lab.*` call never
- * runs (a bug this exact shape produced once: the page's click handlers
- * live in the SAME script block as its `lab.data()` call, so `window.lab`
- * arriving late silently killed navigation too, not just the data call).
+ * ORDERING IS LOAD-BEARING, and this bridge's requirement is stricter than
+ * the surface-script slot's: the author's page calls `window.lab.data()`/
+ * `lab.navigate()` SYNCHRONOUSLY, as the first thing its own inline
+ * `<script>` does. So the config assignment, the runtime shim, and any
+ * `shell.script` are prepended INTO `html`, immediately ahead of
+ * `page.html`, where they are one contiguous unit with the page they serve
+ * — `window.lab` must exist before the page's own script tag is even
+ * parsed, or every statement after its first `lab.*` call never runs (a bug
+ * this exact shape produced once: the page's click handlers live in the
+ * SAME script block as its `lab.data()` call, so `window.lab` arriving late
+ * silently killed navigation too, not just the data call).
  */
 export function buildAppSrcdoc(input: BuildAppSrcdocInput): string {
   const { page, shell, pages, tokens, scheme, params, nonce } = input;

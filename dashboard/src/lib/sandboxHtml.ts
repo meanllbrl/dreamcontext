@@ -64,21 +64,35 @@ export interface SandboxSrcdocInput {
   scheme?: 'light' | 'dark';
   /** Optional per-vault brand CSS, appended AFTER `css` so it can override it. */
   overrideCss?: string;
-  /** Optional inline script appended to the end of the body (e.g. the height bridge). */
-  bodyScript?: string;
+  /**
+   * Optional inline script for the surface itself (e.g. Chat's height bridge), placed in
+   * the HEAD — before a single byte of the author's markup is parsed.
+   *
+   * HEAD, and not the end of the body, IS the point of this field. A script below the body
+   * is at the mercy of the markup above it: an author who writes `<\/script>` inside their
+   * own inline script — the reflex from inlining JS into a page — never closes that element,
+   * and the parser swallows everything after it, this script included. Chat lost its height
+   * bridge exactly that way, and a frame whose bridge never runs sits at its floor for the
+   * rest of the session.
+   *
+   * It therefore runs with NO `document.body`: anything touching the body must wait for
+   * `DOMContentLoaded`, which fires even when the parser had to close an unclosed element.
+   */
+  headScript?: string;
 }
 
 /**
  * The complete srcdoc: CSP meta FIRST, then the resolved tokens, then the kit, then any
  * brand override, then the body.
  *
- * Order is load-bearing in two places. The CSP must precede anything that could fetch, or a
+ * Order is load-bearing in three places. The CSP must precede anything that could fetch, or a
  * parser that has already seen a resource declaration has already lost. The override must
  * follow the kit, because "later wins" is the entire mechanism by which a brand restyles the
- * kit without forking it.
+ * kit without forking it. And the surface's own script must precede the body, or the author's
+ * markup can swallow it (see {@link SandboxSrcdocInput.headScript}).
  */
 export function buildSandboxSrcdoc(input: SandboxSrcdocInput): string {
-  const { html, css, tokens, scheme = 'light', overrideCss, bodyScript } = input;
+  const { html, css, tokens, scheme = 'light', overrideCss, headScript } = input;
   const rootVars = Object.entries(tokens)
     .map(([token, value]) => `${token}: ${value};`)
     .join(' ');
@@ -91,8 +105,8 @@ export function buildSandboxSrcdoc(input: SandboxSrcdocInput): string {
     `<style>${css}</style>`,
   ];
   if (overrideCss) parts.push(`<style>${overrideCss}</style>`);
+  if (headScript) parts.push(`<script>${headScript}</script>`);
   parts.push('</head><body>', html);
-  if (bodyScript) parts.push(`<script>${bodyScript}</script>`);
   parts.push('</body></html>');
   return parts.join('\n');
 }

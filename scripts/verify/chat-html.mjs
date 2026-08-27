@@ -23,6 +23,9 @@
  *      sandbox and wins over the base kit.
  *   6. INSIGHT BY ID. A `{"type":"insight"}` block draws the REAL Lab card — no HTML.
  *   7. BOTH THEMES. Dark does not paint the white slab the color-scheme mismatch used to.
+ *   8. A LOST REPORT IS RECOVERABLE. With the frame's first height message deliberately
+ *      eaten before any app listener sees it, the block still reaches its real height —
+ *      the host asks again rather than living with the 40px floor forever.
  *
  * Same harness contract as scripts/verify/dream-actions.mjs: the real server, the real
  * `/ws/agent-chat`, a scripted stand-in for `claude` in an isolated fake HOME so no tokens
@@ -249,6 +252,44 @@ async function startServer(port) {
 
 // ─── the assertions ───────────────────────────────────────────────────────────────────
 
+const visOn = (page, sel) => page.locator(`${sel}:visible`);
+
+const untilOn = async (page, fn, ms = 20000) => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (await fn().catch(() => false)) return true; await page.waitForTimeout(120); }
+  return false;
+};
+
+/**
+ * Open the agent surface on a fresh page and send the one message that makes the stand-in
+ * stream the fixture answer. Shared by every pass below, so a change to how the surface
+ * opens is a change in ONE place — the alternative was two copies drifting apart, and the
+ * second copy is always the one that rots.
+ */
+async function openChatAndAsk(page, base) {
+  const vis = (sel) => visOn(page, sel);
+  await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(4000);
+  for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(300); }
+  if (!(await page.locator('.agent-surface.expanded').count())) {
+    for (const sel of ['.agent-fab', '.agent-overlay-head', '.agent-surface']) {
+      const el = page.locator(sel).first();
+      if (await el.count()) { await el.click({ force: true }).catch(() => {}); await page.waitForTimeout(1500); }
+      if (await page.locator('.agent-surface.expanded').count()) break;
+    }
+  }
+  if (!(await vis('.chat-cmp-input').count())) {
+    await page.getByRole('button', { name: /Start chat/ }).click().catch(() => {});
+  }
+  const opened = await untilOn(page, async () => (await vis('.chat-cmp-input').count()) > 0, 20000);
+  await page.waitForTimeout(800);
+
+  await vis('.chat-cmp-input').first().click();
+  await vis('.chat-cmp-input').first().fill('GO');
+  await page.keyboard.press('Enter');
+  return opened;
+}
+
 async function runTheme(base, theme, report) {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1500, height: 1000 }, colorScheme: theme });
@@ -281,26 +322,7 @@ async function runTheme(base, theme, report) {
   };
 
   console.log(`\n═══ ${theme} ═══`);
-  await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(4000);
-  for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(300); }
-  if (!(await page.locator('.agent-surface.expanded').count())) {
-    for (const sel of ['.agent-fab', '.agent-overlay-head', '.agent-surface']) {
-      const el = page.locator(sel).first();
-      if (await el.count()) { await el.click({ force: true }).catch(() => {}); await page.waitForTimeout(1500); }
-      if (await page.locator('.agent-surface.expanded').count()) break;
-    }
-  }
-  if (!(await vis('.chat-cmp-input').count())) {
-    await page.getByRole('button', { name: /Start chat/ }).click().catch(() => {});
-  }
-  ok('a chat session opens against the real WS route',
-    await until(async () => (await vis('.chat-cmp-input').count()) > 0, 20000));
-  await page.waitForTimeout(800);
-
-  await vis('.chat-cmp-input').first().click();
-  await vis('.chat-cmp-input').first().fill('GO');
-  await page.keyboard.press('Enter');
+  ok('a chat session opens against the real WS route', await openChatAndAsk(page, base));
 
   const frame = () => vis('iframe.chat-htmlview-frame').first();
   ok('the dream-html block mounted an iframe',
@@ -427,6 +449,88 @@ async function runTheme(base, theme, report) {
   await browser.close();
 }
 
+// ─── 8 — a report the host never hears ────────────────────────────────────────────────
+//
+// The defect this pass exists for, reported 2026-08-27 with two screenshots: a block that
+// had drawn its content perfectly and sat at the 40px floor anyway — and STAYED there.
+//
+// The bridge used to speak exactly once, deduped against its last value. Miss that one
+// message — the host's `message` listener attaching a beat late, which a passive effect
+// under a streaming turn can absolutely do — and nothing ever spoke again: a settled body
+// never resizes, so the bridge had nothing more to volunteer and the host had no way to ask.
+// One lost message, one permanently broken block.
+//
+// So this pass EATS the frame's first height report in the top frame, before any listener
+// of the app's can see it, and then demands the block reach its real height anyway. It is a
+// mutation test of the fix rather than of the app: revert the retry and this fails while
+// every other check in the file still passes, which is what makes the extra browser worth it.
+async function runLostReport(base, report) {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
+  page.on('pageerror', (e) => report.note(`[page error] ${String(e).slice(0, 160)}`));
+  const ok = (label, cond, detail) => report.check('lost-report', label, cond, detail);
+
+  await page.addInitScript(() => {
+    // TOP FRAME ONLY. An init script runs in every frame, and inside the sandboxed iframe
+    // this one would eat the HOST'S REQUEST instead — defeating the recovery under test and
+    // turning a passing fix into a failing one.
+    if (window.top !== window) return;
+    window.__dcEaten = 0;
+    window.__dcDeafUntil = 0;
+    window.addEventListener('message', (event) => {
+      const data = event.data;
+      if (!data || typeof data !== 'object' || !('__dreamHtmlHeight' in data)) return;
+      const now = performance.now();
+      // Deaf for a WINDOW, not for one message, and this is the difference between a test
+      // and a decoration. Eating only the first report proves nothing: the body legitimately
+      // resizes once as the pane settles (598px → 686px in this fixture), so the bridge
+      // volunteers a second report and the block recovers with or without the fix — the
+      // first shape of this check passed against code with the retry ripped out. The real
+      // defect is a host that is deaf across the WHOLE settle window, after which a settled
+      // body has nothing left to volunteer and only an ASK can recover it.
+      if (!window.__dcDeafUntil) window.__dcDeafUntil = now + 2500;
+      if (now > window.__dcDeafUntil) return;
+      window.__dcEaten += 1;
+      // Registered from an init script, so this runs before any listener the app adds:
+      // stopping propagation here IS the message never arriving, precisely.
+      event.stopImmediatePropagation();
+    }, true);
+  });
+
+  console.log('\n═══ a lost first report ═══');
+  ok('a chat session opens', await openChatAndAsk(page, base));
+  ok('the dream-html block mounted an iframe',
+    await untilOn(page, async () => (await visOn(page, 'iframe.chat-htmlview-frame').count()) > 0, 30000));
+
+  const eaten = async () => page.evaluate(() => window.__dcEaten ?? 0);
+  ok('every height report the frame volunteered was swallowed — or this pass proves nothing',
+    await untilOn(page, async () => (await eaten()) > 0, 20000), `eaten ${await eaten()}`);
+  // Past the deaf window before measuring, so what recovers the block can only be an ASK.
+  await page.waitForTimeout(3000);
+
+  const frame = () => visOn(page, 'iframe.chat-htmlview-frame').first();
+  const frameH = () => frame().evaluate((el) => el.getBoundingClientRect().height);
+  const recovered = await untilOn(page, async () => (await frameH()) > 120, 15000);
+  // The frame ANIMATES its height (120ms, `HtmlView.css`), so a read taken the instant it
+  // crosses the threshold reads the animation rather than its result — 598px on the way to
+  // 686px, which looks exactly like a bad measurement and is not one.
+  await untilOn(page, async () => {
+    const before = await frameH();
+    await page.waitForTimeout(250);
+    return Math.abs((await frameH()) - before) < 1;
+  }, 6000);
+  const h = await frameH();
+  const body = await page.frameLocator('iframe.chat-htmlview-frame').first().locator('body')
+    .evaluate((b) => b.getBoundingClientRect().height).catch(() => 0);
+  ok('…and the host asked again until it had one: the block is its own height, not the floor',
+    recovered, `frame ${Math.round(h)}px (floor is 40)`);
+  ok('…and that height is the body\'s, not a guess',
+    Math.abs(h - body) < 12, `frame ${Math.round(h)} vs body ${Math.round(body)}`);
+
+  await page.screenshot({ path: join(SHOTS, 'chat-html-lost-report.png'), fullPage: false });
+  await browser.close();
+}
+
 // ─── main ─────────────────────────────────────────────────────────────────────────────
 
 const report = {
@@ -452,6 +556,8 @@ try {
     rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
     await runTheme(base, theme, report);
   }
+  rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
+  await runLostReport(base, report);
 } catch (err) {
   console.error('\nharness error:', err);
   report.rows.push({ theme: '-', label: `harness: ${err.message}`, cond: false, detail: '' });

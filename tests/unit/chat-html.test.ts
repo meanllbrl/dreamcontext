@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseChatActions, MAX_HTML_BYTES, MAX_HTMLS_PER_MESSAGE } from '../../dashboard/src/components/sleepy/chat/chatActions.js';
 import {
-  buildChatSrcdoc, readHeightMessage, HEIGHT_BRIDGE, HEIGHT_MESSAGE_KEY,
+  buildChatSrcdoc, readHeightMessage, HEIGHT_BRIDGE, HEIGHT_MESSAGE_KEY, HEIGHT_REQUEST_KEY,
   CHAT_HTML_CSP, CHAT_HTML_SANDBOX, CHAT_HTML_KIT_CSS, CHAT_KIT_TOKENS,
   MIN_HTML_HEIGHT, MAX_HTML_HEIGHT,
 } from '../../dashboard/src/components/sleepy/chat/chatHtmlKit.js';
@@ -169,6 +169,23 @@ describe('buildChatSrcdoc', () => {
     expect(buildChatSrcdoc({ html: '<b>x</b>', tokens: {}, mode: 'full' })).not.toContain(HEIGHT_MESSAGE_KEY);
   });
 
+  it('mounts the height bridge in the HEAD, above the body it measures', () => {
+    const doc = buildChatSrcdoc({ html: '<b>x</b>', tokens: {} });
+    expect(doc.indexOf(HEIGHT_MESSAGE_KEY)).toBeLessThan(doc.indexOf('</head>'));
+    expect(doc.indexOf(HEIGHT_MESSAGE_KEY)).toBeLessThan(doc.indexOf('<b>x</b>'));
+  });
+
+  it('…so a body that never closes a <script> can no longer swallow it', () => {
+    // The reflex from inlining JS into an HTML page: escaping the closing tag leaves the
+    // element OPEN, and the parser turns everything after it into script text. Appended
+    // below the body, the bridge went with it and the block froze at its 40px floor —
+    // silently, because the markup above the break still drew. Above the body it has
+    // already run before the parser ever meets this.
+    const swallower = '<script>var s = "<\\/script>";</script>';
+    const doc = buildChatSrcdoc({ html: swallower, tokens: {} });
+    expect(doc.indexOf(HEIGHT_MESSAGE_KEY)).toBeLessThan(doc.indexOf(swallower));
+  });
+
   it('resolves the display face and elevated radii the Lab card never needed', () => {
     for (const token of ['--font-family-display', '--radius-xl', '--shadow-lg']) {
       expect(CHAT_KIT_TOKENS, token).toContain(token);
@@ -189,6 +206,24 @@ describe('the height bridge', () => {
   it('is the only thing it posts: one namespaced number', () => {
     expect(HEIGHT_MESSAGE_KEY).toBe('__dreamHtmlHeight');
     expect(HEIGHT_BRIDGE.match(/postMessage/g)?.length).toBe(1);
+  });
+
+  it('waits for the body — parsed in the head, it has none yet', () => {
+    expect(HEIGHT_BRIDGE).toContain('DOMContentLoaded');
+    expect(HEIGHT_BRIDGE).toContain('if (!document.body) return;');
+  });
+
+  it('re-reports when the HOST asks, FORCED past the dedupe', () => {
+    // Without the force this answers a retry with silence: the body has not resized since
+    // the report that went missing, so the deduping `last` swallows the answer and the
+    // block stays at its floor — which is the entire bug the request exists to end.
+    expect(HEIGHT_REQUEST_KEY).toBe('__dreamHtmlMeasure');
+    expect(HEIGHT_BRIDGE).toContain(`event.data.${HEIGHT_REQUEST_KEY} === true`);
+    expect(HEIGHT_BRIDGE).toContain('report(true)');
+  });
+
+  it('answers its own parent and nobody else', () => {
+    expect(HEIGHT_BRIDGE).toContain('event.source !== parent');
   });
 
   it('reads a well-formed height', () => {
