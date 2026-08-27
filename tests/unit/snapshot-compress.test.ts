@@ -199,9 +199,9 @@ describe('compressMarkdownBlock — item compression', () => {
 
   it('titleOnly does not split inside a URL scheme', () => {
     // A scheme colon has no trailing space; splitting there produced
-    // `Flagship kitUP at https` in an early prototype.
-    const out = compressMarkdownBlock('- Flagship kitUP at https://kitup.app is the revenue driver', CORE_L3);
-    expect(out).toContain('https://kitup.app');
+    // `Flagship Storefront at https` in an early prototype.
+    const out = compressMarkdownBlock('- Flagship Storefront at https://acme.example is the revenue driver', CORE_L3);
+    expect(out).toContain('https://acme.example');
     expect(out).not.toMatch(/https…?$/);
   });
 
@@ -278,7 +278,7 @@ describe('shrinkBody', () => {
 
   it('titleOnly never splits on a bare period or a URL scheme colon', () => {
     expect(shrinkBody('Pinned at v0.18.0 for now', 200, true)).toBe('Pinned at v0.18.0 for now');
-    expect(shrinkBody('Docs at https://kitup.app today', 200, true)).toContain('https://kitup.app');
+    expect(shrinkBody('Docs at https://acme.example today', 200, true)).toContain('https://acme.example');
   });
 });
 

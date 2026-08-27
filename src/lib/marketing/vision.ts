@@ -9,7 +9,7 @@
  * effectively no-op for the existing corpus. Instagram ingest extracts hook
  * frames at t={0,1,2,3}s; those are what get labeled.
  *
- * Cost: ~36 frames per Tilki corpus run × ~$0.0001/frame on gpt-4o-mini =
+ * Cost: ~36 frames per full corpus run × ~$0.0001/frame on gpt-4o-mini =
  * ~$0.004. Negligible. Capped retries (1 attempt per frame) keep tail bounded.
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';

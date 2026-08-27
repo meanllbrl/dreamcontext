@@ -226,7 +226,7 @@ describe('detectPatterns — AC3: exclusion set', () => {
   });
 
   it('excludes terms from excludedExtra (soul + user tokens)', () => {
-    const excludedExtra = new Set(['projectname', 'mehmet', 'nuraydin']);
+    const excludedExtra = new Set(['projectname', 'kerem', 'yilmaz']);
     const corpus: CorpusDoc[] = [
       makeDigest('session-a', ['projectname', 'workflow', 'pipeline']),
       makeDigest('session-b', ['projectname', 'workflow', 'pipeline']),

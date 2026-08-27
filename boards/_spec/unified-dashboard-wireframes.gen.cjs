@@ -3,7 +3,7 @@
  * Generates ../../_dream_context/inbox/unified-dashboard-wireframes.excalidraw.md
  *
  * Combined information architecture:
- *   App level (shell home, above any vault): Launcher · Open Project · Second-brain picker
+ *   App level (shell home, above any vault): Launcher · Open Project · Brain picker
  *   Vault level sidebar:
  *     WORKSPACE  : Overview · Brain · Tasks · Knowledge · Features · Core · Council · Taxonomy · Sleep
  *     FEDERATION : Connections · Inbox            (promoted out of Settings)
@@ -337,7 +337,7 @@ function place(id, fn, col, rowY, caption) { const x = COLX[col], y = rowY; B[id
 const RA = 84, RB1 = 620, RB2 = 1080, RB3 = 1540, RC = 2080, RD = 2540, RE = 3020;
 
 head(60, 18, 'A · App shell home  (new — above any vault)');
-place('A1', Launcher, 0, RA, 'Launcher · all projects'); place('A2', OpenProject, 1, RA, 'Open project · macOS FS'); place('A3', BrainPicker, 2, RA, 'Second-brain picker'); place('A4', Shell, 3, RA, 'App shell (combined nav)');
+place('A1', Launcher, 0, RA, 'Launcher · all projects'); place('A2', OpenProject, 1, RA, 'Open project · macOS FS'); place('A3', BrainPicker, 2, RA, 'Brain picker'); place('A4', Shell, 3, RA, 'App shell (combined nav)');
 
 head(60, RB1 - 58, 'B · Workspace  (Overview + the real dashboard pages)');
 place('Overview', Overview, 0, RB1, 'Overview · vault home (new)'); place('Brain', Brain, 1, RB1, 'Brain · graph'); place('Tasks', Tasks, 2, RB1, 'Tasks · 5 views'); place('Knowledge', Knowledge, 3, RB1, 'Knowledge');
@@ -359,8 +359,8 @@ const lx = COLX[1], ly = RD - 4;
 rect(lx, ly, 1180, 132, { bg: '#fcfcfd', stroke: LINE, sw: 1 });
 txt(lx + 14, ly + 12, 'Legend & primary flows', { size: 12 });
 [[VIO, VIOBG, 'accent / in-progress'], [MAG, MAGBG, 'second brain / federation'], [DONE, DONEBG, 'done / accessibility'], [TODO, TODOBG, 'todo / caution'], [REV, REVBG, 'in-review'], [ERR, ERRBG, 'stale / risk']].forEach((l, i) => { rect(lx + 14 + (i % 3) * 300, ly + 36 + Math.floor(i / 3) * 22, 14, 14, { bg: l[1], stroke: l[0], sw: 1 }); txt(lx + 34 + (i % 3) * 300, ly + 38 + Math.floor(i / 3) * 22, l[2], { size: 9 }); });
-txt(lx + 14, ly + 90, 'IA: App home (Launcher/Open/Second-brain) → vault sidebar [WORKSPACE · FEDERATION · CONTROL] + footer [Accessibility · About].', { size: 9, color: MUTED, width: 1150 });
-txt(lx + 14, ly + 108, 'Flows: Launcher → Open Project → Register → Enter vault → Overview.   Launcher → Second-brain picker → Accessibility.', { size: 9, color: MUTED, width: 1150 });
+txt(lx + 14, ly + 90, 'IA: App home (Launcher/Open/Brain) → vault sidebar [WORKSPACE · FEDERATION · CONTROL] + footer [Accessibility · About].', { size: 9, color: MUTED, width: 1150 });
+txt(lx + 14, ly + 108, 'Flows: Launcher → Open Project → Register → Enter vault → Overview.   Launcher → Brain picker → Accessibility.', { size: 9, color: MUTED, width: 1150 });
 
 // flow arrows
 arrow([[B.A1.x + W, B.A1.cy], [B.A2.x, B.A2.cy]], { color: VIO }); txt(B.A1.x + W + 6, B.A1.cy - 16, 'Open Project', { size: 9, color: VIO });

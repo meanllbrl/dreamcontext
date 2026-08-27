@@ -2228,8 +2228,8 @@ export function measureSnapshot(
     // Reading a peer is not the same capability as ASKING one, and the difference is the
     // whole reason this paragraph exists: recall returns what a project has WRITTEN DOWN,
     // while asking gets an answer REASONED from its code by an agent that has its context
-    // loaded. Without this, an agent that sees "Tilki" and finds nothing in recall concludes
-    // the information does not exist — when in fact nobody had written it down yet and Tilki
+    // loaded. Without this, an agent that sees "acme-payments" and finds nothing in recall concludes
+    // the information does not exist — when in fact nobody had written it down yet and the peer
     // could have derived it in one turn.
     lines.push('');
     lines.push(
@@ -2252,8 +2252,8 @@ export function measureSnapshot(
     // name + a SHORT identity per peer. Both keep every peer NAMED, which is
     // what makes `memory recall --vault <name>` reachable at all — and the
     // identity survives to the floor because a bare name reproduced the
-    // original soul-review complaint: the agent sees "Tilki" and has no idea
-    // Tilki is a B2B tutoring SaaS.
+    // original soul-review complaint: the agent sees "acme-payments" and has no
+    // idea acme-payments is the service that owns every refund.
     const recallPointer = 'Recall already spans these. To search one directly: '
       + '`dreamcontext memory recall <q> --vault <name>`.';
     flushDemotable('connected-projects', [

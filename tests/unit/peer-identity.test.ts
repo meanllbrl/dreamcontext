@@ -26,7 +26,7 @@ import {
 import { findVaultLogo } from '../../src/lib/vault-logo.js';
 
 const PEERS: PeerMention[] = [
-  { vault: 'Tilki', agent: 'peer-tilki', whatItIs: 'B2B SaaS for tutors', logo: true },
+  { vault: 'Payments', agent: 'peer-payments', whatItIs: 'Payments and payouts', logo: true },
   { vault: 'marketing-brain', agent: 'peer-marketing-brain', whatItIs: '', logo: false },
 ];
 
@@ -38,14 +38,14 @@ describe('mentionSegments', () => {
   });
 
   it('with no peers there is nothing to highlight, whatever the text says', () => {
-    expect(mentionSegments('@Tilki hello', [])).toEqual([
-      { text: '@Tilki hello', mention: false },
+    expect(mentionSegments('@Payments hello', [])).toEqual([
+      { text: '@Payments hello', mention: false },
     ]);
   });
 
   it('a leading mention splits off as its own highlighted segment', () => {
-    expect(mentionSegments('@Tilki videoları üret', PEERS)).toEqual([
-      { text: '@Tilki', mention: true },
+    expect(mentionSegments('@Payments videoları üret', PEERS)).toEqual([
+      { text: '@Payments', mention: true },
       { text: ' videoları üret', mention: false },
     ]);
   });
@@ -59,8 +59,8 @@ describe('mentionSegments', () => {
   });
 
   it('matching is case-insensitive and covers the envoy agent name too', () => {
-    expect(mentionSegments('@tilki lütfen', PEERS)[0]).toEqual({ text: '@tilki', mention: true });
-    expect(mentionSegments('@peer-tilki lütfen', PEERS)[0]).toEqual({ text: '@peer-tilki', mention: true });
+    expect(mentionSegments('@payments lütfen', PEERS)[0]).toEqual({ text: '@payments', mention: true });
+    expect(mentionSegments('@peer-payments lütfen', PEERS)[0]).toEqual({ text: '@peer-payments', mention: true });
   });
 
   it('an unknown token stays plain — the pill only ever names a real peer', () => {
@@ -70,15 +70,15 @@ describe('mentionSegments', () => {
   });
 
   it("an email address's @ is glued to the previous character and never lights up", () => {
-    expect(mentionSegments('mail me at mehmet@Tilki thanks', PEERS)).toEqual([
-      { text: 'mail me at mehmet@Tilki thanks', mention: false },
+    expect(mentionSegments('mail me at sam@Payments thanks', PEERS)).toEqual([
+      { text: 'mail me at sam@Payments thanks', mention: false },
     ]);
   });
 
   it('several mentions each get their own segment', () => {
-    const segs = mentionSegments('@Tilki and @marketing-brain both', PEERS);
+    const segs = mentionSegments('@Payments and @marketing-brain both', PEERS);
     expect(segs.filter((s) => s.mention).map((s) => s.text)).toEqual([
-      '@Tilki',
+      '@Payments',
       '@marketing-brain',
     ]);
   });
@@ -86,8 +86,8 @@ describe('mentionSegments', () => {
 
 describe('peerForAgent', () => {
   it('maps a `peer-<slug>` subagent type to its peer, case-insensitively', () => {
-    expect(peerForAgent('peer-tilki', PEERS)?.vault).toBe('Tilki');
-    expect(peerForAgent('Peer-Tilki', PEERS)?.vault).toBe('Tilki');
+    expect(peerForAgent('peer-payments', PEERS)?.vault).toBe('Payments');
+    expect(peerForAgent('Peer-Payments', PEERS)?.vault).toBe('Payments');
   });
 
   it('a non-envoy agent type maps to nothing', () => {

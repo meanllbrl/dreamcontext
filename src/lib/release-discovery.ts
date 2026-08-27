@@ -26,7 +26,7 @@ export interface ChangelogEntry {
   references?: string[];
   /**
    * Optional roster of people involved in this change (kebab-case display-name
-   * slugs, e.g. `mehmet`, `ada`). The unified person-attribution carrier — the
+   * slugs, e.g. `kerem`, `ada`). The unified person-attribution carrier — the
    * SAME field used by `memory remember --person`. Backwards compatible: entries
    * without `authors` keep working, and `authors` is DELIBERATELY EXCLUDED from
    * `changelogFingerprint` so adding/removing it never changes dedup identity

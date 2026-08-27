@@ -2,7 +2,7 @@
  * The verdict engine — what happens when a human answers a question.
  *
  * `resumeWithAnswer` resumes the claude session that WROTE the proposal. That
- * is the single decision the whole HITL design rests on, ported from Tilki's
+ * is the single decision the whole HITL design rests on, ported from a sibling project's
  * Concierge (where the drafting session travels with the card and every steer
  * `--resume`s it): because answering means "keep going" rather than "execute
  * what this card is carrying", a question never has to hold an action, and the

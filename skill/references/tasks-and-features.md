@@ -99,7 +99,7 @@ dreamcontext people add "Ada" --email ada@example.com --role backend   # roster 
 dreamcontext people list                           # who is on the roster; `← you` marks the active person
 dreamcontext people whoami --set ada               # bind THIS machine (machine-local, never synced)
 dreamcontext tasks create <name> --person "Ada"    # records a person:ada tag
-dreamcontext tasks tag <name> person:mehmet        # add another assignee
+dreamcontext tasks tag <name> person:kerem        # add another assignee
 dreamcontext tasks tag <name> person:ada --remove  # unassign
 ```
 - `person:<slug>` tags are the source of truth for assignment and support **multiple assignees**. The legacy scalar `assignee` field is deprecated (still read, not written).

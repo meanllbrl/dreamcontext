@@ -13,7 +13,7 @@ import type { RemoteMember } from '../../src/lib/task-backend/index.js';
 const MEMBERS: RemoteMember[] = [
   { slug: 'emrecan-tetik', id: '101', name: 'Emrecan Tetik' },
   { slug: 'aylin-yilmaz', id: '102', name: 'Aylin Yilmaz' },
-  { slug: 'mehmet-nuraydin', id: '103', name: 'Mehmet Nuraydın' },
+  { slug: 'kerem-cinar', id: '103', name: 'Kerem Çınar' },
   { slug: 'ahmet-yilmaz', id: '104', name: 'Ahmet Yilmaz' },
 ];
 
@@ -31,10 +31,10 @@ describe('matchMember', () => {
   });
 
   it('ascii-folds Turkish input before matching', () => {
-    // "mehmet" must reach "Mehmet Nuraydın" (dotless ı in the surname).
-    const m = matchMember('mehmet', MEMBERS);
+    // "kerem" must reach "Kerem Çınar" (dotless ı in the surname).
+    const m = matchMember('kerem', MEMBERS);
     expect(m.kind).toBe('fuzzy');
-    expect(m.kind === 'fuzzy' && m.member.slug).toBe('mehmet-nuraydin');
+    expect(m.kind === 'fuzzy' && m.member.slug).toBe('kerem-cinar');
   });
 
   it('a surname segment shared by two members → ambiguous (never guess)', () => {

@@ -112,7 +112,7 @@ const marks = (table: El) => table.querySelectorAll('th, td').map((c) => (
 
 describe('holdsItsWidth — a label holds its width, prose gives it up', () => {
   it('holds the cell shapes a column is usually made of', () => {
-    for (const text of ['done', 'open', '1240', '$4,320', '3.1%', '2026-W23', 'recall-v2', 'mehmet', '—']) {
+    for (const text of ['done', 'open', '1240', '$4,320', '3.1%', '2026-W23', 'recall-v2', 'kerem', '—']) {
       expect(holdsItsWidth(text), text).toBe(true);
     }
   });

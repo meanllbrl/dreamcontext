@@ -100,7 +100,7 @@ async function addProject(name) {
   console.log('  + opened', name);
 }
 
-for (const name of (process.env.PROJECTS ?? 'Genevous,Tilki,kader-matematik').split(',')) {
+for (const name of (process.env.PROJECTS ?? 'acme-payments,acme-design,atlas-mobile').split(',')) {
   try {
     await addProject(name.trim());
   } catch (err) {

@@ -105,7 +105,7 @@ describe('migration-agent-task', () => {
 });
 
 describe('unfinishedAgentTasks — ledger-judged, setupVersion-blind (the 0.23.0 live regression)', () => {
-  // The live failure (Tilki, 2026-07-30): `update` ran the 0.23.0 code steps
+  // The live failure (a peer vault, 2026-07-30): `update` ran the 0.23.0 code steps
   // and advanced setupVersion to 0.23.0, so the old setupVersion-ranged
   // `migrations pending` computed the empty range (0.23.0, 0.23.0] and printed
   // "No pending agent migration tasks" while the residue distribution task

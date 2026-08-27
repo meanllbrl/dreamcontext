@@ -20,9 +20,9 @@ describe('task-backend/identity — mapLoginToPerson', () => {
   it('maps a login to the person slug whose peopleIdentity.githubLogin matches (case-insensitive)', () => {
     const config = {
       platforms: [], packs: [], multiProduct: false as const, setupVersion: '1', disableNativeMemory: true,
-      peopleIdentity: { 'mehmet-nuraydin': { githubLogin: 'MehmetNur' } },
+      peopleIdentity: { 'kerem-yilmaz': { githubLogin: 'KeremYil' } },
     };
-    expect(mapLoginToPerson('mehmetnur', config)).toBe('mehmet-nuraydin');
+    expect(mapLoginToPerson('keremyil', config)).toBe('kerem-yilmaz');
   });
 
   it('returns null on a blank/absent login, absent config, or no matching mapping', () => {
@@ -31,7 +31,7 @@ describe('task-backend/identity — mapLoginToPerson', () => {
     expect(mapLoginToPerson('someone', null)).toBeNull();
     const config = {
       platforms: [], packs: [], multiProduct: false as const, setupVersion: '1', disableNativeMemory: true,
-      peopleIdentity: { 'mehmet-nuraydin': { githubLogin: 'MehmetNur' } },
+      peopleIdentity: { 'kerem-yilmaz': { githubLogin: 'KeremYil' } },
     };
     expect(mapLoginToPerson('someone-else', config)).toBeNull();
   });
@@ -92,25 +92,25 @@ describe('git-sync/sync-engine — authorFor person tier (C3)', () => {
   it('uses the mapped person as commit author when a signed-in login maps to a roster person', async () => {
     updateSetupConfig(projectRoot, {
       brainRepo: { mode: 'in-tree', enabled: true, autoSync: true },
-      peopleIdentity: { 'mehmet-nuraydin': { githubLogin: 'mehmetnur' } },
+      peopleIdentity: { 'kerem-yilmaz': { githubLogin: 'keremyil' } },
     });
     // 0.23.0: the DISPLAY NAME comes from the roster (`people/people.json`),
     // not the retired `config.people`. `peopleIdentity` still owns the
     // login→slug mapping; a slug with no roster entry falls back to the slug.
-    addPerson(contextRoot, { name: 'Mehmet Nuraydin' });
+    addPerson(contextRoot, { name: 'Kerem Yilmaz' });
     const commitCalls: { message: string; author?: { name: string; email: string } }[] = [];
-    await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(commitCalls, { identity: true, login: 'mehmetnur' }));
-    expect(commitCalls[0].author).toEqual({ name: 'Mehmet Nuraydin', email: 'mehmetnur@users.noreply.github.com' });
+    await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(commitCalls, { identity: true, login: 'keremyil' }));
+    expect(commitCalls[0].author).toEqual({ name: 'Kerem Yilmaz', email: 'keremyil@users.noreply.github.com' });
   });
 
   it('overrides even a set local git identity — the person tier is layered ON TOP', async () => {
     updateSetupConfig(projectRoot, {
       brainRepo: { mode: 'in-tree', enabled: true, autoSync: true },
-      peopleIdentity: { 'mehmet-nuraydin': { githubLogin: 'mehmetnur' } },
+      peopleIdentity: { 'kerem-yilmaz': { githubLogin: 'keremyil' } },
     });
-    addPerson(contextRoot, { name: 'Mehmet Nuraydin' });
+    addPerson(contextRoot, { name: 'Kerem Yilmaz' });
     const commitCalls: { message: string; author?: { name: string; email: string } }[] = [];
-    await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(commitCalls, { identity: true, login: 'mehmetnur' }));
+    await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(commitCalls, { identity: true, login: 'keremyil' }));
     expect(commitCalls[0].author).not.toBeUndefined();
   });
 

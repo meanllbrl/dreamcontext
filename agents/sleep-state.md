@@ -108,7 +108,7 @@ dreamcontext core changelog add \
 
 **Supersedes field**: optional, only when a later entry reverses or replaces an earlier one (e.g., a "default-on" flip of a previously "opt-in" flag, or a v0.4 file path being deprecated). Use coarse keys like `"2026-05-23|memory"` (date + scope) — disambiguators only matter when multiple entries share the same date+scope, in which case fall back to the position-from-top index. Most entries do NOT supersede anything; leave the field absent.
 
-**Authors field — AUTO-STAMPED; pass `--authors` only to attribute to someone ELSE.** Since 0.23.0 the CLI resolves the author itself: when `people/people.json` exists it stamps the machine's ACTIVE person (`DREAMCONTEXT_PERSON` → `people whoami --set` pin → git `user.email` matched against the roster → a solo vault's only person). **Your default is to omit `--authors` entirely.** Override it only when you can see the change was driven by someone other than whoever this machine resolves to — then pass comma-separated roster slugs (`--authors "mehmet,ada"`), determined from git `%an` on the commits the entry clusters and self-identification in the session transcript. An explicit list always wins and is used verbatim. When a single change was driven by distinct people across clusters, attribute each `dreamcontext core changelog add` invocation to its own author(s). On a vault with **no** `people/people.json` the key is **omitted**, never written empty — that is what keeps un-migrated vaults byte-identical. Authors are excluded from the changelog dedup fingerprint, so adding them never re-opens an already-released entry.
+**Authors field — AUTO-STAMPED; pass `--authors` only to attribute to someone ELSE.** Since 0.23.0 the CLI resolves the author itself: when `people/people.json` exists it stamps the machine's ACTIVE person (`DREAMCONTEXT_PERSON` → `people whoami --set` pin → git `user.email` matched against the roster → a solo vault's only person). **Your default is to omit `--authors` entirely.** Override it only when you can see the change was driven by someone other than whoever this machine resolves to — then pass comma-separated roster slugs (`--authors "kerem,ada"`), determined from git `%an` on the commits the entry clusters and self-identification in the session transcript. An explicit list always wins and is used verbatim. When a single change was driven by distinct people across clusters, attribute each `dreamcontext core changelog add` invocation to its own author(s). On a vault with **no** `people/people.json` the key is **omitted**, never written empty — that is what keeps un-migrated vaults byte-identical. Authors are excluded from the changelog dedup fingerprint, so adding them never re-opens an already-released entry.
 
 #### A3. Releases — surface readiness, never auto-release
 
@@ -202,7 +202,7 @@ dreamcontext defaults to single-person. When you have **corroborated evidence** 
 
 **Detection gate — require ≥2 corroborated signals** before flipping a project to multi-person (this gate prevents false positives; one weak signal is never enough):
 
-- **Self-identification in user turns** — a person names themselves or another teammate ("this is Ada", "Mehmet asked me to…", "I'm covering for Lina").
+- **Self-identification in user turns** — a person names themselves or another teammate ("this is Ada", "Kerem asked me to…", "I'm covering for Lina").
 - **Distinct git authors since the epoch** — `git log --since="$CUTOFF" --format='%an <%ae>' | sort -u` returns more than one real human author. Apply the **shared bot-filter** (drop any author whose kebab-case slug contains `github-actions` or `dependabot`) — this is the same `BOT_SLUG_FRAGMENTS` list `attributeByPerson` in `src/lib/attribution.ts` uses, so per-person attribution stays consistent with detection.
 - **Distinct voice / handoff** — the transcript shows a clear authorship handoff or a different working style/voice than the established user.
 
@@ -328,13 +328,13 @@ If a problem in YOUR domain keeps recurring across cycles — a Decision stuck b
 ### Core identity
 - 2.memory.md: +1 Technical Decision (JWT rotation policy, source: tasks specialist mention)
 - 0.soul.md: Current Priority bumped from "v0.2.0 release" to "v0.3.0 sleep fan-out"
-- people/mehmet.md: untouched (no recurring preference observed)
+- people/kerem.md: untouched (no recurring preference observed)
 - 4.tech_stack.md: untouched
 - Triggers added: 0
 
 ### People (roster + constitutions)
-- Roster: single-person (mehmet) — no multi-person signals this cycle, no changes
-  | OR: detected 2 humans (signals: 2 distinct git authors + self-id in transcript) → `people add "Ada" --email ada@example.com` (additive; mehmet preserved); people/ada.md scaffolded
+- Roster: single-person (kerem) — no multi-person signals this cycle, no changes
+  | OR: detected 2 humans (signals: 2 distinct git authors + self-id in transcript) → `people add "Ada" --email ada@example.com` (additive; kerem preserved); people/ada.md scaffolded
 - Reconcile people.json ↔ people/*.md: 2 roster slugs, 2 constitutions — consistent
   | OR: orphan `people/lina.md` has no roster entry (REPORTED, not deleted); roster slug `ada` had no file → re-scaffolded via `people add "Ada"`
 - Authors: auto-stamped by the CLI from the active person (no `--authors` passed)

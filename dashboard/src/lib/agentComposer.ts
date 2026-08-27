@@ -397,7 +397,7 @@ export function isSignInCommand(message: string): boolean {
 export interface PeerMention {
   /** Registered vault name — what gets written into the message. */
   vault: string;
-  /** Generated envoy subagent name (`peer-tilki`), for the hint line. */
+  /** Generated envoy subagent name (`peer-acme-payments`), for the hint line. */
   agent: string;
   /** One-line "what it is" from the peer-summary cache. May be ''. */
   whatItIs: string;
@@ -461,7 +461,7 @@ export function mentionSegments(text: string, peers: PeerMention[]): MentionSegm
  * `''` for a bare `@` (offer every peer), so callers must test for `null`.
  *
  * Anchored at a token boundary exactly like {@link slashQueryAt}, which is what
- * keeps an email address silent: the `@` in `mehmet@nativeminds.ai` is glued to
+ * keeps an email address silent: the `@` in `kerem@example.com` is glued to
  * the previous character, so it never opens the menu.
  */
 export function mentionQueryAt(text: string, caret: number): string | null {
@@ -505,8 +505,8 @@ export function applyPeerMention(
  * The peer a message is ADDRESSED to: a leading `@<vault>`, matched against the
  * known peers. Returns the peer and the message with the mention stripped.
  *
- * Leading only, and that is the whole rule. "@Tilki nasıl yapıyor bunu" is a
- * message FOR Tilki; "bunu @Tilki gibi yapalım" mentions it while talking to the
+ * Leading only, and that is the whole rule. "@acme-payments nasıl yapıyor bunu" is a
+ * message FOR acme-payments; "bunu @acme-payments gibi yapalım" mentions it while talking to the
  * local agent, and routing that to another project would be a surprise the user
  * cannot undo. Same shape as {@link isSignInCommand}'s leading-form test, for
  * the same reason.

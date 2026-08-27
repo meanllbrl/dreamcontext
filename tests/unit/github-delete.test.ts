@@ -203,7 +203,7 @@ describe('github remote ops (A6)', () => {
 
   it('listMembers returns the repo collaborators (login is the assignee id)', async () => {
     const members = await backend.listMembers();
-    expect(members.map((m) => m.slug).sort()).toEqual(['alice', 'mehmet']);
+    expect(members.map((m) => m.slug).sort()).toEqual(['alice', 'kerem']);
     expect(members.find((m) => m.slug === 'alice')!.id).toBe('alice');
   });
 

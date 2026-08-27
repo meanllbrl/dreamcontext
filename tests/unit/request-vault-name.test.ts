@@ -26,14 +26,14 @@ function req(
 
 describe('requestedVaultName', () => {
   it('reads the header when one is present', () => {
-    expect(requestedVaultName(req({ headers: { 'x-dreamcontext-vault': 'tilki-marketing-brain' } })))
-      .toBe('tilki-marketing-brain');
+    expect(requestedVaultName(req({ headers: { 'x-dreamcontext-vault': 'acme-design' } })))
+      .toBe('acme-design');
   });
 
   it('falls back to ?vault= on a GET — the media-element channel', () => {
     expect(requestedVaultName(req({
-      url: '/api/agent/file?path=_dream_context%2Fexport%2Freel-sfx.mp4&raw=1&vault=tilki-marketing-brain',
-    }))).toBe('tilki-marketing-brain');
+      url: '/api/agent/file?path=_dream_context%2Fexport%2Freel-sfx.mp4&raw=1&vault=acme-design',
+    }))).toBe('acme-design');
   });
 
   it('prefers the header over the query when both are sent', () => {
@@ -45,7 +45,7 @@ describe('requestedVaultName', () => {
 
   it('IGNORES ?vault= on a mutating request — a query param rides along on cross-site posts', () => {
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'post']) {
-      expect(requestedVaultName(req({ method, url: '/api/agent/reveal?vault=tilki-marketing-brain' })))
+      expect(requestedVaultName(req({ method, url: '/api/agent/reveal?vault=acme-design' })))
         .toBeNull();
     }
   });

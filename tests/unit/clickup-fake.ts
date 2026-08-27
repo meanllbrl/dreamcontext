@@ -97,7 +97,7 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
     failMode: null,
     members: [
       { id: 501, username: 'Alice Smith', email: 'alice@example.test' },
-      { id: 502, username: 'Mehmet Nuraydın', email: 'mehmet@example.test' },
+      { id: 502, username: 'Kerem Yılmaz', email: 'kerem@example.test' },
     ],
     listStatuses: ['to do', 'in progress', 'review', 'complete'],
     customFields: [

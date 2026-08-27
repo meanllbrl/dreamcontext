@@ -66,7 +66,7 @@ afterEach(() => {
 
 describe('clickup members + person-tag assignee bridge', () => {
   it('memberSlug ascii-folds display names (Turkish chars + diacritics)', () => {
-    expect(memberSlug('Mehmet Nuraydın')).toBe('mehmet-nuraydin');
+    expect(memberSlug('Kerem Yılmaz')).toBe('kerem-yilmaz');
     expect(memberSlug('Alice Smith')).toBe('alice-smith');
     expect(memberSlug('Şule Çağrı Öztürk')).toBe('sule-cagri-ozturk');
     expect(memberSlug('René François')).toBe('rene-francois');
@@ -76,19 +76,19 @@ describe('clickup members + person-tag assignee bridge', () => {
     await backend.sync('pull');
     const state = JSON.parse(readFileSync(join(contextRoot, 'state', '.tasks-sync.json'), 'utf-8'));
     expect(state.members['alice-smith']).toMatchObject({ id: '501', name: 'Alice Smith' });
-    expect(state.members['mehmet-nuraydin']).toMatchObject({ id: '502', name: 'Mehmet Nuraydın' });
+    expect(state.members['kerem-yilmaz']).toMatchObject({ id: '502', name: 'Kerem Yılmaz' });
   });
 
   it('listMembers returns assignee candidates (slug, id, name)', async () => {
     const members = await backend.listMembers!();
     expect(members).toEqual([
       { slug: 'alice-smith', id: '501', name: 'Alice Smith', email: 'alice@example.test' },
-      { slug: 'mehmet-nuraydin', id: '502', name: 'Mehmet Nuraydın', email: 'mehmet@example.test' },
+      { slug: 'kerem-yilmaz', id: '502', name: 'Kerem Yılmaz', email: 'kerem@example.test' },
     ]);
   });
 
   it('a person:<slug> tag drives the remote assignee on push (no manual mapping needed)', async () => {
-    await backend.create({ name: 'Tagged Owner', tags: ['x', 'person:mehmet-nuraydin'], variant: 'cli' });
+    await backend.create({ name: 'Tagged Owner', tags: ['x', 'person:kerem-yilmaz'], variant: 'cli' });
     const report = await backend.sync('push');
     expect(report.errors).toEqual([]);
 
@@ -100,17 +100,17 @@ describe('clickup members + person-tag assignee bridge', () => {
   });
 
   it('multiple person:<slug> tags push as multiple assignees', async () => {
-    await backend.create({ name: 'Co Owned', tags: ['person:mehmet-nuraydin', 'person:alice-smith'], variant: 'cli' });
+    await backend.create({ name: 'Co Owned', tags: ['person:kerem-yilmaz', 'person:alice-smith'], variant: 'cli' });
     await backend.sync('push');
     const remote = [...fake.tasks.values()][0];
-    // Slugs sort → alice-smith (501) before mehmet-nuraydin (502).
+    // Slugs sort → alice-smith (501) before kerem-yilmaz (502).
     expect(remote.assignees.map((a) => a.id).sort()).toEqual([501, 502]);
     // person: tags never travel as plain remote tags (the `dcproject:` stamp does — exclude it).
     expect(remote.tags.map((t) => t.name).filter((n) => !n.startsWith('dcproject:'))).toEqual([]);
   });
 
   it('a legacy assignee field is folded in alongside person tags (union)', async () => {
-    await backend.create({ name: 'Field Owner', tags: ['person:mehmet-nuraydin'], variant: 'cli' });
+    await backend.create({ name: 'Field Owner', tags: ['person:kerem-yilmaz'], variant: 'cli' });
     await backend.updateFields('field-owner', { assignee: 'alice-smith', updated_at: '2026-06-11' });
     await backend.sync('push');
     const remote = [...fake.tasks.values()][0];
@@ -137,7 +137,7 @@ describe('clickup members + person-tag assignee bridge', () => {
     const merged = mirror('assigned-remotely');
     // Assignment lives entirely in person tags now — no `assignee:` field.
     expect(merged).not.toContain('assignee:');
-    expect(merged).toContain('person:mehmet-nuraydin');
+    expect(merged).toContain('person:kerem-yilmaz');
     expect(merged).toContain('person:alice-smith');
 
     // Convergence: the derived person tag must not register as local drift.
@@ -154,13 +154,13 @@ describe('clickup members + person-tag assignee bridge', () => {
     const rid = [...fake.tasks.keys()][0];
     expect(fake.tasks.get(rid)!.assignees.map((a) => a.id)).toEqual([501]);
 
-    // Remote hands it over to Mehmet.
+    // Remote hands it over to Kerem.
     fake.editTask(rid, { assignees: [{ id: 502 }] });
     await backend.sync('both');
 
     const merged = mirror('handover');
     expect(merged).not.toContain('assignee:');
-    expect(merged).toContain('person:mehmet-nuraydin');
+    expect(merged).toContain('person:kerem-yilmaz');
     expect(merged).not.toContain('person:alice-smith');
   });
 });

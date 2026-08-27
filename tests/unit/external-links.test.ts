@@ -42,7 +42,7 @@ describe('externalHref', () => {
   });
 
   it('accepts mailto and tel', () => {
-    expect(externalHref('mailto:mehmet@nuraydin.com')).toBe('mailto:mehmet@nuraydin.com');
+    expect(externalHref('mailto:kerem@example.com')).toBe('mailto:kerem@example.com');
     expect(externalHref('tel:+15551234567')).toBe('tel:+15551234567');
   });
 
@@ -155,7 +155,7 @@ describe('isContainedHref', () => {
 
   it('leaves external links to externalHref, which sends them to the OS', () => {
     expect(isContainedHref('https://github.com/meanllbrl/dreamcontext')).toBe(false);
-    expect(isContainedHref('mailto:mehmet@nuraydin.com')).toBe(false);
+    expect(isContainedHref('mailto:kerem@example.com')).toBe(false);
     expect(isContainedHref('//example.com/x')).toBe(false);
   });
 

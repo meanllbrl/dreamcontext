@@ -500,25 +500,25 @@ describe('sleep 360° — capture → consolidation loop (WS4)', () => {
 
   it('consolidation attributes each changelog/task update per person when multiPerson (links #8)', () => {
     const commits: Commit[] = [
-      { hash: 'aaa', author: 'Mehmet Nuraydin', subject: 'feat: x' },
+      { hash: 'aaa', author: 'Kerem Yilmaz', subject: 'feat: x' },
       { hash: 'bbb', author: 'Ada Lovelace', subject: 'fix: y' },
-      { hash: 'ccc', author: 'Mehmet Nuraydin', subject: 'docs: z' },
+      { hash: 'ccc', author: 'Kerem Yilmaz', subject: 'docs: z' },
     ];
-    const buckets = attributeByPerson(commits, ['Mehmet Nuraydin', 'Ada Lovelace']);
-    expect(Object.keys(buckets).sort()).toEqual(['ada-lovelace', 'mehmet-nuraydin']);
-    expect(buckets['mehmet-nuraydin'].map(c => c.hash)).toEqual(['aaa', 'ccc']);
+    const buckets = attributeByPerson(commits, ['Kerem Yilmaz', 'Ada Lovelace']);
+    expect(Object.keys(buckets).sort()).toEqual(['ada-lovelace', 'kerem-yilmaz']);
+    expect(buckets['kerem-yilmaz'].map(c => c.hash)).toEqual(['aaa', 'ccc']);
     expect(buckets['ada-lovelace'].map(c => c.hash)).toEqual(['bbb']);
   });
 
   it('single-person / bot commit list yields no phantom attribution buckets', () => {
     const commits: Commit[] = [
-      { hash: 'aaa', author: 'Mehmet Nuraydin', subject: 'feat: x' },
+      { hash: 'aaa', author: 'Kerem Yilmaz', subject: 'feat: x' },
       { hash: 'bot', author: 'github-actions[bot]', subject: 'chore: release' },
       { hash: 'dep', author: 'dependabot[bot]', subject: 'bump dep' },
     ];
-    const buckets = attributeByPerson(commits, ['Mehmet Nuraydin']);
-    expect(Object.keys(buckets)).toEqual(['mehmet-nuraydin']); // no bot buckets, no phantom
-    expect(buckets['mehmet-nuraydin'].map(c => c.hash)).toEqual(['aaa']); // bots filtered out
+    const buckets = attributeByPerson(commits, ['Kerem Yilmaz']);
+    expect(Object.keys(buckets)).toEqual(['kerem-yilmaz']); // no bot buckets, no phantom
+    expect(buckets['kerem-yilmaz'].map(c => c.hash)).toEqual(['aaa']); // bots filtered out
   });
 });
 

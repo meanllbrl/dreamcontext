@@ -188,7 +188,7 @@ describe('auditCoreFileSizes — always-loaded vs read-on-demand tier', () => {
   });
 
   it('treats every person constitution as always-loaded', () => {
-    writeFileSync(join(tmpDir, 'people', 'mehmet.md'), BIG);
+    writeFileSync(join(tmpDir, 'people', 'kerem.md'), BIG);
     const audit = auditCoreFileSizes(tmpDir).find((a) => a.relPath.includes('people/'));
     expect(audit!.alwaysLoaded).toBe(true);
   });

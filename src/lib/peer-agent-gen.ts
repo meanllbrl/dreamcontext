@@ -8,7 +8,7 @@ import { resolveVaultContextRoot } from './vaults.js';
  * PER-PEER SUBAGENTS — a connection becomes something the agent can address.
  *
  * A connection in `.connections.json` is invisible to the model: it changes what
- * recall returns, but nothing tells the agent "there is a project called Tilki
+ * recall returns, but nothing tells the agent "there is a project called acme-payments
  * and you may ask it things." So for every active connection we GENERATE a
  * subagent file — `.claude/agents/peer-<slug>.md` — carrying that peer's
  * identity glance and the exact commands that reach it.
@@ -35,7 +35,7 @@ const PEER_AGENT_PREFIX = 'peer-';
 
 /**
  * Slugify a vault name into a filename-safe agent id. Collapses anything outside
- * `[a-z0-9-]` so a vault named "Tilki Öğretmen" cannot produce a path component
+ * `[a-z0-9-]` so a vault named "Acme Payments" cannot produce a path component
  * that needs quoting (or escapes the directory).
  */
 export function peerAgentSlug(vault: string): string {

@@ -342,7 +342,7 @@ export function registerMemoryCommand(program: Command): void {
     .option('--type <type>', 'Changelog type (default: note)', 'note')
     .option('--scope <scope>', 'Changelog scope (default: quick)', 'quick')
     .option('--references <refs>', 'Optional comma-separated references (commit:<sha>, file:<path>, knowledge:<slug>, feature:<slug>, task:<slug>, url:<href>)')
-    .option('--person <list>', 'Comma-separated people to attribute this memory to (e.g. "mehmet,ada") — defaults to the active person')
+    .option('--person <list>', 'Comma-separated people to attribute this memory to (e.g. "kerem,ada") — defaults to the active person')
     .description('Quick-append a CHANGELOG entry. Fast path; for full control use `dreamcontext core changelog add`.')
     .action(async (
       textParts: string[],

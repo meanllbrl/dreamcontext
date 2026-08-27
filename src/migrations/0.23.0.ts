@@ -239,10 +239,10 @@ function writeDoc(path: string, content: string): void {
  * phrase with no sentence punctuation, that then slugifies legally. A
  * hand-maintained `## People` block drifts into description —
  *
- *   - **mehmet** — Mehmet Nuraydın, Technical Product Manager / App Owner. Owns …
+ *   - **kerem** — Kerem Yılmaz, Technical Product Manager / App Owner. Owns …
  *
- * — and which fragment of that is the person's NAME ("mehmet"? "Mehmet
- * Nuraydın"?) is a judgment call. D5 is explicit that a code step must not fake
+ * — and which fragment of that is the person's NAME ("kerem"? "Kerem
+ * Yılmaz"?) is a judgment call. D5 is explicit that a code step must not fake
  * one: cutting at the em dash happens to be right here and silently mangles the
  * next vault. So the bullet is reported as unparsed, its section goes to the
  * residue whole, and `distribute-user-md-residue` places the people with
@@ -279,7 +279,7 @@ const PERSON_MARKER = /\(\s*`?person:([^)`]*)`?\s*\)\s*$/;
 
 /**
  * One token of a human name: opens with a letter, then letters, combining marks,
- * apostrophes and INNER hyphens. `Jean-Luc`, `O'Brien`, `Nuraydın`, `Çimen` pass.
+ * apostrophes and INNER hyphens. `Jean-Luc`, `O'Brien`, `Yılmaz`, `Çimen` pass.
  *
  * A whitelist, not a punctuation blacklist. The blacklist this replaces listed
  * the em dash and en dash and missed the plain `-`, so the single most common
@@ -362,7 +362,7 @@ function parsePeopleBullets(body: string): { names: string[]; unparsed: string[]
  * function used to end with `Object.keys(readPeople(root)).sort()[0]` — the
  * alphabetically first person — which is exactly how a two-person vault wrote
  * one person's Identity, Preferences and Communication Style into the OTHER
- * person's constitution: `bektas` sorts before `mehmet`, and nothing on that
+ * person's constitution: `bektas` sorts before `kerem`, and nothing on that
  * machine said otherwise. The victim's own file stayed an empty scaffold.
  *
  * `resolveActivePerson` refuses that guess by design — "an unresolvable machine
@@ -993,7 +993,7 @@ Read the residue file and place each '## <Heading>' section:
   it into something you did not verify.
 - brand / palette / tone / voice sections → core/3.style_guide_and_branding.md.
 - '## People' is here ONLY when its bullets describe people instead of naming
-  them ("- **mehmet** — Mehmet Nuraydin, Technical Product Manager. Owns ..."),
+  them ("- **kerem** — Kerem Yilmaz, Technical Product Manager. Owns ..."),
   so no code could separate the NAME from the description without guessing.
   Decide each person's name yourself and register them:
   \`dreamcontext people add "<Name>" [--email <email>] [--role <role>]\`.

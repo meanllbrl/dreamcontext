@@ -444,7 +444,7 @@ export async function handleTasksSyncTest(
   sendJson(res, 200, { ...result, backend: backend.name });
 }
 
-/** Title-case a kebab slug for display: "mehmet-nuraydin" → "Mehmet Nuraydin". */
+/** Title-case a kebab slug for display: "kerem-yilmaz" → "Kerem Yilmaz". */
 function slugToName(slug: string): string {
   return slug
     .split('-')

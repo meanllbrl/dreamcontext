@@ -1,9 +1,10 @@
-import { buildCorpus, bm25Search, docKey } from '/Users/mehmetnuraydin/projects/dreamcontext/src/lib/recall.js';
-import { loadGold } from '/Users/mehmetnuraydin/projects/dreamcontext/eval/harness.js';
+import { join } from 'node:path';
+import { buildCorpus, bm25Search, docKey } from '../src/lib/recall.js';
+import { loadGold } from '../eval/harness.js';
 
 const root = process.cwd() + '/_dream_context';
 const corpus = buildCorpus(root);
-const gold = loadGold('/Users/mehmetnuraydin/projects/dreamcontext/eval/gold.jsonl');
+const gold = loadGold(join(process.cwd(), 'eval/gold.jsonl'));
 
 for (const q of gold) {
   const hits = bm25Search(q.query, corpus, 10);

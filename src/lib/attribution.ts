@@ -20,7 +20,7 @@ import { readFrontmatter } from './frontmatter.js';
 export interface Commit {
   /** Commit hash (short or full). */
   hash: string;
-  /** Git author name (e.g. "Mehmet Nuraydın") or email — matched by slug. */
+  /** Git author name (e.g. "Kerem Yılmaz") or email — matched by slug. */
   author: string;
   /** Commit subject line. */
   subject: string;

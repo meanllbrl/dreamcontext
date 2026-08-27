@@ -285,7 +285,7 @@
 
    The one departure is the row: a project gets TWO lines, name over its one-liner. A slash
    command's name IS its meaning, so one line is complete; a project name is a label the
-   user chose months ago, and "which one is Tilki again" is exactly the recall the summary
+   user chose months ago, and "which one is acme-payments again" is exactly the recall the summary
    line answers. It is clamped to one line so a long soul sentence cannot turn the picker
    into a wall. */
 .chat-cmp-mention-row {

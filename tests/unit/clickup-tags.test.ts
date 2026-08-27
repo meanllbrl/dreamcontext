@@ -134,8 +134,8 @@ describe('local tag edits push to the remote (per-tag endpoints)', () => {
     await backend.sync('push');
     expect([...fake.tasks.values()][0].assignees.map((a) => a.id)).toEqual([501]);
 
-    // handover: alice → mehmet
-    await backend.updateFields('handover-local', { tags: ['person:mehmet-nuraydin'], updated_at: '2026-06-11' });
+    // handover: alice → kerem
+    await backend.updateFields('handover-local', { tags: ['person:kerem-yilmaz'], updated_at: '2026-06-11' });
     await backend.sync('push');
     expect([...fake.tasks.values()][0].assignees.map((a) => a.id)).toEqual([502]);
 

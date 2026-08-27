@@ -6,7 +6,7 @@
  * automation fires at 18:00 precisely because nobody is at the Mac, so a gate
  * that can only be answered there is a gate that becomes a rubber stamp: you
  * come back the next morning, find seven questions, and answer them all
- * without reading. Tilki's Concierge got this right first and it is the least
+ * without reading. A sibling project's Concierge got this right first, and it is the least
  * negotiable thing it teaches — the answer surface has to be where the human
  * already is, which is their phone.
  *

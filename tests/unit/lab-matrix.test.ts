@@ -25,7 +25,7 @@ import { syncInsight } from '../../src/lib/lab/sync.js';
 import { checkLab } from '../../src/cli/commands/doctor.js';
 import { LabError, type MatrixSnapshot } from '../../src/lib/lab/types.js';
 
-/** The kitUP motivating fixture: funnel × language, values previously smuggled
+/** The motivating fixture: funnel × language, values previously smuggled
  *  into series names as "F3000 · TR · 119k". */
 function fixtureMatrix(): Record<string, unknown> {
   return {
@@ -46,7 +46,7 @@ function fixtureMatrix(): Record<string, unknown> {
 }
 
 describe('parseMatrixSet (contract validation)', () => {
-  it('accepts the kitUP fixture and preserves shape', () => {
+  it('accepts the motivating fixture and preserves shape', () => {
     const { set, notices } = parseMatrixSet(fixtureMatrix());
     expect(notices).toEqual([]);
     expect(set.kind).toBe('matrix/v1');

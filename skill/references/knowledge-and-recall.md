@@ -132,7 +132,7 @@ Three things to know:
 ```bash
 dreamcontext memory remember "Chose BM25 over mem0 after a 3-reviewer review"
 dreamcontext memory remember "<text>" --references decision:recall-v2,task:recall-engine
-dreamcontext memory remember "<text>" --person mehmet,ada      # attribute (multi-person)
+dreamcontext memory remember "<text>" --person kerem,ada      # attribute (multi-person)
 ```
 Writes a CHANGELOG entry (`type=note`, `scope=quick`); the sleep cycle reconciles it into knowledge later. You do NOT hand-edit `2.memory.md` for these (it no longer carries a LIFO notes section).
 

@@ -170,7 +170,7 @@ describe('buildForecasts — dated tasks are the schedule of record (lock-step w
     expect(f.slipDays).toBe(-11); // work ends Jul 20 → 11 days of buffer before the target
   });
 
-  it('REGRESSION (Tilki board): start-only dated tasks must not collapse the committed window', () => {
+  it('REGRESSION (a real client board): start-only dated tasks must not collapse the committed window', () => {
     // Real-world shape: member tasks carry only start dates (no dues). The old tasks
     // basis made forecast_start = forecast_end = the task start, so the bar collapsed
     // to an 8px stub and the PO's 1-month committed window vanished from the timeline.

@@ -28,7 +28,7 @@ const CORPUS = [
   'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
   '0123456789 %99,8 17.613 10,8 saniye',
   'Paywall görünümü lead\'den SONRA geliyor — ölçülmesi gereken şey sayfada KALMAK',
-  'analytics_kitup.all_merged_analytics / checkout / plan_selection',
+  'analytics_acme.all_merged_analytics / checkout / plan_selection',
   'Şiğüöç ŞİĞÜÖÇ ıI',
 ];
 

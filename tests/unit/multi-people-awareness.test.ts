@@ -178,24 +178,24 @@ describe('multi-people awareness', () => {
     it('supports people: string[] alongside multiProduct (kebab-case display names)', () => {
       writeSetupConfig(
         fx.projectRoot,
-        baseConfig({ multiProduct: ['app', 'site'], people: ['mehmet', 'ada'] }),
+        baseConfig({ multiProduct: ['app', 'site'], people: ['kerem', 'ada'] }),
       );
       const cfg = readSetupConfig(fx.projectRoot);
       expect(cfg).not.toBeNull();
-      expect(cfg!.people).toEqual(['mehmet', 'ada']);
+      expect(cfg!.people).toEqual(['kerem', 'ada']);
       expect(cfg!.multiProduct).toEqual(['app', 'site']);
     });
 
     it('multiPerson is derived true when people.length > 1, false otherwise', () => {
       // Derived only — never read from a persisted flag.
-      expect(isMultiPerson(baseConfig({ people: ['mehmet', 'ada'] }))).toBe(true);
-      expect(isMultiPerson(baseConfig({ people: ['mehmet'] }))).toBe(false);
+      expect(isMultiPerson(baseConfig({ people: ['kerem', 'ada'] }))).toBe(true);
+      expect(isMultiPerson(baseConfig({ people: ['kerem'] }))).toBe(false);
       expect(isMultiPerson(baseConfig({ people: [] }))).toBe(false);
       expect(isMultiPerson(baseConfig())).toBe(false);
       expect(isMultiPerson(null)).toBe(false);
 
       // And it is NEVER persisted: writing then reading carries no multiPerson key.
-      writeSetupConfig(fx.projectRoot, baseConfig({ people: ['mehmet', 'ada'] }));
+      writeSetupConfig(fx.projectRoot, baseConfig({ people: ['kerem', 'ada'] }));
       const raw = JSON.parse(
         readFileSync(join(fx.contextRoot, 'state', '.config.json'), 'utf-8'),
       );
@@ -203,23 +203,23 @@ describe('multi-people awareness', () => {
 
       // updateSetupConfig merges people additively (patch.people ?? existing).
       const merged = updateSetupConfig(fx.projectRoot, { platforms: [] });
-      expect(merged.people).toEqual(['mehmet', 'ada']);
+      expect(merged.people).toEqual(['kerem', 'ada']);
     });
 
     it('config show prints the people roster from people.json (sorted by name)', async () => {
       // 0.23.0: the roster line reads the people STORE, not `.config.json.people`.
       writeSetupConfig(fx.projectRoot, baseConfig());
-      seedPeople(fx.contextRoot, ['mehmet', 'ada']);
+      seedPeople(fx.contextRoot, ['kerem', 'ada']);
       const out = await captureStdout(() =>
         runCli(registerConfigCommand, ['config', 'show']),
       );
-      expect(out).toMatch(/People:\s+ada, mehmet/);
+      expect(out).toMatch(/People:\s+ada, kerem/);
     });
 
     it('a legacy config.people roster no longer feeds the config show line', async () => {
       // The key still PARSES (the 0.23.0 migration needs to read it), but nothing
       // renders it — one file owns "who exists", and it is people.json.
-      writeSetupConfig(fx.projectRoot, baseConfig({ people: ['mehmet', 'ada'] }));
+      writeSetupConfig(fx.projectRoot, baseConfig({ people: ['kerem', 'ada'] }));
       const out = await captureStdout(() =>
         runCli(registerConfigCommand, ['config', 'show']),
       );
@@ -247,23 +247,23 @@ describe('multi-people awareness', () => {
       writeFileSync(
         join(fx.contextRoot, 'core', 'CHANGELOG.json'),
         JSON.stringify([
-          { date: '2026-06-09', type: 'feat', scope: 'x', description: 'd', breaking: false, authors: ['mehmet', 'ada'] },
+          { date: '2026-06-09', type: 'feat', scope: 'x', description: 'd', breaking: false, authors: ['kerem', 'ada'] },
         ]),
         'utf-8',
       );
       const entries = readChangelog(fx.contextRoot);
-      expect(entries[0].authors).toEqual(['mehmet', 'ada']);
+      expect(entries[0].authors).toEqual(['kerem', 'ada']);
     });
 
-    it('core changelog add --authors "mehmet,ada" persists authors on the entry', async () => {
+    it('core changelog add --authors "kerem,ada" persists authors on the entry', async () => {
       await runCli(registerCoreCommand, [
         'core', 'changelog', 'add',
         '--type', 'feat', '--scope', 'people', '--description', 'multi-person',
-        '--authors', 'mehmet, ada',
+        '--authors', 'kerem, ada',
       ]);
       const entries = readChangelog(fx.contextRoot);
       expect(entries).toHaveLength(1);
-      expect(entries[0].authors).toEqual(['mehmet', 'ada']);
+      expect(entries[0].authors).toEqual(['kerem', 'ada']);
       expect(entries[0].description).toBe('multi-person');
     });
 
@@ -272,7 +272,7 @@ describe('multi-people awareness', () => {
       // fingerprint EXCLUDES authors, so adding authors to an otherwise-identical
       // entry does not change its dedup identity — no spurious "unreleased".
       const legacy = { date: '2026-06-09', type: 'fix', scope: 'auth', description: 'bug', breaking: false };
-      const withAuthors = { ...legacy, authors: ['mehmet'] };
+      const withAuthors = { ...legacy, authors: ['kerem'] };
       // Release already contains the legacy entry → it is "released".
       writeFileSync(
         join(fx.contextRoot, 'core', 'RELEASES.json'),
@@ -294,18 +294,18 @@ describe('multi-people awareness', () => {
     });
 
     it('snapshot Recent Changelog shows author attribution when multiPerson', async () => {
-      writeSetupConfig(fx.projectRoot, baseConfig({ people: ['mehmet', 'ada'] }));
-      seedPeople(fx.contextRoot, ['mehmet', 'ada']);
+      writeSetupConfig(fx.projectRoot, baseConfig({ people: ['kerem', 'ada'] }));
+      seedPeople(fx.contextRoot, ['kerem', 'ada']);
       writeFileSync(
         join(fx.contextRoot, 'core', 'CHANGELOG.json'),
         JSON.stringify([
-          { date: '2026-06-09', type: 'feat', scope: 'people', description: 'rostering', breaking: false, authors: ['mehmet', 'ada'] },
+          { date: '2026-06-09', type: 'feat', scope: 'people', description: 'rostering', breaking: false, authors: ['kerem', 'ada'] },
         ]),
         'utf-8',
       );
       const snapshot = generateSnapshot();
       expect(snapshot).toContain('## Recent Changelog');
-      expect(snapshot).toContain('— by mehmet, ada');
+      expect(snapshot).toContain('— by kerem, ada');
 
       // Single-person output is byte-identical to today: same CHANGELOG, no
       // roster ⇒ no "— by" suffix anywhere.
@@ -319,8 +319,8 @@ describe('multi-people awareness', () => {
 
   describe('task person tags', () => {
     it('when multiPerson, the responsible person is recorded as a person:<name> tag in task frontmatter', async () => {
-      writeSetupConfig(fx.projectRoot, baseConfig({ people: ['mehmet', 'ada'] }));
-      seedPeople(fx.contextRoot, ['mehmet', 'ada']);
+      writeSetupConfig(fx.projectRoot, baseConfig({ people: ['kerem', 'ada'] }));
+      seedPeople(fx.contextRoot, ['kerem', 'ada']);
       await runCli(registerTasksCommand, [
         'tasks', 'create', 'Ship rostering', '-w', 'test why', '--person', 'Ada',
       ]);
@@ -329,10 +329,10 @@ describe('multi-people awareness', () => {
     });
 
     it('tasks list can filter/group by person:<name> tag (reuses existing tag handling)', async () => {
-      writeSetupConfig(fx.projectRoot, baseConfig({ people: ['mehmet', 'ada'] }));
-      seedPeople(fx.contextRoot, ['mehmet', 'ada']);
+      writeSetupConfig(fx.projectRoot, baseConfig({ people: ['kerem', 'ada'] }));
+      seedPeople(fx.contextRoot, ['kerem', 'ada']);
       await runCli(registerTasksCommand, ['tasks', 'create', 'Task A', '-w', 'test why', '--person', 'Ada']);
-      await runCli(registerTasksCommand, ['tasks', 'create', 'Task B', '-w', 'test why', '--person', 'Mehmet']);
+      await runCli(registerTasksCommand, ['tasks', 'create', 'Task B', '-w', 'test why', '--person', 'Kerem']);
 
       // --tag person:ada filters via the EXISTING task-query tag handling (the
       // tag was injected into the generic tags array — task-query.ts unchanged).
@@ -350,7 +350,7 @@ describe('multi-people awareness', () => {
         runCli(registerTasksCommand, ['tasks', 'list', '--group-by', 'tag', '--all']),
       );
       expect(grouped).toContain('person:ada');
-      expect(grouped).toContain('person:mehmet');
+      expect(grouped).toContain('person:kerem');
     });
 
     it('single-person projects do not get person tags injected', async () => {
@@ -369,11 +369,11 @@ describe('multi-people awareness', () => {
       // Person attribution rides the UNIFIED `authors` carrier (NOT references).
       await runCli(registerMemoryCommand, [
         'memory', 'remember', 'decided', 'on', 'the', 'roster', 'shape',
-        '--person', 'mehmet,ada',
+        '--person', 'kerem,ada',
       ]);
       const entries = readChangelog(fx.contextRoot);
       expect(entries).toHaveLength(1);
-      expect(entries[0].authors).toEqual(['mehmet', 'ada']);
+      expect(entries[0].authors).toEqual(['kerem', 'ada']);
       // It must NOT be folded into references.
       expect(entries[0].references).toBeUndefined();
     });
@@ -398,14 +398,14 @@ describe('multi-people awareness', () => {
   // vault with ≤1 person grows no roster surface anywhere.
   describe('people roster (people/people.json)', () => {
     it('the roster enumerates each person, keyed by slug, sorted by name', () => {
-      seedPeople(fx.contextRoot, ['mehmet', 'ada']);
+      seedPeople(fx.contextRoot, ['kerem', 'ada']);
       const roster = listPeople(fx.contextRoot);
-      expect(roster.map((p) => p.slug)).toEqual(['ada', 'mehmet']);
+      expect(roster.map((p) => p.slug)).toEqual(['ada', 'kerem']);
       expect(roster.every((p) => Array.isArray(p.emails))).toBe(true);
 
       // Additive update: a third person joins without disturbing the first two.
-      seedPeople(fx.contextRoot, ['mehmet', 'ada', 'lina']);
-      expect(listPeople(fx.contextRoot).map((p) => p.slug)).toEqual(['ada', 'lina', 'mehmet']);
+      seedPeople(fx.contextRoot, ['kerem', 'ada', 'lina']);
+      expect(listPeople(fx.contextRoot).map((p) => p.slug)).toEqual(['ada', 'kerem', 'lina']);
     });
 
     it('solo vault renders no roster section', () => {
@@ -415,10 +415,10 @@ describe('multi-people awareness', () => {
       expect(isMultiPersonVault(fx.contextRoot)).toBe(false);
       expect(listPeople(fx.contextRoot)).toEqual([]);
 
-      seedPeople(fx.contextRoot, ['mehmet']);
+      seedPeople(fx.contextRoot, ['kerem']);
       expect(isMultiPersonVault(fx.contextRoot)).toBe(false);
 
-      seedPeople(fx.contextRoot, ['mehmet', 'ada']);
+      seedPeople(fx.contextRoot, ['kerem', 'ada']);
       expect(isMultiPersonVault(fx.contextRoot)).toBe(true);
     });
   });

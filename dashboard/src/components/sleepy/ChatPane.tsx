@@ -551,7 +551,7 @@ export function ChatPane({
   const askRouting = useAskQuestionWatchdog(conv.items, hasPendingQuestion);
 
   /**
-   * Live sessions in CONNECTED PROJECTS, opened by addressing one (`@Tilki …`).
+   * Live sessions in CONNECTED PROJECTS, opened by addressing one (`@acme-payments …`).
    *
    * Owned by the pane rather than the transcript for the same reason the background-shells
    * tray is: a peer session outlives the message that started it, can sit blocked on a
@@ -1784,7 +1784,7 @@ export function ChatPane({
           // composer, the composer squares the corners it would otherwise round against it.
           shelved={shelf.hasRows}
           onSignIn={onSignIn}
-          // `@Tilki …` opens a live session in that project instead of sending here — see
+          // `@acme-payments …` opens a live session in that project instead of sending here — see
           // the peerSessions note above and PeerSessionCard.
           onPeerMessage={(peer, body) => {
             peerKeyRef.current += 1;

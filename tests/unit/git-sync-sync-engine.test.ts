@@ -885,7 +885,7 @@ describe('git-sync/sync-engine — stale per-project token self-heal', () => {
     expect(readSecrets().github.token).toBe(STALE);
 
     const state = makeState({ dirty: ['knowledge/x.md'], branch: 'main' });
-    const deps = healDeps(state, { global: { token: FRESH, source: 'secrets', via: 'global' }, badTokens: [STALE], throwMessage: 'remote: Permission to Genevous/genevous-brain.git denied to meanllbrl.' });
+    const deps = healDeps(state, { global: { token: FRESH, source: 'secrets', via: 'global' }, badTokens: [STALE], throwMessage: 'remote: Permission to acme-co/acme-brain.git denied to a-user.' });
     const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, deps);
 
     expect(result.action).toBe('pushed');
@@ -911,7 +911,7 @@ describe('git-sync/sync-engine — stale per-project token self-heal', () => {
   it('retry ALSO fails (global rejected too) → surfaces the ORIGINAL failure and does NOT remove the project token', async () => {
     writeGitHubToken(projectRoot, STALE);
     const state = makeState({ dirty: ['knowledge/x.md'], branch: 'main' });
-    const deps = healDeps(state, { global: { token: FRESH, source: 'secrets', via: 'global' }, badTokens: [STALE, FRESH], throwMessage: 'remote: Permission to Genevous/genevous-brain.git denied.' });
+    const deps = healDeps(state, { global: { token: FRESH, source: 'secrets', via: 'global' }, badTokens: [STALE, FRESH], throwMessage: 'remote: Permission to acme-co/acme-brain.git denied.' });
 
     await expect(runBrainSync({ cwd: contextRoot, mode: 'auto' }, deps)).rejects.toThrow(/denied/);
     // Stale token NOT removed — the recovery never succeeded.

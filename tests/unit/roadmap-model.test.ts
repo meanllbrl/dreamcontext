@@ -157,7 +157,7 @@ describe('buildRoadmapModel — forecast cascade (full DAG)', () => {
     expect(a.slipping).toBe(false); // 2026-08-20 <= 2026-09-01
   });
 
-  it('REGRESSION (Tilki board): start-only dated tasks keep the committed window (no point-collapse)', () => {
+  it('REGRESSION (a real client board): start-only dated tasks keep the committed window (no point-collapse)', () => {
     // Member tasks carry only start dates. The old hasDates branch collapsed the
     // forecast to a single day at the earliest task start, erasing the PO's
     // committed month-long window — the timeline drew an 8px stub instead of a bar.

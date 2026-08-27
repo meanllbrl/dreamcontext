@@ -2,10 +2,11 @@
 // The live corpus mutates while you work (session digests, bookmarks, the very
 // task file tracking this work). For a fair engine A/B, evaluate on a FROZEN
 // corpus: git-tracked docs only — no capture docs, no in-flight tracking task.
-import { buildCorpus, bm25Search, docKey, type CorpusDoc } from '/Users/mehmetnuraydin/projects/dreamcontext/src/lib/recall.js';
-import { loadGold, evaluate, formatReport } from '/Users/mehmetnuraydin/projects/dreamcontext/eval/harness.js';
+import { join } from 'node:path';
+import { buildCorpus, bm25Search, docKey, type CorpusDoc } from '../src/lib/recall.js';
+import { loadGold, evaluate, formatReport } from '../eval/harness.js';
 
-const ROOT = '/Users/mehmetnuraydin/projects/dreamcontext/_dream_context';
+const ROOT = join(process.cwd(), '_dream_context');
 // Docs that did not exist when the gold sets were authored / that are
 // session-local noise. Excluded for measurement determinism.
 const EXCLUDED_SLUGS = new Set(['recall-context-uplift-v07']);
@@ -18,7 +19,7 @@ export function stableCorpus(): CorpusDoc[] {
 }
 
 const corpus = stableCorpus();
-const goldPath = process.argv[2] ?? '/Users/mehmetnuraydin/projects/dreamcontext/eval/gold.jsonl';
+const goldPath = process.argv[2] ?? join(process.cwd(), 'eval/gold.jsonl');
 const gold = loadGold(goldPath);
 const searchOpts = process.argv.includes('--link') ? { linkAware: true } : {};
 const report = evaluate(corpus, gold, searchOpts);

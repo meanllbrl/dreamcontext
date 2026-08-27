@@ -347,14 +347,14 @@ describe('migration 0.23.0 — people-first', () => {
     });
 
     it('a descriptive `## People` bullet goes to the residue — the step never fails', () => {
-      // The real h-f_dreamcontext / memoryos block: bullets that DESCRIBE people
+      // A real two-vault block: bullets that DESCRIBE people
       // instead of naming them. Slugifying the whole line yields a 250-char
       // string PERSON_SLUG_RE rejects, which used to throw out of addPerson and
       // report failedCount — pinning setupVersion on every future `update`,
       // permanently, because the runner re-runs each step and this input is
       // deterministic. Both vaults sat on 0.21.0 with 0.23.0 assets installed.
       //
-      // Which fragment is the NAME ("mehmet"? "Mehmet Nuraydın"?) is judgment,
+      // Which fragment is the NAME ("kerem"? "Kerem Yılmaz"?) is judgment,
       // so per D5 the step must route, not guess: section → residue → agentTask.
       writeConfig(v, { platforms: [], packs: [], people: ['Ada Lovelace'], setupVersion: '0.22.0' });
       git.name = 'Ada Lovelace';
@@ -362,7 +362,7 @@ describe('migration 0.23.0 — people-first', () => {
       writeUserMd(
         v,
         '## People\n\n'
-        + '- **mehmet** — Mehmet Nuraydın, Technical Product Manager / App Owner. '
+        + '- **kerem** — Kerem Yılmaz, Technical Product Manager / App Owner. '
         + 'Primary brain operator; owns product, funnel, roadmap, ad-spend. '
         + 'Operates 360°; codes from wireframes, prefers building in-house.\n',
       );
@@ -376,7 +376,7 @@ describe('migration 0.23.0 — people-first', () => {
       // Verbatim in the residue, with the agent told to place it.
       const residue = read(v, 'inbox/1.user-residue.md');
       expect(residue).toContain('## People');
-      expect(residue).toContain('**mehmet** — Mehmet Nuraydın');
+      expect(residue).toContain('**kerem** — Kerem Yılmaz');
       expect(residue).toContain('dreamcontext people add');
       // And the source is retired: the split completed.
       expect(has(v, 'core/1.user.md')).toBe(false);
@@ -452,7 +452,7 @@ describe('migration 0.23.0 — people-first', () => {
       git.email = 'ada@example.com';
       writeUserMd(
         v,
-        '## People\n\n- **mehmet** — Mehmet Nuraydın, TPM. Owns roadmap (`person:mehmet`)\n',
+        '## People\n\n- **kerem** — Kerem Yılmaz, TPM. Owns roadmap (`person:kerem`)\n',
       );
 
       const [, split] = runPeopleFirst(v.root);
@@ -464,14 +464,14 @@ describe('migration 0.23.0 — people-first', () => {
 
     /**
      * The punctuation blacklist this replaced listed the em dash and en dash and
-     * missed the plain `-` — the separator on every keyboard. `- Mehmet -
-     * Product Manager` became a person named "Mehmet - Product Manager" with a
+     * missed the plain `-` — the separator on every keyboard. `- Kerem -
+     * Product Manager` became a person named "Kerem - Product Manager" with a
      * constitution file, silently, with no residue entry and no failure signal.
      */
     it.each([
-      ['- Mehmet - Product Manager', 'plain hyphen, the most common drift separator'],
+      ['- Kerem - Product Manager', 'plain hyphen, the most common drift separator'],
       ['- Ada Lovelace -- Engineer', 'double hyphen'],
-      ['- mehmet – TPM', 'en dash'],
+      ['- kerem – TPM', 'en dash'],
       ['- Ada & Grace', 'an ampersand is not part of a name'],
       ['- Owns the deploy pipeline end to end', 'a sentence with no punctuation at all'],
     ])('%s is prose, not a roster row (%s)', (bullet) => {
@@ -534,8 +534,8 @@ describe('migration 0.23.0 — people-first', () => {
      * `resolveOwnerSlug` used to fall back to `Object.keys(readPeople()).sort()[0]`
      * when nothing on the machine identified the active person. In a two-person
      * vault that is a coin flip decided by the alphabet: `bektas` sorts before
-     * `mehmet`, so Mehmet's Identity / Preferences / Communication Style were
-     * appended to `people/bektas.md` while `people/mehmet.md` stayed an empty
+     * `kerem`, so Kerem's Identity / Preferences / Communication Style were
+     * appended to `people/bektas.md` while `people/kerem.md` stayed an empty
      * scaffold — and step 4 then deleted the only copy of the source.
      *
      * `resolveActivePerson` already refuses this exact guess ("an unresolvable
@@ -548,7 +548,7 @@ describe('migration 0.23.0 — people-first', () => {
         writeConfig(v, {
           platforms: [],
           packs: [],
-          people: ['Bektaş Çimen', 'Mehmet Nuraydın'],
+          people: ['Bektaş Çimen', 'Kerem Yılmaz'],
           setupVersion: '0.22.0',
         });
         git.name = null;
@@ -571,7 +571,7 @@ describe('migration 0.23.0 — people-first', () => {
         expect(bektas).not.toContain('Terse. No preamble');
         expect(bektas).not.toContain('Founder; writes most of the code herself.');
         // Nor is anyone else — including the person who probably owns it.
-        expect(read(v, 'people/mehmet-nuraydin.md')).not.toContain('Ship small, reviewable diffs.');
+        expect(read(v, 'people/kerem-yilmaz.md')).not.toContain('Ship small, reviewable diffs.');
       });
 
       it('routes the three constitution sections to the residue VERBATIM', () => {
@@ -601,21 +601,21 @@ describe('migration 0.23.0 — people-first', () => {
         writeConfig(v, {
           platforms: [],
           packs: [],
-          people: ['Bektaş Çimen', 'Mehmet Nuraydın'],
+          people: ['Bektaş Çimen', 'Kerem Yılmaz'],
           setupVersion: '0.22.0',
         });
         // The seed folds this machine's git identity onto the matching entry, so
         // rung 3 resolves even though the roster holds two people.
-        git.name = 'Mehmet Nuraydın';
-        git.email = 'mehmet@example.com';
+        git.name = 'Kerem Yılmaz';
+        git.email = 'kerem@example.com';
         writeUserMd(v);
 
         const [, split] = runPeopleFirst(v.root);
 
         expect(split.failedCount ?? 0).toBe(0);
-        const mehmet = read(v, 'people/mehmet-nuraydin.md');
-        expect(mehmet).toContain('Ship small, reviewable diffs.');
-        expect(mehmet).toContain('Founder; writes most of the code herself.');
+        const kerem = read(v, 'people/kerem-yilmaz.md');
+        expect(kerem).toContain('Ship small, reviewable diffs.');
+        expect(kerem).toContain('Founder; writes most of the code herself.');
         expect(read(v, 'people/bektas-cimen.md')).not.toContain('Ship small, reviewable diffs.');
         // The constitution sections did NOT also land in the residue.
         expect(countHeading(read(v, 'inbox/1.user-residue.md'), 'Identity')).toBe(0);
@@ -625,7 +625,7 @@ describe('migration 0.23.0 — people-first', () => {
         writeConfig(v, {
           platforms: [],
           packs: [],
-          people: ['Bektaş Çimen', 'Mehmet Nuraydın'],
+          people: ['Bektaş Çimen', 'Kerem Yılmaz'],
           setupVersion: '0.22.0',
         });
         writeUserMd(v);
@@ -634,14 +634,14 @@ describe('migration 0.23.0 — people-first', () => {
         mkdirSync(join(v.root, 'state'), { recursive: true });
         writeFileSync(
           join(v.root, 'state', '.brain-local.json'),
-          JSON.stringify({ activePersonSlug: 'mehmet-nuraydin' }) + '\n',
+          JSON.stringify({ activePersonSlug: 'kerem-yilmaz' }) + '\n',
           'utf-8',
         );
 
         const split = migration0230.steps[SPLIT](v.root);
 
         expect(split.failedCount ?? 0).toBe(0);
-        expect(read(v, 'people/mehmet-nuraydin.md')).toContain('Ship small, reviewable diffs.');
+        expect(read(v, 'people/kerem-yilmaz.md')).toContain('Ship small, reviewable diffs.');
         expect(read(v, 'people/bektas-cimen.md')).not.toContain('Ship small, reviewable diffs.');
       });
 
@@ -654,7 +654,7 @@ describe('migration 0.23.0 — people-first', () => {
         // the step is a detected no-op — it must not re-emit anything anywhere.
         writeFileSync(
           join(v.root, 'state', '.brain-local.json'),
-          JSON.stringify({ activePersonSlug: 'mehmet-nuraydin' }) + '\n',
+          JSON.stringify({ activePersonSlug: 'kerem-yilmaz' }) + '\n',
           'utf-8',
         );
         const again = migration0230.steps[SPLIT](v.root);
@@ -662,7 +662,7 @@ describe('migration 0.23.0 — people-first', () => {
         expect(again.detected).toBe(true);
         expect(again.filesTouched).toEqual([]);
         expect(read(v, 'inbox/1.user-residue.md')).toBe(residueAfterFirst);
-        expect(read(v, 'people/mehmet-nuraydin.md')).not.toContain('Ship small, reviewable diffs.');
+        expect(read(v, 'people/kerem-yilmaz.md')).not.toContain('Ship small, reviewable diffs.');
       });
     });
 

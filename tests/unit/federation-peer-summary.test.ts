@@ -134,13 +134,13 @@ describe('buildPeerSummary', () => {
     const root = makeVault(base, 'filey', home, {});
     writeFileSync(
       join(root, '_dream_context', 'core', '0.soul.md'),
-      '---\nname: "0.soul"\ntype: soul\n---\n\n## Project Identity\n\n**Tilki Öğretmen** is a B2B SaaS product.\n',
+      '---\nname: "0.soul"\ntype: soul\n---\n\n## Project Identity\n\n**Acme Payments** is the service that owns every refund.\n',
       'utf-8',
     );
 
     const summary = buildPeerSummary(join(root, '_dream_context'), 'filey');
 
-    expect(summary.whatItIs).toBe('**Tilki Öğretmen** is a B2B SaaS product.');
+    expect(summary.whatItIs).toBe('**Acme Payments** is the service that owns every refund.');
     expect(summary.whatItIs).not.toContain('0.soul:');
   });
 

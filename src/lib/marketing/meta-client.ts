@@ -1,7 +1,7 @@
 /**
  * meta-client — typed surface for Meta Graph + Marketing API operations.
  *
- * Mirrors signatures from Tilki Öğretmen's existing meta-client.ts (which
+ * Mirrors signatures from a sibling project's existing meta-client.ts (which
  * served the v0 launch of the platform), but every function takes a MetaCtx
  * first and routes through metaFetch — so dry-run, retry, idempotency,
  * header-only auth, per-account concurrency, and chunked upload come for free.

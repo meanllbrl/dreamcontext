@@ -989,7 +989,7 @@ describe('fixture #1 — the pre-change never-evict tier now fits', () => {
     const block = sectionBlock(text, '## Connected projects');
 
     // Name + first-sentence identity: a bare name reproduced the original
-    // soul-review complaint — the agent sees "Tilki", learns nothing.
+    // soul-review complaint — the agent sees "acme-payments", learns nothing.
     expect(block).toContain('- **peer-vault-00** — Peer 00 rationale detail');
     // First sentence only — the 160-char multi-sentence blurb never survives —
     // and the old bare-names roster line is gone.

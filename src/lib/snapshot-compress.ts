@@ -61,9 +61,9 @@ const BOLD_LEAD = /^(\*\*[^*]+?\*\*)\s*[-:—]?\s*/;
  * First-clause split for title-only mode. Deliberately does NOT split on a bare
  * `.` — that mangles version numbers (`v0.18.0`) and abbreviations (`e.g.`). The
  * `:` split requires trailing whitespace (or end of string) for the same reason:
- * a scheme-relative URL (`https://tilki.app`) carries a colon with no space
+ * a scheme-relative URL (`https://acme.example`) carries a colon with no space
  * after it, and splitting there is how an early prototype turned a project's
- * flagship product line into `Flagship: **kitUP** (https`. Titles in these files
+ * flagship product line into `Flagship: **Storefront** (https`. Titles in these files
  * are always written `Name: rest`, so the space is a reliable discriminator.
  * The `{8,}` floor keeps a leading `a: b` from collapsing to `a`.
  */

@@ -107,7 +107,7 @@ function assigneeSlugsOf(raw: Record<string, unknown> | null, tags: string[]): s
 
 /**
  * Slug for a remote display name. Ascii-folds before slugify so
- * "Mehmet Nuraydın" → "mehmet-nuraydin" (plain slugify would mangle the
+ * "Kerem Yılmaz" → "kerem-yilmaz" (plain slugify would mangle the
  * dotless ı into a dash).
  */
 export function memberSlug(name: string): string {

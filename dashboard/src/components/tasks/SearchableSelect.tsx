@@ -27,7 +27,7 @@ interface SearchableSelectProps {
   triggerLabel?: string;
 }
 
-/** Diacritic/Turkish-insensitive fold so "meh" matches "Mehmet Nuraydın". */
+/** Diacritic/Turkish-insensitive fold so "meh" matches "Kerem Yılmaz". */
 function fold(s: string): string {
   // Code points written escaped (not as literal bytes) so the compiled bundle
   // stays ASCII and is safe regardless of how it's served (a literal-byte

@@ -372,7 +372,7 @@ export interface TaskBackend {
 export interface RemoteContainer {
   /** Opaque ids the config needs (provider-specific meanings). */
   ids: Record<string, string>;
-  /** e.g. "Ouromedia / OURO ALL / INBOX-OURO". */
+  /** e.g. "Acme / ACME ALL / INBOX-ACME". */
   path: string;
   name: string;
 }

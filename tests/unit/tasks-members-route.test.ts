@@ -59,7 +59,7 @@ afterEach(() => {
 describe('GET /api/tasks/members (roster fallback)', () => {
   it('returns the vault roster as members on a local project', async () => {
     seedRoster({
-      'mehmet-nuraydin': { name: 'Mehmet Nuraydın' },
+      'kerem-yilmaz': { name: 'Kerem Yılmaz' },
       'ada-lovelace': { name: 'Ada Lovelace' },
     });
 
@@ -68,10 +68,10 @@ describe('GET /api/tasks/members (roster fallback)', () => {
 
     expect(status()).toBe(200);
     const slugs = body().members.map((m) => m.slug).sort();
-    expect(slugs).toEqual(['ada-lovelace', 'mehmet-nuraydin']);
+    expect(slugs).toEqual(['ada-lovelace', 'kerem-yilmaz']);
     // The display name is the roster's own — no lossy title-casing of the slug.
-    const mehmet = body().members.find((m) => m.slug === 'mehmet-nuraydin');
-    expect(mehmet?.name).toBe('Mehmet Nuraydın');
+    const kerem = body().members.find((m) => m.slug === 'kerem-yilmaz');
+    expect(kerem?.name).toBe('Kerem Yılmaz');
   });
 
   it('returns an empty member list when there is no roster and no tasks', async () => {

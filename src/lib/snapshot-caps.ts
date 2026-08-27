@@ -65,7 +65,7 @@ export const CORE_L3 = { itemChars: 70, paraChars: 110, titleOnly: true } as con
  *
  * 350 is the floor worth taking, not the smallest number that fits. Measured
  * against the shipped compressor: 1,065 -> 920 (dreamcontext) and 1,582 -> 1,225
- * (Tilki) going 500 -> 350, but 300 is *worse* on dreamcontext (947) because a
+ * (a large peer vault) going 500 -> 350, but 300 is *worse* on dreamcontext (947) because a
  * tighter per-H2 budget trips more `(+N more)` tails than it saves in prose.
  */
 export const MEMORY_DEEP_PER_SECTION_CHARS = 350;
@@ -123,7 +123,7 @@ export const FEATURES_L2_CHARS = 550;
  * The features remainder tail, same whole-slug + accurate-count shape as
  * TASKS_ROSTER_CHARS. Measured full tails on the two acceptance vaults are 611
  * and 388 chars, so this trims dreamcontext's roster to a counted tail and keeps
- * Tilki's whole.
+ * the smaller vault's whole.
  *
  * This cap has a FLOOR, and the floor MOVES with FEATURES_L2_CHARS. "Every
  * feature slug is named" (AC3) is asserted in `tests/unit/snapshot-floors.test.ts`
@@ -198,7 +198,7 @@ export const CONNECTED_L2_CHARS = 300;
 /**
  * Per-peer identity cap at rung 2 (first sentence, word-safe). A peer named
  * without its "what it is" reproduced the original soul-review complaint —
- * the agent sees "Tilki" and has no idea Tilki is a B2B tutoring SaaS.
+ * the agent sees "acme-payments" and has no idea what it is.
  */
 export const CONNECTED_PEER_ID_CHARS = 90;
 /**
