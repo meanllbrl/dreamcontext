@@ -389,6 +389,9 @@ Key files summary (post-2026-07-01 readability polish; 2026-07-04 basic-terminal
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-08-28 - Chat-html rendering fix: a dc-flow that wraps is still one flow
+- FLOW WRAPPING (bcc1e3a): a flow diagram too long for the pane broke into two rows and fell apart — arrow pointing at empty space (free-standing flex item stranded), wrapped node stretched to fill new row (`flex: 1 1 130px`), no gap between rows. Arrow now drawn by each node's own `::before` in its left margin, travels WITH the node → continuation row opens with "→ next step" (stranded arrow structurally impossible). Nodes hug (`flex: 0 1 auto`), row gap real. Legacy `.dc-flow-arrow` spans hidden not removed (existing messages/stories still render)
+
 ### 2026-08-02 — The transcript window measures itself in CARDS, not just entries
 
 - **Owner report:** "1 mesaj 50 mesajlı bir grup kayamıyor ama daha fazla yüklemek için kaydır diyor" — grouping made the 40-entry window render as two rows, which is shorter than the scroller, so the pane offered scrolling up as the way back through history and then gave nothing to scroll with.

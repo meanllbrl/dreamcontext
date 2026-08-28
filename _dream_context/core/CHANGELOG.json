@@ -1,5 +1,95 @@
 [
   {
+    "date": "2026-08-28",
+    "type": "docs",
+    "scope": "pattern",
+    "description": "Both global dreamcontext paths resolved to a published 0.26.2 install, not this checkout, making the drift invisible — 'dreamcontext update --yes' ran green in all six vaults and propagated the PUBLISHED skill docs over the new ones. The tell is the 'Setup version' line not matching package.json. Since resolve_cli() prefers the global CLI over the bundle, an unlinked machine also runs the published CLI inside a freshly built .app: updated-looking, old-behaving. The pattern now explicitly checks the link as a precondition rather than assuming it. Also: 'tauri build' without --bundles app fails at bundle_dmg.sh AFTER the .app is already correct, which reads as a failed build; the release workflow passes --bundles app, and the checklist now does too.",
+    "breaking": false,
+    "summary": "Build-and-propagate pattern: the global npm link is a precondition to CHECK, not assume",
+    "references": [
+      "commit:72eb7aa",
+      "knowledge:build-and-propagate-pattern"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-28",
+    "type": "fix",
+    "scope": "chat-html",
+    "description": "A flow diagram too long for the pane broke into rows that ended on an arrow pointing at empty space, above a node stretched to fill its row, with no gap between rows — so the last step read as debris. Root cause: arrows were free-standing flex items that could wrap away from the node they pointed at. The arrow is now drawn by each node's own ::before inside that node's left margin, so it travels WITH its node and a stranded arrow is structurally impossible. Nodes hug; row gap is real. Legacy dc-flow-arrow spans are hidden (not removed) so every message already written still renders. Proven geometrically in real Chromium against both new and legacy markup (8 new checks, 69/69 total); mutation-checked — restoring old CSS fails 5 of them.",
+    "breaking": false,
+    "summary": "A dc-flow that wraps is still one flow — arrows now travel with their nodes",
+    "references": [
+      "commit:bcc1e3a"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-28",
+    "type": "feat",
+    "scope": "theses",
+    "description": "The owner's kitUP board had filled with restated metrics ('funnel 3009's first step loses 84% of traffic', 'the second page is broken') — hypotheses whose validation changes nothing and therefore never drives revenue. Every formation surface now applies the SO-WHAT test: if validated, what do we CHANGE, and which revenue-bearing outcome improves? Four-part anatomy: grounded comparison, causal mechanism, lever, outcome that matters. Baked into skill/references/learning.md (new top section + awake-capture step), agents/sleep-learn.md (creation gate + gotcha), SKILL.md entity-router thesis row, create modal copy, board empty state. Observations become evidence on an existing thesis or an insight note — never a new card. The Hypotheses activity list view is deleted end-to-end: component, toolbar toggle, view/listFilter prefs, needsAttention, .thl-* CSS. Status kanban is the only rendering; unread dots and mark-all-read stay on cards. verify:hypotheses rewritten to board-only contract (13/13), stale view pref provably cannot resurrect the list.",
+    "breaking": false,
+    "summary": "A thesis is an optimization claim, not an observation — SO-WHAT test gates every formation surface; activity list view retired",
+    "references": [
+      "commit:7f1a539",
+      "task:theses-quality-bar-hypotheses-must-be-optimization-claims-not-observations-retire-the-list-view"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-28",
+    "type": "fix",
+    "scope": "automations",
+    "description": "A verdict was waiting in the owner's vault that the UI made unanswerable: the card said 'waiting for your verdict' without the question, and 'open chat' refused because all 50 history rows were session-less gate refusals — the run holding the conversation had been pushed off the end. Root cause: a short-circuit deliberately does not advance the watermark so isDue() stays true, and every tick re-hit the same gate, appending a history row. At 5-min ticks that is 288 rows/day against HISTORY_LIMIT 50: within 4 hours the entire history is one repeated refusal and every real run including the one with the session is gone. recordRun now coalesces repeated refusals onto the newest row. The list row now carries the pending question itself (words, kind, choices, ASKING session) where it carried only an id. A run that stops to ask or crashes now opens as a chat tab with no user action, paced by a machine-local watermark that only advances through explicit ack after tabs are open — closing mid-open replays the window instead of swallowing it. Scoped to runs that WANT someone. A session ID is offered only when it is both bound to this automation on this machine AND has a transcript on disk.",
+    "breaking": false,
+    "summary": "Questions are visible on cards, open chat reaches the asking run, and runs needing a human open themselves",
+    "references": [
+      "commit:8f6e39f",
+      "commit:e666438",
+      "file:src/lib/automations/attention.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-28",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "The Meeting Room window opened with zero Tauri permissions because its label `meeting-room` matched no capability file (`default` covers main/vault/sleepy, `checklist` covers checklist windows). With dragDropEnabled:false (so HTML5 drag works), Tauri's built-in drag handler was off and startDragging() was ACL-denied with the rejection swallowed by a bare catch — nothing in console, just a title bar that didn't respond. Fixed with a narrow capability (window chrome only, no shell/global-shortcut/notification since the room renders agent-authored HTML from N projects), warn instead of swallow, and a regression test joining every window label to capability globs with a source tripwire on WebviewWindow count. Found by the owner trying to move a window; 8,000 tests had nothing to say about it.",
+    "breaking": false,
+    "summary": "Meeting Room window can now be dragged — Tauri capability missing for the meeting-room label",
+    "references": [
+      "commit:648a88a"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-28",
+    "type": "fix",
+    "scope": "meeting-room",
+    "description": "Three owner reports from one session. (1) Agents were tagging each other in prose ('@h-f @kitUP — here is the lesson') and every @ was read as a summons, spawning six 'folded into that run' lines for zero extra answers. The room now parses four verbs: ordinary prose, exactly PASS, exactly `WAIT @x`, and a line opening `ASK @x`. A bare @name in prose routes nothing — it is a Slack salutation, not a directive. The prompt also prints ALREADY ANSWERING THIS ROUND derived live from participant state. (2) Replying to an older thread opened a new one because Send read viewingActive, archiving the live thread and forking a third under the one-active invariant. Replies now carry explicit threadId; reopenThread revives an archived one. (3) An agent could not wait for another. `WAIT @x` now parks the agent (new waiting state + chip) and re-wakes it with that answer in transcript. Bounded: one wait per agent per round, resolves on any terminal state, immediate resume when named agents are finished, drain-release to prevent deadlock, new user message releases anyone parked.",
+    "breaking": false,
+    "summary": "Meeting Room gets four parsed verbs: addressing is free, ASK summons, WAIT holds, replies reopen the thread you're reading",
+    "references": [
+      "commit:8782176",
+      "commit:9bc0ce2",
+      "commit:d288ab8"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-27",
     "type": "feat",
     "scope": "meeting-room",
