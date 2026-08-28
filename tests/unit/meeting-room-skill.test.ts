@@ -22,7 +22,12 @@ import {
   MAX_RUNS_PER_AGENT,
   threadsDir,
 } from '../../src/lib/meeting-room.js';
-import { MEETING_CONCURRENCY, MEETING_PASS } from '../../src/lib/meeting-delivery.js';
+import {
+  MEETING_ASK,
+  MEETING_CONCURRENCY,
+  MEETING_PASS,
+  MEETING_WAIT,
+} from '../../src/lib/meeting-delivery.js';
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 
@@ -125,13 +130,42 @@ describe('meeting room — the docs quote the real constants, not a stale copy',
     expect(section.toLowerCase()).toContain('never silently');
   });
 
-  it('documents the one-answer-per-agent-per-message rule, and that a mention coalesces', () => {
+  it('documents the one-answer-per-agent-per-message rule, and that an ASK coalesces', () => {
     // The rule an agent reading these docs would otherwise get wrong in the other direction:
-    // it must not expect a second run for every mention of it in one round.
+    // it must not expect a second run for every time it is named in one round.
     const flat = flatSection();
     expect(flat).toContain('One answer per agent per user message');
     expect(flat.toLowerCase()).toContain('coalesces into the run in flight');
-    expect(flat.toLowerCase()).toContain('follow-up keeps a separate budget');
+    // The two halves of the coalesce, which are NOT the same and were conflated until 08-28.
+    expect(flat.toLowerCase()).toContain('still queued nothing is lost');
+    expect(flat.toLowerCase()).toContain('one catch-up run');
+    expect(flat.toLowerCase()).toContain('share one budget');
+  });
+
+  it('teaches ADDRESSING vs SUMMONING — the distinction the whole protocol turns on', () => {
+    const flat = flatSection();
+    expect(MEETING_ASK).toBe('ASK');
+    // Both halves must be stated: a bare @name does nothing, an ASK line spends a run.
+    expect(flat).toContain('Addressing is not summoning');
+    expect(flat).toContain(`a LINE beginning \`${MEETING_ASK} @Name\``);
+    expect(flat.toLowerCase()).toContain('wakes nobody and routes nothing');
+    // And that the USER's mentions are unaffected — the half an agent would over-generalise.
+    expect(flat).toContain("USER's `@mentions` still route");
+  });
+
+  it('teaches the WAIT verb and its termination rules', () => {
+    const flat = flatSection();
+    expect(MEETING_WAIT).toBe('WAIT');
+    expect(flat).toContain(`exactly \`${MEETING_WAIT} @Name\``);
+    // An agent that does not know the bounds will either never use it or loop on it.
+    expect(flat.toLowerCase()).toContain('one wait per agent per round');
+    expect(flat.toLowerCase()).toContain('cannot deadlock');
+  });
+
+  it('states that a reply revives the thread it is written into, rather than forking', () => {
+    const flat = flatSection();
+    expect(flat).toContain('You write into the thread you are reading');
+    expect(flat.toLowerCase()).toContain('revives it');
   });
 
   it('documents that the room-wide model/effort pick is the app-global one', () => {

@@ -11,7 +11,7 @@ pinned: false
 date: '2026-08-26'
 status: in_review
 created: '2026-08-26'
-updated: '2026-08-27'
+updated: '2026-08-28'
 released_version: null
 tags:
   - 'topic:desktop'
@@ -24,6 +24,9 @@ related_tasks:
     the-meeting-room-becomes-its-own-window-built-out-of-the-chat-with-one-global-model-pick-and-one-answer-per-agent
   - >-
     the-meeting-room-gets-its-own-byte-channel-so-a-dropped-or-pasted-file-reaches-every-agent
+  - a-coalesced-mention-must-still-reach-an-agent-whose-run-is-already-in-flight
+  - >-
+    meeting-room-addressing-is-not-summoning-a-thread-you-can-read-is-a-thread-you-can-answer-and-an-agent-may-wait
 ---
 
 ## Why
@@ -41,6 +44,10 @@ Peer mail addresses one vault; the user had no surface to address ALL agents at 
 - [x] As the user, I see live per-agent presence (thinking / replied / passed / error) without a socket, and past threads stay browsable in the rail
 - [x] As the user, I can @mention one vault (roster-driven menu, names with spaces work) and wake only it
 - [x] As an agent in the room, I can @mention another participant when its answer would change mine, and I get one follow-up run carrying that answer
+- [x] As an agent, I can NAME another project in my prose without waking it — addressing is free; only a line I open with `ASK` spends someone else's run
+- [x] As an agent whose answer depends on a project that is still working, I can answer `WAIT @them` and be woken again with their answer, instead of guessing or answering into a gap
+- [x] As the user, my reply goes into the thread I am READING — answering an older meeting reopens it instead of silently forking a third one
+- [x] As the user, when a question reaches an agent too late to be read, I get one catch-up answer rather than a system line claiming it was folded in
 
 ## Acceptance Criteria
 
@@ -50,10 +57,19 @@ Peer mail addresses one vault; the user had no surface to address ALL agents at 
 - [x] Routing: root without mentions → ALL; with mentions → ONLY mentioned; thread reply without mentions → engaged set; mention parse roster-driven longest-name-first
 - [x] Reply-or-PASS: an exact `PASS` sets state passed and never renders as a message
 - [x] Mention chain bounded: one directed run + one follow-up, depth 1; caps 8 mention runs/thread, 3 runs/agent/thread; cap hits are visible system lines
+- [x] Four verbs, parsed not persuaded: an ordinary message; exactly `PASS`; exactly `WAIT @name` (or bare); a LINE opening `ASK @name`. A bare `@name` in prose routes NOTHING
+- [x] `WAIT` parks the agent (`waiting` state + presence chip), resumes it when the named agents settle, releases on drain so a mutual wait cannot deadlock, one per agent per wave
+- [x] The coalesce splits by what the target could actually READ: still queued → silent (lossless); running past it or finished → banked and paid as ONE catch-up run, announced
+- [x] `reopenThread` — a reply carries its `threadId` and revives an archived thread through the same one-active door `createThread` uses
 - [x] Proven end to end by `npm run verify:meeting-room` (33 checks): real launcher-mode server, 3 scratch vaults, scripted claude echoing its own cwd, Playwright-driven UI, poll cadence measured (2s thinking / 10s idle / stopped when closed)
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-08-28]** THE ROOM HAS FOUR VERBS, AND ADDRESSING IS NOT ONE OF THEM. `PASS`, `WAIT @x`, a line opening `ASK @x`, or an ordinary message — and a bare `@name` in prose routes NOTHING. Owner report 08-28: every agent opened its reply with `@theOthers` the way people do in Slack, the room read each `@` as a summons, and one thread produced six "was folded into that run" system lines and zero extra answers. The rejected fix was a better plea in the prompt ("mention only when their answer would change yours" — which was ALREADY there and which the agents were not violating; they were addressing, not summoning). Giving the summons its own token makes the noise impossible instead of discouraged, and it is the same move `PASS` already made for relevance. The prompt now also names ALREADY ANSWERING THIS ROUND, derived live from participant state, because an agent cannot tell addressing from summoning without knowing who is already awake. The USER's `@mentions` still route: a picker-driven `@` in the composer is an act of routing, an agent's `@` in prose is a word.
+- **[2026-08-28]** AN AGENT MAY ANSWER `WAIT @x` — the room's first verb that produces no message on purpose. Owner report 08-28: the user tagged three projects meaning "dreamcontext teaches, the other two learn"; all three woke at once, so both learners answered before the lesson existed and said so in the thread ("dreamcontext'in dersleri bana daha ulaşmadı"). Ordering the wave by hand was rejected — the room cannot read intent out of a mention list, but the agent CAN read it out of the message. So the decision moves to the agent, like relevance did with `PASS`. Bounds, all of them needed: one wait per agent per wave (a refused second is a visible line, not a loop); waiting resolves when the named agents reach ANY terminal state including `passed` and `error`; naming someone already finished or never woken resumes immediately rather than burning a round trip; anything still parked when the queue drains is released with a line. A WAIT costs a real run and says so in the `runs` counter — the cap is the backstop under every one of those rules.
+- **[2026-08-28]** THE COALESCE SPLITS BY WHAT THE TARGET COULD ACTUALLY READ, and only the lossy half speaks. The 08-27 rule said a mention folded into a run in flight loses nothing because prompts are built at dequeue time — true for a target still QUEUED, false for one already running past that message, which is the common shape when three agents wake together. Fixing the noise made this urgent rather than optional: once a fold stops printing a line, a fold that DROPPED the payload would be invisible. So the orchestrator records, per wave, the message count each agent's prompt was built from; a summons landing at or after it is banked and paid as ONE catch-up run carrying everything missed at once. Follow-up and catch-up SHARE the second-run budget (one run can carry both — its prompt is the whole thread), so the worst case per agent per user message stays the documented constant of two. And the silence is deliberate the other way too: the room narrates LOSSES, not bookkeeping.
+- **[2026-08-28]** YOU WRITE INTO THE THREAD YOU ARE READING, and a reply REVIVES an archived thread rather than forking. The send used to pick its target from `viewingActive` — reply if the thread on screen happened to be the live one, otherwise post — so scrolling back to an older meeting and answering it archived the live thread and opened a third, with nothing on screen saying so. Under the one-active invariant that made an archived thread permanently unanswerable. Owner evidence 08-28: the same message sent twice, 13 seconds apart, into two fresh threads. `reopenThread` goes through the same door `createThread` uses (close whatever is active, in one synchronous pass), so the invariant is preserved rather than weakened; multiple active threads were rejected because the room's whole shape — one roster, one presence strip, one wave ledger per thread — assumes a single live conversation. Only "+ New announcement" opens a meeting now, and the composer placeholder names which of the three cases the next ⏎ will do.
 
 - **[2026-08-27]** `dream-html` IS DRAWN IN THE ROOM, and the gate that stopped it was wrong for every host. `TranscriptItem` charged every block `!!onAction && !!conversationId`; a `dream-view` needs both (a checklist's Submit needs a conversation, an insight needs a project) but `dream-html` needs NEITHER — it is a sandboxed, network-less render. Split to `viewsAllowed = !!conversationId`, with the notice strip UNGATED: a strip whose job is to make a drop honest cannot be conditional on the capability that caused the drop. Closed the same class for buttons (no `onAction`) and boards (no `onOpenBoard`). Consequence beyond the room: the sub-agent drill-in now says what it could not draw instead of dropping it silently.
 - **[2026-08-27]** THE CARET FIX TRAVELS THE OTHER WAY. Adopting the chat's composer inherited a bug the room had already solved: the chat restored the post-insert caret in a `requestAnimationFrame`, which loses the race against fast typing (`@alpha` + "just you: ping" → `@alpha  pingjust you:`). The retired room composer's `pendingCaret` + `useLayoutEffect` is now in `Composer.tsx`, covering the `@` menu, the `/` menu and ↑ recall — so the chat and the peer panel got a fix they had carried broken since they shipped. It was a RACE: the run before it was noticed passed 47/47, which is why a green suite was not evidence.
@@ -80,6 +96,14 @@ Cost is accepted, not solved: a PASS still costs a full context load per agent p
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-08-28 - Four verbs: addressing is free, summoning is a word, and an agent may WAIT
+- ADDRESSING IS NOT SUMMONING. A bare `@name` in an agent's prose routes NOTHING; only a LINE opening `ASK @name` spends another project's run. Owner report: every agent opened its reply naming the others (Slack habit), the room read each `@` as a summons, and one thread produced six "folded into that run" system lines and zero extra answers. The prompt also now prints ALREADY ANSWERING THIS ROUND, derived live from participant state — an agent cannot tell the two apart without it. The USER's `@mentions` still route, unchanged
+- `WAIT @x` — the room's first verb that posts nothing on purpose. The user tagged three projects meaning "A briefs B and C"; all three woke at once and B and C answered before the briefing existed. An agent may now hold and be re-woken with the answer it was waiting for. One wait per agent per round, resolves on ANY terminal state (including `passed`/`error`), immediate resume when the named agents are already finished or were never woken, drain-release so a mutual wait cannot deadlock, and a new user message releases anyone still parked
+- THE COALESCE SPLIT BY WHAT THE TARGET COULD READ. Silencing the fold line made the in-flight DROP invisible, so it had to be fixed in the same pass (closes `a-coalesced-mention-must-still-reach-an-agent-whose-run-is-already-in-flight`). The wave ledger records the message count each agent's prompt was built from: still queued → silent, genuinely lossless; at or past that snapshot → banked and paid as ONE catch-up run carrying everything missed. Follow-up and catch-up SHARE the second-run budget, so the worst case per agent per user message stays the constant 2. The room narrates losses, not bookkeeping
+- YOU WRITE INTO THE THREAD YOU ARE READING. Replies carry an explicit `threadId` and `reopenThread` revives an archived thread through the same one-active door `createThread` uses. Before, answering an older meeting silently archived the live one and forked a third — the owner sent the same message twice, 13s apart, into two fresh threads
+- New `waiting` participant state + presence chip (steady caution ring, distinct from the spinner); the poll treats it as live
+- Proven by `npm run verify:meeting-room` 70/70 (was 52) in the real app, `verify:composer-shared` 17/17, full unit suite 8181 passed
 
 ### 2026-08-27 - Reconciled to f4bbc17 (its own window, built out of the chat)
 - All user stories and acceptance criteria ticked — the feature shipped as described, verified 52/52

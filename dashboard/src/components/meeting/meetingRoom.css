@@ -206,6 +206,18 @@
   animation: meeting-spin 0.8s linear infinite;
 }
 
+/* An agent parked on its own WAIT: awake and holding, so neither the spinner (nothing is
+   running for it) nor the dimmed pass. A steady hollow ring in the caution hue reads as
+   "stopped on purpose" next to a chip that is genuinely spinning. */
+.meeting-presence-chip.state-waiting .meeting-presence-dot {
+  border-color: var(--color-warning);
+  animation: meeting-hold 1.6s ease-in-out infinite;
+}
+
+.meeting-presence-chip.state-waiting .meeting-presence-state {
+  color: var(--color-warning);
+}
+
 .meeting-presence-chip.state-replied .meeting-presence-dot {
   background: var(--color-success);
   border-color: var(--color-success);
@@ -231,6 +243,11 @@
 
 @keyframes meeting-spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes meeting-hold {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 /* ── feed ── */

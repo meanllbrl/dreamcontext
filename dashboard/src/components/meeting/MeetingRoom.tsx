@@ -121,17 +121,24 @@ export function MeetingRoom() {
 
   // The text arrives ALREADY assembled by the composer — quote prefix, attachment paths and
   // all — so there is nothing to fold in here. Which thread it lands in is this window's only
-  // decision: into the active one as a reply, or as a new announcement that archives it.
+  // decision, and the rule is now the one a chat window implies: YOU WRITE INTO THE THREAD YOU
+  // ARE READING. Only the explicit "+ New announcement" sentinel opens a meeting.
+  //
+  // It used to be "reply if the thread on screen happens to be the active one, otherwise
+  // post", which made scrolling back to an older meeting and answering it fork a new thread
+  // and archive the live one — silently, with nothing on screen saying so. The owner hit it
+  // on 08-28 and sent the same message twice, 13 seconds apart, into two fresh threads.
+  // Replying to an archived thread now REVIVES it server-side.
   const send = useCallback(async (text: string) => {
     if (!text.trim()) return;
     setNotice(null);
-    if (viewingActive) {
-      await reply(text);
-    } else {
+    if (composingNew || !effectiveId) {
       const t = await post(text);
       if (t) setSelectedId(t.id);
+    } else {
+      await reply(text, effectiveId);
     }
-  }, [viewingActive, reply, post]);
+  }, [composingNew, effectiveId, reply, post]);
 
   const { host, focusComposer } = useMeetingComposerHost(items, (text) => { void send(text); });
 
@@ -240,10 +247,15 @@ export function MeetingRoom() {
             // per-vault peer endpoint can answer for. No `onPeerMessage`: `@Name` is TEXT in
             // this window and the server routes the delivery.
             mentions={roster.map(rosterMention)}
+            // The placeholder is the ONLY thing on screen that says where the next message
+            // lands, so it must name all three cases — including the one that revives an
+            // archived meeting, which is a consequence the user should read before pressing ⏎.
             idlePlaceholder={
-              viewingActive
-                ? 'Reply to the room…   ·   "@" to address one project'
-                : 'New announcement — archives the previous thread   ·   "@" to address one project'
+              composingNew || !effectiveId
+                ? 'New announcement — archives the previous thread   ·   "@" to address one project'
+                : viewingActive
+                  ? 'Reply to the room…   ·   "@" to address one project'
+                  : 'Reply — reopens this meeting and archives the current one'
             }
             onSignIn={() => setNotice(
               'Signing in belongs to a project session — open a project window and run /login there.',
@@ -278,6 +290,7 @@ function PresenceStrip({ participants }: { participants: MeetingParticipant[] })
 function stateLabel(state: MeetingParticipant['state']): string {
   switch (state) {
     case 'thinking': return 'thinking…';
+    case 'waiting': return 'waiting';
     case 'replied': return 'replied';
     case 'passed': return 'passed';
     case 'error': return 'error';
