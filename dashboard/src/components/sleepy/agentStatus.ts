@@ -1,3 +1,4 @@
+import type { ChatMode } from '../../lib/chatModes';
 import type { SleepyMood } from './SleepyMascot';
 import type { TermStatus, SessionKind } from './agentSession';
 
@@ -54,6 +55,11 @@ export interface SessionRow {
   /** The session's Claude conversation id (agents only) — lets the dock chip poll
    *  per-conversation live state (goal-skill run badge). Absent for shells/dormant. */
   claudeId?: string;
+  /** Which chat mode this session is briefed under — the dock chip's face ACTS it out (Plan
+   *  writes on paper, Develop welds and hammers; Basic is the bare face). Absent for every
+   *  non-chat kind and for a chat that never left Basic, which is why it is optional rather
+   *  than defaulted: `undefined` and `'basic'` must draw identically. */
+  mode?: ChatMode;
 }
 
 export interface SessionStatusInput {

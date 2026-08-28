@@ -645,6 +645,18 @@
   overflow-y: auto;
 }
 
+/* The mode card's own face — the character doing that mode's work, so the grid is read by
+   LOOKING rather than by parsing four sentences. Fixed height so all four cards line up no
+   matter how far a scene hangs below the face's layout box. */
+.chat-cmp-moderow-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 46px;
+  margin-bottom: 4px;
+  overflow: hidden;
+}
+
 .chat-cmp-grouplabel {
   font-family: var(--font-mono);
   font-size: 9.5px;

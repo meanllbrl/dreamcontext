@@ -2457,6 +2457,10 @@ export function AgentSurface() {
       info: deriveSessionStatus({ dormant: meta.dormant, status: s?.status, busy: s?.busy, asking: s?.asking }),
       attention: !meta.dormant && !!s?.attention,
       claudeId: s?.claudeId,
+      // The ROSTER's mode, not the live session's: a mode switch respawns the process and
+      // writes the new mode onto the meta (`chatChangeModeFor`), and the meta is also what
+      // survives a relaunch — so a dormant Develop tab is still at the anvil when it reopens.
+      mode: meta.mode,
     };
   });
   /*

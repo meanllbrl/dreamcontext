@@ -30,7 +30,9 @@ function readCollapsed(): boolean {
 }
 
 /** The status figure: Sleepy's per-state face for agents, a mini prompt glyph with a
- *  blinking cursor for shells, plus the "?" bubble when the session is asking. */
+ *  blinking cursor for shells, plus the "?" bubble when the session is asking. The face also
+ *  DOES the session's chat MODE — Plan writes on paper, Develop works the forge — so one 26px
+ *  figure carries both channels: status is the colour, mode is the motion. */
 function ChipFigure({ row, size = 26 }: { row: SessionRow; size?: number }) {
   // A shell is a plain terminal with no agent behind it → the prompt glyph. Both other
   // kinds (agent, chat) are Claude Code sessions and wear Sleepy's per-state face.
@@ -40,7 +42,7 @@ function ChipFigure({ row, size = 26 }: { row: SessionRow; size?: number }) {
         <span className="agent-dock-chip-glyph" data-kind={row.info.kind}>❯<i /></span>
       ) : (
         <span className="agent-dock-chip-figure-clip">
-          <SleepyMascot mood={row.info.mood} size={size} compact />
+          <SleepyMascot mood={row.info.mood} size={size} compact mode={row.mode} />
         </span>
       )}
       {row.info.kind === 'asking' && <span className="agent-dock-chip-q">?</span>}

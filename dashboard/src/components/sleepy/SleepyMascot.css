@@ -201,7 +201,225 @@
   animation: smascot-qfloat 1.8s ease-in-out infinite;
 }
 
-/* ── Keyframes ─────────────────────────────────────────────────────────── */
+/* ── Mode gear — the chat MODE as an ACTION, on a loop ───────────────────
+   Basic keeps the bare face, unchanged. PLAN writes on paper with a pencil.
+   DEVELOP welds a joint and then hammers it, forever. The loop is the point:
+   at the 26px dock size the detail is gone, but the MOTION still tells the two
+   apart — which no static costume managed.
+
+   SHAPE + MOTION, NOT COLOUR: every hue in this file already belongs to a MOOD,
+   so the tools are drawn in the theme's ink and only the hot metal is warm. A
+   Develop agent that is asking still reads as asking — mid-swing. The scene
+   lives INSIDE `.smascot-face`, so it bobs with the head. */
+.smascot-gear {
+  position: absolute;
+  top: -32px;
+  left: 50%;
+  transform: translateX(-50%);
+  overflow: visible;
+  pointer-events: none;
+  --gear-ink: color-mix(in srgb, var(--color-text) 82%, transparent);
+}
+.smascot-gear-line { stroke: var(--gear-ink); }
+.smascot-gear-fill { fill: var(--gear-ink); }
+/* Tool bodies: solid enough to read as objects, translucent enough that the mood's halo
+   still glows through them. */
+.smascot-gear-fill-soft {
+  fill: color-mix(in srgb, var(--color-text) 24%, transparent);
+  stroke: var(--gear-ink);
+  stroke-width: 2.4;
+}
+/* Paper is OPAQUE — a mouth showing through it read as a bug, not as a sheet. */
+.smascot-gear-sheet {
+  fill: color-mix(in srgb, var(--color-bg) 82%, var(--color-text));
+  stroke: var(--gear-ink);
+  stroke-width: 2.4;
+}
+/* The work happens where the mouth is. Mood keeps speaking through the eyes. */
+.smascot-wears .smascot-smile { visibility: hidden; }
+/* Each mode's eye posture: both look DOWN at what their hands are doing, and Develop
+   squints at the glare off the joint. */
+.smascot-wears-plan .smascot-eyes { transform: translateY(4px); }
+.smascot-wears-plan .smascot-eye { height: 22px; }
+.smascot-wears-develop .smascot-eyes { transform: translateY(4px); }
+.smascot-wears-develop .smascot-eye { height: 19px; border-radius: 6px; }
+
+/* ── PLAN · writing ─────────────────────────────────────────────────────
+   The pencil travels the squiggle and the ink appears under its tip — one shared 3.8s
+   clock, so the line can never run ahead of the hand that is drawing it. Beats: settle
+   (0–6%), write the five humps with a wobble (6–56%), hop right (56–62%), press the
+   full stop (64%), a proud little pause, then lift off and reset. */
+.smascot-pencil { animation: smascot-write 3.8s ease-in-out infinite; }
+/* Wood collar: paper-coloured so the pencil reads as a pencil, not a stick. */
+.smascot-pencil-tip {
+  fill: color-mix(in srgb, var(--color-bg) 82%, var(--color-text));
+  stroke: var(--gear-ink);
+  stroke-width: 1.6;
+}
+.smascot-ink {
+  stroke: var(--gear-ink);
+  stroke-dasharray: 52;
+  animation: smascot-ink 3.8s ease-in-out infinite;
+}
+.smascot-ink-dot {
+  fill: var(--gear-ink);
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: smascot-dot 3.8s ease-in-out infinite;
+}
+
+/* ── DEVELOP · weld, then hammer ────────────────────────────────────────
+   One 3.4s clock for the whole smithy: 0–30% weld (flame flickers, the joint glows,
+   sparks fizz), 30–42% the torch pulls back while the hammer winds up, 47% the strike
+   (flash + burst + the anvil dips), 57% a lighter second tap, then everything walks
+   back to its mark. Every element below reads the SAME percentages — move one and
+   move them all. */
+.smascot-torch { animation: smascot-torch 3.4s ease-in-out infinite; }
+.smascot-anvil { animation: smascot-anvilhit 3.4s ease-in-out infinite; }
+.smascot-weld { fill: var(--color-warning); animation: smascot-weld 3.4s ease-in-out infinite; }
+.smascot-flame { fill: var(--color-warning); opacity: 0; transform-box: fill-box; transform-origin: 0% 0%; animation: smascot-flame 3.4s ease-in-out infinite; }
+.smascot-hammer {
+  transform-box: fill-box;
+  transform-origin: 100% 50%;
+  animation: smascot-hammer 3.4s ease-in-out infinite;
+}
+.smascot-spark { fill: var(--color-warning); opacity: 0; transform-box: fill-box; transform-origin: 50% 50%; }
+.smascot-spark--w1 { animation: smascot-weldspark 3.4s ease-out infinite; }
+.smascot-spark--w2 { animation: smascot-weldspark2 3.4s ease-out infinite; }
+.smascot-spark--w3 { animation: smascot-weldspark3 3.4s ease-out infinite; }
+.smascot-spark--h1 { animation: smascot-hitspark 3.4s ease-out infinite; }
+.smascot-spark--h2 { animation: smascot-hitspark2 3.4s ease-out infinite; }
+.smascot-spark--h3 { animation: smascot-hitspark3 3.4s ease-out infinite; }
+
+/* The gear rides with the eyes when a mood changes their height. */
+.smascot-asking .smascot-gear { top: -34px; }
+.smascot-sleeps .smascot-gear { top: -30px; opacity: 0.85; }
+
+/* ── Keyframes ──────────────────────────────────────────────────────────── */
+
+/* PLAN — the pencil crosses the page dipping into each hump of the squiggle, so it
+   reads as handwriting rather than as a slider; then the hop, the dot, the lift. */
+@keyframes smascot-write {
+  0% { transform: translate(0, 0); opacity: 0; }
+  6% { transform: translate(0, 0); opacity: 1; }
+  11% { transform: translate(4px, -2px); }
+  16% { transform: translate(8px, 0); }
+  21% { transform: translate(12px, -2px); }
+  26% { transform: translate(16px, 0); }
+  31% { transform: translate(20px, -2px); }
+  36% { transform: translate(24px, 0); }
+  41% { transform: translate(28px, -2px); }
+  46% { transform: translate(32px, 0); }
+  51% { transform: translate(36px, -2px); }
+  56% { transform: translate(40px, 0); }
+  59% { transform: translate(43px, -7px); }
+  62% { transform: translate(46px, -1px); }
+  64%, 74% { transform: translate(46px, 0.5px); opacity: 1; }
+  84% { transform: translate(46px, -7px); opacity: 0.4; }
+  90%, 100% { transform: translate(46px, -11px); opacity: 0; }
+}
+@keyframes smascot-ink {
+  0%, 6% { stroke-dashoffset: 52; opacity: 1; }
+  56%, 80% { stroke-dashoffset: 0; opacity: 1; }
+  90%, 100% { stroke-dashoffset: 0; opacity: 0; }
+}
+@keyframes smascot-dot {
+  0%, 62% { opacity: 0; transform: scale(0.2); }
+  65% { opacity: 1; transform: scale(1.35); }
+  68%, 80% { opacity: 1; transform: scale(1); }
+  90%, 100% { opacity: 0; transform: scale(1); }
+}
+
+/* DEVELOP — the torch sits on the joint (tiny working jitter), then pulls back
+   up-left and out of the hammer's way, and walks back for the next weld. */
+@keyframes smascot-torch {
+  0% { transform: translate(0, 0); }
+  8% { transform: translate(0.6px, 0.4px); }
+  16% { transform: translate(-0.5px, -0.3px); }
+  24% { transform: translate(0.5px, 0.4px); }
+  30% { transform: translate(0, 0); }
+  40%, 78% { transform: translate(-8px, -11px) rotate(-8deg); }
+  92%, 100% { transform: translate(0, 0); }
+}
+/* The joint runs hot under the torch, cools a touch, then flashes white for each blow. */
+@keyframes smascot-weld {
+  0%, 4% { opacity: 0.3; r: 3.2; }
+  14% { opacity: 0.95; r: 4.4; }
+  22% { opacity: 0.6; r: 3.6; }
+  30% { opacity: 0.9; r: 4.2; }
+  40%, 45% { opacity: 0.4; r: 3.4; }
+  48% { opacity: 1; r: 6; }
+  54% { opacity: 0.55; r: 4; }
+  58% { opacity: 0.9; r: 5; }
+  72%, 100% { opacity: 0.25; r: 3; }
+}
+/* The flame flickers while it burns, and burns only while the torch is on the joint. */
+@keyframes smascot-flame {
+  0%, 2% { opacity: 0; transform: scale(0.5); }
+  6% { opacity: 1; transform: scale(1); }
+  12% { opacity: 0.85; transform: scale(0.82); }
+  18% { opacity: 1; transform: scale(1.12); }
+  24% { opacity: 0.9; transform: scale(0.85); }
+  30% { opacity: 1; transform: scale(1); }
+  36%, 100% { opacity: 0; transform: scale(0.5); }
+}
+/* The hammer: parked while the weld runs, winds up, strikes, taps once more, returns. */
+@keyframes smascot-hammer {
+  0%, 34% { transform: rotate(34deg); }
+  42% { transform: rotate(52deg); }
+  47% { transform: rotate(-8deg); }
+  51% { transform: rotate(14deg); }
+  57% { transform: rotate(-5deg); }
+  62% { transform: rotate(10deg); }
+  78%, 100% { transform: rotate(34deg); }
+}
+/* The anvil takes the blows — a hard dip on the strike, a softer one on the tap. */
+@keyframes smascot-anvilhit {
+  0%, 45% { transform: translate(0, 0); }
+  48% { transform: translate(0, 1.6px); }
+  52% { transform: translate(0, 0); }
+  57% { transform: translate(0, 1px); }
+  61%, 100% { transform: translate(0, 0); }
+}
+/* Weld sparks — three small ones, staggered, only while the torch is on the joint. */
+@keyframes smascot-weldspark {
+  0%, 6% { opacity: 0; transform: translate(0, 0) scale(0.5); }
+  10% { opacity: 1; }
+  24% { opacity: 0; transform: translate(5px, -10px) scale(0.3); }
+  100% { opacity: 0; transform: translate(5px, -10px) scale(0.3); }
+}
+@keyframes smascot-weldspark2 {
+  0%, 13% { opacity: 0; transform: translate(0, 0) scale(0.5); }
+  17% { opacity: 1; }
+  30% { opacity: 0; transform: translate(-6px, -9px) scale(0.3); }
+  100% { opacity: 0; transform: translate(-6px, -9px) scale(0.3); }
+}
+@keyframes smascot-weldspark3 {
+  0%, 20% { opacity: 0; transform: translate(0, 0) scale(0.4); }
+  24% { opacity: 1; }
+  34% { opacity: 0; transform: translate(3px, -12px) scale(0.3); }
+  100% { opacity: 0; transform: translate(3px, -12px) scale(0.3); }
+}
+/* Impact burst — bigger, faster, and only on the blow. */
+@keyframes smascot-hitspark {
+  0%, 46% { opacity: 0; transform: translate(0, 0) scale(0.4); }
+  49% { opacity: 1; transform: translate(-2px, -3px) scale(1); }
+  60% { opacity: 0; transform: translate(-11px, -13px) scale(0.3); }
+  100% { opacity: 0; }
+}
+@keyframes smascot-hitspark2 {
+  0%, 46% { opacity: 0; transform: translate(0, 0) scale(0.4); }
+  49% { opacity: 1; transform: translate(2px, -2px) scale(1); }
+  62% { opacity: 0; transform: translate(12px, -11px) scale(0.3); }
+  100% { opacity: 0; }
+}
+@keyframes smascot-hitspark3 {
+  0%, 47% { opacity: 0; transform: translate(0, 0) scale(0.4); }
+  50% { opacity: 1; transform: translate(0, -4px) scale(0.9); }
+  64% { opacity: 0; transform: translate(3px, -16px) scale(0.3); }
+  100% { opacity: 0; }
+}
 @keyframes smascot-scan {
   0%, 100% { transform: translateX(-2px); }
   50% { transform: translateX(2px); }
@@ -269,6 +487,16 @@
   .smascot-eye,
   .smascot-eyes,
   .smascot-hand,
+  .smascot-gear,
+  .smascot-pencil,
+  .smascot-ink,
+  .smascot-ink-dot,
+  .smascot-weld,
+  .smascot-flame,
+  .smascot-torch,
+  .smascot-anvil,
+  .smascot-hammer,
+  .smascot-spark,
   .smascot-q span,
   .smascot-zzz span { animation: none !important; }
 }

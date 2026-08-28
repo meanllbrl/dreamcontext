@@ -4,6 +4,7 @@ import {
   type ModelConfig, type ModelOption, type UsageLimit,
 } from '../../../lib/agentComposer';
 import { CHAT_MODE_ROWS, type ChatMode } from '../../../lib/chatModes';
+import { SleepyMascot } from '../SleepyMascot';
 
 /**
  * The three panels behind the redesigned composer toolbar: mode+permission (left trigger),
@@ -78,6 +79,12 @@ export function ModeMenu({
             className={`chat-cmp-modelrow${row.id === mode ? ' is-active' : ''}`}
             onClick={() => { onModeChange(row.id); close(); }}
           >
+            {/* The mode SHOWS itself: the same face the dock chip will wear, doing the same
+                thing. Basic (and J.A.R.V.I.S) draw the bare face, which is the point — you can
+                see what you are turning on and what you are turning off. */}
+            <span className="chat-cmp-moderow-face" aria-hidden>
+              <SleepyMascot size={54} mood="idle" compact mode={row.id} />
+            </span>
             <span className="chat-cmp-modelrow-head">
               <span className="chat-cmp-modelrow-name">{row.name}</span>
               {row.badge && <span className="chat-cmp-badge is-muted">{row.badge}</span>}
