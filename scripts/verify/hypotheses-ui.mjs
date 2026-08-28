@@ -6,21 +6,21 @@
  *
  * Boots the REAL dashboard server on an isolated scratch vault (fake HOME, no
  * user state touched, no tokens spent), seeds five theses across the lifecycle
- * via the real CLI, then drives the UI with Playwright and proves the redesign
- * contract:
+ * via the real CLI, then drives the UI with Playwright and proves the contract
+ * (redesign 08-08; activity list RETIRED 08-28 — the status kanban is the only
+ * rendering):
  *
- *   1. the ACTIVITY LIST is the default view: one row per thesis with the
- *      status WORD, verdict %, split bar, and an unread dot + "what changed"
- *      line (inbox semantics — everything unread on a fresh profile);
- *   2. the list scope tabs filter (Needs attention = drafts, blocked, fresh
- *      flips, settled-but-unpromoted);
- *   3. the DETAIL MODAL is hero-first: lifecycle actions render in the header
+ *   1. the BOARD (status kanban) is the one and only view: status columns with
+ *      the verdict-first card anatomy (status WORD, verdict %), unread dots on
+ *      every card for a fresh profile (inbox semantics), and NO view toggle /
+ *      list rows anywhere;
+ *   2. the DETAIL MODAL is hero-first: lifecycle actions render in the header
  *      next to the verdict, and evidence notes are clamped to two lines and
  *      expand on click;
- *   4. SEEN-STATE works: opening a thesis clears its unread dot, "Mark all
- *      read" clears the rest;
- *   5. the BOARD (kanban) view still renders with the new card anatomy, and
- *      the view choice is REMEMBERED across a reload (persisted prefs).
+ *   3. SEEN-STATE works: opening a thesis clears its card's unread dot, "Mark
+ *      all read" clears the rest;
+ *   4. the board still renders after a reload (no stale view pref can resurrect
+ *      the retired list).
  *
  * Same harness contract as the other verify scripts: real server, isolated
  * fake HOME, COLLECT-DON'T-FAIL-FAST reporting. Screenshots (both themes) land
@@ -125,20 +125,16 @@ async function main() {
     await page.getByText('Hypotheses', { exact: true }).first().click();
     await page.waitForTimeout(800);
 
-    // 1 — activity list default, inbox semantics
-    ok('list view is the default and renders all rows', await page.locator('.thl-row').count() >= 5);
-    ok('fresh profile: every row unread', await page.locator('.thl-row--unread').count() >= 5);
-    ok('status rendered as a word on rows', await page.locator('.thl-row .thc-status', { hasText: 'Validated' }).count() > 0);
-    for (const theme of ['light', 'dark']) { await setTheme(theme); await page.screenshot({ path: join(SHOTS, `list-${theme}.png`) }); }
+    // 1 — board is the only view: kanban columns, card anatomy, inbox dots, no list
+    ok('board renders status columns by default', await page.locator('.thc-col').count() >= 4);
+    ok('board cards use the verdict-first anatomy (status word)', await page.locator('.thc-card .thc-status').count() >= 4);
+    ok('fresh profile: every card unread', await page.locator('.thc-card .thc-unread').count() >= 5);
+    ok('the retired activity list never renders', (await page.locator('.thl-row').count()) === 0);
+    ok('no view toggle in the toolbar', (await page.locator('button', { hasText: 'List' }).count()) === 0);
+    for (const theme of ['light', 'dark']) { await setTheme(theme); await page.screenshot({ path: join(SHOTS, `board-${theme}.png`) }); }
 
-    // 2 — scope tabs
-    await page.locator('.thl-tab', { hasText: 'Needs attention' }).click();
-    await page.waitForTimeout(200);
-    ok('needs-attention tab filters to actionable theses', await page.locator('.thl-row').count() >= 3);
-    await page.locator('.thl-tab', { hasText: 'All' }).click();
-
-    // 3 — detail modal: hero actions + clamped evidence
-    await page.locator('.thl-row', { hasText: 'Hybrid recall' }).first().click();
+    // 2 — detail modal: hero actions + clamped evidence
+    await page.locator('.thc-card', { hasText: 'Hybrid recall' }).first().click();
     await page.waitForTimeout(600);
     ok('modal hero carries the lifecycle actions', await page.locator('.td-actions-row .td-btn').count() >= 2);
     ok('evidence notes are clamped by default', await page.locator('.td-evidence-note--clamped').count() >= 1);
@@ -150,23 +146,26 @@ async function main() {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(300);
 
-    // 4 — seen-state
-    const hybridRow = page.locator('.thl-row', { hasText: 'Hybrid recall' }).first();
-    ok('opened thesis is marked read', !(await hybridRow.evaluate((el) => el.classList.contains('thl-row--unread'))));
-    ok('remaining rows stay unread', (await page.locator('.thl-row--unread').count()) === 4);
+    // 3 — seen-state
+    const hybridCard = page.locator('.thc-card', { hasText: 'Hybrid recall' }).first();
+    ok('opened thesis is marked read', (await hybridCard.locator('.thc-unread').count()) === 0);
+    ok('remaining cards stay unread', (await page.locator('.thc-card .thc-unread').count()) === 4);
     await page.locator('.thb-markread').click();
     await page.waitForTimeout(300);
-    ok('mark all read clears every dot', (await page.locator('.thl-row--unread').count()) === 0);
+    ok('mark all read clears every dot', (await page.locator('.thc-card .thc-unread').count()) === 0);
 
-    // 5 — board view + persisted choice
-    await page.locator('button', { hasText: 'Board' }).first().click();
-    await page.waitForTimeout(400);
-    ok('board view renders status columns', await page.locator('.thc-col').count() >= 4);
-    ok('board cards use the shared anatomy (status word)', await page.locator('.thc-card .thc-status').count() >= 4);
-    for (const theme of ['light', 'dark']) { await setTheme(theme); await page.screenshot({ path: join(SHOTS, `board-${theme}.png`) }); }
+    // 4 — reload cannot resurrect the retired list (stale view prefs ignored)
+    await page.evaluate(() => {
+      const key = Object.keys(localStorage).find((k) => k.includes('theses:board:prefs'));
+      if (key) {
+        const v = JSON.parse(localStorage.getItem(key) ?? '{}');
+        localStorage.setItem(key, JSON.stringify({ ...v, view: 'list', listFilter: 'unread' }));
+      }
+    });
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForTimeout(800);
-    ok('view choice survives a reload', await page.locator('.thc-col').count() >= 4);
+    ok('board renders after a reload', await page.locator('.thc-col').count() >= 4);
+    ok('a stale list pref cannot resurrect the list', (await page.locator('.thl-row').count()) === 0);
 
     await browser.close();
   } finally {

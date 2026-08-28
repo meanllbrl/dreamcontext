@@ -4,6 +4,37 @@ Opt-in subsystem (`learning.enabled`, default OFF — see [Disable switch](#disa
 
 ---
 
+## The quality bar — a thesis is an optimization claim, not an observation
+
+**Apply this bar BEFORE creating a thesis on any surface** — sleep-learn, awake capture, candidate extraction from notes/data sweeps, the dashboard modal. Every candidate claim must survive the SO-WHAT test:
+
+> **If this thesis is validated, what do we CHANGE — and which outcome that matters (revenue, retention, the north-star metric, an objective's KR) improves as a result?**
+
+No concrete answer → it is NOT a thesis. It is an observation. Observations are raw material, never board items: attach one as an evidence event on an existing thesis, note it in the relevant insight's Meaning section, or drop it. A superficial thesis is worse than none — it costs a re-test every sleep cycle, buries the theses whose validation would actually move revenue, and teaches the user to ignore the board.
+
+A thesis that clears the bar has four parts:
+
+1. **A grounded comparison** — a baseline that shows what "better" looks like: another funnel, segment, period, or cohort where the metric behaves differently. "X is low" is not a comparison; "X is low HERE while high THERE" is. Cross-reference the data you already have (earlier questions answered, sibling insights, other funnels) — the strongest theses connect two things the user saw separately.
+2. **A causal mechanism** — WHY the gap exists, stated concretely enough to be wrong.
+3. **A lever** — the specific change that would be made if the mechanism is right.
+4. **An outcome that matters** — the revenue-bearing (or north-star) metric the lever should move, not just the local rate.
+
+Claim template when the parts don't fall out naturally:
+
+```
+<B> underperforms <A> on <metric> because <mechanism>;
+<lever applied to B> should lift <metric> and <downstream outcome>.
+```
+
+| ✗ Not a thesis — an observation that restates a metric | ✓ A thesis — comparative, causal, actionable |
+|---|---|
+| "Funnel 3009's first question step loses 84% of traffic" | "Funnel 253's second page converts far better than 3009's; 3009 opens with a high-friction question that depresses every later step — opening 3009 the way 253 opens should lift its second-page rate and first-purchase revenue" |
+| "The second page is broken" | "Second-page drop-off is concentrated in the paid-social segment where page load is 2× slower; cutting the hero asset should recover most of that segment's checkout rate" |
+
+**Volume rule: fewer, better.** When extracting candidates from source material or a data sweep, expect MOST observations to fail the bar — that is the bar working. Offer the failures as evidence/insight notes, not as theses.
+
+---
+
 ## Entity + lifecycle
 
 Storage: `_dream_context/theses/<slug>.md` — one markdown file per thesis, mirrors `lab/insights/`. Own recall corpus type `thesis` (`memory recall … --types thesis`).
@@ -104,9 +135,10 @@ All frontmatter-structural, many-to-many (same pattern as a task's `objectives:`
 Thesis creation works OUTSIDE sleep too, mirroring the insight-capture precedent exactly:
 
 1. **Detect.** Two trigger shapes: (a) the user states a thesis in conversation ("I think X improves Y", "my hypothesis is…"); (b) the user hands you source material (a meeting note, a report, a discussion) and you can extract candidate falsifiable claims from it on the spot.
-2. **Recall-dedup.** Before proposing to create anything, check for a near-duplicate: `dreamcontext memory recall "<claim keywords>" --types thesis`. Don't create a second thesis for a claim that's already being tracked — link new evidence to the existing one instead.
-3. **Offer-and-confirm.** NEVER auto-create. Propose the claim (and, for a batch extracted from source material, propose them one at a time or as a reviewable list) and let the user confirm/edit before scaffolding.
-4. **Scaffold via CLI, default `draft`.** `dreamcontext theses create "<claim>" [--prediction "<text>"]…` — only promote straight to `open` (`--open`) when the user already has ≥1 falsifiable prediction ready; otherwise `draft` is correct even for a strong hunch.
+2. **Apply the quality bar.** Run every candidate through the SO-WHAT test ([above](#the-quality-bar--a-thesis-is-an-optimization-claim-not-an-observation)) before proposing it. Observations that fail get offered as evidence on an existing thesis or as an insight note — never forced into a thesis. Proposing three claims that pass beats proposing ten that pad the board.
+3. **Recall-dedup.** Before proposing to create anything, check for a near-duplicate: `dreamcontext memory recall "<claim keywords>" --types thesis`. Don't create a second thesis for a claim that's already being tracked — link new evidence to the existing one instead.
+4. **Offer-and-confirm.** NEVER auto-create. Propose the claim (and, for a batch extracted from source material, propose them one at a time or as a reviewable list) and let the user confirm/edit before scaffolding.
+5. **Scaffold via CLI, default `draft`.** `dreamcontext theses create "<claim>" [--prediction "<text>"]…` — only promote straight to `open` (`--open`) when the user already has ≥1 falsifiable prediction ready; otherwise `draft` is correct even for a strong hunch.
 
 The dashboard's create/review modal doubles as the meeting-note candidate review flow (`theses candidates <file.json>` stages extracted claims; the modal walks "Candidate i/n" with confirm/skip, confirmed ones land as `draft`).
 

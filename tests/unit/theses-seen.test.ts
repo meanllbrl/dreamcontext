@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { snapshotOf, diffThesis, needsAttention } from '../../dashboard/src/components/theses/thesis-seen';
+import { snapshotOf, diffThesis } from '../../dashboard/src/components/theses/thesis-seen';
 import type { ThesisView } from '../../dashboard/src/hooks/useTheses';
 
 /** Minimal valid ThesisView with overridable fields. */
@@ -87,28 +87,5 @@ describe('diffThesis', () => {
     const before = snapshotOf(thesis({ updated_at: '2026-08-01' }));
     const after = thesis({ updated_at: '2026-08-02' });
     expect(diffThesis(after, before)).toEqual({ unread: true, summary: 'Updated' });
-  });
-});
-
-describe('needsAttention', () => {
-  it('flags drafts, blocked, and settled-but-unpromoted theses', () => {
-    expect(needsAttention(thesis({ status: 'draft' }))).toBe(true);
-    expect(needsAttention(thesis({ blocked_on_instrumentation: true }))).toBe(true);
-    expect(needsAttention(thesis({ status: 'validated', promoted_to: null }))).toBe(true);
-    expect(needsAttention(thesis({ status: 'invalidated', promoted_to: null }))).toBe(true);
-  });
-
-  it('flags a fresh flip even when already promoted (checked_at === updated_at)', () => {
-    expect(needsAttention(thesis({
-      status: 'validated', promoted_to: 'knowledge/x.md', checked_at: '2026-08-08', updated_at: '2026-08-08',
-    }))).toBe(true);
-  });
-
-  it('does not flag a plain open thesis or a promoted settled one', () => {
-    expect(needsAttention(thesis({ status: 'open' }))).toBe(false);
-    expect(needsAttention(thesis({
-      status: 'validated', promoted_to: 'knowledge/x.md', checked_at: '2026-08-01', updated_at: '2026-08-05',
-    }))).toBe(false);
-    expect(needsAttention(thesis({ status: 'retired' }))).toBe(false);
   });
 });

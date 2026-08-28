@@ -14,7 +14,7 @@ pinned: false
 date: '2026-07-20'
 status: in_review
 created: '2026-07-20'
-updated: '2026-08-10'
+updated: '2026-08-28'
 released_version: 0.20.0
 tags:
   - 'topic:sleep'
@@ -23,6 +23,8 @@ tags:
   - 'kind:architecture'
 related_tasks:
   - proactive-learning-layer
+  - >-
+    theses-quality-bar-hypotheses-must-be-optimization-claims-not-observations-retire-the-list-view
 ---
 
 ## Why
@@ -40,7 +42,7 @@ The brain consolidates what happened but never learns forward: no hypotheses, no
 - [x] As a user, I can connect an insight to a thesis (and a thesis to roadmap objectives), so evidence flows structurally: roadmap has insights + theses + tasks; insights connect to roadmap + theses.
 - [x] As a user, I can list/search theses via CLI (`dreamcontext theses …`, recall-indexed as their own corpus type) and browse a thesis board page in the dashboard (draft/open/validated/invalidated columns with confidence + evidence trail) — plus see related theses on the roadmap objective detail page.
 - [x] As a user, the Hypotheses board leads with VERDICT — status as a word chip, large confidence %, claim clamped to 2 lines, one activity line — so every card's current state is scannable at a glance without decoding glyphs. *(Shipped 2026-08-08: verdict-first card redesign, 128-line CSS rewrite)*
-- [x] As a user, I can toggle between activity list view (default, inbox-style with All/Unread/Needs-attention tabs) and status kanban, with the choice persisted per project. *(Shipped 2026-08-08)*
+- [x] ~~As a user, I can toggle between activity list view (default, inbox-style with All/Unread/Needs-attention tabs) and status kanban, with the choice persisted per project.~~ *(Shipped 2026-08-08; RETIRED 2026-08-28 — owner review: the list view is "çok kötü". The status kanban is the only rendering; unread dots + Mark-all-read live on the cards.)*
 - [x] As a user, changes to a thesis arrive as unread — client-side seen-state diffs snapshots into an unread dot and "what changed" line (flips, confidence moves, evidence deltas), opening the detail marks it read, and a Mark-all-read button clears the inbox. *(Shipped 2026-08-08: per-thesis seen-state snapshots stored in `.hypotheses-seen.json`, 12 unit tests)*
 - [x] As a user, a validated thesis is promoted into canonical knowledge/decision — or, when it governs a procedure and its effect is significant enough, into a RULE in the matching workflow (`knowledge/workflows/`, see knowledge-workflows task) — with the thesis retired to a pointer; an invalidated one is kept as anti-knowledge — every win and every failure is a learning.
 - [x] As a user, I can disable the entire layer with one config switch: no sleep-learn dispatch, no CLI/snapshot noise, and the page reduced to its own off-state. **(Amended 2026-08-01, `3bed3d0`: the nav item is no longer hidden — see below.)**
@@ -60,6 +62,12 @@ The brain consolidates what happened but never learns forward: no hypotheses, no
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-08-28 — The quality bar: a thesis is an optimization claim, not an observation; list view retired
+
+- **Owner review (2026-08-28, kitUP board screenshot):** theses like "funnel 3009's first step loses 84% of traffic" or "second page is broken" are observations that restate a metric — validating them changes nothing, so they are clutter that never drives revenue. The wanted shape is comparative + causal + actionable: "funnel A's second page converts better than B's; B's high-friction opening depresses it — open B the way A opens to lift second-page rate and first-purchase revenue."
+- **The SO-WHAT test now gates every formation surface** (skill `references/learning.md` new top section, `agents/sleep-learn.md` step 2 + gotcha 7, SKILL.md Entity Router thesis row, create-modal subtitle/placeholder, board empty state): *if validated, what do we CHANGE, and which revenue-bearing/north-star outcome improves?* No answer → observation → evidence on an existing thesis or an insight note, never a new thesis. Anatomy: grounded COMPARISON (another funnel/segment/period — connect data the user saw separately) + causal MECHANISM + LEVER + outcome that matters. Volume rule: most extracted observations SHOULD fail the bar.
+- **Activity list view retired** — owner: "list view'ü kaldır, çok kötü." `ThesisListView.tsx`, the toolbar List/Board toggle, `view`/`listFilter` prefs, `ThesisViewMode`/`ThesisListFilter`, `needsAttention`, and the `.thl-*` CSS are deleted; the status kanban is the only rendering. Stale stored prefs are dropped by `mergePrefs` rebuilding a fresh object (pinned by verify assertion "a stale list pref cannot resurrect the list"). Unread dots + Mark-all-read stay, on the cards. `verify:hypotheses` rewritten to the board-only contract (13 assertions green).
 
 ### 2026-08-08 — Hypotheses board redesign: verdict-first, unread state, activity list
 

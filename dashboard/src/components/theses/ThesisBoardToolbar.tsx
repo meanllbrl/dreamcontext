@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { ThesisKind, ThesisStatus } from '../../hooks/useTheses';
 import {
-  type ThesisMenuKey, type ThesisSortKey, type ThesisViewMode, SORT_LABEL, STATUS_META, KIND_META,
+  type ThesisMenuKey, type ThesisSortKey, SORT_LABEL, STATUS_META, KIND_META,
   chipTrigger, popBase, optRow, sectionLabel, checkBox, radioBox,
 } from './thesis-chrome';
 
@@ -35,8 +35,6 @@ interface ThesisBoardToolbarProps {
   toggleBlocked: () => void;
   sort: ThesisSortKey;
   setSort: (s: ThesisSortKey) => void;
-  view: ThesisViewMode;
-  setView: (v: ThesisViewMode) => void;
   archive: boolean;
   toggleArchive: () => void;
   hasActiveFilters: boolean;
@@ -49,7 +47,7 @@ interface ThesisBoardToolbarProps {
 export function ThesisBoardToolbar({
   count, search, setSearch, statusInc, toggleStatus, statusCounts, kind, setKind,
   objectiveOptions, objective, setObjective, blockedOnly, toggleBlocked,
-  sort, setSort, view, setView, archive, toggleArchive,
+  sort, setSort, archive, toggleArchive,
   hasActiveFilters, clearAllFilters, openMenu, setOpenMenu, onCreate,
 }: ThesisBoardToolbarProps) {
   const toggle = (m: ThesisMenuKey) => setOpenMenu(openMenu === m ? null : m);
@@ -214,34 +212,6 @@ export function ThesisBoardToolbar({
             ))}
           </div>
         )}
-      </div>
-
-      {/* View mode — List (activity inbox) vs Board (status kanban). Persisted. */}
-      <div role="group" aria-label="View" style={{ display: 'flex', alignItems: 'center', height: 34, padding: 2, gap: 2, borderRadius: 9, background: 'var(--color-bg-tertiary)', border: '1px solid var(--color-border)', flex: '0 0 auto' }}>
-        {(['list', 'board'] as ThesisViewMode[]).map((v) => (
-          <button
-            key={v}
-            type="button"
-            aria-pressed={view === v}
-            onClick={() => setView(v)}
-            title={v === 'list' ? 'Activity list — what changed, newest first' : 'Board — grouped by status'}
-            style={{
-              ...btnReset,
-              display: 'flex', alignItems: 'center', gap: 5, height: 28, padding: '0 10px', borderRadius: 7, cursor: 'pointer',
-              fontSize: 12, fontWeight: 600,
-              background: view === v ? 'var(--color-bg-elevated)' : 'transparent',
-              color: view === v ? 'var(--color-text)' : 'var(--color-text-tertiary)',
-              boxShadow: view === v ? 'var(--shadow-sm)' : 'none',
-            }}
-          >
-            {v === 'list' ? (
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
-            ) : (
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="4" width="5" height="16" rx="1" /><rect x="10" y="4" width="5" height="11" rx="1" /><rect x="17" y="4" width="5" height="7" rx="1" /></svg>
-            )}
-            {v === 'list' ? 'List' : 'Board'}
-          </button>
-        ))}
       </div>
 
       {/* Archive toggle */}

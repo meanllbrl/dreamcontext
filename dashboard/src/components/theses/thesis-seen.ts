@@ -1,5 +1,4 @@
 import type { ThesisView } from '../../hooks/useTheses';
-import { isFlippedThisCycle } from './thesis-chrome';
 
 /**
  * Client-side "seen" state for the Hypotheses surfaces (inbox semantics, PO
@@ -53,19 +52,6 @@ export function diffThesis(t: ThesisView, seen: SeenSnapshot | undefined): Thesi
   if (dEv > 0) parts.push(`+${dEv} evidence`);
   if (parts.length === 0) parts.push('Updated');
   return { unread: true, summary: parts.join(' · ') };
-}
-
-/**
- * "Needs attention" = the thesis is waiting on a DECISION from you, not on the
- * next sleep cycle: a draft to review, a metric nobody tracks, a fresh flip, or
- * a settled thesis whose learning hasn't been promoted to knowledge yet.
- */
-export function needsAttention(t: ThesisView): boolean {
-  if (t.blocked_on_instrumentation) return true;
-  if (t.status === 'draft') return true;
-  if (isFlippedThisCycle(t)) return true;
-  if ((t.status === 'validated' || t.status === 'invalidated') && !t.promoted_to) return true;
-  return false;
 }
 
 function cap(s: string): string {

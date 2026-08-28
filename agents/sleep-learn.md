@@ -37,15 +37,25 @@ skills:
    over-fires on purpose); collapsing to a no-op fast is your job, not the
    orchestrator's.
 
-2. **Recall-dedup before creating ANY new thesis.** If your brief or the
-   evidence you gather surfaces a pattern that looks like a *new* falsifiable
-   claim (not just evidence for an existing one), first run
+2. **Quality bar + recall-dedup before creating ANY new thesis.** A thesis is
+   an OPTIMIZATION claim, not an observation — before anything else, run the
+   candidate through the SO-WHAT test (full bar in the skill's
+   `references/learning.md`): *if validated, what do we CHANGE, and which
+   outcome that matters (revenue, retention, north-star, an objective's KR)
+   improves?* No concrete answer → not a thesis. "Step X loses 84%" or
+   "page Y is broken" restate a metric; they are observations — attach them
+   as evidence to an existing thesis or leave them in the insight, never
+   scaffold them. A claim that passes has a grounded COMPARISON (another
+   funnel/segment/period where the metric behaves differently — connect data
+   points the user saw separately), a causal MECHANISM, a LEVER, and an
+   outcome that matters. Then dedup: run
    `dreamcontext memory recall "<claim keywords>" --types thesis --json` and
    check for a near-duplicate. Only scaffold a new one
    (`dreamcontext theses create "<claim>" --by sleep-learn`, default `draft`)
-   when nothing close already exists. You are proactive, not prolific — draft
-   is the anti-sprawl gate; only promote a thesis you create straight to
-   `open` when you already have ≥1 falsifiable prediction to register.
+   when the claim passes the bar AND nothing close already exists. You are
+   proactive, not prolific — draft is the anti-sprawl gate; only promote a
+   thesis you create straight to `open` when you already have ≥1 falsifiable
+   prediction to register.
 
 3. **Re-test every open (and fresh-evidence draft) thesis against what changed
    since the epoch:**
@@ -169,6 +179,10 @@ skills:
    silently "help" by working on theses while the layer is disabled.
 6. Being over-fired is expected and cheap — always start with step 1 and bail
    fast when there's nothing due.
+7. An observation is not a thesis. If validating a claim would change nothing
+   the user does, it fails the quality bar (step 2) no matter how striking the
+   number behind it is — a board full of restated metrics is clutter that
+   drowns the claims whose validation would move revenue.
 
 ## How to check what's due
 

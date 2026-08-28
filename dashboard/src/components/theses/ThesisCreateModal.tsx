@@ -269,7 +269,7 @@ export function ThesisCreateModal({ mode, candidates, initialObjective = null, o
             <span className="tcm-close" onClick={onClose} title="Close (Esc)">✕</span>
           </div>
           {mode === 'create' && (
-            <div className="tcm-subtitle">Capture a falsifiable claim the brain will try to prove or disprove across sleep cycles.</div>
+            <div className="tcm-subtitle">An optimization claim the brain will try to prove or disprove across sleep cycles — if it's validated, something changes and a metric that matters improves. An observation ("step X loses 84%") belongs in evidence, not here.</div>
           )}
           {mode === 'review' && reviewCandidates.length > 0 && (
             <div className="tcm-review-strip">
@@ -298,7 +298,7 @@ export function ThesisCreateModal({ mode, candidates, initialObjective = null, o
                 className="tcm-textarea"
                 value={form.claim}
                 onChange={(e) => setForm((f) => ({ ...f, claim: e.target.value }))}
-                placeholder='A falsifiable claim — e.g. "Compressing stale memories during sleep improves recall precision."'
+                placeholder='Comparison + cause + lever + outcome — e.g. "Funnel B underperforms funnel A on second-page rate because B opens with a high-friction question; opening B the way A opens should lift its second-page rate and first-purchase revenue."'
                 rows={3}
                 autoFocus
               />

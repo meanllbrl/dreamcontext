@@ -35,13 +35,6 @@ export const KIND_META: Record<string, { label: string; colorVar: string }> = {
   experimental: { label: 'Experimental', colorVar: 'var(--thesis-amber)' },
 };
 
-/** Board rendering mode — the A/C decision from the 08-08 design session: both
- *  layouts ship, the user's pick is persisted in the board prefs. */
-export type ThesisViewMode = 'list' | 'board';
-
-/** List-view scope tabs (All / Unread / Needs attention). */
-export type ThesisListFilter = 'all' | 'unread' | 'attention';
-
 /** Confidence % ink thresholds pinned by the design: ≥66 green, 40–65 amber, <40 red. */
 export function confidenceInkVar(pct: number): string {
   if (pct >= 66) return 'var(--thesis-validated)';
@@ -66,18 +59,6 @@ export function daysSince(dateStr: string): number {
   if (Number.isNaN(then)) return Infinity;
   const now = Date.now();
   return Math.max(0, Math.floor((now - then) / 86_400_000));
-}
-
-/**
- * Best-effort "flipped this cycle" signal — mirrors ThesisDetailModal's own
- * (there's no explicit `flipped` flag from the server): a validated/invalidated
- * thesis whose latest write is the SAME write that recorded its most recent
- * evidence check is treated as flipped this cycle.
- */
-export function isFlippedThisCycle(t: { status: string; checked_at: string | null; updated_at: string }): boolean {
-  return (t.status === 'validated' || t.status === 'invalidated')
-    && t.checked_at !== null
-    && t.checked_at === t.updated_at;
 }
 
 export const chipTrigger = (active: boolean): CSSProperties => ({

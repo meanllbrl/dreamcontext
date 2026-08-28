@@ -4,22 +4,22 @@ import { useObjectives } from '../../hooks/useObjectives';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { ThesisBoardToolbar, type ObjectiveFilterOption } from './ThesisBoardToolbar';
 import { ThesisColumn } from './ThesisColumn';
-import { ThesisListView } from './ThesisListView';
 import { ThesisDetailModal } from './ThesisDetailModal';
 import { ThesisCreateModal } from './ThesisCreateModal';
-import { BASE_COLUMNS, type ThesisMenuKey, type ThesisSortKey, type ThesisViewMode, type ThesisListFilter, daysSince } from './thesis-chrome';
+import { BASE_COLUMNS, type ThesisMenuKey, type ThesisSortKey, daysSince } from './thesis-chrome';
 import { diffThesis, snapshotOf, type SeenMap, type ThesisDelta } from './thesis-seen';
 import './theses.css';
 import './ThesisBoard.css';
 
 /**
- * The Hypotheses board (redesign 08-08). Owns filter/sort/view/archive prefs
- * (persisted per-project, client-only), the per-thesis SEEN map (inbox
+ * The Hypotheses board (redesign 08-08; list view retired 08-28 — the status
+ * kanban is the ONLY rendering, per owner review). Owns filter/sort/archive
+ * prefs (persisted per-project, client-only), the per-thesis SEEN map (inbox
  * semantics — opening a thesis's detail marks it read), the summary strip, the
- * meeting-note review banner, the two view modes (activity list / status
- * kanban), and the detail/create modals. `initialObjective`/`initialDetailSlug`
- * let a caller (the objective detail Learning section, via HypothesesPage) open
- * the board pre-filtered or jump straight to a thesis's detail modal.
+ * meeting-note review banner, and the detail/create modals.
+ * `initialObjective`/`initialDetailSlug` let a caller (the objective detail
+ * Learning section, via HypothesesPage) open the board pre-filtered or jump
+ * straight to a thesis's detail modal.
  */
 
 interface ThesisBoardPrefs {
@@ -27,23 +27,21 @@ interface ThesisBoardPrefs {
   kind: 'all' | ThesisKind;
   blockedOnly: boolean;
   sort: ThesisSortKey;
-  view: ThesisViewMode;
-  listFilter: ThesisListFilter;
   archive: boolean;
 }
 
 const DEFAULT_PREFS: ThesisBoardPrefs = {
-  statusInc: [], kind: 'all', blockedOnly: false, sort: 'updated', view: 'list', listFilter: 'all', archive: false,
+  statusInc: [], kind: 'all', blockedOnly: false, sort: 'updated', archive: false,
 };
 
+// Stored prefs may still carry the retired list view's `view`/`listFilter`
+// keys — mergePrefs rebuilds a fresh object, so they drop out silently.
 function mergePrefs(stored: Partial<ThesisBoardPrefs>): ThesisBoardPrefs {
   return {
     statusInc: Array.isArray(stored.statusInc) ? stored.statusInc : DEFAULT_PREFS.statusInc,
     kind: stored.kind ?? DEFAULT_PREFS.kind,
     blockedOnly: stored.blockedOnly ?? DEFAULT_PREFS.blockedOnly,
     sort: stored.sort ?? DEFAULT_PREFS.sort,
-    view: stored.view === 'board' ? 'board' : DEFAULT_PREFS.view,
-    listFilter: stored.listFilter === 'unread' || stored.listFilter === 'attention' ? stored.listFilter : 'all',
     archive: stored.archive ?? DEFAULT_PREFS.archive,
   };
 }
@@ -208,7 +206,6 @@ export function ThesisBoard({ initialObjective = null, initialDetailSlug = null 
         objectiveOptions={objectiveOptions} objective={objective} setObjective={setObjective}
         blockedOnly={prefs.blockedOnly} toggleBlocked={() => update((p) => ({ ...p, blockedOnly: !p.blockedOnly }))}
         sort={prefs.sort} setSort={(sort) => update((p) => ({ ...p, sort }))}
-        view={prefs.view} setView={(view) => update((p) => ({ ...p, view }))}
         archive={prefs.archive} toggleArchive={() => update((p) => ({ ...p, archive: !p.archive }))}
         hasActiveFilters={hasActiveFilters} clearAllFilters={clearAllFilters}
         openMenu={openMenu} setOpenMenu={setOpenMenu}
@@ -265,14 +262,6 @@ export function ThesisBoard({ initialObjective = null, initialDetailSlug = null 
           <EmptyState onCreate={() => setShowCreate(true)} />
         ) : sorted.length === 0 ? (
           <NoMatch onClear={clearAllFilters} />
-        ) : prefs.view === 'list' ? (
-          <ThesisListView
-            theses={sorted}
-            deltas={deltas}
-            filter={prefs.listFilter}
-            setFilter={(listFilter) => update((p) => ({ ...p, listFilter }))}
-            onOpen={setDetailSlug}
-          />
         ) : (
           <div className="thb-cols">
             {columns.map((col) => (
@@ -313,7 +302,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
       </div>
       <div style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 22, color: 'var(--color-text)', letterSpacing: '-0.02em' }}>No hypotheses yet</div>
       <div style={{ fontSize: 14, color: 'var(--color-text-tertiary)', maxWidth: 460, lineHeight: 1.55 }}>
-        A hypothesis is a falsifiable claim the brain tries to prove or disprove across sleep cycles — formed by sleep-learn during consolidation, or by you (or the agent) in conversation, including from meeting notes.
+        A hypothesis is a falsifiable optimization claim the brain tries to prove or disprove across sleep cycles — if it's validated, something changes and a metric that matters improves. Formed by sleep-learn during consolidation, or by you (or the agent) in conversation.
       </div>
       <button type="button" onClick={onCreate} className="bd-chip thesis-cta" style={{ marginTop: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer', fontSize: 13.5, fontWeight: 600, border: 'none', boxShadow: '0 8px 20px -6px rgba(123,104,238,0.8)' }}>
         + Create your first hypothesis
