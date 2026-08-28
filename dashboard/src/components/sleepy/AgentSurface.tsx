@@ -447,6 +447,12 @@ export function AgentSurface() {
   // True once the saved roster has been fetched (or the fetch failed/was empty). Gates
   // the persist effect so a pre-hydrate render can't PUT [] and clobber the saved names.
   const hydratedRef = useRef(false);
+  // The SAME fact as render state, for gates that are evaluated during render rather than
+  // inside an effect — today the D7 automation-attention opener, which must not put a tab
+  // on screen before the saved roster has landed. A ref cannot do that job: flipping it
+  // schedules no render, so a gate reading it would stay stale until something unrelated
+  // re-rendered the surface. Every write below sets both, always together.
+  const [hydrated, setHydrated] = useState(false);
   // Auto-title bookkeeping. `autoTitledRef` holds session ids that are DONE — either
   // successfully named or permanently ineligible (user-renamed / dormant) — so we never
   // ask again. `titleInFlightRef` holds ids with a Haiku call currently outstanding, so a
@@ -611,7 +617,7 @@ export function AgentSurface() {
     // machine would get agent tabs auto-restored into doomed WS connections instead of the
     // Prereqs panel.
     if (hydratedRef.current || !(caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) || !settingsReady) return;
-    if (!agentSettings.restoreTabs) { hydratedRef.current = true; return; }
+    if (!agentSettings.restoreTabs) { hydratedRef.current = true; setHydrated(true); return; }
     let cancelled = false;
     (async () => {
       try {
@@ -623,12 +629,27 @@ export function AgentSurface() {
         const saved = Array.isArray(res.sessions)
           ? res.sessions.filter((m) => m.kind !== 'shell' && !/^Terminal \d+$/.test((m.title ?? '').trim()))
           : [];
-        if (!cancelled && saved.length > 0) {
+        // WHAT IS ALREADY ON SCREEN WHEN THE ROSTER LANDS, and why that is not rare.
+        // Any tab present at this point was opened between this effect starting and its
+        // fetch returning. The D7 automation-attention opener is the case that made this
+        // routine: it polls on the SYNCHRONOUS localStorage settings seed, so it needs one
+        // round-trip, while this effect waits for `settingsReady` (the server value) and
+        // then its own fetch — two, sequentially. It is a genuine race, but a lopsided
+        // one, and the restore lost it often enough to cost real users real chats.
+        //
+        // Such a tab must not be spawned a second time from the roster: two live CLIs
+        // `--resume`d onto one conversation interleave their appends and neither sees the
+        // other's turns — the dual-attach guard every other resume path in this file
+        // enforces. Filtered BEFORE the map, because the map is where `spawn` happens; a
+        // dedupe after it would already have started the duplicate process.
+        const alreadyOpen = new Set(sessionListRef.current.map((m) => m.claudeId));
+        const fresh = saved.filter((m) => !m.sessionId || !alreadyOpen.has(m.sessionId));
+        if (!cancelled && fresh.length > 0) {
           // A saved tab WITH a pinned conversation id auto-RESUMES its real Claude session
           // on launch (reopening the app reopens the work via `claude --resume`); a legacy
           // tab without one restores DORMANT (manual Resume). Spawn happens here, once —
           // and only on the non-cancelled invocation, so StrictMode can't double-spawn.
-          const restored: SessionMeta[] = saved.map((m, i) => {
+          const restored: SessionMeta[] = fresh.map((m, i) => {
             // Shells restore as shells; an 'automation' entry KEEPS that display kind (see
             // the branch below — C11/C12); every other Claude-backed tab (saved as agent OR
             // chat) reopens as the CURRENTLY chosen Agent screen — the preference is a swap,
@@ -689,13 +710,28 @@ export function AgentSurface() {
             }
             return { id: `restored-${i}`, title: m.title, kind, bypass: m.bypass, claudeId: newClaudeId(), dormant: true };
           });
-          setSessionList((prev) => (prev.length > 0 ? prev : restored));
-          setPanes((prev) => (prev.length > 0 ? prev : [{
-            id: nextPaneId(), tabs: restored.map((m) => m.id), active: restored[0].id,
-          }]));
+          // APPEND, NEVER REPLACE — and this is the whole bug fix, not a refinement.
+          // These two lines used to read `prev.length > 0 ? prev : restored`, which
+          // DISCARDED the entire restore whenever anything had already opened a tab. The
+          // damage did not stop at one launch: the `finally` below then flips
+          // `hydratedRef`, which unblocks the persist effect, which mirrors the survivor
+          // back to the server as THE WHOLE ROSTER. One automation tab opening by itself
+          // on launch therefore cost the user every past chat they had, permanently, on
+          // the first save after. Restored tabs now join whatever is already here.
+          setSessionList((prev) => [...prev, ...restored]);
+          setPanes((prev) => {
+            if (prev.length === 0) {
+              return [{ id: nextPaneId(), tabs: restored.map((m) => m.id), active: restored[0].id }];
+            }
+            // Restored tabs join the first pane WITHOUT taking its `active` slot: a tab
+            // that is already open is one the user — or a run that stopped to ask — is
+            // looking at right now. A launch-time restore is background furniture and
+            // must not steal the foreground from it.
+            return prev.map((p, i) => (i === 0 ? { ...p, tabs: [...p.tabs, ...restored.map((m) => m.id)] } : p));
+          });
         }
       } catch { /* no saved roster (or non-desktop 403) — just start fresh */ }
-      finally { if (!cancelled) hydratedRef.current = true; }
+      finally { if (!cancelled) { hydratedRef.current = true; setHydrated(true); } }
     })();
     return () => { cancelled = true; };
   }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView, scopedApi]);
@@ -2657,9 +2693,19 @@ export function AgentSurface() {
           the Automations panel does, so a run reaching a tab this way and one
           reached by a click are the SAME tab (its bring-forward guard is what
           makes that true). `ready` mirrors that callback's own guards so the
-          poll cannot exist on a build where nothing could come of it. */}
+          poll cannot exist on a build where nothing could come of it.
+
+          `hydrated` IS PART OF THAT GATE, and it is not defensive tidiness. This opener
+          reads a localStorage settings seed available on the first render and needs one
+          round-trip; the roster restore waits on the SERVER settings and then its own
+          fetch, so it needs two. Unguarded, this tab lands before the saved roster often
+          — not always, which is worse, because it made the resulting data loss look
+          random. Nothing may put a tab on screen before the roster it has to coexist with
+          has been read. The restore above now merges rather than bails, so this gate is
+          the belt and that is the braces; keep both, and see
+          `scripts/verify/automation-tab-restore.mjs`, which forces the losing order. */}
       <AutomationAttentionOpener
-        ready={!!(caps?.desktop && caps.claudeCli && claudeReady && agentSettings.enabled)}
+        ready={!!(caps?.desktop && caps.claudeCli && claudeReady && agentSettings.enabled && hydrated)}
         onOpen={openAutomationRunChat}
       />
       <div

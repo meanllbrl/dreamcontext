@@ -51,6 +51,7 @@
     "verify:composer-shared": "node scripts/verify/composer-shared.mjs",
     "verify:chat-shelf": "node scripts/verify/chat-shelf.mjs",
     "verify:automation-run-chat": "node scripts/verify/automation-run-chat.mjs",
+    "verify:automation-tab-restore": "node scripts/verify/automation-tab-restore.mjs",
     "verify:delegate-modes": "node scripts/verify/delegate-modes.mjs",
     "verify:hypotheses": "node scripts/verify/hypotheses-ui.mjs",
     "verify:lab-board": "node scripts/verify/lab-board.mjs",
