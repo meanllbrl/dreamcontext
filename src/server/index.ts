@@ -102,6 +102,8 @@ import {
   handleAutomationsTelegramGet,
   handleAutomationsTelegramSet,
   handleAutomationsQueue,
+  handleAutomationsAttention,
+  handleAutomationsAttentionAck,
 } from './routes/automations.js';
 import {
   handleThesesList,
@@ -531,6 +533,12 @@ export function buildRouter(): Router {
   router.get('/api/automations/questions', handleAutomationsQuestionsList);
   router.post('/api/automations/questions/:id', handleAutomationsQuestionAnswer);
   router.get('/api/automations/queue', handleAutomationsQueue);
+  // `attention` joins the literal sub-paths above `/:slug` for the same
+  // ordering reason. Read + ack are split so a read never consumes: the app
+  // acks only once the tabs are actually open, so closing it mid-open replays
+  // the same window rather than swallowing it.
+  router.get('/api/automations/attention', handleAutomationsAttention);
+  router.post('/api/automations/attention/ack', handleAutomationsAttentionAck);
   // Before `/:slug` — a literal sub-path registered after a param route is
   // swallowed by it, the same ordering constraint `runs` above documents.
   router.get('/api/automations/:slug/session', handleAutomationsSession);

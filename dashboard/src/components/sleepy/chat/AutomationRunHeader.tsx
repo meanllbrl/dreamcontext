@@ -25,8 +25,18 @@ import './AutomationRunHeader.css';
 
 /** Statuses whose runs can even reach a transcript, mapped to how the card should read.
  *  `blocked`/`deferred`/`orphaned` never started a session, so they cannot appear here —
- *  they are absent by construction, not by omission. */
-const STATUS_TONE: Record<string, 'ok' | 'bad'> = { ok: 'ok', failed: 'bad', timeout: 'bad' };
+ *  they are absent by construction, not by omission.
+ *
+ *  `awaiting-review` is NOT a fault and must never paint the error tint: it means the run
+ *  reached a human gate and stopped, which is the feature working. It arrives here when the
+ *  chat was opened from the automation's open QUESTION rather than from a history row. */
+const STATUS_TONE: Record<string, 'ok' | 'bad' | 'wait'> = {
+  ok: 'ok', failed: 'bad', timeout: 'bad', 'awaiting-review': 'wait',
+};
+
+/** The word the status chip shows. `awaiting-review` is engine vocabulary; on a chat header
+ *  the reader needs the sentence's subject to be THEM. */
+const STATUS_WORD: Record<string, string> = { 'awaiting-review': 'waiting for your verdict' };
 
 function formatFired(iso: string): string {
   const t = Date.parse(iso);
@@ -67,12 +77,14 @@ export function AutomationRunHeader({
     <div className="automation-run-header" data-tone={tone}>
       <div className="arh-top">
         <span className="arh-kicker">Scheduled automation</span>
-        <span className="arh-status" data-tone={tone}>{run.status}</span>
+        <span className="arh-status" data-tone={tone}>{STATUS_WORD[run.status] ?? run.status}</span>
       </div>
       <div className="arh-title">{run.automationTitle}</div>
       <div className="arh-meta">
-        <span>Run #{run.runNumber}</span>
-        <span className="arh-dot" aria-hidden>·</span>
+        {/* Omitted, never faked, when the conversation was reached from its open question:
+            the asking run may be off the end of the bounded history, so no row index
+            describes it. The fire time below still says WHICH run this is. */}
+        {run.runNumber !== null && (<><span>Run #{run.runNumber}</span><span className="arh-dot" aria-hidden>·</span></>)}
         <span>{formatFired(run.firedAt)}</span>
         {run.numTurns !== null && (<><span className="arh-dot" aria-hidden>·</span><span>{run.numTurns} turns</span></>)}
         {duration && (<><span className="arh-dot" aria-hidden>·</span><span>{duration}</span></>)}

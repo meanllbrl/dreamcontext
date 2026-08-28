@@ -27,6 +27,14 @@
   border-color: color-mix(in srgb, var(--color-error) 32%, var(--color-border));
 }
 
+/* A run holding an open question. The edge carries the news for the same reason 'bad' does
+   — the reader is about to read a transcript that STOPPED, and the thing that stopped it is
+   waiting on them a few hundred pixels below. */
+.automation-run-header[data-tone='wait'] {
+  background: color-mix(in srgb, var(--color-warning) 7%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-warning) 32%, var(--color-border));
+}
+
 .arh-top {
   display: flex;
   align-items: center;
@@ -56,6 +64,15 @@
 .arh-status[data-tone='bad'] {
   background: color-mix(in srgb, var(--color-error) 18%, transparent);
   color: var(--color-error);
+}
+
+/* Waiting on the reader, not broken. Warning ink, never error ink — the same rule the
+   board's own "waiting for your verdict" badge follows: painting a human gate red teaches
+   the reader to clear it rather than read it, which is the reflexive approval the gate
+   exists to prevent. */
+.arh-status[data-tone='wait'] {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
 }
 
 .arh-title {

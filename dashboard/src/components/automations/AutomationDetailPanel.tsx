@@ -55,6 +55,40 @@ function fmtDuration(ms: number): string {
   return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 }
 
+/** The plain-English word for a run's status. The engine's own vocabulary
+ *  (`awaiting-review`, `ok`) is written for the runner's log, not for a human
+ *  scanning what their automation has been doing. */
+const HISTORY_WORD: Record<string, string> = {
+  ok: 'Completed',
+  failed: 'Failed',
+  timeout: 'Timed out',
+  blocked: 'Blocked — needs approval',
+  deferred: 'Deferred — sleep was running',
+  orphaned: 'Orphaned — a process was still alive',
+  'awaiting-review': 'Stopped to ask you',
+  'awaiting-approval': 'Stopped to ask about a manifest change',
+};
+
+/**
+ * One run in the history.
+ *
+ * SHAPE, AND WHY IT CHANGED. This was a single wrapping line of eight
+ * competing spans — dot, timestamp, raw status, duration, cost, denials, an
+ * "open chat" pill, and a truncated error — all at 11-12px in a narrow rail.
+ * Every one of them carried the same visual weight, so a failure and a healthy
+ * run were distinguishable only by an 8px dot, and the error message — the
+ * single most important string on a failed row — was clipped to whatever
+ * space the telemetry left over.
+ *
+ * Now the outcome leads, in words. Telemetry drops to a secondary line and
+ * appears only when it exists: a short-circuit has no duration, no cost and no
+ * turns, and printing "0ms · $0.000" for one is telemetry theatre for a run
+ * that never happened. An error gets its own full-width line and wraps.
+ *
+ * The whole row is the button when the run has a session, rather than a pill at
+ * the end of it: a 60px target at the right edge of a rail is a target you miss,
+ * and the row's own text is what the reader is aiming at anyway.
+ */
 function HistoryRow({
   event,
   runNumber,
@@ -64,36 +98,92 @@ function HistoryRow({
   runNumber: number;
   onOpenSession: (runNumber: number) => void;
 }) {
-  return (
-    <div className="adp-history-row">
-      <span className={`adp-history-dot adp-history-dot--${event.status}`} />
-      <span className="adp-history-when">{fmtWhen(event.firedAt)}</span>
-      <span className="adp-history-status">{event.status}</span>
-      <span className="adp-history-duration">{fmtDuration(event.durationMs)}</span>
-      {event.costUsd !== null && <span className="adp-history-cost">${event.costUsd.toFixed(3)}</span>}
-      {event.permissionDenials > 0 && (
-        <span className="adp-history-denials" title="Permission denials during this run">
-          ⚠ {event.permissionDenials}
+  // A recorded session id is necessary but not sufficient: whether a transcript
+  // actually landed is checked in `RunHandoff`, which is the only place that
+  // knows. Its absence, though, IS sufficient to know there is nothing to open
+  // — a blocked, deferred, orphaned or gate-refused run never reached a process.
+  const openable = event.sessionId !== null;
+  // Only render telemetry that means something. A short-circuit finalizes with
+  // zeros across the board, and rendering them claims a run happened.
+  const hasTelemetry = event.durationMs > 0 || event.costUsd !== null || event.numTurns !== null;
+
+  // Spans, not divs: the openable variant wraps this in a <button>, and block
+  // elements sit outside button's phrasing-content model. The classes already
+  // carry the display, so this is a validity fix with no visual change.
+  const body = (
+    <>
+      <span className="adp-history-line">
+        <span className={`adp-history-dot adp-history-dot--${event.status}`} />
+        <span className="adp-history-status">{HISTORY_WORD[event.status] ?? event.status}</span>
+        <span className="adp-history-when">{fmtWhen(event.firedAt)}</span>
+      </span>
+      {hasTelemetry && (
+        <span className="adp-history-sub">
+          {event.durationMs > 0 && <span>{fmtDuration(event.durationMs)}</span>}
+          {event.numTurns !== null && <span>{event.numTurns} turns</span>}
+          {event.costUsd !== null && <span>${event.costUsd.toFixed(3)}</span>}
+          {event.permissionDenials > 0 && (
+            <span className="adp-history-denials" title="Permission denials during this run">
+              ⚠ {event.permissionDenials}
+            </span>
+          )}
         </span>
       )}
-      {/* Only offered when a session was actually recorded — a blocked, deferred or
-          orphaned run never reached one, and a button that opens an empty drawer teaches
-          the user to stop pressing it. A recorded session id is necessary but not
-          sufficient: whether a transcript actually landed is checked in `RunHandoff`,
-          which is the only place that knows. */}
-      {event.sessionId && (
-        <button
-          className="adp-history-session"
-          onClick={() => onOpenSession(runNumber)}
-          title="Reopen this run's conversation as a chat"
-        >
-          open chat
+      {event.error && <span className="adp-history-error">{event.error}</span>}
+    </>
+  );
+
+  if (!openable) return <div className="adp-history-row">{body}</div>;
+  return (
+    <button
+      type="button"
+      className="adp-history-row adp-history-row--openable"
+      onClick={() => onOpenSession(runNumber)}
+      title="Reopen this run's conversation as a chat"
+    >
+      {body}
+      <span className="adp-history-go" aria-hidden>→</span>
+    </button>
+  );
+}
+
+/** How many runs the rail shows before the rest go behind "show all". A rail is
+ *  a glance surface — fifty rows in it is a scroll, not a history. */
+const HISTORY_PREVIEW = 6;
+
+/** The run list, newest first, capped with an honest expander. The hidden count
+ *  is STATED rather than the list silently truncated: a rail that shows six of
+ *  fifty and says nothing reads as "this automation has run six times". */
+function RunHistory({
+  history, onOpenSession,
+}: {
+  history: AutomationRunEvent[];
+  onOpenSession: (runNumber: number) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? history : history.slice(0, HISTORY_PREVIEW);
+  const hidden = history.length - shown.length;
+  return (
+    <>
+      <div className="adp-history">
+        {shown.map((event, i) => (
+          // `i + 1` IS the run number: `history` is stored newest-first, which is
+          // the same 1-based newest-first index `resolveRunSession` takes. Safe
+          // under the cap because the cap only ever trims from the END.
+          <HistoryRow
+            key={`${event.firedAt}-${i}`}
+            event={event}
+            runNumber={i + 1}
+            onOpenSession={onOpenSession}
+          />
+        ))}
+      </div>
+      {history.length > HISTORY_PREVIEW && (
+        <button type="button" className="adp-history-more" onClick={() => setExpanded((e) => !e)}>
+          {expanded ? 'Show fewer' : `Show ${hidden} older ${hidden === 1 ? 'run' : 'runs'}`}
         </button>
       )}
-      {event.error && (
-        <span className="adp-history-error" title={event.error}>{event.error}</span>
-      )}
-    </div>
+    </>
   );
 }
 
@@ -745,19 +835,7 @@ export function AutomationDetailPanel({ summary, runningSlug, autoOpenLatestRun,
                     {history.length === 0 ? (
                       <div className="adp-history-empty">No runs recorded yet.</div>
                     ) : (
-                      <div className="adp-history">
-                        {history.map((event, i) => (
-                          // `i + 1` IS the run number: `history` was reversed to
-                          // newest-first above, which is the same 1-based
-                          // newest-first index `resolveRunSession` takes.
-                          <HistoryRow
-                            key={`${event.firedAt}-${i}`}
-                            event={event}
-                            runNumber={i + 1}
-                            onOpenSession={setOpenSession}
-                          />
-                        ))}
-                      </div>
+                      <RunHistory history={history} onOpenSession={setOpenSession} />
                     )}
                   </>
                 )}

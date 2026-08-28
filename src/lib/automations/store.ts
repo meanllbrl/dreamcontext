@@ -660,6 +660,37 @@ export function writeAutomationCache(contextRoot: string, slug: string, c: Autom
 }
 
 /**
+ * Is this event the SAME gate refusing the SAME owed fire again, rather than
+ * something new having happened?
+ *
+ * THE PROBLEM THIS SOLVES. A short-circuit (`blocked`, `deferred`, `orphaned`,
+ * `awaiting-review`, `awaiting-approval`) deliberately does NOT advance the
+ * watermark — the fire is owed, not lost — so `isDue()` keeps returning true
+ * and every tick calls the runner again, hits the same gate, and appended a
+ * fresh history row. At a 5-minute tick that is 288 identical rows a day
+ * against a `HISTORY_LIMIT` of 50: within four hours the ENTIRE history is one
+ * repeated refusal, and every real run — including the one holding the session
+ * whose question is what the gate is waiting on — has been pushed off the end.
+ * That is how a pending question buries its own conversation and the UI's
+ * "open chat" ends up pointing at a row with `sessionId: null`.
+ *
+ * Coalescing is deliberately narrow: same status, same owed fire, and the
+ * incoming event spawned nothing (`sessionId === null`). A different status, a
+ * new `firedAt`, or an event that actually reached a session is a genuinely
+ * new fact and prepends normally. The newest row is REPLACED rather than
+ * skipped so `startedAt`/`finishedAt` still say when the gate was last hit.
+ */
+function isRepeatOf(e: RunEvent, newest: RunEvent | undefined, enabled: boolean): boolean {
+  if (!enabled || !newest) return false;
+  return (
+    newest.status === e.status
+    && newest.firedAt === e.firedAt
+    && newest.sessionId === null
+    && e.sessionId === null
+  );
+}
+
+/**
  * Record one run attempt (or non-attempt). The SOLE writer of
  * `AutomationCache.lastFireAt` — the watermark advances to `event.firedAt`
  * only when `opts.advanceWatermark !== false` (default: advance). History is
@@ -667,16 +698,28 @@ export function writeAutomationCache(contextRoot: string, slug: string, c: Autom
  * `durationMs`/`outputPath`/`exitCode`/`lastRunAt` fields always mirror the
  * just-recorded event, independent of the watermark decision — they answer
  * "what happened most recently", which `blocked`/`deferred`/`orphaned` are.
+ *
+ * `opts.coalesceRepeat` folds a repeated refusal of the same owed fire onto
+ * the newest row instead of prepending — see `isRepeatOf` for why the history
+ * is otherwise destroyed by a gate nobody has cleared yet.
  */
 export function recordRun(
   contextRoot: string,
   slug: string,
   e: RunEvent,
-  opts?: { advanceWatermark?: boolean },
+  opts?: { advanceWatermark?: boolean; coalesceRepeat?: boolean },
 ): AutomationCache {
   const existing = readAutomationCache(contextRoot, slug);
   const advance = opts?.advanceWatermark !== false;
-  const history = [e, ...(existing?.history ?? [])].slice(0, HISTORY_LIMIT);
+  const prior = existing?.history ?? [];
+  const history = isRepeatOf(e, prior[0], opts?.coalesceRepeat === true)
+    // The row spans FIRST hit → LAST hit. Taking the incoming event wholesale
+    // would move `startedAt` forward on every tick, so a gate nobody has cleared
+    // for three days would read as if it were first hit a minute ago — and an
+    // operator would have no way to tell from the history how long an
+    // automation has actually been stuck.
+    ? [{ ...e, startedAt: prior[0].startedAt }, ...prior.slice(1)]
+    : [e, ...prior].slice(0, HISTORY_LIMIT);
   const cache: AutomationCache = {
     slug,
     lastRunAt: e.startedAt,

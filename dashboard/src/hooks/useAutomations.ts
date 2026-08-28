@@ -66,7 +66,40 @@ export interface AutomationSummary {
    *  question and stays `awaiting-review` after a human answers. Repointed
    *  from the retired review-card store; the field is named for what it now
    *  holds. */
-  pendingQuestionId: string | null;
+  pendingQuestion: PendingQuestionSummary | null;
+}
+
+/**
+ * The open question as the BOARD receives it — mirrors the route's
+ * `PendingQuestionSummary`. Carries the question's own words and the session
+ * that asked, because an id alone made the card unable to do either of the two
+ * things a waiting verdict needs: say what is being asked, and open the
+ * conversation where it can be answered.
+ *
+ * `sessionId` is the asking run's conversation, which is NOT the newest row in
+ * `cache.history` — the gate that holds this automation refuses without
+ * spawning, so it records `sessionId: null` every time it is hit. Anything
+ * resolving "the chat for this question" must come through here.
+ */
+export interface PendingQuestionSummary {
+  id: string;
+  kind: 'approval' | 'flow-hitl';
+  /** The scheduled fire the asking run answered for. Used as the chat header's
+   *  "when": the asking run may have been evicted from the bounded history, so
+   *  this is the only surviving timestamp for it. */
+  runFiredAt: string;
+  /** What the run is asking, in its own words. */
+  question: string;
+  /** The answers offered. Empty ⇒ free text. */
+  choices: string[];
+  /** The conversation to reopen, when there is one it is safe to offer. Null
+   *  for an `'approval'` question (that session ran read-only and is discarded
+   *  either way), AND for any question whose session this machine never bound —
+   *  a question record can arrive over brain sync, and a uuid from one is not a
+   *  capability this machine granted. Either way the question still renders;
+   *  only the "Answer in chat" route is withheld. */
+  sessionId: string | null;
+  createdAt: string;
 }
 
 /** One recorded run attempt (or non-attempt) — mirrors `RunEvent`. */
@@ -639,5 +672,67 @@ export function useSetAutomationTelegram() {
     onSuccess: (_data, { slug }) => {
       queryClient.invalidateQueries({ queryKey: ['automations', slug, 'telegram'] });
     },
+  });
+}
+
+// ─── Runs needing attention (D7) ───────────────────────────────────────────
+
+/** One run that wants a human — mirrors `AttentionRun` in
+ *  `src/lib/automations/attention.ts`. `sessionId` is never null here: a run
+ *  with no conversation is filtered out server-side rather than handed on to
+ *  fail at the resume. */
+export interface AttentionRun {
+  slug: string;
+  automationTitle: string;
+  /** `question` — it stopped and asked. `failed` — it crashed or timed out and
+   *  the transcript is the only place the cause is legible. */
+  reason: 'question' | 'failed';
+  sessionId: string;
+  firedAt: string;
+  /** When this became worth surfacing. The field the watermark compares. */
+  at: string;
+  status: RunStatus;
+  error: string | null;
+  costUsd: number | null;
+  numTurns: number | null;
+  durationMs: number | null;
+  outputPath: string | null;
+}
+
+/**
+ * The runs this machine has not yet opened tabs for, oldest first.
+ *
+ * `enabled` is a real gate, not an optimisation: this query exists to feed the
+ * agent surface, so on a build with Agents switched off (or without the claude
+ * CLI) it must not poll at all — a poll whose results can never be acted on
+ * would advance nothing and cost a request every interval forever.
+ *
+ * Polled at a much slower cadence than `useAutomationQuestions`' 5s: this
+ * answers "what happened while I was away", which changes on the scale of a
+ * scheduled fire, not of a keystroke. `refetchOnWindowFocus` is what actually
+ * carries the app-open case.
+ */
+export function useAutomationAttention(enabled: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['automations-attention'],
+    queryFn: () => api.get<{ runs: AttentionRun[]; watermark: string | null }>('/automations/attention'),
+    refetchInterval: 30000,
+    refetchOnWindowFocus: true,
+    enabled,
+    retry: 0,
+  });
+}
+
+/** Mark everything up to `upTo` as shown. Called only once tabs are actually
+ *  open — see `handleAutomationsAttentionAck` for why a read must not consume.
+ *  The advance is monotonic server-side, so an out-of-order ack from a second
+ *  window cannot rewind the mark. */
+export function useAckAttention() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (upTo: string) => api.post<{ watermark: string | null }>('/automations/attention/ack', { upTo }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['automations-attention'] }); },
   });
 }

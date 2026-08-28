@@ -32,6 +32,9 @@ import { approveAutomation } from '../../src/lib/automations/registry.js';
 import { APPROVAL_DIFF_FIELDS, FLOW_GRAPH_VERSION, type FlowGraph } from '../../src/lib/automations/types.js';
 import { createQuestion, claimQuestion } from '../../src/lib/automations/hitl.js';
 import { enqueueFire } from '../../src/lib/automations/queue.js';
+import { recordRun } from '../../src/lib/automations/store.js';
+import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
+import { mkdirSync as mkdirp, writeFileSync as writeFileP } from 'node:fs';
 import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../src/lib/automations/telegram.js';
 import {
   handleAutomationsList,
@@ -45,6 +48,8 @@ import {
   handleAutomationsTelegramGet,
   handleAutomationsTelegramSet,
   handleAutomationsQueue,
+  handleAutomationsAttention,
+  handleAutomationsAttentionAck,
 } from '../../src/server/routes/automations.js';
 import {
   startAutomationJob,
@@ -104,6 +109,15 @@ function makeAutomation(slug: string, opts: { approve?: boolean } = { approve: t
   });
   if (opts.approve !== false) approveAutomation(projectRoot, manifest, new Date('2026-07-25T12:00:00.000Z'));
   return manifest;
+}
+
+/** A transcript on disk under the fake HOME. A session id with no transcript is
+ *  deliberately not offered by the routes (`--resume` would fresh-pin a blank
+ *  chat claiming to be the run), so any fixture expected to surface needs one. */
+function seedTranscript(id: string): void {
+  const dir = join(fakeHome, '.claude', 'projects', 'dc-route-proj');
+  mkdirp(dir, { recursive: true });
+  writeFileP(join(dir, `${id}.jsonl`), `{"sessionId":"${id}","type":"user"}\n`, 'utf-8');
 }
 
 function fakeOutcome(slug: string, status: RunOutcome['status'] = 'ok'): RunOutcome {
@@ -854,5 +868,170 @@ describe('startAutomationJob process-group wiring (the single most important det
 
     expect(groupKill).toHaveBeenCalledExactlyOnceWith(-42, 'SIGKILL');
     expect(groupKill.mock.calls[0][0]).toBeLessThan(0); // negative PID = process GROUP, never a bare PID
+  });
+});
+
+
+// ─── The pending question on the list row ──────────────────────────────────
+//
+// The list used to carry `pendingQuestionId: string | null` and nothing more,
+// which left the board able to say a verdict was owed but not what on — the
+// words lived behind `/questions`, which is only fetched once the run's chat
+// is already open, i.e. behind the thing the user was trying to reach.
+
+describe('GET /api/automations — the pending question', () => {
+  it('carries the question text and the ASKING session, not just an id', async () => {
+    makeAutomation('asks');
+    createQuestion(contextRoot, {
+      slug: 'asks',
+      runFiredAt: '2026-08-26T06:30:00.000Z',
+      kind: 'flow-hitl',
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      channel: 'chat',
+      question: 'Onay kartı: onayla / reddet / geri bildirim ver',
+      choices: [],
+      nowISO: '2026-08-26T06:54:00.000Z',
+    });
+    // Bound by THIS machine's runner AND with a transcript on disk — the only
+    // case the uuid is offered.
+    recordAutomationSession('asks', '11111111-1111-4111-8111-111111111111');
+    seedTranscript('11111111-1111-4111-8111-111111111111');
+    const { res, status, body } = makeRes();
+    await handleAutomationsList(getReq, res, {}, contextRoot);
+    expect(status()).toBe(200);
+    const row = (body().automations as Array<Record<string, unknown>>)[0];
+    expect(row.pendingQuestion).toMatchObject({
+      kind: 'flow-hitl',
+      question: 'Onay kartı: onayla / reddet / geri bildirim ver',
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      runFiredAt: '2026-08-26T06:30:00.000Z',
+    });
+  });
+
+  it('WITHHOLDS the session id of a question this machine never bound, but still shows the question', async () => {
+    // A question record travels inside the brain; its gitignore coverage is
+    // best-effort. A pulled-in one must not hand this client a resumable
+    // bypassPermissions uuid — the WS gate scans automations/cache/*.json only,
+    // so it would not catch this source. The words still render: seeing what a
+    // teammate's automation asks is fine; resuming their conversation is not.
+    makeAutomation('foreign');
+    createQuestion(contextRoot, {
+      slug: 'foreign',
+      runFiredAt: '2026-08-26T06:30:00.000Z',
+      kind: 'flow-hitl',
+      sessionId: '99999999-9999-4999-8999-999999999999',
+      channel: 'chat',
+      question: 'Ship it?',
+      choices: [],
+      nowISO: '2026-08-26T06:54:00.000Z',
+    });
+    const { res, body } = makeRes();
+    await handleAutomationsList(getReq, res, {}, contextRoot);
+    const row = (body().automations as Array<Record<string, unknown>>)[0];
+    expect(row.pendingQuestion).toMatchObject({ question: 'Ship it?', sessionId: null });
+  });
+
+  it('is null when nothing is open, and drops the answered-question fields', async () => {
+    makeAutomation('quiet');
+    const { res, body } = makeRes();
+    await handleAutomationsList(getReq, res, {}, contextRoot);
+    const row = (body().automations as Array<Record<string, unknown>>)[0];
+    expect(row.pendingQuestion).toBeNull();
+  });
+
+  it('never leaks the answer-side fields a pending question does not have', async () => {
+    makeAutomation('asks');
+    createQuestion(contextRoot, {
+      slug: 'asks',
+      runFiredAt: '2026-08-26T06:30:00.000Z',
+      kind: 'flow-hitl',
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      channel: 'chat',
+      question: 'q?',
+      choices: [],
+      nowISO: '2026-08-26T06:54:00.000Z',
+    });
+    recordAutomationSession('asks', '11111111-1111-4111-8111-111111111111');
+    seedTranscript('11111111-1111-4111-8111-111111111111');
+    const { res, body } = makeRes();
+    await handleAutomationsList(getReq, res, {}, contextRoot);
+    const row = (body().automations as Array<Record<string, unknown>>)[0];
+    expect(Object.keys(row.pendingQuestion as object).sort())
+      .toEqual(['choices', 'createdAt', 'id', 'kind', 'question', 'runFiredAt', 'sessionId']);
+  });
+});
+
+// ─── Attention (D7) ────────────────────────────────────────────────────────
+
+describe('GET /api/automations/attention', () => {
+  it('returns runs needing a human WITHOUT advancing the watermark', async () => {
+    makeAutomation('breaks');
+    recordRun(contextRoot, 'breaks', {
+      firedAt: '2026-08-28T06:30:00.000Z',
+      startedAt: '2026-08-28T06:30:01.000Z',
+      finishedAt: '2026-08-28T06:31:00.000Z',
+      status: 'failed',
+      durationMs: 59000,
+      outputPath: null,
+      error: 'boom',
+      exitCode: 1,
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      costUsd: null,
+      numTurns: null,
+      permissionDenials: 0,
+    });
+    recordAutomationSession('breaks', '11111111-1111-4111-8111-111111111111');
+    seedTranscript('11111111-1111-4111-8111-111111111111');
+
+    const first = makeRes();
+    await handleAutomationsAttention(getReq, first.res, {}, contextRoot);
+    expect(first.status()).toBe(200);
+    expect((first.body().runs as unknown[])).toHaveLength(1);
+    expect(first.body().watermark).toBeNull();
+
+    // A read must not consume: closing the app mid-open is the exact moment
+    // this feature exists to cover.
+    const second = makeRes();
+    await handleAutomationsAttention(getReq, second.res, {}, contextRoot);
+    expect((second.body().runs as unknown[])).toHaveLength(1);
+  });
+
+  it('ack narrows the window, and a bad mark is refused rather than written', async () => {
+    makeAutomation('breaks');
+    recordRun(contextRoot, 'breaks', {
+      firedAt: '2026-08-28T06:30:00.000Z',
+      startedAt: '2026-08-28T06:30:01.000Z',
+      finishedAt: '2026-08-28T06:31:00.000Z',
+      status: 'timeout',
+      durationMs: 59000,
+      outputPath: null,
+      error: 'timed out',
+      exitCode: null,
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      costUsd: null,
+      numTurns: null,
+      permissionDenials: 0,
+    });
+    recordAutomationSession('breaks', '11111111-1111-4111-8111-111111111111');
+    seedTranscript('11111111-1111-4111-8111-111111111111');
+
+    const bad = makeRes();
+    await handleAutomationsAttentionAck(makePostReqWithBody({ upTo: 'nope' }), bad.res, {}, contextRoot);
+    expect(bad.status()).toBe(400);
+
+    const stillThere = makeRes();
+    await handleAutomationsAttention(getReq, stillThere.res, {}, contextRoot);
+    expect((stillThere.body().runs as unknown[])).toHaveLength(1);
+
+    const ack = makeRes();
+    await handleAutomationsAttentionAck(
+      makePostReqWithBody({ upTo: '2026-08-28T06:31:00.000Z' }), ack.res, {}, contextRoot,
+    );
+    expect(ack.status()).toBe(200);
+
+    const after = makeRes();
+    await handleAutomationsAttention(getReq, after.res, {}, contextRoot);
+    expect((after.body().runs as unknown[])).toEqual([]);
+    expect(after.body().watermark).toBe('2026-08-28T06:31:00.000Z');
   });
 });

@@ -806,6 +806,11 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     durationMs: number;
     advanceWatermark: boolean;
     notify: boolean;
+    /** Set by `shortCircuit` only. A refusal that spawns nothing and does not
+     *  advance the watermark WILL be reached again by the very next tick, so
+     *  recording each one as a new history row erases the real runs behind it
+     *  — see `recordRun`'s `isRepeatOf`. */
+    coalesceRepeat?: boolean;
     /** The run's own headline, for the notification body. Null on every path
      *  that produced no document to draw one from. */
     summary?: string | null;
@@ -835,7 +840,10 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       numTurns: params.numTurns,
       permissionDenials: params.permissionDenials,
     };
-    const cache = recordRun(contextRoot, slug, event, { advanceWatermark: params.advanceWatermark });
+    const cache = recordRun(contextRoot, slug, event, {
+      advanceWatermark: params.advanceWatermark,
+      coalesceRepeat: params.coalesceRepeat === true,
+    });
     logFn(`automation "${slug}": ${params.status}${params.error ? ` — ${params.error}` : ''}`);
     // Notify on COMPLETION, success included. A silent success defeats the point
     // of the feature: the run happened with nobody at the keyboard, so "your
@@ -962,6 +970,10 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       durationMs: 0,
       advanceWatermark: false,
       notify: false,
+      // Every path through here refuses without spawning and leaves the fire
+      // owed, so the next tick lands on the same gate again. Fold the repeat
+      // onto the newest row instead of burying the history under it.
+      coalesceRepeat: true,
     });
   };
 

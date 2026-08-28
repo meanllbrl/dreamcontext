@@ -874,6 +874,27 @@
    distinct class of thing rather than a dimmer agent tab. */
 .agent-tab-kind[data-session-kind="automation"] { color: var(--color-accent); opacity: 1; }
 
+/* ── The automation tab's own colour ───────────────────────────────────────
+   Every other tab in this strip is one the user opened. An automation run is
+   not: it arrived on its own, from a schedule, carrying a conversation that
+   already happened under bypassPermissions. A 10px glyph was the only thing
+   saying so, which loses the moment the strip has more than three tabs.
+
+   A left edge plus a faint accent wash, NOT a filled tab: the strip's `.active`
+   state already owns the accent fill, and a filled inactive automation tab
+   would read as the selected one. This has to survive next to `.active`
+   without competing with it, which is why the edge does the work. */
+.agent-tab[data-session-kind="automation"] {
+  border-left: 2px solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+}
+.agent-tab[data-session-kind="automation"]:hover {
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-tertiary));
+}
+.agent-tab[data-session-kind="automation"].active {
+  background: var(--color-accent-soft);
+}
+
 .agent-tab-title {
   /* Don't grow to fill — take exactly the name's natural width so the bar tracks the
      name length; only shrink (with ellipsis) once the tab hits its responsive max-width. */

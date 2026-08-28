@@ -174,3 +174,88 @@ describe('openAutomationRunChat', () => {
     expect(bSaw).toBe(0);
   });
 });
+
+// ─── openAutomationQuestionChat ────────────────────────────────────────────
+//
+// The path a WAITING automation must take. "Open chat" resolved its session
+// from run #1 — the newest row of `cache.history` — which for an automation
+// holding a question is guaranteed to be wrong: the review gate refuses
+// without spawning (`sessionId: null`) and is re-hit by every tick, so the
+// newest rows are session-less refusals stacked on top of the asking run, and
+// past `HISTORY_LIMIT` that run is not in the history at all. The question
+// record is the only thing that still knows the conversation's uuid.
+
+describe('openAutomationQuestionChat', () => {
+  const QUESTION = {
+    id: 'q_2c1tOE5H',
+    kind: 'flow-hitl' as const,
+    runFiredAt: '2026-08-26T06:30:00.000Z',
+    sessionId: '433f1f42-583f-42dc-b9e1-56eb17e0e063',
+  };
+
+  it('dispatches the ASKING session, with no invented run number', async () => {
+    const { openAutomationQuestionChat, AUTOMATION_RUN_CHAT_EVENT } = await load();
+    const bus = new EventTarget();
+    let seen: Record<string, unknown> | null = null;
+    bus.addEventListener(AUTOMATION_RUN_CHAT_EVENT, (e) => {
+      const detail = (e as CustomEvent).detail as Record<string, unknown>;
+      seen = detail;
+      detail.accepted = true;
+    });
+
+    expect(openAutomationQuestionChat(bus, {
+      slug: 'hipotez-onay-karti',
+      automationTitle: 'Hipotez Onay Kartı',
+      question: QUESTION,
+    })).toBe(true);
+
+    expect(seen).toMatchObject({
+      slug: 'hipotez-onay-karti',
+      automationTitle: 'Hipotez Onay Kartı',
+      sessionId: '433f1f42-583f-42dc-b9e1-56eb17e0e063',
+      firedAt: '2026-08-26T06:30:00.000Z',
+      status: 'awaiting-review',
+      // No honest row index describes a run that may be off the end of the
+      // bounded history — the header omits it rather than inventing one.
+      runNumber: null,
+    });
+  });
+
+  it('reports no telemetry and no document — a question record is not a run summary', async () => {
+    const { openAutomationQuestionChat, AUTOMATION_RUN_CHAT_EVENT } = await load();
+    const bus = new EventTarget();
+    let seen: Record<string, unknown> | null = null;
+    bus.addEventListener(AUTOMATION_RUN_CHAT_EVENT, (e) => {
+      const detail = (e as CustomEvent).detail as Record<string, unknown>;
+      seen = detail;
+      detail.accepted = true;
+    });
+    openAutomationQuestionChat(bus, { slug: 's', automationTitle: 't', question: QUESTION });
+    // Zeros here would read as "cost nothing, took no turns"; a run that
+    // stopped to ask also published nothing — that IS the gate.
+    expect(seen).toMatchObject({ costUsd: null, numTurns: null, durationMs: null, outputPath: null });
+  });
+
+  it('refuses an approval question without dispatching — there is no session to resume', async () => {
+    const { openAutomationQuestionChat, AUTOMATION_RUN_CHAT_EVENT } = await load();
+    const bus = new EventTarget();
+    let dispatched = 0;
+    bus.addEventListener(AUTOMATION_RUN_CHAT_EVENT, (e) => {
+      dispatched += 1;
+      ((e as CustomEvent).detail as Record<string, unknown>).accepted = true;
+    });
+    expect(openAutomationQuestionChat(bus, {
+      slug: 's',
+      automationTitle: 't',
+      question: { ...QUESTION, kind: 'approval', sessionId: null },
+    })).toBe(false);
+    expect(dispatched).toBe(0);
+  });
+
+  it('reports false when no surface takes it, so the caller can say so', async () => {
+    const { openAutomationQuestionChat } = await load();
+    expect(openAutomationQuestionChat(new EventTarget(), {
+      slug: 's', automationTitle: 't', question: QUESTION,
+    })).toBe(false);
+  });
+});
