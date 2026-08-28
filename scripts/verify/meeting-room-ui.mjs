@@ -16,7 +16,7 @@
  *   §3  a new post ARCHIVES the previous thread (rail shows both, exactly one active)
  *   §4  a stand-in that answers PASS is marked passed and NEVER appears as a thread message
  *   §5  a user @mention delivers to exactly ONE agent
- *   §6  agent-mentions-agent: the directed answer AND the asker's follow-up both land
+ *   §6  agent-ASKs-agent: the directed answer AND the asker's follow-up both land
  *   §8  ONE ANSWER PER AGENT PER MESSAGE: two agents naming the same third one in a round
  *       wake it ONCE, and the coalesced mention says so in the thread (owner report 08-27)
  *   §9  AN AGENT'S OWN HTML IS DRAWN HERE TOO: a reply carrying a ```dream-html block renders
@@ -56,8 +56,11 @@ const SHOTS = process.env.MEETING_SHOTS_DIR || join(SCRATCH, 'shots');
 // a slice of the fenced message it was asked about — and follows four rules:
 //   [skip:<name>] in the message  → this vault answers exactly PASS
 //   FOLLOW-UP prompt              → "FOLLOWUP from=<name>" (closing a mention loop)
-//   [chain] in the message, alpha → alpha's reply mentions @beta (the directed-run test)
-//   [dup] in the message, a/b     → BOTH alpha and beta mention @gamma (the coalescing test)
+//   [chain] in the message, alpha → alpha's reply ASKs @beta (the directed-run test)
+//   [dup] in the message, a/b     → BOTH alpha and beta ASK @gamma (the catch-up test)
+//   [address] in the msg, a/b     → both NAME @gamma in prose — which must summon nobody
+//   [wait] in the message         → alpha answers slowly with a lesson, gamma answers WAIT
+//                                    @alpha, and its resumed run reports whether it saw it
 //   [html] in the message, alpha   → a reply carrying a real dream-html block AND a dream-view
 //                                    the room cannot resolve (the render/notice test)
 //   otherwise                     → "REPLY from=<name> cwd=<cwd> re=<message slice>"
@@ -83,9 +86,19 @@ const msg = open >= 0 && close > open ? prompt.slice(open + 19, close) : '';
   } else if (prompt.includes('FOLLOW-UP')) {
     result = 'FOLLOWUP from=' + name + ' cwd=' + cwd;
   } else if (msg.includes('[chain]') && name === 'alpha') {
-    result = 'REPLY from=alpha cwd=' + cwd + ' — @beta please confirm';
+    result = 'REPLY from=alpha cwd=' + cwd + '\\nASK @beta please confirm';
   } else if (msg.includes('[dup]') && (name === 'alpha' || name === 'beta')) {
-    result = 'REPLY from=' + name + ' cwd=' + cwd + ' — @gamma this one is yours';
+    result = 'REPLY from=' + name + ' cwd=' + cwd + '\\nASK @gamma this one is yours';
+  } else if (msg.includes('[address]') && (name === 'alpha' || name === 'beta')) {
+    // Addressing, not summoning: the exact shape the owner's agents used on 08-28.
+    result = 'REPLY from=' + name + ' cwd=' + cwd + ' — @gamma @alpha @beta here is my take';
+  } else if (msg.includes('[wait]') && name === 'alpha') {
+    await new Promise((r) => setTimeout(r, 5000));
+    result = 'REPLY from=alpha cwd=' + cwd + ' — THE-LESSON-IS-42';
+  } else if (msg.includes('[wait]') && name === 'gamma') {
+    result = prompt.includes('You asked to wait')
+      ? 'REPLY from=gamma cwd=' + cwd + ' — RESUMED saw-lesson=' + (prompt.includes('THE-LESSON-IS-42') ? 'yes' : 'no')
+      : 'WAIT @alpha';
   } else if (msg.includes('[html]') && name === 'alpha') {
     // Written the way an agent writes it: prose, a drawn block, prose. Plus a dream-view the
     // room has no project to resolve — which must be SAID, not silently dropped.
@@ -363,11 +376,11 @@ async function run(chromium, base, report) {
     `alpha ${alphaCountBefore} → ${(feed5.match(/from=alpha/g) ?? []).length}`);
   await shot('05-mention');
 
-  // ── §6 agent-mentions-agent: directed answer + follow-up ─────────────────────────
-  console.log('\n── §6 the mention chain');
+  // ── §6 agent-ASKs-agent: directed answer + follow-up ─────────────────────────────
+  console.log('\n── §6 the ASK chain');
   await postAnnouncement('@alpha coordinate the rollout [chain]');
-  ok('alpha replied mentioning @beta', await until(async () =>
-    (await feedText()).includes('@beta please confirm'), 45000));
+  ok('alpha replied with an ASK line naming @beta', await until(async () =>
+    (await feedText()).includes('ASK @beta please confirm'), 45000));
   ok("the directed run appended BETA's answer, run in beta's directory", await until(async () => {
     const m = (await feedText()).match(/REPLY from=beta cwd=(\S+)/);
     return !!m && cwdIsVault(m[1], 'beta');
@@ -380,35 +393,63 @@ async function run(chromium, base, report) {
     `gamma=${await chipState('gamma')}`);
   await shot('06-chain');
 
-  // ── §8 one answer per agent per message (owner report 08-27) ─────────────────────
+  const runsOf = async (name) => page.evaluate(async (n) => {
+    const r = await fetch('/api/meeting/state').then((x) => x.json());
+    const p = (r.active?.participants ?? []).find((x) => x.name === n);
+    return p ? p.runs : -1;
+  }, name);
+
+  // ── §8a ADDRESSING IS FREE (owner report 08-28) ──────────────────────────────────
   //
-  // THE REPORTED BUG, reproduced in the real app: two agents each write `@gamma` into their
-  // own reply to one announcement. Before the wave rule, that was two directed runs on top of
-  // gamma's own announcement run — three answers to one question, two of them the same.
-  console.log('\n── §8 the coalescing rule');
-  await postAnnouncement('Everyone weigh in [dup]');
-  ok('alpha and beta both named @gamma', await until(async () => {
+  // THE REPORTED BUG, reproduced in the real app: every agent opens its reply by naming the
+  // others, the way people do in Slack. The room used to read each `@` as a summons and
+  // answer with a system line per pair — six of them in the owner's thread, and not one
+  // extra answer. A bare @name must now do NOTHING.
+  console.log('\n── §8a addressing summons nobody');
+  await postAnnouncement('Everyone weigh in [address]');
+  ok('alpha and beta both NAMED @gamma in prose', await until(async () => {
     const f = await feedText();
-    return (f.match(/@gamma this one is yours/g) ?? []).length === 2
-      && f.includes('from=alpha') && f.includes('from=beta');
+    return (f.match(/@gamma @alpha @beta here is my take/g) ?? []).length === 2;
   }, 60000), (await feedText()).slice(-260));
   ok('gamma answered the announcement', await until(async () =>
     (await feedText()).includes('from=gamma'), 60000));
-  // Let any second run that WOULD have been spawned finish before counting.
+  await page.waitForTimeout(6000); // let any run that WOULD have been spawned appear
+  const feed8a = await feedText();
+  ok('…exactly once — being named woke nobody',
+    ((feed8a.match(/from=gamma/g) ?? []).length) === 1,
+    `gamma messages=${(feed8a.match(/from=gamma/g) ?? []).length}`);
+  ok('…gamma consumed ONE run', (await runsOf('gamma')) === 1, `runs=${await runsOf('gamma')}`);
+  ok('…and the room said NOTHING — no coalesce bookkeeping in the transcript',
+    !/already answering this round|folded into that run|catch-up run/.test(feed8a),
+    feed8a.slice(-260));
+  await shot('08a-addressing');
+
+  // ── §8b an ASK that arrives too late is CAUGHT UP, not dropped ───────────────────
+  //
+  // The other half of the same report: when a summons genuinely reached an agent whose run
+  // was already past reading it, the room claimed it had been "folded into that run" and the
+  // payload vanished — the owner had to ask the room to repeat itself. Two agents ASK gamma
+  // while it is answering; gamma must get exactly ONE catch-up carrying both.
+  console.log('\n── §8b the late ASK is caught up');
+  await postAnnouncement('Everyone weigh in [dup]');
+  ok('alpha and beta both ASKed @gamma', await until(async () => {
+    const f = await feedText();
+    return (f.match(/ASK @gamma this one is yours/g) ?? []).length === 2
+      && f.includes('from=alpha') && f.includes('from=beta');
+  }, 60000), (await feedText()).slice(-260));
+  ok('gamma answered, then answered the late asks ONCE', await until(async () =>
+    ((await feedText()).match(/from=gamma/g) ?? []).length === 2, 60000),
+    (await feedText()).slice(-260));
   await page.waitForTimeout(6000);
-  const feed8 = await feedText();
-  ok('…exactly ONCE — no second run per mention',
-    ((feed8.match(/from=gamma/g) ?? []).length) === 1,
-    `gamma messages=${(feed8.match(/from=gamma/g) ?? []).length}`);
-  ok('…and the coalesced mention is VISIBLE in the thread, not silent',
-    /already answering this round/.test(feed8), feed8.slice(-260));
-  ok('…gamma consumed one run, not three',
-    await page.evaluate(async () => {
-      const r = await fetch('/api/meeting/state').then((x) => x.json());
-      const p = (r.active?.participants ?? []).find((x) => x.name === 'gamma');
-      return p ? p.runs : -1;
-    }) === 1);
-  await shot('08-coalesced');
+  const feed8b = await feedText();
+  ok('…exactly twice — one catch-up for BOTH asks, not one run each',
+    ((feed8b.match(/from=gamma/g) ?? []).length) === 2,
+    `gamma messages=${(feed8b.match(/from=gamma/g) ?? []).length}`);
+  ok('…and the room SAYS it was a catch-up, not that it was folded away',
+    /catch-up run/.test(feed8b) && !/folded into that run/.test(feed8b), feed8b.slice(-300));
+  ok('…gamma consumed two runs, not three', (await runsOf('gamma')) === 2,
+    `runs=${await runsOf('gamma')}`);
+  await shot('08b-catch-up');
 
   // ── §9 the agent's own HTML, drawn in the room ───────────────────────────────────
   //
@@ -439,6 +480,69 @@ async function run(chromium, base, report) {
     await until(async () => (await vis('.chat-view-notice').count()) >= 1, 10000),
     (await feedText()).slice(-260));
   await shot('09-dream-html');
+
+  // ── §10 WAIT: an agent holds instead of guessing (owner report 08-28) ────────────
+  //
+  // THE REPORTED BUG: the owner tagged three projects meaning "alpha briefs the others", and
+  // all three woke at once — so the others answered before the briefing existed and said so
+  // in the thread. Here alpha takes 5s to produce THE-LESSON-IS-42 and gamma answers WAIT
+  // @alpha; the only way its resumed run can report saw-lesson=yes is if the room really did
+  // hold it and re-wake it with alpha's answer in its prompt.
+  console.log('\n── §10 the WAIT verb');
+  await postAnnouncement('alpha, brief the others [wait] [skip:beta]');
+  ok('gamma is held in the WAITING state, not answering yet',
+    await until(async () => (await chipState('gamma')) === 'waiting', 30000),
+    `gamma=${await chipState('gamma')}`);
+  const feedWaiting = await feedText();
+  ok('…the literal WAIT sentinel NEVER renders as a message', !/\bWAIT @alpha\b/.test(feedWaiting),
+    feedWaiting.slice(-260));
+  ok('…and the room says who it is waiting for', /@gamma is waiting for @alpha/.test(feedWaiting),
+    feedWaiting.slice(-260));
+  await shot('10-waiting');
+  ok('alpha eventually delivers the lesson', await until(async () =>
+    (await feedText()).includes('THE-LESSON-IS-42'), 45000));
+  ok('…and gamma is resumed WITH it in its prompt', await until(async () =>
+    (await feedText()).includes('RESUMED saw-lesson=yes'), 45000),
+    (await feedText()).slice(-300));
+  ok('…gamma spent two runs for it: the wait and the answer', (await runsOf('gamma')) === 2,
+    `runs=${await runsOf('gamma')}`);
+  ok('…and ends up REPLIED, not stuck waiting',
+    await until(async () => (await chipState('gamma')) === 'replied', 20000),
+    `gamma=${await chipState('gamma')}`);
+  await shot('10-resumed');
+
+  // ── §11 a reply goes into the thread ON SCREEN, reviving it if archived ──────────
+  //
+  // THE REPORTED BUG: the room sent every reply to whatever thread happened to be ACTIVE, so
+  // scrolling back to an earlier meeting and answering it silently archived the live one and
+  // opened a THIRD. The owner sent the same message twice, 13s apart, into two fresh threads.
+  console.log('\n── §11 write into the thread you are reading');
+  const threadCount = async () => vis('.meeting-rail-item').count();
+  const before11 = await threadCount();
+  const olderTitle = await vis('.meeting-rail-item').nth(1).innerText();
+  await vis('.meeting-rail-item').nth(1).click();   // an ARCHIVED thread
+  ok('selecting an archived thread shows it', await until(async () =>
+    (await vis('.meeting-rail-item.is-selected').count()) === 1, 10000));
+  const placeholder = await composer().getAttribute('placeholder') ?? '';
+  ok('…and the composer SAYS the reply will reopen it', /reopens this meeting/.test(placeholder),
+    placeholder);
+  const input11 = composer();
+  await input11.click();
+  await input11.fill('@alpha one more thing about this older topic');
+  await send();
+  ok('the reply landed IN that thread — no new one was forked',
+    await until(async () => (await threadCount()) === before11, 20000),
+    `rail had ${before11}, now ${await threadCount()}`);
+  ok('…and that thread is now the ACTIVE one', await until(async () => {
+    const active = vis('.meeting-rail-item.is-active');
+    return (await active.count()) === 1
+      && (await active.first().innerText()).startsWith(olderTitle.split('\n')[0].slice(0, 20));
+  }, 20000));
+  ok('…exactly one thread is active, the invariant held',
+    (await vis('.meeting-rail-item.is-active').count()) === 1);
+  ok('…and alpha answered inside it', await until(async () =>
+    (await feedText()).includes('one more thing about this older topic'), 45000));
+  await shot('11-revived');
 
   // ── §7 the poll cadence: ~2s thinking, ~10s idle, stopped when closed ────────────
   console.log('\n── §7 the poll cadence');

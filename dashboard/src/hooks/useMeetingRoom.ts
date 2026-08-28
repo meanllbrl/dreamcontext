@@ -13,7 +13,8 @@ import { api } from '../api/client';
  * refreshes immediately anyway.
  */
 
-export type MeetingRunState = 'idle' | 'thinking' | 'replied' | 'passed' | 'error';
+/** `waiting` is an agent parked on its own WAIT — woken, holding, to be resumed. */
+export type MeetingRunState = 'idle' | 'thinking' | 'waiting' | 'replied' | 'passed' | 'error';
 
 export interface MeetingParticipant {
   name: string;
@@ -70,7 +71,11 @@ export interface UseMeetingRoom {
   busy: boolean;
   refresh: () => Promise<void>;
   post: (body: string) => Promise<MeetingThread | null>;
-  reply: (body: string) => Promise<void>;
+  /**
+   * Speak into a specific thread. An archived one is REVIVED by the server rather than
+   * forked, which is what makes "scroll back and answer" work instead of opening a meeting.
+   */
+  reply: (body: string, threadId?: string) => Promise<void>;
   close: () => Promise<void>;
   /** Fetch one (possibly archived) thread for the history rail. */
   fetchThread: (id: string) => Promise<MeetingThread | null>;
@@ -110,7 +115,11 @@ export function useMeetingRoom(open: boolean): UseMeetingRoom {
       const active = s?.active ?? null;
       // Closed (or never-opened) room: stop — user actions refresh explicitly.
       if (s && !active) return;
-      const thinking = active?.participants.some((p) => p.state === 'thinking') ?? false;
+      // `waiting` counts as working: that agent is parked on a WAIT and will be resumed the
+      // moment the agents it named have spoken, so the room is still live.
+      const thinking = active?.participants.some(
+        (p) => p.state === 'thinking' || p.state === 'waiting',
+      ) ?? false;
       timer = setTimeout(async () => {
         await refresh();
         schedule();
@@ -138,10 +147,10 @@ export function useMeetingRoom(open: boolean): UseMeetingRoom {
     }
   }, [refresh]);
 
-  const reply = useCallback(async (body: string): Promise<void> => {
+  const reply = useCallback(async (body: string, threadId?: string): Promise<void> => {
     setBusy(true);
     try {
-      await api.post('/meeting/reply', { body });
+      await api.post('/meeting/reply', threadId ? { body, threadId } : { body });
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

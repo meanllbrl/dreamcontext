@@ -13,6 +13,7 @@ import {
   listThreads,
   meetingRoster,
   readThread,
+  reopenThread,
 } from '../../lib/meeting-room.js';
 import { readAgentUiChatDefaults } from './launcher.js';
 
@@ -128,8 +129,18 @@ export async function handleMeetingPost(
 }
 
 /**
- * POST /api/meeting/reply — the user speaks into the ACTIVE thread. Routed per
- * the thread-reply rules (mentions, else the engaged set); background fan-out.
+ * POST /api/meeting/reply — the user speaks INTO A THREAD. Routed per the thread-reply rules
+ * (mentions, else the engaged set); background fan-out.
+ *
+ * `threadId` is explicit, and naming an ARCHIVED thread REVIVES it ({@link reopenThread}).
+ * Before this, a reply always went to whatever happened to be active, so reading an older
+ * meeting and typing into it silently archived the live one and opened a THIRD — the owner's
+ * 08-28 report, where the same question became two new threads 13 seconds apart. Speaking
+ * into a conversation is what makes it the live one; the one-active invariant is preserved by
+ * closing the other, exactly as opening a new thread does.
+ *
+ * Omitting `threadId` keeps the old meaning (the active thread), which is what a client with
+ * nothing selected wants.
  */
 export async function handleMeetingReply(
   req: IncomingMessage,
@@ -141,9 +152,19 @@ export async function handleMeetingReply(
     sendError(res, 400, 'invalid_message', 'body must be a non-empty string.');
     return;
   }
-  const thread = activeThread();
+  const wanted = body && typeof body.threadId === 'string' ? body.threadId : '';
+  if (wanted && !isThreadId(wanted)) {
+    sendError(res, 400, 'invalid_thread', 'Malformed thread id.');
+    return;
+  }
+  const thread = wanted ? reopenThread(wanted) : activeThread();
   if (!thread) {
-    sendError(res, 409, 'no_active_thread', 'No active thread — post an announcement first.');
+    sendError(
+      res,
+      wanted ? 404 : 409,
+      wanted ? 'not_found' : 'no_active_thread',
+      wanted ? `No thread "${wanted}".` : 'No active thread — post an announcement first.',
+    );
     return;
   }
   const message = appendMessage(thread.id, { author: 'user', authorKind: 'user', body: text });

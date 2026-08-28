@@ -35,7 +35,13 @@ export const MEETING_SCHEMA_VERSION = 1;
 /** Who wrote a message: the room's owner, one agent, or the room itself. */
 export type MeetingAuthorKind = 'user' | 'agent' | 'system';
 
-export type ParticipantRunState = 'idle' | 'thinking' | 'replied' | 'passed' | 'error';
+/**
+ * `waiting` is the state an agent puts ITSELF in by answering with the WAIT sentinel — it has
+ * been woken, has read the thread, and has decided its answer depends on someone else who is
+ * still thinking. It is a run that produced no message and will be resumed, so it is neither
+ * `thinking` (nothing is spawned) nor `passed` (it has something to say).
+ */
+export type ParticipantRunState = 'idle' | 'thinking' | 'waiting' | 'replied' | 'passed' | 'error';
 
 export interface MeetingMessage {
   id: string;
@@ -291,6 +297,31 @@ export function createThread(
   };
   writeThread(thread, home);
   return thread;
+}
+
+/**
+ * Make `id` THE active thread — the door the user's own voice opens.
+ *
+ * Speaking into a thread is what makes it the live one, so a reply to an archived thread
+ * REVIVES it rather than forking a new meeting (which is what the room did before, silently,
+ * every time the user scrolled back and typed). The one-active invariant is preserved the
+ * same way {@link createThread} preserves it: whatever else is active is closed first, in the
+ * same synchronous pass. Already-active is a no-op. Returns the now-active thread, or null
+ * when it does not exist.
+ */
+export function reopenThread(
+  id: string,
+  home?: string,
+  now: Date = new Date(),
+): MeetingThread | null {
+  const target = readThread(id, home);
+  if (!target) return null;
+  if (target.closedAt === null) return target;
+  const open = activeThread(home);
+  if (open && open.id !== id) {
+    mutateThread(open.id, (t) => { t.closedAt = now.toISOString(); }, home);
+  }
+  return mutateThread(id, (t) => { t.closedAt = null; }, home);
 }
 
 /** Close the active thread (no-op when none). Returns the closed thread. */

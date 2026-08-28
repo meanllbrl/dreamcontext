@@ -482,6 +482,12 @@ connection or consent gate: participants are ALL registered vaults that exist on
 announcement archives the active one (in-flight runs still land their answers in the
 archived thread — history stays truthful). History is kept and browsable in the room's rail.
 
+**You write into the thread you are reading.** A reply carries its `threadId`, and answering
+an ARCHIVED thread REVIVES it — it becomes the active one and whatever was active is archived,
+the same door `createThread` uses, so the one-active invariant holds. Only the explicit
+"+ New announcement" opens a meeting. (Before this the reply always went to whatever happened
+to be active, so scrolling back to an older meeting and typing silently forked a third thread.)
+
 **Routing rules** (who a user message wakes):
 
 | Message | Targets |
@@ -499,23 +505,52 @@ posted to the room verbatim — and that if it has nothing to add, that message 
 `PASS`. A PASS flips the agent's presence chip to *passed* and never appears as a thread
 message. Relevance is the agent's call, not the user's routing burden.
 
-**Agent-to-agent mentions, bounded.** If agent A's reply mentions participant B, B gets ONE
-directed run (fencing A's reply), and when B answers with substance, A gets ONE follow-up run
-carrying that answer. Chain depth is 1: mentions inside B's answer (or the follow-up) render
-as text and deliver nothing.
+**The four verbs an agent answers in.** The expensive one is the one it has to spell out:
 
-**One answer per agent per user message.** A mention wakes an agent this round has not woken;
-for one it already has, the mention COALESCES into the run in flight instead of starting a
-second. Nothing is lost — every prompt is built at dequeue time from the thread as it stands,
-so a mention written while its target is still queued is in that target's transcript when it
-wakes. The follow-up keeps a separate budget (one per agent per round), so the worst case per
-agent per user message is two runs — a constant, rather than something that grows with the
-size of the room. Without this, N agents each naming the same project woke it N times and it
-posted the same answer twice.
+| What the agent writes | What the room does |
+|---|---|
+| an ordinary message | posts it verbatim |
+| exactly `PASS` | nothing to add; never rendered |
+| exactly `WAIT @Name` (or several, or a bare `WAIT`) | holds this agent and resumes it once those agents have spoken |
+| a LINE beginning `ASK @Name` | summons that agent — a real headless run |
+| `@Name` anywhere in prose | **nothing. Addressing is free.** |
+
+**Addressing is not summoning.** A bare `@Name` in an agent's reply is ordinary text: everyone
+in the round reads the thread, so naming them wakes nobody and routes nothing. Only a line an
+agent deliberately opens with `ASK` spends another project's run. The prompt tells each agent
+who is ALREADY ANSWERING THIS ROUND (derived live from participant state) so it can tell the
+two apart. Without the split, agents wrote Slack-style salutations — "@a @b — here is the
+lesson" — and the room read every `@` as a summons, producing system lines and no answers.
+(The USER's `@mentions` still route: that half is unchanged, and is the table above.)
+
+**WAIT — an agent may hold instead of guessing.** When the user tags three projects meaning
+"A briefs B and C", all three wake at once and B and C would answer before the briefing
+exists. `WAIT @A` posts nothing, flips the chip to *waiting*, and re-wakes that agent once A
+has replied/passed/errored, with A's answer in its transcript. One wait per agent per round;
+waiting on someone already finished or never woken resumes immediately; a mutual wait is
+released when the round drains, so it cannot deadlock.
+
+**Agent-to-agent summons, bounded.** If agent A's reply `ASK`s participant B, B gets ONE
+directed run (fencing A's reply), and when B answers with substance, A gets ONE follow-up run
+carrying that answer. Chain depth is 1: an `ASK` inside B's answer (or inside the follow-up)
+renders as text and delivers nothing.
+
+**One answer per agent per user message.** An `ASK` wakes an agent this round has not woken;
+for one it already has, it COALESCES into the run in flight instead of starting a second. If
+that target is still QUEUED nothing is lost — every prompt is built at dequeue time from the
+thread as it stands, so the ask is already in its transcript when it wakes, and the room says
+nothing. If the target is past that point (running or finished) the ask is banked and paid as
+ONE catch-up run carrying everything it missed, announced as a system line. The follow-up and
+the catch-up SHARE one budget (one per agent per round), so the worst case per agent per user
+message is two runs — a constant, rather than something that grows with the size of the room.
+Without this, N agents each naming the same project woke it N times and it posted the same
+answer twice; without the catch-up, the room claimed "folded into that run" when the payload
+had in fact been dropped.
 
 Hard caps, enforced at enqueue: **max 8 mention-triggered runs per thread, max 3 total runs
-per agent per thread** — a delivery dropped by a cap, or coalesced by the rule above, is
-recorded in the thread as a visible system line, never silently.
+per agent per thread** — a delivery dropped by a cap, or one whose payload could not reach its
+target, is recorded in the thread as a visible system line, never silently. A coalesce that
+genuinely loses nothing is deliberately silent: the room narrates losses, not bookkeeping.
 
 Same permission posture as peer mail: headless runs execute under `auto` with nobody to
 answer a prompt, so an agent that hits a permission wall reports itself blocked in its reply

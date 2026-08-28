@@ -8,6 +8,7 @@ import {
   activeThread,
   appendMessage,
   closeActiveThread,
+  reopenThread,
   createThread,
   isThreadId,
   listThreads,
@@ -112,6 +113,30 @@ describe('thread store — the one-active-thread invariant', () => {
     closeActiveThread(home);
     expect(activeThread(home)).toBeNull();
     expect(closeActiveThread(home)).toBeNull();
+  });
+
+  it('reopenThread REVIVES an archived thread and archives whatever was active', () => {
+    // The owner's 08-28 fork: reading an older meeting and answering it used to open a THIRD
+    // thread. Speaking into a conversation is what makes it the live one.
+    const first = createThread({ body: 'the thesis lesson', participants: PARTICIPANTS }, home)!;
+    const second = createThread({ body: 'a different topic', participants: PARTICIPANTS }, home, new Date(Date.now() + 10))!;
+    expect(activeThread(home)!.id).toBe(second.id);
+
+    const revived = reopenThread(first.id, home)!;
+    expect(revived.closedAt).toBeNull();
+    expect(activeThread(home)!.id).toBe(first.id);
+    // Still exactly one active thread — the invariant holds through the new door too.
+    expect(listThreads(home).filter((t) => t.closedAt === null)).toHaveLength(1);
+    expect(readThread(second.id, home)!.closedAt).not.toBeNull();
+    // History is kept, not rewritten: the revived thread still has everything it said.
+    expect(revived.messages.map((m) => m.body)).toEqual(['the thesis lesson']);
+  });
+
+  it('reopening the ACTIVE thread is a no-op, and an unknown id is null', () => {
+    const t = createThread({ body: 'root', participants: PARTICIPANTS }, home)!;
+    expect(reopenThread(t.id, home)!.id).toBe(t.id);
+    expect(activeThread(home)!.id).toBe(t.id);
+    expect(reopenThread('1700000000000-deadbeef', home)).toBeNull();
   });
 
   it('a CLOSED thread still accepts appends — in-flight runs land truthfully', () => {
