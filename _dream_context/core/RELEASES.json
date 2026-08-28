@@ -1,5 +1,22 @@
 [
   {
+    "id": "rel_lmKvRc--",
+    "version": "0.26.2",
+    "date": "2026-08-28",
+    "summary": "A patch for two silent-failure defects, each shipping through a different channel.\n\nTHE MEETING ROOM WINDOW COULD NOT BE MOVED. Tauri v2 scopes permissions by window LABEL, and the room's label `meeting-room` matched no capability file at all — `default` covers main/vault/sleepy, `checklist` covers the checklist windows. A window matching nothing opens with ZERO permissions. Because the room is created with dragDropEnabled:false (so HTML5 drag-and-drop works), Tauri's built-in drag handler is off and startDragging() is the only way to move it — and that call was ACL-denied, with the rejection swallowed by a bare catch. Nothing in the console, nothing red, just a title bar that did not respond. Found by the owner trying to move a window; 8,000 passing tests had nothing to say about it. Fixed with a narrow capability (window chrome only — no shell, global-shortcut or notification, since the room renders agent-authored HTML from N projects), a warn in place of the swallow, and a regression test that joins every window label the frontend mints to the capability globs, with a source tripwire on the WebviewWindow count. Ships in the .app via the tag.\n\nA WRAPPED dc-flow FELL APART. A flow diagram too long for the pane broke into rows that ended on an arrow pointing at empty space, above a node stretched to fill its row, with no gap between the rows — so the last step, the consequence, read as debris. Root cause: arrows were free-standing flex items that could wrap away from the node they pointed at. The arrow is now drawn by each node's own ::before inside that node's left margin, so it travels WITH its node and a stranded arrow is structurally impossible; nodes hug; the row gap is real. Legacy dc-flow-arrow spans are hidden, not removed, so every message already written that way still renders. Proven geometrically in real Chromium against both the new and the legacy markup (8 new checks, 69/69); mutation-checked — restoring the old CSS fails 5 of them. Ships in dist/ via npm, reaching installed apps through `dreamcontext upgrade`.\n\nVerified before tagging: the published 0.26.2 tarball's dist/index.js is byte-identical to the build at 44670ea, so the tag points at the tree npm actually serves. Full suite 8122 passed / 0 failed.",
+    "breaking": false,
+    "status": "released",
+    "features": [],
+    "tasks": [],
+    "changelog": [],
+    "contributors": [
+      "agent",
+      "anil",
+      "mehmet",
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "id": "rel__YGSWdjD",
     "version": "0.26.1",
     "date": "2026-08-27",
