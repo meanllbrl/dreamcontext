@@ -605,6 +605,60 @@ describe('recordRun', () => {
     expect(cache.lastFireAt).toBeNull();
   });
 
+  // ── coalesceRepeat ──────────────────────────────────────────────────────
+  // A short-circuit does not advance the watermark (the fire is OWED), so
+  // isDue() keeps returning true and every tick re-hits the same gate. Without
+  // coalescing that is one history row per tick — 288/day against a 50-row
+  // limit, which destroys the history within hours and takes the asking run's
+  // session id with it.
+
+  it('folds a repeated refusal of the same owed fire onto the newest row', () => {
+    const gate = () => fakeRunEvent({
+      status: 'awaiting-review', sessionId: null, outputPath: null, exitCode: null,
+      costUsd: null, numTurns: null, durationMs: 0, error: 'a question is waiting',
+    });
+    recordRun(contextRoot, 'eod-digest', gate(), { advanceWatermark: false, coalesceRepeat: true });
+    recordRun(contextRoot, 'eod-digest', { ...gate(), startedAt: '2026-07-25T18:05:00.000Z' }, { advanceWatermark: false, coalesceRepeat: true });
+    const cache = recordRun(contextRoot, 'eod-digest', { ...gate(), startedAt: '2026-07-25T18:10:00.000Z' }, { advanceWatermark: false, coalesceRepeat: true });
+    expect(cache.history).toHaveLength(1);
+    // The row SPANS first hit → last hit. `startedAt` keeps the original, or a
+    // gate nobody has cleared for three days would read as first hit a minute
+    // ago and an operator could not tell how long it has been stuck.
+    expect(cache.history[0].startedAt).toBe('2026-07-25T18:00:01.000Z');
+    expect(cache.history[0].finishedAt).toBe('2026-07-25T18:00:05.000Z');
+    // The top-level "when did we last attempt" still moves.
+    expect(cache.lastRunAt).toBe('2026-07-25T18:10:00.000Z');
+  });
+
+  it('does NOT swallow the run that holds a session — coalescing needs both sides session-less', () => {
+    const asked = fakeRunEvent({ status: 'awaiting-review', sessionId: 'sess_asked' });
+    recordRun(contextRoot, 'eod-digest', asked, { advanceWatermark: false, coalesceRepeat: true });
+    const cache = recordRun(
+      contextRoot,
+      'eod-digest',
+      fakeRunEvent({ status: 'awaiting-review', sessionId: null }),
+      { advanceWatermark: false, coalesceRepeat: true },
+    );
+    expect(cache.history).toHaveLength(2);
+    expect(cache.history[1].sessionId).toBe('sess_asked');
+  });
+
+  it('does not coalesce across a different status or a different owed fire', () => {
+    const gate = (o = {}) => fakeRunEvent({ status: 'blocked', sessionId: null, ...o });
+    recordRun(contextRoot, 'eod-digest', gate(), { advanceWatermark: false, coalesceRepeat: true });
+    let cache = recordRun(contextRoot, 'eod-digest', gate({ status: 'deferred' }), { advanceWatermark: false, coalesceRepeat: true });
+    expect(cache.history).toHaveLength(2);
+    cache = recordRun(contextRoot, 'eod-digest', gate({ status: 'deferred', firedAt: '2026-07-26T18:00:00.000Z' }), { advanceWatermark: false, coalesceRepeat: true });
+    expect(cache.history).toHaveLength(3);
+  });
+
+  it('never coalesces without the flag — the default stays prepend-only', () => {
+    const gate = () => fakeRunEvent({ status: 'awaiting-review', sessionId: null });
+    recordRun(contextRoot, 'eod-digest', gate(), { advanceWatermark: false });
+    const cache = recordRun(contextRoot, 'eod-digest', gate(), { advanceWatermark: false });
+    expect(cache.history).toHaveLength(2);
+  });
+
   it('bounds history to HISTORY_LIMIT, newest first', () => {
     for (let i = 0; i < HISTORY_LIMIT + 5; i++) {
       recordRun(contextRoot, 'eod-digest', fakeRunEvent({ sessionId: `sess_${i}` }));

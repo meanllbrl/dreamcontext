@@ -30,8 +30,13 @@ export interface AutomationRunRef {
   slug: string;
   /** The automation's human title ("CalBuddy Funnel Watch"), for the tab and the header. */
   automationTitle: string;
-  /** 1-based, newest-first — the same numbering the run history and `--run N` use. */
-  runNumber: number;
+  /** 1-based, newest-first — the same numbering the run history and `--run N` use.
+   *  NULL when the conversation was reached from its open QUESTION rather than
+   *  from a history row: the asking run can have been evicted from the bounded
+   *  history entirely (a gate that refuses re-records on every tick), so there
+   *  is no honest row index to quote. The header omits the number rather than
+   *  inventing one — see `AutomationRunHeader`. */
+  runNumber: number | null;
   /** The claude conversation UUID this run had. `--resume` takes exactly this. */
   sessionId: string;
   firedAt: string;
@@ -44,6 +49,16 @@ export interface AutomationRunRef {
 }
 
 export const AUTOMATION_RUN_CHAT_EVENT = 'dreamcontext-automation-run-chat';
+
+/** The open question, as the board hands it to this bridge — the fields of
+ *  `PendingQuestionSummary` (`useAutomations.ts`) this file actually needs.
+ *  Structural, not an import, so the bridge stays free of the hooks layer. */
+export interface PendingQuestionRef {
+  id: string;
+  kind: 'approval' | 'flow-hitl';
+  runFiredAt: string;
+  sessionId: string | null;
+}
 
 /** What travels on the event: the run, plus the surface's ACK. */
 export interface AutomationRunChatDetail extends AutomationRunRef {
@@ -74,6 +89,48 @@ export function openAutomationRunChat(bus: EventTarget, run: AutomationRunChatDe
   const detail: AutomationRunChatDetail = { ...run, accepted: false };
   emitInstance<AutomationRunChatDetail>(bus, AUTOMATION_RUN_CHAT_EVENT, detail);
   return detail.accepted === true;
+}
+
+/**
+ * Open the conversation THAT ASKED, from the open question itself.
+ *
+ * WHY THIS EXISTS RATHER THAN REUSING THE HISTORY PATH. "Open chat" used to
+ * resolve its session from run #1 — the newest row of `cache.history`. For an
+ * automation that is *waiting on a verdict* that row is guaranteed to be the
+ * wrong one: the review gate refuses without spawning (`sessionId: null`) and
+ * is re-hit by every tick, so the newest rows are all session-less refusals
+ * stacked on top of the run holding the question — and once there are more of
+ * them than `HISTORY_LIMIT`, the asking run is not in the history at all. The
+ * question record is the only thing that still knows the conversation's uuid,
+ * so a verdict-waiting automation must open from HERE, never from the history.
+ *
+ * Returns false without dispatching for an `'approval'` question: `hitl.ts`
+ * forces its `sessionId` to null because that session ran read-only and is
+ * discarded whether or not the manifest is approved. There is nothing to
+ * resume, and the caller answers it on its own screen instead.
+ */
+export function openAutomationQuestionChat(
+  bus: EventTarget,
+  args: { slug: string; automationTitle: string; question: PendingQuestionRef },
+): boolean {
+  const { slug, automationTitle, question } = args;
+  if (!question.sessionId) return false;
+  return openAutomationRunChat(bus, {
+    slug,
+    automationTitle,
+    runNumber: null,
+    sessionId: question.sessionId,
+    firedAt: question.runFiredAt,
+    status: 'awaiting-review',
+    // The question record carries no telemetry — it is not a run summary. Null
+    // is honest here; a zero would read as "cost nothing, took no turns".
+    costUsd: null,
+    numTurns: null,
+    durationMs: null,
+    // A run that stopped to ask published nothing: the whole point of the gate
+    // is that its document does not land until the verdict does.
+    outputPath: null,
+  });
 }
 
 /**

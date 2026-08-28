@@ -108,24 +108,76 @@
 .adp-detail-value { font-size: 12.5px; color: var(--color-text); word-break: break-word; }
 .adp-detail-value--mono { font-family: var(--font-mono); font-size: 11.5px; }
 
+/* ── Run history ──────────────────────────────────────────────────────────
+   A row is a small STACK, not a wrapping line of eight equal spans: outcome +
+   when on top, telemetry beneath in a quieter register, an error on its own
+   full line. The old single-line layout gave a crash and a clean run the same
+   visual weight and clipped the error to whatever the telemetry left over. */
 .adp-history { display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: 11px; overflow: hidden; }
-.adp-history-row { display: flex; align-items: center; gap: 8px; padding: 7px 12px; font-size: 12px; flex-wrap: wrap; }
+.adp-history-row {
+  display: flex; flex-direction: column; gap: 3px; padding: 8px 12px;
+  font-size: 12px; text-align: left; width: 100%; position: relative;
+  background: none; border: none; color: inherit; font-family: inherit;
+}
 .adp-history-row + .adp-history-row { border-top: 1px solid var(--color-border); }
+
+/* The whole row is the affordance when the run has a conversation — a 60px pill
+   at the right edge of a narrow rail is a target you miss. */
+.adp-history-row--openable { cursor: pointer; transition: background 120ms ease; }
+.adp-history-row--openable:hover { background: var(--color-bg-tertiary); }
+.adp-history-row--openable:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+.adp-history-go {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  color: var(--color-text-tertiary); font-size: 12px; opacity: 0; transition: opacity 120ms ease;
+}
+.adp-history-row--openable:hover .adp-history-go,
+.adp-history-row--openable:focus-visible .adp-history-go { opacity: 1; }
+
+.adp-history-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .adp-history-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
 .adp-history-dot--ok { background: var(--color-success); }
 .adp-history-dot--failed, .adp-history-dot--timeout { background: var(--color-error); }
 .adp-history-dot--blocked { background: var(--color-warning); }
 .adp-history-dot--orphaned { background: var(--color-error); }
 .adp-history-dot--deferred { background: var(--color-text-tertiary); }
-.adp-history-when { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary); flex: 0 0 auto; }
-.adp-history-status { font-weight: 600; font-size: 11.5px; color: var(--color-text); text-transform: capitalize; }
-.adp-history-duration { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary); }
-.adp-history-cost { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary); }
-.adp-history-denials { font-size: 11px; color: var(--color-warning); }
-.adp-history-error {
-  color: var(--color-error); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; max-width: 100%; flex-basis: 100%;
+/* Waiting on the reader, not broken — warning ink, never error ink. Same rule
+   the board badge and the chat header's 'wait' tone follow. */
+.adp-history-dot--awaiting-review,
+.adp-history-dot--awaiting-approval { background: var(--color-warning); }
+
+.adp-history-status {
+  font-weight: 600; font-size: 12px; color: var(--color-text);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.adp-history-when {
+  margin-left: auto; padding-right: 14px; flex: 0 0 auto;
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--color-text-tertiary);
+}
+
+/* Telemetry, demoted. Dot separators are drawn rather than typed so the row
+   does not have to thread them through conditional spans. */
+.adp-history-sub {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-left: 16px;
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--color-text-tertiary);
+}
+.adp-history-sub > span + span::before { content: '·'; margin-right: 8px; opacity: 0.6; }
+.adp-history-denials { color: var(--color-warning); }
+
+/* Full width and WRAPPING. On a failed run this is the only string that says
+   what went wrong; truncating it to one rail-width line hid the cause. */
+.adp-history-error {
+  display: block;
+  padding-left: 16px; color: var(--color-error); font-size: 11.5px;
+  line-height: 1.45; word-break: break-word;
+}
+
+.adp-history-more {
+  align-self: flex-start; margin-top: 6px; background: none; border: none; padding: 2px 0;
+  font-family: var(--font-family-text); font-size: 11.5px; font-weight: 600;
+  color: var(--color-text-secondary); cursor: pointer; transition: color 120ms ease;
+}
+.adp-history-more:hover { color: var(--color-accent); }
+.adp-history-more:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .adp-history-count {
   font-family: var(--font-family-text); font-size: 10px; font-weight: 600;
   background: var(--color-bg-tertiary); color: var(--color-text-secondary);
@@ -160,14 +212,6 @@
 .adp-lesson-text { color: var(--color-text); word-break: break-word; }
 
 /* ── Run session drill-in ────────────────────────────────────────────────── */
-
-.adp-history-session {
-  margin-left: auto; flex: 0 0 auto; font-family: var(--font-family-text); font-size: 10.5px;
-  background: none; border: 1px solid var(--color-border); border-radius: var(--radius-full);
-  color: var(--color-text-secondary); padding: 1px 8px; cursor: pointer;
-  transition: border-color 120ms ease, color 120ms ease;
-}
-.adp-history-session:hover { border-color: var(--color-accent); color: var(--color-accent); }
 
 .adp-session { display: flex; flex-direction: column; }
 .adp-session-head { display: flex; align-items: center; gap: 8px; }

@@ -210,10 +210,15 @@ async function runTheme(base, theme) {
   check('the run history is listed', await until(async () => (await page.locator('.adp-history-row').count()) === 2, 10000));
 
   // ── The button says what it now does ─────────────────────────────────────────────
-  const btns = page.locator('.adp-history-session');
+  const btns = page.locator('.adp-history-row--openable');
   check('every run with a session offers the hand-off', (await btns.count()) === 2);
-  check('the button names the chat, not a drawer',
-    (await btns.first().innerText()).trim().toLowerCase() === 'open chat',
+  // The "open chat" PILL is gone — the whole row is the affordance now (a 60px
+  // target at the right edge of a narrow rail is a target you miss), so the
+  // assertion is that the row is a real button naming the run's outcome, not
+  // that a literal string 'open chat' is somewhere on screen.
+  check('the row itself is the hand-off, and names the run\'s outcome',
+    (await btns.first().evaluate((el) => el.tagName)) === 'BUTTON'
+      && /completed|failed|timed out|stopped to ask/i.test(await btns.first().innerText()),
     JSON.stringify(await btns.first().innerText()));
   await page.screenshot({ path: join(SHOTS, `panel-${theme}.png`) });
 
@@ -222,8 +227,15 @@ async function runTheme(base, theme) {
   check('the panel gets out of the way once the chat is open',
     await until(async () => (await panel.count()) === 0, 15000));
   check('the run opens as a tab', await until(async () => (await page.locator('.agent-tab:visible').count()) === 1, 20000));
-  check('the tab is titled from the automation and its run number',
-    /CalBuddy Funnel Watch · run #1/.test(await tabText()), JSON.stringify(await tabText()));
+  // STALE SINCE D7, caught here: the marker used to be `· run #1` and is now the
+  // run's DATE, because app-open restores every run that needs a human and a
+  // strip of tabs has to say WHEN without a click (`automationRunTabTitle`).
+  // Asserted structurally rather than against a hardcoded "Aug 3" — the helper
+  // formats with `toLocaleDateString`, so a literal date pins this to whatever
+  // timezone and locale the machine running it happens to have.
+  const t1 = await tabText();
+  check('the tab is titled from the automation and marks WHICH run by date',
+    t1.includes(TITLE) && / · /.test(t1) && !/run #/.test(t1), JSON.stringify(t1));
 
   // ── The header: the reason a machine's transcript is readable at all ─────────────
   check('the run header renders above the transcript', await until(async () => (await header.count()) === 1, 15000));
@@ -256,7 +268,7 @@ async function runTheme(base, theme) {
   await until(async () => (await page.locator('.auto-card').count()) > 0, 15000);
   await page.locator('.auto-card').first().click();
   await until(async () => (await page.locator('.adp-history-row').count()) === 2, 10000);
-  await page.locator('.adp-history-session').nth(1).click();
+  await page.locator('.adp-history-row--openable').nth(1).click();
 
   const refusal = page.locator('.adp-session-empty');
   check('a run with no transcript is refused, with the reason',
@@ -270,7 +282,7 @@ async function runTheme(base, theme) {
   // ── Re-opening run #1 focuses the tab it already has ─────────────────────────────
   await page.locator('.adp-session-head .adp-close').first().click();
   await page.waitForTimeout(400);
-  await page.locator('.adp-history-session').first().click();
+  await page.locator('.adp-history-row--openable').first().click();
   await page.waitForTimeout(2500);
   check('reopening the same run does not resume a second CLI onto one transcript',
     (await page.locator('.agent-tab:visible').count()) === 1, await tabText());

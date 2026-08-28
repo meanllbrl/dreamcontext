@@ -31,6 +31,7 @@ import {
 import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '../../lib/sleepAgent';
 import { RUN_BRAIN_RESOLVE_EVENT, BRAIN_RESOLVE_TITLE, BRAIN_RESOLVE_PROMPT } from '../../lib/brainResolveAgent';
 import { DELEGATE_AGENT_EVENT, type DelegateAgentDetail } from '../../lib/delegateAgent';
+import { AutomationAttentionOpener } from './AutomationAttentionOpener';
 import {
   AUTOMATION_RUN_CHAT_EVENT, automationRunTabTitle,
   type AutomationRunChatDetail, type AutomationRunRef,
@@ -2651,6 +2652,16 @@ export function AgentSurface() {
 
   return (
     <>
+      {/* D7 — runs that stopped to ask, or crashed, open as tabs by themselves.
+          Renders nothing; it polls and calls the same `openAutomationRunChat`
+          the Automations panel does, so a run reaching a tab this way and one
+          reached by a click are the SAME tab (its bring-forward guard is what
+          makes that true). `ready` mirrors that callback's own guards so the
+          poll cannot exist on a build where nothing could come of it. */}
+      <AutomationAttentionOpener
+        ready={!!(caps?.desktop && caps.claudeCli && claudeReady && agentSettings.enabled)}
+        onOpen={openAutomationRunChat}
+      />
       <div
         ref={hostRef}
         className={`agent-surface${expanded ? ' expanded' : closing ? ' closing' : ''}`}

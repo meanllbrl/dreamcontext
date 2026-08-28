@@ -241,6 +241,12 @@ export function AgentTabs({
                 key={tab.id}
                 className={'agent-tab' + (active ? ' active' : '')}
                 data-kind={tab.info.kind}
+                /* An automation run is the one tab in this strip the user did not
+                   open. It ran unattended, under bypassPermissions, and arrived
+                   here on its own — the glyph alone said so at 10px, which is not
+                   enough to separate it from the tabs its neighbour opened by
+                   hand. The tab itself carries the colour. */
+                data-session-kind={tab.sessionKind}
                 role="tab"
                 aria-selected={active}
                 tabIndex={0}

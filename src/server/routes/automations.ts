@@ -35,9 +35,12 @@ import { formatSchedule } from '../../lib/automations/schedule.js';
 import { allPendingQuestions, claimQuestion, pendingQuestion } from '../../lib/automations/hitl.js';
 import { resumeWithAnswer } from '../../lib/automations/verdict.js';
 import { queuedFire, type QueuedFire } from '../../lib/automations/queue.js';
+import { ackAttention, attentionRuns, attentionWatermark } from '../../lib/automations/attention.js';
+import { readAutomationSession } from '../../lib/automations/session-registry.js';
+import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../lib/automations/telegram.js';
 import { startAutomationJob, currentAutomationJob } from '../automation-job.js';
-import { AutomationError, type AutomationCache, type AutomationManifest, type FlowGraph } from '../../lib/automations/types.js';
+import { AutomationError, type AutomationCache, type AutomationManifest, type AutomationQuestion, type FlowGraph } from '../../lib/automations/types.js';
 
 /**
  * `/api/automations*` — the dashboard's read + "run now" + approve surface
@@ -73,7 +76,46 @@ interface AutomationSummary {
    *  approval-diff ask or an in-flow HITL stop) — the board badges off this.
    *  Repointed from the retired review-card store to `hitl.ts`'s question
    *  store; the field is named for what it now holds. */
-  pendingQuestionId: string | null;
+  pendingQuestion: PendingQuestionSummary | null;
+}
+
+/**
+ * The open question, as a CARD needs it — not just its id.
+ *
+ * This used to be a bare `pendingQuestionId: string | null`, which let the
+ * board badge "waiting for your verdict" and nothing else: the question's own
+ * words were reachable only from `GET /automations/questions`, which only
+ * `ChatPane` calls — i.e. only AFTER the run's chat is open. So the one screen
+ * that told you a verdict was owed could not tell you what was being asked,
+ * and the screen that could was behind the thing you were trying to reach.
+ *
+ * `sessionId` is the other half, and it is the field that makes "open chat"
+ * work at all: the conversation to resume is the one that ASKED, which is not
+ * the newest history row. A gate that refuses without spawning records
+ * `sessionId: null`, and it re-records on every tick, so by the time a human
+ * looks the newest rows are all session-less refusals stacked on top of the
+ * run that actually holds the question.
+ */
+interface PendingQuestionSummary {
+  id: string;
+  kind: 'approval' | 'flow-hitl';
+  /** The scheduled fire the asking run answered for — the honest "when" for a
+   *  chat opened from this question, since the asking run may no longer be in
+   *  the bounded history at all. */
+  runFiredAt: string;
+  /** What the run is asking, in its own words. */
+  question: string;
+  /** The answers offered. Empty ⇒ free text. */
+  choices: string[];
+  /** The conversation that asked, when it is safe to offer. Null in two cases,
+   *  and the caller must not conflate them with "no question":
+   *   - an `'approval'` question — that session ran read-only and is discarded
+   *     whether or not it is approved (`hitl.ts` forces the field null);
+   *   - a question whose session THIS machine never bound — see
+   *     `summarizeQuestion`. The question is still shown; only the resume is
+   *     withheld. */
+  sessionId: string | null;
+  createdAt: string;
 }
 
 interface AutomationCacheSummary {
@@ -118,7 +160,62 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     // `awaiting-review`/`awaiting-approval` after a human answers and goes
     // stale until the next tick — and it reads `ok` on the run that CREATED
     // the question, which is the state most in need of a badge.
-    pendingQuestionId: pendingQuestion(contextRoot, m.slug)?.id ?? null,
+    pendingQuestion: summarizeQuestion(pendingQuestion(contextRoot, m.slug)),
+  };
+}
+
+/**
+ * Trim a stored question to what a card renders + reaches. Deliberately drops
+ * `answer`/`answeredAt`/`steers`/`channelRefs`: a PENDING question has none of
+ * them, and shipping empty fields invites a reader to bind to them.
+ *
+ * `sessionId` is withheld unless THIS machine's runner bound it. A question
+ * record lives inside the brain and is kept out of git only by a `.gitignore`
+ * line the runner re-ensures best-effort — see `attention.ts`'s `locallyBound`
+ * for the full reasoning and for why the WS resume gate does not cover this
+ * source. A pulled-in question file must not hand a client a resumable
+ * `bypassPermissions` uuid, so the machine-local binding is checked before the
+ * field is ever put on the wire. The question itself still renders: the reader
+ * should see what a teammate's automation is asking; they just get no button
+ * that resumes a conversation this machine never had.
+ */
+/**
+ * A question's session id, but only when opening it would actually reach that
+ * conversation. Two independent gates, both of which must hold:
+ *
+ *  - MACHINE-LOCAL BINDING TO THIS SLUG — a question record lives inside the
+ *    brain and is kept out of git only by a best-effort `.gitignore` line, so a
+ *    pulled-in one must never hand this client a resumable `bypassPermissions`
+ *    uuid. The WS resume gate does not cover this source (it scans
+ *    `automations/cache/*.json` only), so the check happens before the field
+ *    goes on the wire — and it is `readAutomationSession(slug, …)`, not the
+ *    gate's slug-agnostic `isAutomationBoundSession`. See `attention.ts`'s
+ *    `locallyBound` for why discarding the slug admits a confused-deputy.
+ *  - A TRANSCRIPT ON DISK — `--resume` against a missing transcript does not
+ *    fail; it fresh-pins an empty conversation under the same uuid, which would
+ *    open a blank chat claiming to be the run. See `attention.ts`'s
+ *    `hasTranscript`.
+ *
+ * Withholding is not the same as having no question: the words still render, so
+ * the reader sees what is being asked. They just get no button that cannot work.
+ */
+function offerableSession(slug: string, sessionId: string | null): string | null {
+  if (!sessionId) return null;
+  if (readAutomationSession(slug, sessionId) === null) return null;
+  if (findTranscriptBySessionId([sessionId]) === null) return null;
+  return sessionId;
+}
+
+function summarizeQuestion(q: AutomationQuestion | null): PendingQuestionSummary | null {
+  if (!q) return null;
+  return {
+    id: q.id,
+    kind: q.kind,
+    runFiredAt: q.runFiredAt,
+    question: q.question,
+    choices: q.choices,
+    sessionId: offerableSession(q.slug, q.sessionId),
+    createdAt: q.createdAt,
   };
 }
 
@@ -881,5 +978,67 @@ export async function handleAutomationsDispatcherUninstall(
     }
     console.error('[automations] dispatcher uninstall failed:', err);
     sendError(res, 500, 'uninstall_failed', 'Failed to remove the automations dispatcher.');
+  }
+}
+
+
+/**
+ * GET /api/automations/attention — the runs that want a human and have not
+ * been shown on this machine yet, oldest first, plus the current watermark.
+ *
+ * READ-ONLY BY DESIGN. It does not advance the watermark; `POST .../ack` does,
+ * once the client has actually opened the tabs. A read that consumed would
+ * lose the entire window whenever the app was closed or refreshed mid-open,
+ * which is the exact moment this exists to cover.
+ *
+ * Project-wide, like `/questions` and for the same reason: the question a user
+ * has when their app opens is "what happened overnight", not "did this one
+ * automation need me".
+ */
+export async function handleAutomationsAttention(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const projectRoot = dirname(contextRoot);
+    const since = attentionWatermark(projectRoot);
+    sendJson(res, 200, { runs: attentionRuns(contextRoot, since), watermark: since });
+  } catch {
+    sendError(res, 500, 'attention_failed', 'Failed to read runs needing attention.');
+  }
+}
+
+/**
+ * POST /api/automations/attention/ack — mark everything up to `upTo` as shown.
+ *
+ * Body is `{ upTo: string }` (an ISO timestamp, normally the newest `at` the
+ * client just opened). The advance is MONOTONIC inside `ackAttention`: an
+ * older mark than the one on disk is ignored, so two windows acking out of
+ * order cannot rewind the watermark and re-open tabs the user already dealt
+ * with.
+ *
+ * This grants nothing and starts nothing — it only ever narrows what a future
+ * read returns.
+ */
+export async function handleAutomationsAttentionAck(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const body = await parseJsonBody(req);
+    const upTo = typeof body?.upTo === 'string' ? body.upTo : '';
+    if (!upTo || !Number.isFinite(Date.parse(upTo))) {
+      sendError(res, 400, 'bad_watermark', 'Body must be { upTo: <ISO timestamp> }.');
+      return;
+    }
+    const projectRoot = dirname(contextRoot);
+    ackAttention(projectRoot, upTo);
+    sendJson(res, 200, { watermark: attentionWatermark(projectRoot) });
+  } catch {
+    sendError(res, 500, 'attention_ack_failed', 'Failed to record the watermark.');
   }
 }
