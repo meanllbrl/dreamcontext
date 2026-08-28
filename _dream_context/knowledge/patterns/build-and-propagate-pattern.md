@@ -55,7 +55,14 @@ If `dist/dashboard/index.html` is missing, the dashboard did not build — go ba
 
 ### Stage 2 — propagate to every vault
 
-**The global `dreamcontext` command is npm-LINKED to this repo** (`~/.nvm/.../lib/node_modules/dreamcontext -> projects/dreamcontext`). Consequence, and it cuts both ways: Stage 1 updates the CLI for **every project on the machine instantly** — no reinstall, and no opt-out. A broken build breaks every vault at once.
+**CHECK THE LINK, DO NOT ASSUME IT (2026-08-28).** This section used to state flatly that the global `dreamcontext` is npm-LINKED to this repo. On 2026-08-28 it was not: both `~/.nvm/.../bin/dreamcontext` and `/usr/local/bin/dreamcontext` resolved to a real npm INSTALL of the published 0.26.2, and the drift was invisible — `dreamcontext update --yes` ran happily in all six vaults and wrote `Setup version: 0.26.2`, i.e. it propagated the PUBLISHED skill docs over the new ones while looking like a successful propagation. The tell is that line: **if `Setup version` does not match `package.json`, the global CLI is not this checkout** and Stage 2 did the opposite of its job. Restore with `npm link` from the repo root, then verify:
+
+```bash
+dreamcontext --version                       # must equal package.json
+for p in $(which -a dreamcontext); do readlink -f "$p"; done   # every path → THIS checkout's dist/index.js
+```
+
+WHEN LINKED, and only then: Stage 1 updates the CLI for **every project on the machine instantly** — no reinstall, and no opt-out. A broken build breaks every vault at once. (This also decides Stage 4: `resolve_cli()` prefers the global CLI over the bundle, so an unlinked machine runs the *published* CLI inside a freshly built `.app` — the app looks updated and behaves old.)
 
 What does *not* propagate automatically is each vault's **installed skill copies** under its own `.claude/`. Those are regenerated from this repo's `skill/` + `skill-packs/` sources only when `update` runs **inside that vault**:
 
@@ -70,8 +77,10 @@ Skip this and the CLI is new while every agent still reads the old skill docs �
 ### Stage 3 — the Tauri app, LAST
 
 ```bash
-cd desktop && npm run tauri build     # targets: dmg + app
+cd desktop && npm run tauri build -- --bundles app    # what desktop-release.yml actually runs
 ```
+
+**Pass `--bundles app`.** The bare `npm run tauri build` also targets the dmg, and `bundle_dmg.sh` fails on this machine — after the `.app` has already been bundled correctly. The run then ends with "failed to bundle project", which reads as a failed build when the artifact you need is sitting there, finished. Don't debug the dmg; it is not shipped.
 
 The bundle ships `../../dist`, `../../skill-packs`, `../../skill`, and `sleepy` as resources. `frontendDist` is a **placeholder** — Tauri does not build a frontend here. The Rust shell spawns `node <cli> dashboard --launcher` on a free loopback port at runtime and points a webview at it, which is why the CLI build must already be correct.
 
@@ -107,7 +116,8 @@ To exercise the real bundle, remove the global link (or test on a clean machine)
 - [ ] Tests green, `dashboard` tsc exit 0
 - [ ] `npm run build` (composite — never `build:cli` alone)
 - [ ] `dist/dashboard/index.html` exists; `dist/git-sync/askpass.cjs` is executable
-- [ ] `dreamcontext vaults list` → `dreamcontext update --yes` in each
+- [ ] `dreamcontext --version` equals `package.json` (else `npm link` first — see Stage 2)
+- [ ] `dreamcontext vaults list` → `dreamcontext update --yes` in each; each reports the NEW `Setup version`
 - [ ] `cd desktop && npm run tauri build`
 - [ ] Relaunch the app (capability/permission changes need a real restart)
 - [ ] If verifying the bundle rather than the working tree: test without the global link
@@ -116,6 +126,7 @@ To exercise the real bundle, remove the global link (or test on a clean machine)
 
 - **`npm run build:cli` alone.** Silently ships no dashboard. The `existsSync` guard means no error, no warning, exit 0.
 - **Tauri build before CLI build.** Bundles the previous `dist/`. Green build, stale app.
-- **Trusting a locally-launched `.app`.** It's running your repo, not its bundle (Stage 4).
+- **Trusting a locally-launched `.app`.** It's running your repo, not its bundle (Stage 4) — and if the global link is missing, "your repo" is actually the published npm package.
+- **Assuming the npm link is in place.** It silently reverts to a published install (an `npm i -g` anywhere does it), and every downstream stage then succeeds while shipping the old code.
 - **Hardcoding the vault list.** It changes; `dreamcontext vaults list` is the source of truth.
 - **Treating a green build as a passing test.** It bundles whatever compiles.
