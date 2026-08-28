@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "meeting-window",
+  "description": "Narrow capability for the Meeting Room window (label `meeting-room`). Without this file the window matched NO capability at all — `default` scopes to main/vault-*/sleepy/sleepy-perch and `checklist` to checklist-* — so every core:window call it made was denied by the ACL, and because `dragWindowNow()` swallows the rejection the only symptom was a title bar that silently refused to drag. Deliberately excludes every shell:*, global-shortcut:* and notification:* permission the default capability grants: this window renders agent-authored markdown and agent-authored HTML from N different projects, so it gets only the window chrome it actually uses. Same containment pattern as checklist-window; see knowledge/dashboard-server-security.md.",
+  "windows": ["meeting-room"],
+  "remote": {
+    "urls": ["http://localhost:*", "http://127.0.0.1:*"]
+  },
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-focus",
+    "core:window:allow-close"
+  ]
+}

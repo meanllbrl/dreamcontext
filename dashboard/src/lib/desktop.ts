@@ -87,7 +87,15 @@ export async function dragWindowNow(): Promise<void> {
   try {
     const { getCurrentWindow } = await windowApi();
     await getCurrentWindow().startDragging();
-  } catch { /* ACL / non-desktop — ignore */ }
+  } catch (err) {
+    // NEVER silent. This catch used to be bare, and it cost a real bug: the
+    // Meeting Room window's label matched no capability, so `startDragging()`
+    // was denied by the ACL and swallowed here — the window simply would not
+    // move, with nothing in the console to say why. A permission gap is a
+    // developer error, not an expected condition; it belongs on the record even
+    // though the gesture itself must still fail soft.
+    console.warn('[desktop] startDragging() was rejected — is this window label in a capability?', err);
+  }
 }
 
 /**
