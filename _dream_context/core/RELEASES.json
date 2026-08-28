@@ -1,5 +1,22 @@
 [
   {
+    "id": "rel_Lc1HTsdO",
+    "version": "0.26.3",
+    "date": "2026-08-28",
+    "summary": "A patch that makes the learning layer earn its board.\n\nA THESIS IS AN OPTIMIZATION CLAIM, NOT AN OBSERVATION. The owner's kitUP board had filled with restated metrics — 'funnel 3009's first step loses 84% of traffic', 'the second page is broken' — hypotheses whose validation changes nothing and therefore never drives revenue. Every formation surface now applies the SO-WHAT test (if validated, what do we CHANGE, and which revenue-bearing outcome improves?) with a four-part anatomy: a grounded comparison, a causal mechanism, a lever, an outcome that matters. Baked into skill/references/learning.md (new top section + awake-capture step), agents/sleep-learn.md (creation gate + gotcha), the SKILL.md entity-router thesis row, the create modal copy and the board empty state. Observations become evidence on an existing thesis or an insight note — never a new card.\n\nTHE HYPOTHESES ACTIVITY LIST VIEW IS RETIRED. Owner review: the list is bad. The status kanban is the only rendering now; unread dots and mark-all-read stay on the cards. ThesisListView, the toolbar toggle, view/listFilter prefs, needsAttention and the .thl-* CSS are deleted; a stale stored view pref provably cannot resurrect the list (verify assertion). verify:hypotheses rewritten to the board-only contract, 13/13 green; reviewer PASS; 8117 unit tests green.",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [
+      "theses-quality-bar-hypotheses-must-be-optimization-claims-not-observations-retire-the-list-view"
+    ],
+    "changelog": [],
+    "contributors": [
+      "agent",
+      "mehmet"
+    ]
+  },
+  {
     "id": "rel_lmKvRc--",
     "version": "0.26.2",
     "date": "2026-08-28",

@@ -1,7 +1,7 @@
 {
   "name": "dreamcontext",
-  "version": "0.26.2",
-  "description": "dreamcontext \u2014 the persistent brain for your AI agents. Remembers what you built, knows how your project works.",
+  "version": "0.26.3",
+  "description": "dreamcontext — the persistent brain for your AI agents. Remembers what you built, knows how your project works.",
   "type": "module",
   "bin": {
     "dreamcontext": "./dist/index.js"

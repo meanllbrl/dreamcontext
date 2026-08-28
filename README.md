@@ -578,11 +578,11 @@ Full protocol, the complete security model, and every command → [skill/referen
 
 ## Proactive Learning (Hypotheses)
 
-Memory remembers what happened; the learning layer tests what the project *believes*. A **thesis** is a falsifiable claim the brain actively tries to validate or invalidate across sleep cycles: an observation forms a hunch, predictions get **pre-registered** (written down before the evidence that will judge them arrives), evidence accumulates as discrete cited events, and **confidence is derived from the ledger by arithmetic — never asserted by an agent on vibes**.
+Memory remembers what happened; the learning layer tests what the project *believes*. A **thesis** is a falsifiable **optimization claim** the brain actively tries to validate or invalidate across sleep cycles — if it's validated, something changes and a metric that matters improves; an observation that merely restates a metric ('step X loses 84%') belongs in evidence, never on the board. The claim itself carries a grounded comparison, a causal mechanism, a lever, and an outcome that matters: an observation forms a hunch, predictions get **pre-registered** (written down before the evidence that will judge them arrives), evidence accumulates as discrete cited events, and **confidence is derived from the ledger by arithmetic — never asserted by an agent on vibes**.
 
 ```bash
 dreamcontext theses enable                                 # opt-in — the layer is OFF by default
-dreamcontext theses create "Onboarding drop-off is caused by the email-verify step"
+dreamcontext theses create "Web onboarding underperforms mobile because email-verify gates it; deferring the step lifts D1 activation"
 dreamcontext theses predict <slug> "Removing the step lifts D1 activation ≥10%"
 dreamcontext theses evidence <slug> --source insight --ref signup-funnel --verdict supports --note "..."
 dreamcontext theses list                                   # board: draft → open → validated | invalidated → retired

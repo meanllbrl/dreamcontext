@@ -114,6 +114,18 @@
       }
     },
     {
+      "kind": "split",
+      "title": "A hypothesis must earn its card (0.26.3)",
+      "body": "The learning layer now holds every new hypothesis to an optimization bar: if it were validated, what would you change, and which metric that matters improves? 'Step X loses 84%' is an observation — it becomes evidence, not a card. And the board is just the board now: the activity list view is retired, the status kanban is the only rendering, with unread dots and mark-all-read living on the cards.",
+      "side": "right",
+      "shot": {
+        "src": "shots/v0-26-1/hypotheses-board.png",
+        "alt": "The Hypotheses board rendered as a status kanban: draft, open, validated and invalidated columns with verdict-first cards and unread dots.",
+        "caption": "Kanban only — and every card on it has to answer 'so what?'",
+        "frame": "window"
+      }
+    },
+    {
       "kind": "points",
       "title": "And a few more things",
       "items": [
