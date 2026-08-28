@@ -77,6 +77,12 @@ export function MeetingRoom() {
   const composingNew = selectedId === NEW_THREAD;
   const effectiveId = composingNew ? null : selectedId ?? active?.id ?? state?.threads[0]?.id ?? null;
   const viewingActive = active !== null && effectiveId === active.id;
+  // WHERE A MESSAGE GOES is not quite what the feed SHOWS. With no thread active and none
+  // picked, the feed falls back to the newest archived meeting so the window is not blank —
+  // but typing then must open a NEW announcement, not silently revive the thread the user was
+  // only reading. So the send target drops that display-only fallback: it is the thread the
+  // user actually chose, or the live one, or nothing.
+  const sendTargetId = composingNew ? null : selectedId ?? active?.id ?? null;
   const thread: MeetingThread | null = viewingActive ? active : archived;
 
   // An archived selection is fetched once; the active thread rides the poll.
@@ -132,13 +138,13 @@ export function MeetingRoom() {
   const send = useCallback(async (text: string) => {
     if (!text.trim()) return;
     setNotice(null);
-    if (composingNew || !effectiveId) {
+    if (!sendTargetId) {
       const t = await post(text);
       if (t) setSelectedId(t.id);
     } else {
-      await reply(text, effectiveId);
+      await reply(text, sendTargetId);
     }
-  }, [composingNew, effectiveId, reply, post]);
+  }, [sendTargetId, reply, post]);
 
   const { host, focusComposer } = useMeetingComposerHost(items, (text) => { void send(text); });
 
@@ -251,11 +257,13 @@ export function MeetingRoom() {
             // lands, so it must name all three cases — including the one that revives an
             // archived meeting, which is a consequence the user should read before pressing ⏎.
             idlePlaceholder={
-              composingNew || !effectiveId
+              !sendTargetId
                 ? 'New announcement — archives the previous thread   ·   "@" to address one project'
                 : viewingActive
                   ? 'Reply to the room…   ·   "@" to address one project'
-                  : 'Reply — reopens this meeting and archives the current one'
+                  : active
+                    ? 'Reply — reopens this meeting and archives the current one'
+                    : 'Reply — reopens this meeting'
             }
             onSignIn={() => setNotice(
               'Signing in belongs to a project session — open a project window and run /login there.',

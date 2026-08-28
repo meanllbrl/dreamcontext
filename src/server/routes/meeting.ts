@@ -14,6 +14,7 @@ import {
   meetingRoster,
   readThread,
   reopenThread,
+  sanitizeMeetingBody,
 } from '../../lib/meeting-room.js';
 import { readAgentUiChatDefaults } from './launcher.js';
 
@@ -155,6 +156,15 @@ export async function handleMeetingReply(
   const wanted = body && typeof body.threadId === 'string' ? body.threadId : '';
   if (wanted && !isThreadId(wanted)) {
     sendError(res, 400, 'invalid_thread', 'Malformed thread id.');
+    return;
+  }
+  // Sanitize BEFORE reviving anything. `text.trim()` above only rules out whitespace, so a
+  // body of pure control characters passes it and then sanitizes to '' further down — and a
+  // request that ends in a 400 would already have archived the live meeting and made an old
+  // one active, with no message in either to explain why. `createThread` avoids exactly this
+  // by sanitizing before it archives; this door has to as well.
+  if (!sanitizeMeetingBody(text)) {
+    sendError(res, 400, 'invalid_message', 'The reply is empty after sanitizing.');
     return;
   }
   const thread = wanted ? reopenThread(wanted) : activeThread();

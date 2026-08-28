@@ -13,6 +13,7 @@ import {
   type HeadlessRunner,
 } from '../../src/lib/meeting-delivery.js';
 import {
+  MAX_RUNS_PER_AGENT,
   activeThread,
   appendMessage,
   createThread,
@@ -48,6 +49,16 @@ const ok = (reply: string): LiveRunResult => ({ ok: true, reply, sessionId: null
  */
 const slow = (reply: string): Promise<LiveRunResult> =>
   new Promise((r) => setTimeout(() => r(ok(reply)), 40));
+
+/** Wait for a condition on the thread instead of for a duration — see the mid-WAIT test. */
+async function until(fn: () => boolean, ms = 2000): Promise<void> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (fn()) return;
+    await new Promise((r) => setTimeout(r, 2));
+  }
+  throw new Error('condition never held');
+}
 
 interface RecordedRun {
   target: string;
@@ -205,6 +216,49 @@ describe('buildMeetingPrompt', () => {
     expect(prompt).toContain('Never ASK someone already answering this round');
   });
 
+  it('the sections are actually SEPARATED — the blank lines survive assembly', () => {
+    // They did not: a `.filter(line => line !== '')` whose only job was to drop the absent
+    // transcript ate every deliberate separator too, so the whole briefing arrived as one
+    // unbroken block. A prompt teaching a four-verb protocol cannot be a wall of text.
+    const t = seedThread(['alpha', 'beta']);
+    const fresh = readThread(t.id, home)!;
+    const prompt = buildMeetingPrompt({ self: 'alpha', thread: fresh, trigger: fresh.messages[0] });
+    const lines = prompt.split('\n');
+    expect(lines[lines.indexOf('THE ROOM:') - 1]).toBe('');
+    expect(lines[lines.indexOf('THE CONTRACT:') - 1]).toBe('');
+    expect(prompt).toMatch(/\n\nALREADY ANSWERING THIS ROUND/);
+    // …and the absent transcript still leaves no stray blank run behind it.
+    expect(prompt).not.toContain('\n\n\n');
+  });
+
+  it('offers ONLY never-woken agents as ASK targets, not ones that already spoke', () => {
+    // An agent that already replied has spent its answer slot: summoning it can only be
+    // banked against its single second-run budget or refused, so naming it as a free target
+    // invites a run the orchestrator will not give.
+    const t = seedThread(['alpha', 'spoke', 'fresh']);
+    mutateThread(t.id, (th) => {
+      th.participants.find((p) => p.name === 'spoke')!.state = 'replied';
+      th.participants.find((p) => p.name === 'fresh')!.state = 'idle';
+    }, home);
+    const prompt = buildMeetingPrompt({
+      self: 'alpha', thread: readThread(t.id, home)!, trigger: readThread(t.id, home)!.messages[0],
+    });
+    expect(prompt).toContain('NOT woken (@fresh)');
+    expect(prompt).not.toContain('@spoke)');
+  });
+
+  it('a wait-resume prompt does NOT offer the WAIT verb again', () => {
+    // The agent's one wait per round is already spent; taking the offer would burn a whole
+    // headless run to produce nothing but the refusal line.
+    const t = seedThread(['alpha', 'beta']);
+    const fresh = readThread(t.id, home)!;
+    const prompt = buildMeetingPrompt({
+      self: 'alpha', thread: fresh, trigger: fresh.messages[0], resumedFrom: ['beta'],
+    });
+    expect(prompt).toContain('You asked to wait for @beta');
+    expect(prompt).not.toContain('DO NOT GUESS');
+  });
+
   it('with nobody else woken, the round line says so instead of listing an empty set', () => {
     const t = seedThread(['alpha', 'beta']);
     const fresh = readThread(t.id, home)!;
@@ -272,6 +326,16 @@ describe('parseSummons — only an ASK line spends a run', () => {
 
   it('ASK must OPEN the line — the word inside a sentence is prose', () => {
     expect(parseSummons('I would ASK @beta about this, but later', roster)).toEqual([]);
+  });
+
+  it('a bullet, a numbered item or a quote still OPENS the line', () => {
+    // Agents habitually write action items as lists. A summons that silently did nothing
+    // would be this feature's worst failure: a question visibly asked in the transcript that
+    // nobody was ever woken for, and no system line to say so.
+    expect(parseSummons('my answer\n- ASK @beta can you confirm?', roster)).toEqual(['beta']);
+    expect(parseSummons('1. ASK @beta first\n2. then me', roster)).toEqual(['beta']);
+    expect(parseSummons('> ASK @beta quoted', roster)).toEqual(['beta']);
+    expect(parseSummons('  * ASK @alpha nested', roster)).toEqual(['alpha']);
   });
 
   it('leading whitespace is allowed; names with spaces still resolve', () => {
@@ -737,15 +801,26 @@ describe('MeetingOrchestrator', () => {
     // that claims the agent is about to speak on a question nobody is asking any more.
     const t = seedThread(['teacher', 'learner']);
     let released = false;
-    const { orch } = makeOrchestrator((name) => {
-      if (name === 'teacher') return released ? ok('teacher again') : slow('the lesson');
+    // The teacher is held OPEN until this test lets it go, rather than for a fixed 40ms — a
+    // wall-clock race would leave only a few milliseconds in which the assertion below holds,
+    // and a loaded CI box would read the resulting flake as a regression in WAIT itself.
+    let freeTeacher = () => {};
+    const teacherHeld = new Promise<void>((r) => { freeTeacher = r; });
+    const { orch } = makeOrchestrator(async (name) => {
+      if (name === 'teacher') {
+        if (released) return ok('teacher again');
+        await teacherHeld;
+        return ok('the lesson');
+      }
       return ok('WAIT @teacher');
     });
     orch.deliverUserMessage(t.id, t.messages[0].id);
-    // Interrupt while the learner is parked and the teacher is still thinking.
-    await new Promise((r) => setTimeout(r, 20));
+    // Interrupt while the learner is parked and the teacher is genuinely still thinking.
+    await until(() =>
+      readThread(t.id, home)!.participants.find((p) => p.name === 'learner')!.state === 'waiting');
     expect(readThread(t.id, home)!.participants.find((p) => p.name === 'learner')!.state)
       .toBe('waiting');
+    freeTeacher();
     released = true;
     const next = appendMessage(t.id, { author: 'user', authorKind: 'user', body: 'never mind, new question' }, home)!;
     orch.deliverUserMessage(t.id, next.id);
@@ -774,6 +849,125 @@ describe('MeetingOrchestrator', () => {
     const follow = runs.find((r) => r.prompt.includes('FOLLOW-UP'));
     expect(follow?.target).toBe('alpha');
     expect(follow?.prompt).toContain('beta answers at last');
+  });
+
+  // ── What the 08-28 review found, each pinned ────────────────────────────────
+
+  it('a WAIT the room cannot honour is never PUBLISHED as a message', async () => {
+    // The round moved on under a run that was still going. WAIT is a protocol token, so the
+    // user must never read a bare "WAIT @teacher" in the transcript as though it were speech.
+    const t = seedThread(['teacher', 'learner']);
+    let freeLearner = () => {};
+    const held = new Promise<void>((r) => { freeLearner = r; });
+    const { orch } = makeOrchestrator(async (name) => {
+      if (name === 'learner') { await held; return ok('WAIT @teacher'); }
+      return ok('the lesson');
+    });
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    await until(() => readThread(t.id, home)!.messages.some((m) => m.body === 'the lesson'));
+    // A new user message replaces the wave under the learner's still-running turn.
+    const next = appendMessage(t.id, { author: 'user', authorKind: 'user', body: 'new question' }, home)!;
+    orch.deliverUserMessage(t.id, next.id);
+    freeLearner();
+    await orch.idle();
+
+    const after = readThread(t.id, home)!;
+    expect(after.messages.some((m) => m.authorKind === 'agent' && /^WAIT\b/.test(m.body))).toBe(false);
+    expect(after.messages.some((m) => m.authorKind === 'system' && m.body.includes('had already moved on')))
+      .toBe(true);
+  });
+
+  it('a WAIT on a SECOND run is refused in the thread, not posted as speech', async () => {
+    const t = seedThread(['alpha', 'beta'], '@alpha you first');
+    const { orch } = makeOrchestrator((name, prompt) => {
+      if (name === 'alpha' && prompt.includes('FOLLOW-UP')) return ok('WAIT @beta');
+      if (name === 'alpha') return ok('ASK @beta please confirm');
+      return ok('confirmed');
+    });
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    await orch.idle();
+
+    const after = readThread(t.id, home)!;
+    expect(after.messages.some((m) => m.authorKind === 'agent' && /^WAIT\b/.test(m.body))).toBe(false);
+    expect(after.messages.some((m) => m.authorKind === 'system' && m.body.includes('on a second run')))
+      .toBe(true);
+  });
+
+  it('a resume the run cap refuses does not strand the agent in `waiting`', async () => {
+    // runs is per THREAD, so an agent can arrive at its last run and then ask to wait.
+    const t = seedThread(['teacher', 'learner']);
+    mutateThread(t.id, (th) => {
+      th.participants.find((p) => p.name === 'learner')!.runs = MAX_RUNS_PER_AGENT - 1;
+    }, home);
+    const { orch } = makeOrchestrator((name) =>
+      (name === 'teacher' ? slow('the lesson') : ok('WAIT @teacher')));
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    await orch.idle();
+
+    const learner = readThread(t.id, home)!.participants.find((p) => p.name === 'learner')!;
+    // The cap said no. The chip must not go on promising an answer that cannot come — that
+    // would also hold the dashboard at its 2s working cadence for the life of the thread.
+    expect(learner.state).not.toBe('waiting');
+    expect(readThread(t.id, home)!.messages.some((m) => m.body.includes('run cap'))).toBe(true);
+  });
+
+  it('a catch-up the caps refuse is never PROMISED in the thread', async () => {
+    // alpha spends its second-run budget on a follow-up, then is ASKed too late by gamma.
+    // The room must not print "it gets one catch-up run" and the refusal underneath it.
+    const t = seedThread(['alpha', 'beta', 'gamma'], '@alpha @gamma go');
+    const { orch } = makeOrchestrator((name, prompt) => {
+      if (name === 'alpha' && prompt.includes('FOLLOW-UP')) return ok('loop closed');
+      if (name === 'alpha') return ok('ASK @beta confirm please');
+      if (name === 'beta') return ok('beta confirms');
+      return slow('late\nASK @alpha one more thing');
+    });
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    await orch.idle();
+
+    const sys = readThread(t.id, home)!.messages.filter((m) => m.authorKind === 'system');
+    const promised = sys.filter((m) => m.body.includes('catch-up run'));
+    const refused = sys.filter((m) => m.body.includes('already had its second run'));
+    // Exactly one account of what happened, never both.
+    expect(promised.length === 0 || refused.length === 0).toBe(true);
+  });
+
+  it('a reply that sanitizes to nothing still settles the round', async () => {
+    // A whitespace-only reply is not PASS and never becomes a message — but it is still a run
+    // that said nothing, so anyone waiting on it must be released the same way.
+    const t = seedThread(['quiet', 'waiter']);
+    const { orch, runs } = makeOrchestrator((name, prompt) => {
+      if (name === 'quiet') return slow('   ');
+      if (prompt.includes('You asked to wait')) return ok('waiter speaks');
+      return ok('WAIT @quiet');
+    });
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    await orch.idle();
+
+    const after = readThread(t.id, home)!;
+    expect(after.participants.find((p) => p.name === 'quiet')!.state).toBe('passed');
+    expect(runs.filter((r) => r.target === 'waiter')).toHaveLength(2);
+    // Released by the settle, NOT by the drain — the drain's line would be a false account.
+    expect(after.messages.some((m) => m.authorKind === 'system' && m.body.includes('did not answer this round')))
+      .toBe(false);
+    expect(after.messages.some((m) => m.body === 'waiter speaks')).toBe(true);
+  });
+
+  it('a WAIT does not let a SUMMONED agent summon further — depth stays 1', async () => {
+    const t = seedThread(['alpha', 'beta', 'gamma', 'slow'], '@alpha you first');
+    const { orch, runs } = makeOrchestrator((name, prompt) => {
+      if (name === 'alpha' && prompt.includes('FOLLOW-UP')) return ok('noted');
+      if (name === 'alpha') return ok('ASK @beta what do you know?');
+      if (name === 'beta' && prompt.includes('You asked to wait')) return ok('beta answers\nASK @gamma your turn');
+      if (name === 'beta') return ok('WAIT @slow');
+      return ok(`${name} speaks`);
+    });
+    orch.deliverUserMessage(t.id, t.messages[0].id);
+    await orch.idle();
+
+    // beta was summoned; resuming from its WAIT must not promote it to a chain STARTER.
+    expect(runs.some((r) => r.target === 'gamma')).toBe(false);
+    // The chain's own accounting still sees beta's resume as part of the chain.
+    expect(readThread(t.id, home)!.mentionRuns).toBe(3); // summon + resume + follow-up
   });
 
   // ── Global model/effort ────────────────────────────────────────────────────
