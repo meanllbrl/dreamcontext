@@ -34,7 +34,7 @@
 
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -531,6 +531,167 @@ async function runLostReport(base, report) {
   await browser.close();
 }
 
+/**
+ * A FLOW THAT WRAPS IS STILL ONE FLOW — geometry, in real Chromium, against the shipped kit.
+ *
+ * The defect this pass exists for (owner report 2026-08-27, with a screenshot): a `dc-flow`
+ * too long for the pane broke into two rows and fell apart in three separate ways at once —
+ * the row ended on an arrow pointing at empty space, the node that wrapped stretched to fill
+ * its new row instead of hugging its label, and there was no gap between the rows, so the
+ * continuation read as debris rather than as the rest of the diagram. The last step of the
+ * flow — the consequence, the part the reader actually needs — was the part that got wrecked.
+ *
+ * Why the assertions are measurements and not class-name lookups: every one of those three
+ * defects was present while the markup was perfectly correct. Only layout can see them.
+ *
+ * No server and no chat session here on purpose — the subject is the stylesheet the app
+ * ships, so this loads that exact file and nothing else. A pane narrow enough to FORCE the
+ * wrap is the whole point; at full width the bug is invisible, which is how it shipped.
+ */
+async function runFlowWrap(report) {
+  const ok = (label, cond, detail = '') => report.check('flow-wrap', label, cond, detail);
+  console.log('\n═══ a flow that wraps ═══');
+
+  const kitCss = readFileSync(
+    join(REPO, 'dashboard', 'src', 'components', 'sleepy', 'chat', 'chat-html-kit.css'),
+    'utf-8',
+  );
+  // Only the tokens the kit resolves — the app's real theme layer is not under test here.
+  const tokens = `:root{--font-family:system-ui;--font-family-display:system-ui;--font-mono:monospace;
+--color-text:#e8e8ee;--color-text-secondary:#b5b5c0;--color-text-tertiary:#8a8a96;
+--color-border:#3a3a44;--color-border-hover:#4a4a55;--color-bg-secondary:#1d1d24;
+--color-bg-tertiary:#26262e;--color-bg-elevated:#2c2c35;--color-accent:#8b7cf6;
+--color-accent-soft:#8b7cf62e;--chart-1:#8b7cf6;--chart-3:#f97362;
+--radius-sm:6px;--radius-md:9px;--radius-lg:12px;--shadow-md:0 4px 12px rgba(0,0,0,.4);
+--color-highlight:#f5d76e55;--color-highlight-edge:#f5d76e22;
+--color-success:#4ade80;--color-error:#f87171;--color-warning:#fbbf24;
+--color-success-subtle:#4ade8022;--color-error-subtle:#f8717122;}
+body{background:#131318;margin:0;padding:20px;}`;
+
+  // Six nodes in a 640px pane: wide enough to be a real diagram, narrow enough to wrap.
+  // Written the way the brief now tells an agent to write one — NODES ONLY.
+  const markup = `<div class="dc-flow" id="flow">
+    <span class="dc-flow-node">titlebar mousedown</span>
+    <span class="dc-flow-node">4px threshold crossed</span>
+    <span class="dc-flow-node">startDragging()</span>
+    <span class="dc-flow-node dc-bg3">ACL refusal</span>
+    <span class="dc-flow-node dc-bg3">bare catch</span>
+    <span class="dc-flow-node">nothing happens</span>
+  </div>`;
+
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 640, height: 400 }, colorScheme: 'dark' });
+  try {
+    await page.setContent(`<!doctype html><style>${tokens}\n${kitCss}</style>${markup}`);
+    await page.waitForTimeout(200);
+
+    const m = await page.evaluate(() => {
+      const nodes = Array.from(document.querySelectorAll('#flow > *'));
+      const box = (el) => el.getBoundingClientRect();
+      // Group children into visual ROWS by their top edge.
+      const rows = new Map();
+      for (const el of nodes) {
+        if (getComputedStyle(el).display === 'none') continue;
+        const top = Math.round(box(el).top);
+        if (!rows.has(top)) rows.set(top, []);
+        rows.get(top).push(el);
+      }
+      const tops = [...rows.keys()].sort((a, b) => a - b);
+      const last = tops.map((t) => {
+        const row = rows.get(t).sort((a, b) => box(a).left - box(b).left);
+        const el = row[row.length - 1];
+        return { cls: el.className, text: (el.textContent || '').trim() };
+      });
+      // The wrapped node must hug its label. `max-content` is what "hug" means.
+      const tail = nodes[nodes.length - 1];
+      const rendered = Math.round(box(tail).width);
+      const probe = tail.cloneNode(true);
+      probe.style.width = 'max-content';
+      probe.style.position = 'absolute';
+      tail.parentElement.appendChild(probe);
+      const hug = Math.round(probe.getBoundingClientRect().width);
+      probe.remove();
+      const gap = tops.length > 1
+        ? Math.round(tops[1] - (box(rows.get(tops[0])[0]).top + box(rows.get(tops[0])[0]).height))
+        : -1;
+      return { rowCount: tops.length, gap, last, rendered, hug };
+    });
+
+    ok('the flow actually wrapped — otherwise this pass proves nothing',
+      m.rowCount >= 2, `rows=${m.rowCount}`);
+    ok('no row ends on an arrow pointing at nothing',
+      m.last.every((l) => !/dc-flow-arrow/.test(l.cls)),
+      m.last.map((l) => `${l.cls}:${l.text}`).join(' | '));
+    ok('the wrapped node hugs its label instead of filling the row',
+      Math.abs(m.rendered - m.hug) <= 2, `rendered=${m.rendered} hug=${m.hug}`);
+    ok('the rows are separated by a real gap', m.gap >= 6, `gap=${m.gap}px`);
+
+    // The arrow still has to BE there — a fix that just deleted the arrows would pass
+    // every check above and destroy the diagram.
+    const arrows = await page.evaluate(() => {
+      const nodes = Array.from(document.querySelectorAll('#flow > .dc-flow-node'));
+      return nodes.filter((n) => {
+        const c = getComputedStyle(n, '::before').content;
+        return c && c !== 'none' && c !== 'normal';
+      }).length;
+    });
+    ok('every node after the first draws an arrow into it', arrows === 5, `drawn=${arrows}`);
+
+    await page.screenshot({ path: join(SHOTS, 'chat-html-flow-wrap.png') });
+
+    // ── the LEGACY markup, which is where the reported defect actually appeared ──
+    // The owner's flow was written the old way, with `dc-flow-arrow` spans between the
+    // nodes. Those spans are loose flex items, so a wrap could strand one at the end of a
+    // row pointing into empty space. Every message and story already written that way is
+    // still out there, so the kit has to render them correctly too — not just the shape
+    // the brief now teaches. Without this second fixture the dangling-arrow check passes
+    // vacuously: node-only markup has no arrow span to strand.
+    const legacy = `<div class="dc-flow" id="legacy">
+      <span class="dc-flow-node">titlebar mousedown</span>
+      <span class="dc-flow-arrow">→</span>
+      <span class="dc-flow-node">4px threshold crossed</span>
+      <span class="dc-flow-arrow">→</span>
+      <span class="dc-flow-node">startDragging()</span>
+      <span class="dc-flow-arrow">→</span>
+      <span class="dc-flow-node dc-bg3">ACL refusal</span>
+      <span class="dc-flow-arrow">→</span>
+      <span class="dc-flow-node dc-bg3">bare catch</span>
+      <span class="dc-flow-arrow">→</span>
+      <span class="dc-flow-node">nothing happens</span>
+    </div>`;
+    await page.setContent(`<!doctype html><style>${tokens}\n${kitCss}</style>${legacy}`);
+    await page.waitForTimeout(200);
+
+    const L = await page.evaluate(() => {
+      const kids = Array.from(document.querySelectorAll('#legacy > *'))
+        .filter((el) => getComputedStyle(el).display !== 'none');
+      const box = (el) => el.getBoundingClientRect();
+      const rows = new Map();
+      for (const el of kids) {
+        const top = Math.round(box(el).top);
+        if (!rows.has(top)) rows.set(top, []);
+        rows.get(top).push(el);
+      }
+      const tops = [...rows.keys()].sort((a, b) => a - b);
+      const last = tops.map((t) => {
+        const row = rows.get(t).sort((a, b) => box(a).left - box(b).left);
+        return row[row.length - 1].className;
+      });
+      const tail = kids[kids.length - 1];
+      return { rowCount: tops.length, last, tailWidth: Math.round(box(tail).width) };
+    });
+
+    ok('legacy arrow markup still wraps into more than one row',
+      L.rowCount >= 2, `rows=${L.rowCount}`);
+    ok('…and no row ends on a stranded arrow',
+      L.last.every((c) => !/dc-flow-arrow/.test(c)), L.last.join(' | '));
+    ok('…and its wrapped node does not fill the row either',
+      L.tailWidth < 300, `width=${L.tailWidth}`);
+  } finally {
+    await browser.close();
+  }
+}
+
 // ─── main ─────────────────────────────────────────────────────────────────────────────
 
 const report = {
@@ -558,6 +719,7 @@ try {
   }
   rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
   await runLostReport(base, report);
+  await runFlowWrap(report);
 } catch (err) {
   console.error('\nharness error:', err);
   report.rows.push({ theme: '-', label: `harness: ${err.message}`, cond: false, detail: '' });

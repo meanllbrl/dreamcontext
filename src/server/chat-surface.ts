@@ -115,7 +115,8 @@ dc-num dc-delta dc-delta--up|--down|--flat\` · Blocks \`dc-card dc-card-title d
 dc-card-img dc-card-foot dc-stat dc-stat-label dc-stat-note dc-chip dc-chip--accent|--good|
 --bad|--warn dc-callout dc-callout--good|--bad|--warn dc-table dc-kv dc-img dc-figcaption
 dc-btn dc-empty dc-low-sample\` · Explaining \`dc-steps dc-step dc-step-body dc-flow
-dc-flow-node dc-flow-arrow dc-timeline dc-tl dc-tl-dot dc-tl-body dc-tl-when dc-compare
+dc-flow-node\` (nodes only; arrows are drawn) \`dc-timeline dc-tl dc-tl-dot dc-tl-body
+dc-tl-when dc-compare
 dc-option dc-option--pick dc-option-head dc-option-title dc-pros dc-cons dc-tabs dc-tablist
 dc-tab dc-panels dc-panel\` · Data \`dc-bar dc-bar-label dc-bar-track dc-bar-fill
 dc-bar-value dc-funnel dc-funnel-step dc-funnel-bar dc-funnel-drop dc-svg dc-axis

@@ -321,10 +321,18 @@ body {
 }
 .dc-step-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 
-/* Left-to-right pipeline: boxes joined by arrows. Wraps on a narrow pane. */
-.dc-flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
+/* Left-to-right pipeline: boxes the kit joins with arrows. Write NODES ONLY — every node
+   after the first draws its own leading arrow, so when the row wraps the arrow travels
+   WITH the node it points at and a continuation row opens with "→ next step". The flat
+   `.dc-flow-arrow` spans this used to take are absorbed (hidden, superseded by the drawn
+   arrow): as free flex items they could wrap AWAY from their node, leaving a trailing →
+   pointing at nothing over a full-bleed orphan with no row gap (owner report 08-27). */
+.dc-flow { display: flex; align-items: stretch; gap: 10px 0; flex-wrap: wrap; }
 .dc-flow-node {
-  flex: 1 1 130px;
+  /* Hugs its label — a node that stretches to fill the row it wrapped onto reads as a
+     different kind of thing than the boxes before it. */
+  flex: 0 1 auto;
+  position: relative;
   min-width: 0;
   padding: 10px 12px;
   border: 1px solid var(--color-border);
@@ -332,7 +340,20 @@ body {
   background: var(--color-bg-secondary);
   font-size: 12.5px;
 }
-.dc-flow-arrow { display: grid; place-items: center; padding: 0 8px; color: var(--color-text-tertiary); font-size: 15px; }
+.dc-flow-node ~ .dc-flow-node { margin-left: 30px; }
+.dc-flow-node ~ .dc-flow-node::before {
+  content: "\2192";
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  width: 30px;
+  transform: translateY(-50%);
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: 15px;
+  line-height: 1;
+}
+.dc-flow-arrow { display: none; }
 
 /* ═══ Timeline ═══ */
 
