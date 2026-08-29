@@ -87,6 +87,11 @@ function ChatViewItem({ view, conversationId }: {
     case 'pin':
     case 'progress':
       return null;
+    // Applied by the SERVER off the stream (src/server/checkout-directive.ts) and answered
+    // with a banner. Drawn here it would be a card restating a chip the user is already
+    // looking at, one line below the sentence that explains it.
+    case 'checkout':
+      return null;
   }
 }
 

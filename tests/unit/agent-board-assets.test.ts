@@ -261,10 +261,19 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * spec. They are one rule from two sides: switching is what makes a block short. The prose
    * was compressed FIRST, per the rule above — six passes (the intro, the decision bullet,
    * the copy/click bullet, the kit paragraph, the sandbox paragraph, the closing line) paid
-   * back ~250 characters before this number moved. The 8200 covers 7960 actual.
+   * back ~250 characters before this number moved. The 8200 covered 7960 actual.
+   *
+   * Raised 8200 → 8600 on 2026-08-28 for a FIFTH view type, `checkout` — the channel an agent
+   * corrects the shelf's branch chip on when its work lives in a checkout it is not standing
+   * in (a split brain: cwd in the brain repo, edits in a linked repo's worktree). Undocumented
+   * it would be a capability nothing reaches, which is this project's own recorded failure
+   * mode. Same order as last time: the prose was compressed first — the OUT-of-it lead-in, the
+   * nutshell paragraph, and a third `dream-actions` example that only restated a kind the
+   * prose beneath it already names — paying back ~200 of the 550 the section cost. The 8600
+   * covers 8529 actual.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(8200);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(8600);
   });
 
   /**

@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   MAX_TRACKED_SESSIONS, clearSessionCheckout, enterSessionCheckout, exitSessionCheckout,
-  isSameRepository, resetSessionCheckouts, sessionCheckout,
+  governedCommonDirs, isGovernedCheckout, isSameRepository, resetSessionCheckouts, sessionCheckout,
 } from '../../src/lib/session-cwd.js';
 
 function gitAvailable(): boolean {
@@ -49,6 +49,39 @@ function addWorktree(root: string, name: string, branch: string): string {
   const path = join(SCRATCH, name);
   git(root, 'worktree', 'add', '-q', '-b', branch, path);
   return path;
+}
+
+/**
+ * A brain repo that GOVERNS a separate code repo, the way a split brain does on disk: shared
+ * `linkedRepos` in the vault's `.config.json`, and the URL -> local path mapping in a
+ * machine-global registry under an INJECTED home. Returns both roots plus that home.
+ *
+ * The two halves are deliberately built separately, because the bug this fixture exists for is
+ * that they are DIFFERENT repositories: `git rev-parse --git-common-dir` in the code repo's
+ * worktree has never had anything to do with the brain repo's.
+ */
+const LINKED_URL = 'https://github.com/acme/widgets.git';
+
+function makeLinkedProject(prefix: string, opts: { register?: boolean } = {}): {
+  brain: string; code: string; home: string;
+} {
+  const brain = makeRepo(`${prefix}-brain`, 'main');
+  const code = makeRepo(`${prefix}-code`, 'main');
+  mkdirSync(join(brain, '_dream_context', 'state'), { recursive: true });
+  writeFileSync(
+    join(brain, '_dream_context', 'state', '.config.json'),
+    JSON.stringify({ linkedRepos: [{ name: 'widgets', gitRemoteUrl: LINKED_URL }] }, null, 2),
+    'utf-8',
+  );
+
+  const home = mkdtempSync(join(SCRATCH, `${prefix}-home-`));
+  mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+  writeFileSync(
+    join(home, '.dreamcontext', 'linked-repos.json'),
+    JSON.stringify({ repos: opts.register === false ? {} : { [LINKED_URL]: code } }, null, 2),
+    'utf-8',
+  );
+  return { brain, code, home };
 }
 
 const SESSION = '11111111-2222-3333-4444-555555555555';
@@ -131,6 +164,70 @@ describe.skipIf(!HAS_GIT)('session-cwd', () => {
       enterSessionCheckout(SESSION, wt, root);
       expect(enterSessionCheckout(SESSION, root, root)).toBe(true);
       expect(sessionCheckout(SESSION, root)).toBe(root);
+    });
+  });
+
+  /**
+   * The 2026-08-28 bug: three panes, three worktrees, three chips reading `main`.
+   *
+   * When a brain has been split from its code, every worktree an agent opens for real work
+   * belongs to the LINKED repo — a different repository from the vault's own — so the
+   * same-repository gate refused it and the shelf fell back to the brain repo's branch.
+   */
+  describe('isGovernedCheckout — linked code repos', () => {
+    it('accepts a worktree of a LINKED repo, which is NOT the same repository as the vault', () => {
+      const { brain, code, home } = makeLinkedProject('gov-accept');
+      const wt = addWorktree(code, 'gov-accept-wt', 'feat/kurum');
+
+      // The premise, asserted rather than assumed: the old gate said no to exactly this.
+      expect(isSameRepository(wt, brain)).toBe(false);
+      expect(isGovernedCheckout(wt, brain, { home })).toBe(true);
+      // The linked repo's OWN checkout is governed too — a session can work there without a
+      // worktree at all, and the brain repo's branch is the wrong answer for it either way.
+      expect(isGovernedCheckout(code, brain, { home })).toBe(true);
+    });
+
+    it('refuses a repo that is linked in the config but NOT registered on this machine', () => {
+      const { brain, code, home } = makeLinkedProject('gov-unregistered', { register: false });
+      const wt = addWorktree(code, 'gov-unregistered-wt', 'feat/x');
+      expect(isGovernedCheckout(wt, brain, { home })).toBe(false);
+    });
+
+    it('refuses a repository this vault does not govern at all', () => {
+      const { brain, home } = makeLinkedProject('gov-foreign');
+      const stranger = makeRepo('gov-foreign-stranger', 'main');
+      expect(isGovernedCheckout(stranger, brain, { home })).toBe(false);
+      expect(isGovernedCheckout(addWorktree(stranger, 'gov-foreign-wt', 'feat/y'), brain, { home }))
+        .toBe(false);
+    });
+
+    it('governs the vault’s own repo even when the linked config is unreadable', () => {
+      const { brain, home } = makeLinkedProject('gov-broken');
+      writeFileSync(join(brain, '_dream_context', 'state', '.config.json'), '{not json', 'utf-8');
+      const wt = addWorktree(brain, 'gov-broken-wt', 'feat/own');
+      expect(isGovernedCheckout(wt, brain, { home })).toBe(true);
+      expect(governedCommonDirs(brain, { home })).toHaveLength(1);
+    });
+
+    it('an EnterWorktree into a LINKED repo is accepted and read back', () => {
+      const { brain, code, home } = makeLinkedProject('gov-session');
+      const wt = addWorktree(code, 'gov-session-wt', 'feat/roster');
+
+      expect(enterSessionCheckout(SESSION, wt, brain, { home })).toBe(true);
+      expect(sessionCheckout(SESSION, brain, { home })).toBe(wt);
+      // And out again: the session is back on the brain repo, not stuck on the code checkout.
+      exitSessionCheckout(SESSION);
+      expect(sessionCheckout(SESSION, brain, { home })).toBe(brain);
+    });
+
+    it('a move into an UNGOVERNED repo is refused and leaves the session where it was', () => {
+      const { brain, code, home } = makeLinkedProject('gov-refuse');
+      const wt = addWorktree(code, 'gov-refuse-wt', 'feat/ok');
+      const stranger = makeRepo('gov-refuse-stranger', 'main');
+
+      expect(enterSessionCheckout(SESSION, wt, brain, { home })).toBe(true);
+      expect(enterSessionCheckout(SESSION, stranger, brain, { home })).toBe(false);
+      expect(sessionCheckout(SESSION, brain, { home })).toBe(wt);
     });
   });
 

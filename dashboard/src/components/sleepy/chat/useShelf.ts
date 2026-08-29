@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { parseChatActions } from './chatActions';
 import {
   checkoutFact, foldViews, layoutShelf,
@@ -118,16 +119,26 @@ export function useShelf(session: ChatSession, vault: string | null): ShelfHandl
 
   // ── 2. New finished messages → shelf entries ────────────────────────────────────────
   const items = conv.items;
+  const queryClient = useQueryClient();
   useEffect(() => {
     const consumed = consumedRef.current;
     if (!consumed) return;
     const fresh: ChatViewSpec[] = [];
+    let checkoutClaimed = false;
     for (const item of items) {
       if (item.kind !== 'text' || !item.done || consumed.has(item.id)) continue;
       consumed.add(item.id);
       for (const view of parseChatActions(item.text).views) {
         if (view.type === 'pin' || view.type === 'progress') fresh.push(view);
+        // Nothing to fold — a `checkout` is applied by the SERVER, which has already updated
+        // the registry by the time this text finished streaming. All that is owed here is a
+        // refetch, so the chip moves with the sentence that announced it instead of at the
+        // next 15s tick.
+        else if (view.type === 'checkout') checkoutClaimed = true;
       }
+    }
+    if (checkoutClaimed) {
+      void queryClient.invalidateQueries({ queryKey: ['agent-session-facts', conversationId ?? ''] });
     }
     if (fresh.length === 0) return;
     const { entries: next, evicted: dropped, retired } = foldViews(entriesRef.current, fresh, Date.now());
@@ -138,7 +149,7 @@ export function useShelf(session: ChatSession, vault: string | null): ShelfHandl
     // clean-up a user dismissal does, and for the same reason: that id can be re-sent later,
     // and it has to come back CLOSED rather than already open on prose nobody asked for.
     if (retired.length > 0) setOpenId((cur) => (cur !== null && retired.includes(cur) ? null : cur));
-  }, [items]);
+  }, [items, queryClient, conversationId]);
 
   // ── 1. Persistence ──────────────────────────────────────────────────────────────────
   // `writePins` debounces internally, so this may fire per applied event without one

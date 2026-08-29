@@ -68,7 +68,7 @@ draw it in a \`dream-html\` block instead of writing paragraphs about it.
 - **A complex concept gets drawn.** A third paragraph of explanation wanted to be a diagram,
   a table or a labelled flow.
 
-And two things that stay OUT of it, because drawing them makes the answer worse:
+Two things stay OUT, because drawing them makes the answer worse:
 
 - **A short answer.** One fact, one number, one yes — a bordered card around a sentence is
   ceremony. Draw when there is structure to see, not to look thorough.
@@ -76,10 +76,10 @@ And two things that stay OUT of it, because drawing them makes the answer worse:
   prose: a code block gets its own copy button, a backticked path becomes a chip that opens
   the file. Inside the block they are just text.
 
-**In a nutshell, not a report** — one block, one idea, about one screen. A long stack of
-sections reads as work shown, not as an answer. The block carries the explanation; the prose
+**In a nutshell, not a report** — one block, one idea, about one screen; a long stack of
+sections reads as work shown, not an answer. The block carries the explanation, the prose
 around it says what to notice and what you want back — and a block renders exactly where you
-wrote it, so a sentence you put under one lands under it.
+wrote it, so a sentence under one lands under it.
 
 ## \`dream-html\` — you write the HTML, we render it safely
 
@@ -144,9 +144,8 @@ BELOW the svg: svg text scales with the viewBox, so 10px in a 320-wide box rende
 
 \`\`\`dream-actions
 [
-  {"label": "Open the board", "action": "board", "path": "docs/launch.excalidraw.md"},
-  {"label": "Open the task",  "action": "task",  "id": "agent-surface-polish"},
-  {"label": "Run the tests",  "action": "ask",   "text": "run npm test and report failures"}
+  {"label": "Open the task", "action": "task", "id": "agent-surface-polish"},
+  {"label": "Run the tests", "action": "ask",  "text": "run npm test and report failures"}
 ]
 \`\`\`
 
@@ -154,7 +153,7 @@ BELOW the svg: svg text scales with the viewBox, so 10px in a 320-wide box rende
   \`file\`/\`board\` take a \`path\`; \`reveal\` hands a \`path\` to the OS; \`ask\` loads \`text\` into
   the composer; \`url\` opens an https \`url\`.
 
-## \`dream-view\` — the four things HTML must NOT be
+## \`dream-view\` — the five things HTML must NOT be
 
 **A tracked metric.** If the number lives in a dreamcontext Lab insight, name the slug and we
 draw the real card — current cache, canonical render, honest "as of". Never retype tracked
@@ -176,7 +175,7 @@ re-send the \`id\` to update.
 **A fact that must not scroll away** — a row on the shelf docked to the composer. \`weight\`
 is a REQUEST: \`tag\` (short label) or \`row\` (\`lede\`+\`detail\`); the shelf may demote. Max 6
 facts. Pin what only you know AND what still holds at session end: a dev server (\`url\` is
-loopback-only). Never the branch or worktree — the shelf reads the checkout. Never a to-do
+loopback-only). Never the branch or worktree — that is \`checkout\`'s job, below. Never a to-do
 or a blocker; those age with the transcript, in the message. A pin does NOT expire — re-send
 its \`id\` when its fact changes, drop it once there is none left:
 
@@ -186,6 +185,19 @@ its \`id\` when its fact changes, drop it once there is none left:
 
 \`\`\`dream-view
 {"type":"pin","id":"dev","drop":true}
+\`\`\`
+
+**The checkout your WORK is in**, when you are standing somewhere else — in the brain repo,
+editing a linked repo's worktree. Nothing is drawn: the server checks the path, the branch chip
+follows, a banner reports it. The only way to correct that chip; never pin a branch as a tag.
+Withdraw it when the work moves on.
+
+\`\`\`dream-view
+{"type":"checkout","path":"/Users/you/.claude-worktrees/roster-union"}
+\`\`\`
+
+\`\`\`dream-view
+{"type":"checkout","reset":true}
 \`\`\`
 
 **A run's progress**, read live from a task's ticked criteria. Send the slug only — a percent

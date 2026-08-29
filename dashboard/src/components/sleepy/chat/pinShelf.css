@@ -422,3 +422,14 @@
   .pin-chip-word { display: none; }
   .pin-chip.is-marker { padding: 0 5px; }
 }
+
+/* A server fact that disagrees with itself — today only: the writes are landing in a checkout
+   this chip does not name (`src/lib/session-edits.ts`). Tone only, no extra glyph and no extra
+   text: the chip is already the smallest thing on the shelf, and the sentence is one hover
+   away in its title. Amber rather than red because nothing is broken — the reading is true,
+   it just is not the whole truth. */
+.pin-chip.is-warn {
+  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: var(--color-warning);
+}

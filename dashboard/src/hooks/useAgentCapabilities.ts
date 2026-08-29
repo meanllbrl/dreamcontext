@@ -176,11 +176,15 @@ export interface SessionFacts {
   /** False when git is unavailable or this is not a work tree — the shelf then shows no
    *  branch chip at all rather than an empty one. */
   isRepo: boolean;
+  /** Writes landing in a DIFFERENT governed checkout than the one above — the answer for a
+   *  session whose agent never declared where its work is. The chip is MARKED with it and
+   *  keeps its label: the shelf reports the disagreement, it never follows it. */
+  elsewhere: { dir: string; name: string; count: number } | null;
 }
 
 const UNKNOWN_SESSION_FACTS: SessionFacts = {
   branch: null, defaultBranch: null, worktree: false, mainRoot: null, worktreeName: null,
-  worktreeAllowed: false, isRepo: false,
+  worktreeAllowed: false, isRepo: false, elsewhere: null,
 };
 
 /**

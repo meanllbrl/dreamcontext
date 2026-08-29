@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import {
   TAIL_STEPS_BYTES, newestCwdIn, resetTranscriptCheckoutCaches, transcriptCheckout,
 } from '../../src/lib/session-transcript-cwd.js';
+import { resetSessionCheckouts } from '../../src/lib/session-cwd.js';
 
 function gitAvailable(): boolean {
   try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
@@ -114,8 +115,32 @@ describe('newestCwdIn (pure)', () => {
   });
 });
 
+/**
+ * A vault that GOVERNS a separate code repo — a brain split from its code. `link` is written
+ * into the SAME scratch home the transcript lives in, because in production one home holds
+ * both `~/.claude/projects/**` and `~/.dreamcontext/linked-repos.json`.
+ */
+const LINKED_URL = 'https://github.com/acme/widgets.git';
+
+function linkRepoInHome(home: string, brain: string, code: string | null): void {
+  mkdirSync(join(brain, '_dream_context', 'state'), { recursive: true });
+  writeFileSync(
+    join(brain, '_dream_context', 'state', '.config.json'),
+    JSON.stringify({ linkedRepos: [{ name: 'widgets', gitRemoteUrl: LINKED_URL }] }),
+    'utf-8',
+  );
+  mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+  writeFileSync(
+    join(home, '.dreamcontext', 'linked-repos.json'),
+    JSON.stringify({ repos: code ? { [LINKED_URL]: code } : {} }),
+    'utf-8',
+  );
+}
+
 describe.skipIf(!HAS_GIT)('transcriptCheckout', () => {
-  beforeEach(() => { resetTranscriptCheckoutCaches(); });
+  // The governed-roots memo lives in `session-cwd.ts`, so clearing only this module's caches
+  // would leave a previous test's answer standing for a reused project root.
+  beforeEach(() => { resetTranscriptCheckoutCaches(); resetSessionCheckouts(); });
 
   it('names the WORKTREE the transcript last reported, not the project root', () => {
     const root = makeRepo('repo-a', 'main');
@@ -159,6 +184,31 @@ describe.skipIf(!HAS_GIT)('transcriptCheckout', () => {
     // null, not `foreign` — the caller falls back to the project root rather than pointing the
     // shelf (and the `git` calls behind it) at an unrelated repository.
     expect(transcriptCheckout(ID, root, { home })).toBeNull();
+  });
+
+  it('names a worktree of a LINKED code repo — the split-brain case', () => {
+    // Photographed 2026-08-28: three panes running in `~/.claude-worktrees/*` worktrees of the
+    // linked code repo, every chip reading the BRAIN repo's `main`. The code repo is a
+    // different repository, so the same-repository gate refused it and the shelf fell back.
+    const brain = makeRepo('repo-linked-brain', 'main');
+    const code = makeRepo('repo-linked-code', 'main');
+    const wt = addWorktree(code, 'wt-linked', 'feat/kurum-hakedis');
+    const home = makeHome('home-linked');
+    linkRepoInHome(home, brain, code);
+    writeTranscript(home, ID, [withCwd(brain), withCwd(wt, 'feat/kurum-hakedis'), noCwd(1)]);
+
+    expect(transcriptCheckout(ID, brain, { home })).toBe(wt);
+  });
+
+  it('refuses that same worktree when the repo is not linked to this vault', () => {
+    const brain = makeRepo('repo-unlinked-brain', 'main');
+    const code = makeRepo('repo-unlinked-code', 'main');
+    const wt = addWorktree(code, 'wt-unlinked', 'feat/x');
+    const home = makeHome('home-unlinked');
+    linkRepoInHome(home, brain, null); // declared in the config, absent from the registry
+    writeTranscript(home, ID, [withCwd(wt, 'feat/x')]);
+
+    expect(transcriptCheckout(ID, brain, { home })).toBeNull();
   });
 
   it('refuses a directory that is not a repository at all, and one that has vanished', () => {

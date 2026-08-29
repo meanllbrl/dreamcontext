@@ -7,7 +7,8 @@ import { projectRootOf, sanitizeUuid } from './agent-spawn-shared.js';
 import { countCheckboxes, firstUnticked, listCheckboxes, readSection } from '../../lib/markdown.js';
 import { isSafeTaskSlug } from '../../lib/task-backend/local.js';
 import { readSessionFacts, UNKNOWN_SESSION_FACTS } from '../../lib/session-facts.js';
-import { sessionCheckout } from '../../lib/session-cwd.js';
+import { claimedCheckout, sessionCheckout } from '../../lib/session-cwd.js';
+import { editsElsewhere } from '../../lib/session-edits.js';
 import { transcriptCheckout } from '../../lib/session-transcript-cwd.js';
 
 /**
@@ -272,14 +273,29 @@ export async function handleAgentSessionFacts(
   } catch { /* unparseable URL — falls back to the project root, same as no id */ }
 
   const projectRoot = projectRootOf(contextRoot);
-  sendJson(res, 200, readSessionFacts(resolveSessionDir(session || null, projectRoot)));
+  // The facts are read AT the session's checkout; `worktreeAllowed` alone is asked of the
+  // VAULT (third argument), because it is a property of the brain rather than of the folder
+  // the agent happens to be standing in. See readSessionFacts.
+  const dir = resolveSessionDir(session || null, projectRoot);
+  const facts = readSessionFacts(dir, Date.now(), projectRoot);
+  // Composed OUTSIDE the memo: the git reading is stable for 12s, the write counts are not —
+  // they move while a turn runs, and a warning that lags the run by a poll is a warning about
+  // a state the user has already left.
+  sendJson(res, 200, { ...facts, elsewhere: editsElsewhere(session || null, dir) });
 }
 
 /**
- * WHICH directory this session's facts are read from — the transcript's answer, then the tool
- * frames', then the project root.
+ * WHICH directory this session's facts are read from — the agent's own CLAIM, then the
+ * transcript's answer, then the tool frames', then the project root.
  *
- * The order is the point. `sessionCheckout` (src/lib/session-cwd.ts) is fed by the harness's
+ * The order is the point. A CLAIM comes first because it is the only source that can describe
+ * work happening somewhere the session is not standing: an agent whose cwd stays in the brain
+ * repo while it edits a linked repo's worktree produces no frame and no transcript `cwd` to
+ * observe, so if the transcript outranked the claim the feature would only ever restate what
+ * was already known. It is not a free pass — the same governed-repository gate applies, and
+ * the agent withdraws it with `{"type":"checkout","reset":true}` (server/checkout-directive.ts).
+ *
+ * `sessionCheckout` (src/lib/session-cwd.ts) is fed by the harness's
  * `EnterWorktree`/`ExitWorktree` frames on the stdout stream, so it is precise about the moves
  * it can see and BLIND to every other one. `transcriptCheckout` reads the conversation's own
  * `cwd`, which the CLI rewrites on every entry, so it sees all of them — a manual
@@ -300,5 +316,7 @@ export function resolveSessionDir(
   projectRoot: string,
   opts: { home?: string } = {},
 ): string {
-  return transcriptCheckout(session, projectRoot, opts) ?? sessionCheckout(session, projectRoot);
+  return claimedCheckout(session, projectRoot)
+    ?? transcriptCheckout(session, projectRoot, opts)
+    ?? sessionCheckout(session, projectRoot);
 }

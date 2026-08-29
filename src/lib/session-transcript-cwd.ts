@@ -1,7 +1,7 @@
 import { openSync, closeSync, readSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { repoToplevel } from './git-sync/git.js';
-import { isSameRepository } from './session-cwd.js';
+import { isGovernedCheckout } from './session-cwd.js';
 import { findTranscriptBySessionId, isSafeSessionId } from './transcript-locate.js';
 
 /**
@@ -16,7 +16,10 @@ import { findTranscriptBySessionId, isSafeSessionId } from './transcript-locate.
  *   • a plain `git checkout -b` in the main checkout (not a move at all, a BRANCH change, and
  *     the tool-frame reader is structurally blind to it);
  *   • a `cd` back OUT of a worktree, which leaves the override registry holding a directory
- *     the session has left.
+ *     the session has left;
+ *   • a session doing its real work in a LINKED code repo, which is a DIFFERENT repository
+ *     from the vault's own whenever the brain has been split from the code — see
+ *     `isGovernedCheckout`, the gate both this module and the override registry share.
  *
  * ── Why the transcript and not the stream ─────────────────────────────────────────────
  * Measured on this machine, 2026-08-25, against `claude -p --output-format stream-json`: the
@@ -174,17 +177,18 @@ function newestCwd(conversationId: string, home?: string): string | null {
   return remember(tails, conversationId, { ...stat, cwd: null }, MAX_TRACKED_TRANSCRIPTS).cwd;
 }
 
-/** A raw `cwd` resolved to its checkout ROOT and gated to `projectRoot`'s repository, or null.
+/** A raw `cwd` resolved to its checkout ROOT and gated to the repositories `projectRoot`'s vault
+ *  GOVERNS — its own and its linked code repos, per `session-cwd.ts` — or null.
  *  Memoized because it forks git and the answer for a given directory does not change while
  *  the directory exists — and the case where it DOES (the worktree was removed) is caught by
  *  the TTL rather than by a watcher. */
-function checkoutRootOf(cwd: string, projectRoot: string, now: number): string | null {
+function checkoutRootOf(cwd: string, projectRoot: string, now: number, home?: string): string | null {
   const key = `${cwd} ${projectRoot}`;
   const hit = resolved.get(key);
   if (hit && now - hit.at < RESOLVE_TTL_MS) return hit.root;
 
   const top = repoToplevel(cwd);
-  const root = top && isSameRepository(top, projectRoot) ? top : null;
+  const root = top && isGovernedCheckout(top, projectRoot, { home, now }) ? top : null;
   return remember(resolved, key, { root, at: now }, MAX_RESOLVE_CACHE).root;
 }
 
@@ -214,7 +218,7 @@ export function transcriptCheckout(
   if (!conversationId || !isSafeSessionId(conversationId)) return null;
   const cwd = newestCwd(conversationId, opts.home);
   if (!cwd) return null;
-  return checkoutRootOf(cwd, projectRoot, opts.now ?? Date.now());
+  return checkoutRootOf(cwd, projectRoot, opts.now ?? Date.now(), opts.home);
 }
 
 /** TEST SEAM, same contract as `resetSessionCheckouts`/`resetSessionFactsCaches`: the two

@@ -29,11 +29,11 @@
 // Types
 // ---------------------------------------------------------------------------------------
 
-export const VIEW_TYPES = ['insight', 'checklist', 'pin', 'progress'] as const;
+export const VIEW_TYPES = ['insight', 'checklist', 'pin', 'progress', 'checkout'] as const;
 export type ChatViewType = typeof VIEW_TYPES[number];
 
 export type ChatViewSpec =
-  InsightViewSpec | ChecklistViewSpec | PinViewSpec | ProgressViewSpec;
+  InsightViewSpec | ChecklistViewSpec | PinViewSpec | ProgressViewSpec | CheckoutViewSpec;
 
 /**
  * `type: "insight"` — a Lab insight drawn BY SLUG, with no markup from the agent at all.
@@ -130,6 +130,28 @@ export interface PinViewSpec {
 export interface ProgressViewSpec {
   type: 'progress';
   task: string;
+}
+
+/**
+ * `type: "checkout"` — which checkout this session's WORK belongs to, when it is not the one
+ * the session is standing in.
+ *
+ * The odd one out on this surface: nothing is drawn for it. It is applied by the SERVER, off
+ * the same stream it reads tool frames on (src/server/checkout-directive.ts), and the visible
+ * result is the shelf's branch chip changing plus one banner naming the outcome. It is parsed
+ * here for two reasons and no others: so a legitimate block does not fall through to the
+ * unknown-type notice, and so the pane can refresh its session facts at once instead of
+ * waiting out the 15s poll.
+ *
+ * `path` is absolute; `reset: true` withdraws a previous claim and carries no path. The
+ * validator is deliberately thin — the SERVER decides whether the directory may be pointed
+ * at, and a second opinion here would be a rule that can drift from the one that matters.
+ */
+export interface CheckoutViewSpec {
+  type: 'checkout';
+  /** Absolute path, or null for a withdrawal. */
+  path: string | null;
+  reset?: true;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -485,6 +507,25 @@ function validateProgress(obj: Record<string, unknown>, notices: string[]): { vi
   return { view: { type: 'progress', task }, notices };
 }
 
+/**
+ * `type: "checkout"` — a path, or a withdrawal. Anything else is a notice, because a block
+ * that says neither is an agent that meant to move the shelf and did not.
+ */
+function validateCheckout(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  if (obj.reset === true) return { view: { type: 'checkout', path: null, reset: true }, notices };
+
+  const path = optStr(obj.path, 1024);
+  if (!path) {
+    notices.push('A checkout block was skipped — it needs an absolute "path", or "reset": true.');
+    return { view: null, notices };
+  }
+  if (!path.startsWith('/')) {
+    notices.push(`A checkout block was skipped — "${path}" is not an absolute path.`);
+    return { view: null, notices };
+  }
+  return { view: { type: 'checkout', path, reset: undefined }, notices };
+}
+
 // ---------------------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------------------
@@ -522,6 +563,7 @@ export function parseViewBlock(json: string): { view: ChatViewSpec | null; notic
       case 'checklist': return validateChecklist(parsed, notices);
       case 'pin': return validatePin(parsed, notices);
       case 'progress': return validateProgress(parsed, notices);
+      case 'checkout': return validateCheckout(parsed, notices);
       default:
         notices.push(`This answer asked for a view type this app doesn't have (${JSON.stringify(parsed.type ?? null)}).`);
         return { view: null, notices };

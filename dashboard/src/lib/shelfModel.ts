@@ -53,6 +53,11 @@ export interface ShelfFact {
    *  only on server-derived facts, where the label is a compression of a state the user may
    *  want spelled out ("the main checkout is on X, not Y"). */
   note?: string;
+  /** Something about this fact DISAGREES with itself and the user should see it without
+   *  hovering — today, only: the writes are landing in another checkout. Drawn as a tone on
+   *  the chip, never as extra text; the sentence stays in `note`. A `title` tooltip alone was
+   *  not enough, because a warning nobody can see on screen is a warning nobody gets. */
+  warn?: boolean;
   /** The raw values this fact ALREADY states, for {@link layoutShelf}'s duplicate suppression.
    *  A branch name and a worktree name, not the composed label — an agent pin that restates
    *  either of them is the same information twice. See `restates`. */
@@ -85,6 +90,8 @@ export interface ShelfTag {
   url?: string;
   marker?: boolean;
   icon?: ShelfFact['icon'];
+  /** See {@link ShelfFact.warn}. */
+  warn?: boolean;
   /** The chip's hover title. See {@link ShelfFact.note}. */
   note?: string;
   /** This tag is a row that lost the slot: it carries `⌃` and clicking promotes it back. */
@@ -174,6 +181,10 @@ export interface CheckoutFacts {
   worktree: boolean;
   worktreeName: string | null;
   isRepo: boolean;
+  /** Writes are landing in a different governed checkout than the one this chip names
+   *  (`src/lib/session-edits.ts`). Optional so a server that predates the field, and every
+   *  existing test, still composes a chip. */
+  elsewhere?: { name: string; count: number } | null;
 }
 
 /** `worktree-run-progress-live` for `run-progress-live`, and the bare name — the two spellings
@@ -216,6 +227,28 @@ function cap(label: string): string {
 export function checkoutFact(f: CheckoutFacts): ShelfFact | null {
   if (!f.isRepo) return null;
 
+  const fact = checkoutChip(f);
+  if (!fact || !f.elsewhere) return fact;
+
+  // The DISAGREEMENT, appended rather than substituted: the chip goes on saying which checkout
+  // this session is in — that reading is still true — and the note adds where the writes
+  // actually went. The label is deliberately untouched. A chip that renamed itself off an
+  // inferred signal would be the auto-follow this was chosen instead of (2026-08-28), and the
+  // user would have no way to tell a measured checkout from a guessed one.
+  const { name, count } = f.elsewhere;
+  // `marker` is deliberately NOT set here. It means "a state, not a value" and carries the
+  // design's uppercase, transparent treatment — borrowed for the warning it RETYPESET the chip
+  // (`feat/pin-surface` became `FEAT/PIN-SURFACE`, caught by the screenshot, 2026-08-28). A
+  // warning is a tone on the same chip, not a different kind of chip.
+  return {
+    ...fact,
+    warn: true,
+    note: `${fact.note} ${count} ${count === 1 ? 'write has' : 'writes have'} landed in ${name} this session, which is not this checkout — the agent can correct the chip with a checkout block, or this is work it has not declared.`,
+  };
+}
+
+/** The chip itself, before the write-location warning is folded in. */
+function checkoutChip(f: CheckoutFacts): ShelfFact | null {
   if (f.worktree) {
     const name = f.worktreeName || 'worktree';
     const implied = !f.branch || branchImpliedBy(f.branch, name);
@@ -310,6 +343,7 @@ export function layoutShelf(entries: ShelfEntry[], facts: ShelfFact[]): ShelfLay
     const tag: ShelfTag = { id: `fact#${i}`, label: f.label, dismissable: false };
     if (f.url) tag.url = f.url;
     if (f.marker) tag.marker = true;
+    if (f.warn) tag.warn = true;
     if (f.icon) tag.icon = f.icon;
     if (f.note) tag.note = f.note;
     return tag;

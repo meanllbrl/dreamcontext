@@ -64,30 +64,55 @@ const LEFT_BRANCH = 'feat/left-behind';
  *  rejects anything else, and the server keys the checkout registry on it. */
 const SESSION_ID = '9f1c7a2e-4b3d-4c8e-9a11-2d5e6f7a8b90';
 
+/** The session id the checkout-CLAIM check drives. Its own id, because the claim outranks the
+ *  transcript and check 9's session must keep proving the frame path on its own. */
+const CLAIM_SESSION_ID = 'c1a11000-4b3d-4c8e-9a11-2d5e6f7a8b91';
+
 /**
- * A scripted `claude` that does one thing: replay a real `EnterWorktree` move.
+ * A scripted `claude` that replays one of three answers, chosen by the text it is sent.
  *
- * The two frames are VERBATIM shapes captured from `~/.claude/projects/**\/*.jsonl` on
- * 2026-08-24 — the call carries no path (its `input` is `{name}`), the RESULT carries it in
- * prose. That asymmetry is the whole reason the server parses the result, so a stand-in that
- * put the path in the call would verify the wrong thing.
+ * `GO` replays a real `EnterWorktree` move. The two frames are VERBATIM shapes captured from
+ * `~/.claude/projects/**\/*.jsonl` on 2026-08-24 — the call carries no path (its `input` is
+ * `{name}`), the RESULT carries it in prose. That asymmetry is the whole reason the server
+ * parses the result, so a stand-in that put the path in the call would verify the wrong thing.
+ *
+ * `CLAIM` / `RESET` answer with a `dream-view` checkout block in ordinary assistant text —
+ * no tool call, no `cd`, nothing an observer could see. That is the case the block exists for.
  */
 const STANDIN = `#!${process.execPath}
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const WT = ${JSON.stringify(WT)};
+const PJ = ${JSON.stringify(PROJ)};
 let answered = false;
-function answer() {
+function answer(text) {
   if (answered) return;
   answered = true;
   out({ type: 'system', subtype: 'init', session_id: 'verify-chat-shelf', cwd: process.cwd(), slash_commands: [] });
-  out({ type: 'assistant', message: { role: 'assistant', content: [
-    { type: 'tool_use', id: 'toolu_verify_enter', name: 'EnterWorktree', input: { name: 'worktree' } },
-  ] } });
-  out({ type: 'user', message: { role: 'user', content: [
-    { type: 'tool_result', tool_use_id: 'toolu_verify_enter',
-      content: 'Created worktree at ' + WT + ' on branch feat/side-quest. The session is now working in the worktree. Use ExitWorktree to leave mid-session, or exit the session to be prompted.' },
-  ] } });
-  out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'moved' }] } });
+  if (text === 'SILENT-EDIT') {
+    out({ type: 'assistant', message: { role: 'assistant', content: [
+      { type: 'tool_use', id: 'toolu_verify_brain', name: 'Write',
+        input: { file_path: PJ + '/_dream_context/state/note.md' } },
+      { type: 'tool_use', id: 'toolu_verify_edit', name: 'Edit',
+        input: { file_path: WT + '/README.md' } },
+    ] } });
+    out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } });
+  } else if (text === 'CLAIM' || text === 'RESET') {
+    const payload = text === 'CLAIM'
+      ? '{"type":"checkout","path":"' + WT + '"}'
+      : '{"type":"checkout","reset":true}';
+    out({ type: 'assistant', message: { role: 'assistant', content: [
+      { type: 'text', text: 'Working here.\\n\\n\\u0060\\u0060\\u0060dream-view\\n' + payload + '\\n\\u0060\\u0060\\u0060\\n' },
+    ] } });
+  } else {
+    out({ type: 'assistant', message: { role: 'assistant', content: [
+      { type: 'tool_use', id: 'toolu_verify_enter', name: 'EnterWorktree', input: { name: 'worktree' } },
+    ] } });
+    out({ type: 'user', message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'toolu_verify_enter',
+        content: 'Created worktree at ' + WT + ' on branch feat/side-quest. The session is now working in the worktree. Use ExitWorktree to leave mid-session, or exit the session to be prompted.' },
+    ] } });
+    out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'moved' }] } });
+  }
   out({ type: 'result', subtype: 'success', is_error: false, result: 'DONE', num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, session_id: 'verify-chat-shelf' });
 }
 let buf = '';
@@ -98,7 +123,11 @@ process.stdin.on('data', (c) => {
     const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
     if (!line) continue;
     let o; try { o = JSON.parse(line); } catch { continue; }
-    if (o.type === 'user') answer();
+    if (o.type === 'user') {
+      const parts = o.message && o.message.content;
+      const t = Array.isArray(parts) && parts[0] && typeof parts[0].text === 'string' ? parts[0].text.trim() : '';
+      answer(t);
+    }
   }
 });
 process.stdin.on('end', () => process.exit(0));
@@ -276,6 +305,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // ─── run ──────────────────────────────────────────────────────────────────────────────
 
 let server = null;
+/** Drives one chat turn; set by the EnterWorktree check, reused by the checkout-claim check
+ *  that follows it, so both go through exactly the same socket handling. */
+let turn = null;
 try {
   console.log('· building the fixture (isolated HOME, real repo + worktree, real task files)…');
   setup();
@@ -407,21 +439,27 @@ try {
 
     // Drive one real chat turn. The scripted claude answers with the captured EnterWorktree
     // frames; the server observes them on the same NDJSON relay it already parses.
-    await new Promise((resolve, reject) => {
+    //
+    // Returns every `_meta` frame the server sent, because for the CLAIM check below the
+    // banner IS half the contract — a refusal the agent cannot see is the failure mode.
+    turn = async (sessionId, text) => new Promise((resolve, reject) => {
+      const metas = [];
       const ws = new WebSocket(
-        `ws://127.0.0.1:${port}/api/agent/chat?vault=proj&bypass=0&sessionId=${SESSION_ID}`);
+        `ws://127.0.0.1:${port}/api/agent/chat?vault=proj&bypass=0&sessionId=${sessionId}`);
       const timer = setTimeout(() => { try { ws.close(); } catch { /* closing */ } reject(new Error('chat turn timed out')); }, 20_000);
-      ws.on('open', () => ws.send(JSON.stringify({ type: 'user', text: 'GO' })));
+      ws.on('open', () => ws.send(JSON.stringify({ type: 'user', text })));
       ws.on('close', () => { clearTimeout(timer); reject(new Error('socket closed before the turn finished')); });
       ws.on('message', (raw) => {
         let o; try { o = JSON.parse(raw.toString('utf-8')); } catch { return; }
+        if (o.type === '_meta') metas.push(o);
         if (o.type !== 'result') return;
         clearTimeout(timer);
         try { ws.close(); } catch { /* closing */ }
-        resolve();
+        resolve(metas);
       });
       ws.on('error', (e) => { clearTimeout(timer); reject(e); });
     });
+    await turn(SESSION_ID, 'GO');
     // The route memoises a reading for 12s per directory, but the WORKTREE is a directory it
     // has not read yet — so the move shows on the next request, with no wait.
     const after = await facts(base, 'proj', SESSION_ID);
@@ -439,6 +477,66 @@ try {
     const hostile = await facts(base, 'proj', '../../etc');
     ok('a session param that is not a UUID is ignored, not used as a key',
       hostile.body?.branch === BRANCH, JSON.stringify(hostile.body));
+  }
+
+  console.log('\nTHE AGENT SAYS WHERE ITS WORK IS — a dream-view checkout claim');
+  {
+    // The case NEITHER observer can report: the session stands in the project root (its
+    // transcript says so, truthfully) and its work is in the worktree. No EnterWorktree frame,
+    // no `cd`. The claim is the only thing that moves the chip — and it has to OUTRANK the
+    // transcript, or it could never say anything the server did not already know.
+    const dir = join(HOME, '.claude', 'projects', 'verify-proj');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${CLAIM_SESSION_ID}.jsonl`),
+      JSON.stringify({ type: 'assistant', cwd: PROJ, message: { content: [] } }) + '\n', 'utf-8');
+
+    const before = await facts(base, 'proj', CLAIM_SESSION_ID);
+    ok('before the claim, the session reads the checkout it is standing in',
+      before.body?.branch === BRANCH && before.body?.worktree === false, JSON.stringify(before.body));
+
+    const claimed = await turn(CLAIM_SESSION_ID, 'CLAIM');
+    const after = await facts(base, 'proj', CLAIM_SESSION_ID);
+    ok('a claim in ordinary assistant text moves the shelf to the claimed worktree',
+      after.body?.branch === WT_BRANCH && after.body?.worktree === true, JSON.stringify(after.body));
+    ok('…and the claim OUTRANKS the transcript, which still says the project root',
+      after.body?.worktreeName === 'worktree', JSON.stringify(after.body));
+    ok('…and the user is told, on the branch banner',
+      claimed.some((m) => m.subtype === 'branch_start' && /shelf now reads/i.test(String(m.message || ''))),
+      JSON.stringify(claimed.map((m) => m.subtype)));
+
+    const other = await facts(base, 'proj', '00000000-0000-4000-8000-000000000000');
+    ok('…and no other session is moved by it', other.body?.branch === BRANCH, JSON.stringify(other.body));
+
+    const reset = await turn(CLAIM_SESSION_ID, 'RESET');
+    const back = await facts(base, 'proj', CLAIM_SESSION_ID);
+    ok('a reset withdraws the claim and hands the answer back to the transcript',
+      back.body?.branch === BRANCH && back.body?.worktree === false, JSON.stringify(back.body));
+    ok('…and that is announced too', reset.some((m) => m.subtype === 'branch_start'),
+      JSON.stringify(reset.map((m) => m.subtype)));
+  }
+
+  console.log('\nTHE AGENT SAYS NOTHING — the chip warns about where the writes went');
+  {
+    // Option A, chosen by the owner on 2026-08-28 over auto-following the edits: the shelf
+    // keeps naming the checkout the session is in and MARKS it with where the work landed.
+    const EDIT_SESSION_ID = 'ed17ed00-4b3d-4c8e-9a11-2d5e6f7a8b92';
+    const before = await facts(base, 'proj', EDIT_SESSION_ID);
+    ok('before any write, there is nothing to warn about', before.body?.elsewhere == null,
+      JSON.stringify(before.body?.elsewhere));
+
+    await turn(EDIT_SESSION_ID, 'SILENT-EDIT');
+    const after = await facts(base, 'proj', EDIT_SESSION_ID);
+    ok('a write into another checkout is reported, by name and count',
+      after.body?.elsewhere?.name === 'worktree' && after.body?.elsewhere?.count === 1,
+      JSON.stringify(after.body?.elsewhere));
+    ok('…and the BRAIN write in the same turn was not counted',
+      after.body?.elsewhere?.count === 1, JSON.stringify(after.body?.elsewhere));
+    ok('…while the checkout itself is UNCHANGED — a warning, never a move',
+      after.body?.branch === BRANCH && after.body?.worktree === false, JSON.stringify(after.body));
+
+    const other = await facts(base, 'proj', '00000000-0000-4000-8000-000000000000');
+    ok('…and no other session is warned', other.body?.elsewhere == null,
+      JSON.stringify(other.body?.elsewhere));
   }
 
   console.log('\nA MOVE WITH NO FRAME AT ALL — the transcript is what the shelf reads');

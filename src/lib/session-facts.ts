@@ -3,6 +3,7 @@ import { realpathSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { currentBranch, isGitRepo } from './git-sync/git.js';
 import { worktreeIsolationAllowed } from './worktree-gate.js';
+import type { EditsElsewhere } from './session-edits.js';
 
 /**
  * The facts a chat session needs to say WHICH checkout it is acting on — the branch, and
@@ -52,11 +53,17 @@ export interface SessionFacts {
   /** False when git is unavailable or this is not a work tree — the shelf then shows no
    *  branch chip at all rather than an empty one. */
   isRepo: boolean;
+  /** Writes are landing in a DIFFERENT governed checkout than the one described above, or
+   *  null when they are not. Unlike every other field this is not read from git and is not
+   *  memoized with them: it changes as a turn runs, so the route fills it in per request
+   *  (src/lib/session-edits.ts). The chip is MARKED with it; it is never followed. */
+  elsewhere: EditsElsewhere | null;
 }
 
 /** The one shape every failure resolves to. Frozen so a caller cannot mutate the shared
  *  constant into a lie for every subsequent caller. */
 export const UNKNOWN_SESSION_FACTS: SessionFacts = Object.freeze({
+  elsewhere: null,
   branch: null,
   defaultBranch: null,
   worktree: false,
@@ -223,8 +230,13 @@ export function gitCommonDir(cwd: string, now: number = Date.now()): string | nu
  * "reports the checkout it left" defect this whole surface exists to end, just from the other
  * direction. Not a test seam: production code calls this.
  */
-export function forgetSessionFacts(projectRoot: string): void {
-  cache.delete(projectRoot);
+export function forgetSessionFacts(dir: string): void {
+  // A prefix sweep rather than one delete, because the key is `<dir> NUL <gateRoot>` and one
+  // directory can be cached under several gates — the vault's own root is read both as the
+  // session's checkout and as the gate for a session that moved into a linked repo.
+  for (const key of cache.keys()) {
+    if (key === dir || key.startsWith(`${dir}\0`)) cache.delete(key);
+  }
 }
 
 /** TEST SEAM, shared with `session-cwd.ts`'s own reset: the two memos in this module are
@@ -236,30 +248,48 @@ export function resetSessionFactsCaches(): void {
 }
 
 /**
- * The session facts for `projectRoot`, memoized for {@link SESSION_FACTS_TTL_MS}.
+ * The session facts for `dir`, memoized for {@link SESSION_FACTS_TTL_MS}.
+ *
+ * ── Why `gateRoot` is separate from `dir` ─────────────────────────────────────────────
+ * Every field here but one describes the CHECKOUT the session is in, and is read from git
+ * there. `worktreeAllowed` is not that kind of fact: it is a property of the VAULT — may an
+ * agent working for this brain open a worktree at all (worktree-gate.ts, answered from the
+ * brain's own `.config.json` and its linked repos). Asked at the checkout instead, it inverts
+ * exactly where it matters: a session working in a linked code repo has no `.config.json`
+ * under it, so the gate that says "yes, this brain is split, worktrees are safe" would answer
+ * "no" from inside the very worktree it permitted. `gateRoot` defaults to `dir`, so a caller
+ * that reads facts for the vault's own root — `session-start-branch.ts` — is unchanged.
  *
  * `now` is a TEST SEAM ONLY — it exists so the TTL boundary itself can be exercised without
  * a sleep. Production callers pass nothing.
  */
-export function readSessionFacts(projectRoot: string, now: number = Date.now()): SessionFacts {
-  const hit = cache.get(projectRoot);
+export function readSessionFacts(
+  dir: string,
+  now: number = Date.now(),
+  gateRoot: string = dir,
+): SessionFacts {
+  const key = gateRoot === dir ? dir : `${dir}\0${gateRoot}`;
+  const hit = cache.get(key);
   if (hit && now - hit.at < SESSION_FACTS_TTL_MS) return hit.facts;
 
-  const facts = computeSessionFacts(projectRoot);
-  cache.set(projectRoot, { facts, at: now });
+  const facts = computeSessionFacts(dir, gateRoot);
+  cache.set(key, { facts, at: now });
   return facts;
 }
 
-function computeSessionFacts(projectRoot: string): SessionFacts {
-  if (!isGitRepo(projectRoot)) return UNKNOWN_SESSION_FACTS;
-  const { worktree, mainRoot } = readWorktree(projectRoot);
+function computeSessionFacts(dir: string, gateRoot: string): SessionFacts {
+  if (!isGitRepo(dir)) return UNKNOWN_SESSION_FACTS;
+  const { worktree, mainRoot } = readWorktree(dir);
   return {
-    branch: currentBranch(projectRoot),
-    defaultBranch: readDefaultBranch(projectRoot),
+    branch: currentBranch(dir),
+    defaultBranch: readDefaultBranch(dir),
     worktree,
     mainRoot,
-    worktreeName: worktree ? basename(projectRoot) || null : null,
-    worktreeAllowed: worktreeIsolationAllowed(projectRoot),
+    worktreeName: worktree ? basename(dir) || null : null,
+    worktreeAllowed: worktreeIsolationAllowed(gateRoot),
     isRepo: true,
+    // Filled by the route, which knows the session. Null here so the memoized git reading
+    // can never freeze a count that moves during a turn.
+    elsewhere: null,
   };
 }

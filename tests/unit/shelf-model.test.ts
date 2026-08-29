@@ -370,6 +370,54 @@ describe('constants', () => {
  * verdict on 2026-08-25 was "iki branch gösterimi saçma", and it was silly before any agent
  * pinned anything on top of it.
  */
+/**
+ * The write-location warning, folded into the chip the user is already reading.
+ *
+ * The rule it enforces is the one that made option A the choice over auto-following
+ * (2026-08-28): the LABEL never moves. A chip that renamed itself off an inferred signal
+ * would leave no way to tell a measured checkout from a guessed one.
+ */
+describe('checkoutFact — writes landing somewhere else', () => {
+  const base: CheckoutFacts = {
+    branch: 'main', defaultBranch: 'main', worktree: false, worktreeName: null, isRepo: true,
+  };
+
+  it('marks the chip and names the checkout the writes went to, without moving the label', () => {
+    const plain = checkoutFact(base);
+    const warned = checkoutFact({ ...base, elsewhere: { name: 'roster-union', count: 7 } });
+
+    expect(warned?.label).toBe(plain?.label);
+    expect(warned?.icon).toBe(plain?.icon);
+    expect(warned?.warn).toBe(true);
+    // NOT `marker`. That flag carries the design's uppercase treatment, so borrowing it for the
+    // warning retypeset the chip — `feat/pin-surface` rendered as `FEAT/PIN-SURFACE`, which the
+    // screenshot caught and this assertion now prevents.
+    expect(warned?.marker).toBe(plain?.marker);
+    expect(warned?.note).toContain('roster-union');
+    expect(warned?.note).toContain('7 writes');
+    // The original reading survives — the warning is appended to it, never a substitute.
+    expect(warned?.note).toContain(String(plain?.note));
+  });
+
+  it('says "write has" for one and "writes have" for several', () => {
+    expect(checkoutFact({ ...base, elsewhere: { name: 'x', count: 1 } })?.note).toContain('1 write has');
+    expect(checkoutFact({ ...base, elsewhere: { name: 'x', count: 2 } })?.note).toContain('2 writes have');
+  });
+
+  it('warns on a WORKTREE chip too, keeping its own label and icon', () => {
+    const wt = { ...base, worktree: true, worktreeName: 'side', branch: 'feat/side' };
+    const warned = checkoutFact({ ...wt, elsewhere: { name: 'other', count: 3 } });
+    expect(warned?.label).toBe(checkoutFact(wt)?.label);
+    expect(warned?.icon).toBe('worktree');
+    expect(warned?.note).toContain('other');
+  });
+
+  it('changes nothing when there is no disagreement, or no chip at all', () => {
+    expect(checkoutFact({ ...base, elsewhere: null })).toEqual(checkoutFact(base));
+    expect(checkoutFact({ ...base, isRepo: false, elsewhere: { name: 'x', count: 9 } })).toBeNull();
+  });
+});
+
 describe('checkoutFact — the checkout is stated once', () => {
   const base: CheckoutFacts = {
     branch: 'main', defaultBranch: 'main', worktree: false, worktreeName: null, isRepo: true,

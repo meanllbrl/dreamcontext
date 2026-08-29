@@ -12,7 +12,7 @@ pinned: false
 date: '2026-08-23'
 status: in_review
 created: '2026-08-23'
-updated: '2026-08-27'
+updated: '2026-08-28'
 released_version: null
 tags:
   - 'topic:agents'
@@ -27,6 +27,7 @@ related_tasks:
   - >-
     run-progress-reads-as-a-live-checklist-not-two-lines-under-a-number-it-never-explains
   - an-agent-can-drop-a-pin-whose-fact-stopped-being-true
+  - the-shelf-follows-a-session-into-a-linked-code-repo-not-just-the-vault-s-own
 ---
 
 ## Why

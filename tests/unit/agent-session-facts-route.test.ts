@@ -20,8 +20,9 @@ import { join } from 'node:path';
 import { handleAgentSessionFacts, resolveSessionDir } from '../../src/server/routes/agent-shelf.js';
 import type { SessionFacts } from '../../src/lib/session-facts.js';
 import { resetSessionFactsCaches } from '../../src/lib/session-facts.js';
-import { enterSessionCheckout, resetSessionCheckouts } from '../../src/lib/session-cwd.js';
+import { enterSessionCheckout, exitSessionCheckout, resetSessionCheckouts } from '../../src/lib/session-cwd.js';
 import { resetTranscriptCheckoutCaches } from '../../src/lib/session-transcript-cwd.js';
+import { recordSessionEdit, resetSessionEdits } from '../../src/lib/session-edits.js';
 
 function gitAvailable(): boolean {
   try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
@@ -88,6 +89,29 @@ describe.skipIf(!HAS_GIT)('GET /api/agent/session-facts', () => {
     resetSessionCheckouts();
     resetSessionFactsCaches();
     resetTranscriptCheckoutCaches();
+    resetSessionEdits();
+  });
+
+  it('carries the write-location warning, composed OUTSIDE the git memo', async () => {
+    const { root, contextRoot } = makeProject('elsewhere-route', 'main');
+    const wt = addWorktree(root, 'elsewhere-route-wt', 'feat/written-in');
+
+    const quiet = await get(contextRoot, SESSION_A);
+    expect(quiet.elsewhere).toBeNull();
+
+    recordSessionEdit(SESSION_A, join(wt, 'src.ts'), root);
+    const warned = await get(contextRoot, SESSION_A);
+    // Composed per request: the git reading above is memoized for 12s, and had `elsewhere`
+    // ridden along with it this second call would still say null.
+    expect(warned.elsewhere?.name).toBe('elsewhere-route-wt');
+    expect(warned.elsewhere?.count).toBe(1);
+    // The chip's own reading is UNCHANGED — a warning, never a move.
+    expect(warned.branch).toBe('main');
+    expect(warned.worktree).toBe(false);
+
+    // Another session wrote nothing, and a caller with no id has no session to warn about.
+    expect((await get(contextRoot, SESSION_B)).elsewhere).toBeNull();
+    expect((await get(contextRoot)).elsewhere).toBeNull();
   });
 
   it('with NO session id, answers for the project root — the pre-existing behaviour', async () => {
@@ -165,9 +189,11 @@ describe.skipIf(!HAS_GIT)('GET /api/agent/session-facts', () => {
  * The tool-frame registry (`session-cwd.ts`) is precise about the moves it can see and blind to
  * every other one: a manual `git worktree add` + `cd`, a plain `git checkout -b`, and a `cd`
  * back OUT of a worktree it is still holding. The transcript sees all of them, so it wins where
- * the two disagree. Every case below is one of those disagreements.
+ * the two disagree. Above BOTH sits the agent's own CLAIM (server/checkout-directive.ts), which
+ * is the only source that can describe work happening where the session is not standing — the
+ * one thing neither observer can report. Every case below is one of those disagreements.
  */
-describe.skipIf(!HAS_GIT)('resolveSessionDir — the transcript outranks the tool frames', () => {
+describe.skipIf(!HAS_GIT)('resolveSessionDir — claim, then transcript, then tool frames', () => {
   beforeEach(() => {
     resetSessionCheckouts();
     resetSessionFactsCaches();
@@ -219,6 +245,55 @@ describe.skipIf(!HAS_GIT)('resolveSessionDir — the transcript outranks the too
     const home = makeHome('order-fallback-home');
 
     expect(resolveSessionDir(SESSION_A, root, { home })).toBe(wt);
+  });
+
+  it('a CLAIM outranks the transcript — the case neither observer can see', () => {
+    // The agent stands in the vault (cwd says so, truthfully) and does its work in a worktree.
+    // If the transcript won here, the declaration could only ever restate what was already
+    // known, and the shelf would keep naming the checkout the work is NOT in.
+    const { root } = makeProject('order-claim', 'main');
+    const wt = addWorktree(root, 'order-claim-wt', 'feat/declared');
+    const home = makeHome('order-claim-home');
+    writeTranscript(home, SESSION_A, root);
+
+    expect(enterSessionCheckout(SESSION_A, wt, root, { claim: true })).toBe(true);
+    expect(resolveSessionDir(SESSION_A, root, { home })).toBe(wt);
+  });
+
+  it('a WITHDRAWN claim hands the answer straight back to the transcript', () => {
+    const { root } = makeProject('order-withdraw', 'main');
+    const wt = addWorktree(root, 'order-withdraw-wt', 'feat/declared');
+    const home = makeHome('order-withdraw-home');
+    writeTranscript(home, SESSION_A, root);
+
+    enterSessionCheckout(SESSION_A, wt, root, { claim: true });
+    exitSessionCheckout(SESSION_A);
+    expect(resolveSessionDir(SESSION_A, root, { home })).toBe(realpathSync(root));
+  });
+
+  it('an OBSERVED move does not outrank the transcript — only a claim does', () => {
+    // The distinction the `claim` flag exists for: same registry, same directory, different
+    // authority. A frame is an observation the transcript also made (and made later).
+    const { root } = makeProject('order-observed', 'main');
+    const wt = addWorktree(root, 'order-observed-wt', 'feat/observed');
+    const home = makeHome('order-observed-home');
+    writeTranscript(home, SESSION_A, root);
+
+    enterSessionCheckout(SESSION_A, wt, root); // no claim
+    expect(resolveSessionDir(SESSION_A, root, { home })).toBe(realpathSync(root));
+  });
+
+  it('reports writes that landed in ANOTHER checkout — and does not follow them', () => {
+    // The owner's question, 2026-08-28: what if the agent never says anything? The route
+    // answers with the checkout the session is in, MARKED with where the writes actually went.
+    const { root } = makeProject('order-elsewhere', 'main');
+    const wt = addWorktree(root, 'order-elsewhere-wt', 'feat/written-in');
+    const home = makeHome('order-elsewhere-home');
+    resetSessionEdits();
+    recordSessionEdit(SESSION_A, join(wt, 'src.ts'), root);
+
+    // The checkout is unchanged — this is a warning, not a move.
+    expect(resolveSessionDir(SESSION_A, root, { home })).toBe(root);
   });
 
   it('falls back to the PROJECT ROOT when neither source knows anything', () => {

@@ -22,6 +22,11 @@ import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
 import { clearSessionCheckout, enterSessionCheckout, exitSessionCheckout } from '../../lib/session-cwd.js';
 import { describeFreshStart, freshSessionOnDefaultBranch } from '../../lib/session-start-branch.js';
 import { createWorktreeWatcher } from '../worktree-frames.js';
+import {
+  describeCheckoutClaim, describeCheckoutReset, readCheckoutDirective, readEditPaths,
+} from '../checkout-directive.js';
+import { clearSessionEdits, recordSessionEdit } from '../../lib/session-edits.js';
+import { forgetSessionFacts, readSessionFacts } from '../../lib/session-facts.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
@@ -688,8 +693,10 @@ export function startChatSession(
     cleanupBriefing();
     unwatchAuth();
     // The session's checkout override dies with the session. Left behind it would be answered
-    // to a RESUMED conversation of the same id whose agent is back in the project root.
-    if (pinId) clearSessionCheckout(pinId);
+    // to a RESUMED conversation of the same id whose agent is back in the project root — and
+    // the same holds for its write counts, which would otherwise warn a fresh pane about
+    // edits made by a run that has ended.
+    if (pinId) { clearSessionCheckout(pinId); clearSessionEdits(pinId); }
   };
 
   /** Socket gone (tab closed, app window died, network drop) → drain and reap the child.
@@ -767,6 +774,33 @@ export function startChatSession(
         const move = observeWorktree(obj);
         if (move?.kind === 'enter') enterSessionCheckout(pinId, move.dir, projectRoot);
         else if (move?.kind === 'exit') exitSessionCheckout(pinId);
+
+        // WHERE the writes are landing, which is the answer for a session that declares
+        // nothing at all. Counted here and never acted on — the shelf reports the
+        // disagreement, it does not follow it (src/lib/session-edits.ts).
+        for (const path of readEditPaths(obj)) recordSessionEdit(pinId, path, projectRoot);
+
+        // …and the checkout the agent DECLARED, for the work it is doing somewhere its cwd
+        // never went — see checkout-directive.ts. Answered on the same banner the fresh-start
+        // guard uses, because a refusal the agent cannot see is a claim it will keep making.
+        const said = readCheckoutDirective(obj);
+        if (said?.kind === 'reset') {
+          exitSessionCheckout(pinId);
+          sendMeta({ subtype: 'branch_start', kind: 'moved', message: describeCheckoutReset() });
+        } else if (said?.kind === 'set') {
+          const ok = enterSessionCheckout(pinId, said.dir, projectRoot, { claim: true });
+          // Re-read rather than trust the memo: a claim is worth a sentence naming the branch
+          // it landed on, and that reading is 12s stale exactly when the agent just moved.
+          if (ok) forgetSessionFacts(said.dir);
+          sendMeta({
+            subtype: 'branch_start',
+            kind: ok ? 'moved' : 'failed',
+            message: describeCheckoutClaim(
+              said.dir,
+              ok ? readSessionFacts(said.dir, Date.now(), projectRoot) : null,
+            ),
+          });
+        }
       }
     }
   });

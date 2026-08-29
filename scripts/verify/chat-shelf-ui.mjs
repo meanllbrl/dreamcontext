@@ -41,6 +41,9 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(tmpdir(), 'dreamcontext-verify-chat-shelf-ui');
 const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'proj');
+/** A linked worktree of PROJ. The agent writes here while STANDING in PROJ and says nothing
+ *  about it — the case the chip's warning exists for. */
+const WT = join(SCRATCH, 'roster-union');
 
 /** Geometry tolerance — see the header. */
 const EPS = 2;
@@ -99,6 +102,8 @@ const STANDIN = `#!${process.execPath}
 /** Scripted stand-in for \`claude -p --input-format stream-json\` — see scripts/verify/chat-shelf-ui.mjs. */
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const WT_PATH = ${JSON.stringify(WT)};
+const PROJ_PATH = ${JSON.stringify(PROJ)};
 const inbox = [];
 let busy = false;
 
@@ -171,6 +176,7 @@ function reply(prompt) {
   if (prompt.includes('NOCRIT')) return 'Tracking a task with nothing to count.' + NOCRIT;
   if (prompt.includes('PROGRESS')) return 'Tracking the run.' + PROGRESS;
   if (prompt.includes('MANY')) return 'Pinned five rows.' + MANY;
+  if (prompt.includes('EDITWT')) return 'Fixed the roster union and left a note in the brain.';
   if (prompt.includes('FILL')) return FILLER;
   return 'ANSWER ' + prompt;
 }
@@ -179,6 +185,16 @@ async function runTurn(prompt) {
   busy = true;
   out({ type: 'system', subtype: 'init', session_id: 'verify-shelf', model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'bypassPermissions', slash_commands: ['compact'] });
   await sleep(120);
+  // EDITWT — writes into the linked worktree and into the brain, and DECLARES NOTHING. The
+  // brain write is the control: it must not be counted, or the warning would be on always.
+  if (prompt.includes('EDITWT')) {
+    out({ type: 'assistant', message: { role: 'assistant', content: [
+      { type: 'tool_use', id: 'tu_wt_1', name: 'Edit', input: { file_path: WT_PATH + '/README.md' } },
+      { type: 'tool_use', id: 'tu_wt_2', name: 'Write', input: { file_path: WT_PATH + '/src/roster.ts' } },
+      { type: 'tool_use', id: 'tu_brain', name: 'Write', input: { file_path: PROJ_PATH + '/_dream_context/state/note.md' } },
+    ] } });
+    await sleep(60);
+  }
   out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: reply(prompt) }] } });
   await sleep(120);
   out({ type: 'result', subtype: 'success', is_error: false, result: 'DONE', num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 10, output_tokens: 10 }, session_id: 'verify-shelf' });
@@ -237,6 +253,14 @@ function setupScratch() {
   writeFileSync(join(PROJ, '_dream_context', 'state', `${EMPTY_SLUG}.md`),
     '---\nid: task_nocrit\nstatus: in_progress\n---\n\n## Acceptance Criteria\n\nProse only, no checkboxes.\n');
   spawnSync('git', ['init', '-q', '-b', 'feat/pin-surface'], { cwd: PROJ });
+  // A REAL worktree of the fixture, so the write-location warning has somewhere real to point.
+  // It needs a commit first: `git worktree add` has nothing to check out otherwise.
+  writeFileSync(join(PROJ, 'README.md'), '# fixture\n');
+  for (const args of [
+    ['config', 'user.email', 'verify@example.com'], ['config', 'user.name', 'Verify'],
+    ['add', 'README.md'], ['commit', '-qm', 'initial'],
+    ['worktree', 'add', '-q', '-b', 'feat/roster-union', WT],
+  ]) spawnSync('git', args, { cwd: PROJ });
 
   const bin = join(HOME, '.local', 'bin', 'claude');
   writeFileSync(bin, STANDIN);
@@ -736,6 +760,46 @@ async function runWidth(chromium, base, width, report) {
     bottomHeld(beforeDropBox, await box('.pin-tags')),
     JSON.stringify({ before: bottomOf(beforeDropBox), after: bottomOf(await box('.pin-tags')) }));
 
+  console.log('── the agent says nothing: the chip warns about where the writes went');
+  const chip = () => page.locator('.pin-chip', { hasText: 'feat/pin-surface' }).first();
+  ok('before any write, the checkout chip carries no warning',
+    (await page.locator('.pin-chip.is-warn').count()) === 0);
+  if (process.env.VERIFY_SHOTS) {
+    await page.locator('.pin-chip', { hasText: 'feat/pin-surface' }).first()
+      .screenshot({ path: `${process.env.VERIFY_SHOTS}/chip-before-${width}.png` })
+      .catch((e) => report.note(`(shot chip-before failed: ${e.message.split('\n')[0]})`));
+  }
+
+  await say('EDITWT');
+  // Up to a full poll: `elsewhere` rides the 15s session-facts refetch, and nothing invalidates
+  // it early — a write is not an event the client hears about.
+  const warned = await until(async () => (await page.locator('.pin-chip.is-warn').count()) > 0, 25000);
+  ok('after writes into another checkout, the chip is marked', warned,
+    await page.locator('.pin-tags').first().innerText().catch(() => '(no tag line)'));
+
+  const title = warned ? await chip().getAttribute('title') : '';
+  ok('…and the reason names the checkout and counts the writes',
+    /roster-union/.test(title || '') && /2 writes/.test(title || ''), title || '(no title)');
+  ok('…and the BRAIN write in the same turn was not counted', !/3 writes/.test(title || ''), title || '');
+  ok('…while the chip still names the checkout the session is in — a warning, not a move',
+    (await chip().innerText()).toLowerCase().includes('feat/pin-surface'),
+    await chip().innerText().catch(() => ''));
+  ok('…and is not RETYPESET by the warning — same casing as before it fired',
+    (await chip().innerText()) === 'feat/pin-surface', await chip().innerText().catch(() => ''));
+
+  // Photographed HERE, not at the end of the run: the reload in section 7 leaves the surface
+  // collapsed, and the shots taken after it silently wrote nothing for as long as they existed.
+  // A failed screenshot now says so rather than leaving an empty directory to be discovered.
+  const shot = process.env.VERIFY_SHOTS;
+  if (shot) {
+    for (const [sel, name] of [['.pin-shelf', 'chat-shelf'], ['.pin-tags', 'chat-shelf-warn'],
+      ['.pin-chip.is-warn', 'chip-after']]) {
+      await page.locator(sel).first().screenshot({ path: `${shot}/${name}-${width}.png` })
+        .catch((e) => report.note(`(shot ${name}-${width} failed: ${e.message.split('\n')[0]})`));
+    }
+  }
+
+
   // ── 7 — dismissal, and persistence across a reload ───────────────────────────────
   console.log('── dismiss + reload');
   const tagsBefore = (await vis('.pin-tags').first().innerText()).replace(/\s+/g, ' ');
@@ -781,8 +845,9 @@ async function runWidth(chromium, base, width, report) {
   ok('…and a DROPPED pin stays dropped, for the same reason',
     !afterReload.includes('tag-1-1'), afterReload);
 
-  const shot = process.env.VERIFY_SHOTS;
-  if (shot) await page.locator('.pin-shelf').first().screenshot({ path: `${shot}/chat-shelf-${width}.png` }).catch(() => {});
+  // ── the write-location warning ───────────────────────────────────────────────────
+  // The agent writes into the linked worktree, writes into the brain, and says NOTHING about
+  // either. The chip must keep naming the checkout the session is in, and wear the warning.
 
   await browser.close();
 }

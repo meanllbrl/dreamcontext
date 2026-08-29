@@ -479,6 +479,9 @@ function TagChip({
 }) {
   const cls = ['pin-chip'];
   if (tag.marker) cls.push('is-marker');
+  // The disagreement is drawn, not only titled: the chip's own tone carries it, so a user who
+  // never hovers still sees that this reading is contested. The sentence stays in `title`.
+  if (tag.warn) cls.push('is-warn');
   if (tag.url) cls.push('is-link');
   if (tag.demoted) cls.push('is-demoted');
 

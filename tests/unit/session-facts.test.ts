@@ -79,6 +79,28 @@ describe.skipIf(!HAS_GIT)('readSessionFacts', () => {
     expect(readSessionFacts(root).worktree).toBe(false);
   });
 
+  it('asks the worktree GATE at the vault, not at the checkout the session moved into', () => {
+    // The gate is a property of the BRAIN ("is this brain split from its code?"), and the
+    // answer lives in the vault's `.config.json`. Read from inside a checkout that has no
+    // such file — every linked code repo, and every worktree — it inverts: "not allowed"
+    // from inside the very worktree the vault permitted.
+    const vault = makeRepo('gate-vault', 'main');
+    mkdirSync(join(vault, '_dream_context', 'state'), { recursive: true });
+    writeFileSync(
+      join(vault, '_dream_context', 'state', '.config.json'),
+      JSON.stringify({ brainRepo: { mode: 'full-repo' } }),
+      'utf-8',
+    );
+    const wt = join(SCRATCH, 'gate-wt');
+    git(vault, 'worktree', 'add', '-q', '-b', 'feat/gate', wt);
+
+    expect(readSessionFacts(wt).worktreeAllowed).toBe(false);              // gate at the checkout
+    expect(readSessionFacts(wt, Date.now(), vault).worktreeAllowed).toBe(true); // gate at the vault
+    // Every OTHER field still describes the checkout, not the vault.
+    expect(readSessionFacts(wt, Date.now(), vault).branch).toBe('feat/gate');
+    expect(readSessionFacts(wt, Date.now(), vault).worktreeName).toBe('gate-wt');
+  });
+
   it('an unborn branch still reports its name — symbolic-ref, not rev-parse', () => {
     // `git rev-parse --abbrev-ref HEAD` degrades to the literal "HEAD" on a repo with zero
     // commits; `currentBranch` uses symbolic-ref precisely so this case is not a null.
