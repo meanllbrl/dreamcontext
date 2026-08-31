@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-08-29'
+updated: '2026-08-31'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -59,6 +59,8 @@ related_tasks:
   - a-claude-account-switch-reaches-the-sessions-already-open
   - >-
     chat-answers-become-agent-written-html-typed-chart-page-retire-dream-html-renders-in-a-themed-sandbox
+  - >-
+    chat-depiction-becomes-a-built-board-dream-html-stops-being-the-default-for-structure
 type: feature
 name: in-app-agent-terminal
 description: ''
