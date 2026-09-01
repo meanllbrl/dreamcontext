@@ -1,5 +1,70 @@
 [
   {
+    "date": "2026-08-29",
+    "type": "chore",
+    "scope": "release",
+    "description": "Stamp 0.26.3 across the five version surfaces and run the full local build-and-propagate: the npm-linked global CLI, all 6 registered vaults re-propagated, and the desktop app rebuilt and installed. Three build-path lessons came out of it and belong with the build-and-propagate pattern rather than in the release notes. (1) A locally built .app is only LINKER-signed by tauri build, so it fails codesign --verify --deep --strict; the deep-sign step (codesign --deep --force --sign - --entitlements desktop/src-tauri/entitlements.plist) exists ONLY in .github/workflows/desktop-release.yml and is missing from the local build-and-propagate path. (2) --bundles app is required on this machine because dmg bundling fails after the .app finishes. (3) dreamcontext app status reporting running: no immediately after an install is an ARTIFACT of the atomic bundle swap breaking the pgrep path match, not evidence the app died. NOT PUBLISHED: 0.26.3 is a local rollout only and the npm registry stays on 0.26.2 (published 2026-08-28, verified against dist-tags).",
+    "breaking": false,
+    "summary": "0.26.3 cut across all five version surfaces and propagated locally to 6 vaults + the desktop app; registry stays on the published 0.26.2",
+    "references": [
+      "commit:4cdc9e3",
+      "knowledge:patterns/build-and-propagate-pattern",
+      "file:.github/workflows/desktop-release.yml"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-29",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Fix a data-loss defect introduced when automations gained the ability to open as chat tabs. AutomationAttentionOpener polls on the SYNCHRONOUS localStorage settings seed (one round-trip) while the roster restore waits for settingsReady, the SERVER settings, and then its own fetch (two, sequentially), so the opener usually won the race; the restore's 'prev.length > 0 ? prev : restored' then read that single tab as 'someone already populated the roster' and threw the whole restore away. hydratedRef flipped, the persist effect unblocked, and the survivor was mirrored back to .agent-sessions.json AS THE WHOLE ROSTER — every past chat deleted from disk, not merely hidden for one launch. Restored tabs now APPEND to whatever is already open and join the first pane without taking its active slot, and saved entries whose claudeId is already on screen are filtered out BEFORE the map (the map is where spawn happens) so two live CLIs are never --resume'd onto one conversation. A new `hydrated` render state mirrors hydratedRef for gates evaluated during render. scripts/verify/automation-tab-restore.mjs forces the adverse order by holding /api/agent/sessions for 2.5s so the opener always wins, and asserts on the persisted file rather than the screen.",
+    "breaking": false,
+    "summary": "A run that opens itself no longer costs the user their saved chats — the tab restore appends instead of discarding",
+    "references": [
+      "commit:8ebb243",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:scripts/verify/automation-tab-restore.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-29",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add per-mode mascot animation so a chat session shows which brief it is running under. Plan holds a sheet and writes on it (pencil, handwriting squiggle, full stop, fresh page); Develop works a forge (torch weld with flicker and sparks, hammer strike, anvil dip, blacksmith's tap); Basic is untouched byte for byte because gearForMode returns null for basic, jarvis and undefined, so the notch perch, sleep-debt tracker and zero-session FAB render exactly as before. The design rule that emerged: TWO CHANNELS, NEVER ONE — colour still belongs to mood (green working, magenta asking, violet ready) and mode is shape and motion only, so a Develop agent blocked on a question still reads as asking, mid-swing. Scenes are drawn in theme ink with only genuinely hot things (flame, weld, sparks) using --color-warning, so no hex is baked in. The mode is read off the roster (SessionMeta.mode), not the live session, so a dormant Develop tab is still at the anvil when it reopens; the mode picker shows all four faces doing their own work so you can see what you are turning off as well as on. Three costume drafts (spectacles/visor, brows, sheet + hard hat) were built and rejected for reading as wardrobe rather than character, and the file header records that so it is not re-derived. Verified with 9 unit tests in tests/unit/mascot-mode-gear.test.ts, dashboard tsc and build clean, art judged against rendered frame strips at 100px and 26px in both themes.",
+    "breaking": false,
+    "summary": "Sleepy acts out the chat mode — Plan writes on a sheet, Develop works a forge; colour stays mood, movement carries mode",
+    "references": [
+      "commit:d1267e0",
+      "file:dashboard/src/components/sleepy/SleepyMascot.tsx",
+      "file:dashboard/tests/unit/mascot-mode-gear.test.ts",
+      "file:_dream_context/core/3.style_guide_and_branding.md"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-08-29",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Fix three parts of one defect where the composer shelf's branch chip named a checkout the work was not in (owner screenshot: three panes across three worktrees, all three chips reading 'main'). (A) isGovernedCheckout now accepts a checkout of the vault's own repo OR of any 'dreamcontext link'ed code repo present on this machine, so a brain split from its code no longer refuses every worktree the agent actually works in; worktreeAllowed is read at the VAULT rather than the resolved checkout. (B) A fifth dream-view type, 'checkout' (path + reset), lets the agent state where its work is; it is applied SERVER-side off the same stream that carries EnterWorktree frames, gated exactly like a tool frame's path, with the outcome stated on the branch banner either way — a claim outranks the transcript because it is the only source that can describe work happening where the session is not standing. (C) Write frames are counted per checkout so the chip warns in amber (label unchanged — it warns, never follows) when the agent says nothing; writes under _dream_context/ are excluded, and that exclusion is load-bearing since 19 of 19 measured write frames were brain writes. Evidence: chat-shelf.mjs 72/72, chat-shelf-ui.mjs 92/92 against a real server, browser, git worktree and WS turns; 285 unit tests green; tsc clean in both roots.",
+    "breaking": false,
+    "summary": "The chat shelf's branch chip follows the session into a linked code repo, and warns in amber when it cannot",
+    "references": [
+      "commit:95b0810",
+      "file:dashboard/src/lib/checkout-directive.ts",
+      "file:_dream_context/knowledge/features/chat-composer-shelf.md"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-28",
     "type": "docs",
     "scope": "pattern",

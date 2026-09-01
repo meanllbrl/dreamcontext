@@ -133,8 +133,10 @@ trace to this checkout's `dist`, not a stale duplicate.
 
 - `state/pre-publish-checklist-v0-25-0.md` — the worked example these steps were
   distilled from, with the per-gate evidence.
-- `state/heal-the-v0-24-1-release-record.md` — the open scar: npm has 0.24.1, the tag
-  does not exist.
+- `state/heal-the-v0-24-1-release-record.md` — the historical scar from the 0.24.1
+  cut, whose tag was never pushed. RESOLVED as of 2026-08-29: the registry now
+  serves **0.26.2** (verified independently by two sleep specialists). The live gap
+  is one patch — 0.26.3 is cut locally and unpublished.
 - `_dream_context/core/RELEASES.json` — the `superseded` rows are the failure record.
 
 ## Last Verified

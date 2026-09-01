@@ -29,18 +29,12 @@ related_tasks:
 type: feature
 name: lab-analytics-insights
 description: >-
-  Lab (dashboard: "Insights") — curated analytics metrics synced from external
-  sources (generic HTTP or custom script) into the brain: manifest + bounded
-  cache with sync history, TTL sync, secret-redacting credential layer, roadmap
-  KR binding, SessionStart/recall surfacing, dashboard Lab page whose cards
-  resolve through a plug-and-play chart registry (eleven renders: number/line/pie/
-  raw/funnel/bar/bar_compare/stacked/table/heatmap/breakdown), a universal date-range
-  control on every windowed insight, size-aware cards, and an
-  InsightDetailPanel slide-over. NEW (in_review): dataset/v1 dimensional row model,
-  app/v1 multi-page interactive apps (script-authored routed bodies with sandboxed
-  bridge, CLI read surface), matrix/v1 breakdown (deprecated for new insights,
-  grandfathered), html/v1 hybrid (single-page card bodies), and My Reports (native
-  date-navigable composition layer).
+  Lab (dashboard: "Insights") — curated analytics metrics synced from HTTP or
+  script sources into the brain: manifest + bounded cache, TTL sync, redacting
+  credential layer, roadmap KR binding, snapshot/recall surfacing, and a Lab page
+  whose cards resolve through a chart registry (eleven renders). In review:
+  dataset/v1 rows, app/v1 multi-page interactive apps, html/v1 hybrid cards, and
+  date-navigable My Reports. Full render list and payload contracts in the body.
 pinned: false
 date: '2026-07-05'
 ---

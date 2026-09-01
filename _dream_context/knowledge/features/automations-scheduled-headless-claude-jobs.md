@@ -12,7 +12,7 @@ pinned: false
 date: '2026-07-26'
 status: in_review
 created: '2026-07-26'
-updated: '2026-08-28'
+updated: '2026-08-29'
 released_version: v0.22.0
 tags:
   - 'topic:agents'
@@ -33,9 +33,6 @@ related_tasks:
   - approve-time-duplicate-run-warning-for-shared-automations
   - >-
     fix-automations-every-run-binds-its-session-telegram-carries-the-report-and-a-bare-message-talks-to-the-latest-run
-  - >-
-    fix-automations-the-question-is-visible-on-the-card-open-chat-reaches-the-run-that-asked-and-a-run-needing-a-human-opens-itself
-  - fix-agents-an-automation-tab-opening-on-launch-wiped-the-saved-roster
 ---
 
 ## Why

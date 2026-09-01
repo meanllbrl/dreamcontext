@@ -2,14 +2,11 @@
 id: know_dashboard_knowledge_rendering
 name: dashboard-knowledge-rendering
 description: >-
-  How the dreamcontext dashboard renders knowledge files: Excalidraw boards via
-  live @excalidraw/excalidraw canvas (not exported SVG), SQL via SqlPreview ER
-  view, Markdown via MarkdownPreview, and the /api/knowledge-assets route for
-  resolving Obsidian board embedded images (SHA1→path→base64 WebP via sharp).
-  Also covers the live-refresh header button, SQL fence-concat fallback, and the
-  DocContent pattern (search-result rendering reuses the same renderers via
-  full-record fetch per hit type). Feature PRDs surface as typed knowledge on
-  the Knowledge page via buildKnowledgeIndex({includeFeatures}).
+  How the dashboard renders knowledge files: Excalidraw boards on a live canvas
+  (not exported SVG), SQL via SqlPreview's ER view, Markdown via MarkdownPreview,
+  and /api/knowledge-assets for Obsidian embedded images. Also the live-refresh
+  button, the SQL fence-concat fallback, and the DocContent pattern that lets
+  search results reuse the same renderers.
 type: knowledge
 tags:
   - architecture

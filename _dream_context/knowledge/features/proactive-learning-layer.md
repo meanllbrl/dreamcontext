@@ -24,7 +24,7 @@ tags:
 related_tasks:
   - proactive-learning-layer
   - >-
-    theses-quality-bar-hypotheses-must-be-optimization-claims-not-observations-retire-the-list-view
+    hypotheses-ui-redesign-verdict-first-cards-list-board-toggle-seen-state-calm-detail-modal
 ---
 
 ## Why
@@ -72,7 +72,7 @@ The brain consolidates what happened but never learns forward: no hypotheses, no
 ### 2026-08-08 — Hypotheses board redesign: verdict-first, unread state, activity list
 
 - **Verdict-first card anatomy** — every card now leads with status (word chip), big confidence % (— until evidence exists), claim clamped to 2 lines, and one activity line. Every glyph, link-count chip, avatar and FLIPPED glow removed. The old cards read as glyph soup with no signal; the new ones answer "what is this, what's its status, how confident are we?" in one scan.
-- **Two view modes** — activity list (default, inbox-style with All/Unread/Needs-attention tabs) and status kanban, persisted per project in `.hypotheses-prefs.json`. Switching modes is one click in the toolbar.
+- **Two view modes** — activity list (default, inbox-style with All/Unread/Needs-attention tabs) and status kanban, persisted per project in `.hypotheses-prefs.json`. Switching modes is one click in the toolbar. **⚠️ SUPERSEDED 2026-08-28 (7f1a539) — the activity list and the toolbar toggle NO LONGER EXIST. The status kanban is the only rendering; see the 2026-08-28 entry above. This bullet is retained as history, not as current behaviour.**
 - **Client-side seen-state** — per-thesis snapshots (`status`, `confidence`, `evidence.length`, `predictions.length`) diff into an unread dot plus a "what changed" line (flips, confidence moves ±X%, +N evidence). Opening the detail marks it read; Mark-all-read in the summary strip clears the inbox. The seen store is gitignored (`.hypotheses-seen.json`) and machine-local — unread is a UI concern, never brain-synced. 12 unit tests pin the diff logic.
 - **Detail modal rebuilt around the hero** — lifecycle actions (flip-citation / promote panels) sit next to the verdict and expand in place; evidence notes clamp to two lines and expand on click; predictions/changelog/rail lose their boxes. The old modal was boxes-in-boxes with no focal point; the new one gives the verdict the canvas.
 - **Validation** — 12 new unit tests on `seenState.ts` (diff logic, mark-read idempotence, never-seen fallback, storage round-trip), plus `npm run verify:hypotheses` (self-contained scratch vault + real server + Playwright, 13 assertions × 2 themes) added to the verify suite.

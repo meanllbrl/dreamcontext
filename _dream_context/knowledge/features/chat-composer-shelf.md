@@ -12,7 +12,7 @@ pinned: false
 date: '2026-08-23'
 status: in_review
 created: '2026-08-23'
-updated: '2026-08-28'
+updated: '2026-08-29'
 released_version: null
 tags:
   - 'topic:agents'
@@ -49,6 +49,9 @@ Both need a surface that PERSISTS and, for progress, one that is DERIVED from th
 - [x] As a developer, tags in the shelf wrap onto additional lines when they don't fit — tags are NEVER hidden behind a fold or +N chip.
 - [x] As a developer, clicking a progress row opens its detail as a floating popover (not in-place expansion), so the shelf stays one predictable height.
 - [x] As a developer, I can click a localhost:PORT pin to open it in my browser, so I can test the running work immediately.
+- [x] As someone whose brain is split from its code, the branch chip names the LINKED repo checkout my session is actually working in — not the brain repo it was launched from.
+- [x] As the agent, I can STATE which checkout my work is happening in, so the chip is right even when the work is happening somewhere the session is not standing.
+- [x] As someone driving a run, when the agent writes into a checkout it never declared, the chip warns me instead of silently following an inferred signal.
 
 ## Acceptance Criteria
 
@@ -76,9 +79,29 @@ Both need a surface that PERSISTS and, for progress, one that is DERIVED from th
 - [x] **CHAT_SURFACE_BRIEFING** documents both types and teaches the weight. chat-surface-lockstep.test.ts green.
 - [x] **The shelf's type is ONE zoom-aware ladder** — `--pin-text` / `--pin-text-sm` / `--pin-num` / `--pin-marker` / `--pin-glyph` declared once on `.pin-shelf`, every rung `calc(<px> * var(--zoom, 1))`, and NO raw `font-size: <n>px` left in `pinShelf.css` or `progressPanel.css`. `.pin-pop` re-declares the two text rungs one step up because it is a reading surface, not a strip. Proven by MEASUREMENT, not by declaration: `verify:chat-shelf-ui` samples computed `font-size` at every rung at 100% / 120% / 85% and asserts each scales proportionally and returns exactly.
 - [x] **Verification script** — `scripts/verify/chat-shelf-ui.mjs` drives resting state, row opening/closing, ceiling, scroll-invariance against real server in Chromium (geometry via boundingBox at scroll positions, ±2px tolerance).
+- [x] **The governed-checkout gate covers LINKED repos, not just the vault's own** — `isGovernedCheckout` accepts a checkout of the vault's repository OR of any `dreamcontext link`ed code repo present on this machine. With a brain split from its code, every worktree the agent works in belongs to the linked repo; the same-repository gate previously refused all of them and the chip fell back to the brain repo's branch.
+- [x] **`worktreeAllowed` is read at the VAULT, not at the resolved checkout** — otherwise the property could be inverted to false from inside the very worktree it permitted.
+- [x] **A fifth `dream-view` type, `checkout`** — `{"type":"checkout","path":"…"}` plus `reset`, applied SERVER-side off the stream, gated exactly like a tool frame's path. The outcome is stated on the branch banner whether applied or refused.
+- [x] **A checkout claim OUTRANKS the transcript** — it is the only source that can describe work happening where the session is not standing; the transcript would otherwise overrule the very `cwd` the claim corrects.
+- [x] **The chip WARNS but never follows an inferred checkout** — write frames are counted per checkout; on a mismatch the chip keeps its label and wears an amber tone naming where the work landed. Writes under `_dream_context/` are excluded from the count.
+- [x] **Evidence** — `chat-shelf.mjs` 72/72 (was 60) and `chat-shelf-ui.mjs` 92/92 against a real server, a real browser, real `git worktree add` and real WS turns; 285 unit tests green over the touched suites; tsc clean in both roots.
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-08-29 - The checkout is DETECTED, never guessed: Edit/Write frames already carry an absolute path
+
+The load-bearing realization behind the whole linked-repo fix. The server does not need to infer, poll, or ask which checkout a session is working in: the **Edit/Write frames in the stream it is already reading carry an absolute `file_path`**. The checkout is therefore observable from data already in hand, at zero extra cost and with no guessing.
+
+What that observation is allowed to DO is deliberately narrow, and the narrowness is the decision:
+
+- **A path is evidence, not a statement.** A file path is a side effect of doing work, not a claim about where the work lives. So the measured signal may only WARN (amber chip naming where writes landed) — it may never rename the chip. A chip that renamed itself off an inferred signal would leave no way to tell a *measured* checkout from a *guessed* one.
+- **Only an explicit `checkout` claim moves the chip**, and it is applied SERVER-side off the same stream. A directive applied in the pane would be a fact that exists only while someone is watching.
+- **The claim outranks the transcript**, because it is the only source that can describe work happening where the session is not standing.
+- **Brain writes are excluded and that exclusion is load-bearing**: 19 of 19 write frames measured across the owner's three live sessions were `_dream_context/` writes. Counting them would leave the warning lit during every correct session.
+
+Found by an owner screenshot — three panes, three worktrees, three chips all reading `main` — after unit tests had passed. Two of the defects (the warning living only in a native tooltip) were unreachable by any unit test.
+
 
 ### 2026-08-27 - dream-html rendering advances: height bridge handshake, pen-stroke markers, hover tips
 Three commits landed on the chat's dream-html rendering, all tied to the Meeting Room exposing what the shelf relies on:

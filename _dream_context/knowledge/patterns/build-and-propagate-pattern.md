@@ -3,10 +3,11 @@ id: build-and-propagate-pattern
 name: 'Build & Propagate Pattern (CLI → every vault, then the Tauri app)'
 description: >-
   Build order is not a preference: dashboard, then CLI, then `dreamcontext
-  update` to every vault, then the Tauri app LAST. Two footguns make a build
-  look successful while shipping stale code — tsup's dashboard copy fails
-  SILENTLY behind an existsSync guard, and resolve_cli prefers a globally-linked
-  CLI over the bundled one, so a locally-run .app never exercises its own bundle.
+  update` to every vault, then the Tauri app LAST. Footguns that make a build
+  look successful while shipping stale or unsigned code — tsup's dashboard copy
+  fails SILENTLY behind an existsSync guard, resolve_cli prefers a globally-linked
+  CLI over the bundled one, and `tauri build` leaves the .app only linker-signed
+  because the deep-sign step lives solely in CI.
 tags:
   - architecture
   - 'topic:desktop'
@@ -86,6 +87,27 @@ The bundle ships `../../dist`, `../../skill-packs`, `../../skill`, and `sleepy` 
 
 **Capability changes need this stage.** `desktop/src-tauri/capabilities/*.json` is read at app startup, so any new window label or permission (e.g. a `checklist-*` window) is inert until the app is rebuilt and relaunched — not merely reloaded.
 
+### Stage 3a — deep-sign the bundle (macOS; NOT optional, 2026-08-28)
+
+`tauri build` leaves the Mach-O only **linker-signed**. The bundle it produces therefore FAILS
+`codesign --verify --deep --strict`, and a locally built `.app` installed as-is is an unsigned-in-practice
+bundle. This step existed only in `.github/workflows/desktop-release.yml`, so every CI release was signed
+and every *local* build silently was not — the gap that produced a failing-verification install on 2026-08-28.
+
+Run the workflow's exact command, between Stage 3 and the install:
+
+```bash
+APP="desktop/src-tauri/target/release/bundle/macos/dreamcontext-beta.app"
+codesign --deep --force --sign - \
+  --entitlements desktop/src-tauri/entitlements.plist \
+  "$APP"
+codesign --verify --deep --strict "$APP"    # must exit 0 BEFORE you install
+```
+
+The entitlements are load-bearing, not ceremony: non-sandboxed with no hardened runtime, which is what gives
+the spawned Node child filesystem rights and JIT. Sign without them and the CLI the app shells out to breaks
+in ways that look like app bugs.
+
 ### Stage 3b — never edit a bundled resource while the app is building
 
 The Tauri bundle ships `../../dist`, `../../skill-packs`, `../../skill` and `sleepy` **as resources**, copied at the *bundling* step — which happens only after a long Rust compile. So a `skill/SKILL.md` edit made ten minutes into a build lands in a race you cannot see: early enough and it ships, late enough and it doesn't, and **the build succeeds either way**.
@@ -111,6 +133,13 @@ So on the machine that built it, the `.app` runs **the repo's `dist/`, not its o
 
 To exercise the real bundle, remove the global link (or test on a clean machine); to force a specific CLI, set `DREAMCONTEXT_CLI`.
 
+**`app status` reporting `running: no` right after an install is a FALSE NEGATIVE.** The check is a path match —
+`pgrep -f "<bundle>/Contents/MacOS/"` (`src/cli/commands/app.ts`) — and the installer swaps the bundle atomically
+by renaming the old one aside. The still-running process is now executing from a path that no longer matches, so
+pgrep finds nothing. The app is alive; only the match broke. Do not "fix" this by reinstalling or by killing an app
+that is running fine — quit and relaunch to pick up the new bundle (which the new code requires anyway), and the
+status resolves itself.
+
 ## Checklist (copyable)
 
 - [ ] Tests green, `dashboard` tsc exit 0
@@ -118,8 +147,9 @@ To exercise the real bundle, remove the global link (or test on a clean machine)
 - [ ] `dist/dashboard/index.html` exists; `dist/git-sync/askpass.cjs` is executable
 - [ ] `dreamcontext --version` equals `package.json` (else `npm link` first — see Stage 2)
 - [ ] `dreamcontext vaults list` → `dreamcontext update --yes` in each; each reports the NEW `Setup version`
-- [ ] `cd desktop && npm run tauri build`
-- [ ] Relaunch the app (capability/permission changes need a real restart)
+- [ ] `cd desktop && npm run tauri build -- --bundles app` (bare `tauri build` fails on the dmg AFTER the .app is finished)
+- [ ] Deep-sign with entitlements, then `codesign --verify --deep --strict` exits 0 (Stage 3a) — a local build is only linker-signed
+- [ ] Relaunch the app (capability/permission changes need a real restart); ignore a post-install `app status: running: no` — it's the atomic-swap path match, not a dead app
 - [ ] If verifying the bundle rather than the working tree: test without the global link
 
 ## Anti-patterns
@@ -129,4 +159,8 @@ To exercise the real bundle, remove the global link (or test on a clean machine)
 - **Trusting a locally-launched `.app`.** It's running your repo, not its bundle (Stage 4) — and if the global link is missing, "your repo" is actually the published npm package.
 - **Assuming the npm link is in place.** It silently reverts to a published install (an `npm i -g` anywhere does it), and every downstream stage then succeeds while shipping the old code.
 - **Hardcoding the vault list.** It changes; `dreamcontext vaults list` is the source of truth.
+- **Installing a locally built `.app` without deep-signing it.** `tauri build` linker-signs only; the bundle fails
+  `codesign --verify --deep --strict` and the signing step lives only in CI (Stage 3a).
+- **Reading a post-install `running: no` as a crash.** It is the pgrep path match breaking on the atomic bundle swap (Stage 4).
+- **Debugging the dmg failure.** `--bundles app` avoids it; the dmg is not shipped (Stage 3).
 - **Treating a green build as a passing test.** It bundles whatever compiles.

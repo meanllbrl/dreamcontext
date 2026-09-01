@@ -21,9 +21,12 @@ cycles_checked: 0
 checked_at: null
 promoted_to: null
 created_at: '2026-07-23'
-updated_at: '2026-08-26'
+updated_at: '2026-08-29'
 ---
 ## Understanding changelog
+
+### CYCLE 14 · 2026-08-29
+Cycle 14 check (epoch 2026-08-29T14:46:40.509Z, STANDARD/non-destructive). Re-tested against the NEW quality bar that shipped this cycle (commit 7f1a539, 2026-08-28, 'a thesis is an optimization claim, not an observation'), and the verdict is now formal rather than editorial. SO-WHAT test, all four parts fail: no grounded COMPARISON (the claim is the single word 'Test'), no causal MECHANISM, no LEVER (nothing could be changed on the strength of it), and no OUTCOME that matters (validating it moves no revenue, retention or KR). The prediction 'Olmaz' is not falsifiable — it names no measurable quantity, threshold or direction. This is precisely the card class the bar was written to exclude, and it now sits on the status kanban as the ONLY open thesis, which is the maximum-visibility slot for clutter. Structurally unfalsifiable besides: both its links are demo fixtures — the demo-broken-api insight has still never synced and reports an error (verified in lab list this cycle), and the hello-world-pr objective still has 0 tasks (0% progress, slipping 20d on upstream deps) — so no evidence event can ever attach to it. Zero evidence events across 14 checks. No evidence appended this cycle: the quality bar landing is a governance fact about the CARD, not an observation bearing on the CLAIM, and fabricating a ledger event for a claim with no domain would permanently pollute derived confidence. Status left open at 50% (non-destructive depth; retirement is the user's call). CHRONIC-OPEN FLAG re-reported (14 checks since 2026-07-23). DECISION ASK, 12th consecutive raise: retire it — 'dreamcontext theses retire test'. NOTE FOR THE NEXT CYCLE: frontmatter cycles_checked still reads 0 and checked_at null despite 14 recorded cycles, because store.ts increments cycles_checked ONLY inside addEvidence (src/lib/theses/store.ts:440) — a changelog-only pass never bumps it. Any chronic-open escalation gated on cycles_checked >= 3 is therefore structurally unreachable for exactly the evidence-less theses it exists to catch. Reported upstream as a decision ask this cycle.
 
 ### CYCLE 13 · 2026-08-26
 Cycle 13 check (epoch 2026-08-26T15:50:27.999Z, STANDARD consolidation): No fresh evidence since the epoch. Only one commit this cycle (57d96a1 brain consolidation). Seven sessions focused on Lab render: app (matrix/v1, html/v1, My Reports, sandboxed app bridge) — zero work relevant to this placeholder claim. It remains a literal test artifact — claim 'Test', prediction 'Olmaz', zero evidence events across 13 cycles — linked only to demo fixtures (the demo-broken-api insight and the hello-world-pr objective). Still open at 50% confidence with no path to validation or invalidation. CHRONIC-OPEN FLAG re-reported to the orchestrator (13 checks since 2026-07-23, far past the 3-cycle threshold). DECISION ASK, 11th consecutive raise: retire it (dreamcontext theses retire test) or replace its claim with a real falsifiable one. The two links are BOTH demo fixtures, so even if the claim were real it could not accumulate evidence — a thesis bound only to demo data is structurally unfalsifiable.
@@ -52,8 +55,5 @@ Cycle 6 check (epoch 2026-07-26T20:46:07Z, DEEP consolidation): No fresh evidenc
 ### CYCLE 5 · 2026-07-26
 Cycle 5 check (epoch 2026-07-26T13:36:17Z, DEEP consolidation): No fresh evidence since the epoch (zero commits, zero lab syncs, zero completed tasks, zero objective movements relevant to this claim). This remains a literal test artifact with claim 'Test', prediction 'Olmaz', zero evidence events across 5 cycles, links only to demo fixtures (demo-broken-api insight, hello-world-pr objective with 0 tasks). Still open at 50% confidence with no path to validation or invalidation. Has now been open for 5+ consecutive cycles without any status movement — this meets the chronic-open threshold (≥3 cycles). DECISION ASK: Retire or delete this thesis — it pollutes the Hypotheses board with no falsifiable hypothesis being tested and will never validate or invalidate in its current form.
 
-### CYCLE 4 · 2026-07-25
-Cycle 4 check (epoch 2026-07-25T17:56:43Z): No fresh evidence since the epoch (zero commits, zero lab syncs, zero completed tasks, zero objective movements). This remains a literal test artifact with claim 'Test', prediction 'Olmaz', zero evidence events, links only to demo fixtures. Still open at 50% confidence with no path to validation or invalidation. Decision ask re-raised: retire or delete this thesis — it pollutes the Hypotheses board with no falsifiable hypothesis being tested.
-
-### CONDENSED · 2026-08-26
-Condensed summary of 4 earlier cycles.
+### CONDENSED · 2026-08-29
+Condensed summary of 5 earlier cycles.

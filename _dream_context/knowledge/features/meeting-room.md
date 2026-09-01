@@ -11,7 +11,7 @@ pinned: false
 date: '2026-08-26'
 status: in_review
 created: '2026-08-26'
-updated: '2026-08-28'
+updated: '2026-08-29'
 released_version: null
 tags:
   - 'topic:desktop'
@@ -20,13 +20,6 @@ tags:
   - backend
 related_tasks:
   - meeting-room-hidden-launcher-chat-where-all-agents-convene
-  - >-
-    the-meeting-room-becomes-its-own-window-built-out-of-the-chat-with-one-global-model-pick-and-one-answer-per-agent
-  - >-
-    the-meeting-room-gets-its-own-byte-channel-so-a-dropped-or-pasted-file-reaches-every-agent
-  - a-coalesced-mention-must-still-reach-an-agent-whose-run-is-already-in-flight
-  - >-
-    meeting-room-addressing-is-not-summoning-a-thread-you-can-read-is-a-thread-you-can-answer-and-an-agent-may-wait
 ---
 
 ## Why
