@@ -4,6 +4,8 @@ import fg from 'fast-glob';
 import { readFrontmatter, writeFrontmatter } from '../frontmatter.js';
 import { today } from '../id.js';
 import { snapshotAsOf } from './matrix.js';
+import { parseRelativeRange } from './tweaks.js';
+import { readWindowCache, type WindowRange } from './window-cache.js';
 import { getInsight, insightPath, isSafeInsightSlug, readCache } from './store.js';
 import {
   LabError,
@@ -30,6 +32,14 @@ import {
 export const DATE_NAVS = ['none', 'daily', 'weekly', 'monthly'] as const;
 export type DateNav = (typeof DATE_NAVS)[number];
 
+/**
+ * A window spec on a report/section/item: `'own'` (keep the tile's own
+ * window — exempt from inheritance) or a relative range (`last_30_days`)
+ * anchored at the report's selected date. Most specific wins: item > section
+ * > report > the date_nav default (daily/weekly/monthly → 1/7/30 days).
+ */
+export type WindowSpec = 'own' | string;
+
 /** One insight reference inside a report section. */
 export interface ReportItem {
   /** The insight slug this item draws from. */
@@ -38,6 +48,8 @@ export interface ReportItem {
   view?: string;
   /** Optional breakdown view config (matrix insights): pivot axes + filter. */
   breakdown?: { rows?: string; cols?: string; filter?: Record<string, string> };
+  /** Pinned window ('own' or last_N_unit) — overrides the inherited one. */
+  window?: WindowSpec;
 }
 
 export interface ReportSection {
@@ -45,6 +57,8 @@ export interface ReportSection {
   /** Free prose above the section's charts. */
   prose?: string;
   items: ReportItem[];
+  /** Section-level window ('own' or last_N_unit) — overrides the report's. */
+  window?: WindowSpec;
 }
 
 export interface ReportManifest {
@@ -57,6 +71,12 @@ export interface ReportManifest {
   path: string;
   /** The `## Notes` prose. */
   notes: string;
+  /** Report default window ('own' or last_N_unit); absent → date_nav default. */
+  window?: WindowSpec;
+  /** AI commentary surface: `false` removes it entirely — a report without an
+   *  agent reading is first-class (owner, 2026-09-01). Absent/true = the
+   *  Analyze button is offered; nothing generates without an explicit click. */
+  commentary?: boolean;
 }
 
 export function reportsDir(contextRoot: string): string {
@@ -81,6 +101,14 @@ function toDateNav(v: unknown): DateNav {
   return (DATE_NAVS as readonly string[]).includes(s) ? (s as DateNav) : 'none';
 }
 
+/** LENIENT window-spec parse: 'own' or a valid relative range, else undefined. */
+function toWindowSpec(v: unknown): WindowSpec | undefined {
+  if (typeof v !== 'string') return undefined;
+  const s = v.trim();
+  if (s === 'own') return 'own';
+  return parseRelativeRange(s) !== null ? s : undefined;
+}
+
 /** LENIENT item parse: needs an insight slug, else null (skipped). */
 function parseItem(raw: unknown): ReportItem | null {
   const r = asRecord(raw);
@@ -89,6 +117,8 @@ function parseItem(raw: unknown): ReportItem | null {
   if (!insight) return null;
   const item: ReportItem = { insight };
   if (typeof r.view === 'string' && r.view.trim()) item.view = r.view.trim();
+  const windowSpec = toWindowSpec(r.window);
+  if (windowSpec) item.window = windowSpec;
   const breakdown = asRecord(r.breakdown);
   if (breakdown) {
     const b: ReportItem['breakdown'] = {};
@@ -117,6 +147,8 @@ export function parseSections(v: unknown): ReportSection[] {
     const section: ReportSection = { title, items };
     const prose = strOrNull(r.prose);
     if (prose) section.prose = prose;
+    const windowSpec = toWindowSpec(r.window);
+    if (windowSpec) section.window = windowSpec;
     out.push(section);
   }
   return out;
@@ -125,7 +157,7 @@ export function parseSections(v: unknown): ReportSection[] {
 export function readReportFile(filePath: string): ReportManifest {
   const { data, content } = readFrontmatter<Record<string, unknown>>(filePath);
   const slug = basename(filePath, '.md');
-  return {
+  const manifest: ReportManifest = {
     slug,
     title: typeof data.title === 'string' && data.title.trim() ? data.title : slug,
     description: strOrNull(data.description),
@@ -134,6 +166,10 @@ export function readReportFile(filePath: string): ReportManifest {
     path: filePath,
     notes: content.trim(),
   };
+  const windowSpec = toWindowSpec(data.window);
+  if (windowSpec) manifest.window = windowSpec;
+  if (data.commentary === false) manifest.commentary = false;
+  return manifest;
 }
 
 /** All reports, sorted by slug (stable). Missing directory → empty list. */
@@ -224,7 +260,74 @@ export function createReport(contextRoot: string, input: CreateReportInput): Rep
   return readReportFile(path);
 }
 
+// ─── Window inheritance (owner decision, 2026-09-01) ────────────────────────
+//
+// The report's date navigator IS its measurement window: the date_nav
+// granularity sets the default span (daily/weekly/monthly → the 1/7/30 days
+// ending at the selected date; live = ending today), and every item measures
+// that period unless a report/section/item `window` spec says otherwise.
+// `'own'` opts an item out (the tile keeps its own window and SAYS so).
+
+const DAY_MS = 86_400_000;
+
+/** The date_nav default span in days (none → no inheritance). */
+const NAV_SPAN_DAYS: Record<DateNav, number | null> = {
+  none: null,
+  daily: 1,
+  weekly: 7,
+  monthly: 30,
+};
+
+function isoMinusDays(toISO: string, days: number): string {
+  return new Date(Date.parse(`${toISO}T00:00:00Z`) - days * DAY_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * The concrete window one item should measure over, or null = 'own' (keep the
+ * tile's window). Most specific spec wins: item > section > a view-time CUSTOM
+ * range (the navigator's free from→to) > report > nav default. `anchorISO` =
+ * the selected date (or today for live). A custom range deliberately loses to
+ * item/section pins — a lagging metric pinned to 30 days stays pinned — but
+ * beats the report default: it IS the reader's explicit window ask.
+ */
+export function reportTargetWindow(
+  report: Pick<ReportManifest, 'date_nav' | 'window'>,
+  section: Pick<ReportSection, 'window'>,
+  item: Pick<ReportItem, 'window'>,
+  anchorISO: string,
+  custom: WindowRange | null = null,
+): WindowRange | null {
+  const pinned = item.window ?? section.window;
+  if (pinned === 'own') return null;
+  if (pinned) {
+    const span = parseRelativeRange(pinned);
+    return span === null ? null : { fromISO: isoMinusDays(anchorISO, span), toISO: anchorISO };
+  }
+  if (custom) return custom;
+  const navSpan = NAV_SPAN_DAYS[report.date_nav];
+  const spec = report.window ?? (navSpan !== null ? `last_${navSpan}_days` : 'own');
+  if (spec === 'own') return null;
+  const span = parseRelativeRange(spec);
+  if (span === null) return null;
+  return { fromISO: isoMinusDays(anchorISO, span), toISO: anchorISO };
+}
+
 // ─── Date resolution (shared by the API and `lab report show`) ──────────────
+
+/** How one item's shown data relates to its target window. */
+export type WindowStatus =
+  /** No target (spec 'own' / date_nav none): the tile's own window, today's behavior. */
+  | 'own'
+  /** The canonical cache already measures exactly the target window — no extra fetch. */
+  | 'aligned'
+  /** Served from a fresh transient window-cache measurement. */
+  | 'window'
+  /** A window-cache entry exists but is past the insight's TTL — shown, refetch due. */
+  | 'stale'
+  /** No measurement for this window yet — a window sync is needed. */
+  | 'missing'
+  /** The insight has no source (manual tile) — it cannot re-measure a window. */
+  | 'cannot';
 
 /** What one report item resolves to for a given date (or live, date=null). */
 export interface ResolvedReportItem {
@@ -246,6 +349,48 @@ export interface ResolvedReportItem {
   funnelSnapshot: FunnelSnapshot | null;
   /** Live cache — attached only when resolving WITHOUT a date. */
   cache: InsightCache | null;
+  /**
+   * The measurement window of the SHOWN data, or null when the source recorded
+   * none. Honesty rules: the engine's silent 30-day default is NEVER reported
+   * as a window (no declaration = null), and a dated series event carries no
+   * window at all — the current tweak must not relabel history (the tweak may
+   * have changed since; see the 2026-08-31 window-mix report).
+   */
+  window: { fromISO: string; toISO: string } | null;
+  /** The `range` tweak value that produced the live cache (e.g. `last_7_days`), or null. */
+  rangeKey: string | null;
+  /** The window this item SHOULD measure (inheritance), or null = 'own'. */
+  targetWindow: WindowRange | null;
+  /** How the shown data relates to the target window. */
+  windowStatus: WindowStatus;
+}
+
+function isCalendarDate(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+}
+
+/**
+ * Derive the live cache's measurement window from the tweak values that
+ * produced it: explicit `from`/`to` win, else a relative `range` anchored at
+ * the cache's own fetch date (the window ended when the sync ran, not today).
+ * No declaration → null — never the engine's fallback span.
+ */
+export function windowFromTweaks(
+  tweaks: Record<string, string> | undefined,
+  fetchedAt: string,
+): { fromISO: string; toISO: string } | null {
+  if (!tweaks) return null;
+  const from = typeof tweaks.from === 'string' ? tweaks.from.trim() : '';
+  const to = typeof tweaks.to === 'string' ? tweaks.to.trim() : '';
+  if (isCalendarDate(from) && isCalendarDate(to)) return { fromISO: from, toISO: to };
+  const rangeVal = typeof tweaks.range === 'string' ? tweaks.range.trim() : '';
+  const span = rangeVal ? parseRelativeRange(rangeVal) : null;
+  if (span === null) return null;
+  const anchor = Date.parse(fetchedAt);
+  if (!Number.isFinite(anchor)) return null;
+  const toISO = new Date(anchor).toISOString().slice(0, 10);
+  const fromISO = new Date(Date.parse(`${toISO}T00:00:00Z`) - span * 86_400_000).toISOString().slice(0, 10);
+  return { fromISO, toISO };
 }
 
 /** The newest ok sync event at/before the end of `date`, or null. */
@@ -277,11 +422,44 @@ function funnelSnapshotAsOf(history: FunnelSnapshot[] | undefined, date: string)
   return best;
 }
 
-/** Resolve one item: live (date=null) or as-of a calendar date (YYYY-MM-DD). */
+/** The measurement window a cache's data covers (typed range first, else tweaks). */
+function cacheShownWindow(cache: InsightCache): WindowRange | null {
+  return (
+    cache.matrix?.range ??
+    cache.funnel?.range ??
+    cache.datasets?.range ??
+    cache.app?.range ??
+    windowFromTweaks(cache.tweaks, cache.fetchedAt)
+  );
+}
+
+function sameWindow(a: WindowRange | null, b: WindowRange | null): boolean {
+  return !!a && !!b && a.fromISO === b.fromISO && a.toISO === b.toISO;
+}
+
+/** Fill the live-cache fields of a resolved item from one cache object. */
+function fillFromCache(base: ResolvedReportItem, cache: InsightCache): void {
+  base.cache = cache;
+  base.asOf = cache.fetchedAt || null;
+  base.latest = cache.latest;
+  base.matrixSnapshot = cache.matrixHistory ? cache.matrixHistory[cache.matrixHistory.length - 1] ?? null : null;
+  base.rangeKey = typeof cache.tweaks?.range === 'string' && cache.tweaks.range.trim() ? cache.tweaks.range.trim() : null;
+  base.window = cacheShownWindow(cache);
+}
+
+/**
+ * Resolve one item: live (date=null) or as-of a calendar date (YYYY-MM-DD).
+ * `target` is the inherited measurement window (null = 'own' — the tile's own
+ * window, the pre-inheritance behavior). Priority with a target: canonical
+ * cache already aligned → transient window cache (fresh, then stale) →
+ * missing (a window sync is owed). A source-less insight cannot re-measure —
+ * it falls back to its own resolution and says so.
+ */
 export function resolveReportItem(
   contextRoot: string,
   item: ReportItem,
   date: string | null,
+  target: WindowRange | null = null,
 ): ResolvedReportItem {
   const manifest: InsightManifest | null = getInsight(contextRoot, item.insight);
   const base: ResolvedReportItem = {
@@ -297,33 +475,70 @@ export function resolveReportItem(
     matrixSnapshot: null,
     funnelSnapshot: null,
     cache: null,
+    window: null,
+    rangeKey: null,
+    targetWindow: target,
+    windowStatus: target ? 'missing' : 'own',
   };
   if (!manifest) return base;
 
   const cache = readCache(contextRoot, item.insight);
+
+  if (target) {
+    if (!manifest.source) {
+      // A manual tile has nothing to fetch — it keeps its own window, honestly.
+      base.windowStatus = 'cannot';
+      base.targetWindow = target;
+    } else {
+      // 1. The canonical cache may already measure exactly the target window
+      //    (the aligned live case) — no extra fetch, no duplicate storage.
+      if (cache && sameWindow(cacheShownWindow(cache), target)) {
+        fillFromCache(base, cache);
+        base.windowStatus = 'aligned';
+        return base;
+      }
+      // 2. The transient window cache.
+      const winCache = readWindowCache(contextRoot, item.insight, target);
+      if (winCache) {
+        fillFromCache(base, winCache);
+        const ageMin = (Date.now() - Date.parse(winCache.fetchedAt)) / 60_000;
+        base.windowStatus =
+          Number.isFinite(ageMin) && ageMin >= 0 && ageMin < manifest.refresh.ttl_minutes
+            ? 'window'
+            : 'stale';
+        return base;
+      }
+      // 3. Nothing measured for this window yet — the honest empty until the
+      //    window sync lands (never a silently substituted other window).
+      base.windowStatus = 'missing';
+      return base;
+    }
+  }
+
   if (!cache) return base;
 
   if (date === null) {
-    // Live: the current cache, stamped with its own fetch time.
-    base.cache = cache;
-    base.asOf = cache.fetchedAt || null;
-    base.latest = cache.latest;
-    base.matrixSnapshot = cache.matrixHistory ? cache.matrixHistory[cache.matrixHistory.length - 1] ?? null : null;
+    // Live ('own' and manual-tile fallback both land here): the current
+    // cache, stamped with its own fetch time.
+    fillFromCache(base, cache);
     return base;
   }
 
-  // Dated: the latest snapshot AT OR BEFORE the end of that date — per source.
+  // Dated 'own' (and the manual tile's dated fallback): the latest snapshot
+  // AT OR BEFORE the end of that date — per source.
   const matrixSnap = snapshotAsOf(cache.matrixHistory, date);
   if (matrixSnap) {
     base.matrixSnapshot = matrixSnap;
     base.asOf = matrixSnap.at;
     base.latest = matrixSnap.total?.v ?? null;
+    base.window = matrixSnap.range ?? null;
     return base;
   }
   const funnelSnap = funnelSnapshotAsOf(cache.funnelHistory, date);
   if (funnelSnap) {
     base.funnelSnapshot = funnelSnap;
     base.asOf = funnelSnap.at;
+    base.window = funnelSnap.range ?? null;
     return base;
   }
   const event = latestEventAsOf(cache, date);
@@ -341,17 +556,42 @@ export interface ResolvedReportSection {
   items: ResolvedReportItem[];
 }
 
-/** Resolve a whole report for a date (null = live). */
+/** Resolve a whole report for a date (null = live), with window inheritance:
+ *  each item gets its target window (item > section > custom > report > nav
+ *  default) anchored at the selected date (or today). `customFrom` is the
+ *  navigator's free range start — with the anchor date it forms an explicit
+ *  from→to window for every non-pinned item. */
 export function resolveReport(
   contextRoot: string,
   report: ReportManifest,
   date: string | null,
+  customFrom: string | null = null,
 ): ResolvedReportSection[] {
+  const anchor = date ?? today();
+  const custom: WindowRange | null =
+    customFrom && customFrom <= anchor ? { fromISO: customFrom, toISO: anchor } : null;
   return report.sections.map((section) => ({
     title: section.title,
     prose: section.prose ?? null,
-    items: section.items.map((item) => resolveReportItem(contextRoot, item, date)),
+    items: section.items.map((item) =>
+      resolveReportItem(contextRoot, item, date, reportTargetWindow(report, section, item, anchor, custom)),
+    ),
   }));
+}
+
+/** The window syncs a resolved report still owes: slug → target window for
+ *  every missing/stale item (first window wins on a rare duplicate slug — the
+ *  caller re-plans after the job settles, so the second one lands next). */
+export function reportWindowPlan(sections: ResolvedReportSection[]): Record<string, WindowRange> {
+  const plan: Record<string, WindowRange> = {};
+  for (const section of sections) {
+    for (const item of section.items) {
+      if (item.missing || !item.targetWindow) continue;
+      if (item.windowStatus !== 'missing' && item.windowStatus !== 'stale') continue;
+      if (!plan[item.insight]) plan[item.insight] = item.targetWindow;
+    }
+  }
+  return plan;
 }
 
 /** Every distinct insight slug a report references (the sync-job subset). */

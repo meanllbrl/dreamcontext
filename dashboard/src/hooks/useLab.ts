@@ -200,6 +200,8 @@ export interface LabSyncJob {
   error: string | null;
   /** The slugs the run is scoped to (a report's subset), or null = whole board. */
   slugs: string[] | null;
+  /** Per-slug transient window overrides (report window inheritance), or null. */
+  windows: Record<string, { fromISO: string; toISO: string }> | null;
   /** The insight that settled most recently ("now syncing …" copy). */
   current: string | null;
 }
@@ -223,10 +225,15 @@ export function useStartLabSyncJob() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    mutationFn: (opts: { force?: boolean; slugs?: string[] } = {}) =>
+    mutationFn: (opts: {
+      force?: boolean;
+      slugs?: string[];
+      windows?: Record<string, { fromISO: string; toISO: string }>;
+    } = {}) =>
       api.post<{ job: LabSyncJob; started: boolean }>('/lab/sync-jobs', {
         force: opts.force !== false,
         ...(opts.slugs ? { slugs: opts.slugs } : {}),
+        ...(opts.windows ? { windows: opts.windows } : {}),
       }),
     onSuccess: (d) => {
       // Seed the poll cache so the progress chip appears immediately (no 800ms gap).
@@ -263,6 +270,15 @@ export interface ResolvedReportItem {
   funnelSnapshot: FunnelSnapshot | null;
   /** Live cache — only when resolving WITHOUT a date. */
   cache: InsightCache | null;
+  /** Measurement window of the SHOWN data, or null = none recorded (honest;
+   *  never the engine's silent default, never today's tweak relabeling history). */
+  window: { fromISO: string; toISO: string } | null;
+  /** The `range` tweak value behind the live cache (e.g. `last_7_days`), or null. */
+  rangeKey: string | null;
+  /** The window this item SHOULD measure (report inheritance), or null = 'own'. */
+  targetWindow: { fromISO: string; toISO: string } | null;
+  /** How the shown data relates to the target window. */
+  windowStatus: 'own' | 'aligned' | 'window' | 'stale' | 'missing' | 'cannot';
 }
 
 export interface ResolvedReportSection {
@@ -278,10 +294,64 @@ export interface ReportDetail {
     description: string | null;
     date_nav: ReportSummary['date_nav'];
     notes: string;
+    /** False = the report opted out of AI commentary (non-AI reports are
+     *  first-class); absent (older servers) = enabled. */
+    commentaryEnabled?: boolean;
   };
   /** The resolved-to date, or null = live. */
   date: string | null;
   sections: ResolvedReportSection[];
+}
+
+/** The stored AI commentary of one report view, or null. */
+export interface ReportCommentary {
+  slug: string;
+  dateKey: string;
+  generatedAt: string;
+  model: string;
+  body: string;
+}
+
+export interface ReportCommentaryJob {
+  id: string;
+  slug: string;
+  dateKey: string;
+  status: 'running' | 'success' | 'error';
+  startedAt: number;
+  finishedAt: number | null;
+  error: string | null;
+  commentary: ReportCommentary | null;
+}
+
+export function useLabReportCommentary(slug: string | null, date: string | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['lab-report-commentary', slug, date],
+    queryFn: () =>
+      api.get<{ commentary: ReportCommentary | null; job: ReportCommentaryJob | null }>(
+        `/lab/reports/${slug}/commentary${date ? `?date=${date}` : ''}`,
+      ),
+    enabled: !!slug,
+    // Poll while a generation runs; idle otherwise.
+    refetchInterval: (query) => (query.state.data?.job?.status === 'running' ? 1200 : false),
+    retry: 0,
+  });
+}
+
+/** Start (or adopt) the commentary generation for a report view. */
+export function useStartLabReportCommentary() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ slug, date, from }: { slug: string; date: string | null; from?: string | null }) =>
+      api.post<{ job: ReportCommentaryJob; started: boolean }>(
+        `/lab/reports/${slug}/commentary`,
+        { ...(date ? { date } : {}), ...(from ? { from } : {}) },
+      ),
+    onSuccess: (_d, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['lab-report-commentary', vars.slug, vars.date] });
+    },
+  });
 }
 
 export function useLabReports() {
@@ -293,11 +363,15 @@ export function useLabReports() {
   });
 }
 
-export function useLabReport(slug: string | null, date: string | null) {
+export function useLabReport(slug: string | null, date: string | null, from: string | null = null) {
   const api = useApi();
+  const params = new URLSearchParams();
+  if (date) params.set('date', date);
+  if (from) params.set('from', from);
+  const qs = params.toString();
   return useQuery({
-    queryKey: ['lab-report', slug, date],
-    queryFn: () => api.get<ReportDetail>(`/lab/reports/${slug}${date ? `?date=${date}` : ''}`),
+    queryKey: ['lab-report', slug, date, from],
+    queryFn: () => api.get<ReportDetail>(`/lab/reports/${slug}${qs ? `?${qs}` : ''}`),
     enabled: !!slug,
     retry: 0,
   });

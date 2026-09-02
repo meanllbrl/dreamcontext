@@ -83,6 +83,8 @@ import {
   handleLabCredentialsSet,
   handleLabReportsList,
   handleLabReportShow,
+  handleLabReportCommentaryGet,
+  handleLabReportCommentaryStart,
 } from './routes/lab.js';
 import {
   handleAutomationsList,
@@ -501,6 +503,9 @@ export function buildRouter(): Router {
   // Reports before `/api/lab/:slug` — first match wins within a method, and
   // `/api/lab/reports` must never be read as an insight named "reports".
   router.get('/api/lab/reports', handleLabReportsList);
+  // Commentary before the bare :slug reads — first match wins within a method.
+  router.get('/api/lab/reports/:slug/commentary', handleLabReportCommentaryGet);
+  router.post('/api/lab/reports/:slug/commentary', handleLabReportCommentaryStart);
   router.get('/api/lab/reports/:slug', handleLabReportShow);
   router.get('/api/lab/:slug', handleLabShow);
   router.patch('/api/lab/:slug/tweaks', handleLabTweaks);

@@ -1,137 +1,348 @@
-/* My Reports page — full-width sections over chartRegistry bodies, honest
-   date navigation, and a print stylesheet (browser print → PDF is the export). */
+/* My Reports — the dreamcontext Reports template.
+   A branded document sheet: masthead wordmark + gradient rule, display-face
+   title, designed sections, stat-grid items with window chips, a signing
+   footer, and a print stylesheet (browser print → PDF is the export).
+   Every value rides tokens.css — no hardcoded colors. */
 
 .report-page {
   height: 100%;
   overflow-y: auto;
-  padding: 16px 24px 48px;
-  max-width: 980px;
-  margin: 0 auto;
+  padding: var(--space-4) var(--space-6) var(--space-12);
 }
 
 .report-loading,
 .report-empty {
   color: var(--color-text-tertiary);
-  font-size: 13px;
-  padding: 18px 0;
+  font-size: var(--font-size-xs);
+  padding: var(--space-3) 0;
 }
+
+/* ── Toolbar (app chrome — never printed) ── */
 
 .report-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
+  gap: var(--space-2);
+  max-width: 920px;
+  margin: 0 auto var(--space-3);
 }
 
 .report-spacer { flex: 1; }
 
 .report-back,
 .report-action {
-  padding: 4px 10px;
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 600;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
   border: 1px solid var(--color-border);
   background: transparent;
   color: var(--color-text-secondary);
+  transition: color var(--transition-fast), border-color var(--transition-fast);
 }
 .report-back:hover,
 .report-action:hover:not(:disabled) {
   color: var(--color-text);
   border-color: var(--color-border-hover);
 }
+.report-back:focus-visible,
+.report-action:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-glow);
+}
 .report-action:disabled { opacity: 0.45; cursor: default; }
 
 .report-sync-status {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-accent);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
-.report-title {
-  font-size: 22px;
-  font-weight: 700;
+/* ── The document sheet ── */
+
+.report-sheet {
+  max-width: 920px;
+  margin: 0 auto;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-8) var(--space-10) var(--space-8);
+}
+
+/* ── Masthead — the line that signs the document as dreamcontext's ── */
+
+.report-masthead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.report-mark {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--gradient-brand);
+  flex-shrink: 0;
+}
+
+.report-logotype {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.02em;
   color: var(--color-text);
-  margin: 4px 0 2px;
+}
+
+.report-kicker {
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  margin-left: var(--space-1);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--color-border);
+}
+
+.report-mast-meta {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.report-rule {
+  height: 2px;
+  border-radius: 2px;
+  background: var(--gradient-brand);
+  margin-bottom: var(--space-6);
+}
+
+/* ── Title block ── */
+
+.report-title {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--letter-spacing-subheading);
+  line-height: var(--line-height-heading-sm);
+  color: var(--color-text);
+  margin: 0 0 var(--space-2);
 }
 
 .report-desc {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
   color: var(--color-text-secondary);
-  margin-bottom: 10px;
+  margin: 0 0 var(--space-3);
+  max-width: 64ch;
 }
+
+.report-metaline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+/* ── Chips (the .lab-badge pair: subtle bg + toned text, no border) ── */
+
+.report-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+}
+.report-chip--accent,
+.report-chip--known {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+.report-chip--none,
+.report-chip--unknown {
+  color: var(--color-warning);
+  background: var(--color-warning-subtle);
+}
+
+/* ── Date navigator (chrome — never printed) ── */
 
 .report-datenav {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 8px 0 16px;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
 }
 
 .report-date-input {
-  padding: 3px 8px;
-  border-radius: 7px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
-  background: var(--color-bg-secondary);
+  background: var(--color-bg);
   color: var(--color-text);
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--font-size-xs);
 }
 
 .report-date-hint {
-  font-size: 11.5px;
+  font-size: var(--font-size-2xs);
   color: var(--color-text-tertiary);
 }
 
-.report-section { margin: 18px 0; }
+/* ── AI commentary — interpretation on top of the data, visually its own
+     voice: brand-tinted surface, always labelled generated. ── */
 
-.report-section-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--color-text);
-  margin: 0 0 6px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--color-border);
+.report-commentary {
+  background: var(--gradient-brand-subtle);
+  border: 1px solid var(--color-accent-soft);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  margin: 0 0 var(--space-4);
 }
 
-.report-section-prose {
-  font-size: 12.5px;
+.report-commentary-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.report-commentary-kicker {
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.report-commentary-body {
+  margin-top: var(--space-2);
+  font-size: var(--font-size-xs);
+  line-height: 1.65;
   color: var(--color-text-secondary);
-  margin: 0 0 10px;
+  max-width: 76ch;
+}
+.report-commentary-body p { margin: 0 0 var(--space-2); }
+.report-commentary-body strong { color: var(--color-text); }
+.report-commentary-body code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Sections ── */
+
+.report-section { margin: var(--space-8) 0 0; }
+
+.report-section-title {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.01em;
+  line-height: var(--line-height-heading-sm);
+  color: var(--color-text);
+  margin: 0 0 var(--space-2);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--color-border);
+}
+
+.report-mix-warn {
+  border: 1px solid var(--color-warning);
+  background: var(--color-warning-subtle);
+  color: var(--color-text);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  margin: 0 0 var(--space-3);
+}
+
+/* The section's reading voice — a note panel, not a text wall. */
+.report-section-prose {
+  background: var(--color-bg-tertiary);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-xs);
+  line-height: 1.65;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--space-4);
+  max-width: 76ch;
+}
+.report-section-prose strong { color: var(--color-text); }
+.report-section-prose code,
+.report-notes-body code,
+.report-item--missing code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Items: stat cards pack into a grid, chart cards run full width ── */
+
+.report-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
 }
 
 .report-item {
-  margin: 12px 0 18px;
+  flex: 1 1 100%;
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  padding: var(--space-3) var(--space-4);
+}
+
+.report-item--stat { flex: 1 1 236px; }
+
+.report-item--missing {
+  border-color: var(--color-error);
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+}
+
+.report-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
 }
 
 .report-item-title {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text);
-  margin-bottom: 6px;
+  min-width: 0;
 }
 
-.report-item--missing {
-  padding: 10px 12px;
-  border: 1px solid var(--color-error-subtle, var(--color-border));
-  border-radius: 8px;
-  color: var(--color-error);
-  font-size: 12.5px;
-}
-.report-item--missing code {
-  font-family: var(--font-mono);
-}
+.report-item-head .report-chip { margin-left: auto; }
+
+.report-item-body { min-width: 0; }
 
 .report-asof {
-  margin-top: 4px;
-  font-size: 11px;
+  margin-top: var(--space-2);
+  font-size: var(--font-size-2xs);
   color: var(--color-text-tertiary);
 }
 
+.report-window-failed { color: var(--color-error); }
+
 .report-skeleton {
   height: 96px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: linear-gradient(
     100deg,
     var(--color-bg-tertiary) 40%,
@@ -142,53 +353,83 @@
   animation: report-shimmer 1.4s ease-in-out infinite;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .report-skeleton { animation: none; }
+}
+
 @keyframes report-shimmer {
   from { background-position: 120% 0; }
   to { background-position: -80% 0; }
 }
 
+/* The NumberCard idiom: display face, tight tracking, tabular digits. */
 .report-big-number {
-  font-family: var(--font-mono);
-  font-size: 28px;
-  font-weight: 700;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
   color: var(--color-text);
 }
 
 .report-funnel-snap {
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .report-mini-table {
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 .report-mini-table th {
   text-align: left;
-  padding: 5px 10px;
-  font-weight: 600;
+  padding: var(--space-1) var(--space-3);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text-secondary);
   background: var(--color-bg-tertiary);
 }
 .report-mini-table td {
-  padding: 4px 10px;
+  padding: var(--space-1) var(--space-3);
   border-top: 1px solid var(--color-border);
   color: var(--color-text);
 }
-.report-num { text-align: right; font-family: var(--font-mono); }
-
-.report-notes {
-  border-top: 1px solid var(--color-border);
-  padding-top: 10px;
+.report-num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
+
+/* ── Notes ── */
+
 .report-notes-body {
-  white-space: pre-wrap;
-  font-size: 12.5px;
+  font-size: var(--font-size-xs);
+  line-height: 1.65;
   color: var(--color-text-secondary);
+  max-width: 76ch;
+}
+.report-notes-body p { margin: 0 0 var(--space-3); }
+.report-notes-body strong { color: var(--color-text); }
+
+/* ── Footer — the document signs itself ── */
+
+.report-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-12);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.report-foot .report-mark {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
 }
 
 /* ── Print (browser print → PDF is the report's PDF export) ── */
@@ -197,9 +438,21 @@
   .report-page {
     overflow: visible;
     height: auto;
-    max-width: none;
     padding: 0;
   }
-  .report-section { break-inside: avoid; }
+  .report-sheet {
+    max-width: none;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+    padding: 0;
+  }
+  .report-mark,
+  .report-rule {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .report-section,
+  .report-item { break-inside: avoid; }
   .report-skeleton { display: none; }
 }

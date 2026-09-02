@@ -11,7 +11,10 @@ import { resolveTweaks } from '../../lib/lab/tweaks.js';
 import { computeFunnelPrev } from '../../lib/lab/funnel.js';
 import { bindInsight, syncInsight, syncAll } from '../../lib/lab/sync.js';
 import { currentLabSyncJob, startLabSyncJob } from '../lab-sync-job.js';
+import { currentLabCommentaryJob, startLabCommentaryJob } from '../lab-commentary-job.js';
+import { readReportCommentary, commentaryDateKey } from '../../lib/lab/report-commentary.js';
 import { getReport, listReports, resolveReport } from '../../lib/lab/reports-store.js';
+import { isValidWindow, type WindowRange } from '../../lib/lab/window-cache.js';
 import { readCredentials, redactSecrets, writeCredential } from '../../lib/lab/credentials.js';
 import { requiredCredentialKeys } from '../../lib/lab/required-credentials.js';
 import { LabError, type Binding, type InsightCache, type InsightManifest } from '../../lib/lab/types.js';
@@ -197,8 +200,28 @@ export async function handleLabSyncJobStart(
         return;
       }
     }
+    // Optional `windows` maps slug → {fromISO,toISO}: those slugs sync into the
+    // TRANSIENT window cache (report window inheritance) — never the canonical
+    // one, never a KR. Shape-validated here; sync.ts re-validates the dates.
+    let windows: Record<string, WindowRange> | undefined;
+    if (body.windows !== undefined) {
+      const raw = body.windows;
+      const isRecord = raw && typeof raw === 'object' && !Array.isArray(raw);
+      const entries = isRecord ? Object.entries(raw as Record<string, unknown>) : [];
+      const valid = isRecord && entries.length > 0 && entries.every(([, w]) =>
+        w && typeof w === 'object'
+        && isValidWindow(w as WindowRange));
+      if (!valid) {
+        sendError(res, 400, 'invalid_windows', '`windows` must map insight slugs to { fromISO, toISO } day windows (from ≤ to).');
+        return;
+      }
+      windows = Object.fromEntries(entries.map(([slug, w]) => {
+        const win = w as WindowRange;
+        return [slug.trim(), { fromISO: win.fromISO, toISO: win.toISO }];
+      }));
+    }
     // Default force:true — pressing Sync all IS the explicit "refetch now".
-    const { job, started } = startLabSyncJob(contextRoot, { force: body.force !== false, slugs });
+    const { job, started } = startLabSyncJob(contextRoot, { force: body.force !== false, slugs, windows });
     sendJson(res, 200, { job, started });
   } catch (err) {
     console.error('[lab] sync job start failed:', err);
@@ -256,6 +279,17 @@ export async function handleLabReportShow(
       }
       date = rawDate;
     }
+    // Optional free-range start: with the (date ?? today) anchor it forms an
+    // explicit from→to window for every non-pinned item.
+    const rawFrom = url.searchParams.get('from');
+    let from: string | null = null;
+    if (rawFrom !== null && rawFrom !== '') {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(rawFrom) || Number.isNaN(Date.parse(`${rawFrom}T00:00:00Z`))) {
+        sendError(res, 400, 'invalid_from', '`from` must be a valid YYYY-MM-DD date.');
+        return;
+      }
+      from = rawFrom;
+    }
     sendJson(res, 200, {
       report: {
         slug: report.slug,
@@ -263,14 +297,92 @@ export async function handleLabReportShow(
         description: report.description,
         date_nav: report.date_nav,
         notes: report.notes,
+        commentaryEnabled: report.commentary !== false,
       },
       date,
-      sections: resolveReport(contextRoot, report, date),
+      from,
+      sections: resolveReport(contextRoot, report, date, from),
     });
   } catch (err) {
     console.error('[lab] report show failed:', err);
     sendError(res, 500, 'report_failed', 'Failed to read the report.');
   }
+}
+
+/** Parse + validate the optional `date` query/body value ('' → null). */
+function parseReportDate(raw: unknown): { ok: true; date: string | null } | { ok: false } {
+  if (raw === undefined || raw === null || raw === '') return { ok: true, date: null };
+  if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw) || Number.isNaN(Date.parse(`${raw}T00:00:00Z`))) {
+    return { ok: false };
+  }
+  return { ok: true, date: raw };
+}
+
+/**
+ * GET /api/lab/reports/:slug/commentary?date= — the stored commentary for that
+ * report view (or null) plus the current generation job (or null).
+ */
+export async function handleLabReportCommentaryGet(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const report = getReport(contextRoot, params.slug);
+  if (!report) {
+    sendError(res, 404, 'not_found', `Report not found: ${params.slug}`);
+    return;
+  }
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  const parsed = parseReportDate(url.searchParams.get('date'));
+  if (!parsed.ok) {
+    sendError(res, 400, 'invalid_date', '`date` must be a valid YYYY-MM-DD date.');
+    return;
+  }
+  sendJson(res, 200, {
+    commentary: readReportCommentary(contextRoot, params.slug, commentaryDateKey(parsed.date)),
+    job: currentLabCommentaryJob(contextRoot, params.slug, parsed.date),
+  });
+}
+
+/**
+ * POST /api/lab/reports/:slug/commentary { date? } — START (or adopt) a
+ * commentary generation for that view. The run is a headless pure-text
+ * `claude -p`; the server writes the dated commentary file. 409 when the
+ * report opted out (`commentary: false` — non-AI reports are first-class).
+ */
+export async function handleLabReportCommentaryStart(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const report = getReport(contextRoot, params.slug);
+  if (!report) {
+    sendError(res, 404, 'not_found', `Report not found: ${params.slug}`);
+    return;
+  }
+  if (report.commentary === false) {
+    sendError(res, 409, 'commentary_disabled', 'This report has commentary disabled (commentary: false).');
+    return;
+  }
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  const parsed = parseReportDate(body.date);
+  if (!parsed.ok) {
+    sendError(res, 400, 'invalid_date', '`date` must be a valid YYYY-MM-DD date.');
+    return;
+  }
+  const parsedFrom = parseReportDate(body.from);
+  if (!parsedFrom.ok) {
+    sendError(res, 400, 'invalid_from', '`from` must be a valid YYYY-MM-DD date.');
+    return;
+  }
+  const { job, started } = startLabCommentaryJob(contextRoot, params.slug, parsed.date, {}, parsedFrom.date);
+  sendJson(res, 200, { job, started });
 }
 
 /** GET /api/lab/sync-jobs/current — the live (or last settled) bulk-sync job, or null. */

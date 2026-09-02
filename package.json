@@ -56,6 +56,7 @@
     "verify:hypotheses": "node scripts/verify/hypotheses-ui.mjs",
     "verify:lab-board": "node scripts/verify/lab-board.mjs",
     "verify:lab-breakdown-reports": "node scripts/verify/lab-breakdown-reports.mjs",
+    "verify:lab-report-template": "node scripts/verify/lab-report-template.mjs",
     "verify:project-tabs": "node scripts/verify/project-tabs.mjs",
     "verify:project-chip-status": "node scripts/verify/project-chip-status.mjs",
     "verify:automations": "node scripts/verify/automations.mjs",

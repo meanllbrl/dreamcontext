@@ -11,7 +11,8 @@ import { writeCredential, listCredentialNames } from '../../lib/lab/credentials.
 import { gitignoreCovers } from '../../lib/gitignore.js';
 import { computeFunnelPrev, computeStepRows, worstDropIndex } from '../../lib/lab/funnel.js';
 import { dimLabel, dimValues, pivotCell, MATRIX_LOW_SAMPLE_THRESHOLD, MATRIX_SET_KIND } from '../../lib/lab/matrix.js';
-import { createReport, getReport, listReports, resolveReport, DATE_NAVS, type DateNav } from '../../lib/lab/reports-store.js';
+import { createReport, getReport, listReports, reportWindowPlan, resolveReport, DATE_NAVS, type DateNav } from '../../lib/lab/reports-store.js';
+import { generateReportCommentary } from '../../lib/lab/report-commentary.js';
 import { findAppPage } from '../../lib/lab/app.js';
 import { queryDataset, resolveDatasetAsOf, type DatasetQuery } from '../../lib/lab/datasetQuery.js';
 import { htmlToText } from '../../lib/lab/htmlText.js';
@@ -585,10 +586,11 @@ export function registerLabCommand(program: Command): void {
   report
     .command('show')
     .argument('<slug>', 'Report slug')
-    .description('Show a report with every item resolved (optionally as of a date)')
-    .option('--date <date>', 'Resolve to the latest snapshot at/before this YYYY-MM-DD date')
+    .description('Show a report with every item resolved (optionally as of a date / over a custom from→to window)')
+    .option('--date <date>', 'The window END (YYYY-MM-DD; default today for live)')
+    .option('--from <date>', 'Free-range window START — with --date (or today) it overrides the default window for every non-pinned item')
     .option('--json', 'Emit as JSON')
-    .action((slug: string, opts: { date?: string; json?: boolean }) => {
+    .action((slug: string, opts: { date?: string; from?: string; json?: boolean }) => {
       const root = ensureContextRoot();
       const manifest = getReport(root, slug);
       if (!manifest) {
@@ -602,9 +604,15 @@ export function registerLabCommand(program: Command): void {
         process.exitCode = 1;
         return;
       }
-      const sections = resolveReport(root, manifest, date);
+      const from = opts.from ?? null;
+      if (from !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(from) || Number.isNaN(Date.parse(`${from}T00:00:00Z`)))) {
+        error(`--from must be a valid YYYY-MM-DD date (got "${from}").`);
+        process.exitCode = 1;
+        return;
+      }
+      const sections = resolveReport(root, manifest, date, from);
       if (opts.json) {
-        console.log(JSON.stringify({ report: manifest, date, sections }, null, 2));
+        console.log(JSON.stringify({ report: manifest, date, from, sections }, null, 2));
         return;
       }
       console.log(header(`Report: ${manifest.title}`));
@@ -620,16 +628,122 @@ export function registerLabCommand(program: Command): void {
             continue;
           }
           if (item.asOf === null) {
-            console.log(chalk.dim(`    ${item.insight}: no snapshot at/before this date — nothing to show (no interpolation).`));
+            if (item.targetWindow && (item.windowStatus === 'missing' || item.windowStatus === 'stale')) {
+              console.log(chalk.dim(`    ${item.insight}: window ${item.targetWindow.fromISO}→${item.targetWindow.toISO} not measured yet — dreamcontext lab report sync ${slug}${date ? ` --date ${date}` : ''}`));
+            } else {
+              console.log(chalk.dim(`    ${item.insight}: no snapshot at/before this date — nothing to show (no interpolation).`));
+            }
             continue;
           }
           const latest = item.latest !== null ? ` · ${item.latest}${item.unit ? ` ${item.unit}` : ''}` : '';
-          console.log(`    ${item.title ?? item.insight}${latest} ${chalk.dim(`as of ${item.asOf}`)}`);
+          // Window honesty: name the measurement window — or say plainly that
+          // there is none ("no declared window") / that history recorded none.
+          const window = item.window
+            ? `window ${item.window.fromISO}→${item.window.toISO}`
+            : date !== null
+              ? 'window unknown'
+              : 'no declared window';
+          const status = item.windowStatus !== 'own' ? ` [${item.windowStatus}]` : '';
+          console.log(`    ${item.title ?? item.insight}${latest} ${chalk.dim(`as of ${item.asOf} · ${window}${status}`)}`);
         }
       }
       if (manifest.notes) {
         console.log();
         console.log(chalk.dim(manifest.notes));
+      }
+    });
+
+  report
+    .command('sync')
+    .argument('<slug>', 'Report slug')
+    .description('Fetch the window measurements a report still owes into the TRANSIENT window cache (canonical caches, snapshot trails and KR bindings untouched)')
+    .option('--date <date>', 'Anchor the windows at this YYYY-MM-DD date (default: today)')
+    .option('--from <date>', 'Free-range window START (with --date/today as the end)')
+    .action(async (slug: string, opts: { date?: string; from?: string }) => {
+      const root = ensureContextRoot();
+      const manifest = getReport(root, slug);
+      if (!manifest) {
+        error(`Report not found: ${slug}`);
+        process.exitCode = 1;
+        return;
+      }
+      const date = opts.date ?? null;
+      if (date !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`)))) {
+        error(`--date must be a valid YYYY-MM-DD date (got "${date}").`);
+        process.exitCode = 1;
+        return;
+      }
+      const from = opts.from ?? null;
+      if (from !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(from) || Number.isNaN(Date.parse(`${from}T00:00:00Z`)))) {
+        error(`--from must be a valid YYYY-MM-DD date (got "${from}").`);
+        process.exitCode = 1;
+        return;
+      }
+      // Re-plan after every pass: a slug that appears in two sections with two
+      // different pinned windows can only carry one window per pass.
+      const MAX_WINDOW_PASSES = 3;
+      for (let pass = 1; pass <= MAX_WINDOW_PASSES; pass++) {
+        const plan = reportWindowPlan(resolveReport(root, manifest, date, from));
+        const slugs = Object.keys(plan);
+        if (slugs.length === 0) {
+          success(pass === 1
+            ? 'Nothing owed — every item already measures its window.'
+            : 'All windows measured.');
+          return;
+        }
+        console.log(header(`Pass ${pass}: measuring ${slugs.length} window(s)`));
+        for (const s of slugs) console.log(chalk.dim(`  ${s} · ${plan[s].fromISO}→${plan[s].toISO}`));
+        const { results, failed } = await syncAll(root, { force: true, only: slugs, windows: plan });
+        for (const r of results) {
+          if (r.status === 'failed') warn(`${r.slug}: ${r.error}`);
+          else console.log(`  ✓ ${r.slug}${r.latest !== undefined && r.latest !== null ? ` · ${r.latest}` : ''}`);
+        }
+        if (failed.length === slugs.length) {
+          error('No progress this pass — every window fetch failed (see above).');
+          process.exitCode = 1;
+          return;
+        }
+      }
+      const remaining = Object.keys(reportWindowPlan(resolveReport(root, manifest, date, from)));
+      if (remaining.length > 0) {
+        warn(`Still owed after ${MAX_WINDOW_PASSES} passes: ${remaining.join(', ')}`);
+        process.exitCode = 1;
+      } else {
+        success('All windows measured.');
+      }
+    });
+
+  report
+    .command('comment')
+    .argument('<slug>', 'Report slug')
+    .description('Generate the report\'s AI commentary for a view (headless pure-text claude run; the dated file lands in lab/reports/.commentary/). Reports with `commentary: false` refuse.')
+    .option('--date <date>', 'The report view to comment on (YYYY-MM-DD; default: live)')
+    .option('--from <date>', 'Free-range window START of the commented view')
+    .option('--model <model>', 'Model for the run (default: sonnet)')
+    .action(async (slug: string, opts: { date?: string; from?: string; model?: string }) => {
+      const root = ensureContextRoot();
+      const manifest = getReport(root, slug);
+      if (!manifest) {
+        error(`Report not found: ${slug}`);
+        process.exitCode = 1;
+        return;
+      }
+      const date = opts.date ?? null;
+      if (date !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`)))) {
+        error(`--date must be a valid YYYY-MM-DD date (got "${date}").`);
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        console.log(chalk.dim('  Generating commentary (headless claude, pure text — no tools, no writes by the model)…'));
+        const sections = resolveReport(root, manifest, date, opts.from ?? null);
+        const commentary = await generateReportCommentary(root, manifest, sections, date, { model: opts.model });
+        success(`Commentary written: lab/reports/.commentary/${slug}/${commentary.dateKey}.md (${commentary.model})`);
+        console.log();
+        console.log(commentary.body);
+      } catch (err) {
+        handleLabError(err);
+        process.exitCode = 1;
       }
     });
 

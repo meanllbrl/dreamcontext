@@ -5,6 +5,7 @@ import { getAdapter, scriptFilePath } from './adapters/index.js';
 import { readCredentials, redactSecrets } from './credentials.js';
 import { getInsight, listInsights, readCache, writeCache, writeInsightBinding } from './store.js';
 import { resolveTweaks } from './tweaks.js';
+import { isValidWindow, writeWindowCache, type WindowRange } from './window-cache.js';
 import { rollupSeries } from './rollup.js';
 import {
   appendFunnelHistory,
@@ -82,6 +83,16 @@ export interface SyncOptions {
   force?: boolean;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  /**
+   * Transient measurement-window override (report window inheritance). When
+   * set, the resolved range/from/to are replaced by this window and the result
+   * is written to the TRANSIENT window cache only — the canonical cache, the
+   * snapshot trails and the KR binding are never touched (the 42.31→0 lesson:
+   * a report aligning windows must not move the roadmap). TTL freshness is
+   * skipped (the window cache has its own read-side freshness policy) and a
+   * failed run writes nothing at all.
+   */
+  window?: WindowRange;
 }
 
 /** One insight settled during a `syncAll` run — emitted as it happens, not at the end. */
@@ -101,6 +112,9 @@ export interface SyncAllOptions extends SyncOptions {
   concurrency?: number;
   /** Restrict the run to these slugs (used by the job layer's retry pass). */
   only?: string[];
+  /** Per-slug transient window overrides (report window inheritance) — each
+   *  listed slug syncs into the window cache instead of the canonical one. */
+  windows?: Record<string, WindowRange>;
   /** Called as each insight settles — the caller's live progress feed. */
   onProgress?: (ev: LabSyncProgress) => void;
   /** Per-insight watchdog in ms (default LAB_INSIGHT_TIMEOUT_MS). */
@@ -247,11 +261,17 @@ export async function syncInsight(
   const manifest = getInsight(contextRoot, slug);
   if (!manifest) throw new LabError(`Insight not found: ${slug}`);
 
+  const windowOverride = opts.window && isValidWindow(opts.window) ? opts.window : undefined;
+  if (opts.window && !windowOverride) {
+    throw new LabError(`Invalid window override for ${slug}: from/to must be YYYY-MM-DD with from ≤ to.`);
+  }
+
   const nowMs = opts.now ? opts.now() : Date.now();
   const prior = readCache(contextRoot, slug);
 
-  // ── TTL staleness skip (reported, never silent). ──
-  if (!opts.force && prior?.fetchedAt) {
+  // ── TTL staleness skip (reported, never silent). A window-overridden run is
+  // always explicit — its freshness lives on the window-cache read side. ──
+  if (!opts.force && !windowOverride && prior?.fetchedAt) {
     const ageMin = (nowMs - Date.parse(prior.fetchedAt)) / 60_000;
     if (Number.isFinite(ageMin) && ageMin >= 0 && ageMin < manifest.refresh.ttl_minutes) {
       console.log(`[lab] ${slug}: fresh (age ${Math.round(ageMin)}m < ttl ${manifest.refresh.ttl_minutes}m) — skipping; use --force to refetch.`);
@@ -259,7 +279,26 @@ export async function syncInsight(
     }
   }
 
-  const resolvedTweaks = resolveTweaks(manifest);
+  let resolvedTweaks = resolveTweaks(manifest);
+  if (windowOverride) {
+    // Replace the window everywhere an adapter can read it: the range object
+    // (what scripts consume via ctx.resolvedTweaks.range), and the from/to
+    // values ({{tweak:from}}/{{tweak:to}} substitution). The relative `range`
+    // value is dropped so a script reading the string cannot contradict the
+    // object it sits next to.
+    const spanMs = Date.parse(`${windowOverride.toISO}T00:00:00Z`) - Date.parse(`${windowOverride.fromISO}T00:00:00Z`);
+    const values: Record<string, string> = {
+      ...resolvedTweaks.values,
+      from: windowOverride.fromISO,
+      to: windowOverride.toISO,
+    };
+    delete values.range;
+    resolvedTweaks = {
+      values,
+      range: { fromISO: windowOverride.fromISO, toISO: windowOverride.toISO },
+      spanDays: Math.max(0, Math.round(spanMs / 86_400_000)),
+    };
+  }
   const credentials = readCredentials(contextRoot);
   const secretValues = Object.values(credentials);
 
@@ -388,6 +427,31 @@ export async function syncInsight(
       latest = computeLatest(series, manifest.binding);
     }
 
+    if (windowOverride) {
+      // ── Transient window run: full cache SHAPE, but no history, no trails,
+      // no canonical write, no KR binding — the measurement answers a report's
+      // window question and nothing else. ──
+      const transient: InsightCache = {
+        slug,
+        fetchedAt: new Date(nowMs).toISOString(),
+        tweaks: resolvedTweaks.values,
+        granularity,
+        unit: manifest.unit,
+        series,
+        latest,
+        error: null,
+        errorAt: null,
+        scriptHash: null,
+      };
+      if (funnel) transient.funnel = funnel;
+      if (matrix) transient.matrix = matrix;
+      if (datasets) transient.datasets = datasets;
+      if (html !== undefined) transient.html = html;
+      if (app) transient.app = app;
+      writeWindowCache(contextRoot, slug, windowOverride, transient);
+      return { slug, status: 'ok', latest, granularity };
+    }
+
     const cache: InsightCache = {
       slug,
       fetchedAt: new Date(nowMs).toISOString(),
@@ -437,6 +501,13 @@ export async function syncInsight(
     const rawMsg = err instanceof LabError ? err.message : (err instanceof Error ? err.message : String(err));
     const message = redactSecrets(rawMsg, secretValues);
     console.error(`[lab] sync failed for ${slug}: ${message}`);
+
+    if (windowOverride) {
+      // A failed transient run writes NOTHING — the canonical cache's error
+      // state belongs to the canonical timeline, and there is no partial
+      // window measurement worth keeping.
+      return { slug, status: 'failed', error: message };
+    }
 
     const failCache: InsightCache = {
       slug,
@@ -574,7 +645,10 @@ export async function syncAll(
     for (;;) {
       const i = next++;
       if (i >= total) return;
-      const result = await settleInsight(contextRoot, slugs[i], opts, timeoutMs);
+      const slugOpts: SyncOptions = opts.windows?.[slugs[i]]
+        ? { ...opts, window: opts.windows[slugs[i]] }
+        : opts;
+      const result = await settleInsight(contextRoot, slugs[i], slugOpts, timeoutMs);
       results[i] = result;
       done++;
       // A throwing progress callback is the CALLER's bug and must not abort the

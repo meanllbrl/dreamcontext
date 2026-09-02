@@ -253,15 +253,30 @@ async function main() {
     ok('items carry the as-of stamp', reportText.includes('as of'));
     await shoot('report-live');
 
-    // Date honesty: a date BEFORE the first sync has no snapshot — honest empty.
-    await page.locator('.report-date-input').fill('2020-01-01');
-    await page.waitForTimeout(900);
+    // Window inheritance (owner decision 2026-09-01): a past date RE-MEASURES
+    // — the date navigator IS the measurement window. The page first shows the
+    // honest "not measured yet" state, then a window sync fills it with data
+    // measured over the selected window (never a silently substituted other
+    // window). The old snapshot-as-of semantics live on under `window: own`
+    // (pinned by the unit suite).
+    await page.locator('input[aria-label="Window end"]').fill('2020-01-01');
+    await page.waitForTimeout(700);
+    const pendingText = await page.locator('.report-page').innerText();
+    // Local scripts can settle inside the first poll, so at this instant the
+    // page shows EITHER the honest un-measured/measuring state OR the already
+    // re-measured window — what it must never show is yesterday's live window
+    // passed off as the selected one.
+    ok('a past date never passes another window off as the selected one',
+      pendingText.includes('not measured yet') || pendingText.includes('Measuring')
+      || pendingText.includes('Dec 31 – Jan 1') || !pendingText.includes('as of'));
+    // Let the window sync job settle and the sections fill.
+    await page.waitForTimeout(5000);
     const datedText = await page.locator('.report-page').innerText();
-    ok('a pre-history date shows the honest empty state (no interpolation)',
-      datedText.includes('No snapshot at or before 2020-01-01'));
-    ok('the empty state names the rule', datedText.includes('nothing is interpolated')
-      || datedText.includes('had not synced yet'));
-    await shoot('report-dated-empty');
+    ok('the past date re-measured: the pivot renders for the selected window',
+      await page.locator('.report-page table th', { hasText: 'TR' }).count() >= 1);
+    ok('the re-measured items wear the selected window on their chip',
+      datedText.includes('Dec 31 – Jan 1'));
+    await shoot('report-dated-window');
 
     // Back to live: the pivot returns.
     await page.locator('.report-page button', { hasText: 'Live' }).click();

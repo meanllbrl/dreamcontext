@@ -1,4 +1,5 @@
 import { syncAll, type LabSyncProgress, type SyncResult } from '../lib/lab/sync.js';
+import type { WindowRange } from '../lib/lab/window-cache.js';
 
 /**
  * Background bulk-insight sync jobs for the dashboard Insights board.
@@ -35,6 +36,10 @@ export interface LabSyncJobState {
   error: string | null;
   /** The slugs this run is scoped to (a report's subset), or null = the board. */
   slugs: string[] | null;
+  /** Per-slug transient window overrides (report window inheritance), or null.
+   *  Exposed so a client can tell whether the running job covers ITS window
+   *  request or is someone else's run to wait out. */
+  windows: Record<string, WindowRange> | null;
   /** The insight that settled most recently ("now syncing …" copy). */
   current: string | null;
 }
@@ -72,7 +77,7 @@ export function _resetLabSyncJobs(): void {
  */
 export function startLabSyncJob(
   contextRoot: string,
-  opts: { force?: boolean; slugs?: string[] } = {},
+  opts: { force?: boolean; slugs?: string[]; windows?: Record<string, WindowRange> } = {},
 ): { job: LabSyncJobState; started: boolean } {
   pruneSettledJobs();
   const existing = jobs.get(contextRoot);
@@ -93,6 +98,7 @@ export function startLabSyncJob(
     failed: [],
     error: null,
     slugs: opts.slugs && opts.slugs.length > 0 ? [...opts.slugs] : null,
+    windows: opts.windows && Object.keys(opts.windows).length > 0 ? { ...opts.windows } : null,
     current: null,
   };
   jobs.set(contextRoot, job);
@@ -127,7 +133,12 @@ async function runLabSyncJob(
       ]);
     };
 
-    let pass = await syncAll(contextRoot, { force, only: job.slugs ?? undefined, onProgress });
+    let pass = await syncAll(contextRoot, {
+      force,
+      only: job.slugs ?? undefined,
+      windows: job.windows ?? undefined,
+      onProgress,
+    });
     job.results = pass.results;
     job.failed = pass.failed.map((r) => r.slug);
     job.total = pass.results.length;
@@ -141,7 +152,12 @@ async function runLabSyncJob(
       const retrying = job.failed;
       job.done = 0;
       job.total = retrying.length;
-      pass = await syncAll(contextRoot, { force: true, only: retrying, onProgress });
+      pass = await syncAll(contextRoot, {
+        force: true,
+        only: retrying,
+        windows: job.windows ?? undefined,
+        onProgress,
+      });
       job.results = mergeLabResults(job.results, pass.results);
       job.failed = pass.failed.map((r) => r.slug);
       job.done = job.total;

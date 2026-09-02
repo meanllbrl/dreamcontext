@@ -1161,6 +1161,18 @@
       "group": true
     },
     {
+      "path": "lab report comment",
+      "desc": "Generate the report's AI commentary for a view (headless pure-text claude run; the dated file lands in lab/reports/.commentary/). Reports with `commentary: false` refuse.",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--date",
+        "--from",
+        "--model"
+      ]
+    },
+    {
       "path": "lab report create",
       "desc": "Scaffold a new report in lab/reports/<slug>.md",
       "args": [
@@ -1180,12 +1192,24 @@
     },
     {
       "path": "lab report show",
-      "desc": "Show a report with every item resolved (optionally as of a date)",
+      "desc": "Show a report with every item resolved (optionally as of a date / over a custom from→to window)",
       "args": [
         "<slug>"
       ],
       "valueFlags": [
-        "--date"
+        "--date",
+        "--from"
+      ]
+    },
+    {
+      "path": "lab report sync",
+      "desc": "Fetch the window measurements a report still owes into the TRANSIENT window cache (canonical caches, snapshot trails and KR bindings untouched)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--date",
+        "--from"
       ]
     },
     {
