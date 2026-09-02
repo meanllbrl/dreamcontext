@@ -2,13 +2,15 @@
 id: feat_T2UDusWh
 status: active
 created: '2026-06-13'
-updated: '2026-08-29'
+updated: '2026-09-02'
 released_version: v0.8.1
 tags:
   - devops
   - architecture
   - 'topic:desktop'
-related_tasks: []
+related_tasks:
+  - >-
+    app-status-always-reports-running-no-macos-pgrep-truncates-the-command-line-at-66-chars
 type: feature
 name: continuous-app-update
 description: ''

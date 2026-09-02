@@ -1,5 +1,136 @@
 [
   {
+    "date": "2026-09-02",
+    "type": "chore",
+    "scope": "diagrams",
+    "description": "Add export-excalidraw-html.mjs script that renders the real scene through the lib's own exportToSvg in headless Chromium and inlines it, so the output is the board itself rather than a re-drawing. Found uncommitted in the tree from an earlier session, complete and tested.",
+    "breaking": false,
+    "summary": "Script to export an Excalidraw board to self-contained HTML",
+    "references": [
+      "commit:66d3a423",
+      "file:scripts/diagrams/export-excalidraw-html.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-02",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add per-mode mascot animation so a chat session visually shows which brief it runs under. Plan holds a sheet and writes on it (pencil, handwriting squiggle, full stop, fresh page); Develop works a forge (torch weld with flicker and sparks, hammer strike, anvil dip, blacksmith's tap); Basic is untouched. The design rule: two channels, never one — colour still belongs to mood (green working, magenta asking, violet ready) and mode is shape and motion only, so a Develop agent blocked on a question still reads as asking. Mode is read from SessionMeta.mode in the roster (not live session) so a dormant Develop tab shows its anvil when reopened. Mode picker shows all four faces at work so you see what you are turning off as well as on. Scenes drawn in theme ink with only hot things (flame, weld, sparks) using --color-warning.",
+    "breaking": false,
+    "summary": "Sleepy acts out the chat mode — Plan writes on a sheet, Develop works a forge",
+    "references": [
+      "commit:d1267e02",
+      "file:dashboard/src/components/sleepy/SleepyPerch.tsx",
+      "file:tests/unit/mascot-mode-gear.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-02",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Fix the chat shelf's branch chip reading 'main' across three worktrees where the agent was actually working in different checkouts (owner screenshot). isGovernedCheckout now accepts the vault's own repo OR any linked code repo present on this machine, so a brain split from its code no longer refuses every worktree the agent works in. A new dream-view type 'checkout' (path + reset) lets the agent state where its work is; applied server-side from the same stream that carries EnterWorktree frames, gated like tool frames. The claim outranks the transcript because it is the only source that can describe work happening outside the session's standing checkout. Write frames are counted per checkout and the chip warns in amber when the agent claims nothing; writes under _dream_context/ are excluded (19 of 19 measured frames were brain writes).",
+    "breaking": false,
+    "summary": "The shelf follows a session into a linked code repo and warns when it cannot",
+    "references": [
+      "commit:95b08104",
+      "file:dashboard/src/components/sleepy/chat/ChatShelf.tsx",
+      "file:src/server/chat-surface.ts",
+      "file:scripts/verify/chat-shelf.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-02",
+    "type": "feat",
+    "scope": "lab",
+    "description": "Lab Reports adopt the Reports template pattern: window inheritance (a report declares one window, every item inherits unless overridden), free date ranges (not just predefined bands), and spread AI commentary (one commentary block per insight, rendered alongside its tile rather than in a separate section). Each report item can declare its own window override; section-level window enforcement prevents mixed-window incoherence. The template enables date-navigable composed views over existing insights without forcing every report into a rigid structure.",
+    "breaking": false,
+    "summary": "Reports become the dreamcontext Reports template with window inheritance and spread AI commentary",
+    "references": [
+      "commit:4e03203a",
+      "file:dashboard/src/components/lab/reports/ReportPage.tsx",
+      "knowledge:features/lab-analytics-insights"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-02",
+    "type": "fix",
+    "scope": "lab",
+    "description": "Fix Lab request budget leak where opening a report forced a re-sync of every insight it referenced, ignoring TTL entirely. ReportPage sent force:true over every slug, and both the hook and POST /api/lab/sync-jobs treated omitted force as true, so the TTL gate at sync.ts:274 was being bypassed on every automatic path. Report open and window-override jobs now pass force:false explicitly, handing the decision back to the sync engine's TTL: a slug inside its ttl_minutes settles as fresh with zero adapter calls, an expired one refetches, and windowed slugs are unaffected (window overrides bypass TTL by design). Explicit refresh affordances (Sync all, card Refresh, tweak save) still force as intended — those are user actions.",
+    "breaking": false,
+    "summary": "Opening a Lab report no longer refetches every insight regardless of age",
+    "references": [
+      "commit:c2d4aa3b",
+      "file:dashboard/src/components/lab/reports/ReportPage.tsx",
+      "file:src/lib/lab/sync.ts",
+      "file:tests/unit/lab-request-budget.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-02",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Plan and Develop chat modes now end with a clean multi-reviewer judge (the sub-agent-iterative-reviewer pattern) instead of the agent reviewing its own work. A plan session ends by asking the critical questions and driving decisions, then hands off to Develop; a Develop session works in waves with validation and evidence, ending with a genuine external review. Both modes lean on the multi-reviewer and iterative-reviewer patterns throughout.",
+    "breaking": false,
+    "summary": "Plan and Develop modes end in a clean judge instead of self-review",
+    "references": [
+      "commit:b8167cbd",
+      "knowledge:multi-reviewer-pattern",
+      "knowledge:sub-agent-iterative-reviewer-pattern"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-02",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add SubAgentReport component so dispatched sub-agents render as named cards (avatar + name + badge + standfirst) instead of the main agent verbatim-retyping their reports. The Agent tool's 'report not shown' description was being read as 'the user cannot see it' so the main agent played safe and pasted the whole report into the transcript as flat prose. The report is now a first-class entity: collapsed state shows face/name/badge/standfirst (the run's own summary, never manufactured); open state renders the full report as markdown in place. Two carriers: synchronous dispatch reads tool_result, backgrounded dispatch lazy-fetches its sidechain transcript only when opened. The chat-surface briefing gains a counter-rule so the main agent knows the report is visible. Runtime verification caught two defects unit tests missed: useState mounting before tool_result arrived, and CLI background receipts being treated as reports.",
+    "breaking": false,
+    "summary": "A finished sub-agent's report becomes a collapsed card in the transcript instead of being re-typed by the main agent",
+    "references": [
+      "commit:01da38c2",
+      "file:dashboard/src/components/sleepy/chat/SubAgentCard.tsx",
+      "file:src/server/chat-surface.ts",
+      "file:scripts/verify/chat-subagent-report.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-02",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add export/save/compose artifact layer to dream-html blocks. Each block can be exported as PNG/PDF/single-file HTML or copied as image; blocks can be saved by name into the brain (searchable via recall, source conversation shown); saved blocks and text can be composed into printable reports. Blocks are now indexed in recall (markup stripped). Typography lockstep: blocks read resolved --chat-text/--chat-line-height tokens from the pane, rebuild on zoom, respect locale via lang attribute. Three typefaces (Inter, Plus Jakarta Sans, JetBrains Mono) are vendored and embedded as data: URLs so the CSP blocks webfonts while blocks render in the intended face. Container queries collapse grids at narrow widths, sentence flow is restored (inline elements no longer stack as flex items), and toned flow nodes render as tints rather than chart fills behind prose. Fullscreen bar carries export controls. The Reports masthead and print rules are reused.",
+    "breaking": false,
+    "summary": "dream-html blocks read as part of the transcript and can be exported, saved by name, and composed into reports",
+    "references": [
+      "commit:e3374f82",
+      "file:dashboard/src/components/sleepy/chat/HtmlView.tsx",
+      "file:dashboard/src/components/sleepy/chat/chat-html-kit.css",
+      "file:dashboard/src/lib/artifactReport.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-08-29",
     "type": "chore",
     "scope": "release",

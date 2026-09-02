@@ -2,7 +2,7 @@
 id: feat_LDQn2Bi8
 status: in_review
 created: '2026-02-25'
-updated: '2026-08-29'
+updated: '2026-09-02'
 released_version: v0.19.0
 tags:
   - backend
@@ -25,7 +25,7 @@ related_tasks:
   - >-
     feat-sync-bulk-first-sync-progress-bar-inline-custom-fields-changelog-backfill-skip-lock-heartbeat
   - >-
-    task-sync-pull-loses-data-silently-objectives-wiped-watermark-skips-failed-tasks
+    github-task-sync-pull-silently-wipes-the-local-only-objectives-field-on-every-mirrored-task
 type: feature
 name: task-management
 description: ''

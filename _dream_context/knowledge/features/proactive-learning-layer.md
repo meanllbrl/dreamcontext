@@ -14,7 +14,7 @@ pinned: false
 date: '2026-07-20'
 status: in_review
 created: '2026-07-20'
-updated: '2026-08-28'
+updated: '2026-09-02'
 released_version: 0.20.0
 tags:
   - 'topic:sleep'
@@ -25,6 +25,8 @@ related_tasks:
   - proactive-learning-layer
   - >-
     hypotheses-ui-redesign-verdict-first-cards-list-board-toggle-seen-state-calm-detail-modal
+  - >-
+    theses-quality-bar-hypotheses-must-be-optimization-claims-not-observations-retire-the-list-view
 ---
 
 ## Why
