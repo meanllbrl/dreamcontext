@@ -15,8 +15,10 @@
  *     `allow-scripts` would let the frame reach into the parent document and remove its own
  *     sandbox attribute — the two grants together are equivalent to no sandbox at all.
  *   • srcdoc CSP `default-src 'none'` — no fetch, no XHR, no beacon, no remote image, no
- *     font, no stylesheet. `style-src`/`script-src 'unsafe-inline'` are what make the body
- *     drawable and interactive at all, and they grant nothing that reaches the network.
+ *     remote font, no stylesheet. `style-src`/`script-src 'unsafe-inline'` are what make the
+ *     body drawable and interactive at all, and `font-src data:` lets the reading face ride
+ *     INSIDE the document. None of the three reaches the network: a `data:` URL contacts no
+ *     host, so the frame still issues zero requests by any route.
  *   • Therefore the markup is NOT sanitized, and must not be: the sandbox is the boundary,
  *     not a filter. A `<script>` in the body can animate, compute and respond to clicks
  *     against data already embedded in the document, and can do nothing else.
@@ -25,12 +27,30 @@
  * vitest with a `.js` specifier.
  */
 
-/** The CSP embedded as the FIRST element of every srcdoc. */
+/**
+ * The CSP embedded as the FIRST element of every srcdoc.
+ *
+ * `font-src data:` is the only allowance beyond drawing, and it is not a network grant: a
+ * `data:` URL resolves inside the document, contacts no host, and issues no request. It
+ * exists because the app's reading face could not otherwise cross the frame boundary — the
+ * block fell back to system-ui while the transcript around it rendered in Inter, a measured
+ * 10% difference in the same string at the same size (F5, 2026-09-02). The bytes ride in
+ * the document, which is the same property that lets an exported block render offline.
+ *
+ * What it deliberately does NOT say is `font-src https:` or a host allow-list. Either would
+ * turn "this frame cannot reach the network" into "this frame cannot reach the network
+ * except…", and the whole security argument for not sanitizing the markup is that there is
+ * no exception.
+ */
+import { SANDBOX_FONT_CSS } from './sandboxFont.js';
+
 export const SANDBOX_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'";
+  "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:";
 
 /** The sandbox grant — scripts yes, same-origin NEVER (that would void the CSP). */
 export const SANDBOX_GRANT = 'allow-scripts';
+
+export { SANDBOX_FONT_CSS } from './sandboxFont.js';
 
 /**
  * Read the current computed value of every named token off the live document.
@@ -101,6 +121,10 @@ export function buildSandboxSrcdoc(input: SandboxSrcdocInput): string {
     '<!doctype html><html><head>',
     `<meta http-equiv="Content-Security-Policy" content="${SANDBOX_CSP}">`,
     '<meta charset="utf-8">',
+    // The face BEFORE the tokens that name it: `--font-family` resolves to a stack starting
+    // with 'Inter', and inside this frame that name means nothing unless the @font-face is
+    // already declared. See lib/sandboxFont.ts for why it has to travel in the document.
+    `<style>${SANDBOX_FONT_CSS}</style>`,
     `<style>:root { color-scheme: ${scheme}; ${rootVars} }</style>`,
     `<style>${css}</style>`,
   ];

@@ -96,6 +96,18 @@ function KnowledgeIcon() {
   );
 }
 
+/** Saved blocks — a framed picture, which is what a saved block is. */
+function SavedIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="2" y="2.5" width="12" height="11" rx="2" />
+      <path d="M2 10.5l3-2.5 2.5 2 2.5-3 4 3.5" />
+      <circle cx="6" cy="5.75" r="1" />
+    </svg>
+  );
+}
+
 /** Taxonomy — a label/tag with its eyelet. */
 function TaxonomyIcon() {
   return (
@@ -211,6 +223,7 @@ const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   core: CoreIcon,
   knowledge: KnowledgeIcon,
   taxonomy: TaxonomyIcon,
+  saved: SavedIcon,
   brain: BrainIcon,
   sleep: SleepIcon,
   announcements: AnnouncementsIcon,

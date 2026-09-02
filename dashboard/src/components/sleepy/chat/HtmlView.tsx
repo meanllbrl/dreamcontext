@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../../../context/VaultContext';
+import { useI18n } from '../../../context/I18nContext';
+import { useAppZoom } from '../../../hooks/useAppZoom';
 import { FullscreenOverlay } from '../../layout/FullscreenOverlay';
 import {
-  buildChatSrcdoc, resolveChatKitTokens, readHeightMessage, htmlOutline,
-  CHAT_HTML_SANDBOX, HTML_PENDING_HEIGHT, HEIGHT_REQUEST_KEY,
+  buildChatSrcdoc, resolveChatKitTokens, readHeightMessage, readSnapshotMessage, htmlOutline,
+  CHAT_HTML_SANDBOX, HTML_PENDING_HEIGHT, HEIGHT_REQUEST_KEY, SNAPSHOT_REQUEST_KEY,
+  type HtmlSnapshot,
 } from './chatHtmlKit';
+import {
+  buildStandaloneHtml, exportFilename, titleFromHtml, rasterize, downloadBlob,
+  copyBlobAsImage, printStandalone, measureStandalone,
+} from './htmlExport';
 import './HtmlView.css';
 
 /**
@@ -90,22 +97,47 @@ const HEIGHT_RETRIES = 16;
  * inline the CONTENT does (via the bridge), fullscreen the OVERLAY does (the frame fills it,
  * and the document scrolls inside).
  */
-function HtmlFrame({ html, overrideCss, mode, title }: {
+function HtmlFrame({ html, overrideCss, mode, title, reading, frameRefOut }: {
   html: string;
   overrideCss?: string;
   mode: 'card' | 'full';
   title: string;
+  /**
+   * The element the transcript's reading tokens are resolved from — see `HtmlView`, which
+   * owns it. Passed in rather than read from a local ref because the FULLSCREEN frame is
+   * portaled to `document.body`, outside `.chat-pane`, where those tokens do not exist:
+   * resolving locally would make the presentation the one place the zoom control stops
+   * working.
+   */
+  reading: Element | null;
+  /** The overlay's export bar needs to TALK to this frame (the snapshot request), and it
+   *  renders in the dialog header, not inside here. Shared ref rather than a callback so
+   *  there is exactly one frame identity both sides agree on. */
+  frameRefOut?: React.MutableRefObject<HTMLIFrameElement | null>;
 }) {
   const theme = useDataTheme();
+  const zoom = useAppZoom();
+  const { locale } = useI18n();
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [measured, setMeasured] = useState<{ html: string; height: number } | null>(null);
 
   // Rebuilt on theme flip: same html, freshly resolved token values, and the matching
   // color-scheme (a mismatch makes Chromium paint an opaque white canvas behind the
   // transparent body — under the dark theme, a white slab with near-white text on it).
+  // `zoom` is in the deps for its EFFECT, not its value: the reading size is read out of
+  // the pane's computed style, and the pane only carries the new one after the zoom control
+  // has written --zoom. Without it the frame keeps the size it was built at and the block
+  // is the one thing on screen that does not follow "− 100% +".
   const srcdoc = useMemo(
-    () => buildChatSrcdoc({ html, tokens: resolveChatKitTokens(), scheme: theme, overrideCss, mode }),
-    [html, theme, overrideCss, mode],
+    () => buildChatSrcdoc({
+      html,
+      tokens: resolveChatKitTokens(reading),
+      scheme: theme,
+      overrideCss,
+      mode,
+      lang: locale,
+    }),
+    [html, theme, overrideCss, mode, reading, locale, zoom],
   );
 
   /**
@@ -164,7 +196,7 @@ function HtmlFrame({ html, overrideCss, mode, title }: {
 
   return (
     <iframe
-      ref={frameRef}
+      ref={(el) => { frameRef.current = el; if (frameRefOut) frameRefOut.current = el; }}
       className="chat-htmlview-frame"
       title={title}
       sandbox={CHAT_HTML_SANDBOX}
@@ -181,19 +213,222 @@ function HtmlFrame({ html, overrideCss, mode, title }: {
   );
 }
 
-function HtmlFullscreen({ html, overrideCss, onClose }: {
+/**
+ * Ask the block what it currently looks like, and wait for the answer.
+ *
+ * Authenticated by SOURCE for the same reason the height listener is (`event.source`): a
+ * frame with no same-origin grant has the opaque origin "null", so an origin check would
+ * either reject our own frame or accept every other sandboxed frame on the page.
+ *
+ * The timeout is the honest half. A block whose author left an unclosed `<script>` has no
+ * bridge at all (that is a real defect this codebase has already been bitten by), and an
+ * export that hangs forever on a spinner is worse than one that says it could not.
+ */
+const SNAPSHOT_TIMEOUT_MS = 4000;
+
+function requestSnapshot(frame: HTMLIFrameElement | null): Promise<HtmlSnapshot> {
+  return new Promise((resolve, reject) => {
+    const win = frame?.contentWindow;
+    if (!win) { reject(new Error('The block is not on screen.')); return; }
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('message', onMessage);
+    };
+    function onMessage(event: MessageEvent) {
+      if (event.source !== win) return;
+      const snap = readSnapshotMessage(event.data);
+      if (!snap) return;
+      cleanup();
+      resolve(snap);
+    }
+    const timer = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('The block did not answer in time.'));
+    }, SNAPSHOT_TIMEOUT_MS);
+    window.addEventListener('message', onMessage);
+    win.postMessage({ [SNAPSHOT_REQUEST_KEY]: true }, '*');
+  });
+}
+
+/**
+ * The export bar — the five buttons the owner's sketch asked for, minus Save (E2).
+ *
+ * Every one of them starts the same way: ask the frame for the picture it is showing, wrap
+ * it in a standalone document, and then differ only in what they do with that document.
+ * That shared first step is the feature — "export" and "what I am looking at" are the same
+ * thing, or the button is a lie.
+ */
+function ExportActions({ frameRef, html, reading, overrideCss, lang, theme, source }: {
+  frameRef: React.MutableRefObject<HTMLIFrameElement | null>;
+  html: string;
+  reading: Element | null;
+  overrideCss?: string;
+  lang: string;
+  theme: 'light' | 'dark';
+  source?: string;
+}) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [naming, setNaming] = useState<string | null>(null);
+
+  const title = useMemo(() => titleFromHtml(html), [html]);
+
+  /** The one shared step. Returns the standalone document for the CURRENT screen state. */
+  const buildDoc = useCallback(async () => {
+    const snap = await requestSnapshot(frameRef.current);
+    return buildStandaloneHtml({
+      html: snap.html,
+      tokens: resolveChatKitTokens(reading),
+      meta: { title, source },
+      scheme: theme,
+      overrideCss,
+      lang,
+    });
+  }, [frameRef, reading, title, source, theme, overrideCss, lang]);
+
+  const run = useCallback(async (label: string, fn: () => Promise<string | null>) => {
+    setBusy(label);
+    setNote(null);
+    try {
+      setNote(await fn());
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Export failed.');
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
+  const png = () => run('PNG', async () => {
+    const doc = await buildDoc();
+    const { width, height } = await measureStandalone(doc);
+    downloadBlob(await rasterize(doc, width, height), exportFilename(title, 'png'));
+    return null;
+  });
+
+  const pdf = () => run('PDF', async () => {
+    await printStandalone(await buildDoc());
+    return null;
+  });
+
+  const htmlFile = () => run('HTML', async () => {
+    const doc = await buildDoc();
+    downloadBlob(new Blob([doc], { type: 'text/html' }), exportFilename(title, 'html'));
+    return null;
+  });
+
+  const copy = () => run('Copy', async () => {
+    const doc = await buildDoc();
+    const { width, height } = await measureStandalone(doc);
+    const okCopy = await copyBlobAsImage(await rasterize(doc, width, height));
+    return okCopy ? '✓ copied' : 'This browser cannot put an image on the clipboard.';
+  });
+
+  /**
+   * Save it into the brain under a name.
+   *
+   * Saves the SNAPSHOT, like every other action here — what you keep is what you were
+   * looking at. The name is asked for rather than derived because the derived one is the
+   * block's heading, and the heading is what made sense inside the conversation; the name
+   * is what has to make sense in a list three weeks later.
+   */
+  const save = (name: string) => run('Save', async () => {
+    const snap = await requestSnapshot(frameRef.current);
+    await api.post('/artifacts', { title: name, html: snap.html, sourceTitle: source ?? null });
+    // The saved-blocks list is a separate surface; invalidate so it does not show a stale
+    // list the moment the user goes looking for what they just saved.
+    await queryClient.invalidateQueries({ queryKey: ['artifacts'] });
+    setNaming(null);
+    return '✓ saved to the brain';
+  });
+
+  if (naming !== null) {
+    return (
+      <form
+        className="chat-htmlexport-name"
+        onSubmit={(e) => { e.preventDefault(); if (naming.trim()) save(naming.trim()); }}
+      >
+        <input
+          className="chat-htmlexport-input"
+          value={naming}
+          autoFocus
+          maxLength={120}
+          placeholder="Name this block"
+          aria-label="Name this block"
+          onChange={(e) => setNaming(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setNaming(null); } }}
+        />
+        <button className="chat-htmlexport-btn" type="submit" disabled={!naming.trim() || !!busy}>
+          {busy === 'Save' ? '…' : 'Save'}
+        </button>
+        <button className="chat-htmlexport-btn" type="button" onClick={() => setNaming(null)}>
+          Cancel
+        </button>
+      </form>
+    );
+  }
+
+  return (
+    <>
+      {note && <span className="chat-htmlexport-note" role="status">{note}</span>}
+      <button className="chat-htmlexport-btn" onClick={png} disabled={!!busy}
+        title="Download this block as a PNG image">
+        {busy === 'PNG' ? '…' : '↓ PNG'}
+      </button>
+      <button className="chat-htmlexport-btn" onClick={pdf} disabled={!!busy}
+        title="Print this block, or save it as a PDF">
+        {busy === 'PDF' ? '…' : 'PDF'}
+      </button>
+      <button className="chat-htmlexport-btn" onClick={htmlFile} disabled={!!busy}
+        title="Download as one self-contained HTML file — no network, opens anywhere">
+        {busy === 'HTML' ? '…' : 'HTML'}
+      </button>
+      <button className="chat-htmlexport-btn" onClick={copy} disabled={!!busy}
+        title="Copy this block to the clipboard as an image">
+        {busy === 'Copy' ? '…' : '⧉ Copy'}
+      </button>
+      <button className="chat-htmlexport-btn" onClick={() => { setNote(null); setNaming(title); }}
+        disabled={!!busy} title="Save this block into the brain under a name">
+        ☆ Save
+      </button>
+    </>
+  );
+}
+
+function HtmlFullscreen({ html, overrideCss, onClose, reading, source }: {
   html: string;
   overrideCss?: string;
   onClose: () => void;
+  reading: Element | null;
+  source?: string;
 }) {
+  const fullFrame = useRef<HTMLIFrameElement | null>(null);
+  const theme = useDataTheme();
+  const { locale } = useI18n();
   // Portaled to document.body because `.agent-surface` sets `contain: layout paint`, which
   // makes it the containing block for `position: fixed` — an un-portaled overlay would be
   // clipped to the chat pane instead of covering the window. Same reason `BoardFullscreen`
   // portals; it cost a bug the first time it was learned.
   return createPortal(
-    <FullscreenOverlay label="Presentation" onClose={onClose}>
+    <FullscreenOverlay
+      label="Presentation"
+      onClose={onClose}
+      actions={(
+        <ExportActions
+          frameRef={fullFrame}
+          html={html}
+          reading={reading}
+          overrideCss={overrideCss}
+          lang={locale}
+          theme={theme}
+          source={source}
+        />
+      )}
+    >
       <div className="chat-htmlview-full">
-        <HtmlFrame html={html} overrideCss={overrideCss} mode="full" title="Presentation" />
+        <HtmlFrame html={html} overrideCss={overrideCss} mode="full" title="Presentation"
+          reading={reading} frameRefOut={fullFrame} />
       </div>
     </FullscreenOverlay>,
     document.body,
@@ -246,9 +481,18 @@ export function HtmlView({ html }: { html: string }) {
   const { data } = useChatKitOverride();
   const overrideCss = data?.css ?? undefined;
 
+  /**
+   * This wrapper is the block's own place IN the transcript, which makes it the honest
+   * place to read the transcript's reading size from — whatever `.chat-pane` (or a future
+   * host) has set on the column this block sits in, rather than a selector this file would
+   * have to keep in sync. State and not a bare ref because the first render has no node yet
+   * and the srcdoc has to be rebuilt once it does.
+   */
+  const [reading, setReading] = useState<Element | null>(null);
+
   return (
-    <div className="chat-htmlview">
-      <HtmlFrame html={html} overrideCss={overrideCss} mode="card" title="Rendered answer" />
+    <div className="chat-htmlview" ref={setReading}>
+      <HtmlFrame html={html} overrideCss={overrideCss} mode="card" title="Rendered answer" reading={reading} />
       <button
         type="button"
         className="chat-htmlview-full-btn"
@@ -259,7 +503,7 @@ export function HtmlView({ html }: { html: string }) {
         <span aria-hidden>⛶</span>
       </button>
       {data?.notice && <p className="chat-htmlview-notice" role="status">{data.notice}</p>}
-      {full && <HtmlFullscreen html={html} overrideCss={overrideCss} onClose={() => setFull(false)} />}
+      {full && <HtmlFullscreen html={html} overrideCss={overrideCss} onClose={() => setFull(false)} reading={reading} />}
     </div>
   );
 }

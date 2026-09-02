@@ -29,20 +29,57 @@ html, body {
   padding: 0;
 }
 
+/**
+ * THE ONE SIZE THE WHOLE KIT IS SET IN, and it is the TRANSCRIPT'S, not ours.
+ *
+ * `--chat-text` / `--chat-line-height` are the reading size and rhythm every prose surface
+ * in the chat already reads (ChatPane.css) — 15px x the window's zoom, led at 1.75. A block
+ * that set its own 14px/1.55 sat in the middle of that column reading as a different
+ * document: smaller type, tighter lines, and completely deaf to the "- 100% +" control,
+ * because CSS variables do not cross the iframe boundary and `--zoom` never arrived
+ * (owner report 2026-09-02, "ana metin text size'i ile html text size uyusmuyor"). The host
+ * resolves both off the pane and injects them; it re-injects when the zoom changes.
+ *
+ * It lands on <html> rather than body so every size below can be a REM — one root, no
+ * compounding, so a chip inside a stat inside a card is the size it says it is. The px
+ * fallbacks keep a host that has no chat tokens (a Meeting Room embed) looking as it did.
+ */
+html {
+  font-size: var(--chat-text, 14px);
+}
+
 body {
   font-family: var(--font-family);
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: 1rem;
+  line-height: var(--chat-line-height, 1.55);
   color: var(--color-text);
   background: transparent;
+  /* The same three the app sets on its own body (styles/global.css). Type that matches in
+     size, leading and FACE still reads as a different document if it is tracked differently
+     or ligates differently — the tracking alone was 8.6px over one line. */
+  letter-spacing: var(--letter-spacing-body, normal);
+  font-feature-settings: "calt" 0, "clig" 0, "liga" 0;
   -webkit-font-smoothing: antialiased;
+  /* Everything in here sizes itself against the PANE, which is narrower than a window and
+     narrower still with the slide-over open. Makes the @container rules below possible. */
+  container-type: inline-size;
 }
 
 /* ── The root wrapper. Wrap the whole block in it: it owns the rhythm between
-     sections so an author never hand-spaces margins. ── */
-.dc-doc { display: flex; flex-direction: column; gap: 14px; }
-.dc-doc--tight { gap: 8px; }
-.dc-doc--airy { gap: 22px; }
+     sections so an author never hand-spaces margins.
+
+     BLOCK FLOW, NOT A FLEX COLUMN — and this is the single most consequential line in the
+     kit. A flex column turns every direct child into a flex ITEM, including bare text and
+     inline elements: an author who writes a sentence with a `dc-code` chip in the middle of
+     it gets three stacked full-width rows instead of one sentence. The owner's report was
+     "hiçbir şey anlaşılmıyor", and it was literally true — the prose had been cut into
+     pieces (screenshot 2026-09-02). `> * + *` gives block children the same rhythm a `gap`
+     did, while inline content goes back to doing what inline content does. Same idiom
+     `.dc-panel` already used. ── */
+.dc-doc { display: block; }
+/* Little content does not want a 960px box. One kv, three chips, a single stat — stretched
+   across the full measure they read as a mostly-empty panel with something lost in it. */
+.dc-doc--hug { max-inline-size: max-content; }
 
 /* ═══ Typography ═══ */
 
@@ -53,16 +90,16 @@ body {
   color: var(--color-text);
   margin: 0;
 }
-.dc-h1 { font-size: 24px; line-height: 1.25; }
-.dc-h2 { font-size: 18px; line-height: 1.3; }
-.dc-h3 { font-size: 15px; line-height: 1.35; font-weight: 600; letter-spacing: -0.01em; }
+.dc-h1 { font-size: 1.714rem; line-height: 1.25; }
+.dc-h2 { font-size: 1.286rem; line-height: 1.3; }
+.dc-h3 { font-size: 1.071rem; line-height: 1.35; font-weight: 600; letter-spacing: -0.01em; }
 
 /* The one line under a heading that frames what follows. */
-.dc-lede { font-size: 14.5px; color: var(--color-text-secondary); margin: 0; }
+.dc-lede { font-size: 1.036rem; color: var(--color-text-secondary); margin: 0; }
 .dc-p { margin: 0; color: var(--color-text); }
-.dc-muted { font-size: 13px; color: var(--color-text-tertiary); }
+.dc-muted { font-size: 0.929rem; color: var(--color-text-tertiary); }
 .dc-label {
-  font-size: 11px;
+  font-size: 0.786rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -107,7 +144,7 @@ body {
 
 .dc-code {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 0.893rem;
   padding: 1px 5px;
   border-radius: 4px;
   background: var(--color-bg-tertiary);
@@ -115,7 +152,7 @@ body {
 }
 .dc-pre {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 0.893rem;
   line-height: 1.5;
   margin: 0;
   padding: 12px 14px;
@@ -132,19 +169,19 @@ body {
 
 .dc-value {
   font-family: var(--font-family-display);
-  font-size: 28px;
+  font-size: 2rem;
   font-weight: 700;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
   color: var(--color-text);
 }
-.dc-value--lg { font-size: 40px; }
-.dc-value--sm { font-size: 19px; }
-.dc-unit { font-size: 14px; font-weight: 500; color: var(--color-text-tertiary); margin-left: 4px; }
+.dc-value--lg { font-size: 2.857rem; }
+.dc-value--sm { font-size: 1.357rem; }
+.dc-unit { font-size: 1rem; font-weight: 500; color: var(--color-text-tertiary); margin-left: 4px; }
 .dc-num { font-family: var(--font-mono); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
-.dc-delta { font-size: 13px; font-weight: 600; }
+.dc-delta { font-size: 0.929rem; font-weight: 600; }
 .dc-delta--up { color: var(--color-success); }
 .dc-delta--down { color: var(--color-error); }
 .dc-delta--flat { color: var(--color-text-tertiary); }
@@ -154,7 +191,9 @@ body {
 .dc-row { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
 .dc-row--top { align-items: flex-start; }
 .dc-row--between { justify-content: space-between; }
-.dc-stack { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* Block flow for the same reason as .dc-doc — a stack holding a sentence must not cut it
+   into rows. Use .dc-row when you want things beside each other. */
+.dc-stack { display: block; min-width: 0; }
 .dc-spacer { flex: 1; }
 
 .dc-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
@@ -181,7 +220,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 11px;
+  font-size: 0.786rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -192,9 +231,6 @@ body {
 /* ═══ Card ═══ */
 
 .dc-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
   padding: 14px 16px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -203,8 +239,8 @@ body {
 }
 .dc-card--flat { background: transparent; }
 .dc-card--accent { border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); }
-.dc-card-title { font-family: var(--font-family-display); font-size: 15px; font-weight: 650; letter-spacing: -0.01em; color: var(--color-text); }
-.dc-card-sub { font-size: 12.5px; color: var(--color-text-tertiary); }
+.dc-card-title { font-family: var(--font-family-display); font-size: 1.071rem; font-weight: 650; letter-spacing: -0.01em; color: var(--color-text); }
+.dc-card-sub { font-size: 0.893rem; color: var(--color-text-tertiary); }
 .dc-card-img { width: 100%; border-radius: var(--radius-md); display: block; object-fit: cover; }
 .dc-card-foot { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
@@ -212,17 +248,14 @@ body {
      their separation instead of sinking into the same grey. ═══ */
 
 .dc-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
   padding: 12px 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-bg-secondary);
   min-width: 0;
 }
-.dc-stat-label { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
-.dc-stat-note { font-size: 11.5px; color: var(--color-text-tertiary); }
+.dc-stat-label { font-size: 0.857rem; font-weight: 600; color: var(--color-text-secondary); }
+.dc-stat-note { font-size: 0.821rem; color: var(--color-text-tertiary); }
 
 /* ═══ Chip / badge — the .lab-badge pair: subtle background, toned text, no border ═══ */
 
@@ -232,7 +265,7 @@ body {
   gap: 4px;
   padding: 3px 9px;
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 0.821rem;
   font-weight: 600;
   white-space: nowrap;
   color: var(--color-text-secondary);
@@ -252,7 +285,7 @@ body {
   border: 1px solid color-mix(in srgb, var(--color-accent) 38%, var(--color-border));
   background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-tertiary));
   color: var(--color-text);
-  font-size: 13.5px;
+  font-size: 0.964rem;
 }
 .dc-callout--good { border-color: color-mix(in srgb, var(--color-success) 38%, var(--color-border)); background: color-mix(in srgb, var(--color-success) 10%, var(--color-bg-tertiary)); }
 .dc-callout--bad { border-color: color-mix(in srgb, var(--color-error) 38%, var(--color-border)); background: color-mix(in srgb, var(--color-error) 10%, var(--color-bg-tertiary)); }
@@ -263,7 +296,7 @@ body {
 .dc-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 0.929rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   overflow: hidden;
@@ -272,7 +305,7 @@ body {
   text-align: left;
   padding: 8px 12px;
   font-weight: 600;
-  font-size: 12px;
+  font-size: 0.857rem;
   color: var(--color-text-secondary);
   background: var(--color-bg-tertiary);
   white-space: nowrap;
@@ -280,27 +313,34 @@ body {
 .dc-table td { padding: 7px 12px; border-top: 1px solid var(--color-border); color: var(--color-text); }
 .dc-table th.dc-num, .dc-table td.dc-num { text-align: right; }
 .dc-table tr.dc-row--pick td { background: var(--color-accent-soft); }
-.dc-caption { font-size: 12px; color: var(--color-text-tertiary); }
+.dc-caption { font-size: 0.857rem; color: var(--color-text-tertiary); }
+
+/* A table wider than the pane. `.dc-table` keeps its `overflow: hidden` — that is what
+   clips its own corners to the radius — so the SCROLL has to live one level out, or the
+   right-hand columns just stop existing at the pane's edge with nothing to say they did. */
+.dc-table-wrap { overflow-x: auto; max-width: 100%; }
+.dc-table-wrap::-webkit-scrollbar { height: 8px; }
+.dc-table-wrap::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
 
 /* Key/value pairs — a spec list without a table's ceremony. */
-.dc-kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
+.dc-kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 0.929rem; }
 .dc-kv dt { color: var(--color-text-tertiary); }
 .dc-kv dd { margin: 0; color: var(--color-text); }
 
 /* ═══ Bar row — the BarList idiom. Set the fill's width inline. ═══ */
 
-.dc-bar { display: flex; align-items: center; gap: 10px; font-size: 13px; min-width: 0; }
+.dc-bar { display: flex; align-items: center; gap: 10px; font-size: 0.929rem; min-width: 0; }
 .dc-bar-label { flex: 0 0 32%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); }
 .dc-bar-track { flex: 1; min-width: 0; height: 9px; border-radius: 5px; background: var(--color-bg-tertiary); overflow: hidden; }
 .dc-bar-fill { display: block; height: 100%; border-radius: 5px; background: var(--chart-1); }
-.dc-bar-value { flex-shrink: 0; font-family: var(--font-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--color-text); }
+.dc-bar-value { flex-shrink: 0; font-family: var(--font-mono); font-size: 0.893rem; font-variant-numeric: tabular-nums; color: var(--color-text); }
 
 /* ═══ Funnel — stacked proportional steps, the shape a conversion story wants ═══ */
 
 .dc-funnel { display: flex; flex-direction: column; gap: 6px; }
-.dc-funnel-step { display: flex; align-items: center; gap: 10px; font-size: 13px; }
-.dc-funnel-bar { height: 30px; border-radius: var(--radius-sm); background: var(--chart-1); display: flex; align-items: center; padding: 0 10px; color: #fff; font-weight: 600; font-size: 12.5px; min-width: 44px; }
-.dc-funnel-drop { font-size: 12px; color: var(--color-text-tertiary); }
+.dc-funnel-step { display: flex; align-items: center; gap: 10px; font-size: 0.929rem; }
+.dc-funnel-bar { height: 30px; border-radius: var(--radius-sm); background: var(--chart-1); display: flex; align-items: center; padding: 0 10px; color: var(--color-accent-text, #fff); font-weight: 600; font-size: 0.893rem; min-width: 44px; }
+.dc-funnel-drop { font-size: 0.857rem; color: var(--color-text-tertiary); }
 
 /* ═══ Steps / flow — how to explain a PROCESS instead of narrating it ═══ */
 
@@ -314,12 +354,12 @@ body {
   border-radius: 999px;
   display: grid;
   place-items: center;
-  font-size: 12px;
+  font-size: 0.857rem;
   font-weight: 700;
   color: var(--color-accent);
   background: var(--color-accent-soft);
 }
-.dc-step-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dc-step-body { min-width: 0; }
 
 /* Left-to-right pipeline: boxes the kit joins with arrows. Write NODES ONLY — every node
    after the first draws its own leading arrow, so when the row wraps the arrow travels
@@ -338,7 +378,7 @@ body {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg-secondary);
-  font-size: 12.5px;
+  font-size: 0.893rem;
 }
 .dc-flow-node ~ .dc-flow-node { margin-left: 30px; }
 .dc-flow-node ~ .dc-flow-node::before {
@@ -350,10 +390,31 @@ body {
   transform: translateY(-50%);
   text-align: center;
   color: var(--color-text-tertiary);
-  font-size: 15px;
+  font-size: 1.071rem;
   line-height: 1;
 }
 .dc-flow-arrow { display: none; }
+/* A step that MEANS something — the failure, the branch that pays off — tinted the same way
+   a callout is: a 10% surface under normal text, never a solid fill with prose on top. The
+   modifier exists so "this node matters" has a legitimate class; without one the reach is
+   for `dc-bg3`, which is a chart fill, and dark-red body text on saturated orange is what
+   that produced (owner screenshot 2026-09-02). Tone is MEANING here, not decoration. */
+.dc-flow-node--accent {
+  border-color: color-mix(in srgb, var(--color-accent) 38%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-secondary));
+}
+.dc-flow-node--good {
+  border-color: color-mix(in srgb, var(--color-success) 38%, var(--color-border));
+  background: color-mix(in srgb, var(--color-success) 10%, var(--color-bg-secondary));
+}
+.dc-flow-node--bad {
+  border-color: color-mix(in srgb, var(--color-error) 38%, var(--color-border));
+  background: color-mix(in srgb, var(--color-error) 10%, var(--color-bg-secondary));
+}
+.dc-flow-node--warn {
+  border-color: color-mix(in srgb, var(--color-warning) 38%, var(--color-border));
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--color-bg-secondary));
+}
 
 /* ═══ Timeline ═══ */
 
@@ -369,17 +430,24 @@ body {
   background: var(--color-border);
 }
 .dc-tl-dot { flex: 0 0 11px; height: 11px; margin-top: 5px; border-radius: 999px; background: var(--chart-1); position: relative; z-index: 1; }
-.dc-tl-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.dc-tl-when { font-size: 11.5px; color: var(--color-text-tertiary); }
+.dc-tl-body { min-width: 0; }
+.dc-tl-when { font-size: 0.821rem; color: var(--color-text-tertiary); }
 
 /* ═══ Compare — the DECISION block. Two or three options rendered side by side so
      the reader picks by looking, instead of reading a paragraph about each. ═══ */
 
-.dc-compare { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); align-items: stretch; }
+/* 340px, not 230px, and the difference is the whole readability of a decision block.
+   `auto-fit` keeps two columns for as long as they FIT, which is not the same as for as
+   long as they READ: at a 534px pane, minmax(230px) gave two 261px columns and a measure
+   of 27 characters — prose broken every three words down two ragged ribbons (owner
+   screenshot 2026-09-02). Measured across pane widths, ~340px is where a column still
+   holds ~40 characters; below that the honest answer is one column, which at the SAME pane
+   width reads at 45. 380px is the measured floor: it keeps two columns at a full-width
+   pane (~48 characters each) and stacks everywhere narrower, where one column reads at 67.
+   An option that is a title and three short bullets loses nothing by stacking; an option
+   that is a paragraph gains everything. The briefing asks for the short kind. */
+.dc-compare { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); align-items: stretch; }
 .dc-option {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
   padding: 14px 16px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -392,8 +460,8 @@ body {
   background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-secondary));
 }
 .dc-option-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.dc-option-title { font-family: var(--font-family-display); font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
-.dc-pros, .dc-cons { margin: 0; padding-left: 16px; font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
+.dc-option-title { font-family: var(--font-family-display); font-size: 1.071rem; font-weight: 650; letter-spacing: -0.01em; }
+.dc-pros, .dc-cons { margin: 0; padding-left: 16px; font-size: 0.929rem; display: flex; flex-direction: column; gap: 3px; }
 .dc-pros li { color: var(--color-text); }
 .dc-cons li { color: var(--color-text-secondary); }
 .dc-pros li::marker { content: "+ "; color: var(--color-success); font-weight: 700; }
@@ -414,7 +482,7 @@ body {
 .dc-tablist { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--color-border); }
 .dc-tab {
   padding: 6px 12px;
-  font-size: 13px;
+  font-size: 0.929rem;
   font-weight: 600;
   color: var(--color-text-secondary);
   border-bottom: 2px solid transparent;
@@ -459,7 +527,7 @@ body {
 .dc-btn {
   appearance: none;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 0.893rem;
   font-weight: 600;
   padding: 5px 12px;
   border-radius: var(--radius-sm);
@@ -523,7 +591,7 @@ span.dc-tip, div.dc-tip {
   background: var(--color-bg-elevated);
   color: var(--color-text);
   box-shadow: var(--shadow-md);
-  font-size: 12px;
+  font-size: 0.857rem;
   line-height: 1.4;
   white-space: nowrap;
 }
@@ -539,7 +607,7 @@ span.dc-tip--below, div.dc-tip--below { bottom: auto; top: calc(100% + 6px); }
 /* ═══ Media ═══ */
 
 .dc-img { max-width: 100%; border-radius: var(--radius-md); display: block; }
-.dc-figcaption { font-size: 12px; color: var(--color-text-tertiary); margin-top: 5px; }
+.dc-figcaption { font-size: 0.857rem; color: var(--color-text-tertiary); margin-top: 5px; }
 
 /* ═══ Chart colors — the ONLY palette. Never a hardcoded hex: these follow the
      theme and the user's brand override. Use on SVG (fill/stroke) or a div. ═══ */
@@ -559,37 +627,80 @@ span.dc-tip--below, div.dc-tip--below { bottom: auto; top: calc(100% + 6px); }
    width (~900) so one user unit is about one pixel. */
 .dc-axis-text { fill: var(--color-text-tertiary); font-size: 10px; font-family: var(--font-family); }
 /* Axis labels as HTML, outside the svg — never scaled, always legible. */
-.dc-axis-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--color-text-tertiary); margin-top: 4px; }
-.dc-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--color-text-secondary); }
+.dc-axis-row { display: flex; justify-content: space-between; font-size: 0.786rem; color: var(--color-text-tertiary); margin-top: 4px; }
+.dc-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.857rem; color: var(--color-text-secondary); }
 .dc-legend-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 5px; vertical-align: -1px; }
 
 /* ═══ Honesty helpers — the same words the native renders use ═══ */
 
 .dc-low-sample { opacity: 0.45; }
-.dc-empty { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; text-align: center; }
+.dc-empty { color: var(--color-text-tertiary); font-size: 0.929rem; padding: 24px 0; text-align: center; }
 
 /* ═══ Slides — a presentation, only in the fullscreen overlay.
      Inline in the transcript a slide is just a padded section (a viewport-height
      slide would make the auto-height measurement chase the frame it is setting);
      in fullscreen the host sets data-dc-mode="full" and they become real pages. ═══ */
 
-.dc-slide {
+/* Block inline, for the same reason every other prose container is (see .dc-doc). It
+   becomes a flex column only in fullscreen, where `justify-content: center` needs one and
+   a slide is a composed page rather than a paragraph. */
+.dc-slide { padding: 20px 0; }
+html[data-dc-mode="full"] .dc-slides { scroll-snap-type: y mandatory; }
+html[data-dc-mode="full"] .dc-slide {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 20px 0;
-}
-html[data-dc-mode="full"] .dc-slides { scroll-snap-type: y mandatory; }
-html[data-dc-mode="full"] .dc-slide {
   min-height: calc(100vh - 40px);
   justify-content: center;
   scroll-snap-align: start;
   padding: 40px 0;
 }
-html[data-dc-mode="full"] .dc-slide .dc-h1 { font-size: 40px; }
-html[data-dc-mode="full"] .dc-slide .dc-h2 { font-size: 26px; }
-html[data-dc-mode="full"] .dc-slide .dc-value { font-size: 52px; }
-html[data-dc-mode="full"] body { font-size: 15px; }
+html[data-dc-mode="full"] .dc-slide .dc-h1 { font-size: 2.857rem; }
+html[data-dc-mode="full"] .dc-slide .dc-h2 { font-size: 1.857rem; }
+html[data-dc-mode="full"] .dc-slide .dc-value { font-size: 3.714rem; }
+/* Fullscreen reads a notch larger — derived from the same root, not a second constant, so
+   the zoom control still moves both modes together. */
+html[data-dc-mode="full"] { font-size: calc(var(--chat-text, 14px) * 1.07); }
+
+/* ═══ Narrow panes — the block's width is the PANE's, and the pane is not a window.
+     A `dc-grid--4` of stat tiles at 380px gives each column ~80px, and a 2rem `.dc-value`
+     does not fit in 80px: it clips mid-digit ("190.313" rendered as "190.31" — owner
+     screenshot 2026-09-02). Wrapping the number instead would be worse, so the COLUMNS
+     give way. The container is the body, so this tracks the real pane width including the
+     slide-over, not the window's. ═══ */
+
+@container (max-width: 640px) {
+  .dc-grid--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (max-width: 520px) {
+  .dc-grid--3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (max-width: 340px) {
+  .dc-grid--2, .dc-grid--3, .dc-grid--4 { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ═══ THE DOCUMENT RHYTHM — deliberately the LAST thing in this stylesheet ═══
+
+   These replace the `gap` the prose containers used to get from being flex columns (see
+   .dc-doc for why they no longer are). They live here, at the bottom, for a reason that
+   cost a round to find: `.dc-doc > * + *` and `.dc-p` have the SAME specificity (0,1,0),
+   so whichever is written later wins — and almost every text class in this kit sets
+   `margin: 0`. Declared next to their container, these rules were silently overridden and
+   the whole document collapsed to zero spacing. Last means last. ═══ */
+
+.dc-doc > * + * { margin-top: 14px; }
+.dc-doc--tight > * + * { margin-top: 8px; }
+.dc-doc--airy > * + * { margin-top: 22px; }
+.dc-stack > * + * { margin-top: 10px; }
+.dc-card > * + * { margin-top: 8px; }
+.dc-option > * + * { margin-top: 8px; }
+.dc-stat > * + * { margin-top: 3px; }
+.dc-step-body > * + * { margin-top: 2px; }
+.dc-tl-body > * + * { margin-top: 2px; }
+.dc-slide > * + * { margin-top: 16px; }
+/* Fullscreen slides go back to being a flex column (for vertical centring), where `gap`
+   does the spacing — so the margin would double it. */
+html[data-dc-mode="full"] .dc-slide > * + * { margin-top: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

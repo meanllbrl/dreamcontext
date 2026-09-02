@@ -37,6 +37,7 @@ export const TYPE_LABELS: Record<CorpusType, string> = {
   insight: 'insight',
   thesis: 'thesis',
   automation: 'automation',
+  artifact: 'artifact',
   skill: 'skill', // never produced by buildCorpus; present only to satisfy the Record type
 };
 

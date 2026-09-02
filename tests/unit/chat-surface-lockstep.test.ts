@@ -148,6 +148,73 @@ describe('dream-view is surface-gated to the Chat spawn', () => {
   });
 });
 
+describe('CHAT_SURFACE_BRIEFING <-> dc- kit lockstep', () => {
+  /**
+   * The other half of the same standing rule, for the OTHER vocabulary the briefing owns.
+   * A `dream-view` type it names but the client drops renders a notice; a `dc-` class it
+   * names but `chat-html-kit.css` does not define renders NOTHING — an unstyled div in the
+   * middle of an answer, with no notice and nothing in the console to say why.
+   *
+   * Only this direction is pinned. The kit deliberately defines more than the briefing
+   * lists (`dc-doc--tight`, `dc-card--flat`, `dc-slides`, …): an unnamed class is a
+   * capability the agent simply never reaches, which is the safe half of the trade.
+   */
+  const repo = new URL('../../', import.meta.url).pathname;
+  const kitCss = readFileSync(
+    join(repo, 'dashboard/src/components/sleepy/chat/chat-html-kit.css'), 'utf-8',
+  );
+  const KIT = new Set((kitCss.match(/\.dc-[a-z0-9-]+/g) ?? []).map((c) => c.slice(1)));
+
+  /** The briefing writes the vocabulary in shorthand. This is that shorthand, expanded. */
+  function expand(token: string): string[] {
+    const range = token.match(/^(.*?)(\d+)\.\.(\d+)$/);   // dc-f1..8
+    if (range) {
+      const out: string[] = [];
+      for (let i = Number(range[2]); i <= Number(range[3]); i++) out.push(`${range[1]}${i}`);
+      return out;
+    }
+    const parts = token.split('|');
+    const head = parts[0];
+    const base = head.includes('--') ? head.slice(0, head.indexOf('--')) : head;
+    return [head, ...parts.slice(1).map((p) => (
+      // `dc-chip--accent|--good` hangs each modifier off the base; `dc-grid--2|3|4` and
+      // `dc-h1|h2|h3` swap the tail of the head for the part.
+      p.startsWith('--') ? base + p : head.slice(0, head.length - p.length) + p
+    ))];
+  }
+
+  /** The canonical class list — the run between "Layout" and the last hover class. */
+  function namedClasses(): string[] {
+    const from = CHAT_SURFACE_BRIEFING.indexOf('Layout `dc-doc');
+    const to = CHAT_SURFACE_BRIEFING.indexOf('dc-tip-box dc-tip-text`');
+    expect(from, 'the briefing no longer carries a dc- class list').toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    return CHAT_SURFACE_BRIEFING.slice(from, to + 'dc-tip-box dc-tip-text'.length)
+      .replace(/[`()]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.startsWith('dc-'))
+      .flatMap(expand);
+  }
+
+  it('every dc- class the briefing names is defined by the kit', () => {
+    const named = namedClasses();
+    expect(named.length, 'parsed no classes at all — the expander is broken').toBeGreaterThan(60);
+    const missing = [...new Set(named)].filter((c) => !KIT.has(c));
+    expect(missing, `named in the briefing, undefined in chat-html-kit.css: ${missing.join(', ')}`)
+      .toEqual([]);
+  });
+
+  it('names the classes this pass added, or they are unreachable', () => {
+    // The kit grew three affordances for the owner's 2026-09-02 look report (a tone for a
+    // flow node that MEANS something, a scroll for a too-wide table, a hug for a small
+    // block). A kit class no briefing names is a class no agent will ever type.
+    const named = new Set(namedClasses());
+    for (const c of ['dc-doc--hug', 'dc-table-wrap', 'dc-flow-node--warn', 'dc-flow-node--good']) {
+      expect(named, c).toContain(c);
+    }
+  });
+});
+
 // Criterion 10 ("dashboard/src contains no reference to BoardCanvas") is already asserted by
 // `tests/unit/chat-actions.test.ts`'s "BoardCanvas — fully removed (Capability 3, criterion
 // 10)" describe block, added alongside the board-fullscreen change itself. Not duplicated here.

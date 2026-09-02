@@ -196,3 +196,75 @@
   .chat-htmlpending-bars span,
   .chat-htmlpending-outline li { animation: none; }
 }
+
+/* ── The export bar, in the fullscreen dialog header ──────────────────────────────────
+   Quiet by default and sized like the overlay's own close button: these are file actions,
+   not the point of the screen. They sit BESIDE the close control (FullscreenOverlay's
+   `actions` slot), so they inherit its focus trap for free — the export bar is inside the
+   dialog, which is what stops Tab from walking out into the transcript behind it. */
+.chat-htmlexport-btn {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.chat-htmlexport-btn:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border-hover);
+}
+
+.chat-htmlexport-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Disabled means "another export is running", not "unavailable" — so it reads as busy
+   rather than broken: dimmed, but not struck out of the bar. */
+.chat-htmlexport-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The one line that reports what happened. A failed export has to SAY so — the whole
+   defect this feature exists for is work that silently went nowhere. */
+.chat-htmlexport-note {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  max-width: 42ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The name field, in place of the bar. Replacing the buttons rather than sitting beside
+   them keeps the dialog header one row tall at any window width — and there is nothing
+   else worth clicking while you are naming the thing. */
+.chat-htmlexport-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chat-htmlexport-input {
+  width: 22ch;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.chat-htmlexport-input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}

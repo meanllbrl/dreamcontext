@@ -34,7 +34,7 @@
 
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -91,6 +91,9 @@ const htmlBlock = (loopback) => [
   // <script> below: if either tip reveals, it reveals on the kit's CSS alone.
   '  <p class="dc-p">Conversion <span class="dc-hit" id="hit">14.2%',
   '    <span class="dc-tip" id="tip">3,204 of 22,560</span></span></p>',
+  // A code chip INSIDE a sentence: carries the mono face for the typography pass, and is
+  // the shape that used to shatter a paragraph into stacked full-width rows.
+  '  <p class="dc-p">Run <span class="dc-code" id="code">npm run verify</span> to see it.</p>',
   '  <svg class="dc-svg" viewBox="0 0 200 70" role="img" aria-label="One point">',
   '    <g class="dc-hit" id="svghit"><circle class="dc-f1" cx="100" cy="40" r="12"/>',
   '      <g class="dc-tip" id="svgtip" transform="translate(100,40)">',
@@ -692,6 +695,731 @@ body{background:#131318;margin:0;padding:20px;}`;
   }
 }
 
+/**
+ * THE BLOCK IS SET IN THE TRANSCRIPT'S TYPE — measured, in real Chromium, at two zooms.
+ *
+ * The defect (owner report 2026-09-02, with screenshots): "ana metin text size'i ile html
+ * text size uyusmuyor / satir araliklari da uyusmuyor". The kit set itself at 14px/1.55
+ * while every prose surface around it reads --chat-text (15px x --zoom) at 1.75, and since
+ * CSS variables do not cross an iframe boundary the block also never heard the window's
+ * "- 100% +" control at all. Both halves are invisible to a unit test: the CSS now SAYS
+ * var(--chat-text), and would go on saying it while resolving to nothing.
+ *
+ * So this asserts computed pixels on both sides of the boundary, and does it twice — the
+ * second pass drives the real zoom contract (--zoom on <html> + the dreamcontext-zoom
+ * event) and requires the block to have MOVED. A block that matched at 1.0 and stayed put
+ * at 1.25 is the original bug wearing the fix's clothes.
+ *
+ * Also checks the locale, in the same session and for the same reason: `text-transform:
+ * uppercase` is locale-sensitive, and a srcdoc with no `lang` casts Turkish with the
+ * English rules — "değiştiriyor" became "DEĞIŞTIRIYOR", dotless, a different word.
+ */
+async function runTypography(base, report) {
+  const ok = (label, cond, detail = '') => report.check('typography', label, cond, detail);
+  console.log('\n═══ the block reads in the transcript\'s type ═══');
+
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  try {
+    ok('a chat session opens against the real WS route', await openChatAndAsk(page, base));
+    await page.waitForSelector('.chat-htmlview-frame', { timeout: 20000 });
+    await page.waitForTimeout(1800);
+
+    /** Computed px on BOTH sides: the transcript's own prose, and .dc-p inside the frame. */
+    const measure = async () => {
+      const host = await page.evaluate(() => {
+        // The REAL paragraph the assistant's answer is set in — the prose immediately
+        // above the block, in the same column. Deliberately not `--chat-text` read off the
+        // pane: a custom property resolves lazily, so that reads back the unevaluated
+        // `calc(15px * var(--zoom))` and any comparison against it is vacuous. Computed
+        // pixels on a painted paragraph is the only honest left-hand side.
+        const nodes = [...document.querySelectorAll('.chat-pane p')];
+        const el = nodes.reverse().find((n) => (n.textContent || '').includes('shape of it'));
+        if (!el) return { size: 0, line: 0, found: false };
+        const cs = getComputedStyle(el);
+        return { size: parseFloat(cs.fontSize), line: parseFloat(cs.lineHeight), found: true };
+      });
+      const frame = page.frameLocator('.chat-htmlview-frame').first();
+      const inner = await frame.locator('.dc-p').first().evaluate((el) => {
+        const cs = getComputedStyle(el);
+        const root = getComputedStyle(document.documentElement);
+        return {
+          size: parseFloat(cs.fontSize),
+          line: parseFloat(cs.lineHeight),
+          rootSize: parseFloat(root.fontSize),
+          lang: document.documentElement.lang,
+        };
+      });
+      return { host, inner };
+    };
+
+    // ── F5: the FACE, not just the size ────────────────────────────────────────────────
+    // Measured by RENDERED WIDTH, which is the only thing that cannot lie here:
+    // `document.fonts.check()` returns true for a family the engine will happily fall back
+    // on, and computed font-family reports the STACK rather than the face that won. Same
+    // string, same size, same weight, probed on both sides of the frame boundary — if they
+    // resolve different faces the widths differ, and they did: 473px against 430px, a 10%
+    // gap that reads as "the text size doesn't match" (F5).
+    const PROBE = `(() => {
+      const el = document.createElement('span');
+      el.textContent = 'Conversion 14.2% WWW degistiriyor';
+      el.style.cssText = 'position:absolute;left:-9999px;font-size:40px;font-weight:400;white-space:pre';
+      el.style.fontFamily = getComputedStyle(document.body).fontFamily;
+      document.body.appendChild(el);
+      const w = el.getBoundingClientRect().width;
+      el.remove();
+      return w;
+    })()`;
+    const hostFace = await page.evaluate(`(() => {
+      const el = document.createElement('span');
+      el.textContent = 'Conversion 14.2% WWW degistiriyor';
+      el.style.cssText = 'position:absolute;left:-9999px;font-size:40px;font-weight:400;white-space:pre';
+      el.style.fontFamily = getComputedStyle(document.querySelector('.chat-pane')).fontFamily;
+      document.body.appendChild(el);
+      const w = el.getBoundingClientRect().width;
+      el.remove();
+      return w;
+    })()`);
+    const blockFace = await page.frameLocator('.chat-htmlview-frame').first()
+      .locator('body').evaluate((_b, p) => eval(p), PROBE);
+    // Diagnostic reference points: what each side measures when FORCED to system-ui, so a
+    // mismatch says which side fell back rather than merely that they differ.
+    const forced = async (fam) => ({
+      host: await page.evaluate(`(() => {
+        const el = document.createElement('span');
+        el.textContent = 'Conversion 14.2% WWW degistiriyor';
+        el.style.cssText = "position:absolute;left:-9999px;font-size:40px;font-weight:400;white-space:pre;font-family:${fam}";
+        document.body.appendChild(el);
+        const w = el.getBoundingClientRect().width; el.remove(); return w;
+      })()`),
+      block: await page.frameLocator('.chat-htmlview-frame').first().locator('body')
+        .evaluate((_b, f) => {
+          const el = document.createElement('span');
+          el.textContent = 'Conversion 14.2% WWW degistiriyor';
+          el.style.cssText = `position:absolute;left:-9999px;font-size:40px;font-weight:400;white-space:pre;font-family:${f}`;
+          document.body.appendChild(el);
+          const w = el.getBoundingClientRect().width; el.remove(); return w;
+        }, fam),
+    });
+    const sys = await forced('ui-sans-serif');
+    const inter = await forced("'Inter'");
+    report.note(`forced system-ui: host ${sys.host.toFixed(1)} / block ${sys.block.toFixed(1)}`);
+    report.note(`forced Inter:     host ${inter.host.toFixed(1)} / block ${inter.block.toFixed(1)}`);
+
+    ok('the block no longer falls back to the system face',
+      Math.abs(blockFace - sys.block) > 4,
+      `block ${blockFace.toFixed(1)}px, system fallback would be ${sys.block.toFixed(1)}px`);
+    ok('the block is drawn in the SAME TYPEFACE as the transcript, not a fallback',
+      Math.abs(hostFace - blockFace) < 2,
+      `transcript ${hostFace.toFixed(1)}px vs block ${blockFace.toFixed(1)}px`);
+
+    // EVERY face the kit uses, not just the body's. The kit also sets headings, values and
+    // card titles in `--font-family-display` and code in `--font-mono`; each is a separate
+    // webfont the app loads and the frame cannot. Measured on the REAL classes, because a
+    // synthetic `font-family: 'X'` probe cannot tell a loaded face from a fallback.
+    for (const [label, sel, token] of [
+      ['display (.dc-h2)', '.dc-h2', '--font-family-display'],
+      ['mono (.dc-code)', '.dc-code', '--font-mono'],
+    ]) {
+      const hostW = await page.evaluate((t) => {
+        const pane = document.querySelector('.chat-pane');
+        const el = document.createElement('span');
+        el.textContent = 'Ceyrek okumasi WWW';
+        el.style.cssText = 'position:absolute;left:-9999px;white-space:pre;font-size:40px;font-weight:700';
+        el.style.fontFamily = getComputedStyle(pane).getPropertyValue(t);
+        document.body.appendChild(el);
+        const w = +el.getBoundingClientRect().width.toFixed(1); el.remove(); return w;
+      }, token);
+      const frameW = await page.frameLocator('.chat-htmlview-frame').first().locator('body')
+        .evaluate((b, s2) => {
+          const src = document.querySelector(s2);
+          const el = document.createElement('span');
+          el.textContent = 'Ceyrek okumasi WWW';
+          el.style.cssText = 'position:absolute;left:-9999px;white-space:pre;font-size:40px;font-weight:700';
+          el.style.fontFamily = src ? getComputedStyle(src).fontFamily : getComputedStyle(b).fontFamily;
+          b.appendChild(el);
+          const w = +el.getBoundingClientRect().width.toFixed(1); el.remove(); return w;
+        }, sel).catch(() => -1);
+      ok(`${label} — the block resolves the same face as the app`,
+        frameW > 0 && Math.abs(hostW - frameW) < 2, `host ${hostW}px vs block ${frameW}px`);
+    }
+
+    const srcdocKB = await page.locator('.chat-htmlview-frame').first()
+      .evaluate((el) => Math.round((el.getAttribute('srcdoc') || '').length / 1024));
+    report.note(`srcdoc is ${srcdocKB}KB per block with the face embedded`);
+
+    const at1 = await measure();
+    ok('the transcript paragraph beside the block was found and measured',
+      at1.host.found && at1.host.size > 0, `size=${at1.host.size}px line=${at1.host.line}px`);
+    ok('the block is set at the transcript\'s reading SIZE, to the pixel',
+      Math.abs(at1.inner.size - at1.host.size) < 0.51,
+      `block=${at1.inner.size}px transcript=${at1.host.size}px`);
+    ok('…and led at the transcript\'s RHYTHM, not its own tighter one',
+      Math.abs(at1.inner.line - at1.host.line) < 1.01,
+      `block=${at1.inner.line}px transcript=${at1.host.line}px`);
+    ok('…and the srcdoc carries the app locale, so uppercase casts by its rules',
+      at1.inner.lang.length > 0, `lang="${at1.inner.lang}"`);
+
+    // Scrolled to the block on purpose: the pair of shots this leaves behind is the
+    // before/after evidence a human reads, and it is only evidence if the transcript
+    // paragraph and the block are in the same frame.
+    const showBlock = async () => {
+      await page.evaluate(() => document.querySelector('.chat-htmlview')
+        ?.scrollIntoView({ block: 'center' }));
+      await page.waitForTimeout(400);
+    };
+    await showBlock();
+    await page.screenshot({ path: join(SHOTS, 'chat-html-type-zoom-100.png'), fullPage: false });
+
+    // ── the same measurement, through the window's own zoom contract ──────────────────
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty('--zoom', '1.25');
+      window.dispatchEvent(new CustomEvent('dreamcontext-zoom', { detail: 1.25 }));
+    });
+    await page.waitForTimeout(1200);
+    const at125 = await measure();
+
+    ok('zoom moved the transcript — the control did something to measure against',
+      at125.host.size > at1.host.size + 1,
+      `${at1.host.size}px -> ${at125.host.size}px`);
+    ok('the block MOVED WITH IT — this is the half the iframe boundary used to swallow',
+      at125.inner.size > at1.inner.size + 1,
+      `${at1.inner.size}px -> ${at125.inner.size}px`);
+    ok('…and it is still the transcript\'s size at the new zoom',
+      Math.abs(at125.inner.size - at125.host.size) < 0.51,
+      `block=${at125.inner.size}px transcript=${at125.host.size}px`);
+    ok('…the whole scale rode along, not just the body (dc-h2 grew too)',
+      at125.inner.rootSize > at1.inner.rootSize + 1,
+      `root ${at1.inner.rootSize}px -> ${at125.inner.rootSize}px`);
+
+    await showBlock();
+    await page.screenshot({ path: join(SHOTS, 'chat-html-type-zoom-125.png'), fullPage: false });
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
+ * TURKISH UPPERCASE, and the narrow pane the owner's second screenshot was taken in.
+ *
+ * Two defects from one screenshot. `.dc-label` uppercases, and CSS casing follows the
+ * document's language: with no `lang` the frame turned "değişiyor" into "DEĞIŞIYOR" —
+ * dotless I, which in Turkish is a different letter. And a `dc-grid--4` of stat tiles in a
+ * ~380px pane gave each column ~80px, in which a 2rem `.dc-value` clipped mid-number
+ * ("190.313" rendered cut). Neither is visible at desk width in English, which is how both
+ * shipped. No server: the subject is the stylesheet, so this loads exactly that.
+ */
+async function runNarrowAndTurkish(report) {
+  const ok = (label, cond, detail = '') => report.check('narrow+tr', label, cond, detail);
+  console.log('\n═══ a narrow pane, in Turkish ═══');
+
+  const kitCss = readFileSync(
+    join(REPO, 'dashboard', 'src', 'components', 'sleepy', 'chat', 'chat-html-kit.css'),
+    'utf-8',
+  );
+  const tokens = `:root{--font-family:system-ui;--font-family-display:system-ui;--font-mono:monospace;
+--chat-text:15px;--chat-line-height:1.75;
+--color-text:#e8e8ee;--color-text-secondary:#b5b5c0;--color-text-tertiary:#8a8a96;
+--color-border:#3a3a44;--color-bg-secondary:#1d1d24;--color-bg-tertiary:#26262e;
+--color-accent:#8b7cf6;--color-accent-soft:#8b7cf62e;--chart-1:#8b7cf6;
+--radius-sm:6px;--radius-md:9px;--radius-lg:12px;
+--color-success:#4ade80;--color-error:#f87171;--color-warning:#fbbf24;}`;
+
+  const markup = `<div class="dc-doc">
+    <span class="dc-label" id="label">pay el değiştiriyor</span>
+    <div class="dc-grid dc-grid--4" id="grid">
+      <div class="dc-stat"><span class="dc-stat-label">Gelir</span>
+        <span class="dc-value" id="v">190.313</span></div>
+      <div class="dc-stat"><span class="dc-stat-label">B</span><span class="dc-value">2</span></div>
+      <div class="dc-stat"><span class="dc-stat-label">C</span><span class="dc-value">3</span></div>
+      <div class="dc-stat"><span class="dc-stat-label">D</span><span class="dc-value">4</span></div>
+    </div>
+    <div class="dc-table-wrap" id="wrap"><table class="dc-table"><tbody><tr>
+      ${Array.from({ length: 9 }, (_x, i) => `<td>uzunca bir hücre ${i}</td>`).join('')}
+    </tr></tbody></table></div>
+  </div>
+  <div class="dc-doc dc-doc--hug" id="hug"><span class="dc-chip">tek</span></div>
+  <div class="dc-flow"><span class="dc-flow-node" id="plain">nötr</span>
+    <span class="dc-flow-node dc-flow-node--warn" id="toned">riskli</span></div>`;
+
+  const browser = await chromium.launch();
+  // 380px: the chat pane with the slide-over open, which is where the screenshot came from.
+  const page = await browser.newPage({ viewport: { width: 380, height: 700 }, colorScheme: 'dark' });
+  try {
+    await page.setContent(
+      `<!doctype html><html lang="tr"><head><style>${tokens}\n${kitCss}</style></head>`
+      + `<body>${markup}</body></html>`,
+    );
+    await page.waitForTimeout(200);
+
+    const m = await page.evaluate(() => {
+      const el = (s) => document.querySelector(s);
+      const val = el('#v');
+      const cols = new Set(
+        [...el('#grid').children].map((c) => Math.round(c.getBoundingClientRect().left)),
+      ).size;
+      const wrap = el('#wrap');
+      return {
+        // The rendered casing, read back off the painted box rather than the source text.
+        label: getComputedStyle(el('#label')).textTransform,
+        cast: 'değiştiriyor'.toLocaleUpperCase(document.documentElement.lang),
+        columns: cols,
+        // Clipping, as the browser sees it: the number's own ink vs the box it is given.
+        valueScroll: val.scrollWidth,
+        valueBox: Math.round(val.getBoundingClientRect().width),
+        tableScrolls: wrap.scrollWidth > wrap.clientWidth + 1,
+        tableClipped: wrap.getBoundingClientRect().width > document.body.clientWidth + 1,
+        hugWidth: Math.round(el('#hug').getBoundingClientRect().width),
+        paneWidth: document.body.clientWidth,
+        // A toned node must be TINTED, not filled: the same surface family the callout
+        // uses, so normal body text still reads on it.
+        plainBg: getComputedStyle(el('#plain')).backgroundColor,
+        tonedBg: getComputedStyle(el('#toned')).backgroundColor,
+        tonedBorder: getComputedStyle(el('#toned')).borderTopColor,
+      };
+    });
+
+    ok('the label really is uppercased — otherwise the casing check proves nothing',
+      m.label === 'uppercase', m.label);
+    ok('Turkish casts with a DOTTED İ, because the document says lang="tr"',
+      m.cast === 'DEĞİŞTİRİYOR', m.cast);
+    ok('a dc-grid--4 gives way to fewer columns instead of squeezing four into 380px',
+      m.columns <= 2, `${m.columns} columns at 380px`);
+    ok('…so the headline number is not clipped mid-digit',
+      m.valueScroll <= m.valueBox + 1, `ink=${m.valueScroll}px box=${m.valueBox}px`);
+    ok('a table wider than the pane scrolls inside its wrap', m.tableScrolls);
+    ok('…and does not push the block itself past the pane', !m.tableClipped);
+    ok('a dc-doc--hug block hugs its one chip instead of spreading over the pane',
+      m.hugWidth < m.paneWidth / 2, `hug=${m.hugWidth}px pane=${m.paneWidth}px`);
+    ok('a toned flow node is a TINT, not the solid chart fill it used to have to borrow',
+      m.tonedBg !== m.plainBg && m.tonedBorder !== 'rgb(251, 191, 36)',
+      `plain=${m.plainBg} toned=${m.tonedBg} border=${m.tonedBorder}`);
+
+    await page.screenshot({ path: join(SHOTS, 'chat-html-narrow-tr.png'), fullPage: true });
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
+ * A BLOCK COMES OUT AS A FILE — the whole point of the export layer, in real Chromium.
+ *
+ * The defect this exists for (owner feature request, 2026-08-29): the only way to get a
+ * block out was a screenshot, so anything worth sharing got written a second time by hand.
+ *
+ * Three things a unit test cannot prove, all proven here against the real chat session:
+ *   1. The frame ANSWERS the snapshot request, and answers with what is ON SCREEN — the
+ *      fixture's script sets "Ran: no" to "yes", so a snapshot still saying "no" means the
+ *      export is shipping the authored markup rather than the render.
+ *   2. The four buttons each produce their artifact: a real PNG (magic bytes, real pixels,
+ *      not a blank canvas), a downloaded HTML file that opens and draws standalone, and a
+ *      clipboard attempt that reports honestly when the platform refuses.
+ *   3. The exported HTML is genuinely self-contained — opened with the network cut, it
+ *      still renders, which is the property the whole design leans on.
+ */
+async function runExport(base, report) {
+  const ok = (label, cond, detail = '') => report.check('export', label, cond, detail);
+  console.log('\n═══ a block comes out as a file ═══');
+
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
+  const page = await ctx.newPage();
+  try {
+    ok('a chat session opens against the real WS route', await openChatAndAsk(page, base));
+    await page.waitForSelector('.chat-htmlview-frame', { timeout: 20000 });
+    await page.waitForTimeout(1800);
+
+    await page.locator('.chat-htmlview-full-btn').first().click({ force: true });
+    ok('fullscreen opened, where the export bar lives',
+      await untilOn(page, async () => (await page.locator('.chat-htmlview-full').count()) > 0, 8000));
+    await page.waitForTimeout(1200);
+
+    // Open the detail INSIDE THE FRAME THAT WILL BE EXPORTED. Fullscreen is its own
+    // document, so a click on the inline copy proves nothing about this one — and the
+    // export must carry what THIS reader is looking at. `#more` is `display:none` in the
+    // authored markup, so if it comes out expanded, the snapshot is genuinely live.
+    const fullInner = page.frameLocator('.chat-htmlview-full iframe').first();
+    await fullInner.locator('#grow').click();
+    await page.waitForTimeout(400);
+    ok('the reader opened a detail in the frame about to be exported',
+      (await fullInner.locator('#more').evaluate((el) => getComputedStyle(el).display)) === 'block');
+
+    const bar = page.locator('.chat-htmlexport-btn');
+    // Five, matching the request's own sketch: four that produce a file, one that saves
+    // into the brain.
+    ok('the export bar offers all five actions', (await bar.count()) === 5,
+      `${await bar.count()} buttons`);
+
+    // ── 1. HTML: the file, and what is in it ────────────────────────────────────────────
+    const htmlDl = await Promise.all([
+      page.waitForEvent('download', { timeout: 20000 }),
+      page.getByTitle(/self-contained HTML/).click(),
+    ]).then(([d]) => d);
+    const htmlPath = join(SHOTS, 'exported-block.html');
+    await htmlDl.saveAs(htmlPath);
+    const exported = readFileSync(htmlPath, 'utf-8');
+
+    ok('the HTML button downloads a file, named off the block\'s own heading',
+      /rendered-answer\.html$/.test(htmlDl.suggestedFilename()), htmlDl.suggestedFilename());
+    ok('…carrying the live render, not the authored markup',
+      exported.includes('>yes<'),
+      exported.includes('>no<') ? 'exported the BEFORE state' : 'no marker found');
+    // Not "the markup exists" — it always did, hidden. EXPANDED is the claim.
+    ok('…including the detail the reader had opened, expanded as they left it',
+      /id="more"[^>]*style="[^"]*display:\s*block/.test(exported),
+      (exported.match(/id="more"[^>]*>/) || ['not found'])[0]);
+    ok('…with the kit and the resolved tokens inlined',
+      exported.includes('.dc-doc') && /--color-text:\s*[^;]+;/.test(exported));
+    ok('…and the same CSP the live block runs under',
+      exported.includes("default-src 'none'"));
+    // NOT "contains no URL": this fixture's block deliberately carries hostile fetch calls
+    // in its own script TEXT, and an export that stripped them would be lying about what
+    // the block is. The property that matters is that the document never LOADS anything —
+    // no stylesheet, no font, no remote image. Proven twice: statically here, and then by
+    // counting requests when the file is opened with the network cut.
+    ok('…and it references no external resource to load',
+      !/<link[^>]+href|@import\s|<img[^>]+src\s*=\s*["']https?:|url\(\s*["']?https?:/i.test(exported));
+
+    // ── 2. …and it actually RENDERS, with the network cut ───────────────────────────────
+    const offline = await browser.newContext({ offline: true, viewport: { width: 1000, height: 800 } });
+    const opened = await offline.newPage();
+    // ATTEMPTED vs COMPLETED — the same distinction the live-sandbox pass draws above, and
+    // for the same reason. The exported file re-runs the block's own script (its `<script>`
+    // elements come back through `innerHTML` and execute on re-parse), so the two hostile
+    // `<img>` beacons are genuinely ISSUED. What has to be true is that the CSP the file
+    // carries kills every one of them: attempted may be non-zero, finished must be zero.
+    const asked = [];
+    const finishedOut = [];
+    opened.on('request', (r) => { if (!r.url().startsWith('file://')) asked.push(r.url()); });
+    opened.on('requestfinished', (r) => { if (!r.url().startsWith('file://')) finishedOut.push(r.url()); });
+    await opened.goto(`file://${htmlPath}`, { waitUntil: 'load' });
+    await opened.waitForTimeout(600);
+    const drawn = await opened.evaluate(() => {
+      const doc = document.querySelector('.dc-doc');
+      const title = document.querySelector('.dcx-title');
+      const box = doc?.getBoundingClientRect();
+      return {
+        wide: Math.round(box?.width ?? 0),
+        tall: Math.round(box?.height ?? 0),
+        titled: (title?.textContent || '').trim(),
+        painted: doc ? getComputedStyle(doc.querySelector('.dc-stat') ?? doc).backgroundColor : '',
+      };
+    });
+    ok('the exported file opens OFFLINE and draws the block', drawn.wide > 300 && drawn.tall > 200,
+      `${drawn.wide}x${drawn.tall}`);
+    // The decisive one. The block's own script asks for two hostile hosts; under the CSP
+    // the file carries, neither attempt is ever made — so a file mailed to a colleague
+    // cannot beacon from their machine either.
+    ok('…and the block\'s own hostile beacons still complete NOWHERE, off this machine',
+      finishedOut.length === 0, finishedOut.join(' | '));
+    ok('…killed by the policy the FILE carries, not by the app it was exported from',
+      asked.length === 0 || asked.every((u) => !finishedOut.includes(u)),
+      `attempted ${asked.length}, finished ${finishedOut.length}`);
+    ok('…with its name on it', drawn.titled.length > 0, drawn.titled);
+    ok('…and the theme surface really painted, not a naked default',
+      drawn.painted !== '' && drawn.painted !== 'rgba(0, 0, 0, 0)', drawn.painted);
+    await opened.screenshot({ path: join(SHOTS, 'exported-block-offline.png'), fullPage: true });
+    await offline.close();
+
+    // ── 3. PNG: a real image with real pixels ───────────────────────────────────────────
+    const pngDl = await Promise.all([
+      page.waitForEvent('download', { timeout: 30000 }),
+      page.getByTitle(/as a PNG image/).click(),
+    ]).then(([d]) => d);
+    const pngPath = join(SHOTS, 'exported-block.png');
+    await pngDl.saveAs(pngPath);
+    const png = readFileSync(pngPath);
+
+    ok('the PNG button downloads a real PNG',
+      png.length > 4 && png[0] === 0x89 && png.subarray(1, 4).toString() === 'PNG',
+      `${png.length} bytes`);
+    // A foreignObject render that failed silently is the classic way to ship a blank
+    // rectangle, so this asserts the image has CONTENT, not just a header.
+    const px = await page.evaluate(async (bytes) => {
+      const blob = new Blob([new Uint8Array(bytes)], { type: 'image/png' });
+      const bmp = await createImageBitmap(blob);
+      const c = document.createElement('canvas');
+      c.width = bmp.width; c.height = bmp.height;
+      const g = c.getContext('2d');
+      g.drawImage(bmp, 0, 0);
+      const d = g.getImageData(0, 0, c.width, c.height).data;
+      const seen = new Set();
+      for (let i = 0; i < d.length; i += 4 * 97) seen.add(`${d[i]},${d[i + 1]},${d[i + 2]}`);
+      return { w: bmp.width, h: bmp.height, colors: seen.size };
+    }, [...png]);
+    ok('…at the export width, times the raster scale', px.w === 900 * 2, `${px.w}x${px.h}`);
+    ok('…and it is not a blank rectangle — the block is really drawn in it',
+      px.colors > 3, `${px.colors} distinct sampled colours`);
+
+    // ── 4. Copy: succeeds, or says so ───────────────────────────────────────────────────
+    await page.getByTitle(/clipboard as an image/).click();
+    await page.waitForTimeout(2500);
+    const note = await page.locator('.chat-htmlexport-note').first().textContent().catch(() => null);
+    ok('the copy button reports an outcome either way — never a silent no-op',
+      note !== null && note.trim().length > 0, JSON.stringify(note));
+
+    await page.screenshot({ path: join(SHOTS, 'chat-html-export-bar.png') });
+  } finally {
+    await ctx.close();
+    await browser.close();
+  }
+}
+
+/**
+ * SAVED, FOUND AGAIN, AND COMPOSED — the other two thirds of the feature request, end to end.
+ *
+ * The request ranks them "dışa aktar > kaydet > rapor yap", and the second two are the ones
+ * that only exist if the whole chain works: a block saved out of a conversation has to
+ * reach the brain as a real file, come back in a list that says WHERE it came from, be
+ * findable by `memory recall` three weeks later, and then compose with others into one
+ * document. Any link broken and the user is back to screenshots.
+ *
+ * Note what is deliberately proven with the CLI and not the UI: recall. "Aramada çıkıyor"
+ * is a claim about the corpus, and the corpus is what the agent reads on its next session —
+ * asserting it through the real `dreamcontext memory recall` is the only honest version.
+ */
+async function runSaveAndReport(base, report) {
+  const ok = (label, cond, detail = '') => report.check('save+report', label, cond, detail);
+  console.log('\n═══ saved to the brain, found again, composed ═══');
+
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
+  const page = await ctx.newPage();
+  try {
+    ok('a chat session opens against the real WS route', await openChatAndAsk(page, base));
+    await page.waitForSelector('.chat-htmlview-frame', { timeout: 20000 });
+    await page.waitForTimeout(1800);
+
+    // ── save it, under a Turkish name (the slug path is where this breaks) ──────────────
+    await page.locator('.chat-htmlview-full-btn').first().click({ force: true });
+    await untilOn(page, async () => (await page.locator('.chat-htmlview-full').count()) > 0, 8000);
+    await page.waitForTimeout(1000);
+    await page.getByTitle(/Save this block into the brain/).click();
+    const nameField = page.locator('.chat-htmlexport-input');
+    ok('the Save button asks for a name rather than inventing one',
+      await untilOn(page, async () => (await nameField.count()) > 0, 5000));
+    await nameField.fill('Pay el değiştiriyor');
+    await page.locator('.chat-htmlexport-name button[type="submit"]').click();
+    ok('…and reports that it landed',
+      await untilOn(page, async () => /saved/i.test(
+        (await page.locator('.chat-htmlexport-note').first().textContent().catch(() => '')) || ''), 12000));
+
+    // ── it is a real file in the brain, with its provenance ─────────────────────────────
+    const file = join(PROJ, '_dream_context', 'artifacts', 'pay-el-degistiriyor.md');
+    ok('a Turkish name becomes a findable slug, not a mangled one', existsSync(file), file);
+    const raw = existsSync(file) ? readFileSync(file, 'utf-8') : '';
+    ok('…the file keeps the block itself', raw.includes('```dream-html') && raw.includes('dc-doc'));
+    ok('…and the LIVE render, not the authored markup', /Ran[\s\S]{0,80}yes|>yes</.test(raw),
+      raw.includes('>no<') ? 'saved the BEFORE state' : 'marker not found');
+
+    // ── recall finds it by what it SAYS ─────────────────────────────────────────────────
+    const recall = execFileSync(process.execPath, [CLI, 'memory', 'recall', 'Conversion', '--types', 'artifact'],
+      { cwd: PROJ, encoding: 'utf-8', env: { ...process.env, HOME } });
+    ok('`memory recall` finds the saved block — "aramada çıkıyor", proven on the real corpus',
+      /pay-el-degistiriyor/.test(recall), recall.split('\n').slice(0, 4).join(' | '));
+
+    const noise = execFileSync(process.execPath, [CLI, 'memory', 'recall', 'div span class', '--types', 'artifact'],
+      { cwd: PROJ, encoding: 'utf-8', env: { ...process.env, HOME } });
+    ok('…and is NOT dredged up by its own tag names', !/pay-el-degistiriyor/.test(noise),
+      noise.split('\n').slice(0, 3).join(' | '));
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+
+    // ── the list surface ────────────────────────────────────────────────────────────────
+    await page.goto(`${base}/?vault=proj&page=saved`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2500);
+    let rows = page.locator('.saved-row');
+    if ((await rows.count()) === 0) {
+      // The nav is the supported route in; the query param is only a shortcut.
+      await page.getByText('Saved blocks', { exact: true }).first().click();
+      await page.waitForTimeout(1500);
+      rows = page.locator('.saved-row');
+    }
+    ok('the saved block appears in its own list', (await rows.count()) >= 1, `${await rows.count()} row(s)`);
+    const rowText = await rows.first().innerText();
+    ok('…named as it was saved', rowText.includes('Pay el değiştiriyor'), rowText.replace(/\s+/g, ' '));
+    ok('…carrying the conversation it came out of', /·\s*\d{4}-\d{2}-\d{2}/.test(rowText),
+      rowText.replace(/\s+/g, ' '));
+
+    // ── opening it draws it, still sandboxed ────────────────────────────────────────────
+    await rows.first().locator('.saved-open').click();
+    ok('opening a saved block draws it again',
+      await untilOn(page, async () => (await page.locator('.saved-preview iframe').count()) > 0, 8000));
+    ok('…still inside the sandbox, never at app origin',
+      (await page.locator('.saved-preview iframe').first().getAttribute('sandbox')) === 'allow-scripts');
+    await page.locator('.saved-row .saved-open').first().click();
+    await page.waitForTimeout(300);
+
+    // ── compose a report out of it ──────────────────────────────────────────────────────
+    await page.getByRole('button', { name: 'Compose a report' }).click();
+    await page.waitForTimeout(400);
+    await page.locator('.saved-compose-title').fill('Q3 okuması');
+    await page.locator('.saved-compose-intro').fill('Tek blok, tek rapor.');
+    await page.locator('.saved-pick').first().check();
+    await page.waitForTimeout(300);
+    await page.locator('.saved-prose').first().fill('Bu düşüş ikinci çeyrekte başladı.');
+
+    const dl = await Promise.all([
+      page.waitForEvent('download', { timeout: 20000 }),
+      page.getByRole('button', { name: 'Export HTML' }).click(),
+    ]).then(([d]) => d);
+    const reportPath = join(SHOTS, 'composed-report.html');
+    await dl.saveAs(reportPath);
+    const doc = readFileSync(reportPath, 'utf-8');
+
+    ok('a report composes out of saved blocks', /q3-okumasi\.html$/.test(dl.suggestedFilename()),
+      dl.suggestedFilename());
+    ok('…wearing the Reports masthead — the same family of document', doc.includes('rp-masthead'));
+    ok('…with the prose the user typed beside the block', doc.includes('ikinci çeyrekte başladı'));
+    ok('…and the block itself inside it', doc.includes('dc-doc'));
+
+    // ── and it, too, opens offline ──────────────────────────────────────────────────────
+    const offline = await browser.newContext({ offline: true, viewport: { width: 1000, height: 900 } });
+    const openedPage = await offline.newPage();
+    const finishedOut = [];
+    openedPage.on('requestfinished', (r) => { if (!r.url().startsWith('file://')) finishedOut.push(r.url()); });
+    await openedPage.goto(`file://${reportPath}`, { waitUntil: 'load' });
+    await openedPage.waitForTimeout(600);
+    const shape = await openedPage.evaluate(() => ({
+      sections: document.querySelectorAll('.rp-section').length,
+      title: (document.querySelector('.rp-title')?.textContent || '').trim(),
+      drew: !!document.querySelector('.rp-item .dc-doc'),
+    }));
+    ok('the composed report opens OFFLINE and draws', shape.sections === 1 && shape.drew,
+      JSON.stringify(shape));
+    ok('…titled as composed', shape.title === 'Q3 okuması', shape.title);
+    ok('…and still lets nothing off the machine', finishedOut.length === 0, finishedOut.join(' | '));
+    await openedPage.screenshot({ path: join(SHOTS, 'composed-report.png'), fullPage: true });
+    await offline.close();
+
+    await page.screenshot({ path: join(SHOTS, 'saved-blocks-page.png'), fullPage: true });
+  } finally {
+    await ctx.close();
+    await browser.close();
+  }
+}
+
+/**
+ * A SENTENCE STAYS A SENTENCE — the worst defect this surface ever shipped, and the one the
+ * owner could only describe as "hiçbir şey anlaşılmıyor" (2026-09-02, with a screenshot).
+ *
+ * Six of the kit's containers were flex COLUMNS. A flex column makes every direct child a
+ * flex item — including bare text runs and inline elements — so an author writing an
+ * ordinary sentence with a `dc-code` chip in the middle of it got three stacked full-width
+ * rows: "…zincirinden çıkıp" / [bağımsız if] / "olur; hourlyRate…". Every explanation the
+ * agent wrote that way was cut into fragments, and no test saw it because the markup was
+ * perfectly valid and every class existed. Only layout can see this.
+ *
+ * The fix is block flow with `> * + *` for the rhythm. This pass is the lock on it: it
+ * writes the exact shape from that screenshot and requires the chip to hug its own text.
+ */
+async function runSentenceIntegrity(report) {
+  const ok = (label, cond, detail = '') => report.check('sentence', label, cond, detail);
+  console.log('\n═══ a sentence stays a sentence ═══');
+
+  const kitCss = readFileSync(
+    join(REPO, 'dashboard', 'src', 'components', 'sleepy', 'chat', 'chat-html-kit.css'), 'utf-8');
+  const tokens = `:root{--font-family:system-ui;--font-family-display:system-ui;
+--font-mono:ui-monospace,monospace;--color-text:#e8e8ee;--color-text-secondary:#b5b5c0;
+--color-text-tertiary:#8a8a96;--color-border:#3a3a44;--color-bg-secondary:#1d1d24;
+--color-bg-tertiary:#26262e;--color-accent:#8b7cf6;--color-accent-soft:#8b7cf62e;
+--color-warning:#fbbf24;--chart-1:#8b7cf6;--radius-sm:6px;--radius-md:9px;--radius-lg:12px;
+--chat-text:15px;--chat-line-height:1.75;}
+body{background:#131318;margin:0;padding:20px}`;
+
+  // Every container that holds prose, each given a sentence with an inline chip in it —
+  // written as a DIRECT child, which is what an agent naturally writes.
+  const CASES = [
+    ['dc-step-body', '<div class="dc-steps"><div class="dc-step"><div class="dc-step-body" id="t">'
+      + 'Kontrol <span class="dc-code" id="c">bağımsız if</span> olur ve loglar.</div></div></div>'],
+    ['dc-doc', '<div class="dc-doc" id="t">Kontrol <span class="dc-code" id="c">bağımsız if</span> olur.</div>'],
+    ['dc-stack', '<div class="dc-stack" id="t">Kontrol <span class="dc-code" id="c">bağımsız if</span> olur.</div>'],
+    ['dc-card', '<div class="dc-card" id="t">Kontrol <span class="dc-code" id="c">bağımsız if</span> olur.</div>'],
+    ['dc-option', '<div class="dc-option" id="t">Kontrol <span class="dc-code" id="c">bağımsız if</span> olur.</div>'],
+    ['dc-tl-body', '<div class="dc-timeline"><div class="dc-tl"><span class="dc-tl-dot"></span>'
+      + '<div class="dc-tl-body" id="t">Kontrol <span class="dc-code" id="c">bağımsız if</span> olur.</div></div></div>'],
+    ['dc-stat', '<div class="dc-stat" id="t">Kontrol <span class="dc-code" id="c">bağımsız if</span> olur.</div>'],
+    ['dc-slide', '<div class="dc-slides"><section class="dc-slide" id="t">'
+      + 'Kontrol <span class="dc-code" id="c">bağımsız if</span> olur.</section></div>'],
+  ];
+
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 900, height: 500 }, colorScheme: 'dark' });
+  try {
+    for (const [label, markup] of CASES) {
+      await page.setContent(`<!doctype html><style>${tokens}\n${kitCss}</style>${markup}`);
+      await page.waitForTimeout(120);
+      const m = await page.evaluate(() => {
+        const t = document.getElementById('t');
+        const box = t.getBoundingClientRect();
+        const chip = document.getElementById('c').getBoundingClientRect();
+        return {
+          box: Math.round(box.width),
+          chip: Math.round(chip.width),
+          // The real question is not "is the chip narrow" — a container that shrinks to its
+          // content (dc-tl-body) is legitimately barely wider than the chip. It is whether
+          // TEXT SITS BESIDE IT: a shattered sentence puts the chip on its own line at the
+          // container's left edge.
+          insetFromLeft: Math.round(chip.left - box.left),
+          lineHeight: Math.round(parseFloat(getComputedStyle(t).lineHeight)),
+          dropFromTop: Math.round(chip.top - box.top),
+        };
+      });
+      ok(`${label} — an inline chip flows in the sentence, not onto its own row`,
+        m.chip < m.box - 20 && m.insetFromLeft > 10,
+        `chip ${m.chip}px of ${m.box}px, ${m.insetFromLeft}px in from the left`);
+    }
+
+    // And the rhythm the flex `gap` used to provide is still there, or the fix traded one
+    // defect for a wall of text with no spacing.
+    await page.setContent(`<!doctype html><style>${tokens}\n${kitCss}</style>
+      <div class="dc-doc"><p class="dc-p" id="a">bir</p><p class="dc-p" id="b">iki</p></div>`);
+    await page.waitForTimeout(120);
+    const gap = await page.evaluate(() => {
+      const a = document.getElementById('a').getBoundingClientRect();
+      const b = document.getElementById('b').getBoundingClientRect();
+      return Math.round(b.top - a.bottom);
+    });
+    ok('…and block children still get the document rhythm', gap >= 12 && gap <= 16, `${gap}px`);
+
+    // ── A DECISION BLOCK STAYS READABLE AT EVERY PANE WIDTH ───────────────────────────
+    // `auto-fit` keeps columns for as long as they FIT, which is not the same as for as
+    // long as they READ. The measure is what decides: below ~40 characters a line, prose
+    // breaks every three words and a two-column comparison becomes two ragged ribbons
+    // (owner screenshot 2026-09-02, measured at 27 characters). Checked at the widths a
+    // chat pane really takes, including the slide-over-open one where it used to fail.
+    const OPT = (t, k) => `<div class="dc-option ${k}"><div class="dc-option-head">`
+      + `<span class="dc-option-title">${t}</span></div><ul class="dc-list"><li id="probe">`
+      + 'Kablo takılı — webhook provisioner\'ı welcome\'a geçiriyor, welcome da çağırıyor. '
+      + 'Yani eksik entegrasyon değil, çalışan bir dalda düşme.</li></ul></div>';
+    for (const w of [960, 760, 620, 534, 460]) {
+      await page.setViewportSize({ width: w, height: 900 });
+      await page.setContent(`<!doctype html><style>${tokens}\n${kitCss}</style>`
+        + `<div class="dc-doc"><div class="dc-compare" id="cmp">${OPT('A', '')}${OPT('B', 'dc-option--pick')}</div></div>`);
+      await page.waitForTimeout(120);
+      const m = await page.evaluate(() => {
+        const cmp = document.getElementById('cmp');
+        const cols = new Set([...cmp.children].map((o) => Math.round(o.getBoundingClientRect().left))).size;
+        const li = document.getElementById('probe');
+        const r = document.createRange(); r.selectNodeContents(li);
+        const lines = new Set([...r.getClientRects()].map((x) => Math.round(x.top))).size;
+        return { cols, per: Math.round((li.textContent || '').trim().length / lines) };
+      });
+      ok(`a dc-compare still reads at a ${w}px pane`, m.per >= 40,
+        `${m.cols} column(s), ${m.per} characters a line`);
+    }
+    await page.setViewportSize({ width: 900, height: 500 });
+
+    await page.setContent(`<!doctype html><style>${tokens}\n${kitCss}</style>
+      <div class="dc-doc">${CASES[0][1]}</div>`);
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: join(SHOTS, 'chat-html-sentence.png') });
+  } finally {
+    await browser.close();
+  }
+}
+
 // ─── main ─────────────────────────────────────────────────────────────────────────────
 
 const report = {
@@ -720,6 +1448,14 @@ try {
   rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
   await runLostReport(base, report);
   await runFlowWrap(report);
+  rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
+  await runTypography(base, report);
+  await runNarrowAndTurkish(report);
+  await runSentenceIntegrity(report);
+  rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
+  await runExport(base, report);
+  rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
+  await runSaveAndReport(base, report);
 } catch (err) {
   console.error('\nharness error:', err);
   report.rows.push({ theme: '-', label: `harness: ${err.message}`, cond: false, detail: '' });

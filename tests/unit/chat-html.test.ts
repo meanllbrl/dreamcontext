@@ -21,7 +21,11 @@ import { tmpdir } from 'node:os';
 import { parseChatActions, MAX_HTML_BYTES, MAX_HTMLS_PER_MESSAGE } from '../../dashboard/src/components/sleepy/chat/chatActions.js';
 import {
   buildChatSrcdoc, readHeightMessage, htmlOutline, HEIGHT_BRIDGE, HEIGHT_MESSAGE_KEY, HEIGHT_REQUEST_KEY,
-  CHAT_HTML_CSP, CHAT_HTML_SANDBOX, CHAT_HTML_KIT_CSS, CHAT_KIT_TOKENS,
+  CHAT_HTML_CSP, CHAT_HTML_SANDBOX, CHAT_HTML_KIT_CSS, CHAT_KIT_TOKENS, CHAT_READING_TOKENS,
+  SNAPSHOT_MESSAGE_KEY, SNAPSHOT_REQUEST_KEY,
+} from '../../dashboard/src/components/sleepy/chat/chatHtmlKit.js';
+import { SANDBOX_FONT_CSS } from '../../dashboard/src/lib/sandboxFont.js';
+import {
   MIN_HTML_HEIGHT, MAX_HTML_HEIGHT, HTML_PENDING_HEIGHT,
 } from '../../dashboard/src/components/sleepy/chat/chatHtmlKit.js';
 import { handleChatHtmlKitGet } from '../../src/server/routes/chat-html-kit.js';
@@ -109,7 +113,40 @@ describe('the sandbox is the boundary', () => {
     expect(CHAT_HTML_CSP).toContain("default-src 'none'");
     expect(CHAT_HTML_CSP).toContain("style-src 'unsafe-inline'");
     expect(CHAT_HTML_CSP).toContain("script-src 'unsafe-inline'");
-    expect(CHAT_HTML_CSP).not.toMatch(/connect-src|img-src|font-src|https?:/);
+    expect(CHAT_HTML_CSP).not.toMatch(/connect-src|img-src|https?:/);
+    // `font-src data:` is the ONE addition (F5 — the reading face could not otherwise
+    // cross the frame boundary) and it is not a network source: a data: URL contacts no
+    // host. This asserts the exact shape, so `font-src https:` or a host allow-list — both
+    // of which WOULD reach the network — cannot slip in behind the same directive name.
+    expect(CHAT_HTML_CSP).toContain('font-src data:');
+    expect(CHAT_HTML_CSP).not.toMatch(/font-src[^;]*(https?:|\*|'self')/);
+  });
+
+  it('carries the reading face INSIDE the document, since it can never fetch one', () => {
+    const doc = buildChatSrcdoc({ html: '<b>x</b>', tokens: {} });
+    expect(doc).toContain("@font-face{font-family:'Inter'");
+    expect(doc).toContain('src:url(data:font/woff2;base64,');
+    // Three families x two subsets. Turkish lives in latin-ext, so shipping only latin
+    // would render ğ ş İ in another face; and the kit names three faces, so embedding only
+    // the text one leaves every heading and code chip falling back.
+    expect(doc.match(/@font-face/g)).toHaveLength(6);
+    for (const family of ['Inter', 'Plus Jakarta Sans', 'JetBrains Mono']) {
+      expect(SANDBOX_FONT_CSS, family).toContain(`font-family:'${family}'`);
+    }
+    expect(SANDBOX_FONT_CSS).toContain('U+0100-02BA');
+  });
+
+  it('the generated font constant matches the vendored woff2 — mirrors rot silently', () => {
+    // Same drift lock as the kit CSS mirror (knowledge/patterns/mirror-with-drift-test.md):
+    // the bytes live in a generated TS constant because these modules must stay importable
+    // by root vitest, which has no Vite asset pipeline.
+    const fonts = join(new URL('../../', import.meta.url).pathname, 'dashboard/src/assets/fonts');
+    const files = ['inter', 'jakarta', 'jetbrains']
+      .flatMap((stem) => [`${stem}-latin.woff2`, `${stem}-latin-ext.woff2`]);
+    for (const f of files) {
+      const b64 = readFileSync(join(fonts, f)).toString('base64');
+      expect(SANDBOX_FONT_CSS, `${f} — re-run scripts/gen-sandbox-font-mirror.mjs`).toContain(b64);
+    }
   });
 
   it('puts the CSP meta FIRST — a parser that already saw a resource has already lost', () => {
@@ -156,7 +193,14 @@ describe('buildChatSrcdoc', () => {
   });
 
   it('omits the override style block entirely when the vault has none', () => {
-    expect(buildChatSrcdoc({ html: '<b>x</b>', tokens: {} }).match(/<style>/g)?.length).toBe(2);
+    // Three without an override — the embedded face, the resolved tokens, the kit — and a
+    // fourth only when the vault actually has a brand sheet. Counted rather than merely
+    // checked for absence, because an empty `<style></style>` would satisfy "no override
+    // css" while still being a block in the cascade.
+    const bare = buildChatSrcdoc({ html: '<b>x</b>', tokens: {} });
+    expect(bare.match(/<style>/g)?.length).toBe(3);
+    const branded = buildChatSrcdoc({ html: '<b>x</b>', tokens: {}, overrideCss: '.dc-p{}' });
+    expect(branded.match(/<style>/g)?.length).toBe(4);
   });
 
   it('carries the mode on <html> so the kit\'s slide rules can see it', () => {
@@ -164,9 +208,23 @@ describe('buildChatSrcdoc', () => {
     expect(buildChatSrcdoc({ html: '<b>x</b>', tokens: {}, mode: 'full' })).toContain('data-dc-mode="full"');
   });
 
-  it('runs the height bridge inline ONLY — in fullscreen the host owns the height', () => {
-    expect(buildChatSrcdoc({ html: '<b>x</b>', tokens: {}, mode: 'card' })).toContain(HEIGHT_MESSAGE_KEY);
-    expect(buildChatSrcdoc({ html: '<b>x</b>', tokens: {}, mode: 'full' })).not.toContain(HEIGHT_MESSAGE_KEY);
+  it('runs the bridge in BOTH modes — the export bar needs it where the buttons are', () => {
+    // It used to be card-only, on the reasoning that fullscreen owns its own height and a
+    // measurement there would fight it. Still true, and still how it behaves — the full
+    // mode's host listener returns early. But the bridge grew a SECOND leg (the snapshot
+    // the export bar reads), and that bar lives in the fullscreen header, so a frame with
+    // no bridge there is a fullscreen with four dead buttons.
+    for (const mode of ['card', 'full'] as const) {
+      const doc = buildChatSrcdoc({ html: '<b>x</b>', tokens: {}, mode });
+      expect(doc, mode).toContain(HEIGHT_MESSAGE_KEY);
+      expect(doc, mode).toContain(SNAPSHOT_MESSAGE_KEY);
+    }
+  });
+
+  it('…and the fullscreen host still ignores the height it hears', () => {
+    // The half the old assertion was really protecting. Enforced in HtmlView, not the kit.
+    const source = readFileSync(join(CHAT_DIR, 'HtmlView.tsx'), 'utf-8');
+    expect(source).toMatch(/if \(mode !== 'card'\) return;/);
   });
 
   it('mounts the height bridge in the HEAD, above the body it measures', () => {
@@ -203,9 +261,29 @@ describe('the height bridge', () => {
     expect(HEIGHT_BRIDGE).not.toContain('documentElement.getBoundingClientRect()');
   });
 
-  it('is the only thing it posts: one namespaced number', () => {
+  it('posts exactly two things, both namespaced, and both about ITSELF', () => {
+    // The bridge's honest bound (knowledge/patterns/sandboxed-app-bridge-pattern.md): it
+    // may carry the block's own content, never the app's. Two legs now — the height, and
+    // the body snapshot the export bar reads — and this counts them so a third cannot be
+    // added without someone re-reading that sentence.
     expect(HEIGHT_MESSAGE_KEY).toBe('__dreamHtmlHeight');
-    expect(HEIGHT_BRIDGE.match(/postMessage/g)?.length).toBe(1);
+    expect(SNAPSHOT_MESSAGE_KEY).toBe('__dreamHtmlSnapshot');
+    expect(HEIGHT_BRIDGE.match(/postMessage/g)?.length).toBe(2);
+    // Both payloads are keyed by a namespaced constant, so an unrelated postMessage on the
+    // page can never be read as either one. Asserted on the BUILT bridge, where the
+    // interpolation has already happened — that is the string the frame actually runs.
+    const posted = [...HEIGHT_BRIDGE.matchAll(/postMessage\(\{\s*(__\w+)/g)].map((m) => m[1]);
+    expect(posted.sort()).toEqual([HEIGHT_MESSAGE_KEY, SNAPSHOT_MESSAGE_KEY].sort());
+  });
+
+  it('the snapshot reads the frame\'s OWN body and nothing else', () => {
+    // What would break the bound: reaching for `parent`, a cookie, or storage. A sandboxed
+    // frame cannot get at any of them anyway — this is the guard on someone later relaxing
+    // the sandbox and finding the bridge already primed to carry it out.
+    const leg = HEIGHT_BRIDGE.slice(HEIGHT_BRIDGE.indexOf(SNAPSHOT_REQUEST_KEY));
+    expect(leg).toContain('document.body');
+    expect(leg).not.toMatch(/parent\.(?!postMessage)/);
+    expect(leg).not.toMatch(/document\.cookie|localStorage|sessionStorage|indexedDB/);
   });
 
   it('waits for the body — parsed in the head, it has none yet', () => {
@@ -290,16 +368,47 @@ describe('the kit', () => {
     const used = new Set(
       [...CHAT_HTML_KIT_CSS.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]),
     );
+    // Two lists, because they resolve off two different elements: CHAT_KIT_TOKENS off
+    // :root, CHAT_READING_TOKENS off the chat pane (that is where --chat-text is declared).
+    // A kit var in neither is a property that silently drops inside the frame.
+    const injected = [...CHAT_KIT_TOKENS, ...CHAT_READING_TOKENS];
     for (const token of used) {
       if (token.startsWith('--dc-')) {
         expect(CHAT_HTML_KIT_CSS, token).toMatch(new RegExp(`${token}:`));
         continue;
       }
-      expect(CHAT_KIT_TOKENS, token).toContain(token);
+      expect(injected, token).toContain(token);
     }
   });
 
-  it('never paints `--color-accent-text` — it is white, and belongs on a SOLID fill', () => {
+  it('sets its type against the TRANSCRIPT\'s reading size, not one of its own', () => {
+    // The defect (owner report 2026-09-02): the kit hardcoded 14px/1.55 while every other
+    // prose surface in the chat reads --chat-text (15px x --zoom) at --chat-line-height
+    // 1.75, so the block was smaller AND tighter than the paragraph above it, and deaf to
+    // the window's zoom control. The px in the fallbacks is what a host with no chat pane
+    // still gets; the point is that it is a FALLBACK.
+    expect(CHAT_HTML_KIT_CSS).toMatch(/html \{\s*font-size: var\(--chat-text, 14px\);/);
+    expect(CHAT_HTML_KIT_CSS).toMatch(/line-height: var\(--chat-line-height, 1\.55\)/);
+    expect(CHAT_HTML_KIT_CSS).toMatch(/body \{[^}]*font-size: 1rem;/);
+  });
+
+  it('sizes every class off that one root — no second scale to keep in step', () => {
+    // Why rem and not em: a chip inside a stat inside a card would compound, and the sizes
+    // an author reads in the class list would not be the sizes they get. The two survivors
+    // in px are SVG text, which is viewBox user units and does not belong to this scale.
+    const px = [...CHAT_HTML_KIT_CSS.matchAll(/([.\w-]+[^{}]*)\{[^}]*font-size: [\d.]+px/g)]
+      .map((m) => m[1].trim().split('\n').pop().trim());
+    expect(px.sort()).toEqual(['.dc-axis-text', '.dc-tip-text']);
+  });
+
+  it('the fullscreen size is DERIVED from the same root, not a second constant', () => {
+    // A literal 15px in full mode is how the presentation stops following the zoom control
+    // while the inline block follows it.
+    expect(CHAT_HTML_KIT_CSS)
+      .toMatch(/html\[data-dc-mode="full"\] \{ font-size: calc\(var\(--chat-text, 14px\) \* 1\.07\); \}/);
+  });
+
+  it('never paints `--color-accent-text` on a TINT — it is white, and wants a solid fill', () => {
     // The bug this pins: `.dc-mark` was `--color-accent-text` (white) on `--color-accent-soft`
     // (a ~16% accent tint), so the one phrase an author marked as load-bearing was the one
     // phrase in the block that could not be read (owner report 08-27). The token stays in
@@ -310,6 +419,11 @@ describe('the kit', () => {
     expect(CHAT_HTML_KIT_CSS).not.toContain('var(--color-accent-text)');
     // And the marker keeps the text colour it inherited, exactly like the app's own <mark>.
     expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-mark, mark \{[^}]*color: inherit/);
+    // The one place the kit DOES own a solid fill is the funnel bar (--chart-1 edge to
+    // edge), and that is exactly where the token belongs. It used to be a hardcoded #fff,
+    // which a brand override pulling chart-1 light would have made invisible.
+    expect(CHAT_HTML_KIT_CSS)
+      .toMatch(/\.dc-funnel-bar \{[^}]*color: var\(--color-accent-text, #fff\)/);
   });
 
   it('keeps html and body at auto height, or the bridge would chase the frame it sets', () => {
@@ -320,7 +434,10 @@ describe('the kit', () => {
     const modeRules = CHAT_HTML_KIT_CSS.match(/html\[data-dc-mode="full"\][^{]*/g) ?? [];
     expect(modeRules.length).toBeGreaterThan(0);
     for (const rule of modeRules) {
-      expect(rule, rule).toMatch(/\.dc-slides?|body/);
+      // The bare root selector is the exception and it is the ROOT SIZE — fullscreen reads
+      // a notch larger, as it always did, but now derived from --chat-text rather than
+      // frozen at 15px. Everything below it scales in rem, so nothing else needs a rule.
+      expect(rule, rule).toMatch(/\.dc-slides?|body|^html\[data-dc-mode="full"\] $/);
     }
   });
 });

@@ -41,7 +41,7 @@ export const HTML_KIT_TOKENS: readonly string[] = [
   '--color-accent', '--color-accent-soft', '--color-accent-text',
   '--color-success', '--color-success-subtle',
   '--color-error', '--color-error-subtle',
-  '--color-warning', '--color-caution',
+  '--color-warning',
   '--font-family', '--font-family-display', '--font-mono',
   '--gradient-brand',
   '--space-1', '--space-2', '--space-3', '--space-4', '--space-6', '--space-8',

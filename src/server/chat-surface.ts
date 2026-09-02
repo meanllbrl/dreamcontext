@@ -108,17 +108,28 @@ theme and brand override — a hardcoded hex is guaranteed to look wrong on anot
 \`style=\` is only for geometry the kit has no word for (an SVG path, a grid template, a bar
 width).
 
-Layout \`dc-doc dc-row dc-row--between dc-stack dc-grid dc-grid--2|3|4 dc-rail dc-spacer
-dc-divider dc-divider-label\` · Text \`dc-h1|h2|h3 dc-lede dc-p dc-muted dc-label dc-strong
-dc-list dc-mark dc-code dc-pre dc-caption\` · Numbers \`dc-value dc-value--lg|--sm dc-unit
-dc-num dc-delta dc-delta--up|--down|--flat\` · Blocks \`dc-card dc-card-title dc-card-sub
-dc-card-img dc-card-foot dc-stat dc-stat-label dc-stat-note dc-chip dc-chip--accent|--good|
---bad|--warn dc-callout dc-callout--good|--bad|--warn dc-table dc-kv dc-img dc-figcaption
-dc-btn dc-empty dc-low-sample\` · Explaining \`dc-steps dc-step dc-step-body dc-flow
-dc-flow-node\` (nodes only; arrows are drawn) \`dc-timeline dc-tl dc-tl-dot dc-tl-body
-dc-tl-when dc-compare
-dc-option dc-option--pick dc-option-head dc-option-title dc-pros dc-cons dc-tabs dc-tablist
-dc-tab dc-panels dc-panel\` · Data \`dc-bar dc-bar-label dc-bar-track dc-bar-fill
+**Tone is MEANING; emphasis is a POINTER.** \`--good|--bad|--warn|--accent\` when the thing
+IS good, bad, at risk or the pick; a neutral step stays neutral. The numbered colors
+(\`dc-bg|f|s1..8\`) are CHART fills — a swatch, a bar, an SVG mark — never a surface under
+words: for a step that matters, \`dc-flow-node--warn\`. Bold a few load-bearing phrases, not
+every other one; bold everywhere is slower to read than plain prose.
+
+**Fit the box to the content.** Little content (one \`dc-kv\`, a few chips) takes
+\`dc-doc--hug\`; a table wider than the pane goes in a \`dc-table-wrap\`. Two \`dc-option\`s of
+dense paragraphs read as ragged ribbons — short bullets, or one column of prose.
+
+Layout \`dc-doc dc-doc--hug dc-row dc-row--between dc-stack dc-grid dc-grid--2|3|4
+dc-rail dc-spacer dc-divider dc-divider-label\` · Text \`dc-h1|h2|h3 dc-lede dc-p dc-muted
+dc-label dc-strong dc-list dc-mark dc-code dc-pre dc-caption\` · Numbers \`dc-value
+dc-value--lg|--sm dc-unit dc-num dc-delta dc-delta--up|--down|--flat\` · Blocks \`dc-card
+dc-card-title dc-card-sub dc-card-img dc-card-foot dc-stat dc-stat-label dc-stat-note
+dc-chip dc-chip--accent|--good|--bad|--warn dc-callout dc-callout--good|--bad|--warn
+dc-table dc-table-wrap dc-kv dc-img dc-figcaption dc-btn dc-empty dc-low-sample\` ·
+Explaining \`dc-steps dc-step dc-step-body dc-flow dc-flow-node
+dc-flow-node--accent|--good|--bad|--warn\` (nodes only; arrows are drawn) \`dc-timeline
+dc-tl dc-tl-dot dc-tl-body dc-tl-when dc-compare dc-option dc-option--pick dc-option-head
+dc-option-title dc-pros dc-cons dc-tabs dc-tablist dc-tab dc-panels dc-panel\` · Data
+\`dc-bar dc-bar-label dc-bar-track dc-bar-fill
 dc-bar-value dc-funnel dc-funnel-step dc-funnel-bar dc-funnel-drop dc-svg dc-axis
 dc-gridline dc-axis-row dc-axis-text dc-legend dc-legend-swatch dc-f1..8 (fill) dc-s1..8
 (stroke) dc-bg1..8\` · Hover \`dc-hit\` wraps the mark, \`dc-tip\` inside is revealed

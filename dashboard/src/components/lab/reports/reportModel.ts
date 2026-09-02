@@ -304,7 +304,17 @@ function itemToHtml(item: ResolvedReportItem, dated: boolean): string {
  * so the file stays readable even opened with no tokens at all. Self-contained:
  * no src/href/URL anywhere (pinned by lab-reports-ui.test.ts).
  */
-const REPORT_HTML_CSS = `
+/**
+ * The Reports LOOK — masthead, rule, section rhythm, print rules.
+ *
+ * Exported because the saved-blocks report (`lib/artifactReport.ts`) composes a
+ * different ENTITY out of the same document family: frozen `dream-html` blocks instead
+ * of live insight items. Sharing the stylesheet is the point — the two are recognisably
+ * the same kind of document — while sharing the report MANIFEST would not be, because a
+ * report item is `{ insight: <slug> }` resolved against a live cache and an artifact has
+ * nothing to resolve. Look, not schema.
+ */
+export const REPORT_HTML_CSS = `
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--color-bg, #ffffff); color: var(--color-text, #292d34); font-family: var(--font-family, ui-sans-serif, system-ui, sans-serif); font-size: 14px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
 .rp-sheet { max-width: 880px; margin: 0 auto; padding: 40px 44px 36px; }

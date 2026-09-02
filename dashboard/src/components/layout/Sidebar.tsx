@@ -11,7 +11,7 @@ import { useVault } from '../../context/VaultContext';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Sidebar.css';
 
-export type Page = 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements';
+export type Page = 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'saved';
 
 interface SidebarProps {
   activePage: Page;
@@ -50,6 +50,7 @@ const NAV_GROUPS: NavGroup[] = [
       { page: 'core', labelKey: 'nav.core' },
       { page: 'knowledge', labelKey: 'nav.knowledge' },
       { page: 'taxonomy', labelKey: 'nav.taxonomy' },
+      { page: 'saved', labelKey: 'nav.saved' },
     ],
   },
   {
