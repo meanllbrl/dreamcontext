@@ -56,6 +56,17 @@ describe('safeDownloadName', () => {
     expect(SAVE_EXT.has('.sh')).toBe(false);
   });
 
+  it('keeps a Turkish name readable — found by running the real route', () => {
+    // `\w` is ASCII-only, so the first cut of this filter rendered
+    // "fırsat radarı — plan özeti.png" as "f_rsat radar_ _ plan _zeti.png". The live
+    // caller sends transliterated ASCII (`exportFilename`), so it was never a user-facing
+    // bug — but a sanitizer that destroys a legitimate name is a trap for the next caller.
+    expect(safeDownloadName('fırsat radarı — plan özeti.png')).toBe('fırsat radarı _ plan özeti.png');
+    expect(safeDownloadName('rapor.html')).toBe('rapor.html');
+    // …and a name made ONLY of non-ASCII letters is a name, not garbage.
+    expect(safeDownloadName('ğüş.png')).toBe('ğüş.png');
+  });
+
   it('truncates a name long enough to break a filesystem, keeping the extension', () => {
     const out = safeDownloadName(`${'a'.repeat(400)}.png`);
     expect(out).not.toBeNull();

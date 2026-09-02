@@ -84,10 +84,15 @@ export function downloadsDir(home = homedir()): string {
 export function safeDownloadName(raw: string): string | null {
   let base = '';
   try { base = basename(String(raw ?? '').replace(/\\/g, '/').trim()); } catch { return null; }
-  base = base.replace(/^\.+/, '');           // no leading dots → no dotfiles, no '..'
-  base = base.replace(/[^\w.\-() ]/g, '_');  // keep the charset a filename may carry
+  base = base.replace(/^\.+/, '');                     // no leading dots → no dotfiles, no '..'
+  // Unicode letters and digits SURVIVE — `\w` is ASCII-only, and this route's whole
+  // neighbourhood exists to keep Turkish names readable (`exportFilename` transliterates
+  // for a reason). A defensive filter that turns "fırsat radarı" into "f_rsat radar_" is
+  // destroying the thing it is protecting. The security property is unchanged: no path
+  // separator, no traversal, no control character, and the extension allowlist below.
+  base = base.replace(/[^\p{L}\p{N}._\-() ]/gu, '_');
   base = base.replace(/\s+/g, ' ').trim();
-  if (!base || !/[A-Za-z0-9]/.test(base)) return null;
+  if (!base || !/[\p{L}\p{N}]/u.test(base)) return null;
   const ext = extname(base).toLowerCase();
   if (!SAVE_EXT.has(ext)) return null;
   // A name long enough to break the filesystem is a bug somewhere upstream, not a request.
