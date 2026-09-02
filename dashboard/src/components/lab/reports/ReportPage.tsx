@@ -24,6 +24,8 @@ import {
   windowLabel,
 } from './reportModel';
 import type { InsightCache, ResolvedReportSection } from '../../../hooks/useLab';
+import { DownloadNote } from '../../layout/DownloadNote';
+import { deliverDownload, deliveredNote, type ExportNote } from '../../../lib/exportDownload';
 import './ReportPage.css';
 
 /**
@@ -615,16 +617,28 @@ export function ReportPage({ slug, onBack, onToast }: ReportPageProps) {
     }
   };
 
-  const exportHtml = () => {
+  const [exportNote, setExportNote] = useState<ExportNote | null>(null);
+  /**
+   * The report as one self-contained HTML file — and a line saying where it went.
+   *
+   * `deliverDownload` and not an `<a download>` for the reason the chat export bar learned
+   * (owner report, 2026-09-02): in the desktop webview a download reports nothing back, so
+   * a click that worked looked exactly like a click that did nothing. It also owns the
+   * object-URL lifetime, which the old inline version got wrong — revoking synchronously
+   * after `click()` is a race WKWebView loses.
+   */
+  const exportHtml = async () => {
     if (!detail.data) return;
-    const html = reportToHtml(detail.data, resolveKitTokens(), exportCommentary);
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${slug}${date ? `-${date}` : ''}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
+    setExportNote(null);
+    try {
+      const html = reportToHtml(detail.data, resolveKitTokens(), exportCommentary);
+      setExportNote(deliveredNote(await deliverDownload(
+        new Blob([html], { type: 'text/html' }),
+        `${slug}${date ? `-${date}` : ''}.html`,
+      )));
+    } catch (err) {
+      setExportNote({ text: err instanceof Error ? err.message : 'Export failed.' });
+    }
   };
 
   if (detail.isLoading) {
@@ -654,8 +668,9 @@ export function ReportPage({ slug, onBack, onToast }: ReportPageProps) {
             {syncJob?.current && reportSlugs.has(syncJob.current) ? ` · syncing ${syncJob.current}` : ''}
           </span>
         )}
+        {exportNote && <DownloadNote note={exportNote} />}
         <button className="report-action" onClick={copyMarkdown}>{copied ? '✓ copied' : 'Copy as Markdown'}</button>
-        <button className="report-action" onClick={exportHtml} title="Download the report as one self-contained HTML file">Export HTML</button>
+        <button className="report-action" onClick={() => void exportHtml()} title="Download the report as one self-contained HTML file">Export HTML</button>
         <button className="report-action" onClick={() => window.print()} title="Print (or save as PDF)">Print</button>
       </div>
 

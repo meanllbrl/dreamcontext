@@ -1,0 +1,57 @@
+/* ── The line an export leaves behind ─────────────────────────────────────────────────
+   Sits inside whichever action bar triggered the export (chat fullscreen header, the
+   saved-blocks composer foot, a Lab report header), so it is deliberately quiet and
+   inline: it reports, it does not become the subject of the screen. The one thing it will
+   not do is be invisible — that was the defect. */
+.dl-note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.dl-note-text {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Matches the export buttons it stands beside rather than introducing a third button
+   shape into a bar that already has one — it IS one of that bar's actions now. */
+.dl-note-btn {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.dl-note-btn:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border-hover);
+}
+
+.dl-note-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.dl-note-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Nothing about a transient export note belongs on paper. */
+@media print {
+  .dl-note { display: none; }
+}

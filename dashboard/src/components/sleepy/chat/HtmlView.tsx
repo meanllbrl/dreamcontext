@@ -5,13 +5,15 @@ import { useApi } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 import { useAppZoom } from '../../../hooks/useAppZoom';
 import { FullscreenOverlay } from '../../layout/FullscreenOverlay';
+import { DownloadNote } from '../../layout/DownloadNote';
+import { deliverDownload, deliveredNote, type ExportNote } from '../../../lib/exportDownload';
 import {
   buildChatSrcdoc, resolveChatKitTokens, readHeightMessage, readSnapshotMessage, htmlOutline,
   CHAT_HTML_SANDBOX, HTML_PENDING_HEIGHT, HEIGHT_REQUEST_KEY, SNAPSHOT_REQUEST_KEY,
   type HtmlSnapshot,
 } from './chatHtmlKit';
 import {
-  buildStandaloneHtml, exportFilename, titleFromHtml, rasterize, downloadBlob,
+  buildStandaloneHtml, exportFilename, titleFromHtml, rasterize,
   copyBlobAsImage, printStandalone, measureStandalone,
 } from './htmlExport';
 import './HtmlView.css';
@@ -270,7 +272,7 @@ function ExportActions({ frameRef, html, reading, overrideCss, lang, theme, sour
   const api = useApi();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<ExportNote | null>(null);
   const [naming, setNaming] = useState<string | null>(null);
 
   const title = useMemo(() => titleFromHtml(html), [html]);
@@ -288,13 +290,13 @@ function ExportActions({ frameRef, html, reading, overrideCss, lang, theme, sour
     });
   }, [frameRef, reading, title, source, theme, overrideCss, lang]);
 
-  const run = useCallback(async (label: string, fn: () => Promise<string | null>) => {
+  const run = useCallback(async (label: string, fn: () => Promise<ExportNote | null>) => {
     setBusy(label);
     setNote(null);
     try {
       setNote(await fn());
     } catch (err) {
-      setNote(err instanceof Error ? err.message : 'Export failed.');
+      setNote({ text: err instanceof Error ? err.message : 'Export failed.' });
     } finally {
       setBusy(null);
     }
@@ -303,10 +305,13 @@ function ExportActions({ frameRef, html, reading, overrideCss, lang, theme, sour
   const png = () => run('PNG', async () => {
     const doc = await buildDoc();
     const { width, height } = await measureStandalone(doc);
-    downloadBlob(await rasterize(doc, width, height), exportFilename(title, 'png'));
-    return null;
+    return deliveredNote(
+      await deliverDownload(await rasterize(doc, width, height), exportFilename(title, 'png')),
+    );
   });
 
+  // The one action with no file to report: the OS print sheet IS the feedback, and it is
+  // in front of everything. A note under it would be talking to a covered window.
   const pdf = () => run('PDF', async () => {
     await printStandalone(await buildDoc());
     return null;
@@ -314,15 +319,16 @@ function ExportActions({ frameRef, html, reading, overrideCss, lang, theme, sour
 
   const htmlFile = () => run('HTML', async () => {
     const doc = await buildDoc();
-    downloadBlob(new Blob([doc], { type: 'text/html' }), exportFilename(title, 'html'));
-    return null;
+    return deliveredNote(await deliverDownload(
+      new Blob([doc], { type: 'text/html' }), exportFilename(title, 'html'),
+    ));
   });
 
   const copy = () => run('Copy', async () => {
     const doc = await buildDoc();
     const { width, height } = await measureStandalone(doc);
     const okCopy = await copyBlobAsImage(await rasterize(doc, width, height));
-    return okCopy ? '✓ copied' : 'This browser cannot put an image on the clipboard.';
+    return { text: okCopy ? '✓ copied as an image' : 'This browser cannot put an image on the clipboard.' };
   });
 
   /**
@@ -340,7 +346,7 @@ function ExportActions({ frameRef, html, reading, overrideCss, lang, theme, sour
     // list the moment the user goes looking for what they just saved.
     await queryClient.invalidateQueries({ queryKey: ['artifacts'] });
     setNaming(null);
-    return '✓ saved to the brain';
+    return { text: '✓ saved to the brain' };
   });
 
   if (naming !== null) {
@@ -371,7 +377,7 @@ function ExportActions({ frameRef, html, reading, overrideCss, lang, theme, sour
 
   return (
     <>
-      {note && <span className="chat-htmlexport-note" role="status">{note}</span>}
+      {note && <DownloadNote note={note} />}
       <button className="chat-htmlexport-btn" onClick={png} disabled={!!busy}
         title="Download this block as a PNG image">
         {busy === 'PNG' ? '…' : '↓ PNG'}

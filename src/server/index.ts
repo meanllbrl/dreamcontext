@@ -153,6 +153,7 @@ import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent
 import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
+import { handleAgentDownload } from './routes/agent-download.js';
 import { handleAgentSessionsGet, handleAgentSessionsPut } from './routes/agent-sessions.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handlePeerList, handlePeerLogo, handlePeerMailList, handlePeerSend, handlePeerMailStatus } from './routes/peer.js';
@@ -423,6 +424,10 @@ export function buildRouter(): Router {
   // Image drop → write under the active vault's temp dir (desktop-gated, vault-scoped:
   // NOT vault-agnostic, so it resolves contextRoot from the X-Dreamcontext-Vault header).
   router.post('/api/agent/drop', handleAgentDrop);
+  // An export the PAGE produced (a `dream-html` PNG/HTML) written into ~/Downloads, so the
+  // surface can name the file it just made and offer to reveal it. Vault-agnostic: it
+  // writes to the user's home, not into any project's brain. Desktop-gated.
+  router.post('/api/agent/download', handleAgentDownload);
   // Auto-title a session from its first user message (Haiku) — vault-scoped, desktop-only.
   router.post('/api/agent/title', handleAgentTitle);
   // Per-vault session roster (titles + layout) so renamed tabs survive a reload
@@ -626,7 +631,7 @@ export function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team', '/api/meeting'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team', '/api/meeting'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

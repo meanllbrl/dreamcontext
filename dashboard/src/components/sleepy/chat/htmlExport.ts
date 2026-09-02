@@ -273,17 +273,10 @@ export async function rasterize(
   });
 }
 
-/** Hand a blob to the OS as a download. */
-export function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  // Revoked on the next turn, not synchronously: Safari/WKWebView has not necessarily
-  // started reading the object URL by the time `click()` returns.
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
-}
+/* Putting the file on disk lives in `lib/exportDownload.ts`, not here: in the desktop app
+   a `<a download>` reports nothing back — no path, no completion, no error — so the write
+   goes through the server and the surface can say where it landed. This module's job ends
+   at producing the bytes. */
 
 /**
  * The image onto the clipboard, for pasting into Slack.

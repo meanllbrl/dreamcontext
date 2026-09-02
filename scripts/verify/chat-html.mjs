@@ -1151,10 +1151,19 @@ async function runExport(base, report) {
     ok('…and it is not a blank rectangle — the block is really drawn in it',
       px.colors > 3, `${px.colors} distinct sampled colours`);
 
+    // ── The defect this pass closed: a download that said nothing (owner, 2026-09-02) ──
+    // Chromium is not the desktop webview, so what is proven here is the FALLBACK half —
+    // the file is named back to the reader. The desktop half (an absolute path from
+    // `POST /api/agent/download` plus the Show button) needs the real app; it cannot be
+    // reached from a browser, where the route 403s by design.
+    const dlNote = await page.locator('.dl-note-text').first().textContent().catch(() => null);
+    ok('a downloaded file names itself back to the reader — never a silent success',
+      !!dlNote && /\.png\b/i.test(dlNote), JSON.stringify(dlNote));
+
     // ── 4. Copy: succeeds, or says so ───────────────────────────────────────────────────
     await page.getByTitle(/clipboard as an image/).click();
     await page.waitForTimeout(2500);
-    const note = await page.locator('.chat-htmlexport-note').first().textContent().catch(() => null);
+    const note = await page.locator('.dl-note-text').first().textContent().catch(() => null);
     ok('the copy button reports an outcome either way — never a silent no-op',
       note !== null && note.trim().length > 0, JSON.stringify(note));
 
@@ -1202,7 +1211,7 @@ async function runSaveAndReport(base, report) {
     await page.locator('.chat-htmlexport-name button[type="submit"]').click();
     ok('…and reports that it landed',
       await untilOn(page, async () => /saved/i.test(
-        (await page.locator('.chat-htmlexport-note').first().textContent().catch(() => '')) || ''), 12000));
+        (await page.locator('.dl-note-text').first().textContent().catch(() => '')) || ''), 12000));
 
     // ── it is a real file in the brain, with its provenance ─────────────────────────────
     const file = join(PROJ, '_dream_context', 'artifacts', 'pay-el-degistiriyor.md');

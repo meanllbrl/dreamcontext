@@ -233,16 +233,10 @@
   cursor: default;
 }
 
-/* The one line that reports what happened. A failed export has to SAY so — the whole
-   defect this feature exists for is work that silently went nowhere. */
-.chat-htmlexport-note {
-  font-size: 12px;
-  color: var(--color-text-tertiary);
-  max-width: 42ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* The line that reports what happened — including where a downloaded file landed, and a
+   way to go and see it — is `layout/DownloadNote`, shared with the other two export bars
+   (saved-blocks compose, Lab report). A silent export is the defect this feature exists to
+   end, and success was the last case still silent. */
 
 /* The name field, in place of the bar. Replacing the buttons rather than sitting beside
    them keeps the dialog header one row tall at any window width — and there is nothing

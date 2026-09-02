@@ -4,7 +4,9 @@ import { useApi } from '../context/VaultContext';
 import { resolveChatKitTokens } from '../components/sleepy/chat/chatHtmlKit';
 import { HtmlView } from '../components/sleepy/chat/HtmlView';
 import { artifactReportToHtml, type ReportBlock } from '../lib/artifactReport';
-import { downloadBlob, exportFilename, printStandalone } from '../components/sleepy/chat/htmlExport';
+import { exportFilename, printStandalone } from '../components/sleepy/chat/htmlExport';
+import { DownloadNote } from '../components/layout/DownloadNote';
+import { deliverDownload, deliveredNote, type ExportNote } from '../lib/exportDownload';
 import './SavedBlocksPage.css';
 
 /**
@@ -54,7 +56,7 @@ export function SavedBlocksPage() {
   const [reportTitle, setReportTitle] = useState('');
   const [intro, setIntro] = useState('');
   const [prose, setProse] = useState<Record<string, string>>({});
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<ExportNote | null>(null);
 
   const open = useQuery({
     queryKey: ['artifacts', openSlug],
@@ -108,10 +110,12 @@ export function SavedBlocksPage() {
     setNote(null);
     try {
       const doc = await buildReport();
-      downloadBlob(new Blob([doc], { type: 'text/html' }),
-        exportFilename(reportTitle || 'report', 'html'));
+      setNote(deliveredNote(await deliverDownload(
+        new Blob([doc], { type: 'text/html' }),
+        exportFilename(reportTitle || 'report', 'html'),
+      )));
     } catch (err) {
-      setNote(err instanceof Error ? err.message : 'Export failed.');
+      setNote({ text: err instanceof Error ? err.message : 'Export failed.' });
     }
   };
 
@@ -120,7 +124,7 @@ export function SavedBlocksPage() {
     try {
       await printStandalone(await buildReport());
     } catch (err) {
-      setNote(err instanceof Error ? err.message : 'Print failed.');
+      setNote({ text: err instanceof Error ? err.message : 'Print failed.' });
     }
   };
 
@@ -182,7 +186,7 @@ export function SavedBlocksPage() {
             <span className="saved-compose-count">
               {picked.length === 0 ? 'Tick the blocks to include' : `${picked.length} block(s)`}
             </span>
-            {note && <span className="saved-note" role="status">{note}</span>}
+            {note && <DownloadNote note={note} />}
             <button className="saved-action" onClick={exportReport} disabled={picked.length === 0}>
               Export HTML
             </button>
