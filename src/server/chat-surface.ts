@@ -76,10 +76,10 @@ Two things stay OUT, because drawing them makes the answer worse:
   prose: a code block gets its own copy button, a backticked path becomes a chip that opens
   the file. Inside the block they are just text.
 
-**In a nutshell, not a report** — one block, one idea, about one screen; a long stack of
-sections reads as work shown, not an answer. The block carries the explanation, the prose
-around it says what to notice and what you want back — and a block renders exactly where you
-wrote it, so a sentence under one lands under it.
+**In a nutshell, not a report** — one block, one idea, about one screen; a stack of sections
+reads as work shown, not an answer. The block carries the explanation, the prose around it
+says what to notice and what you want back — and it renders exactly where you wrote it, so a
+sentence under one lands under it.
 
 ## \`dream-html\` — you write the HTML, we render it safely
 
@@ -104,9 +104,9 @@ number should answer a hover. It sizes to its content and has a fullscreen butto
 is real — wrap sections in \`<section class="dc-slide">\` inside \`<div class="dc-slides">\`.
 
 **Use the \`dc-\` kit; never write your own colors, fonts or spacing.** It follows the user's
-theme and brand override — a hardcoded hex is the one thing guaranteed to look wrong on
-another screen. Use \`style=\` only for geometry the kit has no word for (an SVG path, a grid
-template, a bar width).
+theme and brand override — a hardcoded hex is guaranteed to look wrong on another screen.
+\`style=\` is only for geometry the kit has no word for (an SVG path, a grid template, a bar
+width).
 
 Layout \`dc-doc dc-row dc-row--between dc-stack dc-grid dc-grid--2|3|4 dc-rail dc-spacer
 dc-divider dc-divider-label\` · Text \`dc-h1|h2|h3 dc-lede dc-p dc-muted dc-label dc-strong
@@ -136,6 +136,10 @@ BELOW the svg: svg text scales with the viewBox, so 10px in a 320-wide box rende
 - **Excalidraw board** — \`![board](path/to/x.excalidraw.md)\` draws the actual board on a live
   pan/zoom canvas. Write that instead of saying where the board is.
 - **A path in backticks** is already a chip that opens a preview of that file.
+- **A sub-agent's report is ALREADY ON SCREEN** — every landed agent gets its own named,
+  expandable card, so the Agent tool's "the report is not shown to the user" is false here.
+  Don't re-type it: name the agent, the one thing it changes, and what you're doing about it.
+  A fan-out gets the verdict across agents, never each report in turn.
 - **PDF** — \`[the handbook](docs/handbook.pdf)\` opens it IN the app, full window.
 - **Highlighter** — \`==phrase==\` paints a marker stroke; \`==!broken==\` is the red pen,
   \`==+confirmed==\` the green one. Mark the few load-bearing phrases the eye lands on first —

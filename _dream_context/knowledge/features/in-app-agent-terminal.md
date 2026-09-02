@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-08-31'
+updated: '2026-09-02'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -61,6 +61,8 @@ related_tasks:
     chat-answers-become-agent-written-html-typed-chart-page-retire-dream-html-renders-in-a-themed-sandbox
   - >-
     chat-depiction-becomes-a-built-board-dream-html-stops-being-the-default-for-structure
+  - >-
+    a-finished-sub-agent-s-report-becomes-a-collapsed-card-in-the-transcript-instead-of-a-wall-the-main-agent-re-types
 type: feature
 name: in-app-agent-terminal
 description: ''
@@ -253,6 +255,7 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - [x] Phase-stamped group collapse: useGroupCollapse stamps user override with current RunGroupPhase; isGroupOpen(phase, toggle) returns toggle.open only when toggle.phase === phase, else automatic rule (open while running, collapsed when done). 89 tests in chat-entities.test.ts cover phase transitions.
 - [x] Sub-agent rail: SubAgentRail mounts in SubAgentCard when group scrolls off-screen (two rects on scroll/resize, no IntersectionObserver); pill shows count + elapsed + chips (horizontal scroll, fade-at-edge); click chip → scrollToSubAgentRow() + flash (data-flash, accent tint + left bar, 800ms); click count → scroll to card; rail unmounts when all runs finish.
 - [x] Sub-agent live meta: SubAgentCard row renders duration (live while running, final when done) · model (resolvedModel from task_started) · tokens (task_progress frames) · tool uses, only fields actually reported. task_progress wired. Background shells (task_type:'local_bash') filtered out — BackgroundShellsTray renders those separately. 132 chat tests green.
+- [x] A landed sub-agent's REPORT is an object in the transcript, not prose the main agent re-typed (owner report 09-02): `SubAgentReport` renders one card per finished dispatch inside the group card — face + run name + subagent-type badge + how it ended + the run's own `task_notification.summary` as its standfirst (`reportStandfirst`; never a UI-written description, `null` when the run said nothing). Collapsed the body is NOT mounted; one click renders the whole report in place as markdown. TWO carriers, because a backgrounded dispatch only has the second: `runReportText` (the parent's Agent-call `tool_result`, prose shapes only — a structured result is not passed off as writing, and the CLI's "Agent started in the background with ID: …" receipt is rejected by `isBackgroundReceipt`) then a LAZY fetch of the run's own sidechain (`GET /api/agent/chat-history?subagent=`, last assistant text via `reportFromHistory`, so a trailing tool call can't hide the verdict) — nothing is requested until the user asks. `reportableRuns` gates membership on the run's STATE, never on having the text (a background fan-out would otherwise get no card); background shells get none. The drill-in's degrade path shows the report as prose instead of a `JSON.stringify` dump. Counter-rule in `chat-surface.ts` — the Agent tool tells the model "the final report is not shown to the user", which is what produced the wall. 42/42 in `npm run verify:chat-subagent-report` (light + dark, both carriers, real Chromium).
 - [x] A pasted image is UPLOADED, not previewed: `Composer.onPaste` writes the clipboard blob through the shared `uploadAgentFile` (`lib/agentDrop.ts` → `POST /api/agent/drop`, the same channel a dropped file uses) and the chip holds the returned absolute path, which `commit()` quotes into the message like any other attachment. The chip carries state (`attaching…` / `couldn't attach — not sent`, `data-state` on the row); `submit` awaits in-flight uploads (guarded against double-send, send button held) so ⌘V then ⏎ sends the picture; a FAILED image is not sendable content and survives the submit instead of vanishing as if it had been sent.
 - [x] The checklist window is never destroyed in the same tick as the action that asked for it (issue #234): a successful submit flips to a `sent` phase that UNMOUNTS the scrollable item list, and `useDeferredClose` closes the OS window two animation frames later (with a 400ms fallback, since an occluded window throttles rAF). The ✕ takes the same road — the trigger was closing a scrolled window, not submitting. Pinned by `tests/unit/checklist-deferred-close.test.ts` (one call site, inside the hook; no scroller in the dying render).
 - [x] Clicking a FOLDER path chip opens the folder (issue #236): the file panel models the `dir` arm `GET /api/agent/file` has always answered with — a clickable listing (folders first, sizes right-aligned, "showing 300 of N" when the route capped it) whose rows re-enter the pane's own routing (`onOpenPath` → `handleOpenFile`), plus *Reveal in Finder* (`POST /agent/reveal`). Helpers `joinChildPath` / `formatEntrySize` / `dirTruncationNote` are pure (8 tests in `chat-dir-listing.test.ts`); `NumberedText` no longer assumes a string.

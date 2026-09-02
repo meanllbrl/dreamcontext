@@ -1341,7 +1341,7 @@ export function ChatPane({
       if (suppressedToolUseIds.has(item.toolUseId)) {
         if (subAgentCardShown) return null; // already represented by the one combined card
         subAgentCardShown = true;
-        return <SubAgentCard key={`subagents-${item.id}`} runs={conv.subAgents} peers={peers} onDrillIn={handleDrillIn} rootRef={setSubAgentCardEl} highlightRunId={jumped?.id ?? null} />;
+        return <SubAgentCard key={`subagents-${item.id}`} runs={conv.subAgents} peers={peers} onDrillIn={handleDrillIn} rootRef={setSubAgentCardEl} highlightRunId={jumped?.id ?? null} conversationId={session.claudeId} />;
       }
       // A tool that touched a board shows the BOARD, not a card about it — the same live
       // canvas an answer's own `![](x.excalidraw.md)` renders, so "I drew this" and "I

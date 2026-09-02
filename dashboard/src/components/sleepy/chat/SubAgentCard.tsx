@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   summarizeSubAgents, formatClock, runMetaChips, isAgentRun, isHeadlessAgentShell,
-  useGroupCollapse, groupOutcomeNote,
+  useGroupCollapse, groupOutcomeNote, reportableRuns,
   type SubAgentRun,
 } from './chatEntities';
+import { SubAgentReport } from './SubAgentReport';
 import { peerForAgent, type PeerMention } from '../../../lib/agentComposer';
 import { peerLogoUrl } from '../../../api/client';
 import { useVault } from '../../../context/VaultContext';
@@ -73,9 +74,14 @@ function groupNoun(agents: number, total: number): string {
   return agents === total ? 'agent' : 'task';
 }
 
-export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId, peers = [] }: {
+export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId, peers = [], conversationId }: {
   runs: SubAgentRun[];
   onDrillIn: (run: SubAgentRun) => void;
+  /** The parent conversation's claude id, forwarded to each landed run's {@link SubAgentReport}
+   *  so it can fetch that run's own transcript for the report text. Absent for a card
+   *  rendered outside a live session — the report cards then stay on whatever the run itself
+   *  carried, and the drill-in is still one click away. */
+  conversationId?: string;
   /** Callback ref for the card's root. ChatPane measures this element to know whether the
    *  card has scrolled off the top of the transcript (→ show the rail), and queries it for
    *  the `data-subagent-row` a rail chip jumps to. */
@@ -109,6 +115,7 @@ export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId
 
   if (total === 0) return null;
 
+  const reports = reportableRuns(runs);
   const lastEnd = Math.max(0, ...runs.map((r) => r.endedAt ?? 0));
   const elapsed = earliestStart != null ? (running > 0 ? tick : lastEnd || tick) - earliestStart : null;
   const outcome = groupOutcomeNote(runs);
@@ -192,6 +199,26 @@ export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId
             </button>
             );
           })}
+        </div>
+      )}
+      {/* The REPORTS of the runs that have landed — rendered OUTSIDE the `open` gate, because
+          they are the point of the collapsed state, not a detail of the expanded one. A
+          finished fan-out therefore rests as its header plus one named report per agent,
+          which is what the main agent used to re-type into the transcript by hand.
+          Deliberately not gated on having the report text in hand either: it arrives on the
+          card's own lazy fetch (see SubAgentReport), and a backgrounded dispatch — every
+          fan-out this project runs — never carries it on the run. */}
+      {reports.length > 0 && conversationId && (
+        <div className="chat-subagents-reports">
+          {reports.map((run) => (
+            <SubAgentReport
+              key={`report-${run.taskId}`}
+              run={run}
+              conversationId={conversationId}
+              peers={peers}
+              onOpenFull={onDrillIn}
+            />
+          ))}
         </div>
       )}
     </div>

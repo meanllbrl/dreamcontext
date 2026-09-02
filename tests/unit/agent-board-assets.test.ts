@@ -271,9 +271,26 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * nutshell paragraph, and a third `dream-actions` example that only restated a kind the
    * prose beneath it already names — paying back ~200 of the 550 the section cost. The 8600
    * covers 8529 actual.
+   *
+   * Raised 8600 → 8900 on 2026-09-02 for the SUB-AGENT REPORT rule. Not a new capability this
+   * time but a CONTRADICTION that has to be stated: the Agent tool's own description tells the
+   * model "the agent's final report is not shown to the user", which is why a reviewer's whole
+   * report was re-typed into the chat column as flat prose (owner report 09-02). Now that a
+   * landed run renders as its own expandable report card that sentence is false here — and a
+   * briefing that stays silent leaves the wrong instruction as the only one in context. Same
+   * order as the last two raises: the prose was compressed first — the nutshell paragraph, the
+   * dc-kit paragraph, and the rule's own first draft (six lines cut to four) — paying back
+   * ~250 of the 511 it cost. That put the briefing at 8850.
+   *
+   * The number here is 9700 rather than 8900 because a SECOND change landed in the same
+   * working tree while this one was being written: the "Tone is MEANING, not decoration" /
+   * "Fit the box to the content" paragraph and its `dc-doc--hug` / `dc-table-wrap` /
+   * `dc-flow-node--*` class additions (~795 chars). Its own accounting belongs to whoever
+   * ships it; recorded here so the jump from 8850 to 9645 actual is explainable rather than
+   * looking like one rule that cost 1100 characters. The 9700 covers 9645 actual.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(8600);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(9700);
   });
 
   /**

@@ -955,6 +955,114 @@ video.chat-msg-user-media-el { cursor: default; }
   .chat-subagents-row[data-flash='1'] { animation: none; background: var(--color-accent-soft); }
 }
 
+/* ── A landed run's REPORT (SubAgentReport) ─────────────────────────────────────────
+   Lives inside the group card, below the rows, and is what the card RESTS as: header +
+   one named report per agent. Collapsed it is three lines; open, it is the agent's own
+   markdown. It reads as a quotation rather than as a second card — an inset panel on the
+   group's own surface, not a nested box with its own border and shadow. */
+.chat-subagents-reports {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--color-border);
+}
+.chat-subagents-reports > * + * { border-top: 1px solid var(--color-border); }
+
+.chat-subreport-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  background: transparent;
+  font-family: var(--font-family-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.chat-subreport-head:hover { background: var(--color-bg-tertiary); }
+.chat-subreport-head:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+/* The face is the row's anchor; nudged onto the title's baseline rather than the box's top. */
+.chat-subreport-head .chat-a-avatar { margin-top: 1px; }
+
+.chat-subreport-head-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.chat-subreport-title { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.chat-subreport-name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-subreport-status { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.chat-subreport-status[data-status='error'] { color: var(--color-error); font-weight: var(--font-weight-semibold); }
+.chat-subreport-status[data-status='stopped'] { color: var(--color-warning); }
+/* The standfirst is the whole point of the collapsed state, so it gets TWO lines and the
+   ellipsis — not one truncated line, which is what made the row alone insufficient. */
+.chat-subreport-standfirst {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-normal);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.chat-subreport[data-open] .chat-subreport-standfirst { -webkit-line-clamp: unset; }
+
+.chat-subreport-cue {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+.chat-subreport-head:hover .chat-subreport-cue { color: var(--color-accent); }
+
+.chat-subreport-body { padding: 0 var(--space-4) var(--space-4) var(--space-4); }
+/* The report is the agent's WRITING, so it is set on the reading surface the transcript's own
+   prose uses — a code block, a table and a heading all land the way they do in an answer. */
+.chat-subreport-prose {
+  padding: var(--space-3) 0 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+.chat-subreport-prose > :first-child { margin-top: 0; }
+.chat-subreport-prose > :last-child { margin-bottom: 0; }
+/* MarkdownPreview ships its own DOCUMENT surface — a bordered, padded panel. Inside a card
+   that already has a border it draws a box in a box, which is the same thing that was
+   flattened out of every assistant answer (see .chat-msg-assistant-body below). The report
+   is a quotation on the card's surface, not a document sitting on it. */
+.chat-subreport-prose .md-preview {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+}
+.chat-subreport-prose .md-preview .markdown-body { font-size: var(--font-size-sm); }
+.chat-subreport-note {
+  margin: var(--space-3) 0 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+.chat-subreport-open {
+  margin-top: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+.chat-subreport-open:hover { color: var(--color-accent); border-color: var(--color-accent); }
+.chat-subreport-open:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+
 /* ── Sub-agent rail — the same group, pinned once you have scrolled past the card ───
    An overlay child of `.chat-transcript`, NOT of the scroller, for exactly the reason the
    "jump to latest" pill is (see ChatPane.css): an absolute child of `.chat-scroll` scrolls

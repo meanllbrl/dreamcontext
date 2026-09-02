@@ -1204,6 +1204,127 @@ export function subAgentToolUseIds(runs: SubAgentRun[]): Set<string> {
   );
 }
 
+// ─── A finished sub-agent's REPORT ────────────────────────────────────────────────
+//
+// Owner report (09-02, screenshot): a reviewer's whole report printed into the chat column
+// as flat prose. The UI was not the leak — `subAgentToolUseIds` above already suppresses the
+// spawning card, and the group card collapses the moment the last run lands. The wall was the
+// MAIN agent's own message: the Agent tool's description tells the model "the agent's final
+// report is not shown to the user — relay what matters", so it played safe and re-typed the
+// report verbatim. Meanwhile the report DID exist in the UI, as a `JSON.stringify` dump at
+// the bottom of the drill-in's degrade path.
+//
+// So the report becomes a first-class object: named, summarised in the flow, and readable in
+// place. These helpers are the pure half — WHICH runs have a report, what its one-line
+// standfirst is, and how to recover the report text from either of its two carriers.
+
+/**
+ * The report text carried on the run itself — the parent's own Agent-call `tool_result`.
+ *
+ * Only the two shapes that really are prose are accepted (a bare string, or `{type:'text'}`
+ * blocks). Anything else is a STRUCTURED result, and running it through
+ * {@link stringifyToolValue} would hand the report card a JSON blob to present as an agent's
+ * writing — which is the defect this whole section exists to remove, moved one component
+ * over. A structured result returns `null` and the card falls back to the sidechain fetch.
+ *
+ * Dispatched agents only: a headless `claude` shell's `resultContent` is its Bash result —
+ * raw stdout, which is output rather than a report, and already has its own live-output panel.
+ */
+export function runReportText(run: SubAgentRun): string | null {
+  if (!isDispatchedAgent(run)) return null;
+  const raw = run.resultContent;
+  const isProse = typeof raw === 'string' || (Array.isArray(raw) && raw.every((b) => (
+    !!b && typeof b === 'object' && typeof (b as Record<string, unknown>).text === 'string'
+  )));
+  if (!isProse) return null;
+  const text = toolResultText(raw).trim();
+  if (!text.length || isBackgroundReceipt(text, run)) return null;
+  return text;
+}
+
+/**
+ * Is this "report" actually the CLI's own RECEIPT for a backgrounded dispatch — "Agent
+ * started in the background with ID: sub-bg"?
+ *
+ * It has to be asked, because that receipt arrives on the same channel and in the same shape
+ * as a real report: a plain string on the Agent call's `tool_result`. Caught live by
+ * `scripts/verify/chat-subagent-report.mjs` on the first run — the background agent's card
+ * proudly rendered the receipt as its findings, which is a worse failure than showing nothing
+ * (it looks like the agent reported, and says the wrong thing).
+ *
+ * Three conditions together, so a real report cannot trip it: ONE line (a report that fits on
+ * one line is not the thing anyone was complaining about), it mentions being in the
+ * background, and it either names THIS run's own task id or opens with the CLI's own wording.
+ * A miss costs the card a fetch it would have made anyway; a false positive costs a genuine
+ * one-line report, which is why the third condition is there.
+ */
+function isBackgroundReceipt(text: string, run: SubAgentRun): boolean {
+  if (text.includes('\n')) return false;
+  if (!/\bin the background\b/i.test(text)) return false;
+  return text.includes(run.taskId) || /^agent\b/i.test(text);
+}
+
+/** The subset of a drill-in history entry {@link reportFromHistory} reads. Structural for the
+ *  same reason as {@link ProgressProbe}: this module must not depend on the API types. */
+export interface ReportProbe { kind: string; text?: string }
+
+/**
+ * The report, recovered from the sub-agent's OWN transcript: its last assistant `text`
+ * entry.
+ *
+ * This is the carrier that works for both dispatch modes, which is why the card prefers it.
+ * A BACKGROUNDED agent — the Agent tool's default, and what every fan-out skill here
+ * dispatches — returns "started in the background" as its immediate `tool_result`, so
+ * {@link runReportText} legitimately has nothing for it; the writing only ever exists in the
+ * sidechain. Walked newest-first so a trailing tool call after the final answer cannot hide
+ * it, and `thinking` is skipped: reasoning is not the report.
+ */
+export function reportFromHistory(entries: readonly ReportProbe[]): string | null {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const e = entries[i];
+    if (e.kind !== 'text') continue;
+    const text = (e.text ?? '').trim();
+    if (text.length) return text;
+  }
+  return null;
+}
+
+/**
+ * The one line the collapsed report card leads with.
+ *
+ * `summary` first — the CLI's own `task_notification.summary`, the only human-facing outcome
+ * the run reports about itself. Then the report's own opening, trimmed of a leading markdown
+ * heading so the standfirst is a sentence rather than "# Findings". Never invented: a run
+ * that said nothing gets `null` and the card shows its status instead of a guess.
+ */
+export function reportStandfirst(run: SubAgentRun, report?: string | null): string | null {
+  const summary = run.summary?.trim();
+  if (summary) return summary;
+  const body = (report ?? runReportText(run) ?? '').trim();
+  if (!body) return null;
+  for (const block of body.split(/\n{2,}/)) {
+    const line = block.replace(/^#{1,6}\s+/, '').replace(/\s+/g, ' ').trim();
+    if (line) return line;
+  }
+  return null;
+}
+
+/**
+ * The runs that get a report card: a DISPATCHED agent that has stopped.
+ *
+ * Membership deliberately does not depend on having the text in hand. The text arrives on a
+ * lazy fetch (see `SubAgentReport`), and gating the card on `runReportText` would mean a
+ * backgrounded agent — whose `tool_result` is only ever "started in the background" — never
+ * got a card at all, i.e. exactly the fan-outs this project runs would be the ones with
+ * nothing in the transcript.
+ *
+ * `stopped` earns a card too: a run the user killed still wrote whatever it wrote before the
+ * kill, and that is worth reading. `running` does not — its row already reports it live.
+ */
+export function reportableRuns(runs: readonly SubAgentRun[]): SubAgentRun[] {
+  return runs.filter((r) => isDispatchedAgent(r) && r.status !== 'running');
+}
+
 // ─── Turn progress (the working indicator's condition) ────────────────────────────
 //
 // `session.busy` says a turn is in flight; it does NOT say the transcript is showing it.

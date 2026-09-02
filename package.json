@@ -40,6 +40,7 @@
     "diagrams": "node scripts/diagrams/build-all.mjs",
     "prepublishOnly": "npm run build",
     "verify:chat-toolrows": "node scripts/verify/chat-toolrows.mjs",
+    "verify:chat-subagent-report": "node scripts/verify/chat-subagent-report.mjs",
     "verify:chat-prose": "node scripts/verify/chat-prose.mjs",
     "gen:cli-manifest": "UPDATE_CLI_MANIFEST=1 vitest run tests/unit/cli-manifest.test.ts",
     "verify:chat-html": "node scripts/verify/chat-html.mjs",

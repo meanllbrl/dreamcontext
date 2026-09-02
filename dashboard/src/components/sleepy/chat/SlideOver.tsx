@@ -5,7 +5,7 @@ import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { ItemView } from './TranscriptItem';
 import {
   inlineMediaKind, joinChildPath, formatEntrySize, dirTruncationNote,
-  isHeadlessAgentShell,
+  isHeadlessAgentShell, runReportText,
   type Reference, type SubAgentRun,
 } from './chatEntities';
 import { peerForAgent, type PeerMention } from '../../../lib/agentComposer';
@@ -348,6 +348,7 @@ function SubAgentSlideOver({ run, conversationId, peers = [], onClose }: SlideOv
   }, [api, conversationId, run.taskId, run.status, run.endedAt]);
 
   const usage = usageLine(run.usage);
+  const report = runReportText(run);
   // The drill-in wears the PEER's identity when the run is an envoy: the vault's logo next
   // to the breadcrumb and its name on the badge, instead of the generated `peer-<slug>`.
   const peer = peerForAgent(run.subagentType, peers);
@@ -400,7 +401,19 @@ function SubAgentSlideOver({ run, conversationId, peers = [], onClose }: SlideOv
                 <pre>{run.summary}</pre>
               </div>
             )}
-            {run.resultContent !== undefined && (
+            {/* The run's own closing words, as PROSE. This section used to be a
+                `JSON.stringify` of the result — so on the one path where the transcript
+                hadn't flushed and this view was all there was, the agent's report was
+                presented as a JSON blob (owner report 09-02). `runReportText` accepts only
+                the shapes that really are prose, so a genuinely STRUCTURED result still
+                falls through to the dump below rather than being mislabelled a report. */}
+            {report && (
+              <div className="chat-toolcard-section">
+                <span className="chat-toolcard-label">Report</span>
+                <div className="chat-subreport-prose"><MarkdownPreview content={report} /></div>
+              </div>
+            )}
+            {!report && run.resultContent !== undefined && (
               <div className="chat-toolcard-section">
                 <span className="chat-toolcard-label">Result</span>
                 <pre>{(() => { try { return JSON.stringify(run.resultContent, null, 2); } catch { return String(run.resultContent); } })()}</pre>

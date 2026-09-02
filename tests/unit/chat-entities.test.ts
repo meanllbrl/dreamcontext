@@ -15,6 +15,7 @@ import {
   wheelIntent, keyIntent, touchIntent,
   isAgentRun, isDispatchedAgent, isBackgroundShell, isHeadlessAgentShell, looksLikeHeadlessClaude,
   bashCommandFor, runDurationMs, formatModelName, runMetaChips,
+  runReportText, reportFromHistory, reportStandfirst, reportableRuns,
   isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote, startSubAgentRun,
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_TAIL, WINDOW_STEP, clampLines,
   rememberMediaBox, knownMediaBox, shouldAutoReveal, WINDOW_REVEAL_PX, TRIM_SLACK,
@@ -315,6 +316,160 @@ describe('subAgentToolUseIds', () => {
     ];
     expect(isAgentRun(runs[1])).toBe(true);
     expect(subAgentToolUseIds(runs)).toEqual(new Set(['toolu_agent']));
+  });
+});
+
+// ─── A landed run's report (runReportText / reportFromHistory / reportStandfirst /
+//     reportableRuns) ───────────────────────────────────────────────────────────────
+
+describe('runReportText', () => {
+  it('a bare-string tool_result IS the report', () => {
+    const r = run({ status: 'completed', resultContent: 'NEEDS_WORK — three blocking findings.' });
+    expect(runReportText(r)).toBe('NEEDS_WORK — three blocking findings.');
+  });
+
+  it('reads the `{type:text}` block form too, joined', () => {
+    const r = run({
+      status: 'completed',
+      resultContent: [{ type: 'text', text: '# Findings' }, { type: 'text', text: '1. The claim is false.' }],
+    });
+    expect(runReportText(r)).toBe('# Findings\n1. The claim is false.');
+  });
+
+  it('a STRUCTURED result is not a report — no JSON blob is ever passed off as an agent’s writing', () => {
+    // The whole defect this section exists to remove, one component over: the drill-in used
+    // to `JSON.stringify` this and label it the run's result.
+    const r = run({ status: 'completed', resultContent: { agentId: 'a', totalTokens: 12 } });
+    expect(runReportText(r)).toBeNull();
+  });
+
+  it('a mixed array (one block without text) is structured, not prose', () => {
+    const r = run({ status: 'completed', resultContent: [{ type: 'text', text: 'ok' }, { type: 'image' }] });
+    expect(runReportText(r)).toBeNull();
+  });
+
+  it('no result yet, or an empty/whitespace one → null', () => {
+    expect(runReportText(run({ status: 'completed' }))).toBeNull();
+    expect(runReportText(run({ status: 'completed', resultContent: '   \n ' }))).toBeNull();
+  });
+
+  it('the CLI’s BACKGROUND RECEIPT is not a report, even though it arrives as prose', () => {
+    // Caught live by scripts/verify/chat-subagent-report.mjs: the background agent's card
+    // rendered "Agent started in the background with ID: sub-bg" as its findings — which
+    // reads as though the agent had reported, and says the wrong thing.
+    const r = run({
+      taskId: 'sub-bg', status: 'completed',
+      resultContent: 'Agent started in the background with ID: sub-bg',
+    });
+    expect(runReportText(r)).toBeNull();
+  });
+
+  it('…recognised by its own wording too, when it does not quote the task id', () => {
+    const r = run({ taskId: 'sub-bg', status: 'completed', resultContent: 'Agent xyz started in the background' });
+    expect(runReportText(r)).toBeNull();
+  });
+
+  it('a MULTI-LINE report that happens to discuss background work is still a report', () => {
+    // The guard is three conditions together for exactly this reason: "background" is an
+    // ordinary word, and a real report about background tasks must not vanish.
+    const r = run({
+      taskId: 'sub-bg', status: 'completed',
+      resultContent: '## Findings\n\nThe job runs in the background with ID: sub-bg, which is the defect.',
+    });
+    expect(runReportText(r)).toContain('which is the defect');
+  });
+
+  it('a headless `claude` shell has no REPORT — its result is stdout, and it has its own output panel', () => {
+    const r = run({
+      status: 'completed', taskType: 'local_bash', command: 'claude -p "go"',
+      resultContent: 'some stdout',
+    });
+    expect(isAgentRun(r)).toBe(true);        // it still renders as an agent…
+    expect(runReportText(r)).toBeNull();     // …but not with a report card
+  });
+});
+
+describe('reportFromHistory', () => {
+  it('the LAST assistant text entry is the report', () => {
+    const text = reportFromHistory([
+      { kind: 'user', text: 'review my plan' },
+      { kind: 'text', text: 'Reading the routes…' },
+      { kind: 'text', text: 'NEEDS_WORK. Three blocking findings.' },
+    ]);
+    expect(text).toBe('NEEDS_WORK. Three blocking findings.');
+  });
+
+  it('a trailing tool call cannot hide the report behind it', () => {
+    // Walked newest-first, skipping anything that is not assistant prose — an agent that
+    // wrote its report and then ran one more Bash still has a readable report.
+    const text = reportFromHistory([
+      { kind: 'text', text: 'The verdict.' },
+      { kind: 'tool' },
+    ]);
+    expect(text).toBe('The verdict.');
+  });
+
+  it('thinking is not the report', () => {
+    expect(reportFromHistory([{ kind: 'thinking', text: 'Let me consider…' }])).toBeNull();
+  });
+
+  it('an empty or blank-only transcript → null', () => {
+    expect(reportFromHistory([])).toBeNull();
+    expect(reportFromHistory([{ kind: 'text', text: '  ' }])).toBeNull();
+  });
+});
+
+describe('reportStandfirst', () => {
+  it('the run’s own summary wins — it is what the CLI reported about itself', () => {
+    const r = run({ status: 'completed', summary: 'Found 3 blocking issues', resultContent: '# Report\n\nBody.' });
+    expect(reportStandfirst(r)).toBe('Found 3 blocking issues');
+  });
+
+  it('falls back to the report’s opening line, with a leading markdown heading stripped', () => {
+    const r = run({ status: 'completed', resultContent: '## Security review\n\nThree findings, two blocking.' });
+    expect(reportStandfirst(r)).toBe('Security review');
+  });
+
+  it('skips a heading that is the ONLY thing before the prose, and collapses whitespace', () => {
+    const r = run({ status: 'completed' });
+    expect(reportStandfirst(r, '#   \n\nThe verdict\nis   split.')).toBe('The verdict is split.');
+  });
+
+  it('a run that said nothing gets NO standfirst — never a manufactured one', () => {
+    expect(reportStandfirst(run({ status: 'completed' }))).toBeNull();
+    expect(reportStandfirst(run({ status: 'error', summary: '  ' }))).toBeNull();
+  });
+});
+
+describe('reportableRuns', () => {
+  it('a landed dispatch gets a card; a running one does not (its row reports it live)', () => {
+    const runs = [
+      run({ taskId: 'done', status: 'completed' }),
+      run({ taskId: 'live', status: 'running' }),
+    ];
+    expect(reportableRuns(runs).map((r) => r.taskId)).toEqual(['done']);
+  });
+
+  it('errored and stopped runs get a card too — they wrote something before they ended', () => {
+    const runs = [run({ taskId: 'e', status: 'error' }), run({ taskId: 's', status: 'stopped' })];
+    expect(reportableRuns(runs).map((r) => r.taskId)).toEqual(['e', 's']);
+  });
+
+  it('membership does NOT depend on having the text in hand', () => {
+    // A backgrounded agent — the Agent tool's default, and what every fan-out skill here
+    // dispatches — returns "started in the background" as its tool_result, so gating on
+    // `runReportText` would leave exactly those fan-outs with nothing in the transcript.
+    const r = run({ taskId: 'bg', status: 'completed', resultContent: undefined });
+    expect(runReportText(r)).toBeNull();
+    expect(reportableRuns([r]).map((x) => x.taskId)).toEqual(['bg']);
+  });
+
+  it('a background SHELL never gets a report card, headless-claude or not', () => {
+    const runs = [
+      run({ taskId: 'sh', status: 'completed', taskType: 'local_bash', command: 'npm test' }),
+      run({ taskId: 'hc', status: 'completed', taskType: 'local_bash', command: 'claude -p "go"' }),
+    ];
+    expect(reportableRuns(runs)).toEqual([]);
   });
 });
 
