@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-08-26'
+updated: '2026-09-01'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -25,14 +25,19 @@ related_tasks:
   - insights-breakdown-contract-matrix-v1-native-reports-layer
   - >-
     the-insights-custom-range-applies-a-window-nobody-can-clear-and-reloads-226kb-to-do-it
-  - script-authored-insights-become-multi-page-interactive-apps-not-fixed-height-cards
+  - >-
+    script-authored-insights-become-multi-page-interactive-apps-not-fixed-height-cards
+  - >-
+    reports-become-a-branded-dreamcontext-template-window-honest-items-designed-sections-native-export
+  - >-
+    reports-gain-an-optional-button-triggered-ai-commentary-layer-pure-text-headless-claude
 type: feature
 name: lab-analytics-insights
 description: >-
   Lab (dashboard: "Insights") — curated analytics metrics synced from HTTP or
   script sources into the brain: manifest + bounded cache, TTL sync, redacting
-  credential layer, roadmap KR binding, snapshot/recall surfacing, and a Lab page
-  whose cards resolve through a chart registry (eleven renders). In review:
+  credential layer, roadmap KR binding, snapshot/recall surfacing, and a Lab
+  page whose cards resolve through a chart registry (eleven renders). In review:
   dataset/v1 rows, app/v1 multi-page interactive apps, html/v1 hybrid cards, and
   date-navigable My Reports. Full render list and payload contracts in the body.
 pinned: false
