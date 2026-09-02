@@ -16,7 +16,7 @@ import {
 
 // 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
 // intentionally excluded from buildCorpus defaults to avoid polluting haikuRecall.
-export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight' | 'thesis' | 'automation' | 'artifact';
+export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight' | 'thesis' | 'automation';
 
 /**
  * Every corpus type `buildCorpus` can produce, in snapshot/report order. The
@@ -29,7 +29,7 @@ export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelo
  */
 export const CORPUS_TYPES: readonly CorpusType[] = [
   'knowledge', 'feature', 'task', 'memory', 'changelog',
-  'objective', 'insight', 'thesis', 'automation', 'artifact',
+  'objective', 'insight', 'thesis', 'automation',
 ];
 
 /**
@@ -493,17 +493,9 @@ function loadMarkdownDocs(
       // never tokenized, so JSON-only terms never score.
       // BOTH this path (BM25 corpus) AND knowledge-index.ts (entry.content)
       // apply extraction — neither alone closes all memory surfaces.
-      // Same rule the Excalidraw branch above states: index what a human would SEARCH
-      // for, never the serialisation it happens to be stored in. A saved block keeps its
-      // markup in a ```dream-html fence beside its extracted words, so without this every
-      // artifact would tokenize `div`, `span`, `class` and `dc-doc` — matching every query
-      // that happened to contain them and out-ranking nothing useful. The prose the store
-      // writes above the fence is the searchable half; this drops the other one.
       const body = isExcalidrawPath(file)
         ? extractExcalidrawText(content)
-        : type === 'artifact'
-          ? content.replace(/```dream-html[\s\S]*?```/g, ' ').replace(/^##\s*Block\s*$/m, ' ').trim()
-          : content.trim();
+        : content.trim();
       const relPath = file.replace(contextRoot + '/', '');
       const fields = buildFields({ slug, title, description, tags, body });
       out.push({
@@ -870,13 +862,6 @@ export function buildCorpus(
     // first-class recall so "what do we measure / what does <metric> mean"
     // surfaces the curated insight, not raw numbers.
     docs.push(...loadMarkdownDocs(join(contextRoot, 'lab', 'insights'), 'insight', contextRoot));
-  }
-  if (types.has('artifact')) {
-    // Saved `dream-html` blocks (artifacts/<slug>.md). The file holds the markup in a
-    // fenced block AND its extracted text as prose; the prose is what lands in the corpus
-    // body, which is the whole reason a saved diagram is findable by what it SAYS rather
-    // than by the tag names it is built from. See lib/artifacts-store.ts.
-    docs.push(...loadMarkdownDocs(join(contextRoot, 'artifacts'), 'artifact', contextRoot));
   }
   if (types.has('thesis')) {
     // Proactive-learning-layer theses (theses/<slug>.md) — the claim prose is

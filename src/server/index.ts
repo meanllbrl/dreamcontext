@@ -126,9 +126,6 @@ import {
 import { handleBoardGet, handleBoardSharedPut, handleBoardLocalPut } from './routes/board.js';
 import { handleChatHtmlKitGet } from './routes/chat-html-kit.js';
 import {
-  handleArtifactsList, handleArtifactShow, handleArtifactSave, handleArtifactDelete,
-} from './routes/artifacts.js';
-import {
   handleSleepyChatSend,
   handleSleepyChatStream,
   handleSleepyChatHistory,
@@ -500,13 +497,6 @@ export function buildRouter(): Router {
   // GET /api/lab/:slug — but GET /api/lab/credentials MUST be registered before
   // GET /api/lab/:slug (first match wins within a method). No route ever
   // returns a credential value — /api/lab/credentials carries key names only.
-  // Saved `dream-html` blocks. Its own entity, not a Lab report item — see
-  // lib/artifacts-store.ts for why a frozen block and a live insight cannot share one.
-  router.get('/api/artifacts', handleArtifactsList);
-  router.post('/api/artifacts', handleArtifactSave);
-  router.get('/api/artifacts/:slug', handleArtifactShow);
-  router.delete('/api/artifacts/:slug', handleArtifactDelete);
-
   router.get('/api/lab', handleLabList);
   router.post('/api/lab/sync', handleLabSync);
   // Bulk sync runs as a SERVER-owned job — a full board takes minutes and the

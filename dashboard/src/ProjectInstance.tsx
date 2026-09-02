@@ -22,7 +22,6 @@ import { SettingsPage } from './pages/SettingsPage';
 import { PacksPage } from './pages/PacksPage';
 import { AboutPage } from './pages/AboutPage';
 import { TaxonomyPage } from './pages/TaxonomyPage';
-import { SavedBlocksPage } from './pages/SavedBlocksPage';
 import { AnnouncementsPage } from './pages/AnnouncementsPage';
 import type { Page } from './components/layout/Sidebar';
 import './ProjectInstance.css';
@@ -135,8 +134,6 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
       return <PacksPage />;
     case 'taxonomy':
       return <TaxonomyPage />;
-    case 'saved':
-      return <SavedBlocksPage />;
     case 'about':
       return <AboutPage />;
     case 'announcements':

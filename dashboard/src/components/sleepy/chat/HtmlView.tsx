@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 import { useAppZoom } from '../../../hooks/useAppZoom';
@@ -253,12 +253,17 @@ function requestSnapshot(frame: HTMLIFrameElement | null): Promise<HtmlSnapshot>
 }
 
 /**
- * The export bar — the five buttons the owner's sketch asked for, minus Save (E2).
+ * The export bar — take the block out as a file, or as an image on the clipboard.
  *
  * Every one of them starts the same way: ask the frame for the picture it is showing, wrap
  * it in a standalone document, and then differ only in what they do with that document.
  * That shared first step is the feature — "export" and "what I am looking at" are the same
  * thing, or the button is a lie.
+ *
+ * There WAS a fifth button here, "☆ Save", which filed the block into the brain as an
+ * artifact and fed a Saved-blocks page. The owner retired the whole layer on 2026-09-02
+ * ("sadece indirebilelim yeter") — so the bar is now exactly what it says: four ways out,
+ * no second home for the block to live in.
  */
 function ExportActions({ frameRef, html, reading, overrideCss, lang, theme, source }: {
   frameRef: React.MutableRefObject<HTMLIFrameElement | null>;
@@ -269,11 +274,8 @@ function ExportActions({ frameRef, html, reading, overrideCss, lang, theme, sour
   theme: 'light' | 'dark';
   source?: string;
 }) {
-  const api = useApi();
-  const queryClient = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<ExportNote | null>(null);
-  const [naming, setNaming] = useState<string | null>(null);
 
   const title = useMemo(() => titleFromHtml(html), [html]);
 
@@ -331,50 +333,6 @@ function ExportActions({ frameRef, html, reading, overrideCss, lang, theme, sour
     return { text: okCopy ? '✓ copied as an image' : 'This browser cannot put an image on the clipboard.' };
   });
 
-  /**
-   * Save it into the brain under a name.
-   *
-   * Saves the SNAPSHOT, like every other action here — what you keep is what you were
-   * looking at. The name is asked for rather than derived because the derived one is the
-   * block's heading, and the heading is what made sense inside the conversation; the name
-   * is what has to make sense in a list three weeks later.
-   */
-  const save = (name: string) => run('Save', async () => {
-    const snap = await requestSnapshot(frameRef.current);
-    await api.post('/artifacts', { title: name, html: snap.html, sourceTitle: source ?? null });
-    // The saved-blocks list is a separate surface; invalidate so it does not show a stale
-    // list the moment the user goes looking for what they just saved.
-    await queryClient.invalidateQueries({ queryKey: ['artifacts'] });
-    setNaming(null);
-    return { text: '✓ saved to the brain' };
-  });
-
-  if (naming !== null) {
-    return (
-      <form
-        className="chat-htmlexport-name"
-        onSubmit={(e) => { e.preventDefault(); if (naming.trim()) save(naming.trim()); }}
-      >
-        <input
-          className="chat-htmlexport-input"
-          value={naming}
-          autoFocus
-          maxLength={120}
-          placeholder="Name this block"
-          aria-label="Name this block"
-          onChange={(e) => setNaming(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setNaming(null); } }}
-        />
-        <button className="chat-htmlexport-btn" type="submit" disabled={!naming.trim() || !!busy}>
-          {busy === 'Save' ? '…' : 'Save'}
-        </button>
-        <button className="chat-htmlexport-btn" type="button" onClick={() => setNaming(null)}>
-          Cancel
-        </button>
-      </form>
-    );
-  }
-
   return (
     <>
       {note && <DownloadNote note={note} />}
@@ -393,10 +351,6 @@ function ExportActions({ frameRef, html, reading, overrideCss, lang, theme, sour
       <button className="chat-htmlexport-btn" onClick={copy} disabled={!!busy}
         title="Copy this block to the clipboard as an image">
         {busy === 'Copy' ? '…' : '⧉ Copy'}
-      </button>
-      <button className="chat-htmlexport-btn" onClick={() => { setNote(null); setNaming(title); }}
-        disabled={!!busy} title="Save this block into the brain under a name">
-        ☆ Save
       </button>
     </>
   );

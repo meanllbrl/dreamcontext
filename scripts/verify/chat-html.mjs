@@ -34,7 +34,7 @@
 
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1045,10 +1045,11 @@ async function runExport(base, report) {
       (await fullInner.locator('#more').evaluate((el) => getComputedStyle(el).display)) === 'block');
 
     const bar = page.locator('.chat-htmlexport-btn');
-    // Five, matching the request's own sketch: four that produce a file, one that saves
-    // into the brain.
-    ok('the export bar offers all five actions', (await bar.count()) === 5,
-      `${await bar.count()} buttons`);
+    // Four ways OUT, and nothing else. The request's sketch had a fifth ("☆ Save", into the
+    // brain); the owner retired that whole layer on 2026-09-02 — "sadece indirebilelim
+    // yeter" — so a fifth button reappearing here is a regression, not a feature.
+    ok('the export bar offers four ways out, and no second home for the block',
+      (await bar.count()) === 4, `${await bar.count()} buttons`);
 
     // ── 1. HTML: the file, and what is in it ────────────────────────────────────────────
     const htmlDl = await Promise.all([
@@ -1168,141 +1169,6 @@ async function runExport(base, report) {
       note !== null && note.trim().length > 0, JSON.stringify(note));
 
     await page.screenshot({ path: join(SHOTS, 'chat-html-export-bar.png') });
-  } finally {
-    await ctx.close();
-    await browser.close();
-  }
-}
-
-/**
- * SAVED, FOUND AGAIN, AND COMPOSED — the other two thirds of the feature request, end to end.
- *
- * The request ranks them "dışa aktar > kaydet > rapor yap", and the second two are the ones
- * that only exist if the whole chain works: a block saved out of a conversation has to
- * reach the brain as a real file, come back in a list that says WHERE it came from, be
- * findable by `memory recall` three weeks later, and then compose with others into one
- * document. Any link broken and the user is back to screenshots.
- *
- * Note what is deliberately proven with the CLI and not the UI: recall. "Aramada çıkıyor"
- * is a claim about the corpus, and the corpus is what the agent reads on its next session —
- * asserting it through the real `dreamcontext memory recall` is the only honest version.
- */
-async function runSaveAndReport(base, report) {
-  const ok = (label, cond, detail = '') => report.check('save+report', label, cond, detail);
-  console.log('\n═══ saved to the brain, found again, composed ═══');
-
-  const browser = await chromium.launch();
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
-  const page = await ctx.newPage();
-  try {
-    ok('a chat session opens against the real WS route', await openChatAndAsk(page, base));
-    await page.waitForSelector('.chat-htmlview-frame', { timeout: 20000 });
-    await page.waitForTimeout(1800);
-
-    // ── save it, under a Turkish name (the slug path is where this breaks) ──────────────
-    await page.locator('.chat-htmlview-full-btn').first().click({ force: true });
-    await untilOn(page, async () => (await page.locator('.chat-htmlview-full').count()) > 0, 8000);
-    await page.waitForTimeout(1000);
-    await page.getByTitle(/Save this block into the brain/).click();
-    const nameField = page.locator('.chat-htmlexport-input');
-    ok('the Save button asks for a name rather than inventing one',
-      await untilOn(page, async () => (await nameField.count()) > 0, 5000));
-    await nameField.fill('Pay el değiştiriyor');
-    await page.locator('.chat-htmlexport-name button[type="submit"]').click();
-    ok('…and reports that it landed',
-      await untilOn(page, async () => /saved/i.test(
-        (await page.locator('.dl-note-text').first().textContent().catch(() => '')) || ''), 12000));
-
-    // ── it is a real file in the brain, with its provenance ─────────────────────────────
-    const file = join(PROJ, '_dream_context', 'artifacts', 'pay-el-degistiriyor.md');
-    ok('a Turkish name becomes a findable slug, not a mangled one', existsSync(file), file);
-    const raw = existsSync(file) ? readFileSync(file, 'utf-8') : '';
-    ok('…the file keeps the block itself', raw.includes('```dream-html') && raw.includes('dc-doc'));
-    ok('…and the LIVE render, not the authored markup', /Ran[\s\S]{0,80}yes|>yes</.test(raw),
-      raw.includes('>no<') ? 'saved the BEFORE state' : 'marker not found');
-
-    // ── recall finds it by what it SAYS ─────────────────────────────────────────────────
-    const recall = execFileSync(process.execPath, [CLI, 'memory', 'recall', 'Conversion', '--types', 'artifact'],
-      { cwd: PROJ, encoding: 'utf-8', env: { ...process.env, HOME } });
-    ok('`memory recall` finds the saved block — "aramada çıkıyor", proven on the real corpus',
-      /pay-el-degistiriyor/.test(recall), recall.split('\n').slice(0, 4).join(' | '));
-
-    const noise = execFileSync(process.execPath, [CLI, 'memory', 'recall', 'div span class', '--types', 'artifact'],
-      { cwd: PROJ, encoding: 'utf-8', env: { ...process.env, HOME } });
-    ok('…and is NOT dredged up by its own tag names', !/pay-el-degistiriyor/.test(noise),
-      noise.split('\n').slice(0, 3).join(' | '));
-
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(400);
-
-    // ── the list surface ────────────────────────────────────────────────────────────────
-    await page.goto(`${base}/?vault=proj&page=saved`, { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(2500);
-    let rows = page.locator('.saved-row');
-    if ((await rows.count()) === 0) {
-      // The nav is the supported route in; the query param is only a shortcut.
-      await page.getByText('Saved blocks', { exact: true }).first().click();
-      await page.waitForTimeout(1500);
-      rows = page.locator('.saved-row');
-    }
-    ok('the saved block appears in its own list', (await rows.count()) >= 1, `${await rows.count()} row(s)`);
-    const rowText = await rows.first().innerText();
-    ok('…named as it was saved', rowText.includes('Pay el değiştiriyor'), rowText.replace(/\s+/g, ' '));
-    ok('…carrying the conversation it came out of', /·\s*\d{4}-\d{2}-\d{2}/.test(rowText),
-      rowText.replace(/\s+/g, ' '));
-
-    // ── opening it draws it, still sandboxed ────────────────────────────────────────────
-    await rows.first().locator('.saved-open').click();
-    ok('opening a saved block draws it again',
-      await untilOn(page, async () => (await page.locator('.saved-preview iframe').count()) > 0, 8000));
-    ok('…still inside the sandbox, never at app origin',
-      (await page.locator('.saved-preview iframe').first().getAttribute('sandbox')) === 'allow-scripts');
-    await page.locator('.saved-row .saved-open').first().click();
-    await page.waitForTimeout(300);
-
-    // ── compose a report out of it ──────────────────────────────────────────────────────
-    await page.getByRole('button', { name: 'Compose a report' }).click();
-    await page.waitForTimeout(400);
-    await page.locator('.saved-compose-title').fill('Q3 okuması');
-    await page.locator('.saved-compose-intro').fill('Tek blok, tek rapor.');
-    await page.locator('.saved-pick').first().check();
-    await page.waitForTimeout(300);
-    await page.locator('.saved-prose').first().fill('Bu düşüş ikinci çeyrekte başladı.');
-
-    const dl = await Promise.all([
-      page.waitForEvent('download', { timeout: 20000 }),
-      page.getByRole('button', { name: 'Export HTML' }).click(),
-    ]).then(([d]) => d);
-    const reportPath = join(SHOTS, 'composed-report.html');
-    await dl.saveAs(reportPath);
-    const doc = readFileSync(reportPath, 'utf-8');
-
-    ok('a report composes out of saved blocks', /q3-okumasi\.html$/.test(dl.suggestedFilename()),
-      dl.suggestedFilename());
-    ok('…wearing the Reports masthead — the same family of document', doc.includes('rp-masthead'));
-    ok('…with the prose the user typed beside the block', doc.includes('ikinci çeyrekte başladı'));
-    ok('…and the block itself inside it', doc.includes('dc-doc'));
-
-    // ── and it, too, opens offline ──────────────────────────────────────────────────────
-    const offline = await browser.newContext({ offline: true, viewport: { width: 1000, height: 900 } });
-    const openedPage = await offline.newPage();
-    const finishedOut = [];
-    openedPage.on('requestfinished', (r) => { if (!r.url().startsWith('file://')) finishedOut.push(r.url()); });
-    await openedPage.goto(`file://${reportPath}`, { waitUntil: 'load' });
-    await openedPage.waitForTimeout(600);
-    const shape = await openedPage.evaluate(() => ({
-      sections: document.querySelectorAll('.rp-section').length,
-      title: (document.querySelector('.rp-title')?.textContent || '').trim(),
-      drew: !!document.querySelector('.rp-item .dc-doc'),
-    }));
-    ok('the composed report opens OFFLINE and draws', shape.sections === 1 && shape.drew,
-      JSON.stringify(shape));
-    ok('…titled as composed', shape.title === 'Q3 okuması', shape.title);
-    ok('…and still lets nothing off the machine', finishedOut.length === 0, finishedOut.join(' | '));
-    await openedPage.screenshot({ path: join(SHOTS, 'composed-report.png'), fullPage: true });
-    await offline.close();
-
-    await page.screenshot({ path: join(SHOTS, 'saved-blocks-page.png'), fullPage: true });
   } finally {
     await ctx.close();
     await browser.close();
@@ -1463,8 +1329,6 @@ try {
   await runSentenceIntegrity(report);
   rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
   await runExport(base, report);
-  rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
-  await runSaveAndReport(base, report);
 } catch (err) {
   console.error('\nharness error:', err);
   report.rows.push({ theme: '-', label: `harness: ${err.message}`, cond: false, detail: '' });

@@ -234,31 +234,6 @@
 }
 
 /* The line that reports what happened — including where a downloaded file landed, and a
-   way to go and see it — is `layout/DownloadNote`, shared with the other two export bars
-   (saved-blocks compose, Lab report). A silent export is the defect this feature exists to
-   end, and success was the last case still silent. */
-
-/* The name field, in place of the bar. Replacing the buttons rather than sitting beside
-   them keeps the dialog header one row tall at any window width — and there is nothing
-   else worth clicking while you are naming the thing. */
-.chat-htmlexport-name {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.chat-htmlexport-input {
-  width: 22ch;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: 12px;
-}
-
-.chat-htmlexport-input:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
-}
+   way to go and see it — is `layout/DownloadNote`, shared with the Lab report's export bar.
+   A silent export is the defect this feature exists to end, and success was the last case
+   still silent. */

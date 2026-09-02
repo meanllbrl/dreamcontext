@@ -15,7 +15,6 @@ const translations: Record<string, Record<string, string>> = {
     'nav.settings': 'Settings',
     'nav.packs': 'Packs',
     'nav.taxonomy': 'Taxonomy',
-    'nav.saved': 'Saved blocks',
     'nav.about': 'What is this?',
     'nav.announcements': 'Announcements',
     'nav.lab': 'Lab',

@@ -307,12 +307,12 @@ function itemToHtml(item: ResolvedReportItem, dated: boolean): string {
 /**
  * The Reports LOOK — masthead, rule, section rhythm, print rules.
  *
- * Exported because the saved-blocks report (`lib/artifactReport.ts`) composes a
- * different ENTITY out of the same document family: frozen `dream-html` blocks instead
- * of live insight items. Sharing the stylesheet is the point — the two are recognisably
- * the same kind of document — while sharing the report MANIFEST would not be, because a
- * report item is `{ insight: <slug> }` resolved against a live cache and an artifact has
- * nothing to resolve. Look, not schema.
+ * Exported (not module-private) because a second composer used to share it: the retired
+ * saved-blocks report, which built a different ENTITY — frozen `dream-html` blocks — out of
+ * the same document family. The rule it established still holds for anything that comes
+ * next: share the LOOK, never the report MANIFEST, because a report item is
+ * `{ insight: <slug> }` resolved against a live cache and a frozen block has nothing to
+ * resolve.
  */
 export const REPORT_HTML_CSS = `
 * { box-sizing: border-box; }
