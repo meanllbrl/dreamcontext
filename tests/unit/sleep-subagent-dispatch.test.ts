@@ -44,6 +44,11 @@ describe('sub-agent dispatch authorization', () => {
         'sleep-federation', 'sleep-learn',
         'curator', 'initializer', 'goal-skill', 'dreamcontext-deep-research',
         'council', 'multi-review',
+        // The Plan and Develop chat MODES are here too: their briefings are system-prompt
+        // appends, which cannot satisfy an injected line that asks for a USER request.
+        // Drop these and plan mode reviews its own plan inline while develop mode signs
+        // off on its own diff (server/chat-modes.ts).
+        'goal-plan-reviewer', 'goal-validator',
       ]) {
         expect(SUBAGENT_DISPATCH_AUTHORIZATION).toContain(flow);
       }

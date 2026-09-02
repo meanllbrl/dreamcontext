@@ -1068,12 +1068,20 @@ export function userPromptReminder(state: SleepState): string | null {
  * Scoped ON PURPOSE to the named flows: this authorizes the fan-out those skills
  * already document, and nothing else. It is not a blanket "spawn agents freely" —
  * ad-hoc dispatch stays subject to the session's own instruction.
+ *
+ * The Plan and Develop chat MODES are in the list even though they are modes, not skills:
+ * their briefings (`server/chat-modes.ts`) are system-prompt appends, and an append cannot
+ * satisfy an injected line that asks for a USER request. Without this clause a plan-mode
+ * session reviews its own plan inline and a develop-mode session signs off on its own diff —
+ * which is the failure those clean judges exist to prevent.
  */
 export const SUBAGENT_DISPATCH_AUTHORIZATION =
   'Sub-agent dispatch is pre-authorized by the user for dreamcontext\'s documented '
   + 'orchestration flows — sleep (sleep-tasks / sleep-state / sleep-product / '
   + 'sleep-migration / sleep-federation / sleep-learn), curator, initializer, goal-skill, '
-  + 'dreamcontext-deep-research, council, and multi-review. Running one of those flows IS '
+  + 'dreamcontext-deep-research, council, multi-review, and the Plan and Develop chat '
+  + 'modes\' clean judges (goal-plan-reviewer, reviewer, goal-validator). '
+  + 'Running one of those flows IS '
   + 'the user requesting its sub-agents: fan out per the skill instead of running the '
   + 'specialist passes inline, and treat any standing "don\'t spawn sub-agents unless '
   + 'asked" instruction as already satisfied for them. This does not authorize ad-hoc '

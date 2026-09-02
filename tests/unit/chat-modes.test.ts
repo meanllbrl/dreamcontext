@@ -135,6 +135,55 @@ describe('modeBriefing', () => {
     expect(brief).toContain('dreamcontext tasks create');
   });
 
+  // ── The review contract (2026-09-02) ────────────────────────────────────────────────
+  // This mode is goal-skill's planning half, and for a while it shipped WITHOUT Phase 2:
+  // step 4 said "review your own plan", i.e. the author grading itself — the anchoring
+  // failure `three-reviewer-parallel-mandates-pattern` exists to name. These four tests are
+  // what keep the self-review wording from drifting back in.
+  it('plan dispatches CLEAN reviewer lenses — never reviews its own plan', () => {
+    const brief = modeBriefing('plan', { worktreeAllowed: false });
+    expect(brief).toContain('goal-plan-reviewer');
+    // Parallel, in one message: sequential lenses cost a round-trip each and, worse, let a
+    // later lens read an earlier one's framing.
+    expect(brief).toMatch(/IN PARALLEL/);
+    expect(brief).toMatch(/ONE message/);
+    // Fed the ARTIFACT, not the session — a judge that meets the work through the plan text
+    // stays independent (goal-skill's two-lane rule).
+    expect(brief).toMatch(/only the plan text/i);
+    expect(brief).toMatch(/never review your own/i);
+  });
+
+  it('plan names the mandate-diverse lenses, including edge cases', () => {
+    const brief = modeBriefing('plan', { worktreeAllowed: false });
+    // Different mandates surface different categories; none is a substitute for another.
+    for (const lens of ['critic', 'pragmatist', 'edge-cases', 'security']) {
+      expect(brief, `missing lens: ${lens}`).toContain(lens);
+    }
+    // Security is conditional on the hot-path surfaces, not a fourth lens on every plan.
+    expect(brief).toMatch(/auth, crypto, secrets or migrations/);
+  });
+
+  it('plan ITERATES on the review, and escalates instead of proceeding when stuck', () => {
+    const brief = modeBriefing('plan', { worktreeAllowed: false });
+    expect(brief).toMatch(/SOLID/);
+    expect(brief).toMatch(/re-review/i);
+    // Convergence by signal (goal-skill Phase 2): the same finding surviving a revision means
+    // the loop is stuck, and a stuck loop goes to the user — it does not get waved through.
+    expect(brief).toMatch(/SAME finding twice/i);
+    expect(brief).toMatch(/never quietly proceed/i);
+  });
+
+  it('plan writes the plan INTO the task — criteria, details, constraints, validation', () => {
+    // "Create a task" alone produced a task with a name and nothing else: the plan body,
+    // the decisions and the agreed validation method stayed in the transcript, which is
+    // exactly the artifact the next session cannot find.
+    const brief = modeBriefing('plan', { worktreeAllowed: false });
+    for (const section of ['acceptance_criteria', 'technical_details', 'constraints']) {
+      expect(brief, `missing section: ${section}`).toContain(`insert <slug> ${section}`);
+    }
+    expect(brief).toMatch(/Validation method:/);
+  });
+
   it('plan ENDS by offering the develop handoff as a dream-actions button', () => {
     const brief = modeBriefing('plan', { worktreeAllowed: false });
     expect(brief).toContain('dream-actions');
@@ -164,6 +213,44 @@ describe('modeBriefing', () => {
     expect(brief).toMatch(/waves/i);
     expect(brief).toMatch(/evidence/i);
     expect(brief).toContain('dreamcontext tasks log');
+  });
+
+  // ── The review + validate contract (2026-09-02) ─────────────────────────────────────
+  // The mirror of the Plan briefing's step 4. This half used to end at "don't expand scope":
+  // the agent built, gated its own waves, ticked its own criteria and declared itself done —
+  // every judgement in the loop belonging to the author, one phase later and more expensive
+  // than the planning version of the same bug.
+  it('develop dispatches a CLEAN reviewer after the last wave — it does not self-approve', () => {
+    const brief = modeBriefing('develop', { worktreeAllowed: false });
+    expect(brief).toMatch(/you do not sign off on your own work/i);
+    expect(brief).toContain('`reviewer`');
+    // Once, after the LAST wave: a full review of a half-built wave reports on code the next
+    // wave is about to rewrite (goal-skill Phase 5).
+    expect(brief).toMatch(/LAST wave/);
+    // The judge fetches its own diff — a pasted diff is the author choosing what gets read.
+    expect(brief).toMatch(/git diff[^\n]*ITSELF/);
+    expect(brief).toMatch(/never paste a diff/i);
+  });
+
+  it('develop iterates on review findings, and escalates one that survives a fix', () => {
+    const brief = modeBriefing('develop', { worktreeAllowed: false });
+    expect(brief).toMatch(/re-review/i);
+    expect(brief).toMatch(/SAME finding twice/i);
+    expect(brief).toMatch(/never merge past it/i);
+  });
+
+  it('develop validates through a CLEAN judge — it does not certify its own build', () => {
+    // Plan mode writes "Validation method: …" into the task as a criterion; this is the half
+    // that spends it. goal-skill Phase 6 calls this "the real gate" and always dispatches a
+    // clean goal-validator — an earlier draft of this briefing had the BUILDER run the check
+    // and close the task itself, which is the self-approval this whole change exists to end.
+    const brief = modeBriefing('develop', { worktreeAllowed: false });
+    expect(brief).toContain('goal-validator');
+    expect(brief).toMatch(/you do not certify your own build/i);
+    expect(brief).toContain('Validation method:');
+    expect(brief).toMatch(/Flaky, skipped or "should pass" is a\s+FAIL/);
+    expect(brief).toContain('dreamcontext tasks status <slug> completed');
+    expect(brief).toContain('in_review');
   });
 
   // `\s+`, not a literal space: the briefings are hand-wrapped prose, so the sentence can
@@ -205,11 +292,25 @@ describe('modeBriefing', () => {
     expect(brief).toContain('_dream_context/');
   });
 
+  // Every briefing rides in the system prompt of EVERY turn of a session that selected it,
+  // so each mode gets a hard ceiling. `plan` and `develop` get a bigger one than the rest, on
+  // purpose: they are the only briefings that carry a CONTRACT (which judges, fed what, and
+  // what to do when they disagree) rather than a list of habits, and the one-line version of
+  // that contract is exactly what let both modes ship self-review. The budget bought a
+  // behaviour. `basic` stays lean — it is the default mode and adds only the worktree rule.
+  //
+  // `develop` is allowed a little more than `plan` for a reason that is NOT its prose: it is
+  // the only mode whose briefing concatenates the shared worktree paragraph (~490 chars in
+  // the ALLOWED arm), so its mode-specific text is the shorter of the two.
+  const BRIEFING_CEILING: Record<string, number> = { plan: 2400, develop: 2600 };
+  const DEFAULT_CEILING = 1600;
+
   it('keeps every briefing short — it rides in the system prompt of every turn', () => {
     for (const mode of CHAT_MODES) {
       for (const worktreeAllowed of [true, false]) {
         expect(modeBriefing(mode, { worktreeAllowed }).length,
-          `${mode} (worktreeAllowed=${worktreeAllowed})`).toBeLessThan(1600);
+          `${mode} (worktreeAllowed=${worktreeAllowed})`)
+          .toBeLessThan(BRIEFING_CEILING[mode] ?? DEFAULT_CEILING);
       }
     }
   });

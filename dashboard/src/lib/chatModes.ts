@@ -38,8 +38,8 @@ export interface ChatModeRow {
  */
 export const CHAT_MODE_ROWS: readonly ChatModeRow[] = [
   { id: 'basic', name: 'Basic', insight: 'Plain Claude. No mode enabled.' },
-  { id: 'plan', name: 'Plan', insight: 'Asks the questions, ends with a task.' },
-  { id: 'develop', name: 'Develop', insight: 'Implements in waves, with evidence.' },
+  { id: 'plan', name: 'Plan', insight: 'Asks, drafts, gets reviewed, ends with a task.' },
+  { id: 'develop', name: 'Develop', insight: 'Builds in waves, reviewed and validated.' },
   {
     id: 'jarvis',
     name: 'J.A.R.V.I.S',
