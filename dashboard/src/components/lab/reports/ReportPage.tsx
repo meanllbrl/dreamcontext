@@ -481,10 +481,22 @@ export function ReportPage({ slug, onBack, onToast }: ReportPageProps) {
   );
 
   // ── B8 + window inheritance: one scoped sync job per need, never two engines.
-  // Live open → full refresh of the report's slugs, window overrides riding
-  // along for the missing/stale ones. A date/window change → a windows-only
-  // job. A foreign running job is waited out, then the plan re-runs; attempts
-  // are capped per view so a permanently failing source cannot loop forever. ──
+  // Live open → a TTL-gated refresh of the report's slugs, window overrides
+  // riding along for the missing/stale ones. A date/window change → a
+  // windows-only job. A foreign running job is waited out, then the plan
+  // re-runs; attempts are capped per view so a permanently failing source
+  // cannot loop forever.
+  //
+  // NOT forced. Opening a report is not a user asking for a refetch — it used
+  // to post `force: true` over every slug in the report, so each open re-ran
+  // every upstream query behind it regardless of age, and editing a report
+  // meant a burst of identical queries at the provider (reported from the
+  // NeonBI side, 2026-09-02). `force: false` hands the decision back to the
+  // engine's TTL gate in `sync.ts`: a slug inside its `ttl_minutes` settles as
+  // `fresh` with zero adapter calls, an expired one still refetches, and the
+  // windowed slugs riding along are unaffected (a window override bypasses the
+  // TTL gate by design). The explicit refetch affordances — Sync all, a card's
+  // Refresh, a tweak save — still force. ──
   const startedRef = useRef(false);
   /** True once THIS page started any job — the sync-status header keys off it. */
   const startedAnyRef = useRef(false);
@@ -497,13 +509,13 @@ export function ReportPage({ slug, onBack, onToast }: ReportPageProps) {
     if (syncJob?.status === 'running') return; // wait — re-runs on settle
     const planSlugs = Object.keys(windowPlan);
     if (date === null && !startedRef.current && reportSlugs.size > 0) {
-      // Page open on Live: refresh everything once (the pre-window behavior),
-      // with the owed windows riding the same job.
+      // Page open on Live: one TTL-gated pass over the report's slugs, with the
+      // owed windows riding the same job.
       startedRef.current = true;
       startedAnyRef.current = true;
       attemptsRef.current.count += 1;
       startJob.mutate(
-        { force: true, slugs: [...reportSlugs], ...(planSlugs.length > 0 ? { windows: windowPlan } : {}) },
+        { force: false, slugs: [...reportSlugs], ...(planSlugs.length > 0 ? { windows: windowPlan } : {}) },
         { onError: (err) => onToast(`Report sync failed to start: ${(err as Error).message}`) },
       );
       return;
@@ -512,8 +524,11 @@ export function ReportPage({ slug, onBack, onToast }: ReportPageProps) {
     if (attemptsRef.current.count >= 3) return; // a broken source must not loop
     attemptsRef.current.count += 1;
     startedAnyRef.current = true;
+    // Every slug here carries a window override, which the engine fetches
+    // regardless of TTL — `force` would add nothing but a bypass nobody asked
+    // for, so this path does not send one either.
     startJob.mutate(
-      { force: true, slugs: planSlugs, windows: windowPlan },
+      { force: false, slugs: planSlugs, windows: windowPlan },
       { onError: (err) => onToast(`Window sync failed to start: ${(err as Error).message}`) },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps

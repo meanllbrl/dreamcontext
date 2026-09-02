@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-09-01'
+updated: '2026-09-02'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -31,6 +31,9 @@ related_tasks:
     reports-become-a-branded-dreamcontext-template-window-honest-items-designed-sections-native-export
   - >-
     reports-gain-an-optional-button-triggered-ai-commentary-layer-pure-text-headless-claude
+  - neonbi-request-diyeti-source-freshness-aware-sync-insight-report
+  - >-
+    lab-request-budget-an-upstream-freshness-gate-so-insights-and-reports-stop-re-querying-data-that-has-not-changed
 type: feature
 name: lab-analytics-insights
 description: >-
