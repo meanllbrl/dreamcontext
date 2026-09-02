@@ -17,7 +17,7 @@ import {
 } from '../../dashboard/src/components/sleepy/chat/htmlExport.js';
 import {
   readSnapshotMessage, SNAPSHOT_MESSAGE_KEY, SNAPSHOT_REQUEST_KEY, MAX_SNAPSHOT_CHARS,
-  CHAT_HTML_KIT_CSS, HEIGHT_BRIDGE,
+  CHAT_HTML_KIT_CSS, HEIGHT_BRIDGE, KIT_BEHAVIOUR,
 } from '../../dashboard/src/components/sleepy/chat/chatHtmlKit.js';
 import { SANDBOX_CSP } from '../../dashboard/src/lib/sandboxHtml.js';
 
@@ -53,6 +53,19 @@ describe('the exported document', () => {
   it('never carries the height bridge — there is no parent to report to', () => {
     expect(doc).not.toContain(HEIGHT_BRIDGE);
     expect(doc).not.toContain(SNAPSHOT_REQUEST_KEY);
+  });
+
+  it('DOES carry the kit tab script — an exported tabbed block still switches', () => {
+    // The distinction with the bridge above is the point: the bridge talks to a parent
+    // this file does not have, while the tab script only rearranges the markup shipped
+    // inside it. "Exactly what the block rendered" has to include the reader being able to
+    // open panel two.
+    expect(doc).toContain(KIT_BEHAVIOUR);
+    // …and it is the only script the wrapper adds. The author's own script rides inside
+    // `html`, which is the snapshot — counted here so a second host script cannot slip in
+    // without someone re-reading the CSP argument above.
+    const wrapper = doc.replace(BLOCK, '');
+    expect(wrapper.match(/<script>/g)?.length).toBe(1);
   });
 
   it('puts the brand override LAST, so a branded block exports branded', () => {
@@ -169,8 +182,10 @@ describe('the snapshot leg of the bridge', () => {
   it('the bridge answers the request, and rides in BOTH modes', () => {
     expect(HEIGHT_BRIDGE).toContain(SNAPSHOT_REQUEST_KEY);
     expect(HEIGHT_BRIDGE).toContain(SNAPSHOT_MESSAGE_KEY);
+    // Both host scripts ride in the head, in both modes: the bridge (the export bar in the
+    // fullscreen header talks to its snapshot leg) and the kit's tab script.
     const kit = readFileSync(join(CHAT_DIR, 'chatHtmlKit.ts'), 'utf-8');
-    expect(kit).toContain('headScript: HEIGHT_BRIDGE,');
+    expect(kit).toContain('headScript: `${HEIGHT_BRIDGE}\n${KIT_BEHAVIOUR}`,');
   });
 });
 

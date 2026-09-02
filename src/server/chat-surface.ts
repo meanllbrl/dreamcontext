@@ -98,7 +98,8 @@ sentence under one lands under it.
 
 Sandboxed with NO network: no fetch, remote image, font or stylesheet — everything inline,
 and any data you show must be in the markup you wrote. Inline \`<script>\` DOES run — buttons,
-filters and toggles work on the data in your markup; \`dc-tabs\` and hover need none.
+filters and toggles work on the data in your markup; hover and \`dc-tabs\` need none (a
+\`dc-tablist\` of \`dc-tab\` buttons over a \`dc-panels\`: tab N opens panel N).
 **Two views of one thing = the reader switches; don't stack both**, and a mark holding a
 number should answer a hover. It sizes to its content and has a fullscreen button, so a deck
 is real — wrap sections in \`<section class="dc-slide">\` inside \`<div class="dc-slides">\`.

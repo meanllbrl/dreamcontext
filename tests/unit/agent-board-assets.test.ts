@@ -288,9 +288,16 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * `dc-flow-node--*` class additions (~795 chars). Its own accounting belongs to whoever
    * ships it; recorded here so the jump from 8850 to 9645 actual is explainable rather than
    * looking like one rule that cost 1100 characters. The 9700 covers 9645 actual.
+   *
+   * 9700 -> 9800 on 2026-09-02, for 77 characters: how a `dc-tabs` tablist maps to its
+   * panels ("tab N opens panel N"). That line is not decoration — the previous wording said
+   * only "`dc-tabs` … need none", an author wrote the obvious button tablist, and the block
+   * rendered as a tab bar over an EMPTY BOX (owner screenshot; the kit and the host tab
+   * script now cover the markup, and this says which panel a tab opens). Actual 9670, so
+   * the next rule has room without a third bump.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(9700);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(9800);
   });
 
   /**

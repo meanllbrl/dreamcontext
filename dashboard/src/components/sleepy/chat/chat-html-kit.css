@@ -467,31 +467,62 @@ body {
 .dc-pros li::marker { content: "+ "; color: var(--color-success); font-weight: 700; }
 .dc-cons li::marker { content: "− "; color: var(--color-error); font-weight: 700; }
 
-/* ═══ Tabs — CSS-only, no script needed. Structure (ids must be unique in the block):
-       <div class="dc-tabs">
-         <input type="radio" name="g" id="g1" checked><input type="radio" name="g" id="g2">
-         <div class="dc-tablist"><label class="dc-tab" for="g1">A</label>
-                                 <label class="dc-tab" for="g2">B</label></div>
-         <div class="dc-panels"><section class="dc-panel">…</section>
-                                <section class="dc-panel">…</section></div>
-       </div>
-     The nth-of-type pairs below wire tab N to panel N, up to five. ═══ */
+/* ═══ Tabs — no script the AUTHOR has to write. Two forms work, and the reason there are
+     two is a defect worth remembering (owner screenshot, 2026-09-02):
+
+       1. BUTTONS (write this). `<div class="dc-tablist"><button class="dc-tab">A</button>…`
+          followed by `<div class="dc-panels"><div class="dc-panel">…</div>…`. Tab N opens
+          panel N, wired by the HOST's own tab script (`KIT_BEHAVIOUR` in chatHtmlKit.ts) —
+          which is also inlined into an exported file, so the export keeps switching.
+       2. RADIOS (still supported, and what the kit shipped with). Ids unique in the block:
+            <div class="dc-tabs">
+              <input type="radio" name="g" id="g1" checked><input type="radio" name="g" id="g2">
+              <div class="dc-tablist"><label class="dc-tab" for="g1">A</label>…</div>
+              <div class="dc-panels"><section class="dc-panel">…</section>…</div>
+            </div>
+          Pure CSS, up to five tabs, works with scripting off entirely.
+
+     Form 1 exists because form 2 was the ONLY one and the briefing said "dc-tabs needs no
+     script": an author wrote the obvious button tablist, got no radios, and every panel
+     stayed `display: none` — a tab bar over an EMPTY BOX, two panels of real content gone.
+     Valid markup, every class defined, nothing failed anywhere. Hence the rule below that
+     a panel is never invisible by default. ═══ */
 
 .dc-tabs { display: flex; flex-direction: column; gap: 10px; }
 .dc-tabs > input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
 .dc-tablist { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--color-border); }
+/* The first four declarations are the <button> RESET. Without them a button tablist renders
+   as a row of grey OS buttons in the middle of the kit, in the OS UI face — the second half
+   of the same screenshot. A <label> is untouched by any of them. */
 .dc-tab {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: 0;
+  font: inherit;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   padding: 6px 12px;
   font-size: 0.929rem;
   font-weight: 600;
   color: var(--color-text-secondary);
-  border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   cursor: pointer;
   user-select: none;
 }
 .dc-tab:hover { color: var(--color-text); }
-.dc-panel { display: none; }
+/* The host script's selected tab. The radio form's equivalent is the :checked chain below. */
+.dc-tab--on { color: var(--color-accent); border-bottom-color: var(--color-accent); }
+
+/* A PANEL IS NEVER INVISIBLE BY DEFAULT — the whole lesson above, as one rule. Panel one
+   shows unconditionally, and steps aside only for a REAL selection, by either mechanism.
+   Worst case (no radios, no script at all) the reader gets the first panel, which is a
+   readable block; the old worst case was nothing. */
+.dc-panels > .dc-panel { display: none; }
+.dc-panels > .dc-panel:nth-of-type(1) { display: block; }
+.dc-panels > .dc-panel--on { display: block; }
+.dc-tabs > input:nth-of-type(n+2):checked ~ .dc-panels > .dc-panel:nth-of-type(1),
+.dc-panels:has(> .dc-panel--on) > .dc-panel:nth-of-type(1):not(.dc-panel--on) { display: none; }
 .dc-panel > * + * { margin-top: 10px; }
 
 .dc-tabs > input:nth-of-type(1):checked ~ .dc-tablist > .dc-tab:nth-of-type(1),
@@ -695,6 +726,22 @@ html[data-dc-mode="full"] { font-size: calc(var(--chat-text, 14px) * 1.07); }
 .dc-card > * + * { margin-top: 8px; }
 .dc-option > * + * { margin-top: 8px; }
 .dc-stat > * + * { margin-top: 3px; }
+
+/* ── A TILE'S PARTS ARE LINES, whatever element the author reached for ──
+   The rhythm above spaces children with `margin-top`, which does nothing to an INLINE box —
+   so a stat tile written with `<span>`s ran its value, label and note together as one
+   unreadable line: "124/124verify:chat-htmlyeni check: …" (owner screenshot, 2026-09-02).
+   Same root as the flex-column sentence bug at the top of this file, arrived at from the
+   other side: there, block children were wrongly made flex items; here, inline children
+   were never made blocks.
+
+   These class names only ever mean "this line of the tile/card", so blockifying them cannot
+   break a legitimate use. `.dc-value` is deliberately NOT in that list — a figure is also
+   written mid-sentence — so it is blocked only where it HEADS a tile. */
+.dc-stat-label, .dc-stat-note,
+.dc-card-title, .dc-card-sub,
+.dc-tl-when, .dc-caption, .dc-figcaption { display: block; }
+.dc-stat > .dc-value, .dc-card > .dc-value { display: block; }
 .dc-step-body > * + * { margin-top: 2px; }
 .dc-tl-body > * + * { margin-top: 2px; }
 .dc-slide > * + * { margin-top: 16px; }

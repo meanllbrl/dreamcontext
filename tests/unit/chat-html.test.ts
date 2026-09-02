@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseChatActions, MAX_HTML_BYTES, MAX_HTMLS_PER_MESSAGE } from '../../dashboard/src/components/sleepy/chat/chatActions.js';
 import {
-  buildChatSrcdoc, readHeightMessage, htmlOutline, HEIGHT_BRIDGE, HEIGHT_MESSAGE_KEY, HEIGHT_REQUEST_KEY,
+  buildChatSrcdoc, readHeightMessage, htmlOutline, HEIGHT_BRIDGE, KIT_BEHAVIOUR, HEIGHT_MESSAGE_KEY, HEIGHT_REQUEST_KEY,
   CHAT_HTML_CSP, CHAT_HTML_SANDBOX, CHAT_HTML_KIT_CSS, CHAT_KIT_TOKENS, CHAT_READING_TOKENS,
   SNAPSHOT_MESSAGE_KEY, SNAPSHOT_REQUEST_KEY,
 } from '../../dashboard/src/components/sleepy/chat/chatHtmlKit.js';
@@ -248,6 +248,84 @@ describe('buildChatSrcdoc', () => {
     for (const token of ['--font-family-display', '--radius-xl', '--shadow-lg']) {
       expect(CHAT_KIT_TOKENS, token).toContain(token);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// The kit's own behaviour — tabs that switch without the author writing script
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+describe('the kit tab script', () => {
+  it('rides in the srcdoc beside the height bridge', () => {
+    const doc = buildChatSrcdoc({ html: '<p>x</p>', tokens: {} });
+    // A distinctive line of the SCRIPT, not a class name the kit CSS also mentions.
+    expect(doc).toContain("closest('.dc-tab')");
+    expect(doc).toContain(HEIGHT_MESSAGE_KEY);
+  });
+
+  it('stays inside the block: no message out, no network, no app', () => {
+    // The whole safety story of this surface in one assertion. The tab script only ever
+    // rearranges markup the agent already wrote — it has strictly LESS reach than the
+    // height bridge, which at least posts a number out.
+    expect(KIT_BEHAVIOUR).not.toContain('postMessage');
+    expect(KIT_BEHAVIOUR).not.toMatch(/fetch\(|XMLHttpRequest|WebSocket|new Image/);
+    expect(KIT_BEHAVIOUR).not.toMatch(/\bparent\b|\btop\b\.|document\.cookie|localStorage/);
+  });
+
+  it('leaves the radio form to the CSS, so scripting-off behaves identically', () => {
+    // A `<label class="dc-tab" for>` over a hidden radio worked before this script existed
+    // and must keep working the same way — the script checks the radio and returns rather
+    // than driving the panels itself, so there is exactly one mechanism in play per block.
+    expect(KIT_BEHAVIOUR).toContain('input[type="radio"]');
+    expect(KIT_BEHAVIOUR).toMatch(/radios\[i\]\.checked = true;\s*return;/);
+  });
+
+  it('opens panel N for tab N, and honours an explicit data-panel', () => {
+    expect(KIT_BEHAVIOUR).toContain("getAttribute('data-panel')");
+    expect(KIT_BEHAVIOUR).toContain("classList.toggle('dc-panel--on'");
+    expect(KIT_BEHAVIOUR).toContain("classList.toggle('dc-tab--on'");
+  });
+});
+
+describe('the kit cannot lose an author\'s content', () => {
+  it('a .dc-panel is visible by default — the empty-tab-box defect', () => {
+    // Owner screenshot 2026-09-02: a button tablist meant no radios, `display: none` was
+    // the only default, and two panels of real content rendered as an empty box. The floor
+    // is now "the first panel shows", whatever the author wrote around it.
+    expect(CHAT_HTML_KIT_CSS).toContain('.dc-panels > .dc-panel:nth-of-type(1) { display: block; }');
+    expect(CHAT_HTML_KIT_CSS).toContain('.dc-panels > .dc-panel--on { display: block; }');
+    // …and the bare `.dc-panel { display: none }` that had no escape hatch is gone.
+    expect(CHAT_HTML_KIT_CSS).not.toMatch(/^\.dc-panel \{ display: none; \}$/m);
+  });
+
+  it('a .dc-tab written as a <button> is reset out of its OS look', () => {
+    const rule = CHAT_HTML_KIT_CSS.slice(
+      CHAT_HTML_KIT_CSS.indexOf('.dc-tab {'),
+      CHAT_HTML_KIT_CSS.indexOf('.dc-tab:hover'),
+    );
+    for (const decl of ['appearance: none', '-webkit-appearance: none', 'background: none', 'font: inherit']) {
+      expect(rule, `.dc-tab is missing \`${decl}\``).toContain(decl);
+    }
+  });
+
+  it("a tile's named parts are blocks, so a <span> tile still stacks", () => {
+    // The other half of the same screenshot: value, label and note ran together into one
+    // line ("124/124verify:chat-htmlyeni check…") because the kit spaces children with
+    // `margin-top`, which does nothing to an inline box.
+    for (const cls of ['dc-stat-label', 'dc-stat-note', 'dc-card-title', 'dc-card-sub']) {
+      expect(CHAT_HTML_KIT_CSS, `${cls} is not blockified`)
+        .toMatch(new RegExp(`\\.${cls}[^{]*\\{[^}]*display: block`));
+    }
+    expect(CHAT_HTML_KIT_CSS).toContain('.dc-stat > .dc-value, .dc-card > .dc-value { display: block; }');
+  });
+
+  it('but .dc-value stays inline where it is written mid-sentence', () => {
+    // Scoped on purpose: a figure inside a paragraph must not break the line in three.
+    const bare = CHAT_HTML_KIT_CSS.slice(
+      CHAT_HTML_KIT_CSS.indexOf('.dc-value {'),
+      CHAT_HTML_KIT_CSS.indexOf('.dc-value--lg'),
+    );
+    expect(bare).not.toContain('display: block');
   });
 });
 

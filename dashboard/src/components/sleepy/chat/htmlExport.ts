@@ -24,7 +24,7 @@
  * rasterising half is browser-only and proven in `scripts/verify/chat-html.mjs`.
  */
 import { SANDBOX_CSP, SANDBOX_FONT_CSS } from '../../../lib/sandboxHtml';
-import { CHAT_HTML_KIT_CSS } from './chatHtmlKit';
+import { CHAT_HTML_KIT_CSS, KIT_BEHAVIOUR } from './chatHtmlKit';
 
 /**
  * The width a block is exported AT, regardless of how narrow the pane it was read in was.
@@ -121,6 +121,15 @@ export function buildStandaloneHtml(input: StandaloneInput): string {
     `<style>${CHAT_HTML_KIT_CSS}</style>`,
     `<style>${EXPORT_CHROME_CSS}</style>`,
     overrideCss ? `<style>${overrideCss}</style>` : '',
+    // The kit's own behaviour rides along, for the same reason the kit's CSS does: a tabbed
+    // block that stopped switching the moment it left the app would not be "exactly what
+    // the block rendered". Inert without it — a `.dc-tab` is a button with no handler — and
+    // the CSP the file carries (`script-src 'unsafe-inline'`, `default-src 'none'`) is what
+    // makes an inline script here safe to keep: it can rearrange the markup it shipped
+    // with, and reach nothing else. The RASTER and PRINT paths deliberately run no script
+    // at all, and that is correct there: they draw the SNAPSHOT, which already carries
+    // whichever panel the reader had open.
+    `<script>${KIT_BEHAVIOUR}</script>`,
     '</head><body><div class="dcx-sheet">',
     '<div class="dcx-head">',
     `<h1 class="dcx-title">${esc(meta.title)}</h1>`,

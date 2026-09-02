@@ -110,6 +110,18 @@ const htmlBlock = (loopback) => [
     '<span class="dc-bar-track"><span class="dc-bar-fill" style="width:50%"></span></span>' +
     `<span class="dc-bar-value">${i}</span></div>`).join('\n'),
   '  </div>',
+  // TABS, written the way an author actually writes them — a <button> tablist, no radios,
+  // no script of their own. This exact shape rendered as a tab bar over an EMPTY BOX until
+  // 2026-09-02: the panels were `display: none` with only `input:checked` to un-hide them.
+  // Nothing failed; the content simply was not there. Hence a fixture, forever.
+  '  <div class="dc-tabs">',
+  '    <div class="dc-tablist"><button class="dc-tab" id="tabA">A</button>',
+  '      <button class="dc-tab" id="tabB">B</button></div>',
+  '    <div class="dc-panels">',
+  '      <div class="dc-panel" id="panelA"><p class="dc-p">PANEL-ONE-BODY</p></div>',
+  '      <div class="dc-panel" id="panelB"><p class="dc-p">PANEL-TWO-BODY</p></div>',
+  '    </div>',
+  '  </div>',
   '  <div class="dc-slides"><section class="dc-slide"><h1 class="dc-h1">Slide one</h1></section>',
   '  <section class="dc-slide"><h1 class="dc-h1">Slide two</h1></section></div>',
   '</div>',
@@ -393,6 +405,49 @@ async function runTheme(base, theme, report) {
   await inner.locator('#svghit').hover();
   ok('…and reveals on hover, which is what makes a chart point hoverable at all',
     await until(async () => (await opacityOf('#svgtip')) === '1', 4000), await opacityOf('#svgtip'));
+
+  // ── 3b — tabs, and a tile whose parts are lines ───────────────────────────────────
+  //
+  // Both halves of the owner's 2026-09-02 screenshot, and both are CONTENT LOSS that no
+  // string test can see: a tab bar over an empty box, and a stat tile whose value, label
+  // and note ran together into one unreadable line. Layout is the only witness.
+  console.log('── tabs open a panel; a tile\'s parts are lines');
+  const panelShown = (sel) => inner.locator(sel).evaluate((el) => getComputedStyle(el).display);
+
+  ok('a tab bar written with <button>s shows its FIRST panel — never an empty box',
+    (await inner.locator('#panelA').innerText().catch(() => '')).includes('PANEL-ONE-BODY')
+      && (await panelShown('#panelA')) !== 'none',
+    await panelShown('#panelA'));
+  ok('…and only the first: panel two is not stacked under it',
+    (await panelShown('#panelB')) === 'none', await panelShown('#panelB'));
+
+  await inner.locator('#tabB').click();
+  ok('…clicking tab two OPENS panel two, with no script the author had to write',
+    await until(async () => (await panelShown('#panelB')) === 'block', 4000),
+    await panelShown('#panelB'));
+  ok('…and closes panel one, so the reader sees one panel at a time',
+    (await panelShown('#panelA')) === 'none', await panelShown('#panelA'));
+  const tabB = await inner.locator('#tabB').evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { border: cs.borderBottomColor, appearance: cs.appearance, size: cs.fontSize };
+  });
+  ok('…the selected tab is MARKED as the selected one',
+    tabB.border !== 'rgba(0, 0, 0, 0)' && tabB.border !== 'transparent', tabB.border);
+  // The other half of the screenshot: the tabs rendered as grey OS buttons. `appearance`
+  // is the declaration that stops that, and a computed `none` is the only proof it landed.
+  ok('…and it is drawn as a tab, not as a native button',
+    tabB.appearance === 'none', `appearance: ${tabB.appearance}, ${tabB.size}`);
+
+  // The tile in the fixture is written with SPANS — the shape that collapsed. Its label and
+  // its value must sit on different lines, which is a geometry question, not a CSS one.
+  const tileLines = await inner.locator('.dc-stat').first().evaluate((el) => {
+    const label = el.querySelector('.dc-stat-label')?.getBoundingClientRect();
+    const value = el.querySelector('.dc-value')?.getBoundingClientRect();
+    return label && value ? { labelBottom: label.bottom, valueTop: value.top } : null;
+  });
+  ok('a stat tile written with <span>s still stacks — label above value, not one run of text',
+    !!tileLines && tileLines.valueTop >= tileLines.labelBottom - 2,
+    JSON.stringify(tileLines));
 
   // ── 4 — the brand override ────────────────────────────────────────────────────────
   console.log('── the brand override reaches inside the sandbox');
