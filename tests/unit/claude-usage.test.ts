@@ -273,29 +273,80 @@ describe('readUsageLimits — `lockedReason` (multi-account)', () => {
   it('is carried from the SUMMARY object, and only from there', () => {
     const blob = liveSample();
     const util = (blob.cachedUsageUtilization as Record<string, Record<string, Record<string, unknown>>>).utilization;
-    util.five_hour = { utilization: 100, resets_at: SESSION_RESET, lockedReason: 'session_limit_reached' };
+    // SNAKE_CASE, as a REAL cache writes it — see the shape note below.
+    util.five_hour = { utilization: 100, resets_at: SESSION_RESET, locked_reason: 'session_limit_reached' };
     const session = bar(readUsageLimits(blobHome(blob)), 'session')! as { lockedReason?: unknown };
     expect(session.lockedReason).toBe('session_limit_reached');
     // The wire shape stays an allowlist: exactly one new key, nothing else rode along.
     expect(Object.keys(session).sort()).toEqual(['key', 'lockedReason', 'percent', 'resetsAt']);
   });
 
-  it('a `limits[]` entry carrying lockedReason does NOT put it on the wire', () => {
+  it('a `limits[]` entry carrying a locked reason does NOT put it on the wire', () => {
     const blob = liveSample();
     const util = (blob.cachedUsageUtilization as Record<string, Record<string, unknown>>).utilization;
     delete util.five_hour; // force the limits[] fallback to be the source
     (util.limits as unknown[])[0] = {
-      kind: 'session', percent: 20, resets_at: SESSION_RESET, lockedReason: 'from_the_wrong_place',
+      kind: 'session', percent: 20, resets_at: SESSION_RESET, locked_reason: 'from_the_wrong_place',
     };
     const session = bar(readUsageLimits(blobHome(blob)), 'session')!;
     expect(Object.keys(session).sort()).toEqual(['key', 'percent', 'resetsAt']);
   });
 
-  it('a non-string lockedReason is dropped, not stringified', () => {
+  it('a non-string locked reason is dropped, not stringified', () => {
     const blob = liveSample();
     const util = (blob.cachedUsageUtilization as Record<string, Record<string, Record<string, unknown>>>).utilization;
-    util.five_hour = { utilization: 20, resets_at: SESSION_RESET, lockedReason: 42 };
+    util.five_hour = { utilization: 20, resets_at: SESSION_RESET, locked_reason: 42 };
     expect(bar(readUsageLimits(blobHome(blob)), 'session')).not.toHaveProperty('lockedReason');
+  });
+
+  /**
+   * THE SHAPE, TAKEN FROM A REAL CACHE (CLI 2.1.260, 2026-09-04) — this is the test that
+   * would have caught the bug, and did not exist.
+   *
+   * The first implementation read `lockedReason`, camelCase, and the fixture asserting it was
+   * hand-written to match. So the test passed while the code could never fire on a real
+   * payload: every field in that object is snake_case (`resets_at`, `limit_dollars`,
+   * `used_dollars`, `remaining_dollars`, `locked_reason`), and a LOCKED account would have
+   * been offered as an auto-switch candidate.
+   *
+   * A fixture invented alongside the code it tests proves only that they agree with each
+   * other. This one is transcribed from disk.
+   */
+  it('reads the REAL live shape, verbatim — an unused account and a locked one', () => {
+    const realShape = (over: Record<string, unknown>) => ({
+      oauthAccount: { accountUuid: 'acct-secret-uuid' },
+      cachedUsageUtilization: {
+        fetchedAtMs: FETCHED,
+        accountUuid: 'acct-secret-uuid',
+        utilization: {
+          five_hour: {
+            utilization: 0, resets_at: null, limit_dollars: null,
+            used_dollars: null, remaining_dollars: null, locked_reason: null, ...over,
+          },
+          seven_day: {
+            utilization: 0, resets_at: null, limit_dollars: null,
+            used_dollars: null, remaining_dollars: null, locked_reason: null,
+          },
+          seven_day_opus: null,
+          tangelo: null,
+        },
+      },
+    });
+
+    // An UNUSED account: 0% with no reset window. Correctly yields NO bar — a bar reading
+    // "0%, resets never" would be an invention, and `fetchedAtMs` still reports honestly.
+    const unused = readUsageLimits(blobHome(realShape({})));
+    expect(unused.limits).toEqual([]);
+    expect(unused.fetchedAtMs).toBe(FETCHED);
+
+    // A LOCKED window in the real spelling. This is the assertion the camelCase read failed.
+    const locked = readUsageLimits(blobHome(realShape({
+      utilization: 96, resets_at: SESSION_RESET, locked_reason: 'usage_limit_reached',
+    })));
+    expect(bar(locked, 'session')).toEqual({
+      key: 'session', percent: 96, resetsAt: Date.parse(SESSION_RESET),
+      lockedReason: 'usage_limit_reached',
+    });
   });
 });
 

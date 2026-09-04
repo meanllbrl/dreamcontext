@@ -63,7 +63,7 @@ export interface UsageLimitWire {
   /** Present only when a per-model cap is the BINDING one, e.g. "Fable". */
   scope?: string;
   /** Present only when the CLI reports this window as ALREADY LOCKED (`five_hour` /
-   *  `seven_day` summary `lockedReason`). Read from the SUMMARY objects, never from a
+   *  `seven_day` summary `locked_reason`). Read from the SUMMARY objects, never from a
    *  `limits[]` entry. An account with a locked window is never an auto-switch candidate,
    *  and the surface can say "locked" instead of drawing a bar at some percentage. */
   lockedReason?: string;
@@ -117,7 +117,14 @@ interface Candidate { percent: number | null; resetsAt: number | null; scope?: s
 function fromSummary(raw: unknown): Candidate {
   const o = asRecord(raw);
   if (!o) return { percent: null, resetsAt: null };
-  const locked = typeof o.lockedReason === 'string' ? o.lockedReason.trim() : '';
+  // SNAKE_CASE — `locked_reason`, like every other field in this payload (`resets_at`,
+  // `limit_dollars`, `used_dollars`). Read from a REAL cache written by CLI 2.1.260, not
+  // from a hand-written fixture: the first version of this line read `lockedReason` and
+  // therefore never fired at all, which would have let a LOCKED account be chosen as an
+  // auto-switch candidate. The camelCase spelling is still accepted, so a future CLI that
+  // renames it does not silently turn the guard off again.
+  const rawLocked = o.locked_reason ?? o.lockedReason;
+  const locked = typeof rawLocked === 'string' ? rawLocked.trim() : '';
   return {
     percent: asPercent(o.utilization),
     resetsAt: asResetsAt(o.resets_at),
