@@ -81,6 +81,18 @@ export function sanitizeModel(v: string | null): string {
   return v && v.length <= 64 && /^[A-Za-z0-9._-]+$/.test(v) ? v : '';
 }
 
+/**
+ * Account-id gate, mirroring {@link sanitizeModel}'s shape discipline: anything that is not a
+ * kebab slug becomes '' (= "no account requested", which resolves to the preferred account).
+ *
+ * This is the OUTER of two checks, not the only one. `resolveConfigDir` re-validates the shape
+ * and additionally refuses an id that is not in the register, because the login endpoint and
+ * the automations runner reach it WITHOUT passing through any WebSocket query boundary.
+ */
+export function sanitizeAccountId(v: string | null): string {
+  return v && v.length <= 64 && /^[a-z0-9][a-z0-9-]*$/.test(v) && !v.includes('--') && !v.endsWith('-') ? v : '';
+}
+
 /** Effort-level gate. `claude --effort` accepts exactly this documented set; anything else
  *  (including empty) → '' (no flag), so the value is safe to interpolate unquoted. */
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];

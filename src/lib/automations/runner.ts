@@ -6,6 +6,8 @@ import { notifyViaBundle, NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from './notifie
 import { ensureGitignoreEntries, removeGitignoreEntries } from '../gitignore.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
+import { accountEnvFor, resolveConfigDir } from '../claude-accounts.js';
+import { ensureSandbox } from '../claude-account-sandbox.js';
 import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { approvalFields, checkApproval, getApproval, renderApprovalReview } from './registry.js';
@@ -478,6 +480,24 @@ export interface ClaudeExecOptions {
    * the one failure this subsystem has no way to recover from.
    */
   onSpawned?: (child: ChildProcess, startedAt: Date) => void;
+  /**
+   * Extra environment merged over the base spawn env. Used for the per-account
+   * `CLAUDE_CONFIG_DIR`, and by the in-app sign-in route, which needs the new account's own
+   * sandbox so that `claude auth login` cannot disturb the real `~/.claude`.
+   *
+   * Callers must obtain this from `accountEnvFor(resolveConfigDir(...))`, never build it by
+   * hand: the gate is what validates the id's shape and confines the path.
+   */
+  env?: Record<string, string>;
+  /**
+   * Discard the child's stdout/stderr entirely instead of buffering it.
+   *
+   * The sign-in leg needs this: `attachOutputCollectors` buffers the FULL child stdout, and
+   * other paths in this file write that buffer to disk — while an interactive OAuth flow's
+   * stdout can carry a callback URL bearing an authorization code. With this set, nothing is
+   * collected, so there is no buffer to leak into a file, a response, or a log.
+   */
+  discardOutput?: boolean;
 }
 
 export interface ClaudeExecution {
@@ -512,8 +532,9 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
 
   const spawnOptions: Parameters<SpawnImpl>[2] = {
     cwd: opts.cwd,
-    env: { ...process.env, PATH: claudeAwarePath() },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    // `opts.env` last: the per-account `CLAUDE_CONFIG_DIR` must win over an inherited one.
+    env: { ...process.env, PATH: claudeAwarePath(), ...(opts.env ?? {}) },
+    stdio: opts.discardOutput ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
     detached: true,
   };
   const claudeBin = findClaudeBin();
@@ -1148,6 +1169,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         buildApprovalQuestionArgs(sanitizeAutomationPrompt(buildApprovalQuestionPrompt(manifest, review))),
         {
           cwd: projectRoot,
+          // Same account as the job itself — this child is part of the same automation.
+          env: accountEnvFor(ensureSandbox(resolveConfigDir(null)).configDir),
           timeoutMs: APPROVAL_QUESTION_TIMEOUT_MS,
           spawnImpl: spawnFn,
           killImpl: killFn,
@@ -1236,8 +1259,16 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // which it calls synchronously before any await for exactly that reason.
     const timeoutMs = manifest.timeoutMinutes * 60_000;
     const claudeArgs = buildClaudeArgs(manifest, prompt);
+    // Automations run on the PREFERRED account, full stop. Per-automation account pinning is
+    // OUT OF SCOPE by owner decision (there is no manifest field, parser or UI for it), and
+    // this one-line resolution is all the feature needs: `resolveConfigDir(null)` is the
+    // preferred account, falling back to account #0 — i.e. today's behaviour on a machine
+    // with one account. `ensureSandbox` short-circuits immediately in that case.
+    const automationConfigDir = resolveConfigDir(null);
+    ensureSandbox(automationConfigDir);
     const execution = await executeClaudeDetached(claudeArgs, {
       cwd: projectRoot,
+      env: accountEnvFor(automationConfigDir),
       timeoutMs,
       spawnImpl: spawnFn,
       killImpl: killFn,

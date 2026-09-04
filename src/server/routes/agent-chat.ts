@@ -29,12 +29,21 @@ import { clearSessionEdits, recordSessionEdit } from '../../lib/session-edits.js
 import { forgetSessionFacts, readSessionFacts } from '../../lib/session-facts.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
+import {
+  accountEnvFor, autoSwitchEnabled, isRealHomeConfigDir, listClaudeAccounts, resolveConfigDir,
+} from '../../lib/claude-accounts.js';
+import { ensureSandbox, ensureSharedMcpConfig } from '../../lib/claude-account-sandbox.js';
+import { probeAccountUsage } from '../../lib/claude-usage-probe.js';
+import { readUsageLimits } from '../../lib/claude-usage.js';
+import {
+  SWITCH_THRESHOLD_PERCENT, chooseAccount, shouldProbe, shouldSwitchAway, type AccountReading,
+} from '../../lib/claude-account-switch.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { resolveBoardAssets } from './knowledge.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
-  sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizeChatMode, sanitizePrompt,
+  sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizeChatMode, sanitizePrompt, sanitizeAccountId,
   claudeConversationExists, redeemPromptToken, findFirstTranscriptPath,
 } from './agent-spawn-shared.js';
 
@@ -367,6 +376,12 @@ export function attachAgentChat(server: Server): void {
     // Selects a system-prompt append, not an argv element — an unknown value degrades to
     // plain Claude Code rather than to a half-applied mode. See sanitizeChatMode.
     const mode = sanitizeChatMode(url.searchParams.get('mode'));
+    // Which Claude ACCOUNT this session runs on. '' = none requested, which resolves to the
+    // preferred account (and, with no preferred account, to account #0 — the real HOME, i.e.
+    // exactly today's behaviour). An id that is not in the register is REFUSED below rather
+    // than downgraded to HOME: running a prompt on an account the user did not pick is worse
+    // than an error.
+    const account = sanitizeAccountId(url.searchParams.get('account'));
 
     // T24 — the automation-bound resume gate (see the block comment on
     // `shouldRejectAutomationResume` above). Evaluated HERE, before `startChatSession` is
@@ -399,7 +414,7 @@ export function attachAgentChat(server: Server): void {
 
       const wss = new WebSocketServer({ noServer: true });
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, initialPrompt, deferPrompt });
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt });
       });
     })();
   });
@@ -416,6 +431,9 @@ interface ChatSpawnOpts {
   /** Which way of WORKING this session was opened in — selects the mode brief appended to
    *  the surface briefing. Always a sanitized value; `basic` adds nothing. */
   mode: ChatMode;
+  /** Registered account id, or '' for "resolve the default". Shape-gated at the upgrade
+   *  boundary and re-validated by `resolveConfigDir`, which owns the real decision. */
+  account: string;
   initialPrompt: string;
   deferPrompt: boolean;
 }
@@ -452,7 +470,7 @@ export function startChatSession(
   projectRoot: string,
   opts: ChatSpawnOpts,
 ): void {
-  const { bypass, sessionId, resumeId, model, effort, mode, initialPrompt, deferPrompt } = opts;
+  const { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt } = opts;
   const contextRoot = join(projectRoot, '_dream_context');
 
   // Which Claude account this process is about to inherit. Captured BEFORE the spawn (it is
@@ -461,6 +479,34 @@ export function startChatSession(
   // a switch that lands after this point advances the epoch past it, which is precisely the
   // signal that this process is now running on stale credentials.
   const spawnAuthEpoch = claudeAuthWatcher.epoch();
+
+  // ── Which ACCOUNT this session runs on ──────────────────────────────────────────────
+  // Resolved through the single gate, which validates the id's shape, refuses an id that is
+  // not registered, and asserts the resulting path is either the real HOME or a sandbox under
+  // `~/.dreamcontext/claude-accounts/`. `ensureSandbox` then returns IMMEDIATELY for account
+  // #0 (the default, and the only path a single-account machine ever takes) and otherwise
+  // repairs the sandbox — every spawn, not only the first, so a symlink broken since the last
+  // one does not silently hand this process its own private `projects/`.
+  let accountConfigDir: string;
+  try {
+    accountConfigDir = resolveConfigDir(account || null);
+    ensureSandbox(accountConfigDir);
+  } catch (err) {
+    // A named refusal, not a silent fallback to some other account.
+    try {
+      ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', message: (err as Error).message }));
+    } catch { /* the socket is already gone */ }
+    try { ws.close(); } catch { /* already closed */ }
+    return;
+  }
+  const accountEnv = accountEnvFor(accountConfigDir);
+  const isRealHomeAccount = isRealHomeConfigDir(accountConfigDir);
+  const mcpConfigPath = isRealHomeAccount ? null : ensureSharedMcpConfig();
+  // Recorded beside `spawnAuthEpoch` so the live panel can be labelled with the account it is
+  // really billing, and so the chooser knows which account NOT to move away from on a tie.
+  const activeAccountId = account
+    || listClaudeAccounts().find((a) => (a.configDir ?? homedir()) === accountConfigDir)?.id
+    || '';
 
   // Resume-target selection — mirrors agent-terminal.ts's startPtySession exactly:
   //  • resume requested → resolve the pinned id through the tab-session map FIRST (the
@@ -559,6 +605,12 @@ export function startChatSession(
     ...idArg,
     ...(model ? ['--model', model] : []),
     ...(effort ? ['--effort', effort] : []),
+    // A SANDBOXED session reaches the user's MCP servers BY REFERENCE. Its own config is
+    // seeded with no MCP keys at any depth, so without this flag it would silently lose every
+    // server the user has; copying them per account would multiply the secrets instead.
+    // Account #0 reads the real config directly and needs nothing. `--strict-mcp-config` is
+    // deliberately NOT passed, so a project's own `.mcp.json` still applies.
+    ...(mcpConfigPath ? ['--mcp-config', mcpConfigPath] : []),
   ];
   // Quoted for the login-shell script string exactly like the terminal/title/capture
   // spawns: every element here is either a fixed flag literal or a whitelist-sanitized
@@ -581,13 +633,48 @@ export function startChatSession(
     // claude-aware PATH: `claude` installs into ~/.local/bin, which no default PATH
     // contains — without this the login shell 127s whenever the install's `export
     // PATH` echo never reached the user's rc. See src/lib/claude-path.ts.
-    env: { ...process.env, PATH: claudeAwarePath(), ...tabEnv, ...deferredEnv } as Record<string, string>,
+    env: { ...process.env, PATH: claudeAwarePath(), ...tabEnv, ...deferredEnv, ...accountEnv } as Record<string, string>,
   });
 
   // Liveness guard (mirrors agent-terminal.ts:1408's `if (!alive) return;`): a stale
   // answer/interrupt frame arriving after the child has exited must never throw on a
   // destroyed stdin stream.
   let alive = true;
+  /**
+   * How many turns are ACTUALLY running inside the CLI — a COUNTER, not a boolean.
+   *
+   * Incremented for every user frame written to the child's stdin, decremented on every
+   * `result` the CLI answers with. `turnsInFlight > 0` is the honest answer to "is anything
+   * running", and it is deliberately NOT the client's `busy` flag: `writeUser` sets that
+   * optimistically before the server has decided anything, so a message auto-switch HOLDS
+   * leaves the client believing a turn is in flight when none is — and the client's restart
+   * gate waits for a turn boundary, so believing it would wait forever.
+   *
+   * WHY A COUNTER. A boolean cannot track two OVERLAPPING turns, and two are reachable
+   * through ordinary UI: `setEffort` is delivered as its own user frame, written straight to
+   * stdin OUTSIDE the `switchGate` chain, and the CLI answers it with a quick synthetic turn.
+   * With one boolean, that fast `result` cleared the flag while a real message's turn was
+   * still running — so a switch decision a moment later read "nothing running" and restarted
+   * over live work, which is the exact failure this flag exists to prevent. Counting
+   * correlates the number of turns rather than their identities, which is all the question
+   * needs.
+   *
+   * Clamped at zero: a `result` we did not open a turn for must not drive it negative, which
+   * would read as "less than nothing running" and mask a genuine turn afterwards.
+   *
+   * TWO PATHS CHECKED AND DELIBERATELY NOT COUNTED, so the next reader does not re-derive it:
+   *   • A DEFERRED opening prompt writes nothing to stdin at all (`submitPrompt` is emptied
+   *     when `deferPrompt` is set) — the UserPromptSubmit hook delivers it, so there is no
+   *     turn here to count.
+   *   • `interrupt` and `rewind`'s `interrupt_if_running` are CONTROL requests, not user
+   *     frames: they never open a turn, and an abort that resolves via `control_response`
+   *     WITHOUT a `result` leaves the count high. That is the SAFE direction — the client's
+   *     gate is `move.turnInFlight && (busy || asking)`, so a high count merely defers to the
+   *     client's own flag, i.e. the behaviour that shipped before this feature. The dangerous
+   *     direction is a count that is too LOW while a turn runs, and every stdin write of a
+   *     user frame increments.
+   */
+  let turnsInFlight = 0;
   let interruptWatchdog: ReturnType<typeof setTimeout> | null = null;
   let interruptKillTimer: ReturnType<typeof setTimeout> | null = null;
   let lingerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -599,6 +686,10 @@ export function startChatSession(
   // deferred-prompt note above for why this must NOT wait for `system:init`.
   if (submitPrompt) {
     try {
+      // A server-submitted opening prompt is a REAL turn, so it must set `turnInFlight` like
+      // every other user frame — otherwise a switch decision arriving during it would read
+      // "nothing running" and restart over live work.
+      turnsInFlight += 1;
       child.stdin.write(JSON.stringify({
         type: 'user',
         message: { role: 'user', content: [{ type: 'text', text: submitPrompt }] },
@@ -669,6 +760,14 @@ export function startChatSession(
   // a session that predates the change hears about it.
   const unwatchAuth = claudeAuthWatcher.subscribe((change) => {
     if (change.epoch <= spawnAuthEpoch) return;   // spawned into the new account already
+    // ── SCOPED, not global ────────────────────────────────────────────────────────────
+    // The watcher deliberately stays a SINGLE-HOME watcher: its job is to notice that THE
+    // MACHINE's account changed under us, and a switch WE chose must stay distinguishable
+    // from one the user made outside the app. But its broadcast has to be filtered, because
+    // this session may be running on a sandbox whose credentials that event says nothing
+    // about — forwarding it would kill and respawn a perfectly healthy, unrelated session.
+    // So only a session running on the real HOME hears it.
+    if (!isRealHomeAccount) return;
     sendMeta({
       subtype: 'auth_changed',
       identity: change.identity,
@@ -685,6 +784,9 @@ export function startChatSession(
   const teardown = (): void => {
     if (!alive) return;
     alive = false;
+    // A gone child cannot be mid-turn. `armAccountSwitch` checks `exited` too, but leaving a
+    // stale count here would be a lie about the one thing only this side can report.
+    turnsInFlight = 0;
     clearInterruptTimers();
     clearLingerTimers();
     untrack();
@@ -757,6 +859,25 @@ export function startChatSession(
         clearInterruptTimers();
       }
 
+      // The turn is over. Tracked HERE, from the CLI's own frame, because the client's `busy`
+      // is set OPTIMISTICALLY the moment a user frame is written (chatSession.ts's `writeUser`)
+      // — so it says "a turn is running" for a message auto-switch is still holding, when in
+      // truth nothing was ever handed to the CLI. Only the server can tell those apart.
+      // ONLY the MAIN agent's own `result` closes one of OUR turns.
+      //
+      // BELT AND BRACES, not a fix for an observed leak — and the distinction is worth
+      // recording. A dispatched sub-agent's completion does NOT arrive as a top-level
+      // `result`: it comes back as `tool_use_result` on a `user` (tool_result) frame, which
+      // `chatProtocol.ts`'s `fromToolUseResult` reads and this parser ignores. So today
+      // nothing parented reaches this line at all. The guard is here anyway because a turn is
+      // opened only for a user frame WE wrote, and counting somebody else's `result` would
+      // over-decrement and read as "nothing running" while the main agent's turn continues —
+      // the ONE direction that lets the account switch restart over live work. One property
+      // read is the right price for closing that direction against a future CLI change.
+      if (obj.type === 'result' && obj.parent_tool_use_id === undefined) {
+        turnsInFlight = Math.max(0, turnsInFlight - 1);
+      }
+
       // Refresh the project's slash-command cache from the authoritative source every time
       // the CLI reports one, so a NEW session can be handed the list before its first turn
       // (see the cache's header note for why the stream alone can't do that).
@@ -823,6 +944,133 @@ export function startChatSession(
     try { ws.close(); } catch { /* already closed */ }
   });
 
+  // ── Auto-switch: move the turn to another account BEFORE the limit lands ───────────
+  //
+  // WHY BEFORE: a threshold that fires AFTER the limit is exceeded switches only once the
+  // user has already seen the error, which is the failure this feature exists to remove.
+  //
+  // WHY TWO THRESHOLDS: the `/usage` probe is FREE (measured: num_turns 0, cost 0, ~1.1s),
+  // which is what lets the SWITCH threshold sit high — and a high switch threshold is what
+  // stops a session being moved off its own account for no reason.
+  //
+  // THE MESSAGE IS NEVER SWALLOWED. If no candidate qualifies, the turn goes out on the
+  // current account and the honest limit error surfaces with the earliest reset time beside
+  // it. Eating a user's turn in order to hide a limit is worse than the limit.
+  let switchPending = false;
+  /**
+   * The tail of the evaluation chain. EVERY user frame is appended to it, so evaluation #2
+   * cannot begin until #1 has finished.
+   *
+   * Without this, two messages typed seconds apart both entered `maybeSwitchAccount`, both
+   * passed the `switchPending` check (it is only set at the very END, after a live subprocess
+   * probe that can take seconds), and both decided to switch — the first one's held text was
+   * then overwritten client-side by the second frame and LOST, having never been written to
+   * stdin either. Serialising also preserves the user's own message order, which a race
+   * could not promise.
+   */
+  let switchGate: Promise<unknown> = Promise.resolve();
+
+  /** True when the turn was HELD (a restart is coming); false when the caller should send it. */
+  const maybeSwitchAccount = async (text: string): Promise<boolean> => {
+    // One switch at a time per conversation: a second trigger while a restart is pending sends
+    // its message on the CURRENT account rather than starting a second respawn. The message
+    // still goes out — it is never swallowed.
+    if (switchPending) return false;
+    if (!autoSwitchEnabled()) {
+      // OFF means REPORT, never change: the user is told the window is nearly gone and the
+      // turn goes out unchanged.
+      const reading = readUsageLimits(accountConfigDir);
+      if (shouldSwitchAway(reading)) {
+        sendMeta({
+          subtype: 'account_switch',
+          switched: false,
+          reason: 'auto_switch_disabled',
+          accountId: activeAccountId,
+          limits: reading.limits,
+        });
+      }
+      return false;
+    }
+
+    const accounts = listClaudeAccounts();
+    // Nothing to switch TO. A single-account machine takes this branch and does no work.
+    if (accounts.length < 2) return false;
+
+    let active = readUsageLimits(accountConfigDir);
+    if (!shouldProbe(active)) return false;
+
+    // Past the probe threshold: refresh the ACTIVE account for real before acting on a
+    // possibly stale cache.
+    const activeProbe = await probeAccountUsage(accountConfigDir);
+    if (!alive) return true;                       // the session went away mid-probe
+    if (activeProbe.status === 'ok') active = activeProbe.limits;
+    if (activeProbe.status !== 'needs-relogin' && !shouldSwitchAway(active)) return false;
+
+    // Read every candidate. The active account's reading is reused rather than re-probed.
+    const readings = await Promise.all(accounts.map(async (acc): Promise<AccountReading> => {
+      const dir = acc.configDir ?? homedir();
+      if (dir === accountConfigDir) {
+        return activeProbe.status === 'ok'
+          ? { id: acc.id, limits: activeProbe.limits }
+          : { id: acc.id, problem: activeProbe.status };
+      }
+      const outcome = await probeAccountUsage(dir);
+      return outcome.status === 'ok'
+        ? { id: acc.id, limits: outcome.limits }
+        : { id: acc.id, problem: outcome.status };
+    }));
+    if (!alive) return true;
+
+    const choice = chooseAccount(readings, {
+      threshold: SWITCH_THRESHOLD_PERCENT,
+      currentId: activeAccountId,
+      preferredId: accounts.find((a) => a.preferred)?.id ?? null,
+    });
+
+    // Nothing eligible, or the winner is the account we are already on: send the turn.
+    if (choice.accountId === null) {
+      sendMeta({
+        subtype: 'account_switch',
+        switched: false,
+        reason: 'all_exhausted',
+        accountId: activeAccountId,
+        rejected: choice.rejected,
+        ...(choice.earliestResetAt === undefined ? {} : { earliestResetAt: choice.earliestResetAt }),
+      });
+      return false;
+    }
+    if (choice.accountId === activeAccountId) return false;
+
+    // A DELIBERATE cross-account switch. Deliberately NOT `auth_changed`: that frame is the
+    // single-HOME watcher's "the machine's account changed under us" signal, and this event
+    // never touches `~/.claude.json`, so that fingerprint could not move even in principle.
+    // The client restarts the conversation on the named account at the TURN BOUNDARY and
+    // resubmits the held text.
+    const target = accounts.find((a) => a.id === choice.accountId)!;
+    switchPending = true;
+    sendMeta({
+      subtype: 'account_switch',
+      switched: true,
+      // Whether a turn is REALLY running in the CLI right now. The client's restart gate reads
+      // THIS, not its own optimistic `busy`: the message being held never became a turn, so
+      // gating on `busy` would wait for a boundary that can never arrive. When a genuinely
+      // in-flight turn IS running — a steer that landed mid-turn, or a `/effort` turn the
+      // CLI has not answered yet — this is true and the client correctly waits for it: that
+      // turn was authorized by the old credentials and is allowed to finish on them.
+      turnInFlight: turnsInFlight > 0,
+      reason: activeProbe.status === 'needs-relogin' ? 'needs_relogin' : 'limit_near',
+      accountId: choice.accountId,
+      email: target.email,
+      organizationName: target.organizationName,
+      fromAccountId: activeAccountId,
+      sessionPercent: choice.sessionPercent,
+      rejected: choice.rejected,
+      // The turn the client must resubmit after the restart, so it is never lost.
+      pendingText: text,
+    });
+    return true;
+  };
+
   // ── ws → claude stdin (client control frames) ──────────────────────────────────────
   ws.on('message', (raw: Buffer | string) => {
     if (!alive) return;
@@ -835,7 +1083,22 @@ export function startChatSession(
     try { msg = JSON.parse(str); } catch { return; } // malformed control frame — ignore
 
     if (msg.type === 'user' && typeof msg.text === 'string' && msg.text) {
-      writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: msg.text }] } });
+      // Auto-switch evaluates BEFORE the turn goes to the CLI — the whole point is that the
+      // message does not have to fail first. `maybeSwitchAccount` either sends the turn on
+      // this account (the overwhelmingly common answer, and the answer whenever anything is
+      // uncertain) or holds it and asks the client to restart on another account.
+      const text = msg.text;
+      // Appended to the chain, never fired concurrently — see `switchGate`.
+      switchGate = switchGate.then(() => maybeSwitchAccount(text)
+        // A THROW HERE MUST NOT EAT THE TURN. Without this the guarantee "the message is
+        // never swallowed" would hold for every decision the chooser can make and fail for
+        // the one case nobody planned: an unexpected error on the way to making it.
+        .catch(() => false)
+        .then((held) => {
+          if (!alive || held) return;
+          turnsInFlight += 1;
+          writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+        }));
       return;
     }
 
@@ -880,6 +1143,10 @@ export function startChatSession(
     if (msg.type === 'setEffort' && typeof msg.effort === 'string') {
       const effort = sanitizeEffort(msg.effort);
       if (effort) {
+        // Delivered as a USER frame (there is no effort control request on 2.1.218), so it
+        // starts a turn — the CLI answers with a synthetic assistant bubble and a `result`.
+        // It must set the flag for the same reason the initial prompt does.
+        turnsInFlight += 1;
         writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `/effort ${effort}` }] } });
       }
       return;

@@ -146,6 +146,10 @@ import {
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
 import { handleAgentUsageLimits } from './routes/agent-usage.js';
+import {
+  handleAgentAccountsAdopt, handleAgentAccountsAutoSwitch, handleAgentAccountsList,
+  handleAgentAccountsLogin, handleAgentAccountsPreferred, handleAgentAccountsRemove,
+} from './routes/agent-accounts.js';
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
 import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
@@ -384,6 +388,14 @@ export function buildRouter(): Router {
   // The account's 5-hour + weekly caps, from Claude Code's own cache. Vault-agnostic for
   // the same reason model-config is: it reads the user's install, not a project.
   router.get('/api/agent/usage-limits', handleAgentUsageLimits);
+  // Multi-account. Vault-agnostic for the same reason usage-limits is: these read and write
+  // the user's Claude installs, not any project's brain.
+  router.get('/api/agent/accounts', handleAgentAccountsList);
+  router.post('/api/agent/accounts/adopt', handleAgentAccountsAdopt);
+  router.post('/api/agent/accounts/login', handleAgentAccountsLogin);
+  router.post('/api/agent/accounts/preferred', handleAgentAccountsPreferred);
+  router.post('/api/agent/accounts/remove', handleAgentAccountsRemove);
+  router.post('/api/agent/accounts/auto-switch', handleAgentAccountsAutoSwitch);
   router.get('/api/agent/session-model', handleAgentSessionModel);
   router.get('/api/agent/session-stats', handleAgentSessionStats);
   router.get('/api/agent/chat-history', handleAgentChatHistory);
@@ -621,7 +633,7 @@ export function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team', '/api/meeting'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team', '/api/meeting'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
