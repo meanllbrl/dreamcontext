@@ -3,6 +3,7 @@ import { useApi } from '../context/VaultContext';
 import type { Capabilities } from '../components/sleepy/agentSession';
 import {
   FALLBACK_MODEL_CONFIG, type ModelConfig, type SessionStats, type UsageLimitsResponse,
+  type UsageLimitWire,
 } from '../lib/agentComposer';
 import type { GoalLiveResponse } from '../lib/goalLive';
 import type { CouncilLiveResponse } from '../lib/councilLive';
@@ -117,6 +118,55 @@ export function useUsageLimits(enabled: boolean) {
     staleTime: 55_000,
     retry: false,
     placeholderData: NO_USAGE_LIMITS,
+  });
+}
+
+// ─── Multi-account ───────────────────────────────────────────────────────────────────
+
+/** One connected account. MIRRORED from `src/server/routes/agent-accounts.ts` (`AccountWire`);
+ *  change one side, change the other. */
+export interface ClaudeAccountWire {
+  id: string;
+  email: string;
+  organizationName: string;
+  tier: string;
+  preferred: boolean;
+  isPrimary: boolean;
+  state: 'ok' | 'needs-relogin';
+  limits: UsageLimitWire[];
+  fetchedAtMs: number | null;
+}
+
+export interface ClaudeAccountsResponse {
+  accounts: ClaudeAccountWire[];
+  autoSwitch: boolean;
+}
+
+const NO_ACCOUNTS: ClaudeAccountsResponse = { accounts: [], autoSwitch: true };
+
+/**
+ * The connected accounts (`GET /api/agent/accounts`).
+ *
+ * Same shape of decision as `useUsageLimits` above and for the same reason: accounts are
+ * machine-global, not per conversation, so the key carries no id and every pane's picker
+ * subscribes to ONE cache entry. The cadence is slower still — the register only changes when
+ * a person adds, removes or re-prefers an account — so this polls at five minutes rather than
+ * one. The route reads each account's already-cached numbers and deliberately does NOT probe,
+ * so this is a few file reads, not N spawns.
+ *
+ * Falls back to an EMPTY list, which every consumer renders as no picker at all: a machine
+ * with one account must not learn that a picker exists.
+ */
+export function useClaudeAccounts(enabled: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agent-claude-accounts'],
+    queryFn: () => api.get<ClaudeAccountsResponse>('/agent/accounts'),
+    enabled,
+    refetchInterval: enabled ? 300_000 : false,
+    staleTime: 240_000,
+    retry: false,
+    placeholderData: NO_ACCOUNTS,
   });
 }
 

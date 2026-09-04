@@ -286,8 +286,19 @@ function fmtClock(ms: number): string {
   return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
+/** One connected account, as the picker draws it. */
+export interface AccountOption {
+  id: string;
+  email: string;
+  organizationName: string;
+  preferred: boolean;
+  state: 'ok' | 'needs-relogin';
+  /** 0-100, or null when nothing is cached for this account yet. */
+  sessionPercent: number | null;
+}
+
 export function UsageMenu({
-  limits, staleAsOf, costUsd,
+  limits, staleAsOf, costUsd, accounts = [], activeAccountId = '', onAccountChange,
 }: {
   /** Already filtered by `usageLimits`: a cap with no readable source, a stale cache or a
    *  rolled-over window is simply ABSENT from this array. This component draws one bar per
@@ -296,6 +307,20 @@ export function UsageMenu({
   limits: UsageLimit[];
   staleAsOf: number | null;
   costUsd: number | null;
+  /**
+   * The connected accounts. EMPTY on a machine with fewer than two, and the picker then draws
+   * NOTHING — a single-account user never learns this menu grew a section.
+   *
+   * It lives HERE rather than as a fourth composer chip because an account IS a usage
+   * question: this menu already draws the windows that decide which account can serve a turn,
+   * so the choice belongs beside the numbers behind it.
+   */
+  accounts?: AccountOption[];
+  activeAccountId?: string;
+  /** Absent ⇒ read-only rows. Present ⇒ picking one RESPAWNS the conversation at the turn
+   *  boundary; the row says so, because a picker that silently does nothing is not acceptable
+   *  and one that silently restarts is worse. */
+  onAccountChange?: (accountId: string) => void;
 }) {
   const now = Date.now();
   return (
@@ -322,6 +347,43 @@ export function UsageMenu({
           )}
         </div>
       ))}
+
+      {accounts.length > 1 && (
+        <>
+          <div className="chat-cmp-menu-divider" />
+          <p className="chat-cmp-usagenote">
+            Account · picking another restarts this conversation on it, after the current turn.
+          </p>
+          {accounts.map((a) => {
+            const active = a.id === activeAccountId;
+            const label = a.email || a.id;
+            return (
+              <button
+                key={a.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={active}
+                className={`chat-cmp-modelrow${active ? ' is-active' : ''}`}
+                disabled={!onAccountChange || a.state === 'needs-relogin'}
+                title={a.state === 'needs-relogin'
+                  ? `${label} needs to sign in again`
+                  : a.organizationName || label}
+                onClick={() => { if (!active) onAccountChange?.(a.id); }}
+              >
+                <span className="chat-cmp-modelrow-head">
+                  <span className="chat-cmp-modelrow-name">{label}</span>
+                  {a.preferred && <span className="chat-cmp-badge is-muted">preferred</span>}
+                  <span className="chat-cmp-modelrow-meta">
+                    {a.state === 'needs-relogin'
+                      ? 'sign in again'
+                      : a.sessionPercent === null ? '—' : `${Math.round(a.sessionPercent)}%`}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </>
+      )}
 
       {staleAsOf != null && (
         <p className="chat-cmp-usagenote">Account usage as of {fmtClock(staleAsOf)}.</p>

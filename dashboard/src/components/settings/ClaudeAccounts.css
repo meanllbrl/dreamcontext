@@ -1,0 +1,109 @@
+/* Connected Claude accounts. Tokens only — no literal colors, spacings or fonts, so the
+   section follows the app's theme and any brand override exactly like its siblings. */
+
+.dc-accts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.dc-acct-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dc-acct {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.dc-acct.is-stale { border-color: var(--color-warning); }
+
+.dc-acct-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.dc-acct-who {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.dc-acct-tag {
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+.dc-acct-org {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+.dc-acct-warn {
+  margin: 0;
+  color: var(--color-warning);
+  font-size: var(--font-size-xs);
+}
+
+.dc-acct-bars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.dc-acct-bar { display: flex; flex-direction: column; gap: 3px; }
+.dc-acct-bar-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.dc-acct-bar-label {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+.dc-acct-bar-value {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+.dc-acct-bar-track {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  overflow: hidden;
+}
+.dc-acct-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+/* A locked window is not "full" — it is refusing. The tone says so rather than the width. */
+.dc-acct-bar-fill.is-locked { background: var(--color-warning); }
+
+.dc-acct-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: 2px;
+}
+
+.dc-acct-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.dc-acct-add,
+.dc-acct-add-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

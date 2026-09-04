@@ -102,6 +102,70 @@ export function BranchStartBanner({ tone, message, onDismiss }: {
   );
 }
 
+/**
+ * The account move, SHOWN. The billed account never changes silently — that is a constraint of
+ * this feature, not a nicety — so every automatic switch is drawn and NAMES the account it
+ * moved to, along with why.
+ *
+ * Three shapes, because the three outcomes mean different things to the user:
+ *   • switched          — "moved to <account>, its session window is at N%". Reassurance: the
+ *                         turn went through, on a named account.
+ *   • all_exhausted     — every account is out. This one says WHEN work resumes rather than
+ *                         only that it failed, which is the difference between an error and
+ *                         information the user can act on.
+ *   • auto_switch_disabled — the limit is close and the setting is OFF, so nothing changed.
+ *                         Reporting without acting is exactly what "off" was asked to mean.
+ */
+export function AccountSwitchBanner({ move, onDismiss }: {
+  move: {
+    switched: boolean;
+    reason: 'limit_near' | 'needs_relogin' | 'all_exhausted' | 'auto_switch_disabled';
+    accountId: string;
+    email?: string;
+    sessionPercent?: number;
+    earliestResetAt?: number;
+    rejected?: Array<{ id: string; why: string }>;
+  };
+  onDismiss: () => void;
+}) {
+  const who = move.email || move.accountId;
+  const tone = move.switched ? 'info' : move.reason === 'all_exhausted' ? 'warn' : 'info';
+  const when = move.earliestResetAt
+    ? new Date(move.earliestResetAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : '';
+
+  const message = move.switched
+    ? (move.reason === 'needs_relogin'
+        ? `Moved to ${who} — the previous account needs to sign in again.`
+        : `Moved to ${who}${move.sessionPercent === undefined ? '' : ` · its 5-hour window is at ${Math.round(move.sessionPercent)}%`}.`)
+    : move.reason === 'all_exhausted'
+      ? (when
+          ? `Every account is at its limit. The first one frees up at ${when} — this message went out on the current account, so you will see its own limit error if it lands.`
+          : 'Every account is at its limit. This message went out on the current account.')
+      : 'This account is close to its limit. Auto-switch is off, so nothing was changed.';
+
+  return (
+    <div className={`chat-banner-branch${tone === 'warn' ? ' is-warn' : ''}`} role="status">
+      <span className="chat-banner-branch-mark" aria-hidden>{move.switched ? '⇄' : '⚠'}</span>
+      <div className="chat-banner-branch-sub">
+        <p>{message}</p>
+        {move.rejected && move.rejected.length > 0 && (
+          <p className="chat-banner-branch-why">
+            {move.rejected.map((r) => `${r.id}: ${r.why}`).join(' · ')}
+          </p>
+        )}
+      </div>
+      <button
+        type="button"
+        className="chat-banner-branch-x"
+        aria-label="Dismiss this notice"
+        title="Dismiss"
+        onClick={onDismiss}
+      >×</button>
+    </div>
+  );
+}
+
 export function ReconnectingChip() {
   return (
     <div className="chat-banner-reconnecting">

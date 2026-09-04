@@ -41,6 +41,7 @@ import {
 import type { ChatAction } from './chat/chatActions';
 import { openExternalUrl } from '../../lib/desktop';
 import {
+  AccountSwitchBanner,
   BranchStartBanner, EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner,
   SignInBanner, WorkingIndicator,
 } from './chat/Banners';
@@ -470,7 +471,8 @@ interface PdfState { path: string; label?: string }
 // ─── Top level ──────────────────────────────────────────────────────────────────────
 
 export function ChatPane({
-  session, modelConfig, model, effort, onModelChange, onEffortChange, taskSlug, onContinueInTerminal,
+  session, modelConfig, model, effort, onModelChange, onEffortChange, onAccountChange,
+  taskSlug, onContinueInTerminal,
   permissionMode, onPermissionModeChange, mode, onModeChange, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
   canSignInInApp, signInCommand,
@@ -480,6 +482,9 @@ export function ChatPane({
   model: string;
   effort: string;
   onModelChange: (id: string) => void;
+  /** Move THIS conversation to another Claude account. Respawns at the turn boundary — an
+   *  account is fixed when the process starts, so there is nothing to switch live. */
+  onAccountChange: (accountId: string) => void;
   onEffortChange: (level: string) => void;
   /** No caller sets this yet — the ChatLiveRail's task chip is built and dormant. */
   taskSlug?: string;
@@ -1664,6 +1669,15 @@ export function ChatPane({
                 onDismiss={session.dismissBranchNotice}
               />
             )}
+            {/* The account move, shown where the conversation is — this is the guarantee that
+                the billed account never changes silently. Sits beside the branch notice for
+                the same reason: both answer "something about this conversation changed". */}
+            {conv.accountSwitch && (
+              <AccountSwitchBanner
+                move={conv.accountSwitch}
+                onDismiss={session.dismissAccountSwitch}
+              />
+            )}
             {conv.lastError && <StreamErrorBanner message={conv.lastError} onRetry={retryLastMessage} />}
             {working && (
               <WorkingIndicator
@@ -1753,6 +1767,8 @@ export function ChatPane({
           modelConfig={modelConfig}
           onModelChange={onModelChange}
           onEffortChange={onEffortChange}
+          activeAccountId={session.accountId}
+          onAccountChange={onAccountChange}
           busy={session.busy}
           connected={session.status === 'open'}
           quote={replyQuote}

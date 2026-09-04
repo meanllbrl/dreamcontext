@@ -169,6 +169,45 @@ export type ChatEvent =
    *  sign-in qualifies; restarting onto a signed-out or unknown state makes things worse).
    *  `identity` is a display label ("someone@example.com · team"), possibly empty. */
   | { kind: 'auth-changed'; identity: string; restart: boolean; loggedIn: boolean | null }
+  /**
+   * A DELIBERATE cross-account move, decided by us — not the machine changing under us.
+   *
+   * Deliberately a SEPARATE frame from `auth-changed`, and the reason is load-bearing:
+   * `auth-changed` is produced by the single-HOME watcher's identity fingerprint, and a switch
+   * between two sandboxes never touches `~/.claude.json`, so that fingerprint could not move
+   * even in principle. A frame reusing it would never fire.
+   *
+   * `switched: true`  → the turn was HELD; restart this conversation on `accountId` at the turn
+   *                     boundary and resubmit `pendingText`. The user is TOLD which account —
+   *                     the billed account never changes silently.
+   * `switched: false` → nothing changed and the turn already went out on the current account.
+   *                     `reason` says why: `all_exhausted` (with `earliestResetAt`, so the
+   *                     surface can say WHEN work resumes) or `auto_switch_disabled`.
+   */
+  | {
+      kind: 'account-switch';
+      switched: boolean;
+      reason: 'limit_near' | 'needs_relogin' | 'all_exhausted' | 'auto_switch_disabled';
+      accountId: string;
+      fromAccountId?: string;
+      email?: string;
+      organizationName?: string;
+      sessionPercent?: number;
+      earliestResetAt?: number;
+      rejected?: Array<{ id: string; why: string }>;
+      pendingText?: string;
+      /**
+       * Whether a turn is REALLY running inside the CLI, as the SERVER sees it.
+       *
+       * The restart gate must read this and not the session's own `busy`: `busy` is set
+       * optimistically the instant a user frame is written to the socket, so a message the
+       * server is HOLDING leaves the client believing a turn is in flight when none is — and
+       * a gate waiting for that boundary would wait forever, announcing a switch that never
+       * happens. `true` means a genuinely in-flight turn (a steer that landed mid-turn), and
+       * then waiting is correct: it was authorized by the old credentials and finishes on them.
+       */
+      turnInFlight?: boolean;
+    }
   /** `parentToolUseId` present ⇒ this is a result for a tool a SUB-AGENT called, not the
    *  main agent (the parent's own final Agent-tool result carries none — spike-verified),
    *  so the parent transcript must not open or close a card for it. */
@@ -831,6 +870,33 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
     // server must not paint an ordinary message as a refusal.
     const kind = obj.kind === 'blocked-dirty' || obj.kind === 'failed' ? 'warn' : 'info';
     return { kind: 'branch-start', tone: kind, message };
+  }
+  if (subtype === 'account_switch') {
+    const rejected = Array.isArray(obj.rejected)
+      ? obj.rejected.flatMap((r) => {
+          const o = r && typeof r === 'object' ? r as Record<string, unknown> : null;
+          const id = str(o?.id);
+          const why = str(o?.why);
+          return id && why ? [{ id, why }] : [];
+        })
+      : undefined;
+    const reason = obj.reason;
+    return {
+      kind: 'account-switch',
+      switched: obj.switched === true,
+      reason: reason === 'limit_near' || reason === 'needs_relogin' || reason === 'all_exhausted'
+        ? reason
+        : 'auto_switch_disabled',
+      accountId: str(obj.accountId) ?? '',
+      ...(str(obj.fromAccountId) ? { fromAccountId: str(obj.fromAccountId)! } : {}),
+      ...(str(obj.email) ? { email: str(obj.email)! } : {}),
+      ...(str(obj.organizationName) ? { organizationName: str(obj.organizationName)! } : {}),
+      ...(typeof obj.sessionPercent === 'number' ? { sessionPercent: obj.sessionPercent } : {}),
+      ...(typeof obj.earliestResetAt === 'number' ? { earliestResetAt: obj.earliestResetAt } : {}),
+      ...(rejected && rejected.length > 0 ? { rejected } : {}),
+      ...(str(obj.pendingText) ? { pendingText: str(obj.pendingText)! } : {}),
+      ...(typeof obj.turnInFlight === 'boolean' ? { turnInFlight: obj.turnInFlight } : {}),
+    };
   }
   if (subtype === 'auth_changed') {
     return {

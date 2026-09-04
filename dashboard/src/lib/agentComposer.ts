@@ -659,6 +659,9 @@ export interface UsageLimitWire {
   resetsAt: number;
   /** Set only when a per-model cap is the binding one, e.g. "Fable". */
   scope?: string;
+  /** Set only when the CLI reports this window as ALREADY LOCKED. An account with a locked
+   *  window is never an auto-switch candidate, whatever the percent beside it says. */
+  lockedReason?: string;
 }
 
 /** The body of `GET /api/agent/usage-limits`. MIRRORED in `src/lib/claude-usage.ts`.

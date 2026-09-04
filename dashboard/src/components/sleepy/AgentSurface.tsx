@@ -474,7 +474,9 @@ export function AgentSurface() {
   // before `spawn` (which arms every chat it creates), and `resumeChatSession` is defined
   // after it because it IS a spawn caller. Same latest-value ref idiom as
   // `chatPermissionModeRef` above.
-  const resumeChatRef = useRef<((cs: ChatSession) => void) | null>(null);
+  const resumeChatRef = useRef<
+    ((cs: ChatSession, targetBypass?: boolean, targetAccountId?: string) => ChatSession) | null
+  >(null);
   const [authNotice, setAuthNotice] = useState<{
     identity: string; loggedIn: boolean | null; restarted: number;
   } | null>(null);
@@ -530,6 +532,58 @@ export function AgentSurface() {
       resumeChatRef.current?.(cs);
     });
   }, [noteAuthChange]);
+
+  /**
+   * The half of AUTO-SWITCH that restarts — the new caller of an EXISTING restart mechanism.
+   *
+   * What is genuinely reused is the RESTART MECHANISM: `resumeChatSession` plus the server's
+   * upgrade handler and its `awaitResumeHandoff`, the guard that closes the transcript-loss
+   * race by waiting for the previous holder to let go. What could NOT be reused is the
+   * DETECTION path: `armAuthRestart` above watches `authChanged`, which is produced by the
+   * single-HOME watcher's fingerprint over `~/.claude.json` — and a switch between two
+   * sandboxes never touches that file, so that signal can never fire for this event. Hence a
+   * separate frame and this separate arm.
+   *
+   * THE THREE REFUSALS ARE KEPT VERBATIM from `armAuthRestart`:
+   *   • an in-flight turn waits for the TURN BOUNDARY (it was authorized by the account it
+   *     started on and will finish there; killing it would discard work to save nothing);
+   *   • an EXITED session is left alone;
+   *   • a session no longer in the registry is never respawned — a closed tab's teardown also
+   *     flips `busy` to false, and respawning there would leave a live `claude` behind a tab
+   *     that exists in no pane and no roster.
+   *
+   * `switched: false` is drawn and nothing else: the turn already went out on the current
+   * account, and there is nothing to restart.
+   */
+  const armAccountSwitch = useCallback((cs: ChatSession) => {
+    let settled = false;
+    const stop = () => { settled = true; off(); };
+    const off = cs.subscribe(() => {
+      if (settled) return;
+      if (sessions.current.get(cs.id) !== cs) { stop(); return; }   // closed/replaced
+      const move = cs.getModel().accountSwitch;
+      if (!move) return;
+      if (!move.switched || !move.accountId) { stop(); return; }     // reported only
+      if (cs.getModel().exited) { stop(); return; }
+      // THE GATE READS THE SERVER'S ANSWER, NOT `busy`. `chatSession.writeUser` sets `busy`
+      // optimistically the instant a user frame reaches the socket, so the very message the
+      // server is HOLDING makes this session look busy while nothing is running in the CLI —
+      // and a gate on `busy` alone would wait for a boundary that can never arrive, leaving a
+      // switch announced and never performed. `turnInFlight` is the server's own view: when a
+      // turn genuinely IS running (a steer landed mid-turn) we still wait for it, because it
+      // was authorized by the old credentials and is allowed to finish on them.
+      if (move.turnInFlight && (cs.busy || cs.asking)) return;
+      stop();
+      const next = resumeChatRef.current?.(cs, undefined, move.accountId);
+      if (!next) return;
+      // The notice is carried onto the NEW session before anything else. The frame landed on
+      // the OLD one, which this restart just disposed — without this the switch would be
+      // invisible, which is the one thing this feature promises never to be.
+      next.noteAccountSwitch(move);
+      // The held turn is resubmitted on the NEW process, so the user's message is never lost.
+      if (move.pendingText) next.send(move.pendingText);
+    });
+  }, []);
 
   const autoTitledRef = useRef<Set<string>>(new Set());
   const titleInFlightRef = useRef<Set<string>>(new Set());
@@ -796,7 +850,7 @@ export function AgentSurface() {
   //   1 bp             2 claudeId      3 resume        4 kind
   //   5 initialPrompt  6 model         7 submitInitial 8 promptToken
   //   9 deferPrompt   10 effort       11 explicitBypass 12 mode
-  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '', explicitBypass = false, mode: ChatMode = DEFAULT_CHAT_MODE) => {
+  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '', explicitBypass = false, mode: ChatMode = DEFAULT_CHAT_MODE, accountId = '') => {
     if (kind === 'chat') {
       // Read through the REF, not the state value: `changeChatPermissionMode` below can
       // respawn a conversation in the very same tick it changes the mode, and this closure's
@@ -816,13 +870,16 @@ export function AgentSurface() {
       // switches it live via `/effort`, so its own createSession has no such param), and has
       // no `submitInitial` concept (an initial prompt is always delivered server-side; see
       // chatSession.ts's header note).
-      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode);
+      // '' = let the server resolve the default (the preferred account, else account #0).
+      // The picker and the auto-switch restart are the only callers that name one.
+      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
       // Every chat spawned anywhere in this surface follows the signed-in account, for the
       // same reason the permission-mode default is resolved here rather than per call site:
       // one place to arm means no future spawn path can forget to.
       armAuthRestart(cs);
+      armAccountSwitch(cs);
       return cs;
     }
     // A shell has no permission model, so bypass is meaningless for it — force it off.
@@ -1054,7 +1111,7 @@ export function AgentSurface() {
   // resumed session's trigger then shows what the new process is genuinely running (ChatPane
   // resolves it from the CLI's own `system:init`), so the indicator stays truthful even when
   // this seed is a beat behind.
-  const resumeChatSession = useCallback((cs: ChatSession, targetBypass?: boolean) => {
+  const resumeChatSession = useCallback((cs: ChatSession, targetBypass?: boolean, targetAccountId?: string) => {
     // Captured BEFORE dispose, applied after the respawn — see `carryDraftInto`. This path is
     // also the permission-mode fallback, so it is the one a Bypass switch actually takes.
     const carried = cs.getModel().draft;
@@ -1065,7 +1122,11 @@ export function AgentSurface() {
     // parameter's contract above). Absent — the "Session ended · Resume" case — `cs.bypass`
     // stands, so a resume never escalates.
     const bp = targetBypass ?? cs.bypass;
-    const s = spawn(bp, cs.claudeId, true, 'chat', '', modelForSession(cs), true, '', false, effortForSession(cs), true, cs.mode);
+    // The account is carried over like the model and the mode. `targetAccountId` is the
+    // auto-switch / picker path asking for a DIFFERENT one: an account is `CLAUDE_CONFIG_DIR`,
+    // read once at spawn, so moving it is a respawn — there is no live control request for it.
+    const acct = targetAccountId ?? cs.accountId;
+    const s = spawn(bp, cs.claudeId, true, 'chat', '', modelForSession(cs), true, '', false, effortForSession(cs), true, cs.mode, acct);
     // `spawn` is typed as the Session|ChatSession union; the `'chat'` kind two lines up
     // provably took its chat arm, which is the same narrowing `changeChatMode` does by hand.
     carryDraftInto(s as ChatSession, carried);
@@ -1075,6 +1136,9 @@ export function AgentSurface() {
       tabs: p.tabs.map((t) => (t === cs.id ? s.id : t)),
       active: p.active === cs.id ? s.id : p.active,
     })));
+    // Returned so the auto-switch arm can resubmit the turn the server held — without it the
+    // user's message would be lost at exactly the moment the feature promises not to lose it.
+    return s as ChatSession;
   }, [spawn, modelForSession, effortForSession]);
   // The account watcher's restart path calls this through a ref — see `resumeChatRef`'s note
   // for why it can't call it directly. Assigned on every render so the ref never holds a
@@ -1757,6 +1821,39 @@ export function AgentSurface() {
     return s?.kind === 'chat' ? (s as ChatSession) : undefined;
   }, [sessionList, liveSession]);
 
+  /**
+   * Move a RUNNING conversation to another account.
+   *
+   * The picker LOOKS like the model picker beside it; its ACTION deliberately does not.
+   * `setModel` is a live, in-process control request ("applies to the NEXT turn"); an account
+   * is `CLAUDE_CONFIG_DIR`, read once at spawn, and no `set_account` control message exists.
+   * Copying `setModel`'s shape here would have produced either a silent no-op or a respawn
+   * hidden under a control that every sibling promises will not restart anything.
+   *
+   * So this reuses `changeChatMode`'s shape instead — the surface's existing "this change
+   * needs a new process" path — and it restarts at the TURN BOUNDARY: a turn in flight was
+   * authorized by the account it started on and is allowed to finish there.
+   */
+  const changeChatAccountFor = useCallback((sid: string, accountId: string) => {
+    const cs = sessions.current.get(sid);
+    if (!cs || cs.kind !== 'chat') return;
+    const chat = cs as ChatSession;
+    if (chat.accountId === accountId) return;  // picking the account you are on is not a restart
+    if (chat.busy || chat.asking) {
+      // Not silently dropped and not a mid-turn kill: the notice says the move is queued, and
+      // `armAccountSwitch` is not involved — this is a deliberate user action, so it waits
+      // here for the boundary the same way.
+      const off = chat.subscribe(() => {
+        if (sessions.current.get(chat.id) !== chat) { off(); return; }
+        if (chat.busy || chat.asking) return;
+        off();
+        resumeChatRef.current?.(chat, undefined, accountId);
+      });
+      return;
+    }
+    resumeChatRef.current?.(chat, undefined, accountId);
+  }, []);
+
   const changeChatModelFor = useCallback((sid: string, id: string) => {
     if (!id) return;
     liveChat(sid)?.setModel(id);
@@ -1905,6 +2002,7 @@ export function AgentSurface() {
     resumeChat: resumeChatSession,
     changePermissionMode: changeChatPermissionMode,
     changeMode: changeChatMode,
+    changeAccount: changeChatAccountFor,
     handoffToDevelop,
     openAppPage: onOpenAppPage,
     signIn: signInToClaude,
@@ -1918,6 +2016,7 @@ export function AgentSurface() {
     resumeChat: (cs) => chatActionsRef.current.resumeChat(cs),
     changePermissionMode: (mode) => chatActionsRef.current.changePermissionMode(mode),
     changeMode: (sid, mode) => chatActionsRef.current.changeMode(sid, mode),
+    changeAccount: (sid, accountId) => chatActionsRef.current.changeAccount(sid, accountId),
     handoffToDevelop: (cs, taskSlug) => chatActionsRef.current.handoffToDevelop(cs, taskSlug),
     openAppPage: (page, id) => chatActionsRef.current.openAppPage(page, id),
     signIn: () => chatActionsRef.current.signIn(),

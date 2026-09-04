@@ -15,6 +15,7 @@ import { useTheses, useSetLearningEnabled } from '../hooks/useTheses';
 import { GitHubLogin } from '../components/brain/GitHubLogin';
 import { OriginSetup } from '../components/brain/OriginSetup';
 import { SystemDependencies } from '../components/settings/SystemDependencies';
+import { ClaudeAccounts } from '../components/settings/ClaudeAccounts';
 import { LinkedRepos } from '../components/brain/LinkedRepos';
 import { readAutoCheckpointOnOpen, writeAutoCheckpointOnOpen } from '../lib/brainSyncPrefs';
 import { isDesktop } from '../lib/desktop';
@@ -914,6 +915,11 @@ export function SettingsPage({ focus }: SettingsPageProps) {
             {t('settings.agents.title')}
             <span className="settings-beta-badge">BETA</span>
           </h2>
+          {/* Connected Claude accounts. Deliberately at the TOP of the Agents section: which
+              account an agent runs on is the first thing about it, and the limit that stops
+              work is the reason this section exists. No heading of its own — owner
+              preference; the section title already says where you are. */}
+          <ClaudeAccounts />
           {!agentCfg ? (
             <p className="settings-field-hint">{t('common.loading')}</p>
           ) : (

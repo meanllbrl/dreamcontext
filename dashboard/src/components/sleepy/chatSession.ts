@@ -236,6 +236,29 @@ export interface ConversationModel {
    * restart, which replaces this model entirely.
    */
   authChanged?: { identity: string; restart: boolean; loggedIn: boolean | null };
+  /**
+   * A DELIBERATE account move we decided on — recorded here so the surface can SHOW it. The
+   * billed account never changes silently, so this is the record that gets drawn.
+   *
+   * Distinct from `authChanged` beside it: that one is "the machine's account changed under
+   * us", detected by a fingerprint over `~/.claude.json`, which a sandbox-to-sandbox switch
+   * never touches. `AgentSurface.armAccountSwitch` is the half that restarts.
+   */
+  accountSwitch?: {
+    switched: boolean;
+    reason: 'limit_near' | 'needs_relogin' | 'all_exhausted' | 'auto_switch_disabled';
+    accountId: string;
+    fromAccountId?: string;
+    email?: string;
+    organizationName?: string;
+    sessionPercent?: number;
+    earliestResetAt?: number;
+    rejected?: Array<{ id: string; why: string }>;
+    pendingText?: string;
+    /** The SERVER's answer to "is a turn really running?" — see the frame's own note. The
+     *  restart gate reads this instead of `session.busy`, which is set optimistically. */
+    turnInFlight?: boolean;
+  };
 }
 
 // ─── Public session API (contract C4) ──────────────────────────────────────────────
@@ -260,6 +283,18 @@ export interface ChatSession {
   capabilities: string[];
   model: string;
   effort: string;
+  /**
+   * Which Claude ACCOUNT this process is running on, '' when the default was used.
+   *
+   * `readonly` for the same reason `mode` is, and it is worth being explicit about because the
+   * account picker LOOKS like the model picker: an account is `CLAUDE_CONFIG_DIR`, read ONCE
+   * at spawn, and there is no `set_account` control request. `setModel` beside it is a LIVE,
+   * in-process request; copying its shape here would produce either a silent no-op or a
+   * respawn hidden under a control that promises not to restart. Changing the account means
+   * respawning the conversation (`AgentSurface.changeChatAccount`), which produces a NEW
+   * session object rather than mutating this one.
+   */
+  readonly accountId: string;
   /**
    * How this conversation's agent is BRIEFED to work — the per-mode system-prompt append the
    * server writes at spawn (`src/server/chat-modes.ts`).
@@ -289,6 +324,19 @@ export interface ChatSession {
   /** Take down the fresh-session branch notice ({@link ConversationModel.branchNotice}).
    *  Dismissable because it reports a one-time event: once read, it is history. */
   dismissBranchNotice: () => void;
+  /** Take down the account-switch notice. Dismissable for the same reason the branch notice
+   *  is: it reports a one-time event, and once read it is history. */
+  dismissAccountSwitch: () => void;
+  /**
+   * Seed the account-switch notice on a session that did NOT receive the frame itself.
+   *
+   * Load-bearing, not a convenience: the switch frame arrives on the OLD session, which is
+   * then disposed and replaced. Without carrying the notice across, the very restart that
+   * proves the feature works would ALSO erase the only thing that tells the user their billed
+   * account moved — and "the billed account never changes silently" is a constraint of this
+   * feature. Same reasoning as `carryDraftInto` in AgentSurface.
+   */
+  noteAccountSwitch: (move: NonNullable<ConversationModel['accountSwitch']>) => void;
   /** Focus the composer's input element, if `setFocusTarget` has registered one (a no-op
    *  before the pane mounts, or after it unmounts — same as focusing a not-yet-open
    *  terminal). See {@link ChatSession.setFocusTarget} for why this is a ref-registration
@@ -459,6 +507,7 @@ export function createChatSession(
   promptToken = '',
   deferPrompt = false,
   mode: ChatMode = DEFAULT_CHAT_MODE,
+  accountId = '',
 ): ChatSession {
   const id = `chat-${++chatSessionSeq}`;
   const container = document.createElement('div');
@@ -480,6 +529,10 @@ export function createChatSession(
   // pre-mode caller's URL is unchanged byte-for-byte. A mode that IS in the URL therefore
   // always means somebody asked for one.
   const modeParam = mode !== DEFAULT_CHAT_MODE ? `&mode=${encodeURIComponent(mode)}` : '';
+  // Omitted when empty, like `mode`: an absent `account` means "resolve the default" on the
+  // server (the preferred account, else account #0), so a single-account machine's URL is
+  // unchanged byte-for-byte and an `account` in the URL always means somebody chose one.
+  const accountParam = accountId ? `&account=${encodeURIComponent(accountId)}` : '';
   const bypassParam = bypass ? '1' : '0';
   const serverSubmitsPrompt = !!initialPrompt || !!promptToken;
   const promptParam = !serverSubmitsPrompt
@@ -489,7 +542,7 @@ export function createChatSession(
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
-    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${promptParam}${deferParam}`;
+    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${promptParam}${deferParam}`;
   const ws = new WebSocket(url);
 
   let itemSeq = 0;
@@ -553,6 +606,7 @@ export function createChatSession(
     model,
     effort,
     mode,
+    accountId,
     ensureOpen: () => { /* no DOM-open step — the AgentSurface portal mount IS "open" */ },
     // No terminal grid to refit — the transcript's equivalent is "you were just moved or
     // resized; put the view back where it belongs" (see `setTranscriptRepin`).
@@ -561,6 +615,8 @@ export function createChatSession(
     sendText,
     syncDraft,
     dismissBranchNotice,
+    dismissAccountSwitch,
+    noteAccountSwitch,
     focus: () => { focusTarget?.focus(); },
     dispose,
     subscribe,
@@ -672,6 +728,20 @@ export function createChatSession(
   function dismissBranchNotice(): void {
     if (!conv.branchNotice) return;
     conv = { ...conv, branchNotice: undefined };
+    renderFlush.flush();
+  }
+
+  function dismissAccountSwitch(): void {
+    if (!conv.accountSwitch) return;
+    conv = { ...conv, accountSwitch: undefined };
+    renderFlush.flush();
+  }
+
+  function noteAccountSwitch(move: NonNullable<ConversationModel['accountSwitch']>): void {
+    // `pendingText` is dropped on the way in: on THIS session the turn has already been
+    // resubmitted, so keeping it would invite a second send.
+    const { pendingText: _drop, ...rest } = move;
+    conv = { ...conv, accountSwitch: rest };
     renderFlush.flush();
   }
 
@@ -841,6 +911,29 @@ export function createChatSession(
         // wait for a turn boundary either way). See `authChanged`'s note and
         // AgentSurface's `armAuthRestart`, which is the half that restarts.
         conv = { ...conv, authChanged: { identity: ev.identity, restart: ev.restart, loggedIn: ev.loggedIn } };
+        return;
+      }
+      case 'account-switch': {
+        // Recorded, NOT acted on here — and `busy` is untouched, exactly as `auth-changed`
+        // leaves it. The server HELD the turn before sending this, so nothing is in flight
+        // on the old account; `AgentSurface.armAccountSwitch` performs the restart at the
+        // turn boundary and resubmits `pendingText`.
+        conv = {
+          ...conv,
+          accountSwitch: {
+            switched: ev.switched,
+            reason: ev.reason,
+            accountId: ev.accountId,
+            ...(ev.fromAccountId ? { fromAccountId: ev.fromAccountId } : {}),
+            ...(ev.email ? { email: ev.email } : {}),
+            ...(ev.organizationName ? { organizationName: ev.organizationName } : {}),
+            ...(ev.sessionPercent === undefined ? {} : { sessionPercent: ev.sessionPercent }),
+            ...(ev.earliestResetAt === undefined ? {} : { earliestResetAt: ev.earliestResetAt }),
+            ...(ev.rejected ? { rejected: ev.rejected } : {}),
+            ...(ev.pendingText ? { pendingText: ev.pendingText } : {}),
+            ...(ev.turnInFlight === undefined ? {} : { turnInFlight: ev.turnInFlight }),
+          },
+        };
         return;
       }
       case 'control-ack': {

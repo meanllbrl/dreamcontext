@@ -44,6 +44,11 @@ export interface ChatSurfaceActions {
    *  this RESPAWNS the session under the new brief (same conversation UUID, transcript kept)
    *  rather than switching anything live — see AgentSurface's `changeChatMode`. */
   changeMode: (sid: string, mode: ChatMode) => void;
+  /** Move a RUNNING conversation to another Claude account. RESPAWNS at the turn boundary —
+   *  an account is `CLAUDE_CONFIG_DIR`, read once at spawn, so there is nothing to switch
+   *  live. Same shape as `changeMode` beside it for exactly that reason; see AgentSurface's
+   *  `changeChatAccountFor` for why it must NOT mirror `changeModel`. */
+  changeAccount: (sid: string, accountId: string) => void;
   /** Plan → Develop: open a NEW chat in Develop mode carrying `taskSlug`, then close the plan
    *  tab. Fired by a `develop` action button the plan agent wrote into its own message. */
   handoffToDevelop: (cs: ChatSession, taskSlug: string) => void;
@@ -75,6 +80,7 @@ function ChatPaneHostInner({
 }) {
   const onModelChange = useCallback((id: string) => actions.changeModel(session.id, id), [actions, session]);
   const onEffortChange = useCallback((level: string) => actions.changeEffort(session.id, level), [actions, session]);
+  const onAccountChange = useCallback((accountId: string) => actions.changeAccount(session.id, accountId), [actions, session]);
   const onContinueInTerminal = useCallback(() => actions.continueInTerminal(session), [actions, session]);
   const onResume = useCallback(() => actions.resumeChat(session), [actions, session]);
   const onPermissionModeChange = useCallback(
@@ -97,6 +103,7 @@ function ChatPaneHostInner({
       effort={effort}
       onModelChange={onModelChange}
       onEffortChange={onEffortChange}
+      onAccountChange={onAccountChange}
       onContinueInTerminal={onContinueInTerminal}
       permissionMode={permissionMode}
       onPermissionModeChange={onPermissionModeChange}

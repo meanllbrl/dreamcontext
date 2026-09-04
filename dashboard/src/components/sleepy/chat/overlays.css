@@ -359,6 +359,16 @@
   font-size: var(--font-size-sm);
   line-height: 1.35;
 }
+/* The account-switch banner reuses the branch banner's frame but carries TWO lines: the
+   move itself, and the per-account reasons behind it. A bare <div> in that slot would pick up
+   the browser's default <p> margins, so the nested paragraphs are zeroed explicitly. */
+.chat-banner-branch-sub > p { margin: 0; }
+.chat-banner-branch-why {
+  margin-top: 2px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
 .chat-banner-branch-x {
   margin-left: auto;
   flex: 0 0 auto;

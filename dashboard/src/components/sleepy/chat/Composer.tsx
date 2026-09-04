@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import { pickFiles, pickFolders } from '../../../lib/desktop';
 import { useVault } from '../../../context/VaultContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
-import { useAgentSessionStats, useUsageLimits } from '../../../hooks/useAgentCapabilities';
+import { useAgentSessionStats, useClaudeAccounts, useUsageLimits } from '../../../hooks/useAgentCapabilities';
 import {
   effortLabel, modelLabelFor, quotePath, isSignInCommand, contextLimitFor, usageLimits,
   fmtTokens, CONTEXT_TIGHT_PCT,
@@ -25,7 +25,7 @@ import {
   settleAttachment, subscribeScratch, type Attachment,
 } from './composerScratch';
 import { Popover } from '../SkillPickerPopover';
-import { ModeMenu, ModelMenu, UsageMenu } from './ComposerMenus';
+import { ModeMenu, ModelMenu, UsageMenu, type AccountOption } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
 import type { ComposerHost } from './composerHost';
 import './composer.css';
@@ -129,6 +129,7 @@ export function Composer({
   onPermissionModeChange, onSignIn, onPeerMessage,
   mode = DEFAULT_CHAT_MODE, onModeChange, onSetModelDefault, shelved = false,
   mentions, modelScope = 'session', idlePlaceholder,
+  activeAccountId = '', onAccountChange,
 }: {
   session: ComposerHost;
   model: string;
@@ -264,6 +265,12 @@ export function Composer({
    * advertising a menu that never opens.
    */
   idlePlaceholder?: string;
+  /** Which account THIS conversation is running on, so the picker can mark it. '' means the
+   *  server resolved the default and no explicit account was named. */
+  activeAccountId?: string;
+  /** Absent ⇒ the picker's rows are read-only. Present ⇒ picking one RESPAWNS this
+   *  conversation on that account, at the turn boundary. */
+  onAccountChange?: (accountId: string) => void;
 }) {
   // Which project a pasted image is uploaded into. From THIS subtree, never a module global:
   // with several projects live in one window the bytes would otherwise land in the temp dir of
@@ -633,6 +640,24 @@ export function Composer({
   // source is missing, stale or describing a window that has already rolled over — so an
   // absent cap draws NO bar rather than an empty one.
   const usageRes = useUsageLimits(connected).data ?? null;
+  // The connected accounts, fetched HERE for the same reason the usage limits are: they are
+  // machine-global, one shared cache entry serves every pane, and threading them down through
+  // three layers would buy nothing. `sessionPercent` comes off each account's OWN cached
+  // reading — which is what makes a NON-ACTIVE account's usage visible without switching to
+  // it. An account with nothing cached carries `null`, drawn as "—" and never as 0%, because
+  // 0% would read as "plenty left" about a number we do not have.
+  const accountsRes = useClaudeAccounts(connected).data ?? null;
+  const accounts = useMemo<AccountOption[]>(
+    () => (accountsRes?.accounts ?? []).map((a) => ({
+      id: a.id,
+      email: a.email,
+      organizationName: a.organizationName,
+      preferred: a.preferred,
+      state: a.state,
+      sessionPercent: a.limits.find((l) => l.key === 'session')?.percent ?? null,
+    })),
+    [accountsRes],
+  );
   const { limits: usageBars, staleAsOf } = usageLimits(ctx, usageRes, Date.now());
 
   const runCompact = () => {
@@ -892,7 +917,14 @@ export function Composer({
       )}
       {menu.open === 'usage' && (
         <div ref={menu.menuRef}>
-          <UsageMenu limits={usageBars} staleAsOf={staleAsOf} costUsd={costUsd} />
+          <UsageMenu
+            limits={usageBars}
+            staleAsOf={staleAsOf}
+            costUsd={costUsd}
+            accounts={accounts}
+            activeAccountId={activeAccountId}
+            onAccountChange={onAccountChange && ((id) => { onAccountChange(id); menu.close(); })}
+          />
         </div>
       )}
 
