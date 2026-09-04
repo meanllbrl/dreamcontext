@@ -9,6 +9,12 @@
  * calls `readUsageLimits()` with ZERO arguments — i.e. that no request-derived value can
  * ever select the file. No test here ever touches the real `~/.claude.json`.
  *
+ * Multi-account NARROWED that rule rather than removing it: `home` is now a real production
+ * value, but the only values that can reach it come from `resolveConfigDir`, and the reader
+ * itself refuses any path that is neither the real HOME nor an account sandbox
+ * (`the reader refuses a path outside HOME and the sandbox root`, below). A request-derived
+ * ACCOUNT ID can pick an account; a request-derived PATH still cannot pick a file.
+ *
  * The wire shape is asserted at RUNTIME (`Object.keys`), not only by type: a type says
  * what we intended, and the risk being guarded is a field we did NOT intend riding out of
  * the parsed blob into the response.
@@ -22,7 +28,23 @@ import { readUsageLimits, EMPTY_USAGE_LIMITS } from '../../src/lib/claude-usage.
 const FIXTURE_HOME = mkdtempSync(join(tmpdir(), 'dc-claude-usage-'));
 const CLAUDE_JSON = join(FIXTURE_HOME, '.claude.json');
 
-afterAll(() => { rmSync(FIXTURE_HOME, { recursive: true, force: true }); });
+/**
+ * `$HOME` is pointed AT the fixture for the life of this file.
+ *
+ * Multi-account made `readUsageLimits`'s `home` parameter real in production, so the reader
+ * now asserts that whatever it is handed is either the real HOME or an account sandbox — a
+ * bare temp path is refused, which is exactly the protection we want. `os.homedir()` honours
+ * `$HOME` (the lib's own header depends on that), so pointing `$HOME` here makes the fixture
+ * BE the real home for this process and the assertion passes through its HOME branch instead
+ * of being weakened for the tests' convenience.
+ */
+const REAL_HOME = process.env.HOME;
+process.env.HOME = FIXTURE_HOME;
+
+afterAll(() => {
+  if (REAL_HOME === undefined) delete process.env.HOME; else process.env.HOME = REAL_HOME;
+  rmSync(FIXTURE_HOME, { recursive: true, force: true });
+});
 
 /** Write `~/.claude.json` INTO THE FIXTURE HOME. Never the real one. */
 function writeHome(blob: unknown): void {
@@ -208,8 +230,11 @@ describe('readUsageLimits — the `limits[]` fallback', () => {
 });
 
 /**
- * The `home` parameter is a TEST SEAM. This proves the production caller does not use it —
- * if someone ever threads a request value in, this fails and says why.
+ * `agent-usage.ts` — the composer's own usage route — still calls `readUsageLimits()` with no
+ * argument. It reports the machine's account, and multi-account did not change that. This
+ * proves it: if someone ever threads a request value into THIS route, it fails and says why.
+ * Other callers may legitimately pass a directory now, but only one that came from
+ * `resolveConfigDir` and survived the reader's own confinement assertion.
  */
 describe('the route never lets a request choose which file is read', () => {
   const repoRoot = new URL('../../', import.meta.url).pathname;
@@ -236,6 +261,70 @@ describe('the route never lets a request choose which file is read', () => {
     const osImport = /import\s*\{([^}]*)\}\s*from\s*'node:os'/.exec(lib)?.[1] ?? '';
     expect(osImport).toContain('homedir');
     expect(osImport).not.toContain('userInfo');
+  });
+});
+
+describe('readUsageLimits — `lockedReason` (multi-account)', () => {
+  it('is absent on an ordinary bar', () => {
+    writeHome(liveSample());
+    expect(bar(readUsageLimits(FIXTURE_HOME), 'session')).not.toHaveProperty('lockedReason');
+  });
+
+  it('is carried from the SUMMARY object, and only from there', () => {
+    const blob = liveSample();
+    const util = (blob.cachedUsageUtilization as Record<string, Record<string, Record<string, unknown>>>).utilization;
+    util.five_hour = { utilization: 100, resets_at: SESSION_RESET, lockedReason: 'session_limit_reached' };
+    const session = bar(readUsageLimits(blobHome(blob)), 'session')! as { lockedReason?: unknown };
+    expect(session.lockedReason).toBe('session_limit_reached');
+    // The wire shape stays an allowlist: exactly one new key, nothing else rode along.
+    expect(Object.keys(session).sort()).toEqual(['key', 'lockedReason', 'percent', 'resetsAt']);
+  });
+
+  it('a `limits[]` entry carrying lockedReason does NOT put it on the wire', () => {
+    const blob = liveSample();
+    const util = (blob.cachedUsageUtilization as Record<string, Record<string, unknown>>).utilization;
+    delete util.five_hour; // force the limits[] fallback to be the source
+    (util.limits as unknown[])[0] = {
+      kind: 'session', percent: 20, resets_at: SESSION_RESET, lockedReason: 'from_the_wrong_place',
+    };
+    const session = bar(readUsageLimits(blobHome(blob)), 'session')!;
+    expect(Object.keys(session).sort()).toEqual(['key', 'percent', 'resetsAt']);
+  });
+
+  it('a non-string lockedReason is dropped, not stringified', () => {
+    const blob = liveSample();
+    const util = (blob.cachedUsageUtilization as Record<string, Record<string, Record<string, unknown>>>).utilization;
+    util.five_hour = { utilization: 20, resets_at: SESSION_RESET, lockedReason: 42 };
+    expect(bar(readUsageLimits(blobHome(blob)), 'session')).not.toHaveProperty('lockedReason');
+  });
+});
+
+describe('readUsageLimits — the confinement assertion is IN the reader', () => {
+  it('refuses a path that is neither the real HOME nor an account sandbox', () => {
+    const stray = mkdtempSync(join(tmpdir(), 'dc-stray-home-'));
+    try {
+      expect(() => readUsageLimits(stray)).toThrow(/outside the account sandbox root/);
+    } finally {
+      rmSync(stray, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts a path under the sandbox root and reads THAT account\'s cache', () => {
+    const sandbox = join(FIXTURE_HOME, '.dreamcontext', 'claude-accounts', 'second-account');
+    mkdirSync(sandbox, { recursive: true });
+    writeFileSync(join(sandbox, '.claude.json'), JSON.stringify({
+      oauthAccount: { accountUuid: 'other-account-uuid' },
+      cachedUsageUtilization: {
+        fetchedAtMs: FETCHED,
+        utilization: { five_hour: { utilization: 91, resets_at: SESSION_RESET } },
+      },
+    }), 'utf-8');
+    // The fixture HOME holds 20%; the sandbox holds 91%. Reading the sandbox must not read HOME.
+    writeHome(liveSample());
+    expect(bar(readUsageLimits(sandbox), 'session')).toEqual({
+      key: 'session', percent: 91, resetsAt: Date.parse(SESSION_RESET),
+    });
+    expect(bar(readUsageLimits(FIXTURE_HOME), 'session')?.percent).toBe(20);
   });
 });
 

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { assertConfinedConfigDir } from './claude-accounts.js';
 
 /**
  * Claude Code's own cached ACCOUNT usage — the 5-hour session cap and the weekly cap —
@@ -20,8 +21,16 @@ import { join } from 'node:path';
  *      under an isolated scratch HOME reads its own fixture and never the developer's real
  *      credentials. `os.userInfo().homedir` is deliberately NOT used: it ignores `$HOME`
  *      and would make a fixtured run read the real file.
- *   2. `home` is a TEST SEAM ONLY. The route handler calls `readUsageLimits()` with no
- *      argument, so no request-derived value can ever choose which file is read.
+ *   2. `home` IS REAL IN PRODUCTION — multi-account made it so, and leaving the old
+ *      "TEST SEAM ONLY" note here would now MISLEAD rather than protect. An account's usage
+ *      cache lives in its own `<configDir>/.claude.json`, which is the same shape as
+ *      `~/.claude.json`, so this reader needs no refactor to serve N accounts. What replaces
+ *      the old guarantee is a NARROWER one: the only values that can reach this parameter
+ *      come from `resolveConfigDir` (slug-shaped id, resolved path asserted to be either
+ *      `homedir()` or inside `~/.dreamcontext/claude-accounts/`) — and that assertion is
+ *      REPEATED inside this function, so the guarantee does not rest on a caller remembering
+ *      it. A request-derived ACCOUNT ID can choose which account is read; a request-derived
+ *      PATH still cannot.
  *
  * Nothing from the blob is copied into the return value: every wire field below is built
  * field-by-field from a narrowed primitive, never spread from the parsed object. A key we
@@ -53,6 +62,11 @@ export interface UsageLimitWire {
   resetsAt: number;
   /** Present only when a per-model cap is the BINDING one, e.g. "Fable". */
   scope?: string;
+  /** Present only when the CLI reports this window as ALREADY LOCKED (`five_hour` /
+   *  `seven_day` summary `lockedReason`). Read from the SUMMARY objects, never from a
+   *  `limits[]` entry. An account with a locked window is never an auto-switch candidate,
+   *  and the surface can say "locked" instead of drawing a bar at some percentage. */
+  lockedReason?: string;
 }
 
 /** MIRRORED in `dashboard/src/lib/agentComposer.ts` (UsageLimitsResponse). */
@@ -97,13 +111,18 @@ function asResetsAt(v: unknown): number | null {
 }
 
 /** One candidate bar, before it is proven complete. */
-interface Candidate { percent: number | null; resetsAt: number | null; scope?: string }
+interface Candidate { percent: number | null; resetsAt: number | null; scope?: string; lockedReason?: string }
 
 /** A summary entry (`five_hour` / `seven_day`) — percent lives under `utilization`. */
 function fromSummary(raw: unknown): Candidate {
   const o = asRecord(raw);
   if (!o) return { percent: null, resetsAt: null };
-  return { percent: asPercent(o.utilization), resetsAt: asResetsAt(o.resets_at) };
+  const locked = typeof o.lockedReason === 'string' ? o.lockedReason.trim() : '';
+  return {
+    percent: asPercent(o.utilization),
+    resetsAt: asResetsAt(o.resets_at),
+    ...(locked ? { lockedReason: locked } : {}),
+  };
 }
 
 /** A `limits[]` entry — percent lives under `percent`, and a scoped one names its model. */
@@ -131,6 +150,7 @@ function toWire(key: UsageLimitWire['key'], c: Candidate): UsageLimitWire | null
   // Built field by field, never spread: this is the boundary where account data would leak.
   const wire: UsageLimitWire = { key, percent: c.percent, resetsAt: c.resetsAt };
   if (c.scope) wire.scope = c.scope;
+  if (c.lockedReason) wire.lockedReason = c.lockedReason;
   return wire;
 }
 
@@ -144,7 +164,9 @@ function toWire(key: UsageLimitWire['key'], c: Candidate): UsageLimitWire | null
  * entry parsed.
  */
 export function readUsageLimits(home: string = homedir()): UsageLimitsResponse {
-  const blob = readJsonSafe(join(home, '.claude.json'));
+  // Repeated here on purpose — see note 2 in the header. A directory that is neither the real
+  // HOME nor an account sandbox never gets read, whatever the caller believed.
+  const blob = readJsonSafe(join(assertConfinedConfigDir(home), '.claude.json'));
   const cached = asRecord(blob?.cachedUsageUtilization);
   if (!cached) return { limits: [], fetchedAtMs: null };
 

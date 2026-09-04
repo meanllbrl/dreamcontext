@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
+import { resolve as resolvePath } from 'node:path';
 import { claudeAwarePath, findClaudeBin } from './claude-path.js';
+import { accountEnvFor, assertConfinedConfigDir } from './claude-accounts.js';
 
 /**
  * Is Claude Code actually signed in?
@@ -43,6 +46,11 @@ export interface ClaudeAuthStatus {
   /** The command that starts an interactive sign-in on THIS CLI — what the UI
    *  types into a terminal pane and what it prints as the manual fallback. */
   loginCommand: string;
+  /** `projectsDirectory` as reported. Carried so a caller can VERIFY that an account
+   *  sandbox's shared `projects/` symlink actually took effect, instead of assuming it did:
+   *  `projectsDirectory` follows `CLAUDE_CONFIG_DIR`, so a sandbox whose symlink is missing
+   *  reports a path inside itself rather than the shared store. */
+  projectsDirectory?: string;
   /** Why the probe couldn't answer. Only set when `loggedIn` is null. */
   error?: string;
 }
@@ -55,8 +63,9 @@ export const CLAUDE_LOGIN_FALLBACK = 'claude';
 /** How long a probe result is reused before re-running the CLI. Short enough that
  *  the user's "I just signed in — retry" click re-probes for real. */
 const CACHE_MS = 5_000;
-/** The CLI answers in well under a second; anything past this is a hung spawn. */
-const PROBE_TIMEOUT_MS = 10_000;
+/** The CLI answers in well under a second; anything past this is a hung spawn. Exported so a
+ *  caller that escalates TO this probe can subtract it from its own budget instead of stacking. */
+export const PROBE_TIMEOUT_MS = 10_000;
 
 /**
  * Turn one `claude auth status --json` run into a status. Pure + exported so the
@@ -80,6 +89,7 @@ export function parseAuthStatus(stdout: string, stderr: string, code: number | n
       ...str(payload.email) ? { email: str(payload.email) } : {},
       ...str(payload.orgId) ? { orgId: str(payload.orgId) } : {},
       ...str(payload.subscriptionType) ? { subscription: str(payload.subscriptionType) } : {},
+      ...str(payload.projectsDirectory) ? { projectsDirectory: str(payload.projectsDirectory) } : {},
     };
   }
   // Commander's own message for a subcommand that doesn't exist. A CLI this old
@@ -117,32 +127,70 @@ function extractJson(out: string): Record<string, unknown> | null {
   return null;
 }
 
-let cached: { at: number; value: ClaudeAuthStatus } | null = null;
-let inFlight: Promise<ClaudeAuthStatus> | null = null;
+/**
+ * Memoized results, KEYED BY CONFIG DIRECTORY.
+ *
+ * This was a single unkeyed slot while the app knew one account. With N accounts a single
+ * slot would hand account B's probe result to a caller asking about account A — the two are
+ * separate credential stores, so one cached answer cannot stand for both.
+ */
+const cached = new Map<string, { at: number; value: ClaudeAuthStatus }>();
+const inFlight = new Map<string, Promise<ClaudeAuthStatus>>();
 
-/** Drop the memoized result (after a sign-in run, or for a test). */
-export function resetClaudeAuthCache(): void {
-  cached = null;
-  inFlight = null;
+/** Drop the memoized results (after a sign-in run, or for a test). One dir, or all of them. */
+export function resetClaudeAuthCache(configDir?: string): void {
+  if (configDir === undefined) {
+    cached.clear();
+    inFlight.clear();
+    return;
+  }
+  const key = resolvePath(configDir);
+  cached.delete(key);
+  inFlight.delete(key);
 }
 
 /**
- * Run the probe (memoized for {@link CACHE_MS}, with concurrent callers sharing one
- * run). Never throws — a failed probe is a `loggedIn: null` status, which every
- * consumer treats as "unknown", never as "signed out".
+ * Run the probe (memoized for {@link CACHE_MS} per config dir, with concurrent callers on the
+ * same dir sharing one run). Never throws — a failed probe is a `loggedIn: null` status, which
+ * every consumer treats as "unknown", never as "signed out".
+ *
+ * `configDir` names WHICH credential store the spawned `claude` reads. It is optional, and
+ * omitting it keeps today's behaviour exactly: the real HOME, with no `CLAUDE_CONFIG_DIR` set.
+ *
+ * The confinement assertion below is REPEATED here rather than left to `resolveConfigDir`,
+ * for the same reason `readUsageLimits` repeats it: both functions take a raw directory and
+ * decide which credential store a spawn reads. Asserting in only one of them would make the
+ * single-gate guarantee depend on every caller — today's and tomorrow's — remembering to come
+ * through the gate, which is the dependency this design exists to remove.
  */
-export function claudeAuthStatus(): Promise<ClaudeAuthStatus> {
-  if (cached && Date.now() - cached.at < CACHE_MS) return Promise.resolve(cached.value);
-  if (inFlight) return inFlight;
-  inFlight = runProbe().then((value) => {
-    cached = { at: Date.now(), value };
-    inFlight = null;
+export function claudeAuthStatus(configDir?: string, timeoutMs?: number): Promise<ClaudeAuthStatus> {
+  const dir = configDir === undefined ? homedir() : assertConfinedConfigDir(configDir);
+  const key = resolvePath(dir);
+  const hit = cached.get(key);
+  if (hit && Date.now() - hit.at < CACHE_MS) return Promise.resolve(hit.value);
+  const running = inFlight.get(key);
+  if (running) return running;
+  const promise = runProbe(dir, timeoutMs).then((value) => {
+    cached.set(key, { at: Date.now(), value });
+    inFlight.delete(key);
     return value;
   });
-  return inFlight;
+  inFlight.set(key, promise);
+  return promise;
 }
 
-function runProbe(): Promise<ClaudeAuthStatus> {
+/**
+ * `timeoutMs` lets a caller that already owns a budget (the usage probe's escalation to this
+ * authoritative judge) hand over WHAT IS LEFT of it rather than adding a second 10s ceiling
+ * on top of its own — an escalation that stacks budgets makes the unhappy path feel frozen.
+ */
+function runProbe(dir: string, timeoutMs?: number): Promise<ClaudeAuthStatus> {
+  // A caller-supplied budget is honoured but never allowed to exceed the module's own
+  // ceiling, and never allowed to be zero or negative (which would kill the child instantly).
+  const budget = Math.min(
+    PROBE_TIMEOUT_MS,
+    typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : PROBE_TIMEOUT_MS,
+  );
   return new Promise((resolve) => {
     // Spawn the binary DIRECTLY when we can find it (no shell, no rc sourcing —
     // the probe stays sub-second even with a heavy zshrc); fall back to the same
@@ -151,7 +199,10 @@ function runProbe(): Promise<ClaudeAuthStatus> {
     // claude-aware, so `~/.local/bin` installs resolve without an rc edit.
     const bin = findClaudeBin();
     const shell = process.env.SHELL || '/bin/zsh';
-    const env = { ...process.env, PATH: claudeAwarePath() } as NodeJS.ProcessEnv;
+    // `accountEnvFor` sets `CLAUDE_CONFIG_DIR` for a sandbox and sets NOTHING for the real
+    // HOME — the two are not interchangeable: `CLAUDE_CONFIG_DIR=$HOME` would move the CLI's
+    // projects directory to `~/projects`, which is not where the real transcripts live.
+    const env = { ...process.env, PATH: claudeAwarePath(), ...accountEnvFor(dir) } as NodeJS.ProcessEnv;
     let child: ReturnType<typeof spawn>;
     try {
       child = bin
@@ -174,7 +225,7 @@ function runProbe(): Promise<ClaudeAuthStatus> {
     const timer = setTimeout(() => {
       try { child.kill(); } catch { /* already gone */ }
       done(failed('The sign-in check timed out.'));
-    }, PROBE_TIMEOUT_MS);
+    }, budget);
 
     child.stdout?.on('data', (c: Buffer) => { out += c.toString('utf-8'); });
     child.stderr?.on('data', (c: Buffer) => { err += c.toString('utf-8'); });
