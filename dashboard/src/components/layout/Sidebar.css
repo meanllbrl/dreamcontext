@@ -558,3 +558,23 @@
   transform-origin: center;
   animation: sidebarSleepyBlink 4.4s ease-in-out infinite;
 }
+
+/* ─── Collapsed: the sync row is ONE icon ─────────────────────────────────────
+   The rail is a single column of centered glyphs; the sync button + gear sitting
+   side by side broke that rhythm and squeezed both into a 20px-ish sliver. When
+   collapsed the gear goes away (Settings is already its own rail item, and the
+   gear only deep-links to the same page) and the GitHub mark centers like every
+   other item. */
+.sidebar--collapsed .sidebar-brain-sync-row {
+  justify-content: center;
+  gap: 0;
+}
+
+.sidebar--collapsed .sidebar-brain-sync-row .sidebar-item--synced {
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+.sidebar--collapsed .sidebar-sync-settings {
+  display: none;
+}
