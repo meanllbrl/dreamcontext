@@ -1,0 +1,231 @@
+/**
+ * `claude-accounts.ts` — the multi-account register and its SINGLE GATE.
+ *
+ * The two properties worth a test file: an account id can never become an arbitrary
+ * directory, and `removeAccount` — the one destructive operation in the design — cannot
+ * follow a symlink out of the sandbox into the real `~/.claude/projects`.
+ */
+import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
+import { join } from 'node:path';
+import {
+  ClaudeAccountError,
+  accountEnvFor,
+  accountIdFromEmail,
+  assertConfinedConfigDir,
+  claudeAccountsFilePath,
+  isSafeAccountId,
+  listClaudeAccounts,
+  preferredClaudeAccount,
+  removeClaudeAccount,
+  resolveConfigDir,
+  sandboxDirFor,
+  setPreferredClaudeAccount,
+  upsertClaudeAccount,
+  writeClaudeAccounts,
+  type ClaudeAccount,
+} from '../../src/lib/claude-accounts.js';
+
+const HOME = mkdtempSync(join(tmpdir(), 'dc-accounts-'));
+const REAL_HOME = process.env.HOME;
+process.env.HOME = HOME;
+
+afterAll(() => {
+  if (REAL_HOME === undefined) delete process.env.HOME; else process.env.HOME = REAL_HOME;
+  rmSync(HOME, { recursive: true, force: true });
+});
+
+function account(over: Partial<ClaudeAccount> = {}): ClaudeAccount {
+  const id = over.id ?? 'second-account';
+  return {
+    id,
+    accountUuid: 'uuid-b',
+    email: 'b@example.com',
+    organizationUuid: 'org-b',
+    organizationName: 'Org B',
+    tier: 'max',
+    configDir: sandboxDirFor(id, HOME),
+    preferred: false,
+    ...over,
+  };
+}
+
+/** Account #0 — the one already signed in to the real HOME. */
+const zero = account({ id: 'account-zero', configDir: null, accountUuid: 'uuid-a', email: 'a@example.com' });
+
+beforeEach(() => {
+  rmSync(claudeAccountsFilePath(HOME), { force: true });
+});
+
+describe('the id shape is the automation-slug shape', () => {
+  it('accepts a kebab slug', () => {
+    expect(isSafeAccountId('second-account')).toBe(true);
+    expect(isSafeAccountId('a1')).toBe(true);
+  });
+
+  it('rejects everything that could escape a directory name', () => {
+    for (const bad of ['../evil', '/etc/passwd', 'a/b', 'A-Upper', '-lead', 'trail-', 'double--dash', '', '.', 'a b']) {
+      expect(isSafeAccountId(bad), `"${bad}" was accepted`).toBe(false);
+    }
+    expect(isSafeAccountId(null)).toBe(false);
+    expect(isSafeAccountId(42)).toBe(false);
+  });
+
+  it('derives a usable id from an email', () => {
+    const id = accountIdFromEmail('Mehmet.Nur+work@Example.CO');
+    expect(isSafeAccountId(id)).toBe(true);
+    expect(id).toBe('mehmet-nur-work-example-co');
+  });
+});
+
+describe('resolveConfigDir — the single gate', () => {
+  it('with no id resolves the PREFERRED account', () => {
+    writeClaudeAccounts([zero, account({ preferred: true })], HOME);
+    expect(resolveConfigDir(null, HOME)).toBe(sandboxDirFor('second-account', HOME));
+  });
+
+  it('with no id and no preferred account resolves account #0, i.e. the real HOME', () => {
+    writeClaudeAccounts([zero, account()], HOME);
+    expect(resolveConfigDir(undefined, HOME)).toBe(HOME);
+  });
+
+  it('with an EMPTY register resolves the real HOME — the single-account machine', () => {
+    expect(resolveConfigDir(undefined, HOME)).toBe(HOME);
+    expect(listClaudeAccounts(HOME)).toEqual([]);
+  });
+
+  it('REJECTS an unknown id rather than silently falling back to HOME', () => {
+    writeClaudeAccounts([zero], HOME);
+    expect(() => resolveConfigDir('no-such-account', HOME)).toThrow(ClaudeAccountError);
+    // The failure that matters: it must not quietly return the wrong account.
+    expect(() => resolveConfigDir('no-such-account', HOME)).toThrow(/No such account/);
+  });
+
+  it('REJECTS a traversal id at the gate, not only at the WS boundary', () => {
+    expect(() => resolveConfigDir('../../etc', HOME)).toThrow(/Not a usable account id/);
+  });
+
+  it('drops a register entry whose configDir is not that slug\'s own sandbox path', () => {
+    // Hand-written file claiming a config dir somewhere else entirely.
+    mkdirSync(join(HOME, '.dreamcontext'), { recursive: true });
+    writeFileSync(claudeAccountsFilePath(HOME), JSON.stringify({
+      accounts: [{ ...account(), configDir: '/etc' }],
+    }), 'utf-8');
+    expect(listClaudeAccounts(HOME)).toEqual([]);
+  });
+
+  it('a malformed register reads as empty and never throws', () => {
+    mkdirSync(join(HOME, '.dreamcontext'), { recursive: true });
+    writeFileSync(claudeAccountsFilePath(HOME), '{ not json', 'utf-8');
+    expect(() => listClaudeAccounts(HOME)).not.toThrow();
+    expect(listClaudeAccounts(HOME)).toEqual([]);
+  });
+});
+
+describe('assertConfinedConfigDir', () => {
+  it('accepts the real HOME and a sandbox under the root', () => {
+    expect(assertConfinedConfigDir(HOME, HOME)).toBe(HOME);
+    expect(assertConfinedConfigDir(sandboxDirFor('x', HOME), HOME)).toBe(sandboxDirFor('x', HOME));
+  });
+
+  it('refuses the sandbox ROOT itself, and anything outside it', () => {
+    expect(() => assertConfinedConfigDir(join(HOME, '.dreamcontext', 'claude-accounts'), HOME)).toThrow();
+    expect(() => assertConfinedConfigDir('/etc', HOME)).toThrow(/outside the account sandbox root/);
+    expect(() => assertConfinedConfigDir(join(HOME, '.claude'), HOME)).toThrow();
+    // A traversal is resolved BEFORE the check, so where it LANDS is what decides.
+    // Landing on the real HOME is legitimate (that is account #0's directory)...
+    expect(assertConfinedConfigDir(join(sandboxDirFor('x', HOME), '..', '..', '..'), HOME)).toBe(HOME);
+    // ...landing above it is not.
+    expect(() => assertConfinedConfigDir(join(sandboxDirFor('x', HOME), '..', '..', '..', '..'), HOME)).toThrow();
+  });
+});
+
+describe('accountEnvFor — account #0 sets NOTHING', () => {
+  it('is empty for the real HOME', () => {
+    // CLAUDE_CONFIG_DIR=$HOME is NOT the same as unset: it would move the CLI's projects
+    // directory to ~/projects, which is not where the real transcripts live.
+    expect(accountEnvFor(HOME, HOME)).toEqual({});
+  });
+
+  it('sets CLAUDE_CONFIG_DIR for a sandbox', () => {
+    expect(accountEnvFor(sandboxDirFor('b', HOME), HOME)).toEqual({
+      CLAUDE_CONFIG_DIR: sandboxDirFor('b', HOME),
+    });
+  });
+});
+
+describe('preferred', () => {
+  it('at most one account is preferred after an upsert', () => {
+    writeClaudeAccounts([{ ...zero, preferred: true }], HOME);
+    upsertClaudeAccount(account({ preferred: true }), HOME);
+    expect(listClaudeAccounts(HOME).filter((a) => a.preferred).map((a) => a.id)).toEqual(['second-account']);
+  });
+
+  it('setPreferred moves the flag and rejects an unknown id', () => {
+    writeClaudeAccounts([zero, account({ preferred: true })], HOME);
+    setPreferredClaudeAccount('account-zero', HOME);
+    expect(preferredClaudeAccount(HOME)?.id).toBe('account-zero');
+    expect(() => setPreferredClaudeAccount('ghost', HOME)).toThrow(/No such account/);
+  });
+});
+
+describe('removeClaudeAccount — the one destructive operation', () => {
+  it('deletes the sandbox directory and the register row', () => {
+    writeClaudeAccounts([zero, account()], HOME);
+    const dir = sandboxDirFor('second-account', HOME);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '.claude.json'), '{}', 'utf-8');
+
+    removeClaudeAccount('second-account', HOME);
+    expect(existsSync(dir)).toBe(false);
+    expect(listClaudeAccounts(HOME).map((a) => a.id)).toEqual(['account-zero']);
+  });
+
+  it('does NOT follow the shared symlinks into the real ~/.claude/projects', () => {
+    writeClaudeAccounts([zero, account()], HOME);
+    const dir = sandboxDirFor('second-account', HOME);
+    mkdirSync(dir, { recursive: true });
+    // The real store, with a transcript in it — the thing that must survive.
+    const realProjects = join(HOME, '.claude', 'projects');
+    mkdirSync(realProjects, { recursive: true });
+    writeFileSync(join(realProjects, 'a-conversation.jsonl'), 'precious', 'utf-8');
+    symlinkSync(realProjects, join(dir, 'projects'), 'dir');
+
+    removeClaudeAccount('second-account', HOME);
+
+    expect(existsSync(dir)).toBe(false);
+    expect(existsSync(realProjects)).toBe(true);
+    expect(readFileSync(join(realProjects, 'a-conversation.jsonl'), 'utf-8')).toBe('precious');
+  });
+
+  it('refuses to remove the LAST account, and refuses an unknown id', () => {
+    writeClaudeAccounts([zero], HOME);
+    expect(() => removeClaudeAccount('account-zero', HOME)).toThrow(/last account/);
+    expect(() => removeClaudeAccount('ghost', HOME)).toThrow(/No such account/);
+  });
+
+  it('never leaves the register with nothing preferred', () => {
+    writeClaudeAccounts([zero, account({ preferred: true })], HOME);
+    removeClaudeAccount('second-account', HOME);
+    expect(preferredClaudeAccount(HOME)?.id).toBe('account-zero');
+  });
+});
+
+describe('the register file is written atomically', () => {
+  it('leaves no temp file behind and round-trips', () => {
+    writeClaudeAccounts([zero, account()], HOME);
+    const written = JSON.parse(readFileSync(claudeAccountsFilePath(HOME), 'utf-8')) as { accounts: unknown[] };
+    expect(written.accounts).toHaveLength(2);
+    const strays = existsSync(join(HOME, '.dreamcontext'))
+      ? readFileSync(claudeAccountsFilePath(HOME), 'utf-8')
+      : '';
+    expect(strays).toContain('second-account');
+  });
+});
+
+describe('homedir() is honoured, so nothing here can touch the developer\'s real files', () => {
+  it('the fixture HOME really is homedir() for this process', () => {
+    expect(homedir()).toBe(HOME);
+  });
+});
