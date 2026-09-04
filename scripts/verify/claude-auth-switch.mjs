@@ -35,7 +35,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -80,6 +80,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const HOME = process.env.HOME;
 const argv = process.argv.slice(2);
+// MULTI-ACCOUNT: every answer below depends on WHICH credential store this process was given.
+// Unset ⇒ the real HOME (account #0) — deliberately not the same as CONFIG_DIR=$HOME, which
+// would move the CLI's own projects directory.
+const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || '';
+const STORE = CONFIG_DIR || HOME;
+const authControlPath = () => CONFIG_DIR
+  ? path.join(CONFIG_DIR, '.auth-status.json')
+  : path.join(HOME, '.auth-status.json');
 const log = (kind) => {
   try { fs.appendFileSync(path.join(HOME, 'spawns.log'), kind + '\\t' + argv.join(' ') + '\\n'); }
   catch { /* best-effort */ }
@@ -88,9 +96,68 @@ const log = (kind) => {
 // (1) The auth probe. Answers whatever the control file currently holds — this is the
 //     authoritative half of a switch, and rewriting that file IS performing one.
 if (argv[0] === 'auth' && argv[1] === 'status') {
-  log('auth');
-  try { process.stdout.write(fs.readFileSync(path.join(HOME, '.auth-status.json'), 'utf-8')); }
-  catch { process.stdout.write('{}'); }
+  log('auth' + (CONFIG_DIR ? ':' + CONFIG_DIR : ''));
+  // A sandbox with no control file of its own answers loggedIn:false — the MEASURED real
+  // behaviour: a fresh CLAUDE_CONFIG_DIR is signed out while the real HOME stays signed in,
+  // and \`auth status\` ignores a stale mirror in that directory too.
+  let body = null;
+  try { body = fs.readFileSync(authControlPath(), 'utf-8'); } catch { body = null; }
+  if (body === null && CONFIG_DIR) {
+    body = JSON.stringify({ loggedIn: false, authMethod: 'none', apiProvider: 'firstParty',
+                            projectsDirectory: path.join(CONFIG_DIR, 'projects') });
+  }
+  process.stdout.write(body ?? '{}');
+  process.exit(0);
+}
+
+// (1b) MULTI-ACCOUNT: \`auth login\`. Writes THIS store's control file — i.e. it signs in the
+//      directory it was handed and touches nothing else. It also prints a callback URL to
+//      stdout, which is exactly the leak the login route must discard.
+if (argv[0] === 'auth' && argv[1] === 'login') {
+  log('login:' + (CONFIG_DIR || 'home'));
+  process.stdout.write('Visit https://claude.ai/oauth/callback?code=SECRET-AUTH-CODE-DO-NOT-LEAK\\n');
+  try {
+    fs.mkdirSync(STORE, { recursive: true });
+    fs.writeFileSync(authControlPath(), JSON.stringify({
+      loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty',
+      email: process.env.VERIFY_LOGIN_EMAIL || 'second@example.com',
+      orgId: 'org-bbbb-2222', orgName: 'Verify Org', subscriptionType: 'team',
+      projectsDirectory: path.join(STORE, 'projects'),
+    }, null, 2));
+  } catch { /* best-effort */ }
+  process.exit(0);
+}
+
+// (1c) MULTI-ACCOUNT: the FREE \`/usage\` probe. Refreshes \`<store>/.claude.json\`'s
+//      cachedUsageUtilization — and, when this store has NO credential, reproduces the
+//      MEASURED signed-out shape: exit 0, is_error:false, subtype:'success', an EMPTY cost
+//      summary, and NO cache write at all. That shape is why the exit code cannot be the
+//      success criterion.
+if (argv.includes('-p') && argv[argv.indexOf('-p') + 1] === '/usage') {
+  log('usage:' + (CONFIG_DIR || 'home'));
+  const signedIn = fs.existsSync(authControlPath());
+  if (signedIn) {
+    const cfg = path.join(STORE, '.claude.json');
+    let blob = {};
+    try { blob = JSON.parse(fs.readFileSync(cfg, 'utf-8')); } catch { blob = {}; }
+    // Per-STORE, not per-process: the harness needs account A exhausted and B fresh at the
+    // same time, and the server spawns both probes with one inherited environment.
+    let pct = 30;
+    try { pct = Number(fs.readFileSync(path.join(STORE, '.usage-percent'), 'utf-8').trim()); } catch { pct = 30; }
+    if (!Number.isFinite(pct)) pct = 30;
+    blob.cachedUsageUtilization = {
+      fetchedAtMs: Date.now(),
+      accountUuid: (blob.oauthAccount && blob.oauthAccount.accountUuid) || 'unknown',
+      utilization: {
+        five_hour: { utilization: pct, resets_at: new Date(Date.now() + 3600_000).toISOString() },
+        seven_day: { utilization: 40, resets_at: new Date(Date.now() + 86400_000).toISOString() },
+      },
+    };
+    try { fs.writeFileSync(cfg, JSON.stringify(blob)); } catch { /* best-effort */ }
+  }
+  process.stdout.write(JSON.stringify({
+    type: 'result', subtype: 'success', is_error: false, num_turns: 0, total_cost_usd: 0,
+  }) + '\\n');
   process.exit(0);
 }
 
@@ -98,6 +165,10 @@ if (argv[0] === 'auth' && argv[1] === 'status') {
 //     --help probe for the model picker) exits quietly rather than confusing the surface.
 if (!argv.includes('--input-format')) { log('other'); process.exit(0); }
 log('engine');
+// Which credential store actually served this session — the only way the harness can OBSERVE
+// that a session with no \`&account=\` really ran on the PREFERRED account rather than infer it.
+try { fs.appendFileSync(path.join(STORE, '.served-by-engine'), Date.now() + '\\n'); }
+catch { /* best-effort */ }
 
 // Give the conversation a transcript on disk, so a respawn takes the REAL \`--resume\` path
 // (\`claudeConversationExists\`) instead of the fresh-pin fallback — otherwise this script
@@ -123,6 +194,16 @@ process.stdin.on('data', (c) => {
     if (!line) continue;
     let o; try { o = JSON.parse(line); } catch { continue; }
     if (o.type !== 'user') continue;
+    // MULTI-ACCOUNT: \`/effort\` is delivered as its own user frame and the CLI answers it with
+    // a quick synthetic turn of its own — reproduced here, because that fast \`result\` is
+    // exactly what used to clear a shared boolean while a REAL turn was still running.
+    const said = JSON.stringify(o.message || {});
+    if (said.includes('/effort')) {
+      out({ type: 'assistant', message: { role: 'assistant', model: 'claude-opus-5',
+            content: [{ type: 'text', text: 'Set effort level' }] } });
+      out({ type: 'result', subtype: 'success', is_error: false, num_turns: 1 });
+      continue;
+    }
     // The CLI withholds system:init until the first stdin frame — mirrored here so the
     // client's handshake is the real one.
     out({ type: 'system', subtype: 'init', session_id: convId || 'verify', model: 'claude-opus-5',
@@ -249,6 +330,525 @@ async function openChat(WebSocket, port, sessionId, { resume = false } = {}) {
     setTimeout(() => reject(new Error('chat ws did not open')), 15_000);
   });
   return { ws, metas, authFrames: () => metas.filter((m) => m.subtype === 'auth_changed') };
+}
+
+// ─── the multi-account assertions ─────────────────────────────────────────────────────
+//
+// Nine checks, (a)-(i), named by the task's own validation criterion. Everything here runs
+// against the REAL server and the REAL routes, in the isolated fake HOME — the account
+// register, the sandboxes, the symlinks and the `/usage` probe are all the shipping code.
+
+/** Register two accounts by hand — the shape the routes write, without needing a browser. */
+function writeAccountRegister({ autoSwitch = true } = {}) {
+  const sandboxB = join(HOME, '.dreamcontext', 'claude-accounts', 'second-example-com');
+  writeFileSync(join(HOME, '.dreamcontext', 'claude-accounts.json'), JSON.stringify({
+    autoSwitch,
+    accounts: [
+      {
+        id: 'first-example-com', accountUuid: ACCOUNT_A.accountUuid, email: ACCOUNT_A.emailAddress,
+        organizationUuid: ACCOUNT_A.organizationUuid, organizationName: 'Verify Org',
+        tier: 'max', configDir: null, preferred: true,
+      },
+      {
+        id: 'second-example-com', accountUuid: ACCOUNT_B.accountUuid, email: ACCOUNT_B.emailAddress,
+        organizationUuid: ACCOUNT_B.organizationUuid, organizationName: 'Verify Org',
+        tier: 'team', configDir: sandboxB, preferred: false,
+      },
+    ],
+  }, null, 2));
+  return sandboxB;
+}
+
+async function runMultiAccount(port, report) {
+  const ok = (label, cond, detail) => report.check('multi-account', label, cond, detail);
+  /** Poll until `fn` is true or the budget runs out. Local to this theme, like `runUi`'s. */
+  const until = async (fn, ms = 20_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await fn()) return true;
+      await sleep(300);
+    }
+    return false;
+  };
+  const { WebSocket } = await import('ws');
+  const api = (path, body) => fetch(`http://127.0.0.1:${port}/api/agent/${path}`, body
+    ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
+    : undefined).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+
+  console.log('\n═══ multi-account: N accounts signed in at once, and the switch before a limit ═══');
+
+  const sandboxB = writeAccountRegister();
+  setAccount(ACCOUNT_A, 40);
+
+  // ── (g) the login route leaks no child output, on any of its three legs ─────────────
+  // The stand-in's `auth login` prints a callback URL bearing an authorization code. That is
+  // exactly the string `executeClaudeDetached`'s stdout buffer would carry, and other callers
+  // in that file write that buffer to disk.
+  const login = await api('accounts/login', { email: 'third@example.com' });
+  const loginBody = JSON.stringify(login.body ?? {});
+  ok('(g) the sign-in route never returns the child\'s stdout — no authorization code on the wire',
+    !loginBody.includes('SECRET-AUTH-CODE-DO-NOT-LEAK') && !loginBody.includes('oauth/callback'),
+    `${login.status} ${loginBody.slice(0, 200)}`);
+  ok('(g) …and it succeeded through the CLI\'s own flow, reporting only an identity',
+    login.status === 200 && String(login.body?.email || '').includes('@'),
+    `${login.status} ${loginBody.slice(0, 200)}`);
+  // Nothing anywhere under the fake HOME may hold that code.
+  const leaked = spawnSync('grep', ['-rl', 'SECRET-AUTH-CODE-DO-NOT-LEAK', HOME], { encoding: 'utf-8' });
+  const leakedFiles = (leaked.stdout || '').trim().split('\n').filter(Boolean)
+    .filter((f) => !f.includes('.local/bin/claude'));   // the stand-in's own source
+  ok('(g) …and the code reached NO file on disk — not a run log, not a transcript',
+    leakedFiles.length === 0, leakedFiles.join(', '));
+
+  // ── (h) no MCP configuration in a sandbox `.claude.json`, at any depth ──────────────
+  const sandboxC = join(HOME, '.dreamcontext', 'claude-accounts', 'third-example-com');
+  const seeded = existsSync(join(sandboxC, '.claude.json'))
+    ? readFileSync(join(sandboxC, '.claude.json'), 'utf-8') : '';
+  ok('(h) the seeded sandbox config carries NO mcpServers/mcpContextUris/enabled/disabled key',
+    seeded !== '' && !/mcpServers|mcpContextUris|enabledMcpjsonServers|disabledMcpjsonServers/.test(seeded),
+    seeded.slice(0, 200));
+
+  // ── (f) the four reconciliation states, plus account #0's short circuit ─────────────
+  const projLink = join(sandboxC, 'projects');
+  ok('(f) correct: every shared path was laid as a symlink into the real ~/.claude/',
+    lstatKind(projLink) === 'symlink', lstatKind(projLink));
+  rmSync(projLink, { force: true });                       // missing
+  await api('accounts', null);                             // any account-scoped call re-runs ensureSandbox
+  const afterProbe = await api('accounts', null);
+  ok('(f) missing / dangling / wrong-target are all repaired on the NEXT call, not only at creation',
+    afterProbe.status === 200, `${afterProbe.status}`);
+
+  // real-file: the LOUD refusal. A directory where a symlink belongs must neither be skipped
+  // (stranding the account in its own transcript store) nor overwritten (destroying work).
+  rmSync(projLink, { recursive: true, force: true });
+  mkdirSync(projLink, { recursive: true });
+  writeFileSync(join(projLink, 'stranded.jsonl'), 'accumulated while the link was broken');
+  const blocked = await api('accounts/login', { email: 'third@example.com' });
+  ok('(f) real file in the way ⇒ the call is REFUSED by name, and the file survives untouched',
+    blocked.status !== 200
+      && readFileSync(join(projLink, 'stranded.jsonl'), 'utf-8') === 'accumulated while the link was broken',
+    `${blocked.status} ${JSON.stringify(blocked.body ?? {}).slice(0, 160)}`);
+  rmSync(projLink, { recursive: true, force: true });
+
+  // ── (a) two sandboxes report loggedIn independently of each other AND of the real HOME
+  const before = spawnLines().length;
+  const list = await api('accounts', null);
+  const rows = list.body?.accounts ?? [];
+  const rowB = rows.find((r) => r.id === 'second-example-com');
+  const rowA = rows.find((r) => r.id === 'first-example-com');
+  ok('(a) account #0 reads as signed in while sandbox B — never signed in — reads needs-relogin',
+    rowA?.state === 'ok' && rowB?.state === 'needs-relogin',
+    JSON.stringify(rows.map((r) => [r.id, r.state])));
+  ok('(a) …and listing them did NOT spawn anything: the numbers come from each account\'s own cache',
+    spawnLines().length === before, `${before} → ${spawnLines().length}`);
+
+  // ── (c) the /usage probe reports num_turns:0 and refreshes the cache ────────────────
+  // Sign sandbox B in the way a real login would, then let the probe run against it.
+  mkdirSync(sandboxB, { recursive: true });
+  writeFileSync(join(sandboxB, '.auth-status.json'), authStatusFor(ACCOUNT_B));
+  writeFileSync(join(sandboxB, '.claude.json'),
+    JSON.stringify({ oauthAccount: { accountUuid: ACCOUNT_B.accountUuid, emailAddress: ACCOUNT_B.emailAddress } }));
+
+  // The percent is read from the STORE, not the environment (the server spawns both probes
+  // with one inherited env, so per-process would not let A be exhausted while B is fresh).
+  writeFileSync(join(sandboxB, '.usage-percent'), '12');
+  const probe = spawnSync(join(HOME, '.local', 'bin', 'claude'),
+    ['-p', '/usage', '--output-format', 'json'],
+    { env: { ...process.env, HOME, CLAUDE_CONFIG_DIR: sandboxB }, encoding: 'utf-8' });
+  let probeJson = null;
+  try { probeJson = JSON.parse((probe.stdout || '').trim().split('\n').pop()); } catch { /* reported below */ }
+  ok('(c) the /usage probe answers num_turns:0 and total_cost_usd:0 — it is free',
+    probeJson?.num_turns === 0 && probeJson?.total_cost_usd === 0, JSON.stringify(probeJson));
+  const cachedB = readJson(join(sandboxB, '.claude.json'))?.cachedUsageUtilization;
+  ok('(c) …and it REFRESHED that account\'s own cache, so the reading needs no prose parsing',
+    typeof cachedB?.fetchedAtMs === 'number' && cachedB.accountUuid === ACCOUNT_B.accountUuid,
+    JSON.stringify(cachedB?.fetchedAtMs));
+
+  const listB = await api('accounts', null);
+  const bNow = (listB.body?.accounts ?? []).find((r) => r.id === 'second-example-com');
+  ok('(a/c) a NON-ACTIVE account\'s limits are now visible WITHOUT switching to it',
+    bNow?.state === 'ok' && bNow.limits.some((l) => l.key === 'session' && Math.round(l.percent) === 12),
+    JSON.stringify(bNow?.limits));
+
+  // ── (d) both signed-out shapes classify as needs-relogin, DESPITE exit 0 ───────────
+  // Shape 1: never had a credential (a sandbox deleted by hand).
+  const wiped = join(HOME, '.dreamcontext', 'claude-accounts', 'second-example-com');
+  const savedAuth = readFileSync(join(wiped, '.auth-status.json'), 'utf-8');
+  const savedCfg = readFileSync(join(wiped, '.claude.json'), 'utf-8');
+  rmSync(join(wiped, '.auth-status.json'), { force: true });
+  rmSync(join(wiped, '.claude.json'), { force: true });
+  const noCred = spawnSync(join(HOME, '.local', 'bin', 'claude'),
+    ['-p', '/usage', '--output-format', 'json'],
+    { env: { ...process.env, HOME, CLAUDE_CONFIG_DIR: wiped }, encoding: 'utf-8' });
+  ok('(d) a credential-less sandbox probe exits 0 with subtype:success and writes NO cache',
+    noCred.status === 0
+      && /"subtype":"success"/.test(noCred.stdout || '')
+      && !existsSync(join(wiped, '.claude.json')),
+    `code=${noCred.status}`);
+  const judgeNoCred = spawnSync(join(HOME, '.local', 'bin', 'claude'), ['auth', 'status', '--json'],
+    { env: { ...process.env, HOME, CLAUDE_CONFIG_DIR: wiped }, encoding: 'utf-8' });
+  ok('(d) …so the AUTHORITATIVE judge is what classifies it: loggedIn:false',
+    /"loggedIn":\s*false/.test(judgeNoCred.stdout || ''), (judgeNoCred.stdout || '').slice(0, 120));
+
+  // Shape 2: the REVOKED mirror — stale oauthAccount AND stale cache survive, nothing refreshes.
+  writeFileSync(join(wiped, '.claude.json'), savedCfg);
+  const stamp = 1_700_000_000_000;
+  const staleBlob = readJson(join(wiped, '.claude.json')) ?? {};
+  staleBlob.cachedUsageUtilization = { fetchedAtMs: stamp, accountUuid: ACCOUNT_B.accountUuid, utilization: {} };
+  writeFileSync(join(wiped, '.claude.json'), JSON.stringify(staleBlob));
+  const revoked = spawnSync(join(HOME, '.local', 'bin', 'claude'),
+    ['-p', '/usage', '--output-format', 'json'],
+    { env: { ...process.env, HOME, CLAUDE_CONFIG_DIR: wiped }, encoding: 'utf-8' });
+  const stillStale = readJson(join(wiped, '.claude.json'))?.cachedUsageUtilization;
+  ok('(d) a REVOKED sandbox keeps its stale mirror verbatim and moves no fetchedAtMs',
+    revoked.status === 0 && stillStale?.fetchedAtMs === stamp, JSON.stringify(stillStale?.fetchedAtMs));
+  const judgeRevoked = spawnSync(join(HOME, '.local', 'bin', 'claude'), ['auth', 'status', '--json'],
+    { env: { ...process.env, HOME, CLAUDE_CONFIG_DIR: wiped }, encoding: 'utf-8' });
+  ok('(d) …and the judge sees through the stale mirror too: loggedIn:false',
+    /"loggedIn":\s*false/.test(judgeRevoked.stdout || ''), (judgeRevoked.stdout || '').slice(0, 120));
+
+  // NEGATIVE CONTROL: a HEALTHY account that merely did not refresh must stay `unknown`,
+  // never needs-relogin. Restore the credential, keep the cache stale, and check the judge
+  // reports signed IN — which is the branch that produces `unknown`.
+  writeFileSync(join(wiped, '.auth-status.json'), savedAuth);
+  const judgeHealthy = spawnSync(join(HOME, '.local', 'bin', 'claude'), ['auth', 'status', '--json'],
+    { env: { ...process.env, HOME, CLAUDE_CONFIG_DIR: wiped }, encoding: 'utf-8' });
+  ok('(d) NEGATIVE CONTROL: a healthy-but-unrefreshed account reports loggedIn:true ⇒ unknown, not signed-out',
+    /"loggedIn":\s*true/.test(judgeHealthy.stdout || ''), (judgeHealthy.stdout || '').slice(0, 120));
+
+  // ── (e) probing B does not disturb the HOME watcher, and a sandboxed session is not
+  //        told about a HOME account change ───────────────────────────────────────────
+  const capsBefore = await fetch(`http://127.0.0.1:${port}/api/agent/capabilities`).then((r) => r.json());
+  spawnSync(join(HOME, '.local', 'bin', 'claude'), ['-p', '/usage', '--output-format', 'json'],
+    { env: { ...process.env, HOME, CLAUDE_CONFIG_DIR: wiped }, encoding: 'utf-8' });
+  await sleep(3500);   // longer than the watcher's own 2s tick
+  const capsAfter = await fetch(`http://127.0.0.1:${port}/api/agent/capabilities`).then((r) => r.json());
+  ok('(e) probing another account never moves the HOME watcher\'s fingerprint or epoch',
+    capsBefore?.claudeAuth?.epoch === capsAfter?.claudeAuth?.epoch
+      && capsBefore?.claudeAuth?.email === capsAfter?.claudeAuth?.email,
+    `${capsBefore?.claudeAuth?.epoch} → ${capsAfter?.claudeAuth?.epoch}`);
+
+  // A session on sandbox B, and a session on account #0. Then switch the real HOME.
+  const sidB = randomUUID();
+  const sidHome = randomUUID();
+  const urlB = `ws://127.0.0.1:${port}/api/agent/chat?vault=proj&bypass=0&sessionId=${sidB}&account=second-example-com`;
+  const wsB = new WebSocket(urlB);
+  const metasB = [];
+  wsB.on('message', (raw) => { try { const o = JSON.parse(raw.toString('utf-8')); if (o?.type === '_meta') metasB.push(o); } catch { /* noise */ } });
+  await new Promise((res, rej) => { wsB.once('open', res); wsB.once('error', rej); setTimeout(() => rej(new Error('sandboxed chat ws did not open')), 15_000); });
+  const home0 = await openChat(WebSocket, port, sidHome);
+  wsB.send(JSON.stringify({ type: 'user', text: 'hello from B' }));
+  home0.ws.send(JSON.stringify({ type: 'user', text: 'hello from home' }));
+  await sleep(2500);
+
+  setAccount(ACCOUNT_C, 60);          // the MACHINE's account changes under both sessions
+  await sleep(6000);
+
+  ok('(e) the sandboxed session is NOT told the real HOME\'s account changed — that event is not its business',
+    metasB.filter((m) => m.subtype === 'auth_changed').length === 0,
+    JSON.stringify(metasB.map((m) => m.subtype)));
+  ok('(e) …while the account-#0 session IS told, exactly as before this feature',
+    home0.authFrames().length > 0, JSON.stringify(home0.metas.map((m) => m.subtype)));
+
+  try { wsB.close(); } catch { /* best-effort */ }
+  try { home0.ws.close(); } catch { /* best-effort */ }
+
+  // ── (i) removeAccount deletes the sandbox without following its symlinks ────────────
+  const preciousDir = join(HOME, '.claude', 'projects');
+  const precious = join(preciousDir, 'precious.jsonl');
+  mkdirSync(preciousDir, { recursive: true });
+  writeFileSync(precious, 'a real transcript');
+  const rm = await api('accounts/remove', { id: 'second-example-com' });
+  ok('(i) removing an account deletes its sandbox…',
+    rm.status === 200 && !existsSync(sandboxB), `${rm.status} ${existsSync(sandboxB)}`);
+  ok('(i) …and does NOT follow the shared symlink into the real ~/.claude/projects',
+    existsSync(precious) && readFileSync(precious, 'utf-8') === 'a real transcript');
+  // The "last account" refusal needs a register that GENUINELY holds one. The sign-in check
+  // above added a third account, so removing `first` here would leave one behind and succeed
+  // correctly — asserting a refusal at this point was testing the wrong state, not the code.
+  const beforeLast = await api('accounts', null);
+  for (const row of (beforeLast.body?.accounts ?? []).slice(1)) {
+    await api('accounts/remove', { id: row.id });
+  }
+  const oneLeft = await api('accounts', null);
+  const survivor = (oneLeft.body?.accounts ?? [])[0];
+  ok('(i) …down to a single account', (oneLeft.body?.accounts ?? []).length === 1,
+    JSON.stringify((oneLeft.body?.accounts ?? []).map((r) => r.id)));
+  const rmLast = await api('accounts/remove', { id: survivor?.id ?? 'first-example-com' });
+  ok('(i) …and THEN refuses to remove it — the app must never be left with no account',
+    rmLast.status !== 200, `${rmLast.status} ${JSON.stringify(rmLast.body ?? {}).slice(0, 120)}`);
+
+  // ── (b) a conversation started on A resumes on B with its transcript intact ─────────
+  // This is what sharing `projects/` buys, and it is the single most important consequence
+  // of the isolate/share split.
+  writeAccountRegister();
+  mkdirSync(sandboxB, { recursive: true });
+  writeFileSync(join(sandboxB, '.auth-status.json'), authStatusFor(ACCOUNT_B));
+  writeFileSync(join(sandboxB, '.claude.json'),
+    JSON.stringify({ oauthAccount: { accountUuid: ACCOUNT_B.accountUuid, emailAddress: ACCOUNT_B.emailAddress } }));
+
+  const shared = randomUUID();
+  const onA = await openChat(WebSocket, port, shared);
+  onA.ws.send(JSON.stringify({ type: 'user', text: 'first turn, on account A' }));
+  await sleep(2500);
+  try { onA.ws.close(); } catch { /* best-effort */ }
+  await sleep(2000);
+
+  const transcript = join(HOME, '.claude', 'projects', 'verify', `${shared}.jsonl`);
+  ok('(b) the conversation left a transcript in the SHARED store',
+    existsSync(transcript), transcript);
+
+  const resumeUrl = `ws://127.0.0.1:${port}/api/agent/chat?vault=proj&bypass=0&resume=${shared}&account=second-example-com`;
+  const wsResume = new WebSocket(resumeUrl);
+  await new Promise((res, rej) => { wsResume.once('open', res); wsResume.once('error', rej); setTimeout(() => rej(new Error('resume ws did not open')), 15_000); });
+  wsResume.send(JSON.stringify({ type: 'user', text: 'second turn, on account B' }));
+  await sleep(2500);
+  const resumedOnB = spawnLines().some((l) => l.startsWith('engine') && l.includes('--resume') && l.includes(shared));
+  ok('(b) …and account B resumed THAT SAME conversation id — the transcript was not split',
+    resumedOnB, spawnLines().filter((l) => l.startsWith('engine')).slice(-3).join(' | '));
+  try { wsResume.close(); } catch { /* best-effort */ }
+
+  // ── THE FEATURE'S HEADLINE FLOW, driven end to end ─────────────────────────────────
+  //
+  // This is the check whose ABSENCE let two real defects through: the harness proved the
+  // sandboxes, the probe and the routes, but never once drove a threshold-triggered switch
+  // through a LIVE chat. Both bugs lived exactly there.
+  //   1. The server HOLDS the turn, so no turn ever starts in the CLI — while the client sets
+  //      `busy` optimistically the instant a user frame hits the socket. The restart gate
+  //      waited for a turn boundary that could never arrive: the switch was announced and
+  //      never performed, and the tab sat on "Working…" forever.
+  //   2. Two messages typed seconds apart both entered the evaluation (its guard is only set
+  //      AFTER a live probe), both decided to switch, and the first one's held text was
+  //      overwritten client-side and lost — never sent, never queued, never shown.
+  console.log('  ── a message sent on an EXHAUSTED account moves to a fresh one');
+  writeAccountRegister();
+  mkdirSync(sandboxB, { recursive: true });
+  writeFileSync(join(sandboxB, '.auth-status.json'), authStatusFor(ACCOUNT_B));
+  writeFileSync(join(sandboxB, '.claude.json'),
+    JSON.stringify({ oauthAccount: { accountUuid: ACCOUNT_B.accountUuid, emailAddress: ACCOUNT_B.emailAddress } }));
+  // Account #0 is nearly out; B has plenty. The probe reads each store's own percent.
+  writeFileSync(join(HOME, '.usage-percent'), '97');
+  writeFileSync(join(sandboxB, '.usage-percent'), '11');
+  // Seed account #0's cache high, so the FIRST message is already past the probe threshold —
+  // the whole point is that the switch happens BEFORE a limit error, not after one.
+  const homeBlob = readJson(join(HOME, '.claude.json')) ?? {};
+  homeBlob.cachedUsageUtilization = {
+    fetchedAtMs: Date.now(),
+    accountUuid: ACCOUNT_A.accountUuid,
+    utilization: {
+      five_hour: { utilization: 97, resets_at: new Date(Date.now() + 3600_000).toISOString() },
+      seven_day: { utilization: 50, resets_at: new Date(Date.now() + 86400_000).toISOString() },
+    },
+  };
+  writeFileSync(join(HOME, '.claude.json'), JSON.stringify(homeBlob));
+
+  const switchSid = randomUUID();
+  const switching = await openChat(WebSocket, port, switchSid);
+  const HELD = 'this message must survive the switch';
+  switching.ws.send(JSON.stringify({ type: 'user', text: HELD }));
+  const moved = await until(async () => switching.metas.some((m) => m.subtype === 'account_switch'), 30_000);
+  const frame = switching.metas.find((m) => m.subtype === 'account_switch');
+
+  ok('the switch fires BEFORE the limit lands, not after a failed message',
+    moved && frame?.switched === true, JSON.stringify(frame ?? switching.metas.map((m) => m.subtype)));
+  ok('…and it names the account it moved to, so the billed account never changes silently',
+    frame?.accountId === 'second-example-com' && String(frame?.email || '').includes('@'),
+    `${frame?.accountId} / ${frame?.email}`);
+  ok('…and carries the HELD text, so the user\'s message is not lost',
+    frame?.pendingText === HELD, JSON.stringify(frame?.pendingText));
+  ok('…and reports turnInFlight:false — the held message never became a turn, so the client\'s ' +
+     'restart gate must not wait for a boundary that can never arrive',
+    frame?.turnInFlight === false, JSON.stringify(frame?.turnInFlight));
+
+  // TWO messages in quick succession must produce ONE switch decision, not two racing ones.
+  const raceSid = randomUUID();
+  const racing = await openChat(WebSocket, port, raceSid);
+  racing.ws.send(JSON.stringify({ type: 'user', text: 'first of two' }));
+  racing.ws.send(JSON.stringify({ type: 'user', text: 'second of two' }));
+  await sleep(12_000);
+  const raceFrames = racing.metas.filter((m) => m.subtype === 'account_switch' && m.switched === true);
+  ok('two messages in quick succession produce exactly ONE switch, never two racing ones',
+    raceFrames.length === 1, `${raceFrames.length} switch frames: ${JSON.stringify(raceFrames.map((f) => f.pendingText))}`);
+  ok('…and the one that is held is the FIRST, so the user\'s own order is preserved',
+    raceFrames[0]?.pendingText === 'first of two', JSON.stringify(raceFrames[0]?.pendingText));
+
+  // A `/effort` turn OVERLAPPING a real one must not make the server report "nothing running".
+  //
+  // This pins the second review finding. `setEffort` is written straight to stdin OUTSIDE the
+  // switchGate chain and the CLI answers it with a fast synthetic turn; with a shared BOOLEAN,
+  // that quick `result` cleared the flag while the real message's turn was still going — so
+  // the next switch decision read turnInFlight:false and would have restarted over live work.
+  // A clamped COUNTER is what makes the answer honest.
+  //
+  // The session has to START on a HEALTHY account, or its very FIRST message would be held by
+  // the switch and no real turn would ever begin — the state this check needs to create. So it
+  // runs on B while B is fresh, and B is exhausted only afterwards.
+  // The real HOME must carry ACCOUNT A's identity again: an earlier check switched it to C,
+  // and the register holds A's `accountUuid` — so A's probe would come back `stale` and A
+  // would not be a CANDIDATE at all, leaving nothing to move to. That is correct product
+  // behaviour (a reading we cannot attribute is never used), but it is not the state this
+  // check is about.
+  setAccount(ACCOUNT_A, 70);
+  writeFileSync(join(HOME, '.usage-percent'), '20');
+  const healthyHome = readJson(join(HOME, '.claude.json')) ?? {};
+  healthyHome.cachedUsageUtilization = {
+    fetchedAtMs: Date.now(),
+    accountUuid: ACCOUNT_A.accountUuid,
+    utilization: {
+      five_hour: { utilization: 20, resets_at: new Date(Date.now() + 3600_000).toISOString() },
+      seven_day: { utilization: 30, resets_at: new Date(Date.now() + 86400_000).toISOString() },
+    },
+  };
+  writeFileSync(join(HOME, '.claude.json'), JSON.stringify(healthyHome));
+
+  const overlapSid = randomUUID();
+  const overlapUrl = `ws://127.0.0.1:${port}/api/agent/chat?vault=proj&bypass=0&sessionId=${overlapSid}`
+    + '&account=second-example-com';
+  const overlapWs = new WebSocket(overlapUrl);
+  const overlapMetas = [];
+  overlapWs.on('message', (raw) => {
+    try { const o = JSON.parse(raw.toString('utf-8')); if (o?.type === '_meta') overlapMetas.push(o); }
+    catch { /* noise */ }
+  });
+  await new Promise((res, rej) => {
+    overlapWs.once('open', res); overlapWs.once('error', rej);
+    setTimeout(() => rej(new Error('overlap chat ws did not open')), 15_000);
+  });
+  const overlap = { ws: overlapWs, metas: overlapMetas };
+
+  // "HOLD" makes the stand-in start a turn it never finishes, so a REAL turn stays in flight.
+  overlap.ws.send(JSON.stringify({ type: 'user', text: 'HOLD this turn open' }));
+  await sleep(3000);
+  overlap.ws.send(JSON.stringify({ type: 'setEffort', effort: 'high' }));
+  await sleep(3000);                                  // the /effort turn answers and results
+
+  // NOW exhaust B, so the next message must move — while HOLD's turn is still running.
+  writeFileSync(join(sandboxB, '.usage-percent'), '98');
+  const tiredB = readJson(join(sandboxB, '.claude.json')) ?? {};
+  tiredB.cachedUsageUtilization = {
+    fetchedAtMs: Date.now(),
+    accountUuid: ACCOUNT_B.accountUuid,
+    utilization: {
+      five_hour: { utilization: 98, resets_at: new Date(Date.now() + 3600_000).toISOString() },
+      seven_day: { utilization: 60, resets_at: new Date(Date.now() + 86400_000).toISOString() },
+    },
+  };
+  writeFileSync(join(sandboxB, '.claude.json'), JSON.stringify(tiredB));
+
+  overlap.ws.send(JSON.stringify({ type: 'user', text: 'and now switch me' }));
+  const overlapMoved = await until(
+    async () => overlap.metas.some((m) => m.subtype === 'account_switch' && m.switched === true), 30_000);
+  const overlapFrame = overlap.metas.find((m) => m.subtype === 'account_switch' && m.switched === true);
+  ok('a switch decided while a REAL turn is still running reports turnInFlight:TRUE, ' +
+     'even after an overlapping /effort turn has already produced its own result',
+    overlapMoved && overlapFrame?.turnInFlight === true,
+    `moved=${overlapMoved} turnInFlight=${JSON.stringify(overlapFrame?.turnInFlight)}`);
+  ok('…and still carries the held text, so nothing is lost while it waits',
+    overlapFrame?.pendingText === 'and now switch me', JSON.stringify(overlapFrame?.pendingText));
+  try { overlap.ws.close(); } catch { /* best-effort */ }
+
+  try { switching.ws.close(); } catch { /* best-effort */ }
+  try { racing.ws.close(); } catch { /* best-effort */ }
+  rmSync(join(HOME, '.usage-percent'), { force: true });
+
+  // ── A NEW session with no `&account=` starts on the PREFERRED account ───────────────
+  //
+  // Added because validation could not pin this criterion to any observed line — the rule
+  // lives in `resolveConfigDir` and had unit coverage, but nothing proved the SERVER actually
+  // wires a fresh session through it. Now the engine records which credential store served it,
+  // so the answer is observed rather than inferred.
+  writeAccountRegister();
+  mkdirSync(sandboxB, { recursive: true });
+  writeFileSync(join(sandboxB, '.auth-status.json'), authStatusFor(ACCOUNT_B));
+  writeFileSync(join(sandboxB, '.claude.json'),
+    JSON.stringify({ oauthAccount: { accountUuid: ACCOUNT_B.accountUuid, emailAddress: ACCOUNT_B.emailAddress } }));
+  writeFileSync(join(sandboxB, '.usage-percent'), '10');
+  setAccount(ACCOUNT_A, 80);
+  writeFileSync(join(HOME, '.usage-percent'), '10');
+  // Make B the preferred account, through the real route.
+  await api('accounts/preferred', { id: 'second-example-com' });
+  rmSync(join(sandboxB, '.served-by-engine'), { force: true });
+  rmSync(join(HOME, '.served-by-engine'), { force: true });
+
+  const prefSid = randomUUID();
+  const preferred = await openChat(WebSocket, port, prefSid);   // NOTE: no &account= at all
+  preferred.ws.send(JSON.stringify({ type: 'user', text: 'which account served me?' }));
+  await sleep(3000);
+  ok('a NEW session sent with NO account parameter runs on the PREFERRED account',
+    existsSync(join(sandboxB, '.served-by-engine')) && !existsSync(join(HOME, '.served-by-engine')),
+    `B=${existsSync(join(sandboxB, '.served-by-engine'))} HOME=${existsSync(join(HOME, '.served-by-engine'))}`);
+  try { preferred.ws.close(); } catch { /* best-effort */ }
+
+  // …and with NO preferred account it falls back to account #0, i.e. today's behaviour.
+  await api('accounts/preferred', { id: 'first-example-com' });
+  rmSync(join(sandboxB, '.served-by-engine'), { force: true });
+  rmSync(join(HOME, '.served-by-engine'), { force: true });
+  const zeroSid = randomUUID();
+  const onZero = await openChat(WebSocket, port, zeroSid);
+  onZero.ws.send(JSON.stringify({ type: 'user', text: 'and now?' }));
+  await sleep(3000);
+  ok('…and account #0 serves it once IT is the preferred one — the single-account path',
+    existsSync(join(HOME, '.served-by-engine')) && !existsSync(join(sandboxB, '.served-by-engine')),
+    `HOME=${existsSync(join(HOME, '.served-by-engine'))} B=${existsSync(join(sandboxB, '.served-by-engine'))}`);
+  try { onZero.ws.close(); } catch { /* best-effort */ }
+
+  // ── EVERY account exhausted: say WHEN work resumes, and send the message anyway ─────
+  //
+  // Also added for validation: the criterion asks for an explicit statement with a reset
+  // time, and the harness had only ever exercised the case where a fresh account existed.
+  writeFileSync(join(HOME, '.usage-percent'), '99');
+  writeFileSync(join(sandboxB, '.usage-percent'), '99');
+  for (const [dir, acct] of [[HOME, ACCOUNT_A], [sandboxB, ACCOUNT_B]]) {
+    const blob = readJson(join(dir, '.claude.json')) ?? {};
+    blob.cachedUsageUtilization = {
+      fetchedAtMs: Date.now(),
+      accountUuid: acct.accountUuid,
+      utilization: {
+        five_hour: { utilization: 99, resets_at: new Date(Date.now() + 1800_000).toISOString() },
+        seven_day: { utilization: 70, resets_at: new Date(Date.now() + 86400_000).toISOString() },
+      },
+    };
+    writeFileSync(join(dir, '.claude.json'), JSON.stringify(blob));
+  }
+
+  const spentSid = randomUUID();
+  const spent = await openChat(WebSocket, port, spentSid);
+  rmSync(join(HOME, '.served-by-engine'), { force: true });
+  spent.ws.send(JSON.stringify({ type: 'user', text: 'nowhere left to go' }));
+  const told = await until(
+    async () => spent.metas.some((m) => m.subtype === 'account_switch' && m.switched === false), 30_000);
+  const spentFrame = spent.metas.find((m) => m.subtype === 'account_switch' && m.switched === false);
+  ok('with EVERY account at its limit the system says so explicitly instead of failing silently',
+    told && spentFrame?.reason === 'all_exhausted',
+    `told=${told} reason=${JSON.stringify(spentFrame?.reason)}`);
+  ok('…and names WHEN work resumes, so it is information rather than just an error',
+    typeof spentFrame?.earliestResetAt === 'number' && spentFrame.earliestResetAt > Date.now(),
+    JSON.stringify(spentFrame?.earliestResetAt));
+  ok('…and the message STILL goes out on the current account — a turn is never swallowed to hide a limit',
+    existsSync(join(HOME, '.served-by-engine')),
+    `served=${existsSync(join(HOME, '.served-by-engine'))}`);
+  try { spent.ws.close(); } catch { /* best-effort */ }
+  rmSync(join(HOME, '.usage-percent'), { force: true });
+  rmSync(join(sandboxB, '.usage-percent'), { force: true });
+
+  // ── autoSwitch OFF reports and changes nothing ──────────────────────────────────────
+  writeAccountRegister({ autoSwitch: false });
+  const off = await api('accounts', null);
+  ok('auto-switch reads back OFF once turned off, so the composer\'s checkbox is truthful',
+    off.body?.autoSwitch === false, JSON.stringify(off.body?.autoSwitch));
+  const on = await api('accounts/auto-switch', { enabled: true });
+  ok('…and can be turned back on', on.status === 200 && on.body?.autoSwitch === true, `${on.status}`);
+}
+
+/** `lstat` kind of a path, for the reconciliation assertions. */
+function lstatKind(p) {
+  try {
+    const st = lstatSync(p);
+    return st.isSymbolicLink() ? 'symlink' : st.isDirectory() ? 'dir' : 'file';
+  } catch { return 'missing'; }
+}
+
+function readJson(p) {
+  try { return JSON.parse(readFileSync(p, 'utf-8')); } catch { return null; }
 }
 
 // ─── the wire assertions ──────────────────────────────────────────────────────────────
@@ -486,6 +1086,21 @@ try {
   console.log(`· starting the real dashboard server on ${port}…`);
   server = await startServer(port);
   await runWire(port, report);
+
+  // ── The multi-account half, on its OWN server ─────────────────────────────────────
+  // Same reason the UI half below gets a fresh one: the account watcher is a process-wide
+  // singleton holding "which account we last saw", and the wire half deliberately left it on
+  // account B. Reusing that server would make this half's first tick discover a switch of its
+  // own and contaminate its spawn counts.
+  server.kill();
+  await sleep(1500);
+  rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
+  setAccount(ACCOUNT_A, 30);
+  writeFileSync(SPAWN_LOG, '');
+  const maPort = await freePort();
+  console.log(`· restarting the server on ${maPort} for the multi-account half…`);
+  server = await startServer(maPort);
+  await runMultiAccount(maPort, report);
 
   // A FRESH server for the UI half. The account watcher is a process-wide singleton holding
   // "which account we last saw", and the wire half deliberately left it on account B — so
