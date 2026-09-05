@@ -31,6 +31,19 @@ export interface ChooseOptions {
   /** Preferred account, preferred on a tie after `currentId`. */
   preferredId?: string | null;
   /**
+   * The register's order, top first — the priority the user dragged into place in
+   * Settings → Agents.
+   *
+   * This is the LAST tie-break, and it replaces what used to be `a.id.localeCompare(b.id)`.
+   * Alphabetical order was only ever a way to be deterministic, and it quietly decided which
+   * account got the work whenever two were equally free. Now the user's own ordering decides
+   * that, which is what "set the priority" has to mean to be worth offering.
+   *
+   * Omit it and the tie-break falls back to the id, exactly as before — so a caller that has
+   * no register order (or a test that does not care) is unaffected.
+   */
+  orderedIds?: string[];
+  /**
    * Accounts the API has actually REFUSED, and the epoch ms until which each stays refused
    * (`claude-limit-rejections.ts`). An entry here OVERRULES the account's own percentages.
    *
@@ -115,6 +128,12 @@ function windows(limits: UsageLimitsResponse): {
  */
 export function chooseAccount(readings: AccountReading[], opts: ChooseOptions): ChooseResult {
   const now = opts.now ?? Date.now();
+  /** Where the user put this account. Unknown (or no order given) sorts last, so the
+   *  id-based fallback below still decides and nothing becomes a coin flip. */
+  const position = (id: string) => {
+    const i = opts.orderedIds ? opts.orderedIds.indexOf(id) : -1;
+    return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+  };
   const rejected: Array<{ id: string; why: string }> = [];
   const candidates: Array<{ id: string; session: number }> = [];
   /** Signed in, no numbers. Only ever consulted when `candidates` comes up empty. */
@@ -173,9 +192,9 @@ export function chooseAccount(readings: AccountReading[], opts: ChooseOptions): 
 
   if (candidates.length === 0 && lastResort.length > 0) {
     // Same tie-break as below, minus the percent nobody has: stay put if we can, else the
-    // preferred account, else the lowest id. Deterministic, never a coin flip.
+    // preferred account, else the user's own order. Deterministic, never a coin flip.
     const rank = (id: string) => (id === opts.currentId ? 0 : id === opts.preferredId ? 1 : 2);
-    lastResort.sort((a, b) => (rank(a) - rank(b)) || a.localeCompare(b));
+    lastResort.sort((a, b) => (rank(a) - rank(b)) || (position(a) - position(b)) || a.localeCompare(b));
     const pick = lastResort[0]!;
     for (const id of lastResort.slice(1)) {
       rejected.push({ id, why: 'its usage could not be read either' });
@@ -193,12 +212,15 @@ export function chooseAccount(readings: AccountReading[], opts: ChooseOptions): 
   for (const id of lastResort) rejected.push({ id, why: 'its usage could not be read' });
 
   // Lowest session usage wins. On a tie, the account already serving wins, then the preferred
-  // one, then the id — so a tie never moves a session for nothing, and never coin-flips.
+  // one, then whichever the user put higher in Settings — so a tie never moves a session for
+  // nothing, never coin-flips, and never overrules the order the user chose.
   candidates.sort((a, b) => {
     if (a.session !== b.session) return a.session - b.session;
     const rank = (id: string) => (id === opts.currentId ? 0 : id === opts.preferredId ? 1 : 2);
     const byRank = rank(a.id) - rank(b.id);
-    return byRank !== 0 ? byRank : a.id.localeCompare(b.id);
+    if (byRank !== 0) return byRank;
+    const byPos = position(a.id) - position(b.id);
+    return byPos !== 0 ? byPos : a.id.localeCompare(b.id);
   });
 
   const winner = candidates[0]!;

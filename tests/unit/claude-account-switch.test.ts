@@ -263,3 +263,44 @@ describe('signed in but unmeasurable — the LAST-RESORT candidate', () => {
     expect(res.rejected).toContainEqual({ id: 'b', why: 'its usage could not be read either' });
   });
 });
+
+describe('the register order is the tie-break — the priority the user dragged into place', () => {
+  it('an equal tie goes to whichever account the user put higher', () => {
+    // Same session percent, no current, no preferred: alphabetical order used to decide this
+    // silently. Now the user's own order does.
+    const res = chooseAccount([reading('a', 20, 5), reading('z', 20, 5)], { ...T, orderedIds: ['z', 'a'] });
+    expect(res.accountId).toBe('z');
+  });
+
+  it('order NEVER outranks the numbers — a busier top account still loses', () => {
+    const res = chooseAccount([reading('a', 10, 5), reading('z', 80, 5)], { ...T, orderedIds: ['z', 'a'] });
+    expect(res.accountId).toBe('a');
+  });
+
+  it('the account already serving still wins a tie, whatever the order says', () => {
+    const res = chooseAccount(
+      [reading('a', 20, 5), reading('z', 20, 5)],
+      { ...T, orderedIds: ['z', 'a'], currentId: 'a' },
+    );
+    expect(res.accountId).toBe('a');
+  });
+
+  it('falls back to the id when no order is given — the old behaviour, unchanged', () => {
+    const res = chooseAccount([reading('z', 20, 5), reading('a', 20, 5)], T);
+    expect(res.accountId).toBe('a');
+  });
+
+  it('an id missing from the order sorts last rather than first', () => {
+    const res = chooseAccount([reading('a', 20, 5), reading('z', 20, 5)], { ...T, orderedIds: ['z'] });
+    expect(res.accountId).toBe('z');
+  });
+
+  it('applies to the last-resort pick too, where there are no numbers at all', () => {
+    const res = chooseAccount(
+      [{ id: 'a', problem: 'healthy-unmeasured' }, { id: 'z', problem: 'healthy-unmeasured' }],
+      { ...T, orderedIds: ['z', 'a'] },
+    );
+    expect(res.accountId).toBe('z');
+    expect(res.unmeasured).toBe(true);
+  });
+});

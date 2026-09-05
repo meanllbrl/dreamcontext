@@ -1037,6 +1037,8 @@ export function startChatSession(
       threshold: SWITCH_THRESHOLD_PERCENT,
       currentId: activeAccountId,
       preferredId: accounts.find((a) => a.preferred)?.id ?? null,
+      // The register's own order IS the user's priority (Settings → Agents, drag to reorder).
+      orderedIds: accounts.map((a) => a.id),
       rejectedUntil: readAccountRejections(),
     });
 
