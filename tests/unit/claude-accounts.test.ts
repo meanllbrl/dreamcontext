@@ -14,11 +14,13 @@ import {
   accountEnvFor,
   accountIdFromEmail,
   assertConfinedConfigDir,
+  autoSwitchEnabled,
   claudeAccountsFilePath,
   isSafeAccountId,
   listClaudeAccounts,
   preferredClaudeAccount,
   removeClaudeAccount,
+  reorderClaudeAccounts,
   resolveConfigDir,
   sandboxDirFor,
   setPreferredClaudeAccount,
@@ -167,6 +169,45 @@ describe('preferred', () => {
     setPreferredClaudeAccount('account-zero', HOME);
     expect(preferredClaudeAccount(HOME)?.id).toBe('account-zero');
     expect(() => setPreferredClaudeAccount('ghost', HOME)).toThrow(/No such account/);
+  });
+});
+
+describe('reorderClaudeAccounts — order IS the priority', () => {
+  const third = () => account({ id: 'third-account', email: 'c@example.com', accountUuid: 'uuid-c' });
+
+  it('writes the given order and makes the TOP account preferred', () => {
+    writeClaudeAccounts([{ ...zero, preferred: true }, account(), third()], HOME);
+    const out = reorderClaudeAccounts(['third-account', 'account-zero', 'second-account'], HOME);
+    expect(out.map((a) => a.id)).toEqual(['third-account', 'account-zero', 'second-account']);
+    expect(listClaudeAccounts(HOME).map((a) => a.id)).toEqual(['third-account', 'account-zero', 'second-account']);
+    // The flag and the order can no longer disagree — that was the whole point.
+    expect(preferredClaudeAccount(HOME)?.id).toBe('third-account');
+    expect(listClaudeAccounts(HOME).filter((a) => a.preferred)).toHaveLength(1);
+  });
+
+  it('ignores an unknown id instead of inventing a row', () => {
+    writeClaudeAccounts([zero, account()], HOME);
+    const out = reorderClaudeAccounts(['ghost', 'second-account', 'account-zero'], HOME);
+    expect(out.map((a) => a.id)).toEqual(['second-account', 'account-zero']);
+  });
+
+  it('keeps an account the caller never mentioned — a stale tab cannot drop a row', () => {
+    writeClaudeAccounts([zero, account(), third()], HOME);
+    // A list built before `third-account` existed.
+    const out = reorderClaudeAccounts(['second-account', 'account-zero'], HOME);
+    expect(out.map((a) => a.id)).toEqual(['second-account', 'account-zero', 'third-account']);
+  });
+
+  it('a duplicate id is taken once', () => {
+    writeClaudeAccounts([zero, account()], HOME);
+    const out = reorderClaudeAccounts(['second-account', 'second-account', 'account-zero'], HOME);
+    expect(out.map((a) => a.id)).toEqual(['second-account', 'account-zero']);
+  });
+
+  it('preserves the auto-switch setting', () => {
+    writeClaudeAccounts([zero, account()], HOME, false);
+    reorderClaudeAccounts(['second-account', 'account-zero'], HOME);
+    expect(autoSwitchEnabled(HOME)).toBe(false);
   });
 });
 

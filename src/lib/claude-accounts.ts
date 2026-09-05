@@ -254,6 +254,39 @@ export function setPreferredClaudeAccount(id: string, home?: string): void {
  * the link, never its target — which is what keeps this away from the real
  * `~/.claude/projects`. It is the one destructive operation in the design, so it has a test.
  */
+/**
+ * Persist a user-chosen ORDER, and make the account at the top the preferred one.
+ *
+ * The register is an array and `listClaudeAccounts` preserves it, so order was already the
+ * list's identity — it just had no way to be expressed. Dragging is that way. Position 0
+ * carries real meaning: it is the account new sessions start on, and the tie-break
+ * `chooseAccount` applies when two accounts are equally free (`preferredId`). Below the top,
+ * order is how the list reads.
+ *
+ * `ids` need not be exhaustive or clean: unknown ids are ignored and any account the caller
+ * forgot keeps its relative position at the end, so a stale tab cannot silently drop an
+ * account by reordering with a list it built before the account existed.
+ */
+export function reorderClaudeAccounts(ids: string[], home: string = homedir()): ClaudeAccount[] {
+  const current = listClaudeAccounts(home);
+  const byId = new Map(current.map((a) => [a.id, a]));
+  const ordered: ClaudeAccount[] = [];
+  const taken = new Set<string>();
+  for (const id of ids) {
+    const acc = byId.get(id);
+    if (!acc || taken.has(id)) continue;
+    taken.add(id);
+    ordered.push(acc);
+  }
+  for (const acc of current) {
+    if (!taken.has(acc.id)) ordered.push(acc);
+  }
+  // Exactly one preferred, and it is the top row — the two can never disagree again.
+  const next = ordered.map((acc, i) => ({ ...acc, preferred: i === 0 }));
+  writeClaudeAccounts(next, home); // autoSwitch is preserved by the writer
+  return next;
+}
+
 export function removeClaudeAccount(id: string, home: string = homedir()): void {
   const accounts = listClaudeAccounts(home);
   const victim = accounts.find((a) => a.id === id);

@@ -148,7 +148,8 @@ import {
 import { handleAgentUsageLimits } from './routes/agent-usage.js';
 import {
   handleAgentAccountsAdopt, handleAgentAccountsAutoSwitch, handleAgentAccountsList,
-  handleAgentAccountsLogin, handleAgentAccountsPreferred, handleAgentAccountsRemove,
+  handleAgentAccountsLogin, handleAgentAccountsPreferred, handleAgentAccountsRefresh,
+  handleAgentAccountsReorder, handleAgentAccountsRemove,
 } from './routes/agent-accounts.js';
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
 import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
@@ -394,6 +395,8 @@ export function buildRouter(): Router {
   router.post('/api/agent/accounts/adopt', handleAgentAccountsAdopt);
   router.post('/api/agent/accounts/login', handleAgentAccountsLogin);
   router.post('/api/agent/accounts/preferred', handleAgentAccountsPreferred);
+  router.post('/api/agent/accounts/reorder', handleAgentAccountsReorder);
+  router.post('/api/agent/accounts/refresh', handleAgentAccountsRefresh);
   router.post('/api/agent/accounts/remove', handleAgentAccountsRemove);
   router.post('/api/agent/accounts/auto-switch', handleAgentAccountsAutoSwitch);
   router.get('/api/agent/session-model', handleAgentSessionModel);

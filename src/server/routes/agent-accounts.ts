@@ -12,6 +12,7 @@ import {
   isSafeAccountId,
   listClaudeAccounts,
   removeClaudeAccount,
+  reorderClaudeAccounts,
   resolveConfigDir,
   sandboxDirFor,
   setAutoSwitchEnabled,
@@ -21,6 +22,7 @@ import {
 import { ensureSandbox, sandboxHasIdentity } from '../../lib/claude-account-sandbox.js';
 import { claudeAuthStatus } from '../../lib/claude-auth.js';
 import { readUsageLimits, type UsageLimitWire } from '../../lib/claude-usage.js';
+import { probeAccountUsage } from '../../lib/claude-usage-probe.js';
 
 /**
  * The multi-account surface: list the accounts, add one through the CLI's OWN OAuth flow,
@@ -238,6 +240,67 @@ export async function handleAgentAccountsPreferred(req: IncomingMessage, res: Se
     return;
   }
   sendJson(res, 200, { id });
+}
+
+/**
+ * POST /api/agent/accounts/reorder — `{ ids }`. The list order the user dragged into place.
+ *
+ * Position 0 becomes the preferred account, so the order and the "new sessions start here"
+ * flag can never drift apart — which they could while a separate "Make preferred" button
+ * sat next to a list that had its own, unrelated order.
+ */
+export async function handleAgentAccountsReorder(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!guard(req, res)) return;
+  const body = await parseJsonBody(req);
+  const raw = Array.isArray(body?.ids) ? body.ids : null;
+  if (!raw || !raw.every((id: unknown) => typeof id === 'string')) {
+    sendError(res, 400, 'invalid_ids', 'ids must be an array of account ids.');
+    return;
+  }
+  try {
+    const accounts = reorderClaudeAccounts(raw as string[]);
+    sendJson(res, 200, { ids: accounts.map((a) => a.id) });
+  } catch (err) {
+    sendError(res, err instanceof ClaudeAccountError ? 422 : 500, 'account_error', (err as Error).message);
+  }
+}
+
+/**
+ * POST /api/agent/accounts/refresh — `{ id? }`. Re-probe usage and answer with the new list.
+ *
+ * The list route deliberately never probes (N spawns on every paint), which left the numbers
+ * as fresh as whenever the CLI last happened to write them and no way to ask for better. This
+ * is that way: one account by id, or every signed-in account when `id` is omitted.
+ *
+ * Probes run SEQUENTIALLY. Concurrent `claude -p` children on N accounts is the spawn storm
+ * the list route exists to avoid; a refresh is user-initiated and rare, so it can take its
+ * time. A probe that fails is not an error for the request — the account keeps whatever
+ * reading it had and the response says which ids came back fresh.
+ */
+export async function handleAgentAccountsRefresh(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!guard(req, res)) return;
+  const body = await parseJsonBody(req);
+  const only = typeof body?.id === 'string' ? body.id : null;
+  const home = homedir();
+  const accounts = listClaudeAccounts(home).filter((a) => !only || a.id === only);
+  if (only && accounts.length === 0) {
+    sendError(res, 422, 'account_error', `No such account: ${only}`);
+    return;
+  }
+
+  const refreshed: string[] = [];
+  const failed: { id: string; why: string }[] = [];
+  for (const acc of accounts) {
+    const dir = acc.configDir ?? home;
+    if (!sandboxHasIdentity(dir, home)) {
+      failed.push({ id: acc.id, why: 'needs-relogin' });
+      continue;
+    }
+    const outcome = await probeAccountUsage(dir, { home });
+    if (outcome.status === 'ok') refreshed.push(acc.id);
+    else failed.push({ id: acc.id, why: outcome.status });
+  }
+  sendJson(res, 200, { refreshed, failed });
 }
 
 /** POST /api/agent/accounts/remove — `{ id }`. Drops the row and deletes the sandbox. */

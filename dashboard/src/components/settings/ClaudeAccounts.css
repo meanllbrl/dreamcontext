@@ -10,19 +10,137 @@
 .dc-acct-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
+/* A row: grip, the account, its controls. Draggable, so it needs a grab affordance
+   and a state while it is being carried. */
 .dc-acct {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
+  transition: border-color 120ms ease, opacity 120ms ease, background 120ms ease;
 }
 .dc-acct.is-stale { border-color: var(--color-warning); }
+/* The top row is the one new sessions start on — say it in the frame, not only in a chip. */
+.dc-acct.is-top { border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); }
+.dc-acct.is-dragging { opacity: 0.45; }
+.dc-acct:hover { background: var(--color-surface-raised, var(--color-surface)); }
+
+.dc-acct-grip {
+  padding-top: 2px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  cursor: grab;
+  user-select: none;
+}
+.dc-acct:active .dc-acct-grip { cursor: grabbing; }
+
+.dc-acct-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.dc-acct-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  flex: 0 0 auto;
+}
+
+/* The plan is the "is this really a Claude account" answer — it reads as a product
+   name, not as the lowercase database value it used to be. */
+.dc-acct-plan {
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.dc-acct-tag--top {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  color: var(--color-accent);
+}
+
+.dc-acct-side {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dc-acct-move {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dc-acct-move-btn {
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dc-acct-move-btn:hover:not(:disabled) {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+.dc-acct-move-btn:disabled { opacity: 0.35; cursor: default; }
+
+/* Toolbar above the list: what dragging means, and the manual refresh. */
+.dc-acct-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.dc-acct-toolbar-note {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.dc-acct-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.dc-acct-refresh-note {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+/* The account policy row is a SETTING, not account state — a rule above it separates
+   the two so the switch does not read as another property of the last account. */
+.dc-acct-policy {
+  margin-top: var(--space-3);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--color-border);
+}
 
 .dc-acct-head {
   display: flex;
@@ -88,6 +206,23 @@
 }
 /* A locked window is not "full" — it is refusing. The tone says so rather than the width. */
 .dc-acct-bar-fill.is-locked { background: var(--color-warning); }
+/* Approaching the wall reads before the number does. */
+.dc-acct-bar-fill.is-warm { background: var(--color-warning); }
+.dc-acct-bar-fill.is-hot { background: var(--color-error, var(--color-danger)); }
+
+/* NO READING is drawn as an empty hatched track, never as a 0% bar: a flat accent line at
+   zero width and "nothing used" look identical, and that ambiguity is exactly what made two
+   accounts impossible to compare. */
+.dc-acct-bar-track.is-unknown {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-border) 0 3px,
+    transparent 3px 7px
+  );
+  box-shadow: inset 0 0 0 1px var(--color-border);
+  opacity: 0.85;
+}
+.dc-acct-bar-value.is-unknown { color: var(--color-text-tertiary); font-style: italic; }
 
 .dc-acct-actions {
   display: flex;
