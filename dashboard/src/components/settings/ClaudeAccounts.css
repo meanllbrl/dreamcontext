@@ -242,3 +242,37 @@
   flex-wrap: wrap;
   gap: var(--space-2);
 }
+
+/* When a reading was taken. A number with no age was the whole defect: an old 0% and a
+   true 0% drew the same pixels. */
+.dc-acct-age {
+  margin: 2px 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.dc-acct-age.is-stale {
+  color: var(--color-warning);
+}
+
+/* While a probe runs, the numbers on screen are the OLD ones — say so by dimming them
+   rather than letting them look current. */
+.dc-acct-bars.is-refreshing {
+  opacity: 0.45;
+  transition: opacity 120ms ease;
+}
+
+/* A measured window at ~0% keeps a visible stub so it cannot be mistaken for the empty
+   track of an account that was never read. */
+.dc-acct-bar-fill.is-zero {
+  opacity: 0.55;
+}
+
+/* Why a refresh could not move THIS account. Named per row, because a count says
+   nothing about which account is not updating or what to do about it. */
+.dc-acct-probe-note {
+  margin: 2px 0 0;
+  max-width: 62ch;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}

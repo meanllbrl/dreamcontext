@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../../context/VaultContext';
 import { useClaudeAccounts, type ClaudeAccountWire } from '../../hooks/useAgentCapabilities';
@@ -26,6 +26,25 @@ import './ClaudeAccounts.css';
  * A missing reading is an EMPTY, hatched track labelled "not measured" — never a 0% bar,
  * which would read as "nothing used", and never prose, which costs the comparison.
  *
+ * ── A reading always carries its age, and goes stale on its own ───────────────────────
+ * Owner, 2026-09-05: "why is usage not shown on the normal account?" — it WAS shown, it was
+ * just old. The list route deliberately never probes (N spawns on every paint), so the
+ * numbers are only as new as whenever the CLI last happened to write them, and the panel
+ * printed them with nothing saying so: a two-hour-old 0% looked exactly like a true 0%.
+ *
+ * Three things follow. Every account states when it was read. A reading past STALE_AFTER_MS
+ * says so in warning tone rather than passing itself off as current. And opening this panel
+ * with a stale reading probes ONCE — the one moment the user is actually looking at these
+ * numbers is the one moment worth spending the spawns on, and it cannot storm because it is
+ * gated on staleness and fires once per mount.
+ *
+ * MEASURED on the owner's own machine while fixing this: a probe of the Max account came
+ * back `healthy-unmeasured` — signed in, but `claude -p "/usage"` publishes no percentages
+ * for it (see claude-usage-probe.ts). Its cache still holds real numbers, written by the CLI
+ * during ordinary use; the refresh button simply cannot move them. So a refresh that could
+ * not measure an account SAYS SO on that account's row. A generic "1 could not be read"
+ * would have left the same question the owner arrived with: why is this one not updating?
+ *
  * ── Order is the priority, all the way down ───────────────────────────────────────────
  * The top account is the one new sessions start on (position 0 IS `preferred`, server-side in
  * `reorderClaudeAccounts`, so the order and the flag can never disagree the way they did when
@@ -38,6 +57,22 @@ import './ClaudeAccounts.css';
  *
  * NO PAGE TITLE — owner preference. The section it sits in already says where you are.
  */
+
+/** Past this, a reading is labelled stale and the panel offers to re-read it on open. */
+const STALE_AFTER_MS = 10 * 60 * 1000;
+
+/** How old a reading is, in the shortest form that is still exact enough to act on. */
+function ageLabel(fetchedAtMs: number | null): { text: string; stale: boolean } {
+  if (!fetchedAtMs) return { text: 'never read', stale: true };
+  const ms = Date.now() - fetchedAtMs;
+  const stale = ms > STALE_AFTER_MS;
+  if (ms < 60_000) return { text: 'read just now', stale: false };
+  const mins = Math.round(ms / 60_000);
+  if (mins < 60) return { text: `read ${mins} min ago`, stale };
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return { text: `read ${hours}h ago`, stale };
+  return { text: `read ${Math.round(hours / 24)}d ago`, stale };
+}
 
 /** Personal accounts carry a UUID as their "organization name". Showing it is noise. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -85,7 +120,16 @@ function Bar({ label, percent, resetsAt, locked }: {
         </span>
       </div>
       <div className={`dc-acct-bar-track${unknown ? ' is-unknown' : ''}`}>
-        {!unknown && <span className={`dc-acct-bar-fill ${tone}`} style={{ width: `${pct}%` }} />}
+        {/* A MEASURED window always draws something. At 0% a zero-width fill is
+            indistinguishable from the empty track of an unread account, which is the
+            confusion this panel was rebuilt to remove — so a real reading keeps a
+            minimum stub. `is-zero` marks it as a floor, not a measurement. */}
+        {!unknown && (
+          <span
+            className={`dc-acct-bar-fill ${tone}${pct < 1.5 ? ' is-zero' : ''}`}
+            style={{ width: `${Math.max(pct, 1.5)}%` }}
+          />
+        )}
       </div>
     </div>
   );
@@ -101,6 +145,8 @@ export function ClaudeAccounts() {
   const [adding, setAdding] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNote, setRefreshNote] = useState('');
+  /** Why the last refresh could not move an account, keyed by id. */
+  const [probeNotes, setProbeNotes] = useState<Record<string, string>>({});
   /** The order the user is arranging, held locally so rows move under the cursor. */
   const [order, setOrder] = useState<string[] | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -164,10 +210,12 @@ export function ClaudeAccounts() {
         '/agent/accounts/refresh', {},
       );
       refresh();
+      // Per ACCOUNT, not a count: "1 could not be read" leaves you asking which one and why.
+      setProbeNotes(Object.fromEntries(res.failed.map((f) => [f.id, f.why])));
       setRefreshNote(
-        res.failed.length === 0
+        res.refreshed.length > 0
           ? `Updated ${res.refreshed.length} account${res.refreshed.length === 1 ? '' : 's'}.`
-          : `Updated ${res.refreshed.length}; ${res.failed.length} could not be read.`,
+          : 'Nothing could be re-read.',
       );
     } catch (e) {
       setError((e as Error)?.message || 'Could not refresh usage.');
@@ -175,6 +223,40 @@ export function ClaudeAccounts() {
       setRefreshing(false);
     }
   }, [api, refresh]);
+
+  /**
+   * Probe ONCE on open when what we have is stale. The list route stays probe-free — this is
+   * not that route, it is the moment a person opened the panel to read these numbers. Gated
+   * twice so it cannot become a storm: only when the freshest reading is already past
+   * STALE_AFTER_MS, and only once per mount.
+   */
+  const autoProbed = useRef(false);
+  useEffect(() => {
+    if (autoProbed.current || refreshing) return;
+    if (serverAccounts.length === 0) return;
+    // The OLDEST reading decides, not the newest. Gating on the newest let one fresh
+    // account mask every stale one beside it — which is the exact shape of the bug this
+    // was written to fix: the busy account gets re-read constantly by its own traffic
+    // while the quiet one drifts for hours, and the quiet one is the one you came to check.
+    // A missing reading counts as infinitely old.
+    const oldest = Math.min(...serverAccounts.map((a) => a.fetchedAtMs ?? 0));
+    if (Date.now() - oldest <= STALE_AFTER_MS) return;
+    autoProbed.current = true;
+    void refreshUsage();
+  }, [serverAccounts, refreshing, refreshUsage]);
+
+  /** What a probe outcome means for the person reading the row. */
+  const probeExplanation = (why: string): string => {
+    if (why === 'healthy-unmeasured') {
+      // Deliberately not "Claude never publishes this": a back-to-back refresh can also
+      // land here when the cache did not change between the two probes. The claim stays to
+      // what was actually observed — this refresh got no percentage.
+      return 'This refresh got no percentage back for this account. Its number updates as the account is used.';
+    }
+    if (why === 'needs-relogin') return 'Signed out — sign in again to read its usage.';
+    if (why === 'stale') return 'The reading that came back belonged to a different account, so it was discarded.';
+    return 'Its usage could not be read this time.';
+  };
 
   const commitOrder = useCallback(async (ids: string[]) => {
     setOrder(ids);
@@ -264,7 +346,7 @@ export function ClaudeAccounts() {
                     {stale && <p className="dc-acct-warn">Signed out — sign in again to use this account.</p>}
 
                     {/* BOTH windows, always. See the header note. */}
-                    <div className="dc-acct-bars">
+                    <div className={`dc-acct-bars${refreshing ? ' is-refreshing' : ''}`}>
                       <Bar
                         label="5-hour session"
                         percent={stale || !session ? null : session.percent}
@@ -278,6 +360,24 @@ export function ClaudeAccounts() {
                         locked={weekly?.lockedReason}
                       />
                     </div>
+
+                    {/* WHEN these numbers were read. Without it a two-hour-old 0% and a true
+                        0% are the same pixel, which is what sent the owner looking for a bug
+                        in a panel that was merely showing an old truth. */}
+                    {!stale && (() => {
+                      const age = ageLabel(a.fetchedAtMs);
+                      const why = probeNotes[a.id];
+                      return (
+                        <>
+                          <p className={`dc-acct-age${age.stale ? ' is-stale' : ''}`}>
+                            {refreshing ? 'Reading usage…' : age.text}
+                          </p>
+                          {!refreshing && why && (
+                            <p className="dc-acct-probe-note">{probeExplanation(why)}</p>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
 
                   <div className="dc-acct-side">
