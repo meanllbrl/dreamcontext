@@ -123,9 +123,14 @@ export function SleepSettings(): JSX.Element {
             <label key={level} className="sleep-threshold-field">
               <span className="sleep-threshold-label">
                 {t(`settings.sleep.level.${level}`)}
-                {overrides[level] !== undefined && (
-                  <span className="sleep-threshold-mark">{t('settings.sleep.overridden')}</span>
-                )}
+                {/* Name the default. The field always carries the value in force,
+                    so the input's placeholder never renders — a default nobody
+                    can see is one nobody can decide against. */}
+                <span className="sleep-threshold-mark">
+                  {overrides[level] !== undefined
+                    ? t('settings.sleep.overridden')
+                    : t('settings.sleep.is_default').replace('{n}', String(DEFAULT_SLEEP_THRESHOLDS[level]))}
+                </span>
               </span>
               <input
                 className={`settings-text-input sleep-threshold-input${invalid === level ? ' sleep-threshold-input--bad' : ''}`}

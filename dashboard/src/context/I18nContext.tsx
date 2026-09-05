@@ -323,6 +323,7 @@ const translations: Record<string, Record<string, string>> = {
     'settings.sleep.level.sleepy': 'Sleepy — recommend',
     'settings.sleep.level.mustSleep': 'Must Sleep — require',
     'settings.sleep.overridden': '(set here)',
+    'settings.sleep.is_default': '(default {n})',
     'settings.sleep.derived': 'Derived from Must Sleep: deep-consolidation authority at {deep}, cooldown override at {cooldown}.',
     'settings.sleep.err_range': 'Each level must be a whole number between 1 and 1000.',
     'settings.sleep.err_order': 'The levels must increase: Drowsy < Sleepy < Must Sleep. A ladder that does not is ignored entirely, so this cannot be saved.',
