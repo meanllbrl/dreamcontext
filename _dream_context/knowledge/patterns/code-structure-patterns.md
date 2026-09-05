@@ -1,8 +1,10 @@
 ---
 name: code-structure-patterns
 type: pattern
-tags: [topic:architecture, domain:engineering]
-updated: "2026-08-01"
+tags:
+  - architecture
+  - 'domain:engineering'
+updated: '2026-08-01'
 description: Code organization patterns for lib modules and CLI commands
 ---
 

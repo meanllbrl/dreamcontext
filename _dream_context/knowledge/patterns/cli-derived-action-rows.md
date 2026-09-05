@@ -1,16 +1,25 @@
 ---
 id: cli-derived-action-rows
-name: "CLI-Derived Action Rows (the UI reads the command tree, not a hand-written list)"
+name: >-
+  CLI-Derived Action Rows (the UI reads the command tree, not a hand-written
+  list)
 description: >-
   A surface that renders a `dreamcontext …` call must derive what it knows from
-  `createProgram()` — a generated manifest plus a drift test — never from a list of commands
-  written by hand. The row then says entity + verb + subject, tones itself by whether the call
-  changed the brain, and reads its outcome off the `✓`/`✗` every command already prints. Adding
-  a CLI endpoint requires NO UI change.
-tags: ["architecture", "design", "topic:frontend", "topic:cli", "domain:dashboard", "kind:pattern"]
+  `createProgram()` — a generated manifest plus a drift test — never from a list
+  of commands written by hand. The row then says entity + verb + subject, tones
+  itself by whether the call changed the brain, and reads its outcome off the
+  `✓`/`✗` every command already prints. Adding a CLI endpoint requires NO UI
+  change.
+tags:
+  - architecture
+  - design
+  - frontend
+  - 'topic:cli'
+  - 'topic:dashboard'
+  - 'kind:pattern'
 pinned: false
-date: "2026-08-01"
-updated: "2026-08-01"
+date: '2026-08-01'
+updated: '2026-08-01'
 ---
 
 ## Why This Exists

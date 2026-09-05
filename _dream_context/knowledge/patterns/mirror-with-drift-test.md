@@ -2,16 +2,16 @@
 name: mirror-with-drift-test
 description: >-
   When one codebase layer cannot import from another (separate tsconfig/bundle),
-  a source-of-truth list/constant must be MIRRORED into the importing layer — and
-  mirrors rot silently. Guard it: a textual drift test parses BOTH files and fails
-  the moment they disagree. Used in chartRegistry RENDERS mirroring types.ts RENDERS,
-  and lab-html-kit.css mirrored as a TS string.
+  a source-of-truth list/constant must be MIRRORED into the importing layer —
+  and mirrors rot silently. Guard it: a textual drift test parses BOTH files and
+  fails the moment they disagree. Used in chartRegistry RENDERS mirroring
+  types.ts RENDERS, and lab-html-kit.css mirrored as a TS string.
 type: knowledge
 tags:
-  - kind:pattern
+  - 'kind:pattern'
   - architecture
-  - topic:testing
-  - topic:build
+  - testing
+  - 'topic:build'
 date: '2026-08-25'
 ---
 

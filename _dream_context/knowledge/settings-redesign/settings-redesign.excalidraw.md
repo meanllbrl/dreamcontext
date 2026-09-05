@@ -1,14 +1,16 @@
 ---
-
 name: settings-redesign
 description: >-
-  Dashboard Settings sayfasinin yeniden tasarim planlama tahtasi: mevcut durumun teshisi (ayni
-  metnin yedi katmanda tekrari, 9 bolumun kesisen bilgi mimarisi, ikiye bolunmus kaydetme modeli)
-  ve uc cozum secenegi (kopya temizligi, bilgi mimarisi yeniden gruplama, aranabilir tek akis)
-  etki/efor karsilastirmasiyla.
-tags: [design, dashboard, settings, excalidraw]
+  Dashboard Settings sayfasinin yeniden tasarim planlama tahtasi: mevcut durumun
+  teshisi (ayni metnin yedi katmanda tekrari, 9 bolumun kesisen bilgi mimarisi,
+  ikiye bolunmus kaydetme modeli) ve uc cozum secenegi (kopya temizligi, bilgi
+  mimarisi yeniden gruplama, aranabilir tek akis) etki/efor karsilastirmasiyla.
+tags:
+  - design
+  - 'topic:dashboard'
+  - settings
+  - 'topic:excalidraw'
 excalidraw-plugin: parsed
-
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 

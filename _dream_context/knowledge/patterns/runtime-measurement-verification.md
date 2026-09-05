@@ -1,16 +1,23 @@
 ---
 id: runtime-measurement-verification
-name: "Runtime Measurement Verification (measure painted pixels, not CSS intentions)"
+name: 'Runtime Measurement Verification (measure painted pixels, not CSS intentions)'
 description: >-
-  Verify the RENDERED artifact in real Chromium by measuring what the user actually sees —
-  painted line boxes via Range.getClientRects, element geometry via getBoundingClientRect,
-  not CSS values read by hand. Compare variants on REAL data (a captured transcript, not a
-  mockup), in both themes, and pin the measurements as executable assertions. A rule that
-  measured 35px while its CSS said 26px proves the test.
-tags: ["architecture", "testing", "topic:frontend", "domain:dashboard", "kind:pattern"]
+  Verify the RENDERED artifact in real Chromium by measuring what the user
+  actually sees — painted line boxes via Range.getClientRects, element geometry
+  via getBoundingClientRect, not CSS values read by hand. Compare variants on
+  REAL data (a captured transcript, not a mockup), in both themes, and pin the
+  measurements as executable assertions. A rule that measured 35px while its CSS
+  said 26px proves the test. And validate the INSTRUMENT before trusting its
+  verdict: a harness's own limits arrive disguised as the subject's faults.
+tags:
+  - architecture
+  - testing
+  - frontend
+  - 'topic:dashboard'
+  - 'kind:pattern'
 pinned: false
-date: "2026-08-02"
-updated: "2026-08-02"
+date: '2026-08-02'
+updated: '2026-09-05'
 ---
 
 ## Why This Exists
@@ -111,6 +118,41 @@ paranoia.
 const collapsedRowHeight = await page.evaluate(…);
 assert(collapsedRowHeight === 32, `collapsed row ${collapsedRowHeight}px, expected 32px`);
 ```
+
+### 7. Validate the INSTRUMENT before you trust its verdict
+
+The first six steps assume the harness is sound. It usually is not on the first run — and a broken
+harness does not fail loudly, it produces a **confident verdict about the subject**.
+
+The 09-05 OpenUI Wave 6 experiment (does the model actually write the `dream-ui` grammar?) is the
+worked example. The first scorecard read **"33% blank render, 3 fabricated components"** and was
+one step from being reported as a model finding. All three were harness bugs:
+
+| First verdict | Actual cause | Class of error |
+|---|---|---|
+| "33% blank render" | Rendering in bare node — `document is not defined` | Wrong environment |
+| "still blank after jsdom" | recharts measures text with canvas; cartesian charts **cannot be measured headless at all** | A measurement BOUNDARY, not a score |
+| "3 invented components" | The detector regex scanned inside quoted strings and matched prose: `"Kuyruk (client)"`, `"JSONB (kısmi esneklik)"`, `"KB (gzip)"` | Imprecise instrument |
+
+Real result: **0 fabrications, 0 parse errors.** The corrected scorecard says the opposite of the
+first one.
+
+The rules that fall out:
+
+1. **A surprisingly BAD verdict about the subject is a harness alarm first.** The error direction
+   is never neutral — an instrument's own limits always land as the subject's faults, because the
+   subject is what the report is about.
+2. **Run a known-good case through the harness before running the experiment.** One hand-written
+   answer that MUST score perfectly. If it doesn't, you are measuring the harness.
+3. **Distinguish "scored badly" from "could not be measured".** The canvas limit is not a 0 — it is
+   an N/A, and a scorecard that silently folds N/A into the denominator lies. State the measurable
+   subset explicitly (Wave 6 reported 4/4 *of the measurable ones*).
+4. **A detector that scans source text must respect the source's own quoting.** Regex over code or
+   a grammar will match prose inside strings; parse, or at minimum strip string literals first.
+5. **Split generation from scoring into two runs.** Wave 6 had to: vite-node's dev server dies
+   during long `claude` calls. The side benefit is what matters — the expensive phase runs once and
+   the scoring is re-runnable, so fixing the instrument does not cost another 16 model calls. If
+   scoring is not cheaply repeatable, you will be tempted to trust the first verdict.
 
 ## When to Apply
 

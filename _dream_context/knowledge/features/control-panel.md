@@ -2,13 +2,17 @@
 id: feat_ControlPanel_v06
 status: in_review
 created: '2026-05-31'
-updated: '2026-07-08'
+updated: '2026-09-05'
 released_version: v0.8.7
 tags:
   - control-panel
   - backend
   - frontend
-related_tasks: []
+  - 'topic:dashboard'
+  - 'kind:design'
+related_tasks:
+  - settings-dort-gruba-toplanir-tekrarlayan-metin-teklenir-ve-save-dugmesi-kalkar
+  - dashboard-settings-page-section-nav-menu
 type: feature
 name: control-panel
 description: ''
@@ -32,6 +36,10 @@ The dashboard was a read-only task/knowledge/brain viewer with no way to configu
 - [x] As a CLI user, I can run `dreamcontext vaults add/list/remove` and `dreamcontext dashboard --vault <name|path>`.
 - [x] As a user, I can toggle Claude's native auto-memory on/off from the Settings page (Memory section) and from the CLI (`config native-memory enable|disable`) so dreamcontext is the single memory system by default.
 - [x] As a user, dreamcontext disables Claude native auto-memory automatically on install/setup for Claude Code targets so I don't need to configure it manually.
+- [x] As a dashboard user, Settings reads as four groups (Project / Memory / Integrations / This machine) instead of nine flat sections, so I can find a setting without scanning the whole page.
+- [x] As a dashboard user, every change I make is saved instantly and confirmed NEXT TO the control I touched — there is no global Save button to hunt for and no second, different saving model.
+- [x] As a dashboard user, each setting is one row (name + one line on the left, control on the right) with the long explanation folded under "Details", so a section tells me what it does without a wall of paragraphs.
+- [x] As a dashboard user, a control that cannot be used says WHY it is disabled instead of failing when I use it.
 
 ## Acceptance Criteria
 
@@ -72,8 +80,27 @@ The dashboard was a read-only task/knowledge/brain viewer with no way to configu
 - [x] CLI `dreamcontext config show` and `dreamcontext config native-memory enable|disable`; interactive menu System category.
 - [x] `tests/unit/claude-settings.test.ts` (10 new tests); config-route disableNativeMemory cases; full unit suite green (1085+).
 
+### Slice 6 — Settings information architecture redesign (settings-dort-gruba-toplanir-…, 2026-09-05)
+
+- [x] A1. Left nav is four groups instead of nine flat rows: **PROJECT** (Platforms, Task Format, Agents, Sleepy, Linked repos) · **MEMORY** (Native memory, Learning, Recall) · **INTEGRATIONS** (GitHub, Team sync, ClickUp, Connections) · **THIS MACHINE** (Dependencies). Group headings are dividers, not clickable.
+- [x] A2/A14. Scope, not just formatting: the old single GitHub section held three unrelated concepts. Split into **GitHub** (account + Issues mirroring, 1414 → 804 chars), **Team sync** (its own setting under INTEGRATIONS: cloud-sync switch + repo + auto-checkpoint) and **Linked repos** (its own setting under PROJECT — it has nothing to do with where the brain syncs).
+- [x] A3. Nav rows carry no description; each section opens with ONE sentence. `settings.navdesc.*`, the long `settings.desc.*` and `brain.cloudSync.desc` deleted. "Cloud sync" appears once instead of seven times (verified).
+- [x] A4. The System section stopped being a feature list: rows are per DEPENDENCY (git / Claude Code CLI / node-pty), each saying "Needed by: …". A missing dependency appears as a `FeatureDepsNotice` at the top of the section that needs it, with "Open This machine".
+- [x] A5. The global Save button, the dirty state and `.settings-save-row` are gone. Platforms and native memory read straight from the server copy and PATCH on change; cloud-task text fields write on blur, selects and switches write immediately. The result is reported beside the control with `SaveMark`.
+- [x] A6. Failure is never silent: `useInstantSave` shows the error next to the control and does not auto-clear it; config-backed switches hold no local mirror, so after a failed write they show what is actually on disk.
+- [x] A9. One row grammar page-wide (`SettingRow` / `SettingGroup` / `Toggle` / `SettingChoice`): name + one line (62ch measure) left, control right, hairline between rows, grouped headers. The three previous layouts are gone — not one `.settings-checkbox-label` remains.
+- [x] A10. Long copy was FOLDED, not deleted: a "Details" disclosure per row. The Agents section went 3,252 → 1,460 chars with the remainder in 8 folded blocks that open in place.
+- [x] A11. A disabled control states its reason — on the Terminal screen "Answer rendering" is disabled and the row reads "Only the Chat screen can carry this" in a warning tone.
+- [x] A12. No box-in-a-box: `OriginSetup` and `LinkedRepos` drop their own frame inside a row (CSS only — their logic was not touched); A17 added a `compact` prop so they stop repeating the section's own title and paragraph.
+- [x] A15. A CORRECTNESS fix, not cosmetics: the cloud-sync switch is disabled with no repository and says "Pick a repository below first". It used to be flippable and the server rejected it with `400 no_origin` — a switch that could only fail.
+- [x] A7/A16. The sidebar's cloud-sync CTA (`focus.id='brain'`, wire name unchanged) now opens the **Team sync** section it is named after, not the middle of GitHub.
+- [x] A8/A13/A18. Verified in the REAL app three times as the redesign widened: isolated scratch vault + real dashboard server + Playwright — 15/15, then 5/5, then 7/7. A5 was proved against `GET /api/config` (on disk), not just the DOM. Full unit suite green (442 files / 8,090 tests).
+
 ## Constraints & Decisions
 
+- **[2026-09-05]** CHOSEN: B + A (collapse into four groups + copy cleanup). The Save button is REMOVED entirely rather than moved down into each section — two saving models sitting side by side WAS the complaint. DEFERRED, not rejected: C (drop the nav for one long searchable list) can be layered on top of this structure later.
+- **[2026-09-05]** Memory was deliberately NOT collapsed into a single section: Native memory / Learning / Recall stay separate. That separation is the reason the grouped nav exists at all, and Recall is a four-option radio group — a subject on its own.
+- **[2026-09-05]** Planning board: `knowledge/settings-redesign/settings-redesign.excalidraw.md` (spec in the same folder). The diagnosis it captures: every section was forced to fill a navdesc+desc pair, on top of each switch's own label, paragraph and tooltip — which is how one screen came to say "Cloud sync" seven times.
 - **[2026-06-04]** `autoMemoryEnabled: false` is the Claude Code official settings.json key (per Anthropic docs). dreamcontext defaults to disabling it on install. The key is `autoMemoryEnabled` (camelCase) — not `memory`, `nativeMemory`, or any other variant. `applyClaudeAutoMemory` reads the existing `.claude/settings.json`, merges the one key, writes back (no other keys disturbed). PATCH /api/config extends the strict-pick to include `disableNativeMemory` (one additional boolean).
 - **[2026-06-01]** `PATCH /api/config` strict allow-list: body is NEVER spread; only `platforms`/`packs` extracted by name. Prototype-pollution is prevented by design — security invariant, do not relax.
 - **[2026-06-01]** `GET /api/version-check` is cache-only (no network in the request path); networked `refreshVersionCache` stays out-of-band (UserPromptSubmit hook).
@@ -99,6 +126,7 @@ The dashboard was a read-only task/knowledge/brain viewer with no way to configu
 - Hooks (TanStack Query): `useConfig`, `usePacks`, `useVersionCheck`, `useVaults` (+ add/remove mutations).
 - Pages: `SettingsPage` (platforms + packs + Memory toggle + Vaults), `PacksPage` (+ CSS); component `UpdateBadge` (mounted in `Header.tsx`).
 - `Sidebar.tsx` — collapsible + grouped nav (persisted); `App.tsx`/`Shell.tsx` routing; `I18nContext.tsx` keys.
+- **Settings redesign (2026-09-05).** New: `components/settings/useInstantSave.tsx` (per-control save state + `SaveMark`), `components/settings/SettingRow.{tsx,css}` (`SettingRow`/`SettingGroup`/`Toggle`/`SettingChoice`), `components/settings/CloudTaskSync.tsx` (per-provider task-mirroring form, lifted out of `SettingsPage`). Changed: `pages/SettingsPage.tsx` (1,139 → ~640 lines; `SETTINGS_NAV` is now an array of groups, `SectionHead` helper, Save/dirty/`persistCloudConfig` removed), `pages/SettingsPage.css`, `components/settings/SystemDependencies.tsx` (dependency-first render + `FeatureDepsNotice` export), `components/settings/SettingsIcons.tsx` (Learning/Recall/ClickUp/TeamSync/LinkedRepos icons; `SETTINGS_ICONS` keys realigned to the new section ids), `context/I18nContext.tsx` (17 orphan keys deleted, group + one-sentence keys added). No server change was needed: `PATCH /api/config` already does allow-listed partial merge, so field-level writes ride the existing route. The task token writes on blur via `POST /tasks/token`, and Test/Provision call `flush()` first so the probe uses the value on screen. The deep-link contract is preserved — the sidebar still sends `focus.id='brain'` and the page resolves it (`Sidebar.tsx` untouched).
 
 ### Tests
 
@@ -107,6 +135,9 @@ The dashboard was a read-only task/knowledge/brain viewer with no way to configu
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-05 - Slice 6: Settings information architecture redesign
+- Nine flat sections → four groups; GitHub split into GitHub / Team sync / Linked repos; one row grammar with folded Details; the global Save button and dirty state deleted in favour of instant, per-control saves; System became dependency-first. Shipped in `7d8aac7`. Verified in the real app across three waves (15/15, 5/5, 7/7).
 
 ### 2026-06-04 - Slice 5: native memory disable + config CLI
 - `src/lib/claude-settings.ts`: `applyClaudeAutoMemory()` writes `autoMemoryEnabled` to `.claude/settings.json` (server-safe).

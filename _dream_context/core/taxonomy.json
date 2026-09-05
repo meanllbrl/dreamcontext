@@ -52,7 +52,8 @@
       "topic:macos",
       "topic:automations",
       "topic:task",
-      "topic:memory"
+      "topic:memory",
+      "topic:build"
     ]
   },
   "bareTags": [
@@ -108,6 +109,10 @@
     "automations": "topic:automations",
     "macos": "topic:macos",
     "knowledge": "domain:knowledge",
-    "task": "topic:task"
+    "task": "topic:task",
+    "topic:testing": "testing",
+    "topic:frontend": "frontend",
+    "topic:architecture": "architecture",
+    "domain:dashboard": "topic:dashboard"
   }
 }

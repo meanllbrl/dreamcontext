@@ -1,11 +1,19 @@
 ---
 id: tinted-surface-not-filled-swatch
-name: "Tinted Surface, Not Filled Swatch"
-description: "An accent token validated on chips and buttons is not thereby validated on paragraphs. Long-form content the reader OWNS and re-reads takes a tinted surface — accent color-mixed into a theme surface, accent mixed further into the border, ordinary body text on top — never a solid accent fill with its paired on-accent text."
-tags: ["design", "topic:frontend", "domain:dashboard"]
+name: 'Tinted Surface, Not Filled Swatch'
+description: >-
+  An accent token validated on chips and buttons is not thereby validated on
+  paragraphs. Long-form content the reader OWNS and re-reads takes a tinted
+  surface — accent color-mixed into a theme surface, accent mixed further into
+  the border, ordinary body text on top — never a solid accent fill with its
+  paired on-accent text.
+tags:
+  - design
+  - frontend
+  - 'topic:dashboard'
 pinned: false
-date: "2026-08-01"
-updated: "2026-08-27"
+date: '2026-08-01'
+updated: '2026-08-27'
 ---
 
 ## Why This Exists

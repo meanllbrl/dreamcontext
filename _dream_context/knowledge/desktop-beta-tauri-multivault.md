@@ -2,13 +2,10 @@
 id: knowledge_desktop_beta_tauri_multivault
 name: desktop-beta-tauri-multivault
 description: >-
-  How dreamcontext-beta (the Tauri 2 macOS app) wraps the existing React+Node
-  dashboard for multi-vault / multi-window use. Covers: multi-window architecture
-  + Launcher, the Sleepy notch companion, the in-app Agent terminal, project
-  onboarding, the release CI + app install/update path, and the accumulated
-  platform gotchas (CLI resolution, DnD/WKWebView, orphaned-server watchdog,
-  upgrade self-heal). Details live in the body sections — read before touching
-  desktop/.
+  How dreamcontext-beta (the Tauri 2 macOS app) wraps the React+Node dashboard for
+  multi-vault / multi-window use: Launcher + windows, the Sleepy notch, the in-app
+  Agent surface, onboarding, release CI + install/update, and the platform gotchas.
+  Read the body sections before touching desktop/.
 type: knowledge
 tags:
   - architecture

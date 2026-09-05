@@ -1,6 +1,97 @@
 [
   {
     "date": "2026-09-05",
+    "type": "refactor",
+    "scope": "settings",
+    "description": "The Settings page repeated itself badly — 'Cloud sync' appeared seven times across nav label, nav description, section title, section description, the toggle's own label, its paragraph, and its tooltip — because every section filled a navdesc+desc pair and every switch carried its own label and hint. Nine flat menu rows overlapped (GitHub setup appeared in three of them, and a fourth 'System' list duplicated the others keyed on readiness instead of settings). Reorganized into four groups with one grammar and one description per concept; the two parallel save models (platforms/native-memory autosave vs. an explicit Save flow) were unified so no screen needs a Save button.",
+    "breaking": false,
+    "summary": "Settings page collapses to four groups, one description each, and drops the Save button",
+    "references": [
+      "commit:7d8aac7"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-05",
+    "type": "fix",
+    "scope": "agents",
+    "description": "The account list route deliberately never probes on every paint, so a shown percentage was only as fresh as whenever the CLI last happened to write it — an old 0% and a true 0% drew the same pixels. Every account now states when it was last read, and a reading past ten minutes renders in warning tone instead of looking current. Opening the panel with a stale reading triggers exactly one re-read, gated on staleness and on the OLDEST reading present (not the newest), so a busy account isn't re-read constantly while a quiet one goes stale.",
+    "breaking": false,
+    "summary": "Usage numbers carry their age and re-read once when stale instead of passing off old data as current",
+    "references": [
+      "commit:14ec7f3",
+      "task:agents-hesap-paneli-okunur-olur-her-hesabin-iki-limiti-surukle-birak-oncelik-ve-yenile"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-05",
+    "type": "fix",
+    "scope": "agents",
+    "description": "The panel reported 'every account is at its limit' on two accounts actually measured at 7% and 19%. The reader fired on the rate_limit_event frame's TYPE and guessed the rest off the frame itself, but the payload lives under rate_limit_info (not rate_limit or event), so the lookup missed, toWindow read the literal string 'rate_limit_event' as the window name, and the absent resetsAt turned the cooldown into a 20-minute guess. Every message was disqualifying its own account. Fixed to read rate_limit_info.status/utilization/resetsAt directly, so the per-turn indicator is a meter of real utilization, not an accidental refusal banner.",
+    "breaking": false,
+    "summary": "Per-turn rate-limit meter reads the CLI's real payload instead of guessing from the frame type",
+    "references": [
+      "commit:fd5edb5",
+      "task:agents-hesap-paneli-okunur-olur-her-hesabin-iki-limiti-surukle-birak-oncelik-ve-yenile"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-05",
+    "type": "fix",
+    "scope": "agents",
+    "description": "Sending a message right after an auto-switch emptied the tab, dropped it back to the amber 'starting' pulse, and lost the message. Both defects were in auto-switch's client half — the server half was already exercised end to end by verify:claude-auth-switch. The restart notice copies onto the newly created session so the move stays visible, but every chat session arms its own copy of the same watcher on the same field, and noteAccountSwitch flushes subscribers synchronously, so the copied notice read as a fresh instruction and the new session restarted itself.",
+    "breaking": false,
+    "summary": "Account auto-switch stops restarting the session it just switched to",
+    "references": [
+      "commit:a6631d7",
+      "task:multi-account-connect-several-claude-accounts-pick-one-per-session-auto-switch-before-a-limit-lands"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-05",
+    "type": "fix",
+    "scope": "agents",
+    "description": "Auto-switch previously steered entirely on cachedUsageUtilization's forecast session percent, which was measured lying: three minutes after the CLI refused a turn with 'You've hit your session limit', a live /usage probe of that same account read 6%. claude-limit-signal.ts now reads the API's own rejection off the stream (quotaLimits.status:'rejected', its rateLimitType, and its real resetsAt — epoch seconds on that frame, unlike milliseconds everywhere else on the wire) so the switch triggers on the limit that actually fired instead of the number that predicted it might.",
+    "breaking": false,
+    "summary": "Auto-switch now steers on the API's actual quota rejection, not a forecast percentage",
+    "references": [
+      "commit:d05646a",
+      "task:multi-account-connect-several-claude-accounts-pick-one-per-session-auto-switch-before-a-limit-lands"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-05",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Add side-by-side 5-hour and 7-day usage bars per account instead of the old mix of one drawn bar and a text sentence for the other; a missing reading renders as a hatched 'not measured' track rather than a false 0%, and the fill turns warning past 70% and error past 90%. Account identity now shows a product tier name and organization rather than a lowercase database value and a raw UUID. The list order is the user's dragged priority, and chooseAccount now breaks an exact utilization tie on that same order (orderedIds) instead of alphabetically on account id — the alphabet was quietly deciding which account got the next session whenever two were equally free.",
+    "breaking": false,
+    "summary": "Multi-account panel: every account shows both 5h/7d bars, priority order breaks ties",
+    "references": [
+      "commit:a9e0837",
+      "commit:1d3b480",
+      "task:agents-hesap-paneli-okunur-olur-her-hesabin-iki-limiti-surukle-birak-oncelik-ve-yenile",
+      "task:multi-account-connect-several-claude-accounts-pick-one-per-session-auto-switch-before-a-limit-lands"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-05",
     "type": "feat",
     "scope": "chat",
     "description": "Wave 5 of the OpenUI experiment: the boundaries, and the capability they made room for.\n\nThe action gate turned out to be worth more than a defence. FollowUpBlock/FollowUpItem came back into the vocabulary because their action carries text and nothing else: clicking one passes through openuiAction.ts and is converted in TranscriptItem into an ordinary ask via toAction, the same validator every dream-actions button passes. One definition of what an ask may be, not two. Button stays out for a sharper reason than budget — it accepts Action([@OpenUrl(...)]), a second and ungated route to what dream-actions gates to https on the client and again in Rust.\n\nThe gate is a whitelist of one: only continue_conversation is accepted, open_url is refused by name so a dependency bump cannot quietly widen it, an unrecognised type falls through to null, the text is bounded at 400 characters, and only a string leaves the function — form state, urls and tool names have no way through. No action is accepted while the block is still streaming, because a follow-up clicked from a half-written block would send a question the answer had not finished proposing.\n\nBundle cost is now read from the build rather than asserted about the source: tests/unit/openui-bundle.test.ts checks the entry chunk for library fingerprints (recharts, openui-card, defaultChartPalette and two more) and that the split chunk is still over 1MB — a floor, because if it shrank the tree moved somewhere worse. A first version capped the count of 'openui' string hits in the entry at 12, which broke on a reworded settings string; a count that invites raising the number is not a measurement.",

@@ -3,11 +3,12 @@ name: mutation-test-assertions
 description: >-
   A verify assertion can pass on the OLD code and still look like proof. Run the
   mutation before trusting a geometric check — ask "what would this assertion do
-  under the pre-change build?" If it still passes, it's not testing what you think.
+  under the pre-change build?" If it still passes, it's not testing what you
+  think.
 type: knowledge
 tags:
-  - kind:pattern
-  - topic:testing
+  - 'kind:pattern'
+  - testing
   - architecture
 date: '2026-08-27'
 ---

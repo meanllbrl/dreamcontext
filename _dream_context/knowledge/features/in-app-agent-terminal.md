@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-09-02'
+updated: '2026-09-05'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -63,6 +63,10 @@ related_tasks:
     chat-depiction-becomes-a-built-board-dream-html-stops-being-the-default-for-structure
   - >-
     a-finished-sub-agent-s-report-becomes-a-collapsed-card-in-the-transcript-instead-of-a-wall-the-main-agent-re-types
+  - >-
+    openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali
+  - >-
+    a-chat-tab-whose-session-object-died-draws-forever-and-nothing-heals-it
 type: feature
 name: in-app-agent-terminal
 description: ''
@@ -317,11 +321,35 @@ three are mutually exclusive: one answer, one language.
       tokens, and proved by computed pixels in a real browser — 15px/15px, 26.25/26.25, and the
       FACE at 687.9px/687.9px by rendered width. Follows the app's `data-theme`, never the OS's
       `prefers-color-scheme`.
-- [ ] Wave 5 (boundaries) and Wave 6 (does the model actually write this grammar?) are open.
+- [x] Wave 5 (boundaries): the gate is a WHITELIST, not budget trimming. `FollowUpItem` came back
+      into the vocabulary because its action carries ONLY text — a click sends that text through
+      `toAction({action:'ask'})`, the same validator every `dream-actions` button passes. `Button`
+      stays out on principle: it can carry `Action([@OpenUrl(...)])`, i.e. a second, ungated road
+      to the thing `dream-actions` deliberately closes to https. `continue_conversation` and
+      `open_url` are refused BY NAME (pinned by test name so a version bump cannot widen them
+      silently), every unrecognized type falls to null, there is a 400-char limit, only a string
+      leaves the event, and a click during streaming is not accepted.
+- [x] Wave 5: bundle size is measured from the BUILD OUTPUT, by library fingerprints rather than
+      by counting `openui` occurrences in the main chunk — the first version capped the count at
+      12 and an unrelated settings-string change made it 14. Raising the number would have been
+      exactly the act of not looking.
+- [x] Wave 6 — the actual experiment: **the model CAN write this grammar.** 8 questions × 2 modes
+      (`dream-html` vs `dream-ui`), claude-sonnet-5, output run through the REAL parser.
+      Result: 6/6 blocks emitted where a block was warranted (html also 6/6), 4/4 of the
+      measurable ones rendered, **0 invented components, 0 parse errors**, and both
+      "should not be drawn" questions correctly answered in prose. Cost: the ui block averaged
+      1,426 chars and the whole answer 2,795 vs html's 3,386 — OpenUI mode is SHORTER. Latency
+      difference is inside the noise (52.2s vs 50.8s).
+- [ ] Wave 6's one systematic violation is not yet fixed: the model stuffs the explanation INSIDE
+      the block — 9 strings over 200 chars across 4 answers, mostly in `StepsItem` descriptions,
+      while the briefing's own rule says the explanation belongs outside the block. Tightening the
+      prompt here is the highest-yield remaining change.
 
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-09-05] Validate the measuring instrument before you trust its verdict — the Wave 6 scorecard was wrong three times before it was right.** The first OpenUI scorecard read "33% blank render, 3 fabricated components" and was going to be reported as a model finding. All three were HARNESS bugs: (1) rendering in bare node — `document is not defined`, an environment limit, not a model error; (2) after moving to jsdom, recharts measures text with canvas, so cartesian charts CANNOT be measured headless at all — that is a measurement boundary the scorecard has to state, not a failure to score; (3) the "invented component" regex was scanning inside quoted strings and matched prose — `"Kuyruk (client)"`, `"JSONB (kısmi esneklik)"`, `"KB (gzip)"`. Real result: zero fabrications. A measuring instrument's own limits silently become the measured subject's faults, and the direction of that error is always flattering to the instrument. Rule: when a first-pass measurement reports a surprisingly BAD verdict about the subject, suspect the harness first, and re-run against a known-good case before reporting. Written up as the general shape in `knowledge/patterns/runtime-measurement-verification.md` §7. (The same run also cost a two-phase split: vite-node's dev server dies during long `claude` calls, so the expensive generation phase and the scoring phase must be separate runs, which also makes the scoring reproducible.)
 
 - **[2026-08-28] TWO CHANNELS, NEVER ONE: colour = status, shape + motion = mode.** The dock chip and the mode picker drew one face for every chat, so nothing on screen said which brief a session was running under. Mood already owns every hue and animation in `SleepyMascot.tsx` (green scanning = working, magenta wide-eyed = asking, violet = ready), so mode was given a strictly ORTHOGONAL channel: shape and motion only. A second colour channel would make the two fight over the same 26px chip; as built, a Develop agent blocked on a question still reads as *asking* — mid-swing. Gear layers on top of mood rather than replacing it, and the mouth is hidden while a mode is worn because the work happens where the smile was (mood still speaks through the eyes, plus the chip's own colour and "?" bubble). **Each mode is an ACTION ON A LOOP, not a costume** — the owner's call after three costume drafts (spectacles/visor; brows; sheet + hard hat) were all rejected for reading as *wardrobe rather than character*, and because a static costume dies at 26px where the detail is gone. A loop survives the scale-down: the detail vanishes but the MOTION still says which of the two you are looking at. `gearForMode` is TOTAL over `ChatMode`, so a new mode is a silent bare face rather than a crash. The rationale is duplicated in the `SleepyMascot.tsx` file header so the next person does not re-derive the three rejected drafts; the reusable shape is `knowledge/patterns/orthogonal-encoding-channels.md`.
 

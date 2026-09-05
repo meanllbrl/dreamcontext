@@ -64,6 +64,12 @@ Ask: **"If I change this field's rules for UX reasons, does something unrelated 
 
 Display rules are low-stakes and change often. Safety rules are high-stakes and must be deliberate. Never let the first control the second.
 
+## Related
+
+- `unrecognized-shape-returns-null` — the sibling failure. Here the field is well-formed but was
+  computed for display and reused as a gate; there the field is ABSENT or unrecognized and the
+  reader guesses a verdict from the envelope. Both end as a confident wrong answer at a gate.
+
 ## Sources
 
 - Task `one-window-holds-every-open-project-as-a-live-chip-strip` (M9 review finding, 2026-08-09)
