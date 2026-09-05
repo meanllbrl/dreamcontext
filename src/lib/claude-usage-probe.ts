@@ -39,6 +39,19 @@ export type ProbeOutcome =
   | { status: 'stale'; reason: string }
   /** The authoritative judge says this directory holds no working credential. */
   | { status: 'needs-relogin'; reason: string }
+  /**
+   * Signed in, but this account publishes NO usage numbers — a narrower, more useful claim
+   * than `unknown`. MEASURED 2026-09-05 on a Max account: `claude -p "/usage"` answers with
+   * a prose behaviour report ("Last 24h · 4831 requests · 53 sessions…") that contains no
+   * percentages at all, writes no `cachedUsageUtilization`, and exits 0 — while
+   * `auth status --json` reports `loggedIn: true, subscriptionType: "max"`.
+   *
+   * Collapsing that into `unknown` made such an account permanently ineligible, so on a
+   * machine with one measurable and one unmeasurable account auto-switch could only ever
+   * answer "every account is at its limit". It is a LAST-RESORT candidate instead — see
+   * `chooseAccount`.
+   */
+  | { status: 'healthy-unmeasured'; reason: string }
   /** We genuinely could not tell. NEVER counted as zero usage. */
   | { status: 'unknown'; reason: string };
 
@@ -201,6 +214,16 @@ export async function probeAccountUsage(
   const judged = await authStatus(dir, Math.min(remaining, PROBE_TIMEOUT_MS));
   if (judged.loggedIn === false) {
     return { status: 'needs-relogin', reason: 'This account is signed out — it needs to sign in again.' };
+  }
+  // The judge ANSWERED, and it answered "signed in". That is a positive fact about the
+  // account, not an absence of one, and it is the whole difference between a fallback we can
+  // use and one we cannot — see `healthy-unmeasured` above. A judge that errored out told us
+  // nothing, so that stays `unknown`.
+  if (judged.loggedIn === true && !judged.error) {
+    return {
+      status: 'healthy-unmeasured',
+      reason: 'This account is signed in but reports no usage numbers, so its remaining quota is unknown.',
+    };
   }
   return {
     status: 'unknown',

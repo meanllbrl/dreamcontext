@@ -2,9 +2,13 @@
  * `claude-account-switch.ts` — `chooseAccount`, the pure half of auto-switch.
  *
  * Readings arrive as arguments and there is no I/O, so every rule below is a unit test
- * rather than a live-CLI experiment. The rule that matters most: an account we could NOT
- * measure is never a candidate. Counting an unreadable account as 0% is exactly how a
- * "safe" switch lands on an account that is already out of quota.
+ * rather than a live-CLI experiment. The rule that matters most: an account we could not
+ * VOUCH for is never counted as 0%. Treating an unreadable account as empty is exactly how
+ * a "safe" switch lands on an account that is already out of quota.
+ *
+ * Two later rules qualify that without weakening it, and each has its own block below: an
+ * account the API has actually REFUSED is out however good its numbers look, and an account
+ * that is provably signed in but publishes no numbers is a candidate of LAST RESORT.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -80,7 +84,7 @@ describe('the emptiest eligible account wins', () => {
   });
 });
 
-describe('an unmeasurable account is NEVER a candidate', () => {
+describe('an account we cannot vouch for is NEVER counted as empty', () => {
   it('`unknown` is not treated as zero usage', () => {
     const res = chooseAccount([{ id: 'a', problem: 'unknown' }, reading('b', 88, 10)], T);
     expect(res.accountId).toBe('b');
@@ -98,10 +102,15 @@ describe('an unmeasurable account is NEVER a candidate', () => {
     expect(res.rejected).toContainEqual({ id: 'a', why: 'needs to sign in again' });
   });
 
-  it('a reading missing one window is not a candidate either', () => {
+  it('a reading missing one window LOSES to any measured account, however busy', () => {
+    // 'a' looks better on the one number it has (10% vs 50%) and still must not win: half a
+    // reading is not a reading. It is a LAST-RESORT candidate now (see the `unmeasured`
+    // block below), which changes what happens when nothing else qualifies — never what
+    // happens when something does.
     const res = chooseAccount([reading('a', 10, null), reading('b', 50, 50)], T);
     expect(res.accountId).toBe('b');
-    expect(res.rejected).toContainEqual({ id: 'a', why: 'one of its usage windows is missing' });
+    expect(res.unmeasured).toBeUndefined();
+    expect(res.rejected).toContainEqual({ id: 'a', why: 'its usage could not be read' });
   });
 
   it('an all-unmeasurable set yields no account rather than a guess', () => {
@@ -162,5 +171,95 @@ describe('the two thresholds', () => {
   it('an empty reading triggers nothing — absence is not exhaustion', () => {
     expect(shouldProbe({ limits: [], fetchedAtMs: null })).toBe(false);
     expect(shouldSwitchAway({ limits: [], fetchedAtMs: null })).toBe(false);
+  });
+});
+
+/**
+ * ── The 2026-09-05 failure, as rules ───────────────────────────────────────────────────
+ * Three separate breaks put the same message on screen twice. The two the chooser owns are
+ * pinned here; the third (nothing reacting after a refusal) lives in the route and its
+ * verify scenario.
+ */
+describe('an account the API actually REFUSED outranks its own percentages', () => {
+  const refused = (until: number, window?: string) => ({
+    ...T,
+    now: NOW,
+    rejectedUntil: { a: { until, ...(window ? { window } : {}) } },
+  });
+
+  it('a refused account is not a candidate even while its cache reports 0%', () => {
+    // THE MEASURED CASE. The CLI refused a turn with "You've hit your session limit"; three
+    // minutes later that same account's `/usage` probe answered 6%. A chooser that trusts
+    // the forecast over the refusal sends the very next turn back into the wall — which is
+    // exactly what the user saw when their "devam" came back byte-identical.
+    const res = chooseAccount([reading('a', 0, 0), reading('b', 60, 20)], refused(NOW + HOUR, 'session'));
+    expect(res.accountId).toBe('b');
+    expect(res.rejected).toContainEqual({ id: 'a', why: 'the API refused its last turn on the session limit' });
+  });
+
+  it('the refusal expires on its own — an account is never exiled past its window', () => {
+    const res = chooseAccount([reading('a', 0, 0), reading('b', 60, 20)], refused(NOW - 1, 'session'));
+    expect(res.accountId).toBe('a');
+  });
+
+  it('a refusal with no stated window still disqualifies, without inventing one', () => {
+    const res = chooseAccount([reading('a', 0, 0), reading('b', 60, 20)], refused(NOW + HOUR));
+    expect(res.accountId).toBe('b');
+    expect(res.rejected).toContainEqual({ id: 'a', why: 'the API refused its last turn' });
+  });
+
+  it('a refusal feeds the "when does work resume" answer when everything is out', () => {
+    const res = chooseAccount([reading('a', 0, 0)], refused(NOW + 3 * HOUR, 'session'));
+    expect(res.accountId).toBeNull();
+    expect(res.earliestResetAt).toBe(NOW + 3 * HOUR);
+  });
+});
+
+describe('signed in but unmeasurable — the LAST-RESORT candidate', () => {
+  it('is never preferred over a measured account', () => {
+    const res = chooseAccount([{ id: 'a', problem: 'healthy-unmeasured' }, reading('b', 88, 10)], T);
+    expect(res.accountId).toBe('b');
+    expect(res.unmeasured).toBeUndefined();
+    expect(res.rejected).toContainEqual({ id: 'a', why: 'its usage could not be read' });
+  });
+
+  it('IS chosen when no measured account qualifies, and says there is no number behind it', () => {
+    // The shape this machine actually has: one team account (measurable, and now walled) and
+    // one Max account whose `/usage` publishes no percentages at all. Under the old rule this
+    // answered "every account is at its limit" — auto-switch was dead on the setup it shipped
+    // for. It must move, and it must ADMIT the pick is unmeasured rather than imply otherwise.
+    const res = chooseAccount(
+      [reading('a', 97, 10), { id: 'b', problem: 'healthy-unmeasured' }],
+      { ...T, currentId: 'a' },
+    );
+    expect(res.accountId).toBe('b');
+    expect(res.unmeasured).toBe(true);
+    expect(res.sessionPercent).toBeUndefined();
+  });
+
+  it('still loses to a REFUSAL — last resort is not "any port in a storm"', () => {
+    const res = chooseAccount(
+      [reading('a', 97, 10), { id: 'b', problem: 'healthy-unmeasured' }],
+      { ...T, now: NOW, rejectedUntil: { b: { until: NOW + HOUR, window: 'session' } } },
+    );
+    expect(res.accountId).toBeNull();
+    expect(res.rejected).toContainEqual({ id: 'b', why: 'the API refused its last turn on the session limit' });
+  });
+
+  it('an account we cannot VOUCH for is still never a candidate', () => {
+    // The original guarantee, unchanged where it was earned: `unknown` and `stale` mean we
+    // learned nothing, and nothing is not a fallback. Only a judge saying "signed in" earns
+    // last-resort standing.
+    const res = chooseAccount([reading('a', 97, 10), { id: 'b', problem: 'unknown' }], T);
+    expect(res.accountId).toBeNull();
+  });
+
+  it('two unmeasurable accounts pick deterministically and name the loser', () => {
+    const res = chooseAccount(
+      [{ id: 'z', problem: 'healthy-unmeasured' }, { id: 'b', problem: 'healthy-unmeasured' }],
+      { ...T, preferredId: 'z' },
+    );
+    expect(res.accountId).toBe('z');
+    expect(res.rejected).toContainEqual({ id: 'b', why: 'its usage could not be read either' });
   });
 });

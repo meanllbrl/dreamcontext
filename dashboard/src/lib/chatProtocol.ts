@@ -182,12 +182,20 @@ export type ChatEvent =
    *                     the billed account never changes silently.
    * `switched: false` → nothing changed and the turn already went out on the current account.
    *                     `reason` says why: `all_exhausted` (with `earliestResetAt`, so the
-   *                     surface can say WHEN work resumes) or `auto_switch_disabled`.
+   *                     surface can say WHEN work resumes), `stayed_put`, or
+   *                     `auto_switch_disabled`.
+   *
+   * `limit_near` is a FORECAST — the percentage is approaching the threshold. `limit_hit` is
+   * an OBSERVATION: the API refused THIS turn and said so on the stream. `limit_known` is a
+   * REMEMBERED observation: an earlier turn was refused, so this one moves before trying.
+   * The last two exist because the forecast was measured wrong on 2026-09-05 (a refused
+   * account read 6% three minutes later), and a surface that only forecasts cannot recover.
    */
   | {
       kind: 'account-switch';
       switched: boolean;
-      reason: 'limit_near' | 'needs_relogin' | 'all_exhausted' | 'auto_switch_disabled';
+      reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted'
+        | 'stayed_put' | 'auto_switch_disabled';
       accountId: string;
       fromAccountId?: string;
       email?: string;
@@ -196,6 +204,9 @@ export type ChatEvent =
       earliestResetAt?: number;
       rejected?: Array<{ id: string; why: string }>;
       pendingText?: string;
+      /** The winner is signed in but publishes no usage numbers — there is no percent behind
+       *  this choice, and the banner must say so rather than imply a measured one. */
+      unmeasured?: boolean;
       /**
        * Whether a turn is REALLY running inside the CLI, as the SERVER sees it.
        *
@@ -884,7 +895,8 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
     return {
       kind: 'account-switch',
       switched: obj.switched === true,
-      reason: reason === 'limit_near' || reason === 'needs_relogin' || reason === 'all_exhausted'
+      reason: reason === 'limit_near' || reason === 'limit_hit' || reason === 'limit_known'
+        || reason === 'needs_relogin' || reason === 'all_exhausted' || reason === 'stayed_put'
         ? reason
         : 'auto_switch_disabled',
       accountId: str(obj.accountId) ?? '',
@@ -895,6 +907,7 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       ...(typeof obj.earliestResetAt === 'number' ? { earliestResetAt: obj.earliestResetAt } : {}),
       ...(rejected && rejected.length > 0 ? { rejected } : {}),
       ...(str(obj.pendingText) ? { pendingText: str(obj.pendingText)! } : {}),
+      ...(obj.unmeasured === true ? { unmeasured: true } : {}),
       ...(typeof obj.turnInFlight === 'boolean' ? { turnInFlight: obj.turnInFlight } : {}),
     };
   }
@@ -932,6 +945,12 @@ function fromSystem(obj: Record<string, unknown>): ChatEvent {
  * well-formed JSON object — any frame type/shape this module doesn't recognize (including
  * `rate_limit_event`, and any future frame type the CLI adds) degrades to `{kind:'ignored',
  * rawType}` rather than crashing the relay or the UI's event loop.
+ *
+ * `rate_limit_event` being IGNORED HERE is not the same as unread: the SERVER reads it (and
+ * the richer refusal frame beside it) in `claude-limit-signal.ts` and answers with an
+ * `account_switch` meta frame, which this module does parse. The rendering side has nothing
+ * useful to do with the raw event, and drawing both it and the banner would say the same
+ * thing twice.
  */
 export function toChatEvent(obj: Record<string, unknown>): ChatEvent {
   const type = str(obj.type) ?? '';

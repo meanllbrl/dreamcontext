@@ -107,42 +107,71 @@ export function BranchStartBanner({ tone, message, onDismiss }: {
  * this feature, not a nicety — so every automatic switch is drawn and NAMES the account it
  * moved to, along with why.
  *
- * Three shapes, because the three outcomes mean different things to the user:
+ * The shapes, because each outcome means something different to the user:
  *   • switched          — "moved to <account>, its session window is at N%". Reassurance: the
- *                         turn went through, on a named account.
+ *                         turn went through, on a named account. When the move was a LAST
+ *                         RESORT (`unmeasured`) it says there is no number behind the choice
+ *                         instead of quietly omitting one — an account picked blind and an
+ *                         account picked at 4% must not read the same.
+ *   • limit_hit         — the API had ALREADY refused the turn. Worth its own sentence: the
+ *                         user is looking at a failed message and needs to know it is being
+ *                         resent, not retyped.
+ *   • limit_known       — an EARLIER turn was refused, so this one moved before trying. It
+ *                         must not borrow limit_hit's sentence: this message did not fail,
+ *                         and saying it did is the same class of untruth as a silent switch.
  *   • all_exhausted     — every account is out. This one says WHEN work resumes rather than
  *                         only that it failed, which is the difference between an error and
  *                         information the user can act on.
- *   • auto_switch_disabled — the limit is close and the setting is OFF, so nothing changed.
- *                         Reporting without acting is exactly what "off" was asked to mean.
+ *   • stayed_put        — refused, and nowhere better to go. Only ever shown after a real
+ *                         refusal; a pre-emptive "stayed put" is not news and stays silent.
+ *   • auto_switch_disabled — the limit is close (or already hit) and the setting is OFF, so
+ *                         nothing changed. Reporting without acting is what "off" means.
  */
 export function AccountSwitchBanner({ move, onDismiss }: {
   move: {
     switched: boolean;
-    reason: 'limit_near' | 'needs_relogin' | 'all_exhausted' | 'auto_switch_disabled';
+    reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted'
+      | 'stayed_put' | 'auto_switch_disabled';
     accountId: string;
     email?: string;
     sessionPercent?: number;
     earliestResetAt?: number;
+    unmeasured?: boolean;
     rejected?: Array<{ id: string; why: string }>;
   };
   onDismiss: () => void;
 }) {
   const who = move.email || move.accountId;
-  const tone = move.switched ? 'info' : move.reason === 'all_exhausted' ? 'warn' : 'info';
+  const tone = move.switched ? 'info' : move.reason === 'stayed_put' ? 'info' : 'warn';
   const when = move.earliestResetAt
     ? new Date(move.earliestResetAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : '';
 
+  // How the destination is described. A last-resort pick has no percentage behind it and says
+  // so — see the header. Anything else names the window it landed on, when we measured one.
+  const landed = move.unmeasured
+    ? ` · its usage could not be read, so this is a best available choice`
+    : move.sessionPercent === undefined ? '' : ` · its 5-hour window is at ${Math.round(move.sessionPercent)}%`;
+
   const message = move.switched
     ? (move.reason === 'needs_relogin'
         ? `Moved to ${who} — the previous account needs to sign in again.`
-        : `Moved to ${who}${move.sessionPercent === undefined ? '' : ` · its 5-hour window is at ${Math.round(move.sessionPercent)}%`}.`)
+        : move.reason === 'limit_hit'
+          // The turn already failed. Say that it is being RESENT — otherwise the user retypes
+          // it, which is the exact friction this feature exists to remove.
+          ? `That message hit the limit on the previous account. Resending it on ${who}${landed}.`
+          : move.reason === 'limit_known'
+            ? `The previous account is still at its limit${when ? ` until ${when}` : ''}, so this went to ${who}${landed}.`
+            : `Moved to ${who}${landed}.`)
     : move.reason === 'all_exhausted'
       ? (when
           ? `Every account is at its limit. The first one frees up at ${when} — this message went out on the current account, so you will see its own limit error if it lands.`
           : 'Every account is at its limit. This message went out on the current account.')
-      : 'This account is close to its limit. Auto-switch is off, so nothing was changed.';
+      : move.reason === 'stayed_put'
+        ? `This account hit its limit and no other account is in better shape${when ? `, so work resumes at ${when}` : ''}.`
+        : move.reason === 'auto_switch_disabled' && when
+          ? `This account is at its limit until ${when}. Auto-switch is off, so nothing was changed.`
+          : 'This account is close to its limit. Auto-switch is off, so nothing was changed.';
 
   return (
     <div className={`chat-banner-branch${tone === 'warn' ? ' is-warn' : ''}`} role="status">

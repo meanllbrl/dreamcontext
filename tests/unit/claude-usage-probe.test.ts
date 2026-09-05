@@ -211,7 +211,7 @@ describe('needs-relogin — a non-refresh escalates ONCE to the authoritative ju
 });
 
 describe('unknown — never counted as zero usage', () => {
-  it('NEGATIVE CONTROL: a healthy account that simply did not refresh stays `unknown`', async () => {
+  it('a healthy account that publishes no numbers is `healthy-unmeasured`, not `unknown`', async () => {
     writeSandboxConfig({
       oauthAccount: { accountUuid: ACCOUNT_UUID },
       cachedUsageUtilization: usageCache({ fetchedAtMs: 1_000 }),
@@ -224,9 +224,16 @@ describe('unknown — never counted as zero usage', () => {
       runProbe: async () => ({ timedOut: false }),
     });
 
-    // The judge says the credential is fine, so this is NOT needs-relogin — it is genuinely
-    // "we could not tell", which is the answer that keeps the account out of the candidate set.
-    expect(res.status).toBe('unknown');
+    // The judge ANSWERED, and it answered "signed in". That is a positive fact, and it is a
+    // real shape: measured 2026-09-05, a Max account's `/usage` returns a prose behaviour
+    // report with no percentages and writes no cache at all, while `auth status` reports
+    // `loggedIn: true`. Calling that `unknown` made such an account permanently ineligible,
+    // so a machine with one measurable and one unmeasurable account had an auto-switch that
+    // could only ever answer "every account is at its limit".
+    //
+    // It is still NOT counted as zero usage — `chooseAccount` takes it only as a last resort
+    // and flags the choice `unmeasured`. See claude-account-switch.test.ts.
+    expect(res.status).toBe('healthy-unmeasured');
     expect(j.calls).toHaveLength(1);
   });
 

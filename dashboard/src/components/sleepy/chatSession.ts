@@ -246,13 +246,16 @@ export interface ConversationModel {
    */
   accountSwitch?: {
     switched: boolean;
-    reason: 'limit_near' | 'needs_relogin' | 'all_exhausted' | 'auto_switch_disabled';
+    reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted'
+      | 'stayed_put' | 'auto_switch_disabled';
     accountId: string;
     fromAccountId?: string;
     email?: string;
     organizationName?: string;
     sessionPercent?: number;
     earliestResetAt?: number;
+    /** The winner is signed in but publishes no usage numbers — the banner says so. */
+    unmeasured?: boolean;
     rejected?: Array<{ id: string; why: string }>;
     pendingText?: string;
     /** The SERVER's answer to "is a turn really running?" — see the frame's own note. The
@@ -929,6 +932,7 @@ export function createChatSession(
             ...(ev.organizationName ? { organizationName: ev.organizationName } : {}),
             ...(ev.sessionPercent === undefined ? {} : { sessionPercent: ev.sessionPercent }),
             ...(ev.earliestResetAt === undefined ? {} : { earliestResetAt: ev.earliestResetAt }),
+            ...(ev.unmeasured ? { unmeasured: true } : {}),
             ...(ev.rejected ? { rejected: ev.rejected } : {}),
             ...(ev.pendingText ? { pendingText: ev.pendingText } : {}),
             ...(ev.turnInFlight === undefined ? {} : { turnInFlight: ev.turnInFlight }),

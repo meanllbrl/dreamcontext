@@ -38,6 +38,8 @@ import { readUsageLimits } from '../../lib/claude-usage.js';
 import {
   SWITCH_THRESHOLD_PERCENT, chooseAccount, shouldProbe, shouldSwitchAway, type AccountReading,
 } from '../../lib/claude-account-switch.js';
+import { readLimitSignal, type LimitSignal } from '../../lib/claude-limit-signal.js';
+import { readAccountRejections, recordAccountRejection } from '../../lib/claude-limit-rejections.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { resolveBoardAssets } from './knowledge.js';
@@ -587,6 +589,7 @@ export function startChatSession(
     // either way. `worktreeIsolationAllowed` never throws, and sits inside this try anyway
     // so an unexpected failure degrades to the un-briefed agent rather than a failed spawn.
     const modeBrief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot) });
+    // WHICH expressive channel this session is taught. Resolved here, once, because the
     const briefing = modeBrief ? `${CHAT_SURFACE_BRIEFING}\n${modeBrief}` : CHAT_SURFACE_BRIEFING;
     writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
     briefingArg = ['--append-system-prompt-file', brief];
@@ -675,6 +678,16 @@ export function startChatSession(
    *     user frame increments.
    */
   let turnsInFlight = 0;
+  /**
+   * The last text WE handed to the CLI, kept so the post-hoc switch can resubmit the exact
+   * turn the API refused. Without it a limit landing mid-turn can only be announced, and the
+   * user still retypes — which is the friction this whole feature exists to remove.
+   *
+   * Overwritten per turn rather than queued: a rejection answers the turn in flight, and an
+   * older one has already been answered. `/effort` and other synthetic frames deliberately
+   * do NOT set it — resubmitting one after a switch would replay a setting, not a message.
+   */
+  let lastSentText: string | null = null;
   let interruptWatchdog: ReturnType<typeof setTimeout> | null = null;
   let interruptKillTimer: ReturnType<typeof setTimeout> | null = null;
   let lingerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -690,6 +703,9 @@ export function startChatSession(
       // every other user frame — otherwise a switch decision arriving during it would read
       // "nothing running" and restart over live work.
       turnsInFlight += 1;
+      // A refused opening prompt is the worst one to lose: the user never typed it into a
+      // composer they could scroll back to.
+      lastSentText = submitPrompt;
       child.stdin.write(JSON.stringify({
         type: 'user',
         message: { role: 'user', content: [{ type: 'text', text: submitPrompt }] },
@@ -878,6 +894,17 @@ export function startChatSession(
         turnsInFlight = Math.max(0, turnsInFlight - 1);
       }
 
+      // The API REFUSED this turn. Read before anything else acts on the frame, because this
+      // is the only account signal on the whole surface that is an observation rather than a
+      // forecast — see `claude-limit-signal.ts` for the frame and why the forecast alone was
+      // not enough. `onLimitRejected` writes the refusal down and moves the turn; it does
+      // nothing at all when there is nowhere to move it to.
+      //
+      // A SUB-AGENT's rejection counts too, and deliberately so: it drew on the same account
+      // quota, and the main turn it belongs to is about to fail for the same reason.
+      const limit = readLimitSignal(obj);
+      if (limit) onLimitRejected(limit);
+
       // Refresh the project's slash-command cache from the authoritative source every time
       // the CLI reports one, so a NEW session can be handed the list before its first turn
       // (see the cache's header note for why the stream alone can't do that).
@@ -970,50 +997,29 @@ export function startChatSession(
    */
   let switchGate: Promise<unknown> = Promise.resolve();
 
-  /** True when the turn was HELD (a restart is coming); false when the caller should send it. */
-  const maybeSwitchAccount = async (text: string): Promise<boolean> => {
-    // One switch at a time per conversation: a second trigger while a restart is pending sends
-    // its message on the CURRENT account rather than starting a second respawn. The message
-    // still goes out — it is never swallowed.
-    if (switchPending) return false;
-    if (!autoSwitchEnabled()) {
-      // OFF means REPORT, never change: the user is told the window is nearly gone and the
-      // turn goes out unchanged.
-      const reading = readUsageLimits(accountConfigDir);
-      if (shouldSwitchAway(reading)) {
-        sendMeta({
-          subtype: 'account_switch',
-          switched: false,
-          reason: 'auto_switch_disabled',
-          accountId: activeAccountId,
-          limits: reading.limits,
-        });
-      }
-      return false;
-    }
-
+  /**
+   * Ask every account where the next turn should go, and announce the answer.
+   *
+   * Extracted so the PRE-EMPTIVE path (percent nearing the threshold) and the POST-HOC path
+   * (the API refused a turn) reach the same decision through the same code. They differ only
+   * in what woke them and in what they tell the user — never in how the winner is picked, so
+   * a rule fixed for one is fixed for both.
+   *
+   * Returns true when a restart was announced and the caller must not send the turn.
+   */
+  const decideAndAnnounce = async (
+    text: string,
+    cause: 'limit_near' | 'needs_relogin' | 'limit_hit' | 'limit_known',
+    activeReading: AccountReading,
+    /** When the account we are LEAVING comes back, when a recorded refusal says so. Carried
+     *  so `limit_known` can name the time instead of only the fact. */
+    previousResetAt?: number,
+  ): Promise<boolean> => {
     const accounts = listClaudeAccounts();
-    // Nothing to switch TO. A single-account machine takes this branch and does no work.
-    if (accounts.length < 2) return false;
-
-    let active = readUsageLimits(accountConfigDir);
-    if (!shouldProbe(active)) return false;
-
-    // Past the probe threshold: refresh the ACTIVE account for real before acting on a
-    // possibly stale cache.
-    const activeProbe = await probeAccountUsage(accountConfigDir);
-    if (!alive) return true;                       // the session went away mid-probe
-    if (activeProbe.status === 'ok') active = activeProbe.limits;
-    if (activeProbe.status !== 'needs-relogin' && !shouldSwitchAway(active)) return false;
-
-    // Read every candidate. The active account's reading is reused rather than re-probed.
+    // Read every candidate. The active account's reading is passed in rather than re-probed.
     const readings = await Promise.all(accounts.map(async (acc): Promise<AccountReading> => {
       const dir = acc.configDir ?? homedir();
-      if (dir === accountConfigDir) {
-        return activeProbe.status === 'ok'
-          ? { id: acc.id, limits: activeProbe.limits }
-          : { id: acc.id, problem: activeProbe.status };
-      }
+      if (dir === accountConfigDir) return { ...activeReading, id: acc.id };
       const outcome = await probeAccountUsage(dir);
       return outcome.status === 'ok'
         ? { id: acc.id, limits: outcome.limits }
@@ -1025,21 +1031,26 @@ export function startChatSession(
       threshold: SWITCH_THRESHOLD_PERCENT,
       currentId: activeAccountId,
       preferredId: accounts.find((a) => a.preferred)?.id ?? null,
+      rejectedUntil: readAccountRejections(),
     });
 
-    // Nothing eligible, or the winner is the account we are already on: send the turn.
-    if (choice.accountId === null) {
-      sendMeta({
-        subtype: 'account_switch',
-        switched: false,
-        reason: 'all_exhausted',
-        accountId: activeAccountId,
-        rejected: choice.rejected,
-        ...(choice.earliestResetAt === undefined ? {} : { earliestResetAt: choice.earliestResetAt }),
-      });
+    // Nothing eligible, or the winner is the account we are already on.
+    if (choice.accountId === null || choice.accountId === activeAccountId) {
+      // A pre-emptive "stay put" is silent — nothing happened worth a banner. A POST-HOC one
+      // is not: the user is looking at a failed turn and is owed the reason plus, when we
+      // know it, the time it comes back.
+      if (choice.accountId === null || cause === 'limit_hit' || cause === 'limit_known') {
+        sendMeta({
+          subtype: 'account_switch',
+          switched: false,
+          reason: choice.accountId === null ? 'all_exhausted' : 'stayed_put',
+          accountId: activeAccountId,
+          rejected: choice.rejected,
+          ...(choice.earliestResetAt === undefined ? {} : { earliestResetAt: choice.earliestResetAt }),
+        });
+      }
       return false;
     }
-    if (choice.accountId === activeAccountId) return false;
 
     // A DELIBERATE cross-account switch. Deliberately NOT `auth_changed`: that frame is the
     // single-HOME watcher's "the machine's account changed under us" signal, and this event
@@ -1058,17 +1069,124 @@ export function startChatSession(
       // CLI has not answered yet — this is true and the client correctly waits for it: that
       // turn was authorized by the old credentials and is allowed to finish on them.
       turnInFlight: turnsInFlight > 0,
-      reason: activeProbe.status === 'needs-relogin' ? 'needs_relogin' : 'limit_near',
+      reason: cause,
       accountId: choice.accountId,
       email: target.email,
       organizationName: target.organizationName,
       fromAccountId: activeAccountId,
-      sessionPercent: choice.sessionPercent,
+      ...(choice.sessionPercent === undefined ? {} : { sessionPercent: choice.sessionPercent }),
+      ...(choice.unmeasured ? { unmeasured: true } : {}),
+      ...(previousResetAt === undefined ? {} : { earliestResetAt: previousResetAt }),
       rejected: choice.rejected,
       // The turn the client must resubmit after the restart, so it is never lost.
       pendingText: text,
     });
     return true;
+  };
+
+  /**
+   * The POST-HOC path: the API already refused a turn.
+   *
+   * This exists because the pre-emptive path is a FORECAST and forecasts are wrong. Measured
+   * 2026-09-05: the CLI refused a turn with "You've hit your session limit" while that same
+   * account's `/usage` probe answered 6% three minutes later — so the threshold never armed,
+   * the message landed as an error, and the user's "devam" walked into the identical wall.
+   *
+   * Two things happen here, and the FIRST matters more than the second: the refusal is
+   * written down (`recordAccountRejection`), which is what stops every later turn — in this
+   * pane and any other — from trusting the percentage that just lied. The switch is the
+   * visible half; the memory is the half that makes it stay fixed.
+   */
+  const onLimitRejected = (signal: LimitSignal): void => {
+    if (switchPending) return;
+    const recorded = recordAccountRejection(activeAccountId, signal);
+
+    if (!autoSwitchEnabled()) {
+      // OFF still REPORTS — and reporting a limit that has ALREADY landed is worth more than
+      // reporting one that is merely near, because the user is looking at a failed turn.
+      sendMeta({
+        subtype: 'account_switch',
+        switched: false,
+        reason: 'auto_switch_disabled',
+        accountId: activeAccountId,
+        earliestResetAt: recorded.until,
+      });
+      return;
+    }
+    if (listClaudeAccounts().length < 2) return;   // nothing to switch to
+
+    const text = lastSentText;
+    if (!text) return;   // no turn of ours to move — nothing to resubmit
+
+    // Onto the SAME serialisation chain as the pre-emptive path. A rejection frame and a
+    // user frame arriving together must not both decide to switch: the gate is what makes
+    // "one switch at a time" true across the two entry points rather than within each.
+    switchGate = switchGate.then(() =>
+      decideAndAnnounce(text, 'limit_hit', { id: activeAccountId, problem: 'unknown' })
+        .catch(() => false));
+  };
+
+  /** True when the turn was HELD (a restart is coming); false when the caller should send it. */
+  const maybeSwitchAccount = async (text: string): Promise<boolean> => {
+    // One switch at a time per conversation: a second trigger while a restart is pending sends
+    // its message on the CURRENT account rather than starting a second respawn. The message
+    // still goes out — it is never swallowed.
+    if (switchPending) return false;
+
+    // The API's own refusal, remembered from an earlier turn (this pane or any other). It
+    // OUTRANKS the percentages below, which is the point: the account that produced the
+    // 2026-09-05 failure reported 6% minutes after being refused, so a threshold check alone
+    // would clear it to serve again immediately.
+    const standingRefusal = readAccountRejections()[activeAccountId];
+
+    if (!autoSwitchEnabled()) {
+      // OFF means REPORT, never change: the user is told the window is nearly gone and the
+      // turn goes out unchanged.
+      const reading = readUsageLimits(accountConfigDir);
+      if (standingRefusal || shouldSwitchAway(reading)) {
+        sendMeta({
+          subtype: 'account_switch',
+          switched: false,
+          reason: 'auto_switch_disabled',
+          accountId: activeAccountId,
+          limits: reading.limits,
+          ...(standingRefusal ? { earliestResetAt: standingRefusal.until } : {}),
+        });
+      }
+      return false;
+    }
+
+    const accounts = listClaudeAccounts();
+    // Nothing to switch TO. A single-account machine takes this branch and does no work.
+    if (accounts.length < 2) return false;
+
+    // A standing refusal skips the probe entirely — we already know this account will not
+    // serve, and spending 1.2s re-asking a cache that lied is worse than useless.
+    // `limit_known`, not `limit_hit`: THIS turn has not failed — an earlier one did, and we
+    // are moving before trying. Telling the user their message hit a limit when it did not is
+    // the same class of untruth as switching the billed account silently.
+    if (standingRefusal) {
+      return decideAndAnnounce(
+        text, 'limit_known', { id: activeAccountId, problem: 'unknown' }, standingRefusal.until);
+    }
+
+    let active = readUsageLimits(accountConfigDir);
+    if (!shouldProbe(active)) return false;
+
+    // Past the probe threshold: refresh the ACTIVE account for real before acting on a
+    // possibly stale cache.
+    const activeProbe = await probeAccountUsage(accountConfigDir);
+    if (!alive) return true;                       // the session went away mid-probe
+    if (activeProbe.status === 'ok') active = activeProbe.limits;
+    if (activeProbe.status !== 'needs-relogin' && !shouldSwitchAway(active)) return false;
+
+    return decideAndAnnounce(
+      text,
+      activeProbe.status === 'needs-relogin' ? 'needs_relogin' : 'limit_near',
+      activeProbe.status === 'ok'
+        ? { id: activeAccountId, limits: activeProbe.limits }
+        : { id: activeAccountId, problem: activeProbe.status },
+    );
   };
 
   // ── ws → claude stdin (client control frames) ──────────────────────────────────────
@@ -1097,6 +1215,7 @@ export function startChatSession(
         .then((held) => {
           if (!alive || held) return;
           turnsInFlight += 1;
+          lastSentText = text;
           writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
         }));
       return;

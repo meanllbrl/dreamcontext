@@ -136,7 +136,12 @@ if (argv[0] === 'auth' && argv[1] === 'login') {
 if (argv.includes('-p') && argv[argv.indexOf('-p') + 1] === '/usage') {
   log('usage:' + (CONFIG_DIR || 'home'));
   const signedIn = fs.existsSync(authControlPath());
-  if (signedIn) {
+  // MEASURED 2026-09-05 on a real Max account: \`/usage\` answers with a PROSE behaviour
+  // report carrying no percentages at all and writes NO cachedUsageUtilization — while
+  // \`auth status --json\` still reports loggedIn:true. Signed in, unmeasurable. The marker
+  // reproduces that account, which is the one the old chooser could never fall back to.
+  const publishesNumbers = !fs.existsSync(path.join(STORE, '.usage-nocache'));
+  if (signedIn && publishesNumbers) {
     const cfg = path.join(STORE, '.claude.json');
     let blob = {};
     try { blob = JSON.parse(fs.readFileSync(cfg, 'utf-8')); } catch { blob = {}; }
@@ -208,6 +213,33 @@ process.stdin.on('data', (c) => {
     // client's handshake is the real one.
     out({ type: 'system', subtype: 'init', session_id: convId || 'verify', model: 'claude-opus-5',
           permissionMode: 'auto', slash_commands: ['/login'], claude_code_version: '2.1.220' });
+    // "LIMIT" makes the API REFUSE this turn. The frame is copied field-for-field from a real
+    // transcript (CLI 2.1.260) — including that \`resetsAt\` is epoch SECONDS here while every
+    // other reset on our wire is millis, and that the percentages in the usage cache are
+    // meanwhile perfectly healthy. That combination IS the 2026-09-05 defect: the forecast
+    // said 6% while the wall was right there.
+    if (said.includes('LIMIT')) {
+      out({
+        type: 'assistant',
+        message: {
+          model: '<synthetic>', role: 'assistant', stop_reason: 'stop_sequence',
+          content: [{ type: 'text', text: "You've hit your session limit \u00b7 resets 4:10am (Europe/Istanbul)" }],
+        },
+        error: 'rate_limit',
+        isApiErrorMessage: true,
+        apiErrorStatus: 429,
+        quotaLimits: {
+          status: 'rejected',
+          resetsAt: Math.floor((Date.now() + 3600_000) / 1000),
+          rateLimitType: 'five_hour',
+          overageStatus: 'rejected',
+          overageDisabledReason: 'group_zero_credit_limit',
+          unifiedRateLimitFallbackAvailable: false,
+        },
+      });
+      out({ type: 'result', subtype: 'success', is_error: false, num_turns: 1 });
+      continue;
+    }
     out({ type: 'assistant', message: { role: 'assistant', model: 'claude-opus-5',
           content: [{ type: 'text', text: 'ack' }] } });
     // "HOLD" starts a turn that never ends, so the surface stays BUSY — that is how the
@@ -827,6 +859,127 @@ async function runMultiAccount(port, report) {
     existsSync(join(HOME, '.served-by-engine')),
     `served=${existsSync(join(HOME, '.served-by-engine'))}`);
   try { spent.ws.close(); } catch { /* best-effort */ }
+  rmSync(join(HOME, '.usage-percent'), { force: true });
+  rmSync(join(sandboxB, '.usage-percent'), { force: true });
+
+  // ── THE 2026-09-05 REGRESSION, driven end to end ───────────────────────────────────
+  //
+  // Three breaks put one limit message on screen twice, and every check above passed while
+  // all three were live — because every one of them measured the FORECAST path. What follows
+  // measures the OBSERVED one.
+  //
+  //   1. The threshold never armed. The account was refused with "You've hit your session
+  //      limit" while its own `/usage` probe answered 6% three minutes later.
+  //   2. There was nowhere to go anyway: the fallback account publishes no usage numbers at
+  //      all, and an unmeasurable account was disqualified outright.
+  //   3. Nothing reacted to the refusal itself. The CLI's rejection frame was read by nobody,
+  //      so the user's "devam" walked into the identical wall.
+  const LIMITS_FILE = join(HOME, '.dreamcontext', 'claude-account-limits.json');
+  const clearRejections = () => rmSync(LIMITS_FILE, { force: true });
+  /** Both accounts HEALTHY and well under the probe threshold — so nothing here can be won
+   *  by the forecast path. Any switch below is earned by the refusal, or it is not earned. */
+  const bothHealthy = () => {
+    writeAccountRegister();
+    setAccount(ACCOUNT_A, 20);
+    writeFileSync(join(HOME, '.usage-percent'), '20');
+    writeFileSync(join(sandboxB, '.usage-percent'), '11');
+    for (const [dir, acct, pct] of [[HOME, ACCOUNT_A, 20], [sandboxB, ACCOUNT_B, 11]]) {
+      const blob = readJson(join(dir, '.claude.json')) ?? {};
+      blob.cachedUsageUtilization = {
+        fetchedAtMs: Date.now(),
+        accountUuid: acct.accountUuid,
+        utilization: {
+          five_hour: { utilization: pct, resets_at: new Date(Date.now() + 3600_000).toISOString() },
+          seven_day: { utilization: 30, resets_at: new Date(Date.now() + 86400_000).toISOString() },
+        },
+      };
+      writeFileSync(join(dir, '.claude.json'), JSON.stringify(blob));
+    }
+  };
+
+  console.log('  ── a limit that ALREADY landed still moves the turn');
+  clearRejections();
+  bothHealthy();
+  const hitSid = randomUUID();
+  const hit = await openChat(WebSocket, port, hitSid);
+  const REFUSED = 'LIMIT this message must be resent, not retyped';
+  hit.ws.send(JSON.stringify({ type: 'user', text: REFUSED }));
+  const reacted = await until(
+    async () => hit.metas.some((m) => m.subtype === 'account_switch' && m.reason === 'limit_hit'), 30_000);
+  const hitFrame = hit.metas.find((m) => m.subtype === 'account_switch' && m.reason === 'limit_hit');
+
+  ok('a REFUSED turn triggers a switch, though every percentage says the account is fine',
+    reacted && hitFrame?.switched === true,
+    `reacted=${reacted} frame=${JSON.stringify(hitFrame ?? hit.metas.map((m) => m.subtype))}`);
+  ok('…it moves to the other account by name, so the billed account never changes silently',
+    hitFrame?.accountId === 'second-example-com', JSON.stringify(hitFrame?.accountId));
+  ok('…and carries the refused text, so the user resends nothing by hand',
+    hitFrame?.pendingText === REFUSED, JSON.stringify(hitFrame?.pendingText));
+  ok('…and the refusal is WRITTEN DOWN, with the reset the API itself stated',
+    (() => {
+      const rec = readJson(LIMITS_FILE)?.rejected?.['first-example-com'];
+      return rec && rec.window === 'session' && rec.estimated === undefined && rec.until > Date.now();
+    })(), JSON.stringify(readJson(LIMITS_FILE)));
+  try { hit.ws.close(); } catch { /* best-effort */ }
+
+  // THE "devam" CASE. A brand-new conversation, an ordinary message, both caches still
+  // reading 20%/11%. Without the memory this starts on the walled account and fails again —
+  // which is exactly what the user saw. The account is remembered as refused, so it moves
+  // BEFORE trying, and says so in its own words rather than borrowing limit_hit's.
+  console.log('  ── and the NEXT message does not walk back into the same wall');
+  const againSid = randomUUID();
+  const again = await openChat(WebSocket, port, againSid);
+  again.ws.send(JSON.stringify({ type: 'user', text: 'devam' }));
+  const rememberedMove = await until(
+    async () => again.metas.some((m) => m.subtype === 'account_switch' && m.switched === true), 30_000);
+  const againFrame = again.metas.find((m) => m.subtype === 'account_switch' && m.switched === true);
+  ok('a refusal is REMEMBERED — the next turn moves before trying, though the cache says 20%',
+    rememberedMove && againFrame?.accountId === 'second-example-com',
+    `moved=${rememberedMove} frame=${JSON.stringify(againFrame)}`);
+  ok('…and it is honest about WHY: this message did not fail, an earlier one did',
+    againFrame?.reason === 'limit_known', JSON.stringify(againFrame?.reason));
+  ok('…and names when the walled account comes back, so the notice is information',
+    typeof againFrame?.earliestResetAt === 'number' && againFrame.earliestResetAt > Date.now(),
+    JSON.stringify(againFrame?.earliestResetAt));
+  try { again.ws.close(); } catch { /* best-effort */ }
+
+  // The FALLBACK the old chooser could never use. B is signed in and answers `auth status`,
+  // but publishes no usage numbers at all — the measured shape of a real Max account. Under
+  // the old rule the only possible answer here was "every account is at its limit".
+  console.log('  ── an account that publishes NO usage numbers is still a place to go');
+  clearRejections();
+  bothHealthy();
+  writeFileSync(join(sandboxB, '.usage-nocache'), '1');
+  const blindSid = randomUUID();
+  const blind = await openChat(WebSocket, port, blindSid);
+  blind.ws.send(JSON.stringify({ type: 'user', text: 'LIMIT nowhere measurable to go' }));
+  const blindMoved = await until(
+    async () => blind.metas.some((m) => m.subtype === 'account_switch' && m.switched === true), 30_000);
+  const blindFrame = blind.metas.find((m) => m.subtype === 'account_switch' && m.switched === true);
+  ok('a signed-in account with NO readable usage is a last-resort fallback, not a dead end',
+    blindMoved && blindFrame?.accountId === 'second-example-com',
+    `moved=${blindMoved} frame=${JSON.stringify(blindFrame ?? blind.metas.map((m) => m.subtype))}`);
+  ok('…and the switch ADMITS there is no number behind it rather than implying a measured pick',
+    blindFrame?.unmeasured === true && blindFrame?.sessionPercent === undefined,
+    `unmeasured=${JSON.stringify(blindFrame?.unmeasured)} pct=${JSON.stringify(blindFrame?.sessionPercent)}`);
+  try { blind.ws.close(); } catch { /* best-effort */ }
+  rmSync(join(sandboxB, '.usage-nocache'), { force: true });
+
+  // NEGATIVE CONTROL. The detector runs on every stream line, and a false positive is the
+  // expensive direction: it would restart a healthy conversation and bill another account.
+  console.log('  ── and an ordinary conversation is never mistaken for a refusal');
+  clearRejections();
+  bothHealthy();
+  const calmSid = randomUUID();
+  const calm = await openChat(WebSocket, port, calmSid);
+  calm.ws.send(JSON.stringify({ type: 'user', text: 'what happens when you hit your session limit?' }));
+  await sleep(6000);
+  ok('a message merely TALKING about session limits switches nothing',
+    calm.metas.filter((m) => m.subtype === 'account_switch').length === 0
+      && readJson(LIMITS_FILE) === null,
+    JSON.stringify(calm.metas.map((m) => m.subtype)));
+  try { calm.ws.close(); } catch { /* best-effort */ }
+  clearRejections();
   rmSync(join(HOME, '.usage-percent'), { force: true });
   rmSync(join(sandboxB, '.usage-percent'), { force: true });
 
