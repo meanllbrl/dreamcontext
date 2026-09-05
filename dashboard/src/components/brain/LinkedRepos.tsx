@@ -20,7 +20,7 @@ import './LinkedRepos.css';
  *    the POST /clone confirmed=true).
  * Add binds a local checkout picked via the native folder picker.
  */
-export function LinkedRepos() {
+export function LinkedRepos({ compact = false }: { compact?: boolean } = {}) {
   const { t } = useI18n();
   const { data: repos } = useLinkedRepos();
   const linkRepo = useLinkRepo();
@@ -78,8 +78,10 @@ export function LinkedRepos() {
 
   return (
     <div className="linked-repos">
-      <p className="linked-repos-title">{t('linkedRepos.title')}</p>
-      <p className="settings-field-hint">{t('linkedRepos.desc')}</p>
+      {/* `compact` = hosted in a section whose head already carries the name and the
+          one-line description. */}
+      {!compact && <p className="linked-repos-title">{t('linkedRepos.title')}</p>}
+      {!compact && <p className="settings-field-hint">{t('linkedRepos.desc')}</p>}
 
       {repos && repos.length > 0 ? (
         <ul className="linked-repos-list">

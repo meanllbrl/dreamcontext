@@ -1,6 +1,11 @@
+/* Settings fills the window like every other screen. It used to be the only page
+   capped at --page-max-width and centred, which on a wide display left a gutter
+   down both sides while Tasks, Roadmap and the rest ran edge to edge. The
+   readable measure is enforced per ROW (.setting-row-text), not by shrinking the
+   whole page — so the text stays comfortable and the layout stops being the odd
+   one out. */
 .settings-page {
-  max-width: var(--page-max-width);
-  margin-inline: auto;
+  width: 100%;
 }
 
 /* ─── In-page section nav (left rail switches the visible section) ─── */
@@ -11,12 +16,18 @@
 }
 
 .settings-nav {
-  flex: 0 0 264px;
+  flex: 0 0 232px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 2px;
   position: sticky;
   top: var(--space-4);
+}
+
+.settings-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .settings-content {
@@ -31,7 +42,7 @@
 
 .settings-nav-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-3);
   width: 100%;
   padding: var(--space-3);
@@ -99,11 +110,22 @@
   line-height: 1.3;
 }
 
-.settings-nav-desc {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-normal);
-  color: var(--color-text-secondary);
-  line-height: 1.4;
+/* Group heading: the menu's four buckets (Project / Memory / Integrations /
+   This machine). A label, not a control — the sections underneath are the
+   clickable things. */
+.settings-nav-group + .settings-nav-group {
+  margin-top: var(--space-4);
+}
+
+.settings-nav-group-label {
+  display: block;
+  padding: 0 var(--space-3);
+  margin-bottom: var(--space-1);
+  font-size: var(--font-size-xs, 11px);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
 }
 
 /* The label uses flex `gap`, so drop the badge's own left margin to avoid double spacing. */
@@ -131,8 +153,7 @@
   max-width: 68ch;
 }
 
-/* Narrow viewports: the rail stacks full-width above the content. Descriptions
-   are dropped so the menu stays compact when it's not beside the content. */
+/* Narrow viewports: the rail stacks full-width above the content. */
 @media (max-width: 720px) {
   .settings-body {
     flex-direction: column;
@@ -143,39 +164,23 @@
     position: static;
     width: 100%;
   }
-  .settings-nav-item {
-    align-items: center;
-  }
-  .settings-nav-desc {
-    display: none;
-  }
 }
 
-.settings-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-6);
-  gap: var(--space-4);
-  flex-wrap: wrap;
+/* Every control saves itself, so the outcome is reported NEXT TO the control —
+   the page-level Save button and its far-away status row are gone. */
+.settings-save-mark {
+  margin-left: var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
 }
 
-.settings-save-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.settings-saved {
-  font-size: var(--font-size-sm);
+.settings-save-mark--ok {
   color: var(--color-success);
-  font-weight: var(--font-weight-medium);
 }
 
-.settings-error {
-  font-size: var(--font-size-sm);
+.settings-save-mark--err {
   color: var(--color-error);
-  font-weight: var(--font-weight-medium);
 }
 
 .settings-empty-notice {
@@ -262,13 +267,13 @@
 
 .settings-field-hint {
   margin: 0;
+  max-width: 62ch;
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   line-height: 1.5;
-  /* Indent to align the hint text under the checkbox label text.
-     .settings-checkbox width = var(--space-4) = 16px
-     .settings-checkbox-label gap = var(--space-3) = 12px */
-  padding-left: calc(var(--space-4) + var(--space-3));
+  /* No indent: this used to align under a checkbox label, and there are no
+     checkbox rows left on the page — every setting is a SettingRow now. The
+     leftover padding just made stray hints look like mis-indented list items. */
 }
 
 .settings-checkbox-label {
@@ -397,9 +402,10 @@
 /* ── Embedding-model status card (under the Hybrid recall option) ───────────── */
 /* Indented to line up under the option's hint text (same offset as
    .settings-field-hint: checkbox width + label gap). */
+/* Sits inside the Hybrid choice's own text column, so it no longer needs the
+   old checkbox-alignment indent. */
 .embed-model-card {
   margin-top: var(--space-2);
-  margin-left: calc(var(--space-4) + var(--space-3));
   padding: var(--space-3);
   display: flex;
   flex-direction: column;
@@ -501,4 +507,10 @@
 .embed-model-btn--primary:hover:not(:disabled) {
   color: #fff;
   filter: brightness(1.06);
+}
+
+/* A hint that reports a real conflict (the other task backend is the active one),
+   not just guidance. */
+.settings-field-hint--warn {
+  color: var(--color-warning);
 }

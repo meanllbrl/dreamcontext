@@ -122,16 +122,78 @@ export function SystemIcon(props: IconProps) {
   );
 }
 
+/** Learning — a spark: the layer that forms and tests hypotheses. */
+export function LearningIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 3v3M12 18v3M4.2 7.5l2.6 1.5M17.2 15l2.6 1.5M4.2 16.5l2.6-1.5M17.2 9l2.6-1.5" />
+      <circle cx="12" cy="12" r="3.25" />
+    </Icon>
+  );
+}
+
+/** Recall — a magnifier over a document: how memory is fetched back. */
+export function RecallIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="10.75" cy="10.75" r="6.25" />
+      <path d="m15.5 15.5 4 4" />
+      <path d="M8.25 9.75h5M8.25 12.5h3.5" />
+    </Icon>
+  );
+}
+
+/** ClickUp — three stacked task lines with a check. */
+export function ClickUpIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 6.5h9M4 12h9M4 17.5h6" />
+      <path d="m15.5 16 2 2 4-4.5" />
+    </Icon>
+  );
+}
+
+/** Team sync — two people sharing one repo. */
+export function TeamSyncIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="2.75" />
+      <path d="M3.5 19.5a4.5 4.5 0 0 1 9 0" />
+      <path d="M15.5 5.5a2.75 2.75 0 0 1 0 5.5" />
+      <path d="M17 15.5a4.5 4.5 0 0 1 3.5 4" />
+    </Icon>
+  );
+}
+
+/** Linked repos — a folder tied to a remote. */
+export function LinkedReposIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h3.4l1.6 2h4.5A1.5 1.5 0 0 1 16 9.5V11" />
+      <path d="M3.5 7.5v9A1.5 1.5 0 0 0 5 18h6" />
+      <path d="M14.5 15.5a2 2 0 0 1 2-2h1a2 2 0 1 1 0 4h-1" />
+      <path d="M20.5 15.5a2 2 0 0 0-2-2" />
+      <path d="M15.5 15.5h4" />
+    </Icon>
+  );
+}
+
 export const SETTINGS_ICONS = {
   platforms: PlatformsIcon,
-  tasks: CloudTasksIcon,
-  memory: MemoryIcon,
-  connections: ConnectionsIcon,
   format: FormatIcon,
-  brain: BrainRepoIcon,
-  system: SystemIcon,
   agents: AgentsIcon,
   sleepy: SleepyIcon,
+  memory: MemoryIcon,
+  learning: LearningIcon,
+  recall: RecallIcon,
+  github: BrainRepoIcon,
+  teamsync: TeamSyncIcon,
+  linkedrepos: LinkedReposIcon,
+  clickup: ClickUpIcon,
+  connections: ConnectionsIcon,
+  system: SystemIcon,
+  /** Legacy id kept so the old `tasks` icon import site (if any) still resolves. */
+  tasks: CloudTasksIcon,
 } as const;
 
 export type SettingsIconId = keyof typeof SETTINGS_ICONS;

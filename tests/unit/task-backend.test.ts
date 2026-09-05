@@ -448,12 +448,17 @@ describe('task backend', () => {
       }
     });
 
-    it('SettingsPage exposes the backend selector + connection test (Cloud Task Management)', () => {
+    it('the Settings UI exposes the backend switch + connection test (Cloud Task Management)', () => {
+      // The form lives in CloudTaskSync (one instance per provider: Integrations →
+      // GitHub carries the Issues half beside project sync, Integrations → ClickUp
+      // owns the other). It moved out of SettingsPage when the settings menu was
+      // regrouped; the guard follows it rather than pinning the old address.
       const src = readFileSync(
-        join(SRC_ROOT, '..', 'dashboard', 'src', 'pages', 'SettingsPage.tsx'),
+        join(SRC_ROOT, '..', 'dashboard', 'src', 'components', 'settings', 'CloudTaskSync.tsx'),
         'utf-8',
       );
-      expect(src).toContain("t('settings.cloud_tasks.label')");
+      expect(src).toContain("t('settings.tasksync.github.label')");
+      expect(src).toContain("t('settings.tasksync.clickup.label')");
       expect(src).toContain('/tasks/sync-test');
       expect(src).toContain('taskBackend');
       // Token is CLI-managed — the page must NOT collect or display it.

@@ -1,0 +1,139 @@
+{
+  "out": "./settings-redesign.excalidraw.md",
+  "name": "settings-redesign",
+  "description": "Dashboard Settings sayfasinin yeniden tasarim planlama tahtasi: mevcut durumun teshisi (ayni metnin yedi katmanda tekrari, 9 bolumun kesisen bilgi mimarisi, ikiye bolunmus kaydetme modeli) ve uc cozum secenegi (kopya temizligi, bilgi mimarisi yeniden gruplama, aranabilir tek akis) etki/efor karsilastirmasiyla.",
+  "tags": ["design", "dashboard", "settings", "excalidraw"],
+  "elements": [
+    { "type": "stack", "x": 60, "y": 60, "gap": 56, "items": [
+      { "type": "sectionTitle", "text": "Settings — neden karisik, ne yapmali", "fontSize": 42 },
+      { "type": "takeaway", "label": "OZETLE", "width": 820,
+        "text": "Sorun ayar sayisi degil. Ayni sey **yedi ayri yerde** tekrar yaziliyor, 9 bolum birbirinin ustune biniyor ve sayfada ==iki farkli kaydetme modeli== yan yana calisiyor." },
+
+      { "type": "sectionTitle", "text": "1 · Tekrar — tek ekranda 'Cloud sync' yedi kez", "fontSize": 30 },
+      { "type": "row", "gap": 40, "valign": "top", "items": [
+        { "type": "table", "headers": ["Nerede", "Ne yaziyor"], "align": ["left", "left"], "rows": [
+          ["Sol nav basligi", "Cloud sync"],
+          ["Sol nav alt metni", "Back up and share your project memory on GitHub"],
+          ["Bolum basligi", "Cloud sync"],
+          ["Bolum aciklamasi", "Sign in with GitHub and connect a brain repo to back up your project memory…"],
+          ["Sagdaki anahtar", "Cloud sync  (set here)"],
+          ["Anahtarin altindaki paragraf", "When on, dreamcontext syncs the entire project folder…"],
+          ["Anahtarin tooltip'i", "Sync your whole project (code + brain) to its GitHub repo…"]
+        ]},
+        { "type": "callout", "w": 460, "color": "red", "title": "Kok neden",
+          "lead": "Her bolum **ayni sablonu** doldurmak zorunda.",
+          "items": [
+            "`navdesc` + `desc` cifti her bolumde var — biri digerinin uzun hali.",
+            "Anahtar kendi etiketini ve kendi ipucunu da tasiyor.",
+            "Hicbiri digerinin var oldugunu bilmiyor; ekranda ust uste biniyorlar."
+          ]}
+      ]},
+
+      { "type": "sectionTitle", "text": "2 · Bilgi mimarisi — 9 bolum, ucu ayni seyden bahsediyor", "fontSize": 30 },
+      { "type": "row", "gap": 14, "valign": "top", "items": [
+        { "type": "card", "w": 150, "h": 74, "text": "Platforms", "color": "blue", "fontSize": 15 },
+        { "type": "card", "w": 150, "h": 74, "text": "Cloud Tasks", "color": "yellow", "fontSize": 15 },
+        { "type": "card", "w": 150, "h": 74, "text": "Memory", "color": "purple", "fontSize": 15 },
+        { "type": "card", "w": 150, "h": 74, "text": "Connections", "color": "purple", "fontSize": 15 },
+        { "type": "card", "w": 150, "h": 74, "text": "Cloud sync", "color": "yellow", "fontSize": 15 },
+        { "type": "card", "w": 150, "h": 74, "text": "System", "color": "gray", "fontSize": 15 },
+        { "type": "card", "w": 150, "h": 74, "text": "Task Format", "color": "yellow", "fontSize": 15 },
+        { "type": "card", "w": 150, "h": 74, "text": "Agents", "color": "green", "fontSize": 15 },
+        { "type": "card", "w": 150, "h": 74, "text": "Sleepy", "color": "green", "fontSize": 15 }
+      ]},
+      { "type": "row", "gap": 40, "valign": "top", "items": [
+        { "type": "callout", "w": 620, "color": "yellow", "title": "GitHub uc yerde",
+          "lead": "Ayni hesap, uc ayri bolumde **uc ayri kurulum**.",
+          "items": [
+            "Cloud Tasks → GitHub Issues saglayicisi + `token` + owner/repo.",
+            "Cloud sync → GitHub oturumu + brain repo + linked repos.",
+            "System → cloud sync ve cloud tasks'in `git` bagimliligi."
+          ]},
+        { "type": "callout", "w": 560, "color": "purple", "title": "Ucuncu liste",
+          "lead": "System, bolum listesini **dorduncu kez** tekrarliyor.",
+          "items": [
+            "Icindeki dort satir: Cloud sync, Cloud tasks, Sleep agent, Agent terminal.",
+            "Yani bolumun kendisi degil, bolumlerin **hazir mi** gorunumu."
+          ]}
+      ]},
+
+      { "type": "sectionTitle", "text": "3 · Kaydetme modeli ikiye bolunmus", "fontSize": 30 },
+      { "type": "row", "gap": 40, "valign": "top", "items": [
+        { "type": "table", "headers": ["Ayar", "Nasil kaydediliyor"], "align": ["left", "left"], "rows": [
+          ["Platforms", { "text": "Save dugmesi", "color": "red" }],
+          ["Cloud Tasks (10 alan)", { "text": "Save dugmesi", "color": "red" }],
+          ["Memory · native memory", { "text": "Save dugmesi", "color": "red" }],
+          ["Memory · learning, recall", { "text": "Aninda", "color": "green" }],
+          ["Cloud sync · anahtar, checkpoint", { "text": "Aninda", "color": "green" }],
+          ["Connections, Agents, Sleepy", { "text": "Aninda", "color": "green" }]
+        ]},
+        { "type": "callout", "w": 520, "color": "red", "title": "Niye kotu",
+          "lead": "Save dugmesi **sayfanin sol ustunde**, degistirdigin kontrolden kopuk.",
+          "items": [
+            "Zamanin ==%90'inda pasif== duruyor — ne ise yaradigi ogrenilemiyor.",
+            "Ayni ekranda bir anahtar aninda, digeri Save bekliyor; hangisi hangisi belli degil."
+          ]}
+      ]},
+
+      { "type": "sectionTitle", "text": "Uc cozum", "fontSize": 34 },
+      { "type": "row", "gap": 32, "valign": "top", "items": [
+        { "type": "callout", "w": 430, "color": "gray", "title": "A · Kopya temizligi",
+          "lead": "Yapiyi birak, **metni tekle**.",
+          "items": [
+            "Bolum basi tek aciklama: `navdesc` kalir, `desc` silinir.",
+            "Anahtar etiketi + tooltip tek satira iner.",
+            "Efor ~yarim gun · risk yok · ekran hala 9 bolum."
+          ]},
+        { "type": "callout", "w": 430, "color": "green", "title": "B · Dort gruba topla",
+          "lead": "Bolumleri **konusuna gore** yeniden grupla, kopyayi da temizle.",
+          "items": [
+            "Proje · Hafiza · Entegrasyonlar · Bu makine.",
+            "GitHub tek bir 'Entegrasyonlar > GitHub' altinda birlesir.",
+            "System, bolumlerin ustune rozet olur — ayri liste degil."
+          ]},
+        { "type": "callout", "w": 430, "color": "blue", "title": "C · Tek akis + arama",
+          "lead": "Nav'i birak, **aranabilir tek uzun liste** yap.",
+          "items": [
+            "Her ayar bir satir: baslik, tek cumle, kontrol sagda.",
+            "Ustte arama kutusu; bolumler sadece kaydirma cipasi.",
+            "En temiz sonuc, en buyuk yeniden yazim."
+          ]}
+      ]},
+
+      { "type": "row", "gap": 40, "valign": "top", "items": [
+        { "type": "quadrant", "w": 620, "h": 440, "title": "Etki / efor",
+          "xAxis": { "left": "az efor", "right": "cok efor" },
+          "yAxis": { "bottom": "az etki", "top": "cok etki" },
+          "quadrantLabels": { "tl": "kolay kazanc", "tr": "buyuk is, buyuk kazanc", "bl": "", "br": "pahali" },
+          "items": [
+            { "label": "A · kopya", "x": 0.12, "y": 0.42 },
+            { "label": "B · dort grup", "x": 0.45, "y": 0.82 },
+            { "label": "C · tek akis", "x": 0.86, "y": 0.9 }
+          ]},
+        { "type": "callout", "w": 560, "color": "green", "title": "Onerim",
+          "lead": "**B**, ustune A'nin metin temizligi. C'yi simdilik erteleyelim.",
+          "items": [
+            "B, sikayetin ikisini birden cozuyor: tekrar ve kesisen bolumler.",
+            "Tek kaydetme modeli sart — her sey ==aninda kaydedilsin==, Save dugmesi kalksin.",
+            "C'nin arama kutusu, B bittikten sonra uzerine eklenebilir."
+          ]}
+      ]},
+
+      { "type": "sectionTitle", "text": "B secilirse yeni iskelet", "fontSize": 30 },
+      { "type": "row", "gap": 24, "valign": "top", "items": [
+        { "type": "column", "x": 0, "y": 0, "color": "blue", "items": [
+          { "text": "PROJE", "color": "gray" }, "Platforms", "Task Format", "Agents", "Sleepy"
+        ]},
+        { "type": "column", "x": 0, "y": 0, "color": "purple", "items": [
+          { "text": "HAFIZA", "color": "gray" }, "Native memory", "Learning", "Recall modu"
+        ]},
+        { "type": "column", "x": 0, "y": 0, "color": "yellow", "items": [
+          { "text": "ENTEGRASYONLAR", "color": "gray" }, "GitHub (sync + issues)", "ClickUp", "Connections"
+        ]},
+        { "type": "column", "x": 0, "y": 0, "color": "gray", "items": [
+          { "text": "BU MAKINE", "color": "gray" }, "Bagimliliklar", "Kurulum"
+        ]}
+      ]}
+    ]}
+  ]
+}

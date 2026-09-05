@@ -8,13 +8,18 @@ import type { Capabilities } from '../sleepy/agentSession';
 import './SystemDependencies.css';
 
 /**
- * The per-feature dependency doctor (Settings → System). Every feature that
- * shells out to external software is listed with what it actually needs on THIS
- * machine, a live installed/missing check (`GET /api/agent/capabilities`, polled
- * every 30s), and a fix: one-click install where the environment allows it
- * (desktop + a viable installer), a copyable command otherwise. This is the
- * answer to "the feature just spins forever" — a missing prerequisite is named
- * and fixable BEFORE the feature is attempted.
+ * The dependency doctor (Settings → This machine). One row per piece of external
+ * software this project shells out to, with a live installed/missing check
+ * (`GET /api/agent/capabilities`, polled every 30s) and a fix: one-click install
+ * where the environment allows it (desktop + a viable installer), a copyable
+ * command otherwise.
+ *
+ * It is keyed on the DEPENDENCY, not the feature. Listing it by feature made this
+ * panel a fourth copy of the settings menu — the same four names the nav, the
+ * section titles and the sidebar were already showing — while the actual question
+ * ("is git here?") was answered three times over. Each row now says which features
+ * need it, and the features themselves carry a `FeatureDepsNotice` where the user
+ * actually meets them.
  */
 
 type DepKey = 'git' | 'claude' | 'pty';
@@ -206,6 +211,40 @@ function ClaudeAccountRow({ caps }: { caps: Capabilities }) {
   );
 }
 
+/** Which features need this dependency (desktop-only ones only count on desktop). */
+function featuresNeeding(dep: DepKey, caps: Capabilities): FeatureMeta[] {
+  return FEATURES.filter((f) => f.deps.includes(dep) && (!f.desktopOnly || caps.desktop));
+}
+
+/**
+ * The missing-prerequisite banner, rendered INSIDE the section whose feature is
+ * blocked — "Cloud sync needs git, which isn't installed" sitting above the cloud
+ * sync controls, rather than in a separate list the user has to think to visit.
+ * Renders nothing when the feature is ready, so a healthy machine sees no noise.
+ */
+export function FeatureDepsNotice({ feature, onOpenMachine }: { feature: string; onOpenMachine?: () => void }) {
+  const { t } = useI18n();
+  const { data: caps } = useAgentCapabilities();
+  const meta = FEATURES.find((f) => f.key === feature);
+  if (!caps || !meta) return null;
+  if (meta.desktopOnly && !caps.desktop) return null;
+  const missing = meta.deps.filter((d) => !DEPS[d].present(caps));
+  if (missing.length === 0) return null;
+
+  return (
+    <p className="sysdep-notice">
+      {t('system.notice.blocked')
+        .replace('{feature}', t(meta.titleKey))
+        .replace('{deps}', missing.map((d) => t(DEPS[d].nameKey)).join(', '))}
+      {onOpenMachine && (
+        <button type="button" className="sysdep-notice-link" onClick={onOpenMachine}>
+          {t('system.notice.open')}
+        </button>
+      )}
+    </p>
+  );
+}
+
 export function SystemDependencies() {
   const { t } = useI18n();
   const { data: caps } = useAgentCapabilities();
@@ -214,33 +253,24 @@ export function SystemDependencies() {
 
   // claude/pty one-click installs run through npm — surface the blocker once.
   const npmNeeded = caps.desktop && !caps.npm && (!caps.claudeCli || !caps.nodePty);
+  // Only list software something on this machine can actually use.
+  const depKeys = (Object.keys(DEPS) as DepKey[]).filter((d) => featuresNeeding(d, caps).length > 0);
 
   return (
     <div className="sysdep">
       {npmNeeded && <p className="sysdep-npm-warn">{t('system.dep.npmMissing')}</p>}
       <ClaudeAccountRow caps={caps} />
-      {FEATURES.map((f) => {
-        const missing = f.deps.filter((d) => !DEPS[d].present(caps));
-        const ready = missing.length === 0;
-        return (
-          <div key={f.key} className="sysdep-feature">
-            <div className="sysdep-feature-head">
-              <span className="sysdep-feature-title">{t(f.titleKey)}</span>
-              {f.desktopOnly && !caps.desktop ? (
-                <span className="sysdep-badge">{t('system.feature.desktopOnly')}</span>
-              ) : (
-                <span className={`sysdep-badge${ready ? ' sysdep-badge--ok' : ' sysdep-badge--warn'}`}>
-                  {ready ? t('system.feature.ready') : t('system.feature.blocked')}
-                </span>
-              )}
-            </div>
-            <p className="settings-field-hint">{t(f.descKey)}</p>
-            {f.deps.length === 0
-              ? <p className="sysdep-nodeps">{t('system.feature.noDeps')}</p>
-              : f.deps.map((d) => <DepRow key={d} dep={DEPS[d]} caps={caps} />)}
-          </div>
-        );
-      })}
+      {depKeys.map((d) => (
+        <div key={d} className="sysdep-item">
+          <DepRow dep={DEPS[d]} caps={caps} />
+          <p className="sysdep-neededby">
+            {t('system.dep.neededBy').replace(
+              '{features}',
+              featuresNeeding(d, caps).map((f) => t(f.titleKey)).join(' · '),
+            )}
+          </p>
+        </div>
+      ))}
     </div>
   );
 }

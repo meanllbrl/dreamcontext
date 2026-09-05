@@ -40,7 +40,7 @@ function describeOrigin(remote: string): { name: string; web: string | null } {
  *
  * Renders only when GitHub is connected.
  */
-export function OriginSetup() {
+export function OriginSetup({ compact = false }: { compact?: boolean } = {}) {
   const { t } = useI18n();
   const { data: auth } = useAuthStatus();
   const { data: status } = useBrainStatus();
@@ -117,7 +117,9 @@ export function OriginSetup() {
   return (
     <div className="origin-setup">
       <p className="origin-setup-title">{t('brain.origin.title')}</p>
-      <p className="settings-field-hint">{t('brain.origin.desc')}</p>
+      {/* `compact` = the section head already said what this is; a second paragraph
+          saying it again is the duplication this page was rebuilt to remove. */}
+      {!compact && <p className="settings-field-hint">{t('brain.origin.desc')}</p>}
 
       <div className="origin-setup-tabs" role="tablist">
         <button

@@ -1,20 +1,21 @@
 import { useState, useEffect, useRef } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../context/I18nContext';
-import { useApi, useVault } from '../context/VaultContext';
-import { useConfig, useUpdateConfig, type PlatformId, type SetupConfig } from '../hooks/useConfig';
-import { SearchableSelect } from '../components/tasks/SearchableSelect';
+import { useVault } from '../context/VaultContext';
+import { useConfig, useUpdateConfig, type PlatformId } from '../hooks/useConfig';
 import { ConnectionsManager } from '../components/settings/ConnectionsManager';
 import { EmbeddingModelCard } from '../components/settings/EmbeddingModelCard';
 import { TaskOverrideEditor } from '../components/settings/TaskOverrideEditor';
 import { SETTINGS_ICONS } from '../components/settings/SettingsIcons';
+import { CloudTaskSync } from '../components/settings/CloudTaskSync';
+import { SettingGroup, SettingRow, SettingChoice, Toggle } from '../components/settings/SettingRow';
+import { useInstantSave, SaveMark } from '../components/settings/useInstantSave';
 import { useAgentCapabilities } from '../hooks/useAgentCapabilities';
-import { useBrainSettings, useUpdateBrainSettings } from '../hooks/useBrainStatus';
+import { useAuthStatus, useBrainSettings, useBrainStatus, useUpdateBrainSettings } from '../hooks/useBrainStatus';
 import { useSleep, useUpdateSleep, type RecallMode } from '../hooks/useSleep';
 import { useTheses, useSetLearningEnabled } from '../hooks/useTheses';
 import { GitHubLogin } from '../components/brain/GitHubLogin';
 import { OriginSetup } from '../components/brain/OriginSetup';
-import { SystemDependencies } from '../components/settings/SystemDependencies';
+import { SystemDependencies, FeatureDepsNotice } from '../components/settings/SystemDependencies';
 import { ClaudeAccounts } from '../components/settings/ClaudeAccounts';
 import { LinkedRepos } from '../components/brain/LinkedRepos';
 import { readAutoCheckpointOnOpen, writeAutoCheckpointOnOpen } from '../lib/brainSyncPrefs';
@@ -53,47 +54,6 @@ function accelFromKeyEvent(e: React.KeyboardEvent): string | null {
   return [...mods, key].join('+');
 }
 
-interface RemoteContainer {
-  ids: Record<string, string>;
-  path: string;
-  name: string;
-}
-
-interface ProvisionResult {
-  created: string[];
-  existing: string[];
-  backfilled: number;
-  errors: string[];
-}
-
-interface SyncStatus {
-  backend: string;
-  pendingPush: number;
-  queuedOps: number;
-  conflicts: number;
-  watermark: number | null;
-}
-
-interface ConnectionTestResponse {
-  ok: boolean;
-  backend: string;
-  user?: string;
-  error?: string;
-  note?: string;
-}
-
-interface ProviderTokenStatus {
-  set: boolean;
-  source: 'env' | 'secrets' | null;
-  masked: string | null;
-}
-
-// Token status is reported for the ACTIVE backend only (the server resolves the
-// provider from the saved config); `backend` says which one it describes.
-interface TokenStatusResponse extends ProviderTokenStatus {
-  backend: string;
-}
-
 // ─── Platform options (duplicated client-side — can't import from src/lib) ────
 
 interface PlatformOption {
@@ -121,53 +81,105 @@ const RECALL_MODE_OPTIONS: RecallModeOption[] = [
   { mode: 'off', labelKey: 'settings.recall.off.label', hintKey: 'settings.recall.off.hint' },
 ];
 
-// ─── Default config when config is null ───────────────────────────────────────
-
-const DEFAULT_CONFIG: Pick<SetupConfig, 'platforms' | 'disableNativeMemory'> = {
-  platforms: [],
-  disableNativeMemory: true,
-};
-
 // ─── Section navigation (in-page menu) ────────────────────────────────────────
 
-type SettingsSectionId = 'platforms' | 'tasks' | 'format' | 'memory' | 'connections' | 'brain' | 'system' | 'agents' | 'sleepy';
+type SettingsSectionId =
+  | 'platforms' | 'format' | 'linkedrepos' | 'agents' | 'sleepy'
+  | 'memory' | 'learning' | 'recall'
+  | 'github' | 'teamsync' | 'clickup' | 'connections'
+  | 'system';
 
 interface SettingsNavItem {
   id: SettingsSectionId;
   labelKey: string;
-  descKey: string;
   desktopOnly?: boolean;
   beta?: boolean;
   lab?: boolean;
 }
 
-// Each item pairs a consistent line icon (SETTINGS_ICONS) with a label and a
-// one-line description, so the menu explains itself instead of relying on
-// look-alike Unicode glyphs. Task Format sits just above Sleepy — both are the
-// newer, beta-tier surfaces.
-const SETTINGS_NAV: SettingsNavItem[] = [
-  { id: 'platforms', labelKey: 'settings.nav.platforms', descKey: 'settings.navdesc.platforms' },
-  { id: 'tasks', labelKey: 'settings.nav.tasks', descKey: 'settings.navdesc.tasks' },
-  { id: 'memory', labelKey: 'settings.nav.memory', descKey: 'settings.navdesc.memory' },
-  { id: 'connections', labelKey: 'settings.nav.connections', descKey: 'settings.navdesc.connections' },
-  { id: 'brain', labelKey: 'settings.nav.brain', descKey: 'settings.navdesc.brain' },
-  { id: 'system', labelKey: 'settings.nav.system', descKey: 'settings.navdesc.system' },
-  { id: 'format', labelKey: 'settings.nav.format', descKey: 'settings.navdesc.format', beta: true },
-  { id: 'agents', labelKey: 'settings.nav.agents', descKey: 'settings.navdesc.agents', desktopOnly: true, beta: true },
-  { id: 'sleepy', labelKey: 'settings.nav.sleepy', descKey: 'settings.navdesc.sleepy', desktopOnly: true, lab: true },
+interface SettingsNavGroup {
+  id: string;
+  labelKey: string;
+  items: SettingsNavItem[];
+}
+
+/**
+ * The menu is GROUPED, and each row is an icon + a short label — nothing else.
+ *
+ * The flat nine-row menu carried a one-line description under every label, which
+ * the section below then restated at length: a single screen managed to say
+ * "Cloud sync" seven times (nav label, nav description, section title, section
+ * description, the toggle's own label, the paragraph under it, and its tooltip).
+ * One name in the rail, one sentence at the top of the section — that's the rule
+ * this structure exists to enforce.
+ *
+ * The grouping is also what let GitHub stop being three separate setups: project
+ * sync and Issues task-mirroring now share one account section under Integrations.
+ */
+const SETTINGS_NAV: SettingsNavGroup[] = [
+  {
+    id: 'project',
+    labelKey: 'settings.group.project',
+    items: [
+      { id: 'platforms', labelKey: 'settings.nav.platforms' },
+      { id: 'format', labelKey: 'settings.nav.format', beta: true },
+      { id: 'linkedrepos', labelKey: 'settings.nav.linkedrepos' },
+      { id: 'agents', labelKey: 'settings.nav.agents', desktopOnly: true, beta: true },
+      { id: 'sleepy', labelKey: 'settings.nav.sleepy', desktopOnly: true, lab: true },
+    ],
+  },
+  {
+    id: 'memory',
+    labelKey: 'settings.group.memory',
+    items: [
+      { id: 'memory', labelKey: 'settings.nav.memory' },
+      { id: 'learning', labelKey: 'settings.nav.learning' },
+      { id: 'recall', labelKey: 'settings.nav.recall' },
+    ],
+  },
+  {
+    id: 'integrations',
+    labelKey: 'settings.group.integrations',
+    items: [
+      { id: 'github', labelKey: 'settings.nav.github' },
+      { id: 'teamsync', labelKey: 'settings.nav.teamsync' },
+      { id: 'clickup', labelKey: 'settings.nav.clickup' },
+      { id: 'connections', labelKey: 'settings.nav.connections' },
+    ],
+  },
+  {
+    id: 'machine',
+    labelKey: 'settings.group.machine',
+    items: [
+      { id: 'system', labelKey: 'settings.nav.system' },
+    ],
+  },
 ];
+
+/** Section header: the name once, then the one sentence that explains it. */
+function SectionHead({ titleKey, descKey, badge }: { titleKey: string; descKey: string; badge?: 'beta' | 'lab' }) {
+  const { t } = useI18n();
+  return (
+    <div className="settings-section-head">
+      <h2 className="settings-section-title">
+        {t(titleKey)}
+        {badge === 'beta' && <span className="settings-beta-badge">BETA</span>}
+        {badge === 'lab' && <span className="settings-lab-badge">{t('nav.lab')}</span>}
+      </h2>
+      <p className="settings-section-desc">{t(descKey)}</p>
+    </div>
+  );
+}
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface SettingsPageProps {
-  /** Sidebar deep-link target — `{ id: 'brain', nonce }` opens the Brain Repo section. */
+  /** Sidebar deep-link target — `{ id: 'brain', nonce }` opens the GitHub section. */
   focus?: { id: string | null; nonce: number };
 }
 
 export function SettingsPage({ focus }: SettingsPageProps) {
   const { t } = useI18n();
-  const api = useApi();
-  const queryClient = useQueryClient();
   const { data: config, isLoading: configLoading, isError: configError } = useConfig();
   const updateConfig = useUpdateConfig();
 
@@ -181,23 +193,26 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   const { data: agentCaps } = useAgentCapabilities();
   const desktopSurfaces = (agentCaps?.desktop ?? false) || isDesktop();
 
-  // SW2 — Cloud sync master toggle (Brain Repo & Collaboration section).
+  // Team sync's two preconditions, read here so the SWITCH can be gated on them rather
+  // than offered and then refused by the server (400 `no_origin`).
   const { data: brainSettings } = useBrainSettings();
+  const { data: brainStatus } = useBrainStatus();
+  const { data: githubAuth } = useAuthStatus();
   const updateBrainSettings = useUpdateBrainSettings();
-  // Item 7 — machine-local "auto-checkpoint on open" preference (localStorage, not team
+  const githubConnected = githubAuth?.connected === true;
+  const hasOrigin = brainStatus?.hasRemote === true;
+  // Machine-local "auto-checkpoint on open" preference (localStorage, not team
   // config), and PER VAULT: it decides whether opening THIS project auto-commits its
   // uncommitted work, so it is read and written against this instance's vault.
   const { vault } = useVault();
   const [autoCheckpoint, setAutoCheckpoint] = useState<boolean>(() => readAutoCheckpointOnOpen(vault));
 
-  // Memory recall mode — lives in .sleep.json (not the setup config), so it is
-  // persisted immediately via PATCH /api/sleep rather than buffered behind Save.
+  // Memory recall mode lives in .sleep.json (not the setup config).
   const { data: sleepState } = useSleep();
   const updateSleep = useUpdateSleep();
   const recallMode: RecallMode = sleepState?.recall_mode ?? 'haiku';
 
-  // Learning layer (Hypotheses) switch — applied immediately via the dedicated
-  // /api/learning endpoints, independent of the config save flow below.
+  // Learning layer (Hypotheses) switch — dedicated /api/learning endpoints.
   const { data: thesesData } = useTheses();
   const learningEnabled = thesesData?.enabled === true;
   const setLearningEnabled = useSetLearningEnabled();
@@ -205,31 +220,19 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   // In-page section nav: only one settings group is shown at a time so a
   // specific setting is quick to find instead of buried in one long scroll.
   const [activeSection, setActiveSection] = useState<SettingsSectionId>('platforms');
-  const navItems = SETTINGS_NAV.filter((item) => !item.desktopOnly || desktopSurfaces);
+  const navGroups = SETTINGS_NAV
+    .map((g) => ({ ...g, items: g.items.filter((item) => !item.desktopOnly || desktopSurfaces) }))
+    .filter((g) => g.items.length > 0);
 
-  const [platforms, setPlatforms] = useState<PlatformId[]>(DEFAULT_CONFIG.platforms);
-  const [disableNativeMemory, setDisableNativeMemory] = useState<boolean>(
-    DEFAULT_CONFIG.disableNativeMemory,
-  );
-  const [cloudTasks, setCloudTasks] = useState(false);
-  const [taskProvider, setTaskProvider] = useState<'clickup' | 'github'>('clickup');
-  const [clickupTeam, setClickupTeam] = useState('');
-  const [clickupSpace, setClickupSpace] = useState('');
-  const [clickupList, setClickupList] = useState('');
-  const [githubOwner, setGithubOwner] = useState('');
-  const [githubRepo, setGithubRepo] = useState('');
-  // API-key inputs are write-only: empty by default, never seeded from the server
-  // (the token is never sent back). A non-empty value is saved on Save/Test/Provision.
-  const [clickupToken, setClickupToken] = useState('');
-  const [githubToken, setGithubToken] = useState('');
-  const [testResult, setTestResult] = useState<ConnectionTestResponse | null>(null);
-  const [testing, setTesting] = useState(false);
-  const [provisionNote, setProvisionNote] = useState<string | null>(null);
-  const [provisionPreview, setProvisionPreview] = useState<ProvisionResult | null>(null);
-  const [provisioning, setProvisioning] = useState(false);
-  const [persistError, setPersistError] = useState<string | null>(null);
-  const [dirty, setDirty] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
+  // Config-backed switches read straight from the server copy, so a write that
+  // fails leaves the control showing what is actually on disk instead of a value
+  // the user believes was saved.
+  const platforms = config?.platforms ?? [];
+  const disableNativeMemory = config?.disableNativeMemory ?? true;
+  const platformsSave = useInstantSave();
+  const nativeMemorySave = useInstantSave();
+  const brainToggleSave = useInstantSave();
+
   // Sleepy notch quick-capture (desktop-only, persisted in localStorage; applies live).
   const [sleepy, setSleepy] = useState<SleepyConfig>(() => readSleepyConfig());
   const [capturingHotkey, setCapturingHotkey] = useState(false);
@@ -269,173 +272,16 @@ export function SettingsPage({ focus }: SettingsPageProps) {
     writeAgentSettings(next);
   };
 
-  const { data: syncStatus } = useQuery({
-    queryKey: ['tasks-sync-status'],
-    queryFn: () => api.get<{ status: SyncStatus }>('/tasks/sync-status'),
-    select: (d) => d.status,
-  });
-
-  // Whether an API key is already configured (and from where), without ever
-  // pulling the secret itself — drives the "key set ✓" indicator.
-  const { data: tokenStatus } = useQuery({
-    queryKey: ['tasks-token-status'],
-    queryFn: () => api.get<TokenStatusResponse>('/tasks/token-status'),
-    enabled: cloudTasks,
-  });
-  // The status describes the SAVED backend; only trust it for the provider the
-  // form currently shows (switching the dropdown before saving shouldn't claim a
-  // key is set for the newly-picked provider).
-  const providerTokenStatus: ProviderTokenStatus | undefined =
-    tokenStatus && tokenStatus.backend === taskProvider ? tokenStatus : undefined;
-
-  // Pickable lists straight from the remote API — same picker the CLI
-  // onboarding uses, so nobody hunts ids out of URLs in the dashboard either.
-  const { data: containers } = useQuery({
-    queryKey: ['tasks-containers'],
-    queryFn: () => api.get<{ containers: RemoteContainer[] }>('/tasks/containers'),
-    select: (d) => d.containers,
-    enabled: cloudTasks,
-    staleTime: 5 * 60 * 1000,
-  });
-
-  // Containers carry a backend-specific id bag (ClickUp: teamId/spaceId/listId;
-  // GitHub: owner/repo). The picker keys on `path` (the full, human-readable
-  // name) so it is provider-agnostic and stays unique across both shapes.
-  const handlePickContainer = (path: string | null) => {
-    const picked = (containers ?? []).find(c => c.path === path);
-    if (!picked) return;
-    if (taskProvider === 'github') {
-      setGithubOwner(picked.ids.owner ?? '');
-      setGithubRepo(picked.ids.repo ?? '');
-    } else {
-      setClickupTeam(picked.ids.teamId ?? '');
-      setClickupSpace(picked.ids.spaceId ?? '');
-      setClickupList(picked.ids.listId ?? '');
-    }
-    markDirty();
-  };
-
-  /**
-   * Persist the cloud-task form to disk: write the API key (if one was typed)
-   * into the gitignored secrets store, then PATCH the provider coordinates.
-   * Test Connection and Provision call this FIRST so they always act on what is
-   * on screen — the old flow tested stale saved config and reported "not set".
-   * Returns true on success; sets `persistError` and returns false on failure.
-   */
-  const persistCloudConfig = async (): Promise<boolean> => {
-    const taskBackend = cloudTasks ? taskProvider : 'local';
-    const typedToken = (taskProvider === 'github' ? githubToken : clickupToken).trim();
-    try {
-      // Config FIRST: this sets `taskBackend`, so the server resolves the right
-      // backend for the token write and every subsequent test/provision call.
-      await updateConfig.mutateAsync({
-        platforms,
-        disableNativeMemory,
-        taskBackend,
-        ...(cloudTasks && taskProvider === 'clickup'
-          ? { clickup: { teamId: clickupTeam || undefined, spaceId: clickupSpace || undefined, listId: clickupList || undefined } }
-          : {}),
-        ...(cloudTasks && taskProvider === 'github'
-          ? { github: { owner: githubOwner || undefined, repo: githubRepo || undefined } }
-          : {}),
-      });
-      // Then the API key into the active backend's gitignored secrets store.
-      if (cloudTasks && typedToken) {
-        await api.post('/tasks/token', { token: typedToken });
-      }
-      // The secret is on disk now — drop it from React state and refresh derived
-      // queries (key status, pickable containers, sync badge).
-      if (typedToken) {
-        if (taskProvider === 'github') setGithubToken(''); else setClickupToken('');
-      }
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['tasks-token-status'] }),
-        queryClient.invalidateQueries({ queryKey: ['tasks-containers'] }),
-        queryClient.invalidateQueries({ queryKey: ['tasks-sync-status'] }),
-      ]);
-      setDirty(false);
-      setPersistError(null);
-      return true;
-    } catch (err) {
-      setPersistError(err instanceof Error ? err.message : String(err));
-      return false;
-    }
-  };
-
-  const formatProvisionResult = (result: ProvisionResult): string =>
-    result.errors.length > 0
-      ? `⚠ ${result.errors[0]}`
-      : result.created.length > 0
-        ? `✓ ${t('settings.cloud_tasks.provision_created')}: ${result.created.join(', ')}${result.backfilled > 0 ? ` · ${t('settings.cloud_tasks.provision_backfilled').replace('{n}', String(result.backfilled))}` : ''}`
-        : `✓ ${t('settings.cloud_tasks.provision_nothing')}`;
-
-  // One-line status under the API-key input: where the key comes from, masked.
-  const tokenStatusHint = (s?: ProviderTokenStatus): string => {
-    if (!s || !s.set) return t('settings.cloud_tasks.api_key_none');
-    if (s.source === 'env') return `${t('settings.cloud_tasks.api_key_env')} ${s.masked ?? ''}`.trim();
-    return `${t('settings.cloud_tasks.api_key_set')} ${s.masked ?? ''}`.trim();
-  };
-
-  // Step 1 of provisioning: auto-save, then a DRY RUN that previews exactly which
-  // fields/labels will be created vs already exist — nothing is written yet.
-  const handleProvisionPreview = async () => {
-    setProvisioning(true);
-    setProvisionNote(null);
-    setProvisionPreview(null);
-    try {
-      if (!(await persistCloudConfig())) return;
-      const { result } = await api.post<{ result: ProvisionResult }>('/tasks/provision', { dryRun: true });
-      if (result.created.length === 0 && result.errors.length === 0) {
-        // Nothing to do — say so instead of showing an empty confirm panel.
-        setProvisionNote(`✓ ${t('settings.cloud_tasks.provision_nothing')}`);
-      } else {
-        setProvisionPreview(result);
-      }
-    } catch (err) {
-      setProvisionNote(`⚠ ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setProvisioning(false);
-    }
-  };
-
-  // Step 2: the user confirmed the preview — actually create the fields/labels.
-  const handleProvisionConfirm = async () => {
-    setProvisioning(true);
-    setProvisionNote(null);
-    try {
-      const { result } = await api.post<{ result: ProvisionResult }>('/tasks/provision', { dryRun: false });
-      setProvisionPreview(null);
-      setProvisionNote(formatProvisionResult(result));
-      void queryClient.invalidateQueries({ queryKey: ['tasks-sync-status'] });
-    } catch (err) {
-      setProvisionNote(`⚠ ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setProvisioning(false);
-    }
-  };
-
-  // Seed form state from loaded config
+  // Sidebar deep-link: the rail's cloud-sync CTA jumps straight to the GitHub
+  // section. `nonce` bumps on every navigate() so re-clicking the rail item
+  // re-opens the section even if it's already active. 'brain' is the rail's own
+  // id for that CTA and is kept as the wire name so the sidebar needs no change.
   useEffect(() => {
-    const base = config ?? DEFAULT_CONFIG;
-    setPlatforms(base.platforms);
-    setDisableNativeMemory(base.disableNativeMemory ?? true);
-    const cfg = config as SetupConfig | null;
-    setCloudTasks(cfg?.taskBackend === 'clickup' || cfg?.taskBackend === 'github');
-    setTaskProvider(cfg?.taskBackend === 'github' ? 'github' : 'clickup');
-    setClickupTeam(cfg?.clickup?.teamId ?? '');
-    setClickupSpace(cfg?.clickup?.spaceId ?? '');
-    setClickupList(cfg?.clickup?.listId ?? '');
-    setGithubOwner(cfg?.github?.owner ?? '');
-    setGithubRepo(cfg?.github?.repo ?? '');
-    setDirty(false);
-    setSaveSuccess(false);
-  }, [config]);
-
-  // Sidebar deep-link: opening the "GitHub sync" CTA jumps straight to the
-  // Brain Repo section. `nonce` bumps on every navigate() so re-clicking the
-  // rail item re-opens the section even if it's already active.
-  useEffect(() => {
-    if (focus?.id === 'brain') setActiveSection('brain');
+    // The rail's CTA reads "Set up team sync", so that is the section it opens. Its wire
+    // name is still 'brain' (the sidebar is unchanged); 'github' is accepted for anything
+    // that still asks for the old target.
+    if (focus?.id === 'brain' || focus?.id === 'teamsync') setActiveSection('teamsync');
+    else if (focus?.id === 'github') setActiveSection('github');
   }, [focus?.id, focus?.nonce]);
 
   if (configLoading) {
@@ -446,692 +292,505 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   }
 
   const togglePlatform = (id: PlatformId) => {
-    setPlatforms((prev) => {
-      const next = prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id];
-      setDirty(true);
-      setSaveSuccess(false);
-      return next;
-    });
+    const next = platforms.includes(id) ? platforms.filter((p) => p !== id) : [...platforms, id];
+    void platformsSave.save(() => updateConfig.mutateAsync({ platforms: next }));
   };
 
   const toggleNativeMemory = () => {
-    setDisableNativeMemory((prev) => !prev);
-    setDirty(true);
-    setSaveSuccess(false);
+    void nativeMemorySave.save(() => updateConfig.mutateAsync({ disableNativeMemory: !disableNativeMemory }));
   };
 
-  const handleSave = async () => {
-    setSaveSuccess(false);
-    if (await persistCloudConfig()) setSaveSuccess(true);
-  };
-
-  const markDirty = () => {
-    setDirty(true);
-    setSaveSuccess(false);
-  };
-
-  const handleTestConnection = async () => {
-    setTesting(true);
-    setTestResult(null);
-    setProvisionPreview(null);
-    try {
-      // Auto-save first so the probe runs against the on-screen values (incl. a
-      // freshly typed API key), not whatever was last persisted.
-      if (!(await persistCloudConfig())) return;
-      setTestResult(await api.post<ConnectionTestResponse>('/tasks/sync-test', {}));
-    } catch (err) {
-      setTestResult({ ok: false, backend: taskProvider, error: err instanceof Error ? err.message : String(err) });
-    } finally {
-      setTesting(false);
-    }
-  };
+  const openMachine = () => setActiveSection('system');
 
   return (
     <div className="settings-page">
-      <div className="settings-header">
-        <div className="settings-save-row">
-          {saveSuccess && !dirty && (
-            <span className="settings-saved">{t('settings.saved')}</span>
-          )}
-          {updateConfig.isError && (
-            <span className="settings-error">{t('common.error')}</span>
-          )}
-          <button
-            className="btn btn--primary"
-            onClick={handleSave}
-            disabled={!dirty || updateConfig.isPending}
-          >
-            {updateConfig.isPending ? t('settings.saving') : t('settings.save')}
-          </button>
-        </div>
-      </div>
-
       {config === null && (
         <div className="settings-empty-notice">{t('settings.no_config')}</div>
       )}
 
       <div className="settings-body">
         <nav className="settings-nav" aria-label={t('settings.title')}>
-          {navItems.map((item) => {
-            const NavIcon = SETTINGS_ICONS[item.id];
-            const active = activeSection === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                className={`settings-nav-item${active ? ' settings-nav-item--active' : ''}`}
-                aria-current={active ? 'page' : undefined}
-                onClick={() => setActiveSection(item.id)}
-              >
-                <span className="settings-nav-icon" aria-hidden="true">
-                  {NavIcon ? <NavIcon /> : null}
-                </span>
-                <span className="settings-nav-text">
-                  <span className="settings-nav-label">
-                    {t(item.labelKey)}
-                    {item.lab && <span className="settings-lab-badge">{t('nav.lab')}</span>}
-                    {item.beta && <span className="settings-beta-badge">BETA</span>}
-                  </span>
-                  <span className="settings-nav-desc">{t(item.descKey)}</span>
-                </span>
-              </button>
-            );
-          })}
+          {navGroups.map((group) => (
+            <div key={group.id} className="settings-nav-group">
+              <span className="settings-nav-group-label">{t(group.labelKey)}</span>
+              {group.items.map((item) => {
+                const NavIcon = SETTINGS_ICONS[item.id];
+                const active = activeSection === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`settings-nav-item${active ? ' settings-nav-item--active' : ''}`}
+                    aria-current={active ? 'page' : undefined}
+                    onClick={() => setActiveSection(item.id)}
+                  >
+                    <span className="settings-nav-icon" aria-hidden="true">
+                      {NavIcon ? <NavIcon /> : null}
+                    </span>
+                    <span className="settings-nav-label">
+                      {t(item.labelKey)}
+                      {item.lab && <span className="settings-lab-badge">{t('nav.lab')}</span>}
+                      {item.beta && <span className="settings-beta-badge">BETA</span>}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         <div className="settings-content">
+
+      {/* ─── Project ─────────────────────────────────────────────────────── */}
+
       {activeSection === 'platforms' && (
       <section className="settings-section">
-        <div className="settings-section-head">
-          <h2 className="settings-section-title">{t('settings.platforms')}</h2>
-          <p className="settings-section-desc">{t('settings.desc.platforms')}</p>
-        </div>
-        <div className="settings-checkboxes">
+        <SectionHead titleKey="settings.nav.platforms" descKey="settings.desc.platforms" />
+        <SettingGroup>
           {PLATFORM_OPTIONS.map(({ id, labelKey }) => (
-            <label key={id} className="settings-checkbox-label">
-              <input
-                type="checkbox"
-                className="settings-checkbox"
-                checked={platforms.includes(id)}
-                onChange={() => togglePlatform(id)}
-              />
-              <span>{t(labelKey)}</span>
-            </label>
+            <SettingRow
+              key={id}
+              labelled
+              title={t(labelKey)}
+              hint={t(`${labelKey}.hint`)}
+              status={<SaveMark state={platformsSave.state} />}
+              control={
+                <Toggle
+                  checked={platforms.includes(id)}
+                  disabled={platformsSave.state.kind === 'saving'}
+                  onChange={() => togglePlatform(id)}
+                />
+              }
+            />
           ))}
-        </div>
+        </SettingGroup>
       </section>
       )}
+      {activeSection === 'format' && <TaskOverrideEditor />}
 
-      {activeSection === 'tasks' && (
-      <section className="settings-section">
-        <div className="settings-section-head">
-          <h2 className="settings-section-title">{t('settings.tasks')}</h2>
-          <p className="settings-section-desc">{t('settings.desc.tasks')}</p>
-        </div>
-        <div className="settings-checkboxes">
-          <label className="settings-checkbox-label">
-            <input
-              type="checkbox"
-              className="settings-checkbox"
-              checked={cloudTasks}
-              onChange={() => { setCloudTasks((p) => !p); markDirty(); }}
-            />
-            <span>{t('settings.cloud_tasks.label')}</span>
-          </label>
-          <p className="settings-field-hint">
-            {taskProvider === 'github' ? t('settings.cloud_tasks.github.hint') : t('settings.cloud_tasks.hint')}
-          </p>
-          {cloudTasks && (
+      {activeSection === 'agents' && desktopSurfaces && (
+        <section className="settings-section">
+          <SectionHead titleKey="settings.nav.agents" descKey="settings.desc.agents" badge="beta" />
+          <FeatureDepsNotice feature="agentTerminal" onOpenMachine={openMachine} />
+
+          {/* Connected Claude accounts stay at the TOP: which account an agent runs
+              on is the first thing about it, and the limit that stops work is the
+              reason this block exists. */}
+          <SettingGroup title={t('settings.agents.accounts.title')}>
+            <ClaudeAccounts />
+          </SettingGroup>
+
+          {!agentCfg ? (
+            <p className="settings-field-hint">{t('common.loading')}</p>
+          ) : (
             <>
-              <div className="settings-field-row">
-                <label>{t('settings.cloud_tasks.provider')}</label>
-                <select
-                  className="settings-text-input"
-                  value={taskProvider}
-                  onChange={(e) => {
-                    const next = e.target.value as 'clickup' | 'github';
-                    setTaskProvider(next);
-                    setTestResult(null);
-                    markDirty();
-                  }}
-                >
-                  <option value="clickup">{t('settings.cloud_tasks.provider.clickup')}</option>
-                  <option value="github">{t('settings.cloud_tasks.provider.github')}</option>
-                </select>
-              </div>
+              <SettingGroup title={t('settings.agents.surface.title')}>
+                {/* Master on/off — hides the FAB/dock and collapses any open overlay. */}
+                <SettingRow
+                  title={t('settings.agents.enable')}
+                  hint={t('settings.agents.enable_hint')}
+                  more={t('settings.agents.enable_more')}
+                  control={
+                    <Toggle
+                      label={t('settings.agents.enable')}
+                      checked={agentCfg.enabled}
+                      onChange={(next) => updateAgentCfg({ ...agentCfg, enabled: next })}
+                    />
+                  }
+                />
 
-              {taskProvider === 'clickup' && (
-                <>
-                  {(containers ?? []).length > 0 && (
-                    <div className="settings-field-row">
-                      <label>{t('settings.cloud_tasks.list_label')}</label>
-                      <SearchableSelect
-                        value={clickupList ? ((containers ?? []).find(c => c.ids.listId === clickupList)?.path ?? null) : null}
-                        options={(containers ?? []).map(c => ({ value: c.path, label: c.path }))}
-                        placeholder={t('settings.cloud_tasks.list_pick')}
-                        searchPlaceholder={t('settings.cloud_tasks.list_search')}
-                        clearLabel={t('settings.cloud_tasks.keep_current')}
-                        onChange={handlePickContainer}
-                      />
-                    </div>
-                  )}
-                  <div className="settings-field-row">
-                    <label>{t('settings.cloud_tasks.team')}</label>
-                    <input
-                      className="settings-text-input"
-                      value={clickupTeam}
-                      onChange={(e) => { setClickupTeam(e.target.value); markDirty(); }}
+                {agentCfg.enabled && (
+                  <>
+                    {/* Agent screen — Chat (the standard surface) vs Terminal (legacy), a
+                        mutually-exclusive preference: the chosen one takes over every Claude
+                        entry point (＋ New, ⌘T/⌘D, reopened tabs, Sleep/delegate spawns).
+                        Chat is listed first because it is the default; Terminal stays here as
+                        the escape hatch back to the raw TUI. Stored as the same `chatView`
+                        boolean the original beta checkbox used (agent-ui.json compat). */}
+                    <SettingRow
+                      title={t('settings.agents.screen')}
+                      hint={t('settings.agents.screen_hint')}
+                      more={t('settings.agents.screen_more')}
+                      control={
+                        <select
+                          className="settings-text-input"
+                          aria-label={t('settings.agents.screen')}
+                          value={agentCfg.chatView ? 'chat' : 'terminal'}
+                          onChange={(e) => updateAgentCfg({ ...agentCfg, chatView: e.target.value === 'chat' })}
+                        >
+                          <option value="chat">{t('settings.agents.screen.chat')}</option>
+                          <option value="terminal">{t('settings.agents.screen.terminal')}</option>
+                        </select>
+                      }
                     />
-                  </div>
-                  <div className="settings-field-row">
-                    <label>{t('settings.cloud_tasks.space')}</label>
-                    <input
-                      className="settings-text-input"
-                      value={clickupSpace}
-                      onChange={(e) => { setClickupSpace(e.target.value); markDirty(); }}
-                    />
-                  </div>
-                  <div className="settings-field-row">
-                    <label>{t('settings.cloud_tasks.list')}</label>
-                    <input
-                      className="settings-text-input"
-                      value={clickupList}
-                      onChange={(e) => { setClickupList(e.target.value); markDirty(); }}
-                    />
-                  </div>
-                  <div className="settings-field-row">
-                    <label>{t('settings.cloud_tasks.api_key')}</label>
-                    <input
-                      type="password"
-                      className="settings-text-input"
-                      autoComplete="off"
-                      value={clickupToken}
-                      placeholder={providerTokenStatus?.set ? (providerTokenStatus.masked ?? '••••••••') : t('settings.cloud_tasks.api_key_placeholder')}
-                      onChange={(e) => { setClickupToken(e.target.value); markDirty(); }}
-                    />
-                  </div>
-                  <p className="settings-field-hint">{tokenStatusHint(providerTokenStatus)}</p>
-                  <p className="settings-field-hint">{t('settings.cloud_tasks.token_hint')}</p>
-                </>
-              )}
 
-              {taskProvider === 'github' && (
-                <>
-                  {(containers ?? []).length > 0 && (
-                    <div className="settings-field-row">
-                      <label>{t('settings.cloud_tasks.github.repo_picker')}</label>
-                      <SearchableSelect
-                        value={githubOwner && githubRepo ? `${githubOwner}/${githubRepo}` : null}
-                        options={(containers ?? []).map(c => ({ value: c.path, label: c.path }))}
-                        placeholder={t('settings.cloud_tasks.github.pick')}
-                        searchPlaceholder={t('settings.cloud_tasks.github.search')}
-                        clearLabel={t('settings.cloud_tasks.keep_current')}
-                        onChange={handlePickContainer}
-                      />
-                    </div>
-                  )}
-                  <div className="settings-field-row">
-                    <label>{t('settings.cloud_tasks.github.owner')}</label>
-                    <input
-                      className="settings-text-input"
-                      value={githubOwner}
-                      onChange={(e) => { setGithubOwner(e.target.value); markDirty(); }}
-                    />
-                  </div>
-                  <div className="settings-field-row">
-                    <label>{t('settings.cloud_tasks.github.repo')}</label>
-                    <input
-                      className="settings-text-input"
-                      value={githubRepo}
-                      onChange={(e) => { setGithubRepo(e.target.value); markDirty(); }}
-                    />
-                  </div>
-                  <div className="settings-field-row">
-                    <label>{t('settings.cloud_tasks.api_key')}</label>
-                    <input
-                      type="password"
-                      className="settings-text-input"
-                      autoComplete="off"
-                      value={githubToken}
-                      placeholder={providerTokenStatus?.set ? (providerTokenStatus.masked ?? '••••••••') : t('settings.cloud_tasks.api_key_placeholder')}
-                      onChange={(e) => { setGithubToken(e.target.value); markDirty(); }}
-                    />
-                  </div>
-                  <p className="settings-field-hint">{tokenStatusHint(providerTokenStatus)}</p>
-                  <p className="settings-field-hint">{t('settings.cloud_tasks.github.token_hint')}</p>
-                </>
-              )}
+                    {/* Answer rendering — WHICH LANGUAGE the agent draws structured answers
+                        in, sitting directly under the screen it draws them on. An enum, not a
+                        checkbox: the modes are mutually exclusive (see `AgentChatRender`), and
+                        a third depiction is already proposed.
 
-              <div className="settings-test-row">
-                <button className="btn btn--secondary" onClick={handleTestConnection} disabled={testing || provisioning}>
-                  {testing ? t('settings.cloud_tasks.testing') : t('settings.cloud_tasks.test')}
-                </button>
-                <button className="btn btn--secondary" onClick={handleProvisionPreview} disabled={provisioning || testing}>
-                  {provisioning && !provisionPreview
-                    ? (taskProvider === 'github' ? t('settings.cloud_tasks.github.provisioning') : t('settings.cloud_tasks.provisioning'))
-                    : (taskProvider === 'github' ? t('settings.cloud_tasks.github.provision') : t('settings.cloud_tasks.provision'))}
-                </button>
-                {testResult && testResult.ok && (
-                  <span className="settings-test-ok">
-                    ✓ {testResult.note ?? `${t('settings.cloud_tasks.test_ok')} ${testResult.user}`}
-                  </span>
+                        DISABLED on the Terminal screen, deliberately. The choice only reaches
+                        the agent through the surface briefing, and that briefing is appended
+                        to a CHAT spawn alone — offering it here while it can do nothing is the
+                        exact "designed capability, unwired" failure this project has already
+                        paid for once. Disabled + a reason beats an active control that lies. */}
+                    <SettingRow
+                      title={t('settings.agents.chat_render')}
+                      hint={agentCfg.chatView ? t('settings.agents.chat_render_hint') : t('settings.agents.chat_render.needs_chat')}
+                      more={t('settings.agents.chat_render_more')}
+                      tone={agentCfg.chatView ? 'default' : 'warn'}
+                      control={
+                        <select
+                          className="settings-text-input"
+                          aria-label={t('settings.agents.chat_render')}
+                          value={agentCfg.chatRender}
+                          disabled={!agentCfg.chatView}
+                          onChange={(e) => updateAgentCfg({ ...agentCfg, chatRender: e.target.value as AgentSettings['chatRender'] })}
+                        >
+                          <option value="html">{t('settings.agents.chat_render.html')}</option>
+                          <option value="openui">{t('settings.agents.chat_render.openui')}</option>
+                        </select>
+                      }
+                    />
+
+                    {/* Quick open/close hotkey (in-app; default Ctrl+A). */}
+                    <SettingRow
+                      title={t('settings.agents.hotkey')}
+                      hint={t('settings.agents.hotkey_hint')}
+                      more={t('settings.agents.hotkey_more')}
+                      control={
+                        <input
+                          className="settings-text-input"
+                          readOnly
+                          aria-label={t('settings.agents.hotkey')}
+                          value={capturingAgentHotkey ? t('settings.agents.hotkey_capturing') : formatHotkey(agentCfg.hotkey)}
+                          onFocus={() => { setCapturingAgentHotkey(true); lastModTapRef.current = null; }}
+                          onBlur={() => { setCapturingAgentHotkey(false); lastModTapRef.current = null; }}
+                          onKeyDown={(e) => {
+                            e.preventDefault();
+                            // Backspace/Delete clears the binding (no quick-toggle key).
+                            if (e.key === 'Backspace' || e.key === 'Delete') {
+                              updateAgentCfg({ ...agentCfg, hotkey: '' });
+                              lastModTapRef.current = null;
+                              setCapturingAgentHotkey(false);
+                              e.currentTarget.blur();
+                              return;
+                            }
+                            // A lone modifier: bind it on the *second* tap of the same key
+                            // within the window (⌃⌃, ⌥⌥, ⌘⌘, ⇧⇧). Ignore auto-repeat while held.
+                            const lone = loneModifierToken(e);
+                            if (lone) {
+                              if (e.repeat) return;
+                              const now = Date.now();
+                              const last = lastModTapRef.current;
+                              if (last && last.token === lone && now - last.ts <= DOUBLE_TAP_MS) {
+                                lastModTapRef.current = null;
+                                updateAgentCfg({ ...agentCfg, hotkey: `${lone}+${lone}` });
+                                setCapturingAgentHotkey(false);
+                                e.currentTarget.blur();
+                              } else {
+                                lastModTapRef.current = { token: lone, ts: now };
+                              }
+                              return;
+                            }
+                            // Anything else is a normal chord — a stray modifier tap is cleared.
+                            lastModTapRef.current = null;
+                            const accel = accelFromAgentKey(e);
+                            if (accel) {
+                              updateAgentCfg({ ...agentCfg, hotkey: accel });
+                              setCapturingAgentHotkey(false);
+                              e.currentTarget.blur();
+                            }
+                          }}
+                        />
+                      }
+                    />
+                  </>
                 )}
-                {testResult && !testResult.ok && (
-                  <span className="settings-test-err">✗ {testResult.error}</span>
-                )}
-              </div>
-              {persistError && <p className="settings-test-err">✗ {persistError}</p>}
-              {provisionNote && <p className="settings-field-hint">{provisionNote}</p>}
+              </SettingGroup>
 
-              {provisionPreview && (
-                <div className="settings-provision-preview">
-                  <p className="settings-provision-preview-title">
-                    {taskProvider === 'github'
-                      ? t('settings.cloud_tasks.github.preview_title')
-                      : t('settings.cloud_tasks.preview_title')}
-                  </p>
-                  {provisionPreview.created.length > 0 && (
-                    <p className="settings-provision-line">
-                      <span className="settings-provision-badge settings-provision-badge--new">
-                        {t('settings.cloud_tasks.preview_will_create').replace('{n}', String(provisionPreview.created.length))}
-                      </span>{' '}
-                      {provisionPreview.created.join(', ')}
-                    </p>
-                  )}
-                  {provisionPreview.existing.length > 0 && (
-                    <p className="settings-provision-line settings-provision-line--muted">
-                      <span className="settings-provision-badge">
-                        {t('settings.cloud_tasks.preview_existing').replace('{n}', String(provisionPreview.existing.length))}
-                      </span>{' '}
-                      {provisionPreview.existing.join(', ')}
-                    </p>
-                  )}
-                  <div className="settings-provision-actions">
-                    <button className="btn btn--primary" onClick={handleProvisionConfirm} disabled={provisioning}>
-                      {provisioning
-                        ? t('settings.cloud_tasks.provision_creating')
-                        : t('settings.cloud_tasks.provision_confirm').replace('{n}', String(provisionPreview.created.length))}
-                    </button>
-                    <button className="btn btn--ghost" onClick={() => setProvisionPreview(null)} disabled={provisioning}>
-                      {t('settings.cloud_tasks.provision_cancel')}
-                    </button>
-                  </div>
-                </div>
-              )}
-              {syncStatus && syncStatus.backend !== 'local' && (
-                <p className="settings-sync-badge">
-                  {t('settings.cloud_tasks.status')}: {syncStatus.pendingPush} {t('settings.cloud_tasks.pending')}
-                  {syncStatus.conflicts > 0 && ` · ${syncStatus.conflicts} ${t('settings.cloud_tasks.conflicts')}`}
-                </p>
+              {agentCfg.enabled && (
+                <SettingGroup title={t('settings.agents.session.title')}>
+                  {/* Reopen past tabs on launch. */}
+                  <SettingRow
+                    title={t('settings.agents.restore_tabs')}
+                    hint={t('settings.agents.restore_tabs_hint')}
+                    more={t('settings.agents.restore_tabs_more')}
+                    control={
+                      <Toggle
+                        label={t('settings.agents.restore_tabs')}
+                        checked={agentCfg.restoreTabs}
+                        onChange={(next) => updateAgentCfg({ ...agentCfg, restoreTabs: next })}
+                      />
+                    }
+                  />
+
+                  {/* Auto-title: Haiku names the tab from the first message. */}
+                  <SettingRow
+                    title={t('settings.agents.auto_title')}
+                    hint={t('settings.agents.auto_title_hint')}
+                    more={t('settings.agents.auto_title_more')}
+                    control={
+                      <Toggle
+                        label={t('settings.agents.auto_title')}
+                        checked={agentCfg.autoTitle}
+                        onChange={(next) => updateAgentCfg({ ...agentCfg, autoTitle: next })}
+                      />
+                    }
+                  />
+
+                  {/* Default agent — Claude Code is the only option today. */}
+                  <SettingRow
+                    title={t('settings.agents.default_agent')}
+                    hint={t('settings.agents.default_agent_hint')}
+                    control={
+                      <select
+                        className="settings-text-input"
+                        aria-label={t('settings.agents.default_agent')}
+                        value={agentCfg.defaultAgent}
+                        onChange={(e) => updateAgentCfg({ ...agentCfg, defaultAgent: e.target.value as AgentSettings['defaultAgent'] })}
+                      >
+                        <option value="claude">{t('settings.agents.agent.claude')}</option>
+                      </select>
+                    }
+                  />
+
+                  {/* Terminal renderer: GPU smoothness vs native-text comfort. Applies
+                      live to open sessions (agentSession listens for the settings event). */}
+                  <SettingRow
+                    title={t('settings.agents.renderer')}
+                    hint={t('settings.agents.renderer_hint')}
+                    more={t('settings.agents.renderer_more')}
+                    control={
+                      <select
+                        className="settings-text-input"
+                        aria-label={t('settings.agents.renderer')}
+                        value={agentCfg.renderer}
+                        onChange={(e) => updateAgentCfg({ ...agentCfg, renderer: e.target.value as AgentSettings['renderer'] })}
+                      >
+                        <option value="webgl">{t('settings.agents.renderer.webgl')}</option>
+                        <option value="dom">{t('settings.agents.renderer.dom')}</option>
+                      </select>
+                    }
+                  />
+                </SettingGroup>
               )}
             </>
           )}
-        </div>
-      </section>
+        </section>
       )}
-
-      {activeSection === 'format' && <TaskOverrideEditor />}
-
+      {activeSection === 'sleepy' && desktopSurfaces && (
+        <section className="settings-section">
+          <SectionHead titleKey="settings.nav.sleepy" descKey="settings.desc.sleepy" badge="lab" />
+          <SettingGroup>
+            <SettingRow
+              labelled
+              title={t('settings.sleepy.enable')}
+              hint={t('settings.desc.sleepy')}
+              control={<Toggle checked={sleepy.enabled} onChange={(next) => updateSleepy({ ...sleepy, enabled: next })} />}
+            />
+            {sleepy.enabled && (
+              <SettingRow
+                title={t('settings.sleepy.hotkey')}
+                hint={t('settings.sleepy.hotkey_hint')}
+                control={
+                  <input
+                    className="settings-text-input"
+                    readOnly
+                    value={capturingHotkey ? t('settings.sleepy.hotkey_capturing') : sleepy.hotkey}
+                    onFocus={() => setCapturingHotkey(true)}
+                    onBlur={() => setCapturingHotkey(false)}
+                    onKeyDown={(e) => {
+                      e.preventDefault();
+                      const accel = accelFromKeyEvent(e);
+                      if (accel) {
+                        updateSleepy({ ...sleepy, hotkey: accel });
+                        setCapturingHotkey(false);
+                        e.currentTarget.blur();
+                      }
+                    }}
+                  />
+                }
+              />
+            )}
+          </SettingGroup>
+        </section>
+      )}
       {activeSection === 'memory' && (
       <section className="settings-section">
-        <div className="settings-section-head">
-          <h2 className="settings-section-title">{t('settings.memory')}</h2>
-          <p className="settings-section-desc">{t('settings.desc.memory')}</p>
-        </div>
-        <div className="settings-checkboxes">
-          <label className="settings-checkbox-label">
-            <input
-              type="checkbox"
-              className="settings-checkbox"
-              checked={disableNativeMemory}
-              onChange={toggleNativeMemory}
-            />
-            <span>{t('settings.native_memory.label')}</span>
-          </label>
-          <p className="settings-field-hint">{t('settings.native_memory.hint')}</p>
-        </div>
-
-        <div className="settings-subsection">
-          <h3 className="settings-nav-label">{t('settings.learning.title')}</h3>
-          <div className="settings-checkboxes">
-            <label className="settings-checkbox-label">
-              <input
-                type="checkbox"
-                className="settings-checkbox"
+        <SectionHead titleKey="settings.nav.memory" descKey="settings.desc.memory" />
+        <SettingGroup>
+          <SettingRow
+            labelled
+            title={t('settings.native_memory.label')}
+            hint={t('settings.native_memory.hint')}
+            status={<SaveMark state={nativeMemorySave.state} />}
+            control={
+              <Toggle
+                checked={disableNativeMemory}
+                disabled={nativeMemorySave.state.kind === 'saving'}
+                onChange={toggleNativeMemory}
+              />
+            }
+          />
+        </SettingGroup>
+      </section>
+      )}
+      {activeSection === 'learning' && (
+      <section className="settings-section">
+        <SectionHead titleKey="settings.nav.learning" descKey="settings.desc.learning" />
+        <SettingGroup>
+          <SettingRow
+            labelled
+            title={t('settings.learning.label')}
+            hint={t('settings.learning.row_hint')}
+            control={
+              <Toggle
                 checked={learningEnabled}
                 disabled={setLearningEnabled.isPending}
-                onChange={() => setLearningEnabled.mutate(!learningEnabled)}
+                onChange={(next) => setLearningEnabled.mutate(next)}
               />
-              <span>{t('settings.learning.label')}</span>
-            </label>
-            <p className="settings-field-hint">{t('settings.learning.hint')}</p>
-          </div>
-        </div>
-
-        <div className="settings-subsection">
-          <h3 className="settings-nav-label">{t('settings.recall.title')}</h3>
-          <p className="settings-field-hint settings-recall-desc">{t('settings.recall.desc')}</p>
-          <div className="settings-checkboxes" role="radiogroup" aria-label={t('settings.recall.title')}>
-            {RECALL_MODE_OPTIONS.map(({ mode, labelKey, hintKey, experimental }) => (
-              <div key={mode}>
-                <label className="settings-checkbox-label">
-                  <input
-                    type="radio"
-                    name="recall-mode"
-                    className="settings-checkbox"
-                    checked={recallMode === mode}
-                    disabled={updateSleep.isPending}
-                    onChange={() => updateSleep.mutate({ recall_mode: mode })}
-                  />
-                  <span>
-                    {t(labelKey)}
-                    {experimental && <span className="settings-beta-badge">{t('settings.recall.experimental')}</span>}
-                  </span>
-                </label>
-                <p className="settings-field-hint">{t(hintKey)}</p>
-                {mode === 'hybrid' && recallMode === 'hybrid' && <EmbeddingModelCard />}
-              </div>
-            ))}
-          </div>
-          {updateSleep.isError && <p className="settings-test-err">✗ {t('common.error')}</p>}
-        </div>
+            }
+          />
+        </SettingGroup>
+        {setLearningEnabled.isError && <p className="settings-test-err">✗ {t('common.error')}</p>}
       </section>
       )}
-
-      {activeSection === 'connections' && (
-      <ConnectionsManager
-      />
-      )}
-
-      {activeSection === 'brain' && (
+      {activeSection === 'recall' && (
       <section className="settings-section">
-        <div className="fed-head">
-          <div className="settings-section-head">
-            <h2 className="settings-section-title">{t('settings.brain')}</h2>
-            <p className="settings-section-desc">{t('settings.desc.brain')}</p>
-          </div>
-          <label className="fed-sharing-toggle settings-checkbox-label" title={t('brain.cloudSync.hint')}>
-            <input
-              type="checkbox"
-              className="settings-checkbox"
-              checked={brainSettings?.enabled ?? false}
-              disabled={updateBrainSettings.isPending}
-              onChange={(e) => updateBrainSettings.mutate(e.target.checked)}
-            />
-            <span>
-              {t('brain.cloudSync.label')}
-              {brainSettings && (
-                <span className="settings-field-hint brain-cloudsync-source">
-                  {' '}({brainSettings.source === 'explicit' ? t('brain.cloudSync.source.explicit') : t('brain.cloudSync.source.derived')})
-                </span>
-              )}
-            </span>
-          </label>
+        <SectionHead titleKey="settings.nav.recall" descKey="settings.desc.recall" />
+        <div className="setting-choices" role="radiogroup" aria-label={t('settings.nav.recall')}>
+          {RECALL_MODE_OPTIONS.map(({ mode, labelKey, hintKey, experimental }) => (
+            <SettingChoice
+              key={mode}
+              name="recall-mode"
+              value={mode}
+              checked={recallMode === mode}
+              disabled={updateSleep.isPending}
+              onSelect={() => updateSleep.mutate({ recall_mode: mode })}
+              title={t(labelKey)}
+              hint={t(hintKey)}
+              badge={experimental ? <span className="settings-beta-badge">{t('settings.recall.experimental')}</span> : undefined}
+            >
+              {mode === 'hybrid' && recallMode === 'hybrid' && <EmbeddingModelCard />}
+            </SettingChoice>
+          ))}
         </div>
-
-        <p className="settings-section-desc">{t('brain.cloudSync.desc')}</p>
-        {updateBrainSettings.isError && (
-          <p className="settings-field-hint brain-scope-error">
-            {(updateBrainSettings.error as Error)?.message ?? t('brain.cloudSync.error')}
-          </p>
-        )}
-
-        <div className="settings-subsection">
-          <h3 className="settings-nav-label">{t('brain.auth.title')}</h3>
-          <GitHubLogin />
-          {/* No project origin yet → create/attach one so full-repo sync can turn on. */}
-          <OriginSetup />
-          {/* Linked repos — the bare code repos this brain governs (present/missing + clone). */}
-          <LinkedRepos />
-        </div>
-
-        <div className="settings-subsection">
-          <label className="fed-sharing-toggle settings-checkbox-label" title={t('brain.scope.autoCheckpoint.hint')}>
-            <input
-              type="checkbox"
-              checked={autoCheckpoint}
-              onChange={(e) => { setAutoCheckpoint(e.target.checked); writeAutoCheckpointOnOpen(vault, e.target.checked); }}
-            />
-            <span>{t('brain.scope.autoCheckpoint.label')}</span>
-          </label>
-          <p className="settings-field-hint">{t('brain.scope.autoCheckpoint.hint')}</p>
-        </div>
+        {updateSleep.isError && <p className="settings-test-err">✗ {t('common.error')}</p>}
       </section>
       )}
+      {activeSection === 'github' && (
+      <section className="settings-section">
+        <SectionHead titleKey="settings.nav.github" descKey="settings.desc.github" />
+
+        {/* The ACCOUNT, and the one thing that uses it here. Team sync is the other
+            use and has its own section — the two were one screen and it read as a
+            single, three-part setup nobody could follow. */}
+        <SettingGroup title={t('settings.github.account.title')}>
+          <div className="setting-row">
+            <GitHubLogin />
+          </div>
+        </SettingGroup>
+
+        <SettingGroup title={t('settings.github.issues.title')} note={t('settings.github.issues.note')}>
+          <CloudTaskSync provider="github" />
+        </SettingGroup>
+      </section>
+      )}
+
+      {/* ─── Team sync — its own setting, because it is its own decision ──────────
+          It shares the GitHub account but nothing else: what it needs (a repo), what
+          it does (pushes the whole project) and when it does it (on open, on demand)
+          are all its own. It also has its own entry in the sidebar rail, which is
+          where most people meet it. */}
+      {activeSection === 'teamsync' && (
+      <section className="settings-section">
+        <SectionHead titleKey="settings.nav.teamsync" descKey="settings.desc.teamsync" />
+        <FeatureDepsNotice feature="cloudSync" onOpenMachine={openMachine} />
+
+        {!githubConnected ? (
+          // Nothing here can work without the account, so the section says that once
+          // instead of drawing four controls that would each fail on their own.
+          <SettingRow
+            tone="warn"
+            title={t('settings.teamsync.needsAccount.title')}
+            hint={t('settings.teamsync.needsAccount.hint')}
+            control={
+              <button type="button" className="btn btn--secondary btn--sm" onClick={() => setActiveSection('github')}>
+                {t('settings.teamsync.needsAccount.cta')}
+              </button>
+            }
+          />
+        ) : (
+          <SettingGroup>
+            {/* THE SWITCH IS GATED ON THE REPO, not just styled as if it were. The server
+                refuses to enable sync with no origin (400 `no_origin`), so an enabled
+                control here was a switch that could only fail — the user flipped it, it
+                bounced back, and nothing said why. */}
+            <SettingRow
+              title={t('brain.cloudSync.label')}
+              hint={hasOrigin ? t('brain.cloudSync.hint') : t('settings.teamsync.needsRepo')}
+              tone={hasOrigin ? 'default' : 'warn'}
+              status={<SaveMark state={brainToggleSave.state} />}
+              control={
+                <Toggle
+                  label={t('brain.cloudSync.label')}
+                  checked={brainSettings?.enabled ?? false}
+                  disabled={!hasOrigin || updateBrainSettings.isPending || brainToggleSave.state.kind === 'saving'}
+                  onChange={(next) => { void brainToggleSave.save(() => updateBrainSettings.mutateAsync(next)); }}
+                />
+              }
+            />
+
+            {/* The repo it syncs to — create, attach, change or disconnect. */}
+            <SettingRow title={t('settings.teamsync.repo.title')} hint={t('settings.teamsync.repo.hint')}>
+              <OriginSetup compact />
+            </SettingRow>
+
+            <SettingRow
+              title={t('brain.scope.autoCheckpoint.label')}
+              hint={t('brain.scope.autoCheckpoint.hint')}
+              more={t('brain.scope.autoCheckpoint.more')}
+              control={
+                <Toggle
+                  label={t('brain.scope.autoCheckpoint.label')}
+                  checked={autoCheckpoint}
+                  onChange={(next) => { setAutoCheckpoint(next); writeAutoCheckpointOnOpen(vault, next); }}
+                />
+              }
+            />
+          </SettingGroup>
+        )}
+      </section>
+      )}
+
+      {/* Linked repos are neither the GitHub account nor team sync: they are the OTHER
+          code repos this brain governs. They sat inside the sync panel and were read as
+          part of it. */}
+      {activeSection === 'linkedrepos' && (
+      <section className="settings-section">
+        <SectionHead titleKey="settings.nav.linkedrepos" descKey="settings.desc.linkedrepos" />
+        <LinkedRepos compact />
+      </section>
+      )}
+      {activeSection === 'clickup' && (
+      <section className="settings-section">
+        <SectionHead titleKey="settings.nav.clickup" descKey="settings.desc.clickup" />
+        <CloudTaskSync provider="clickup" />
+      </section>
+      )}
+
+      {activeSection === 'connections' && <ConnectionsManager />}
+
+      {/* ─── This machine ────────────────────────────────────────────────── */}
 
       {activeSection === 'system' && (
       <section className="settings-section">
-        <div className="settings-section-head">
-          <h2 className="settings-section-title">{t('settings.system')}</h2>
-          <p className="settings-section-desc">{t('settings.desc.system')}</p>
-        </div>
+        <SectionHead titleKey="settings.nav.system" descKey="settings.desc.system" />
         <SystemDependencies />
       </section>
       )}
 
-      {activeSection === 'agents' && desktopSurfaces && (
-        <section className="settings-section">
-          <h2 className="settings-section-title">
-            {t('settings.agents.title')}
-            <span className="settings-beta-badge">BETA</span>
-          </h2>
-          {/* Connected Claude accounts. Deliberately at the TOP of the Agents section: which
-              account an agent runs on is the first thing about it, and the limit that stops
-              work is the reason this section exists. No heading of its own — owner
-              preference; the section title already says where you are. */}
-          <ClaudeAccounts />
-          {!agentCfg ? (
-            <p className="settings-field-hint">{t('common.loading')}</p>
-          ) : (
-            <div className="settings-checkboxes">
-              {/* Master on/off — hides the FAB/dock and collapses any open overlay. */}
-              <label className="settings-checkbox-label">
-                <input
-                  type="checkbox"
-                  className="settings-checkbox"
-                  checked={agentCfg.enabled}
-                  onChange={() => updateAgentCfg({ ...agentCfg, enabled: !agentCfg.enabled })}
-                />
-                <span>{t('settings.agents.enable')}</span>
-              </label>
-              <p className="settings-field-hint">{t('settings.agents.enable_hint')}</p>
-
-              {agentCfg.enabled && (
-                <>
-                  {/* Reopen past tabs on launch. */}
-                  <label className="settings-checkbox-label">
-                    <input
-                      type="checkbox"
-                      className="settings-checkbox"
-                      checked={agentCfg.restoreTabs}
-                      onChange={() => updateAgentCfg({ ...agentCfg, restoreTabs: !agentCfg.restoreTabs })}
-                    />
-                    <span>{t('settings.agents.restore_tabs')}</span>
-                  </label>
-                  <p className="settings-field-hint">{t('settings.agents.restore_tabs_hint')}</p>
-
-                  {/* Default agent — Claude Code is the only option today. */}
-                  <div className="settings-field-row">
-                    <label>{t('settings.agents.default_agent')}</label>
-                    <select
-                      className="settings-text-input"
-                      value={agentCfg.defaultAgent}
-                      onChange={(e) => updateAgentCfg({ ...agentCfg, defaultAgent: e.target.value as AgentSettings['defaultAgent'] })}
-                    >
-                      <option value="claude">{t('settings.agents.agent.claude')}</option>
-                    </select>
-                  </div>
-                  <p className="settings-field-hint">{t('settings.agents.default_agent_hint')}</p>
-
-                  {/* Terminal renderer: GPU smoothness vs native-text comfort. Applies
-                      live to open sessions (agentSession listens for the settings event). */}
-                  <div className="settings-field-row">
-                    <label>{t('settings.agents.renderer')}</label>
-                    <select
-                      className="settings-text-input"
-                      value={agentCfg.renderer}
-                      onChange={(e) => updateAgentCfg({ ...agentCfg, renderer: e.target.value as AgentSettings['renderer'] })}
-                    >
-                      <option value="webgl">{t('settings.agents.renderer.webgl')}</option>
-                      <option value="dom">{t('settings.agents.renderer.dom')}</option>
-                    </select>
-                  </div>
-                  <p className="settings-field-hint">{t('settings.agents.renderer_hint')}</p>
-
-                  {/* Auto-title: Haiku names the tab from the first message. */}
-                  <label className="settings-checkbox-label">
-                    <input
-                      type="checkbox"
-                      className="settings-checkbox"
-                      checked={agentCfg.autoTitle}
-                      onChange={() => updateAgentCfg({ ...agentCfg, autoTitle: !agentCfg.autoTitle })}
-                    />
-                    <span>{t('settings.agents.auto_title')}</span>
-                  </label>
-                  <p className="settings-field-hint">{t('settings.agents.auto_title_hint')}</p>
-
-                  {/* Agent screen — Chat (the standard surface) vs Terminal (legacy), a
-                      mutually-exclusive preference: the chosen one takes over every Claude
-                      entry point (＋ New, ⌘T/⌘D, reopened tabs, Sleep/delegate spawns).
-                      Chat is listed first because it is the default; Terminal stays here as
-                      the escape hatch back to the raw TUI. Stored as the same `chatView`
-                      boolean the original beta checkbox used (agent-ui.json compat). */}
-                  <div className="settings-field-row">
-                    <label>{t('settings.agents.screen')}</label>
-                    <select
-                      className="settings-text-input"
-                      value={agentCfg.chatView ? 'chat' : 'terminal'}
-                      onChange={(e) => updateAgentCfg({ ...agentCfg, chatView: e.target.value === 'chat' })}
-                    >
-                      <option value="chat">{t('settings.agents.screen.chat')}</option>
-                      <option value="terminal">{t('settings.agents.screen.terminal')}</option>
-                    </select>
-                  </div>
-                  <p className="settings-field-hint">{t('settings.agents.screen_hint')}</p>
-
-                  {/* Answer rendering — WHICH LANGUAGE the agent draws structured answers
-                      in, sitting directly under the screen it draws them on. An enum, not a
-                      checkbox: the modes are mutually exclusive (see `AgentChatRender`), and
-                      a third depiction is already proposed.
-
-                      DISABLED on the Terminal screen, deliberately. The choice only reaches
-                      the agent through the surface briefing, and that briefing is appended
-                      to a CHAT spawn alone — offering it here while it can do nothing is the
-                      exact "designed capability, unwired" failure this project has already
-                      paid for once. Disabled + a reason beats an active control that lies. */}
-                  <div className="settings-field-row">
-                    <label>{t('settings.agents.chat_render')}</label>
-                    <select
-                      className="settings-text-input"
-                      value={agentCfg.chatRender}
-                      disabled={!agentCfg.chatView}
-                      onChange={(e) => updateAgentCfg({ ...agentCfg, chatRender: e.target.value as AgentSettings['chatRender'] })}
-                    >
-                      <option value="html">{t('settings.agents.chat_render.html')}</option>
-                      <option value="openui">{t('settings.agents.chat_render.openui')}</option>
-                    </select>
-                  </div>
-                  <p className="settings-field-hint">{t('settings.agents.chat_render_hint')}</p>
-
-                  {/* Quick open/close hotkey (in-app; default Ctrl+A). */}
-                  <div className="settings-field-row">
-                    <label>{t('settings.agents.hotkey')}</label>
-                    <input
-                      className="settings-text-input"
-                      readOnly
-                      value={capturingAgentHotkey ? t('settings.agents.hotkey_capturing') : formatHotkey(agentCfg.hotkey)}
-                      onFocus={() => { setCapturingAgentHotkey(true); lastModTapRef.current = null; }}
-                      onBlur={() => { setCapturingAgentHotkey(false); lastModTapRef.current = null; }}
-                      onKeyDown={(e) => {
-                        e.preventDefault();
-                        // Backspace/Delete clears the binding (no quick-toggle key).
-                        if (e.key === 'Backspace' || e.key === 'Delete') {
-                          updateAgentCfg({ ...agentCfg, hotkey: '' });
-                          lastModTapRef.current = null;
-                          setCapturingAgentHotkey(false);
-                          e.currentTarget.blur();
-                          return;
-                        }
-                        // A lone modifier: bind it on the *second* tap of the same key
-                        // within the window (⌃⌃, ⌥⌥, ⌘⌘, ⇧⇧). Ignore auto-repeat while held.
-                        const lone = loneModifierToken(e);
-                        if (lone) {
-                          if (e.repeat) return;
-                          const now = Date.now();
-                          const last = lastModTapRef.current;
-                          if (last && last.token === lone && now - last.ts <= DOUBLE_TAP_MS) {
-                            lastModTapRef.current = null;
-                            updateAgentCfg({ ...agentCfg, hotkey: `${lone}+${lone}` });
-                            setCapturingAgentHotkey(false);
-                            e.currentTarget.blur();
-                          } else {
-                            lastModTapRef.current = { token: lone, ts: now };
-                          }
-                          return;
-                        }
-                        // Anything else is a normal chord — a stray modifier tap is cleared.
-                        lastModTapRef.current = null;
-                        const accel = accelFromAgentKey(e);
-                        if (accel) {
-                          updateAgentCfg({ ...agentCfg, hotkey: accel });
-                          setCapturingAgentHotkey(false);
-                          e.currentTarget.blur();
-                        }
-                      }}
-                    />
-                  </div>
-                  <p className="settings-field-hint">{t('settings.agents.hotkey_hint')}</p>
-                </>
-              )}
-            </div>
-          )}
-        </section>
-      )}
-
-      {activeSection === 'sleepy' && desktopSurfaces && (
-        <section className="settings-section">
-          <h2 className="settings-section-title">
-            Sleepy — notch quick-capture
-            <span className="settings-lab-badge">{t('nav.lab')}</span>
-          </h2>
-          <div className="settings-checkboxes">
-            <label className="settings-checkbox-label">
-              <input
-                type="checkbox"
-                className="settings-checkbox"
-                checked={sleepy.enabled}
-                onChange={() => updateSleepy({ ...sleepy, enabled: !sleepy.enabled })}
-              />
-              <span>Enable Sleepy</span>
-            </label>
-            <p className="settings-field-hint">
-              Press the hotkey anywhere to drop a capture bar under the notch: pick a project, type a
-              thought, hit return — it's saved to that project's memory and learned.
-            </p>
-            {sleepy.enabled && (
-              <div className="settings-field-row">
-                <label>Hotkey</label>
-                <input
-                  className="settings-text-input"
-                  readOnly
-                  value={capturingHotkey ? 'Press a key combo…' : sleepy.hotkey}
-                  onFocus={() => setCapturingHotkey(true)}
-                  onBlur={() => setCapturingHotkey(false)}
-                  onKeyDown={(e) => {
-                    e.preventDefault();
-                    const accel = accelFromKeyEvent(e);
-                    if (accel) {
-                      updateSleepy({ ...sleepy, hotkey: accel });
-                      setCapturingHotkey(false);
-                      e.currentTarget.blur();
-                    }
-                  }}
-                />
-              </div>
-            )}
-          </div>
-        </section>
-      )}
         </div>
       </div>
     </div>
