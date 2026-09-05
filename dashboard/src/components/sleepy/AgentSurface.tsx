@@ -44,6 +44,7 @@ import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { CHAT_MODE_ROWS, DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { preparePrompt, developKickoffPrompt } from '../../lib/agentPrompt';
 import { clearPins } from '../../lib/pinStore';
+import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } from '../../lib/respawnTrace';
 import { dropScratch } from './chat/composerScratch';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig, useAgentCapabilities } from '../../hooks/useAgentCapabilities';
@@ -168,6 +169,12 @@ function withNotAvailableSuffix(title: string): string {
  *  a terminal — is still an unnamed tab and must stay eligible. Shells ("Terminal N") are
  *  never auto-titled, so their pattern is intentionally absent. */
 const DEFAULT_TAB_TITLE_RE = /^(?:Agent|Chat) \d+$/;
+
+/** How long a roster entry may have no session object before the orphan detector believes
+ *  it. Comfortably longer than any respawn's dispose→spawn→remap round trip (all synchronous
+ *  bar the state flush), so it never fires on the healthy path, and short enough that a real
+ *  orphan is reported while the user still remembers what they just did. */
+const ORPHAN_GRACE_MS = 1500;
 
 /** Where a tab will land when the drag ends, recorded during dragover (the `drop` event
  *  is unreliable in WKWebView, so we act on the source tab's reliable `dragend`). */
@@ -529,7 +536,16 @@ export function AgentSurface() {
       if (cs.busy || cs.asking) return;  // wait for the turn boundary
       stop();
       noteAuthChange(changed.identity, changed.loggedIn, 1);
-      resumeChatRef.current?.(cs);
+      // The OTHER watcher that restarts through the same mechanism. Traced for the same
+      // reason as `armAccountSwitch`: without it a respawn could appear in the trace with no
+      // trigger above it, and the two watchers would be indistinguishable after the fact.
+      traceRespawn('armAuthRestart', 'armed', {
+        from: cs.id, claudeId: cs.claudeId,
+        detail: { identity: changed.identity, loggedIn: changed.loggedIn },
+      });
+      if (!resumeChatRef.current?.(cs)) {
+        traceRespawn('armAuthRestart', 'failed', { from: cs.id, claudeId: cs.claudeId, detail: { error: 'resumeChatRef returned nothing' } });
+      }
     });
   }, [noteAuthChange]);
 
@@ -564,6 +580,31 @@ export function AgentSurface() {
       const move = cs.getModel().accountSwitch;
       if (!move) return;
       if (!move.switched || !move.accountId) { stop(); return; }     // reported only
+      // ── THE NOTICE IS ALSO CARRIED ONTO THE SESSION THIS RESTART CREATES ──────────────
+      //
+      // `next.noteAccountSwitch(move)` at the bottom of this callback copies the notice onto
+      // the replacement so the switch stays VISIBLE — and that replacement carries its own
+      // copy of this very watcher, reading this very field. Without this line the carried
+      // notice is indistinguishable from a fresh instruction: the new session restarts itself
+      // onto the account it was just spawned on, copies the notice onto ITS replacement, and
+      // recurses — synchronously, because `noteAccountSwitch` flushes subscribers rather than
+      // coalescing them — until the stack overflows. `fireSubscribers` wraps every subscriber
+      // in a try/catch, so the overflow is SWALLOWED: what the user sees is not an error but
+      // a tab whose roster entry outlived the session behind it (each frame deleted its
+      // session before spawning the next, and the last spawn never landed). That tab draws,
+      // reads `starting` (the amber pulse), renders an empty pane — no ChatPane is portaled
+      // for a roster id with no session — and cannot be clicked back to life.
+      //
+      // The test is the SERVER'S OWN RULE, not a flag: it refuses to announce a switch to the
+      // account a session is already running on (`choice.accountId === activeAccountId` →
+      // `switched: false`), so a `switched: true` notice naming THIS session's account can
+      // only be the carried one. `accountId` is `readonly` and fixed at spawn, which is what
+      // makes it a truthful answer to "which account am I".
+      //
+      // `return`, not `stop()`: the notice is inert, but this session is still a candidate for
+      // a LATER, genuine switch (its new account can hit a limit too), and disarming here
+      // would silently retire the watcher for the rest of the session's life.
+      if (move.accountId === cs.accountId) return;                    // already there — carried, not asked for
       if (cs.getModel().exited) { stop(); return; }
       // THE GATE READS THE SERVER'S ANSWER, NOT `busy`. `chatSession.writeUser` sets `busy`
       // optimistically the instant a user frame reaches the socket, so the very message the
@@ -574,14 +615,34 @@ export function AgentSurface() {
       // was authorized by the old credentials and is allowed to finish on them.
       if (move.turnInFlight && (cs.busy || cs.asking)) return;
       stop();
+      // The watcher's decision to restart, recorded BEFORE the restart runs — so a trace that
+      // ends in an orphan shows whether auto-switch was what triggered the respawn at all.
+      traceRespawn('armAccountSwitch', 'armed', {
+        from: cs.id, claudeId: cs.claudeId,
+        detail: { toAccountId: move.accountId, turnInFlight: move.turnInFlight, hasPendingText: !!move.pendingText, reason: move.reason },
+      });
       const next = resumeChatRef.current?.(cs, undefined, move.accountId);
-      if (!next) return;
+      if (!next) {
+        // `resumeChatRef` is assigned on every render, so an empty ref here would mean the
+        // restart never ran — after the session was already disposed by nobody. Worth seeing.
+        traceRespawn('armAccountSwitch', 'failed', { from: cs.id, claudeId: cs.claudeId, detail: { error: 'resumeChatRef returned nothing' } });
+        return;
+      }
       // The notice is carried onto the NEW session before anything else. The frame landed on
       // the OLD one, which this restart just disposed — without this the switch would be
       // invisible, which is the one thing this feature promises never to be.
       next.noteAccountSwitch(move);
       // The held turn is resubmitted on the NEW process, so the user's message is never lost.
-      if (move.pendingText) next.send(move.pendingText);
+      //
+      // ENQUEUED, NOT SENT. `next` was constructed microseconds ago and its WebSocket is still
+      // CONNECTING — `writeUser` refuses any frame on a socket that is not OPEN and answers
+      // `false`, which nothing here could act on. So `send` DROPPED the resubmit every single
+      // time: not a race, a certainty, and the one thing this feature promises never to do.
+      // The queue is the mechanism that already knows how to hold a message until the wire can
+      // carry it (`maybeFlushQueue` drains on the open edge), and it holds it VISIBLY — if the
+      // new socket never opens at all, the text is a row the user can still read and resend
+      // rather than something that vanished between two processes.
+      if (move.pendingText) next.enqueue(move.pendingText);
     });
   }, []);
 
@@ -1115,6 +1176,10 @@ export function AgentSurface() {
     // Captured BEFORE dispose, applied after the respawn — see `carryDraftInto`. This path is
     // also the permission-mode fallback, so it is the one a Bypass switch actually takes.
     const carried = cs.getModel().draft;
+    traceRespawn('resumeChatSession', 'begin', {
+      from: cs.id, claudeId: cs.claudeId,
+      detail: { targetBypass, targetAccountId, fromAccountId: cs.accountId, mode: cs.mode, exited: cs.getModel().exited },
+    });
     try { cs.dispose(); } catch { /* best-effort */ }
     sessions.current.delete(cs.id);
     // `targetBypass` is the ONE thing this path does not carry over when it is passed: the
@@ -1126,16 +1191,37 @@ export function AgentSurface() {
     // auto-switch / picker path asking for a DIFFERENT one: an account is `CLAUDE_CONFIG_DIR`,
     // read once at spawn, so moving it is a respawn — there is no live control request for it.
     const acct = targetAccountId ?? cs.accountId;
-    const s = spawn(bp, cs.claudeId, true, 'chat', '', modelForSession(cs), true, '', false, effortForSession(cs), true, cs.mode, acct);
+    let s: ChatSession | Session;
+    try {
+      s = spawn(bp, cs.claudeId, true, 'chat', '', modelForSession(cs), true, '', false, effortForSession(cs), true, cs.mode, acct);
+    } catch (err) {
+      // The old session is already disposed and deleted, so a throw here leaves the roster
+      // entry pointing at nothing — the orphan this trace exists to catch. Reported rather
+      // than swallowed, then rethrown so behaviour is exactly what it was before.
+      traceRespawn('resumeChatSession', 'failed', { from: cs.id, claudeId: cs.claudeId, detail: { error: String(err) } });
+      throw err;
+    }
     // `spawn` is typed as the Session|ChatSession union; the `'chat'` kind two lines up
     // provably took its chat arm, which is the same narrowing `changeChatMode` does by hand.
+    // The carry stays ADJACENT to the spawn — `chat-draft-carry.test.ts` reads the proximity
+    // as the guarantee, and the trace below is diagnostics that must not come between them.
     carryDraftInto(s as ChatSession, carried);
-    setSessionList((prev) => prev.map((m) => (m.id === cs.id ? { ...m, id: s.id, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode: cs.mode } : m)));
-    setPanes((prev) => prev.map((p) => ({
-      ...p,
-      tabs: p.tabs.map((t) => (t === cs.id ? s.id : t)),
-      active: p.active === cs.id ? s.id : p.active,
-    })));
+    traceRespawn('resumeChatSession', 'spawned', { from: cs.id, to: s.id, claudeId: cs.claudeId, detail: { accountId: acct } });
+    setSessionList((prev) => {
+      const next = prev.map((m) => (m.id === cs.id ? { ...m, id: s.id, kind: 'chat' as const, bypass: s.bypass, claudeId: s.claudeId, mode: cs.mode } : m));
+      // `Array.map` cannot report that it matched nothing, and a miss here is silent AND
+      // terminal: the roster keeps the id of a session that no longer exists.
+      traceRespawn('resumeChatSession', 'roster', { from: cs.id, to: s.id, detail: { matched: prev.some((m) => m.id === cs.id), rosterIds: prev.map((m) => m.id) } });
+      return next;
+    });
+    setPanes((prev) => {
+      traceRespawn('resumeChatSession', 'panes', { from: cs.id, to: s.id, detail: { matched: prev.some((p) => p.tabs.includes(cs.id)) } });
+      return prev.map((p) => ({
+        ...p,
+        tabs: p.tabs.map((t) => (t === cs.id ? s.id : t)),
+        active: p.active === cs.id ? s.id : p.active,
+      }));
+    });
     // Returned so the auto-switch arm can resubmit the turn the server held — without it the
     // user's message would be lost at exactly the moment the feature promises not to lose it.
     return s as ChatSession;
@@ -1160,18 +1246,32 @@ export function AgentSurface() {
     const chat = cs as ChatSession;
     if (chat.mode === mode) return; // picking the mode you are already in is not a restart
     const carried = chat.getModel().draft;  // BEFORE dispose — see `carryDraftInto`
+    traceRespawn('changeChatMode', 'begin', { from: chat.id, claudeId: chat.claudeId, detail: { fromMode: chat.mode, toMode: mode } });
     try { chat.dispose(); } catch { /* best-effort */ }
     sessions.current.delete(chat.id);
     // Same B3 call shape as `resumeChatSession` above — `explicitBypass` with `bp = cs.bypass`,
     // so switching Basic → Develop can never also switch `auto` → `bypass`.
-    const s = spawn(chat.bypass, chat.claudeId, true, 'chat', '', modelForSession(chat), true, '', false, effortForSession(chat), true, mode);
-    carryDraftInto(s as ChatSession, carried);  // union → chat arm, as above
-    setSessionList((prev) => prev.map((m) => (m.id === chat.id ? { ...m, id: s.id, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode } : m)));
-    setPanes((prev) => prev.map((p) => ({
-      ...p,
-      tabs: p.tabs.map((t) => (t === chat.id ? s.id : t)),
-      active: p.active === chat.id ? s.id : p.active,
-    })));
+    let s: ChatSession | Session;
+    try {
+      s = spawn(chat.bypass, chat.claudeId, true, 'chat', '', modelForSession(chat), true, '', false, effortForSession(chat), true, mode);
+    } catch (err) {
+      traceRespawn('changeChatMode', 'failed', { from: chat.id, claudeId: chat.claudeId, detail: { error: String(err) } });
+      throw err;
+    }
+    carryDraftInto(s as ChatSession, carried);  // union → chat arm, as above (kept adjacent to the spawn)
+    traceRespawn('changeChatMode', 'spawned', { from: chat.id, to: s.id, claudeId: chat.claudeId, detail: { mode } });
+    setSessionList((prev) => {
+      traceRespawn('changeChatMode', 'roster', { from: chat.id, to: s.id, detail: { matched: prev.some((m) => m.id === chat.id), rosterIds: prev.map((m) => m.id) } });
+      return prev.map((m) => (m.id === chat.id ? { ...m, id: s.id, kind: 'chat' as const, bypass: s.bypass, claudeId: s.claudeId, mode } : m));
+    });
+    setPanes((prev) => {
+      traceRespawn('changeChatMode', 'panes', { from: chat.id, to: s.id, detail: { matched: prev.some((p) => p.tabs.includes(chat.id)) } });
+      return prev.map((p) => ({
+        ...p,
+        tabs: p.tabs.map((t) => (t === chat.id ? s.id : t)),
+        active: p.active === chat.id ? s.id : p.active,
+      }));
+    });
   }, [spawn, modelForSession, effortForSession]);
 
   // The `bypass` dropdown in a chat composer. The mode is ONE setting PER PROJECT (there is a
@@ -1292,15 +1392,34 @@ export function AgentSurface() {
   const openAgentInChat = useCallback((sid: string) => {
     const meta = sessionList.find((m) => m.id === sid);
     if (!meta || meta.kind !== 'agent') return;
+    traceRespawn('openAgentInChat', 'begin', { from: sid, claudeId: meta.claudeId, detail: { dormant: meta.dormant } });
     try { sessions.current.get(sid)?.dispose(); } catch { /* best-effort */ }
     sessions.current.delete(sid);
-    const cs = spawn(meta.bypass, meta.claudeId, true, 'chat');
-    setSessionList((prev) => prev.map((m) => (m.id === sid ? { ...m, id: cs.id, kind: 'chat', bypass: cs.bypass, claudeId: cs.claudeId, dormant: false } : m)));
-    setPanes((prev) => prev.map((p) => ({
-      ...p,
-      tabs: p.tabs.map((t) => (t === sid ? cs.id : t)),
-      active: p.active === sid ? cs.id : p.active,
-    })));
+    // `ReturnType<typeof spawn>`, deliberately, rather than naming either arm: this path
+    // reads only `id`/`bypass`/`claudeId`, which both arms carry, and it converts a TERMINAL
+    // session — spelling a chat type here would misfile it as a chat→chat respawn (the
+    // bucketing `chat-draft-carry.test.ts` does, and it would then demand a draft carry that
+    // a PTY readline cannot supply).
+    let cs: ReturnType<typeof spawn>;
+    try {
+      cs = spawn(meta.bypass, meta.claudeId, true, 'chat');
+    } catch (err) {
+      traceRespawn('openAgentInChat', 'failed', { from: sid, claudeId: meta.claudeId, detail: { error: String(err) } });
+      throw err;
+    }
+    traceRespawn('openAgentInChat', 'spawned', { from: sid, to: cs.id, claudeId: cs.claudeId });
+    setSessionList((prev) => {
+      traceRespawn('openAgentInChat', 'roster', { from: sid, to: cs.id, detail: { matched: prev.some((m) => m.id === sid), rosterIds: prev.map((m) => m.id) } });
+      return prev.map((m) => (m.id === sid ? { ...m, id: cs.id, kind: 'chat' as const, bypass: cs.bypass, claudeId: cs.claudeId, dormant: false } : m));
+    });
+    setPanes((prev) => {
+      traceRespawn('openAgentInChat', 'panes', { from: sid, to: cs.id, detail: { matched: prev.some((p) => p.tabs.includes(sid)) } });
+      return prev.map((p) => ({
+        ...p,
+        tabs: p.tabs.map((t) => (t === sid ? cs.id : t)),
+        active: p.active === sid ? cs.id : p.active,
+      }));
+    });
     setExpanded(true);
   }, [sessionList, spawn]);
 
@@ -2137,6 +2256,56 @@ export function AgentSurface() {
       return next;
     });
   }, [sessionList, panes, minimizedIds]);
+
+  // ── Orphan detector: a live roster entry with no session object ───────────────────
+  //
+  // The reconcile above answers "is every roster id in exactly one pane?", which is a
+  // different question from "does every roster id still have something RUNNING behind it?"
+  // — and it is the second one that a failed respawn breaks. The end state is a tab that
+  // draws, reads as `starting` (an undefined status maps there), renders an empty pane
+  // (no portal is built for it, no container is appended to its slot) and cannot be clicked
+  // back to life. Nothing in this surface notices it today, which is why it is instrumented
+  // rather than merely reasoned about.
+  //
+  // A DORMANT entry legitimately has no session (that is what dormant means) and a MINIMIZED
+  // one still has its session running in the garage, so only non-dormant entries are suspects.
+  //
+  // Reported after a GRACE PERIOD, not on sight. Every respawn passes through a moment where
+  // the old id is deleted and the new one is not yet in the roster; React batches the two
+  // state updates so an effect should never observe that gap, but "should never" is exactly
+  // the assumption a false positive would be built on. Waiting a beat and re-checking costs
+  // nothing and makes a report mean what it says.
+  const orphanTimersRef = useRef<Map<string, number>>(new Map());
+  useEffect(() => { installRespawnTraceGlobal(); }, []);
+  useEffect(() => {
+    const timers = orphanTimersRef.current;
+    const suspects = sessionList.filter((m) => !m.dormant && !sessions.current.has(m.id));
+    const suspect = new Set(suspects.map((m) => m.id));
+    // Healed or closed → drop the pending report, and let this id report again if it ever
+    // breaks a second time.
+    timers.forEach((t, id) => { if (!suspect.has(id)) { clearTimeout(t); timers.delete(id); } });
+    sessionList.forEach((m) => { if (!suspect.has(m.id)) clearOrphan(m.id); });
+    suspects.forEach((m) => {
+      if (timers.has(m.id)) return;
+      timers.set(m.id, window.setTimeout(() => {
+        timers.delete(m.id);
+        if (sessions.current.has(m.id)) return;  // the respawn landed while we waited
+        traceOrphan(m.id, {
+          title: m.title,
+          claudeId: m.claudeId,
+          kind: m.kind,
+          inPane: panes.some((p) => p.tabs.includes(m.id)),
+          isActiveTab: panes.some((p) => p.active === m.id),
+          liveSessionIds: [...sessions.current.keys()],
+        });
+      }, ORPHAN_GRACE_MS));
+    });
+  }, [sessionList, panes, minimizedIds]);
+  // Timers outlive a re-render but must not outlive the surface.
+  useEffect(() => {
+    const timers = orphanTimersRef.current;
+    return () => { timers.forEach((t) => clearTimeout(t)); timers.clear(); };
+  }, []);
 
   // ── On EXPAND the panes go from display:none (offsetParent null) to visible, so
   //    refit every visible session next frame. ──

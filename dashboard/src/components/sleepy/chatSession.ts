@@ -1230,7 +1230,18 @@ export function createChatSession(
     }
   }
 
-  ws.onopen = () => { applyAndNotify(() => { session.status = 'open'; }); };
+  ws.onopen = () => {
+    applyAndNotify(() => { session.status = 'open'; });
+    // THE OPEN EDGE IS A DRAIN EDGE. Until this fires, `writeUser` refuses every frame
+    // (`readyState !== OPEN`) — so anything queued before the socket came up would sit there
+    // until the NEXT inbound frame happened to call `maybeFlushQueue`, and a session whose
+    // first turn has not started yet may wait a long time for one. The account-switch restart
+    // is the caller that made this matter: it hands the held turn to a session that is still
+    // connecting, and that turn must go out the moment the wire exists. Outside the reducer,
+    // for the same reason the `onmessage` drain is: a drain SENDS a frame and appends an item,
+    // which is a second mutation with its own notify.
+    maybeFlushQueue();
+  };
   ws.onmessage = (e) => {
     const raw = typeof e.data === 'string' ? e.data : '';
     if (!raw) return;
