@@ -72,11 +72,66 @@ describe('the real frame', () => {
     expect(sig.window).toBe('weekly');
   });
 
-  it('reads a dedicated rate_limit_event frame', () => {
-    const sig = readLimitSignal({ type: 'rate_limit_event', rateLimitType: 'five_hour', resetsAt: 1788546600 })!;
+  it('reads a REJECTED rate_limit_event frame', () => {
+    const sig = readLimitSignal({
+      type: 'rate_limit_event',
+      rate_limit_info: {
+        status: 'rejected', rateLimitType: 'five_hour', resetsAt: 1788546600,
+        overageDisabledReason: 'org_level_disabled',
+      },
+    })!;
     expect(sig.via).toBe('rateLimitEvent');
     expect(sig.window).toBe('session');
     expect(sig.resetsAtMs).toBe(1788546600 * 1000);
+    expect(sig.detail).toBe('org_level_disabled');
+  });
+});
+
+/**
+ * The frame below is a VERBATIM capture from a healthy `claude -p` turn on 2026-09-05 — 7% of
+ * a five-hour window, nothing refused. The CLI emits one on EVERY turn, so anything this
+ * module says about it is said about every turn the user takes.
+ *
+ * It was read as a refusal: the reader fired on the frame's TYPE and guessed the rest off the
+ * frame itself. Every message disqualified its own account, auto-switch moved to the next, and
+ * that account's first turn exiled it too — "Every account is at its limit", measured 7%.
+ */
+const HEALTHY_METER = {
+  type: 'rate_limit_event',
+  rate_limit_info: {
+    status: 'allowed',
+    resetsAt: 1788643200,
+    rateLimitType: 'five_hour',
+    overageStatus: 'rejected',
+    overageDisabledReason: 'org_level_disabled',
+    isUsingOverage: false,
+    unifiedWindows: {
+      five_hour: { utilization: 0.07, resetsAt: 1788643200 },
+      seven_day: { utilization: 0.19, resetsAt: 1788840000 },
+    },
+  },
+  uuid: 'cb209ad7-16b3-426b-9c29-2fa67073a667',
+  session_id: '6d7568e9-feb7-478e-9f15-fc01ebbfb41f',
+};
+
+describe('the per-turn rate-limit meter is not a refusal', () => {
+  it('a healthy captured frame reads as nothing at all', () => {
+    expect(readLimitSignal(HEALTHY_METER)).toBeNull();
+  });
+
+  it('does not mistake overageStatus for status', () => {
+    // The trap is IN the healthy frame: overage is a separate, org-disabled facility, so
+    // `overageStatus: 'rejected'` rides along on turns nobody refused.
+    expect(HEALTHY_METER.rate_limit_info.overageStatus).toBe('rejected');
+    expect(readLimitSignal(HEALTHY_METER)).toBeNull();
+  });
+
+  it('a status this reader does not understand is silence, not a guess', () => {
+    expect(readLimitSignal({ type: 'rate_limit_event', rate_limit_info: { status: 'warning' } })).toBeNull();
+    expect(readLimitSignal({ type: 'rate_limit_event' })).toBeNull();
+    // The old shape's real damage: with no recognised payload the frame became its own, and
+    // `type` was read as the window. Nothing may be inferred from a frame we cannot parse.
+    expect(readLimitSignal({ type: 'rate_limit_event', rateLimitType: 'five_hour', resetsAt: 1788546600 })).toBeNull();
   });
 });
 

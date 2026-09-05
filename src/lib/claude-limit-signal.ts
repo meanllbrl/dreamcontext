@@ -166,14 +166,47 @@ export function readLimitSignal(frame: unknown): LimitSignal | null {
     };
   }
 
-  // ── 2. A dedicated `rate_limit_event` frame. `chatProtocol.ts` names this type in its
-  //      ignore list, which is how we know the CLI can emit it; its payload shape is not
-  //      pinned by a sample we hold, so it is read defensively and its reset is optional.
+  // ── 2. The dedicated `rate_limit_event` frame — A METER, NOT A REFUSAL.
+  //
+  // CAPTURED LIVE from an ordinary, entirely healthy turn (`claude -p --output-format
+  // stream-json`, 2026-09-05), which is the whole point of quoting it here:
+  //
+  //   { "type": "rate_limit_event",
+  //     "rate_limit_info": { "status": "allowed", "resetsAt": 1788643200,
+  //                          "rateLimitType": "five_hour",
+  //                          "overageStatus": "rejected",
+  //                          "overageDisabledReason": "org_level_disabled",
+  //                          "isUsingOverage": false,
+  //                          "unifiedWindows": {
+  //                            "five_hour": { "utilization": 0.07, "resetsAt": 1788643200 },
+  //                            "seven_day": { "utilization": 0.19, "resetsAt": 1788840000 } } } }
+  //
+  // THE CLI EMITS ONE OF THESE ON EVERY TURN. `status` is the only field that says whether
+  // the API refused anything, and on a healthy turn it reads `allowed` while the account sits
+  // at 7% of its five-hour window. This reader previously fired on the frame's TYPE alone and
+  // guessed the rest off `obj` itself — so every healthy turn was written down as a refusal
+  // (`window: 'unknown'` came from `toWindow('rate_limit_event')`, the absent reset made the
+  // cooldown a 20-minute guess), the account was disqualified, auto-switch moved to the next
+  // one, and its first turn's meter exiled it too. Two accounts, both "at their limit",
+  // measured 7% and 19%. That is the failure this shape is written out to prevent.
+  //
+  // THREE TRAPS, all of them live in the frame above:
+  //   • the payload key is `rate_limit_info` — not `rate_limit`, not `event`;
+  //   • `overageStatus` ALSO reads `rejected` on a healthy frame (overage is a separate,
+  //     org-disabled facility), so a reader keying on it refuses everything forever;
+  //   • falling back to the FRAME as its own payload is what turned a missing field into a
+  //     confident wrong answer. An unrecognised shape now yields null — a missed signal costs
+  //     one visible limit error, which is the status quo, and this module's header explains at
+  //     length why the other direction is the expensive one.
   if (str(obj.type) === 'rate_limit_event') {
-    const payload = asRecord(obj.rate_limit) ?? asRecord(obj.event) ?? obj;
-    const detail = str(payload.reason) ?? str(payload.status);
+    const payload = asRecord(obj.rate_limit_info) ?? asRecord(obj.rate_limit) ?? asRecord(obj.event);
+    if (!payload) return null;
+    // `rejected` is the same word, in the same field, that reader 1 keys on. `allowed`,
+    // `warning`, or anything else is this frame doing its ordinary job.
+    if (str(payload.status)?.toLowerCase() !== 'rejected') return null;
+    const detail = str(payload.overageDisabledReason) ?? str(payload.reason) ?? str(payload.rateLimitType);
     return {
-      window: toWindow(payload.rateLimitType ?? payload.type ?? payload.kind),
+      window: toWindow(payload.rateLimitType),
       resetsAtMs: asEpochMs(payload.resetsAt ?? payload.resets_at),
       via: 'rateLimitEvent',
       ...(detail ? { detail } : {}),
