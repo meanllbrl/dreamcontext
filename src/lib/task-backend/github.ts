@@ -308,9 +308,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
    * issue as `not_planned` — GitHub REST cannot hard-delete, and a soft close
    * preserves issue history + reopenability.
    */
-  async delete(slug: string): Promise<void> {
+  async delete(slug: string, opts: { absorbedBy?: string; reason?: string } = {}): Promise<void> {
     const remoteId = this.ledger.remoteIdFor(slug);
-    await super.delete(slug);
+    await super.delete(slug, opts);
     this.ledger.removeMapping(slug);
     this.ledger.removeTaskSync(slug);
     this.ledger.dequeueFor(slug, Number.MAX_SAFE_INTEGER);

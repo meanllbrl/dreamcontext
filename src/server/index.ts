@@ -9,7 +9,7 @@ import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField } from './routes/tasks.js';
-import { handleSleepGet, handleSleepUpdate } from './routes/sleep.js';
+import { handleSleepGet, handleSleepUpdate, handleSleepAutoGet, handleSleepAutoPut, handleSleepAutoCancel, handleSleepSpecialistsGet } from './routes/sleep.js';
 import { handleEmbeddingModelStatus, handleEmbeddingModelDownload, handleEmbeddingIndexStatus, handleEmbeddingIndexBuild } from './routes/embeddings.js';
 import {
   handleCoreList,
@@ -248,6 +248,12 @@ export function buildRouter(): Router {
   // Sleep
   router.get('/api/sleep', handleSleepGet);
   router.patch('/api/sleep', handleSleepUpdate);
+  // Registered through the standard router — never hand-wired around it — so
+  // the global cross-site-write guard applies to the two mutating verbs.
+  router.get('/api/sleep/specialists', handleSleepSpecialistsGet);
+  router.get('/api/sleep/auto', handleSleepAutoGet);
+  router.put('/api/sleep/auto', handleSleepAutoPut);
+  router.post('/api/sleep/auto/cancel', handleSleepAutoCancel);
   // Embedding-model status + warm-up (backs the Hybrid recall card). The MODEL
   // is vault-agnostic (shared under ~/.dreamcontext/models); the INDEX is
   // per-vault (guarded inside the handler — needs a resolved contextRoot).

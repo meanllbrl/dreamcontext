@@ -73,13 +73,11 @@ export function sanitizeUuid(v: string | null): string {
   return v && UUID_RE.test(v) ? v : '';
 }
 
-/** Strict model-token gate. Claude Code's `--model` takes an alias (`opus`/`sonnet`/
- *  `haiku`) or a full model id — all of which are `[A-Za-z0-9._-]`. Anything with a shell
- *  metacharacter, whitespace, or over 64 chars is rejected to '' (no flag), so the value is
- *  safe to interpolate into the `claude` shell command. Never trusts the client. */
-export function sanitizeModel(v: string | null): string {
-  return v && v.length <= 64 && /^[A-Za-z0-9._-]+$/.test(v) ? v : '';
-}
+/** Strict model-token gate — re-exported from `src/lib/claude-args.ts`, which is the ONE
+ *  copy of the rule. It lives in `src/lib` because `.config.json`'s sleep specialist models
+ *  are gated by the same function and `src/lib` must not import from `src/server`. Kept
+ *  exported here so the many `from './agent-spawn-shared.js'` importers keep compiling. */
+export { sanitizeModel } from '../../lib/claude-args.js';
 
 /**
  * Account-id gate, mirroring {@link sanitizeModel}'s shape discipline: anything that is not a

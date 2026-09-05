@@ -1,5 +1,6 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
-import { today } from '../../lib/id.js';
+import { today, slugify } from '../../lib/id.js';
+import { assertTaskFilingBar, recordCycleTaskFiled, type FilingActor } from '../../lib/task-filing-bar.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { currentSyncJob, startSyncJob } from '../sync-job.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
@@ -321,6 +322,18 @@ export async function handleTasksCreate(
     customFields = v.value;
   }
 
+  // The SAME filing bar the CLI enforces — this route creates tasks without
+  // going through the CLI at all, so without this call it would be the hole in
+  // the gate. The actor defaults to `human`: the dashboard's "Add Task" form is
+  // a person, and a person filing during a background cycle is legitimate. An
+  // in-app agent action that files during a cycle passes `by: 'sleep'`.
+  const actor: FilingActor = body.by === 'sleep' ? 'sleep' : 'human';
+  const verdict = assertTaskFilingBar({ contextRoot, actor, why, slug: slugify(name.trim()) });
+  if (!verdict.allowed) {
+    sendError(res, 400, 'filing_bar', verdict.reason ?? 'Refused by the sleep task-filing bar.');
+    return;
+  }
+
   const backend = backendFor(contextRoot);
   let task: TaskData;
   try {
@@ -345,6 +358,8 @@ export async function handleTasksCreate(
     }
     throw err;
   }
+
+  if (verdict.underBar) recordCycleTaskFiled(contextRoot, task.slug);
 
   recordDashboardChange(contextRoot, {
     entity: 'task',

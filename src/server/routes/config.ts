@@ -1,7 +1,9 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
-import { readSetupConfig, updateSetupConfig, type ClickUpConfig, type GitHubConfig } from '../../lib/setup-config.js';
+import { readSetupConfig, updateSetupConfig, type ClickUpConfig, type GitHubConfig, type SleepConfig } from '../../lib/setup-config.js';
+import { applySleepConfigPatch } from '../../lib/sleep-settings.js';
+import { applySleepSpecialistOverrides } from '../../lib/install-packs.js';
 import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
 import { parsePlatformList, PLATFORM_CATALOG } from '../../lib/platforms.js';
 import { ensureRemoteBackendGitignore } from '../../lib/task-backend/paths.js';
@@ -47,7 +49,10 @@ export async function handleConfigUpdate(
     cloudTaskManagement?: boolean;
     clickup?: ClickUpConfig;
     github?: GitHubConfig;
+    sleep?: SleepConfig;
   } = {};
+  /** Specialists whose model/effort changed — their agent file is re-injected below. */
+  let changedSpecialists: Parameters<typeof applySleepSpecialistOverrides>[1] = [];
 
   if (body.platforms !== undefined) {
     // Validate: must be an array of strings, then pass through parsePlatformList.
@@ -159,6 +164,25 @@ export async function handleConfigUpdate(
     patch.github = { ...existing, ...picked };
   }
 
+  // Sleep settings (thresholds / specialist models / task cap). Validated by the
+  // SAME rules as `dreamcontext sleep config set`, so the dashboard and the CLI
+  // can never accept different things — and a rejected ladder comes back as a
+  // sentence the UI can show rather than a silent fallback to the defaults.
+  if (body.sleep !== undefined) {
+    if (body.sleep === null || typeof body.sleep !== 'object' || Array.isArray(body.sleep)) {
+      sendError(res, 400, 'invalid_sleep', 'sleep must be an object.');
+      return;
+    }
+    const existingSleep = readSetupConfig(dirname(contextRoot))?.sleep ?? {};
+    const result = applySleepConfigPatch(existingSleep, body.sleep as Record<string, unknown>);
+    if (!result.ok) {
+      sendError(res, 400, 'invalid_sleep', result.error);
+      return;
+    }
+    patch.sleep = result.config;
+    changedSpecialists = result.changedSpecialists;
+  }
+
   if (
     patch.platforms === undefined &&
     patch.packs === undefined &&
@@ -166,9 +190,10 @@ export async function handleConfigUpdate(
     patch.taskBackend === undefined &&
     patch.cloudTaskManagement === undefined &&
     patch.clickup === undefined &&
-    patch.github === undefined
+    patch.github === undefined &&
+    patch.sleep === undefined
   ) {
-    sendError(res, 400, 'no_changes', 'Provide at least one of: platforms, packs, disableNativeMemory, taskBackend, cloudTaskManagement, clickup, github.');
+    sendError(res, 400, 'no_changes', 'Provide at least one of: platforms, packs, disableNativeMemory, taskBackend, cloudTaskManagement, clickup, github, sleep.');
     return;
   }
 
@@ -190,6 +215,14 @@ export async function handleConfigUpdate(
   // change takes effect without re-running setup.
   if (patch.disableNativeMemory !== undefined) {
     applyClaudeAutoMemory(projectRoot, patch.disableNativeMemory);
+  }
+  // Push a changed specialist model/effort into its agent frontmatter NOW, so
+  // the next sleep runs on what the user just picked instead of waiting for the
+  // next install. Best-effort: the setting is already saved either way.
+  if (changedSpecialists.length > 0) {
+    try {
+      applySleepSpecialistOverrides(projectRoot, changedSpecialists);
+    } catch { /* the config is authoritative; the next install re-applies it */ }
   }
   sendJson(res, 200, { config: next });
 }

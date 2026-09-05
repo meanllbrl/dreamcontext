@@ -8,10 +8,16 @@ description: >
   entries. Owns ONLY federation state — never touches native local knowledge,
   tasks, or product files. Order is ALWAYS drain-then-distribute.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: claude-sonnet-4-5-20250929
+model: claude-sonnet-5
+effort: low
 skills:
   - dreamcontext
 ---
+
+<!-- Model: claude-sonnet-5 · effort low. Chosen 2026-09-05 because it drains and distributes digests through a fixed, consent-gated pipeline.
+     Not hardcoded policy — a brain overrides it in Settings › Sleep or
+     `dreamcontext sleep config set specialists.sleep-federation.model <id>`, and the choice is
+     re-injected into this frontmatter on every install so it survives `dreamcontext update`. -->
 
 # Sleep — Federation Specialist
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useI18n } from '../context/I18nContext';
 import { useVault } from '../context/VaultContext';
 import { useConfig, useUpdateConfig, type PlatformId } from '../hooks/useConfig';
+import { SleepSettings } from '../components/settings/SleepSettings';
 import { ConnectionsManager } from '../components/settings/ConnectionsManager';
 import { EmbeddingModelCard } from '../components/settings/EmbeddingModelCard';
 import { TaskOverrideEditor } from '../components/settings/TaskOverrideEditor';
@@ -85,7 +86,7 @@ const RECALL_MODE_OPTIONS: RecallModeOption[] = [
 
 type SettingsSectionId =
   | 'platforms' | 'format' | 'linkedrepos' | 'agents' | 'sleepy'
-  | 'memory' | 'learning' | 'recall'
+  | 'memory' | 'sleep' | 'learning' | 'recall'
   | 'github' | 'teamsync' | 'clickup' | 'connections'
   | 'system';
 
@@ -133,6 +134,7 @@ const SETTINGS_NAV: SettingsNavGroup[] = [
     labelKey: 'settings.group.memory',
     items: [
       { id: 'memory', labelKey: 'settings.nav.memory' },
+      { id: 'sleep', labelKey: 'settings.nav.sleep' },
       { id: 'learning', labelKey: 'settings.nav.learning' },
       { id: 'recall', labelKey: 'settings.nav.recall' },
     ],
@@ -634,6 +636,12 @@ export function SettingsPage({ focus }: SettingsPageProps) {
             }
           />
         </SettingGroup>
+      </section>
+      )}
+      {activeSection === 'sleep' && (
+      <section className="settings-section">
+        <SectionHead titleKey="settings.nav.sleep" descKey="settings.desc.sleep" />
+        <SleepSettings />
       </section>
       )}
       {activeSection === 'learning' && (

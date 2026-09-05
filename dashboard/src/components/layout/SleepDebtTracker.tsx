@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useI18n } from '../../context/I18nContext';
-import { useSleep, getSleepLevelKey, getSleepMood, displayDebt, SLEEP_DEBT_MAX } from '../../hooks/useSleep';
+import { useSleep, getSleepLevelKey, getSleepMood, displayDebt, sleepThresholds, sleepDebtMax } from '../../hooks/useSleep';
+import { useAutoSleep } from '../../hooks/useAutoSleep';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
 import { readAgentSettings, AGENT_SETTINGS_EVENT, type AgentSettings } from '../../lib/agentSettings';
 import { useVault, useInstanceEvent } from '../../context/VaultContext';
@@ -37,6 +38,12 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
   const { t } = useI18n();
   const { data: sleep } = useSleep();
   const { data: caps } = useAgentCapabilities();
+  // A background cycle counts as sleeping for every purpose this header has: the
+  // mascot, the label, and — critically — the Sleep button, which must not offer
+  // to start a second consolidation on top of a running one. Queried up here with
+  // the other data hooks: below the `if (!sleep) return null` guard it would be a
+  // conditional hook, and the hook count would jump the moment the debt resolved.
+  const { data: auto } = useAutoSleep();
   const [menuOpen, setMenuOpen] = useState(false);
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(() => readAgentSettings());
   // Every sleep signal below is per PROJECT: the debt itself comes from this instance's
@@ -94,15 +101,19 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
   if (!sleep) return null;
 
   const debt = displayDebt(sleep);
+  const autoRunning = !!auto?.jobLive;
   // A consolidation is live when the epoch is stamped (`sleep start`, cleared by
   // `sleep done`). That's the authoritative "sleep is active" signal.
-  const sleeping = !!sleep.sleep_started_at;
+  const sleeping = !!sleep.sleep_started_at || autoRunning;
   // The bridge between click and real sleep: a request is in flight but the agent hasn't
   // stamped the epoch yet. Suppressed once the real sleep begins.
   const waiting = !sleeping && pendingAt != null;
-  const levelKey = sleeping ? 'must_sleep' : getSleepLevelKey(debt);
-  const mood = sleeping ? 'sleeps' : waiting ? 'sleepy' : getSleepMood(debt);
-  const pct = sleeping ? 100 : Math.min(100, (debt / SLEEP_DEBT_MAX) * 100);
+  // The brain's own ladder (Settings › Sleep), defaults when it never set one.
+  const th = sleepThresholds(sleep);
+  const debtMax = sleepDebtMax(th);
+  const levelKey = sleeping ? 'must_sleep' : getSleepLevelKey(debt, th);
+  const mood = sleeping ? 'sleeps' : waiting ? 'sleepy' : getSleepMood(debt, th);
+  const pct = sleeping ? 100 : Math.min(100, (debt / debtMax) * 100);
   const level = t(`sleep.${levelKey}`);
 
   const agentReady = isSleepAgentReady(caps, agentSettings.chatView) && agentSettings.enabled;
@@ -120,7 +131,7 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
   const summary = sleeping
     ? t('sleep.active')
     : waiting ? t('sleep.waiting')
-    : `${level} · ${debt}/${SLEEP_DEBT_MAX} ${t('sleep.debt')}`;
+    : `${level} · ${debt}/${debtMax} ${t('sleep.debt')}`;
 
   return (
     <div className="sleep-tracker-wrap" ref={wrapRef}>
@@ -135,7 +146,7 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
         aria-label={sleeping
           ? t('sleep.active')
           : waiting ? t('sleep.waiting')
-          : `${t('sleep.level')}: ${level}. ${t('sleep.debt')} ${debt} / ${SLEEP_DEBT_MAX}.`}
+          : `${t('sleep.level')}: ${level}. ${t('sleep.debt')} ${debt} / ${debtMax}.`}
       >
         <span className="sleep-tracker-face" aria-hidden>
           <SleepyMascot mood={mood} size={24} compact />
@@ -156,7 +167,7 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
               </span>
             ) : (
               <span className="sleep-tracker-count">
-                {debt}<span className="sleep-tracker-count-max">/{SLEEP_DEBT_MAX}</span>
+                {debt}<span className="sleep-tracker-count-max">/{debtMax}</span>
               </span>
             )}
           </span>

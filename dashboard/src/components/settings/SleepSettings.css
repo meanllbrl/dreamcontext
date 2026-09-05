@@ -1,0 +1,98 @@
+/* Settings › Sleep — see SleepSettings.tsx. Layout only; every colour and
+   spacing token comes from the shared settings styles. */
+
+.sleep-thresholds {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3, 12px);
+}
+
+.sleep-threshold-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+}
+
+.sleep-threshold-label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2, 8px);
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+
+.sleep-threshold-mark {
+  font-size: 0.8em;
+  opacity: 0.6;
+}
+
+.sleep-threshold-input--bad {
+  border-color: var(--danger, #d9534f);
+}
+
+.sleep-derived,
+.sleep-specialist-name {
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+.sleep-derived {
+  margin: var(--space-2, 8px) 0 0;
+}
+
+.sleep-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  margin-top: var(--space-3, 12px);
+}
+
+.sleep-specialists {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+}
+
+.sleep-specialist-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 0.7fr);
+  align-items: center;
+  gap: var(--space-2, 8px);
+}
+
+.sleep-cap-input {
+  width: 6rem;
+}
+
+@media (max-width: 640px) {
+  .sleep-thresholds,
+  .sleep-specialist-row { grid-template-columns: 1fr; }
+}
+
+.sleep-job {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px);
+  margin-top: var(--space-2, 8px);
+  font-size: 0.9em;
+}
+
+.sleep-job-summary {
+  flex-basis: 100%;
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+
+/* Column headers over the specialist dropdowns. */
+.sleep-specialist-head {
+  font-size: 0.78em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+/* A row that is NOT on the package default reads as deliberate, not accidental. */
+.sleep-specialist-select--set {
+  border-color: var(--accent, #7c6cf5);
+}

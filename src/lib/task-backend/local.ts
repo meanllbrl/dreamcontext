@@ -7,6 +7,8 @@ import { insertToSection, listSections, readSection } from '../markdown.js';
 import { generateId, slugify, today } from '../id.js';
 import { normalizeRice } from '../rice.js';
 import { healTaskRemoved, healTaskRename } from '../feature-links.js';
+import { appendTombstone } from '../task-tombstones.js';
+import { withTaskFileLock } from '../task-file-lock.js';
 import { dateUpdatesForStatus } from '../task-dates.js';
 import { filterTasks, toTaskRecord, type TaskFilter } from '../task-query.js';
 import {
@@ -341,6 +343,22 @@ export class LocalTaskBackend implements TaskBackend {
       throw new TaskBackendError('invalid_input', `Invalid task name: ${input.name}`);
     }
     const filePath = this.taskPath(slug);
+    // Cheap pre-check so the common "already exists" case fails without paying
+    // for a lock. It is NOT the guarantee — see the re-check inside the lock.
+    if (existsSync(filePath)) {
+      throw new TaskBackendError('already_exists', `Task already exists: ${slug}`);
+    }
+    return withTaskFileLock(this.brainRoot(), slug, () => this.writeNewTaskSync(slug, filePath, input));
+  }
+
+  /** The scaffold write itself — always called under {@link withTaskFileLock}. */
+  private writeNewTaskSync(slug: string, filePath: string, input: CreateTaskInput): TaskData {
+    // THE existence guarantee, re-checked with the lock held. The pre-check in
+    // `create` above is a time-of-check/time-of-use window: two processes filing
+    // the same name (a person and a background sleep cycle, or a create racing a
+    // rename) can BOTH pass it, and whichever takes the lock second would
+    // silently overwrite the first task — a lost write in exactly the
+    // two-writer case this lock exists to close.
     if (existsSync(filePath)) {
       throw new TaskBackendError('already_exists', `Task already exists: ${slug}`);
     }
@@ -469,18 +487,22 @@ ${input.why || '(To be defined)'}
     opts?: UpdateFieldsOptions,
   ): Promise<TaskData> {
     const path = this.requirePath(slug);
-    if (fields.tags !== undefined || fields.due_date !== undefined || fields.start_date !== undefined) {
-      const { data: prev } = readFrontmatter<Record<string, unknown>>(path);
-      fields = normalizeBacklogFields(prev, fields);
-    }
-    if (opts?.body !== undefined) {
-      // Merge frontmatter updates + body in a single write (dashboard body edit).
-      const { data } = readFrontmatter<Record<string, unknown>>(path);
-      writeFrontmatter(path, { ...data, ...fields }, opts.body);
-    } else {
-      updateFrontmatterFields(path, fields);
-    }
-    return readTaskFile(path);
+    // The whole read-modify-write is inside the lock: two writers that both
+    // READ before either WRITES silently lose one side's fields.
+    return withTaskFileLock(this.brainRoot(), slug, () => {
+      if (fields.tags !== undefined || fields.due_date !== undefined || fields.start_date !== undefined) {
+        const { data: prev } = readFrontmatter<Record<string, unknown>>(path);
+        fields = normalizeBacklogFields(prev, fields);
+      }
+      if (opts?.body !== undefined) {
+        // Merge frontmatter updates + body in a single write (dashboard body edit).
+        const { data } = readFrontmatter<Record<string, unknown>>(path);
+        writeFrontmatter(path, { ...data, ...fields }, opts.body);
+      } else {
+        updateFrontmatterFields(path, fields);
+      }
+      return readTaskFile(path);
+    });
   }
 
   async insertSection(
@@ -490,19 +512,26 @@ ${input.why || '(To be defined)'}
     opts: InsertSectionOptions,
   ): Promise<void> {
     const path = this.requirePath(slug);
-    insertToSection(path, sectionName, content, opts.position, true, opts.replacePlaceholders ?? false);
+    withTaskFileLock(this.brainRoot(), slug, () =>
+      insertToSection(path, sectionName, content, opts.position, true, opts.replacePlaceholders ?? false));
   }
 
   async addChangelog(slug: string, entry: string, opts?: AddChangelogOptions): Promise<void> {
     const path = this.requirePath(slug);
-    try {
-      insertToSection(path, 'Changelog', entry, 'top');
-    } catch (err) {
-      if (!opts?.fallbackAppend) throw err;
-      // No Changelog section: append at EOF (pre-refactor CLI fallback).
-      const existing = readFileSync(path, 'utf-8');
-      writeFileSync(path, existing.trimEnd() + '\n\n' + entry + '\n', 'utf-8');
-    }
+    // `tasks log` is the single most concurrent task write there is — the
+    // foreground logs progress while a background cycle reconciles the board —
+    // and it is a read-modify-write of the same section, so it is exactly where
+    // an interleave drops an entry.
+    withTaskFileLock(this.brainRoot(), slug, () => {
+      try {
+        insertToSection(path, 'Changelog', entry, 'top');
+      } catch (err) {
+        if (!opts?.fallbackAppend) throw err;
+        // No Changelog section: append at EOF (pre-refactor CLI fallback).
+        const existing = readFileSync(path, 'utf-8');
+        writeFileSync(path, existing.trimEnd() + '\n\n' + entry + '\n', 'utf-8');
+      }
+    });
   }
 
   async complete(slug: string, summary?: string): Promise<TaskData> {
@@ -520,9 +549,21 @@ ${input.why || '(To be defined)'}
     return this.updateFields(slug, { status: 'completed', updated_at: now, ...dates });
   }
 
-  async delete(slug: string): Promise<void> {
+  async delete(slug: string, opts: { absorbedBy?: string; reason?: string } = {}): Promise<void> {
     const path = this.requirePath(slug);
-    rmSync(path);
+    // Read the id BEFORE unlinking — a tombstone that can name the task id stays
+    // traceable through a remote backend's mapping.
+    const doomed = await this.get(slug).catch(() => null);
+    withTaskFileLock(this.brainRoot(), slug, () => rmSync(path));
+    // A deleted FILE proves nothing later; this marker does. Without it a sleep
+    // cycle re-files a chore somebody deliberately consolidated away.
+    appendTombstone(this.brainRoot(), {
+      slug,
+      ...(doomed?.id ? { id: doomed.id } : {}),
+      deletedAt: new Date().toISOString(),
+      ...(opts.absorbedBy ? { absorbedBy: opts.absorbedBy } : {}),
+      ...(opts.reason ? { reason: opts.reason } : {}),
+    });
     // Referential integrity: no feature may keep listing a task that is gone.
     this.healFeatureLinks(() => healTaskRemoved(this.brainRoot(), slug));
   }
@@ -567,7 +608,16 @@ ${input.why || '(To be defined)'}
     // for the rename), then move the file to the new slug. The id-map migration
     // is layered on by the remote backends' override.
     await this.updateFields(slug, { name: trimmed, updated_at: today() });
-    renameSync(path, this.taskPath(newSlug));
+    withTaskFileLock(this.brainRoot(), slug, () => renameSync(path, this.taskPath(newSlug)));
+    // A rename retires the OLD slug just as surely as a delete does: anything
+    // that remembers it (a sleep cycle's fixed-slug lookup, a wikilink) must be
+    // pointed at where the work went rather than concluding it never existed.
+    appendTombstone(this.brainRoot(), {
+      slug,
+      deletedAt: new Date().toISOString(),
+      absorbedBy: newSlug,
+      reason: 'renamed',
+    });
     // Referential integrity: features listing the old slug follow the rename.
     this.healFeatureLinks(() => healTaskRename(this.brainRoot(), slug, newSlug));
     return newSlug;

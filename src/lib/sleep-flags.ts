@@ -135,7 +135,11 @@ export function parseFlagOption(raw: string): Pick<SleepFlag, 'key' | 'label' | 
 }
 
 export interface CuratorTaskPlan {
-  action: 'create' | 'refresh' | 'none';
+  /**
+   * `refresh-absorbing` — the chore was merged into ANOTHER task that is still
+   * open; log the orphan count there instead of re-filing a duplicate.
+   */
+  action: 'create' | 'refresh' | 'refresh-absorbing' | 'none';
   slug: string;
   name: string;
   description: string;
@@ -146,10 +150,23 @@ export interface CuratorTaskPlan {
  * existing one should be refreshed (still open) or recreated (a prior pass
  * completed but orphans recurred). Pure — the caller owns the actual
  * create/update task-backend call.
+ *
+ * THE TOMBSTONE ARGUMENT IS THE BUG FIX. This used to look the chore up by
+ * fixed slug ONLY. When somebody merged it into another task and deleted the
+ * file, the lookup missed and the next cycle filed a brand-new, entirely-empty
+ * copy — observed on this brain every cycle from 2026-07-18 to 2026-08-23, and
+ * B0's audit found it is the only zero-justification task in 116. Passing the
+ * resolved tombstone lets a deliberate consolidation actually stick.
+ *
+ * The resolution is TRANSITIVE (A merged into B, B renamed to C ⇒ C), and a
+ * chain that dead-ends — everything in it deleted, or the absorbing task
+ * COMPLETED — allows `create` again: nothing open owns the work any more, so
+ * re-filing is the right answer rather than a duplicate.
  */
 export function planCuratorTask(
   orphanCount: number,
   existing: { slug: string; status: string } | null,
+  absorbing?: { slug: string; status: string } | null,
 ): CuratorTaskPlan {
   const slug = CURATOR_TASK_SLUG;
   const name = 'Curator pass: orphan tags';
@@ -160,6 +177,11 @@ export function planCuratorTask(
   }
   if (existing && existing.status !== 'completed') {
     return { action: 'refresh', slug, name, description };
+  }
+  // The chore's own file is gone or done — but if the work was ABSORBED by a
+  // task that is still open, that task is where the count belongs.
+  if (absorbing && absorbing.status !== 'completed') {
+    return { action: 'refresh-absorbing', slug: absorbing.slug, name, description };
   }
   return { action: 'create', slug, name, description };
 }

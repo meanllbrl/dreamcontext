@@ -95,6 +95,18 @@ export function AgentsIcon(props: IconProps) {
 }
 
 /** Sleepy — a moon. */
+/** Sleep settings — the debt meter, drawn as a gauge rather than the Sleepy moon
+ *  so the tuning screen is never mistaken for the mascot's own settings. */
+export function SleepDialIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3.5 17a9 9 0 1 1 17 0" />
+      <path d="M12 17l4.5-5" />
+      <circle cx="12" cy="17" r="1.2" />
+    </Icon>
+  );
+}
+
 export function SleepyIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -184,6 +196,7 @@ export const SETTINGS_ICONS = {
   agents: AgentsIcon,
   sleepy: SleepyIcon,
   memory: MemoryIcon,
+  sleep: SleepDialIcon,
   learning: LearningIcon,
   recall: RecallIcon,
   github: BrainRepoIcon,

@@ -341,9 +341,10 @@ function recordIfManifest(
   manifest: Manifest | undefined,
   relPath: string,
   kind: ManagedFileKind,
+  opts?: { baselineSha?: string },
 ): void {
   if (!manifest) return;
-  recordFile(manifest, relPath, dreamcontextVersion(), kind);
+  recordFile(manifest, relPath, dreamcontextVersion(), kind, opts);
 }
 
 // ─── Interactive Pack Browser ───────────────────────────────────────────────
@@ -828,9 +829,9 @@ export async function installCoreForPlatform(
     const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));
     for (const file of agentFiles) {
       const source = join(agentsSourceDir, file);
-      const agentRel = installAgentForPlatform(platform, projectRoot, source);
-      recordIfManifest(manifest, agentRel, 'agent');
-      installed.push(platformPrefixed(platform, agentRel));
+      const agent = installAgentForPlatform(platform, projectRoot, source);
+      recordIfManifest(manifest, agent.relPath, 'agent', { baselineSha: agent.baselineSha });
+      installed.push(platformPrefixed(platform, agent.relPath));
     }
   }
 

@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
+import { promptInput } from '../../lib/prompt.js';
 import { readJsonObject, writeJsonObject, readJsonArray, writeJsonArray } from '../../lib/json-file.js';
 import { today } from '../../lib/id.js';
 import { header, success, error, warn, info } from '../../lib/format.js';
@@ -11,9 +12,24 @@ import { getTaskBackend } from '../../lib/task-backend/index.js';
 import { ProgressBar } from '../../lib/progress.js';
 import type { SyncOptions } from '../../lib/task-backend/types.js';
 import { runMigrations } from '../../lib/migration-runner.js';
-import { readSetupConfig, readBrainLocal, writeBrainLocal } from '../../lib/setup-config.js';
+import { readSetupConfig, updateSetupConfig, readBrainLocal, writeBrainLocal, SLEEP_SPECIALISTS } from '../../lib/setup-config.js';
+import {
+  setSleepConfigKey,
+  resetSleepConfigKey,
+  readInstalledSpecialistDefaults,
+  DEFAULT_MAX_NEW_TASKS_PER_CYCLE,
+} from '../../lib/sleep-settings.js';
+import { applySleepSpecialistOverrides } from '../../lib/install-packs.js';
+import { resolveTombstone, readTombstones } from '../../lib/task-tombstones.js';
+import {
+  currentAutoSleepFingerprint,
+  readAutoSleepSidecar,
+  liveAutoSleepJob,
+} from '../../lib/auto-sleep.js';
+import { runAutoSleep, cancelAutoSleep } from '../../lib/auto-sleep-runner.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
+import { withSleepStateLock } from '../../lib/sleep-state-lock.js';
 import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
 import { reconcileBrainSyncSuccess, reconcileBrainSyncFailure } from '../../lib/git-sync/auth-reconcile.js';
 import { classifySyncError } from '../../lib/git-sync/failure.js';
@@ -55,8 +71,8 @@ import {
   inspectSleepLock,
   SLEEP_LOCK_STALE_MS,
   SLEEP_START_LOCK_STALE_MS,
-  DEBT_SLEEPY,
-  DEBT_MUST_SLEEP,
+  resolveSleepThresholds,
+  hasInvalidSleepThresholds,
 } from '../../lib/sleep-consolidation.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -96,6 +112,7 @@ const DEFAULT_SLEEP_STATE: SleepState = {
   recall_mode: 'haiku',
   consolidation_depth: null,
   pendingMigrationNotices: [],
+  cycle_tasks_filed: [],
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -131,6 +148,7 @@ function freshDefaults(): SleepState {
     recall_mode: 'haiku',
     consolidation_depth: null,
     pendingMigrationNotices: [],
+    cycle_tasks_filed: [],
   };
 }
 
@@ -175,6 +193,9 @@ export function readSleepState(root: string): SleepState {
       compaction_log: Array.isArray(parsed.compaction_log) ? parsed.compaction_log as CompactionRecord[] : [],
       pendingMigrationNotices: Array.isArray(parsed.pendingMigrationNotices)
         ? (parsed.pendingMigrationNotices as unknown[]).filter((n): n is string => typeof n === 'string')
+        : [],
+      cycle_tasks_filed: Array.isArray(parsed.cycle_tasks_filed)
+        ? (parsed.cycle_tasks_filed as unknown[]).filter((n): n is string => typeof n === 'string')
         : [],
     };
   } catch {
@@ -237,6 +258,8 @@ export function migrateKnowledgeAccessKey(
   oldSlug: string,
   newSlug: string,
 ): void {
+  // Read-modify-write of the whole state file — locked like every other one.
+  withSleepStateLock(root, () => {
   const state = readSleepState(root);
   const record = state.knowledge_access[oldSlug];
   if (!record) return;
@@ -252,6 +275,7 @@ export function migrateKnowledgeAccessKey(
     : record;
   delete state.knowledge_access[oldSlug];
   writeSleepState(root, state);
+  });
 }
 
 // ─── Command Registration ──────────────────────────────────────────────────
@@ -268,8 +292,9 @@ export function registerSleepCommand(program: Command): void {
     .action(() => {
       const root = ensureContextRoot();
       const state = readSleepState(root);
-      const level = sleepinessLevel(state.debt);
-      const range = sleepinessRange(state.debt);
+      const t = resolveSleepThresholds(readSetupConfig(dirname(root))?.sleep);
+      const level = sleepinessLevel(state.debt, t);
+      const range = sleepinessRange(state.debt, t);
 
       console.log(header('Sleep State'));
       console.log(`  Debt:       ${chalk.bold(String(state.debt))} ${chalk.dim(`(${range})`)} ${chalk.magentaBright(level)}`);
@@ -316,28 +341,41 @@ export function registerSleepCommand(program: Command): void {
       const score = parseInt(scoreStr, 10);
 
       const root = ensureContextRoot();
-      const state = readSleepState(root);
+      // D2 — read-modify-write under the state lock. Unlike the hooks this one
+      // fails LOUDLY: a person running `sleep add` would rather be told to retry
+      // than have their entry silently lost to an interleaved write.
+      const addLock = withSleepStateLock(root, () => {
+        const state = readSleepState(root);
 
-      state.sessions.unshift({
-        session_id: `manual-${Date.now()}`,
-        transcript_path: null,
-        stopped_at: new Date().toISOString(),
-        last_assistant_message: description.trim(),
-        change_count: null,
-        tool_count: null,
-        score,
-        task_slugs: [],
+        state.sessions.unshift({
+          session_id: `manual-${Date.now()}`,
+          transcript_path: null,
+          stopped_at: new Date().toISOString(),
+          last_assistant_message: description.trim(),
+          change_count: null,
+          tool_count: null,
+          score,
+          task_slugs: [],
+        });
+        state.debt += score;
+
+        writeSleepState(root, state);
+        return state;
       });
-      state.debt += score;
+      if (!addLock.locked) {
+        error('Sleep state is busy (a consolidation may be writing it) — nothing recorded. Retry in a moment.');
+        process.exitCode = 1;
+        return;
+      }
+      const state = addLock.value;
 
-      writeSleepState(root, state);
-
-      const level = sleepinessLevel(state.debt);
+      const t = resolveSleepThresholds(readSetupConfig(dirname(root))?.sleep);
+      const level = sleepinessLevel(state.debt, t);
       success(`Sleep debt: ${state.debt} (${level})`);
 
-      if (state.debt >= DEBT_MUST_SLEEP) {
-        warn(`Must sleep! Debt is ${DEBT_MUST_SLEEP}+. Consolidation needed.`);
-      } else if (state.debt >= DEBT_SLEEPY) {
+      if (state.debt >= t.mustSleep) {
+        warn(`Must sleep! Debt is ${t.mustSleep}+. Consolidation needed.`);
+      } else if (state.debt >= t.sleepy) {
         info('Getting sleepy. Consider consolidating soon.');
       }
     });
@@ -385,6 +423,9 @@ export function registerSleepCommand(program: Command): void {
       }
 
       try {
+        // Read for the DECISIONS below (lock inspection, depth). Deliberately
+        // unlocked: this read is only used to decide, and the mutation itself
+        // re-reads under the lock a few lines down.
         const state = readSleepState(root);
 
         // Mutual exclusion: a consolidation rewrites the shared state/.sleep.json
@@ -424,7 +465,7 @@ export function registerSleepCommand(program: Command): void {
         const decision = consolidationDepth(state.debt, {
           userRequestedDeep: !!opts.deep,
           catchup: catchupDebtSplit(state.sessions),
-        });
+        }, resolveSleepThresholds(readSetupConfig(dirname(root))?.sleep));
         state.consolidation_depth = decision.depth;
 
         // Clear any pending migration notices from the previous cycle so the
@@ -459,7 +500,28 @@ export function registerSleepCommand(program: Command): void {
         }
 
         state.sleep_started_at = new Date().toISOString();
-        writeSleepState(root, state);
+
+        // D2 — the actual mutation, under the state lock and NOTHING else: it
+        // RE-READS so a session record a Stop hook landed while migrations ran
+        // is not clobbered, then applies only the fields this command owns.
+        // Deliberately narrow — migrations above can take longer than the
+        // lock's stale TTL, and holding it across them would invite a reclaim.
+        const startStateLock = withSleepStateLock(root, () => {
+          const fresh = readSleepState(root);
+          fresh.consolidation_depth = state.consolidation_depth;
+          fresh.pendingMigrationNotices = state.pendingMigrationNotices;
+          fresh.sleep_started_at = state.sleep_started_at;
+          // A fresh epoch starts with a fresh filing budget. `sleep done` clears
+          // it too; doing it at BOTH ends means a crashed cycle cannot leave a
+          // stale count holding the next cycle's cap down.
+          fresh.cycle_tasks_filed = [];
+          writeSleepState(root, fresh);
+        });
+        if (!startStateLock.locked) {
+          error('Sleep state is busy — refusing to stamp the epoch on a stale read. Retry in a moment.');
+          process.exitCode = 1;
+          return;
+        }
         say.success(`Consolidation epoch set: ${state.sleep_started_at}`);
         say.info(`Consolidation depth: ${decision.depth} (source: ${decision.source}) — ${decision.reason}`);
         if (decision.cappedByCatchup) {
@@ -594,24 +656,35 @@ export function registerSleepCommand(program: Command): void {
       // the marker never outlives the decision point it exists to gate.
       clearPrivateDerivationMarker(root);
 
-      // Capture previousDebt BEFORE consolidating; feed it to buildHistoryEntry.
-      // applyConsolidation is pure (works on a clone), so the read-modify-write
-      // happens exactly ONCE below — no two-write pattern that could clobber a
-      // concurrent `hook stop`.
-      const previousDebt = state.debt;
-      const epoch = state.sleep_started_at;
+      // D2 — the consolidation read-modify-write, under the state lock.
+      // `applyConsolidation` is pure, so the whole thing is: re-read inside the
+      // lock, transform, write once. Re-reading matters — a Stop hook that
+      // landed a session between this command starting and reaching here must
+      // be consolidated too, not silently discarded by a stale snapshot.
+      const doneLock = withSleepStateLock(root, () => {
+        const fresh = readSleepState(root);
+        const previousDebt = fresh.debt;
+        const epoch = fresh.sleep_started_at;
 
-      const result = applyConsolidation(state, epoch);
-      const today_ = today();
+        const result = applyConsolidation(fresh, epoch);
+        const today_ = today();
 
-      // Write sleep history entry to its own file (LIFO).
-      const history = readSleepHistory(root);
-      history.unshift(buildHistoryEntry(previousDebt, result, summary, today_));
-      writeSleepHistory(root, history);
+        // Write sleep history entry to its own file (LIFO).
+        const history = readSleepHistory(root);
+        history.unshift(buildHistoryEntry(previousDebt, result, summary, today_));
+        writeSleepHistory(root, history);
 
-      // Finalize and persist the new state exactly once.
-      const finalState = finalizeSleepState(result.state, summary, today_, new Date().toISOString());
-      writeSleepState(root, finalState);
+        // Finalize and persist the new state exactly once.
+        const finalState = finalizeSleepState(result.state, summary, today_, new Date().toISOString());
+        writeSleepState(root, finalState);
+        return { previousDebt, epoch, today_, finalState };
+      });
+      if (!doneLock.locked) {
+        error('Sleep state is busy — refusing to consolidate from a stale read. Retry in a moment.');
+        process.exitCode = 1;
+        return;
+      }
+      const { previousDebt, epoch, today_, finalState } = doneLock.value;
 
       if (epoch && finalState.sessions.length > 0) {
         success(`Consolidation complete. Debt reduced from ${previousDebt} to ${finalState.debt}. ${finalState.sessions.length} post-epoch session(s) preserved.`);
@@ -663,27 +736,48 @@ export function registerSleepCommand(program: Command): void {
 
         const backend = getTaskBackend(root);
         const existingTask = await backend.get(CURATOR_TASK_SLUG);
+
+        // If the chore's own file is gone, follow the tombstone chain: it may
+        // have been MERGED into a task that is still open, in which case the
+        // orphan count belongs there and re-filing would be the duplicate this
+        // whole mechanism exists to stop.
+        let absorbing: { slug: string; status: string } | null = null;
+        if (!existingTask) {
+          const resolved = resolveTombstone(root, CURATOR_TASK_SLUG);
+          if (resolved.livingSlug) {
+            const target = await backend.get(resolved.livingSlug).catch(() => null);
+            if (target) absorbing = { slug: target.slug, status: target.status };
+          }
+        }
+
         const plan = planCuratorTask(
           buckets.orphan.length,
           existingTask ? { slug: existingTask.slug, status: existingTask.status } : null,
+          absorbing,
         );
         if (plan.action === 'create') {
           await backend.create({
             name: plan.name,
+            // The chore is born WITH its justification. It used to be created
+            // with an empty '(To be defined)' template — B0 found that made it
+            // the only zero-justification task in 116 created since August.
             description: plan.description,
+            why: plan.description,
             priority: 'medium',
             status: 'todo',
             tags: ['topic:taxonomy'],
             variant: 'cli',
           });
           info(`Curator task created: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
-        } else if (plan.action === 'refresh') {
+        } else if (plan.action === 'refresh' || plan.action === 'refresh-absorbing') {
           await backend.addChangelog(
             plan.slug,
             `- ${today_}: ${buckets.orphan.length} orphan tag(s) still present — curator pass still needed.`,
             { fallbackAppend: true },
           );
-          info(`Curator task refreshed: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
+          info(plan.action === 'refresh'
+            ? `Curator task refreshed: ${plan.slug} (${buckets.orphan.length} orphan tags).`
+            : `Curator chore was merged into ${plan.slug}; logged ${buckets.orphan.length} orphan tags there instead of re-filing it.`);
         }
       } catch (err) {
         warn(`Curator trigger: skipped — ${(err as Error).message ?? err}`);
@@ -903,6 +997,232 @@ export function registerSleepCommand(program: Command): void {
         console.log(`    ${entry.summary}`);
       }
       console.log(`\n  ${chalk.dim(`${history.length} total consolidation(s)`)}`);
+    });
+
+  // --- config ---
+  const config = sleep
+    .command('config')
+    .description('Show this brain\'s sleep settings (debt thresholds, specialist models, task cap)')
+    .action(() => {
+      const root = ensureContextRoot();
+      const projectRoot = dirname(root);
+      const cfg = readSetupConfig(projectRoot)?.sleep;
+      const t = resolveSleepThresholds(cfg);
+      const overridden = (k: 'drowsy' | 'sleepy' | 'mustSleep') =>
+        cfg?.thresholds?.[k] !== undefined ? chalk.yellow(' (overridden)') : chalk.dim(' (default)');
+
+      console.log(header('Sleep Settings'));
+      if (hasInvalidSleepThresholds(cfg)) {
+        warn('The configured thresholds are not strictly increasing — ALL of them are being ignored.');
+        warn('Showing the defaults that are actually in force. Fix with `dreamcontext sleep config set`.');
+      }
+      console.log(`\n  ${chalk.bold('Debt thresholds')}`);
+      console.log(`    Drowsy:      ${chalk.bold(String(t.drowsy))}${overridden('drowsy')}`);
+      console.log(`    Sleepy:      ${chalk.bold(String(t.sleepy))}${overridden('sleepy')}`);
+      console.log(`    Must Sleep:  ${chalk.bold(String(t.mustSleep))}${overridden('mustSleep')}`);
+      console.log(chalk.dim(`    Derived: deep-authority ${t.deepAuthority} (×1.5), cooldown-override ${t.cooldownOverride} (×2)`));
+
+      console.log(`\n  ${chalk.bold('Specialists')}`);
+      for (const name of SLEEP_SPECIALISTS) {
+        const o = cfg?.specialists?.[name];
+        const shipped = readInstalledSpecialistDefaults(projectRoot, name);
+        const model = o?.model ?? shipped.model ?? chalk.dim('(package default)');
+        const effort = o?.effort ?? shipped.effort ?? chalk.dim('(package default)');
+        const mark = o?.model || o?.effort ? chalk.yellow(' *') : '  ';
+        console.log(`   ${mark}${name.padEnd(17)} ${model}  ${chalk.dim('effort')} ${effort}`);
+      }
+
+      const cap = cfg?.maxNewTasksPerCycle ?? DEFAULT_MAX_NEW_TASKS_PER_CYCLE;
+      const capMark = cfg?.maxNewTasksPerCycle !== undefined ? chalk.yellow(' (overridden)') : chalk.dim(' (default)');
+      console.log(`\n  ${chalk.bold('Task filing')}`);
+      console.log(`    Max new tasks per cycle: ${chalk.bold(String(cap))}${capMark}`);
+      console.log(chalk.dim('    The curator self-healing chore is EXEMPT from this cap.'));
+      console.log(chalk.dim('\n  Set with: dreamcontext sleep config set <key> <value>'));
+      console.log(chalk.dim('  Keys: thresholds.drowsy|sleepy|must-sleep · specialists.<name>.model|effort · max-new-tasks'));
+    });
+
+  config
+    .command('set <key> <value>')
+    .description('Set a sleep setting (thresholds.*, specialists.<name>.model|effort, max-new-tasks)')
+    .option('--allow-unknown', 'Accept a model id this build does not know (a newer model than this release)')
+    .action((key: string, value: string, opts: { allowUnknown?: boolean }) => {
+      const root = ensureContextRoot();
+      const projectRoot = dirname(root);
+      const current = readSetupConfig(projectRoot)?.sleep ?? {};
+      const result = setSleepConfigKey(current, key, value, { allowUnknown: !!opts.allowUnknown });
+      if (!result.ok) {
+        error(result.error);
+        process.exit(1);
+      }
+      updateSetupConfig(projectRoot, { sleep: result.config });
+      success(`${key} = ${value}`);
+      if (result.changedSpecialists.length > 0) {
+        const applied = applySleepSpecialistOverrides(projectRoot, result.changedSpecialists);
+        for (const rel of applied.updated) info(`Updated ${rel}`);
+        for (const rel of applied.skipped) warn(`Could not update ${rel} — run \`dreamcontext update --core-only\`.`);
+      }
+    });
+
+  config
+    .command('reset [key]')
+    .description('Clear one sleep setting, or all of them, back to the shipped defaults')
+    .action((key: string | undefined) => {
+      const root = ensureContextRoot();
+      const projectRoot = dirname(root);
+      const current = readSetupConfig(projectRoot)?.sleep ?? {};
+      const result = resetSleepConfigKey(current, key);
+      if (!result.ok) {
+        error(result.error);
+        process.exit(1);
+      }
+      updateSetupConfig(projectRoot, { sleep: result.config });
+      success(key ? `${key} reset to default` : 'All sleep settings reset to defaults');
+      if (result.changedSpecialists.length > 0) {
+        const applied = applySleepSpecialistOverrides(projectRoot, result.changedSpecialists);
+        for (const rel of applied.updated) info(`Updated ${rel}`);
+      }
+    });
+
+  // --- auto (background consolidation, MACHINE-LOCAL) ---
+  const auto = sleep
+    .command('auto')
+    .description('Background consolidation for THIS machine (off by default)');
+
+  auto
+    .command('on')
+    .description('Let this machine consolidate the brain in the background when debt is high')
+    .option('--trigger <level>', 'must-sleep (default) or sleepy', 'must-sleep')
+    .action((opts: { trigger?: string }) => {
+      const root = ensureContextRoot();
+      const projectRoot = dirname(root);
+      const trigger = opts.trigger === 'sleepy' ? 'sleepy' : 'must-sleep';
+      if (opts.trigger && opts.trigger !== 'sleepy' && opts.trigger !== 'must-sleep') {
+        error('--trigger must be "must-sleep" or "sleepy".');
+        process.exitCode = 1;
+        return;
+      }
+      const t = resolveSleepThresholds(readSetupConfig(projectRoot)?.sleep);
+      const at = trigger === 'sleepy' ? t.sleepy : t.mustSleep;
+
+      // Write the trigger FIRST: the fingerprint covers it, so a fingerprint
+      // computed before it is stored would be stale the instant it is saved.
+      const local = readBrainLocal(projectRoot) ?? {};
+      writeBrainLocal(projectRoot, {
+        ...local,
+        autoSleep: { enabled: true, trigger, approvedAt: new Date().toISOString(), approvedFingerprint: 'pending' },
+      });
+      const fingerprint = currentAutoSleepFingerprint(projectRoot);
+      writeBrainLocal(projectRoot, {
+        ...(readBrainLocal(projectRoot) ?? {}),
+        autoSleep: { enabled: true, trigger, approvedAt: new Date().toISOString(), approvedFingerprint: fingerprint },
+      });
+
+      success(`Auto sleep ON for this machine — triggers at debt ${at} (${trigger}).`);
+      console.log(chalk.dim('  What you just approved: the specialist model/effort map, the per-cycle task cap,'));
+      console.log(chalk.dim('  the trigger, and the current contents of the six sleep agent files.'));
+      console.log(chalk.dim('  If any of those change, auto sleep PAUSES and asks you to re-approve.'));
+      console.log(chalk.dim(`  With defaults this runs at most ~3 cycles on the busiest day; each runs six specialists.`));
+      console.log(chalk.dim('  This setting is machine-local — it never rides to teammates.'));
+    });
+
+  auto
+    .command('off')
+    .description('Stop this machine from consolidating in the background')
+    .action(() => {
+      const root = ensureContextRoot();
+      const projectRoot = dirname(root);
+      const local = readBrainLocal(projectRoot) ?? {};
+      if (!local.autoSleep?.enabled) {
+        info('Auto sleep is already off for this machine.');
+        return;
+      }
+      writeBrainLocal(projectRoot, { ...local, autoSleep: { ...local.autoSleep, enabled: false } });
+      success('Auto sleep OFF — sleep directives return to normal.');
+    });
+
+  auto
+    .command('status')
+    .description('Show whether background sleep is armed, and any running job')
+    .option('--json', 'Machine-readable output')
+    .action((opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const projectRoot = dirname(root);
+      const local = readBrainLocal(projectRoot);
+      const cfg = local?.autoSleep;
+      const fingerprint = currentAutoSleepFingerprint(projectRoot);
+      const stale = !!cfg?.enabled && cfg.approvedFingerprint !== fingerprint;
+      const job = readAutoSleepSidecar(root);
+      const jobLive = !!liveAutoSleepJob(root);
+
+      if (opts.json) {
+        console.log(JSON.stringify({ enabled: !!cfg?.enabled, trigger: cfg?.trigger ?? null, consentStale: stale, job, jobLive }, null, 2));
+        return;
+      }
+
+      console.log(header('Auto Sleep (this machine)'));
+      if (!cfg?.enabled) {
+        console.log(`  ${chalk.dim('Off.')} Turn it on with \`dreamcontext sleep auto on\`.`);
+      } else if (stale) {
+        warn('PAUSED — the sleep settings changed since you approved them.');
+        console.log('  Review them with `dreamcontext sleep config`, then re-run `dreamcontext sleep auto on`.');
+      } else {
+        const t = resolveSleepThresholds(readSetupConfig(projectRoot)?.sleep);
+        const at = cfg.trigger === 'sleepy' ? t.sleepy : t.mustSleep;
+        console.log(`  ${chalk.green('Armed')} — starts at debt ${chalk.bold(String(at))} (${cfg.trigger}).`);
+        console.log(chalk.dim(`  Approved ${cfg.approvedAt}`));
+      }
+      if (job) {
+        const live = jobLive ? chalk.green('running') : chalk.dim(job.status);
+        console.log(`\n  Last job: ${live} · started ${job.startedAt}${job.finishedAt ? ` · finished ${job.finishedAt}` : ''}`);
+        if (job.summary) console.log(chalk.dim(`    ${job.summary.slice(0, 200)}`));
+        if (job.error) console.log(chalk.red(`    ${job.error.slice(0, 200)}`));
+        if (jobLive) console.log(chalk.dim(`    pid ${job.pid} — stop it with \`dreamcontext sleep auto cancel\``));
+      }
+    });
+
+  auto
+    .command('cancel')
+    .description('Stop a running background consolidation (asks first)')
+    .option('--yes', 'Skip the confirmation prompt')
+    .action(async (opts: { yes?: boolean }) => {
+      const root = ensureContextRoot();
+      const job = readAutoSleepSidecar(root);
+      if (!job || job.status !== 'running') {
+        info('No background sleep is running.');
+        return;
+      }
+      // A human confirms what they are about to kill — the same stance
+      // `automations kill` takes, and the reason there is no automatic reaper.
+      if (!opts.yes) {
+        if (!process.stdin.isTTY) {
+          error('Refusing to kill a process group without --yes in a non-interactive session.');
+          process.exitCode = 1;
+          return;
+        }
+        console.log(`About to stop the background sleep: pid ${job.pid}, started ${job.startedAt}.`);
+        const answer = (await promptInput({ message: 'Type "stop" to confirm:' })).trim();
+        if (answer !== 'stop') {
+          error('Confirmation did not match — nothing was stopped.');
+          return;
+        }
+      }
+      const res = cancelAutoSleep(root);
+      if (res.killed) success(`Background sleep stopped (process group ${res.pgid}).`);
+      else if (res.refusedReason) { error(res.refusedReason); process.exitCode = 1; }
+      else info('No background sleep is running.');
+    });
+
+
+  // THE dispatcher entry point — the one and only. `spawnAutoSleep` in hook.ts
+  // spawns exactly this; a second alias would be a trap, since a change to one
+  // would silently diverge from the one that actually runs.
+  sleep
+    .command('auto-run', { hidden: true })
+    .description('INTERNAL: run one background consolidation now (spawned detached by the Stop hook)')
+    .action(async () => {
+      const root = ensureContextRoot();
+      const res = await runAutoSleep(root);
+      if (!res.started) process.exitCode = 1;
     });
 }
 

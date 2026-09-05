@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { PlatformId } from './platforms.js';
+import { sanitizeModel } from './claude-args.js';
 
 const CONFIG_REL_PATH = '_dream_context/state/.config.json';
 
@@ -80,11 +81,78 @@ export interface SetupConfig {
    * enabled via `dreamcontext theses enable`).
    */
   learning?: LearningConfig;
+  /**
+   * Per-brain sleep tuning (thresholds, specialist model/effort, task cap).
+   * Absent ⇒ every shipped default applies — see {@link SleepConfig}.
+   */
+  sleep?: SleepConfig;
 }
 
 /** Proactive learning layer switch (see `SetupConfig.learning`). */
 export interface LearningConfig {
   enabled: boolean;
+}
+
+/** The six sleep-cycle specialists whose model/effort are tunable per brain. */
+export const SLEEP_SPECIALISTS = [
+  'sleep-tasks',
+  'sleep-state',
+  'sleep-product',
+  'sleep-migration',
+  'sleep-federation',
+  'sleep-learn',
+] as const;
+export type SleepSpecialist = (typeof SLEEP_SPECIALISTS)[number];
+
+export function isSleepSpecialist(v: unknown): v is SleepSpecialist {
+  return typeof v === 'string' && (SLEEP_SPECIALISTS as readonly string[]).includes(v);
+}
+
+/** Effort levels a sleep specialist may run at. Deliberately NARROWER than the
+ *  launcher's `EFFORT_LEVELS` (no xhigh/max): the owner scoped sleep to low/medium/high. */
+export const SLEEP_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
+export type SleepEffort = (typeof SLEEP_EFFORT_LEVELS)[number];
+
+/**
+ * Model ids the UI offers and `sleep config set` accepts without a flag.
+ *
+ * This is an EXISTENCE contract, not a security one — `sanitizeModel` already
+ * makes any value shell-safe. Its job is to catch the typo (`claude-opus5`)
+ * at the moment it is typed rather than as a specialist that dies mid-cycle.
+ * `--allow-unknown` is the escape hatch for a model this build predates.
+ */
+export const KNOWN_SLEEP_MODELS = [
+  'claude-opus-5',
+  'claude-sonnet-5',
+  'claude-haiku-4-5',
+  'opus',
+  'sonnet',
+  'haiku',
+] as const;
+
+export interface SleepSpecialistConfig {
+  model?: string;
+  effort?: SleepEffort;
+}
+
+/**
+ * Per-brain sleep settings (`.config.json` `sleep: {}`) — SYNCED to teammates.
+ *
+ * Machine-local switches (auto-sleep on/off + trigger) deliberately do NOT live
+ * here; they are in `BrainLocalState.autoSleep` so one laptop turning background
+ * sleep on can never start a cycle on somebody else's.
+ *
+ * Every field is optional and an absent/invalid field falls back to the shipped
+ * default, so a zero-config brain behaves byte-for-byte as it did before this
+ * block existed.
+ */
+export interface SleepConfig {
+  /** Debt levels. Must satisfy drowsy < sleepy < mustSleep or the whole set is ignored. */
+  thresholds?: { drowsy?: number; sleepy?: number; mustSleep?: number };
+  /** Model/effort override per specialist, injected into the agent frontmatter at install. */
+  specialists?: Partial<Record<SleepSpecialist, SleepSpecialistConfig>>;
+  /** How many NEW tasks one sleep cycle may file (the curator chore is exempt). */
+  maxNewTasksPerCycle?: number;
 }
 
 /** A governed CODE repo, SHARED across the team — name (per-project label) + canonical GitHub URL. NEVER a path. */
@@ -161,6 +229,23 @@ export interface BrainLocalState {
    * not be able to feed a path segment into `personFilePath`.
    */
   activePersonSlug?: string;
+  /**
+   * Background auto-sleep, MACHINE-LOCAL by design (Workstream C).
+   *
+   * Deliberately NOT in `.config.json`: a synced boolean would let one laptop's
+   * "yes, sleep for me" start unattended headless cycles on every teammate's
+   * machine. `approvedFingerprint` is the consent envelope (specialist
+   * model/effort map + cap + trigger + the six agent-customization digests) —
+   * when it stops matching `currentAutoSleepFingerprint`, auto-sleep pauses
+   * with `consent-stale` rather than running under settings nobody approved.
+   */
+  autoSleep?: {
+    enabled: boolean;
+    /** Debt level at which a Stop hook may dispatch a background cycle. */
+    trigger: 'must-sleep' | 'sleepy';
+    approvedAt: string;
+    approvedFingerprint: string;
+  };
 }
 
 export interface ClickUpConfig {
@@ -244,6 +329,65 @@ function sanitizeLearning(raw: unknown): LearningConfig | undefined {
   return { enabled: o.enabled };
 }
 
+/** Positive integer in `[min, max]`, else undefined. Never throws — a garbage
+ *  config must degrade to defaults, not break the Stop hook. */
+function sanitizeIntInRange(raw: unknown, min: number, max: number): number | undefined {
+  if (typeof raw !== 'number' || !Number.isInteger(raw)) return undefined;
+  return raw >= min && raw <= max ? raw : undefined;
+}
+
+/**
+ * Gate the `sleep: {}` block. DEFENSIVE BY CONSTRUCTION: every invalid field is
+ * DROPPED (so it falls back to its default) and nothing here ever throws — this
+ * runs inside `readSetupConfig`, which the Stop hook calls on every turn.
+ *
+ * Monotonicity is NOT enforced here (a partial override is legal: setting only
+ * `mustSleep` is the common case). `resolveSleepThresholds` merges over the
+ * defaults and rejects a non-monotonic RESULT, which is the only place the full
+ * ordering is knowable.
+ */
+function sanitizeSleep(raw: unknown): SleepConfig | undefined {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const out: SleepConfig = {};
+
+  if (o.thresholds !== null && typeof o.thresholds === 'object' && !Array.isArray(o.thresholds)) {
+    const t = o.thresholds as Record<string, unknown>;
+    const thresholds: NonNullable<SleepConfig['thresholds']> = {};
+    for (const key of ['drowsy', 'sleepy', 'mustSleep'] as const) {
+      const v = sanitizeIntInRange(t[key], 1, 1000);
+      if (v !== undefined) thresholds[key] = v;
+    }
+    if (Object.keys(thresholds).length > 0) out.thresholds = thresholds;
+  }
+
+  if (o.specialists !== null && typeof o.specialists === 'object' && !Array.isArray(o.specialists)) {
+    const src = o.specialists as Record<string, unknown>;
+    const specialists: NonNullable<SleepConfig['specialists']> = {};
+    for (const [name, value] of Object.entries(src)) {
+      // Unknown specialist names are dropped, not carried.
+      if (!isSleepSpecialist(name)) continue;
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+      const v = value as Record<string, unknown>;
+      const entry: SleepSpecialistConfig = {};
+      // Same gate as every `claude --model` spawn — one regex, no second copy.
+      const model = typeof v.model === 'string' ? sanitizeModel(v.model) : '';
+      if (model) entry.model = model;
+      if (typeof v.effort === 'string' && (SLEEP_EFFORT_LEVELS as readonly string[]).includes(v.effort)) {
+        entry.effort = v.effort as SleepEffort;
+      }
+      if (Object.keys(entry).length > 0) specialists[name] = entry;
+    }
+    if (Object.keys(specialists).length > 0) out.specialists = specialists;
+  }
+
+  // 0 is legal and means "file no tasks at all" (the curator chore stays exempt).
+  const cap = sanitizeIntInRange(o.maxNewTasksPerCycle, 0, 50);
+  if (cap !== undefined) out.maxNewTasksPerCycle = cap;
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 /**
  * Keep ONLY `{name, gitRemoteUrl}` (both non-empty strings) per entry — a
  * hand-injected `path` (or any other stray key) is DROPPED, so a local path can
@@ -323,6 +467,7 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
       projectId:
         typeof parsed.projectId === 'string' && parsed.projectId.trim() ? parsed.projectId.trim() : undefined,
       learning: sanitizeLearning(parsed.learning),
+      sleep: sanitizeSleep(parsed.sleep),
     };
   } catch {
     return null;
@@ -367,6 +512,7 @@ export function updateSetupConfig(
     linkedRepos: patch.linkedRepos ?? existing.linkedRepos,
     projectId: patch.projectId ?? existing.projectId,
     learning: patch.learning ?? existing.learning,
+    sleep: patch.sleep ?? existing.sleep,
   };
   writeSetupConfig(projectRoot, next);
   return next;
@@ -440,6 +586,24 @@ export function readBrainLocal(projectRoot: string): BrainLocalState {
     if (typeof parsed.needsTaskSync === 'boolean') out.needsTaskSync = parsed.needsTaskSync;
     if (typeof parsed.demotedTokenSha256 === 'string') out.demotedTokenSha256 = parsed.demotedTokenSha256;
     if (typeof parsed.activePersonSlug === 'string') out.activePersonSlug = parsed.activePersonSlug;
+    // Background auto-sleep. Validated field by field, like everything above:
+    // this switch hands an unattended agent the brain, so a half-written or
+    // hand-edited block must read as OFF rather than as a vague yes.
+    const auto = parsed.autoSleep;
+    if (
+      auto && typeof auto === 'object' && !Array.isArray(auto)
+      && typeof auto.enabled === 'boolean'
+      && (auto.trigger === 'must-sleep' || auto.trigger === 'sleepy')
+      && typeof auto.approvedAt === 'string'
+      && typeof auto.approvedFingerprint === 'string'
+    ) {
+      out.autoSleep = {
+        enabled: auto.enabled,
+        trigger: auto.trigger,
+        approvedAt: auto.approvedAt,
+        approvedFingerprint: auto.approvedFingerprint,
+      };
+    }
     return out;
   } catch {
     return {};

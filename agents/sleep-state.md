@@ -9,10 +9,16 @@ description: >
   surfaces release readiness; enforces anti-bloat ceilings; flags stale knowledge files for
   sleep-product to handle.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: claude-sonnet-4-5-20250929
+model: claude-sonnet-5
+effort: low
 skills:
   - dreamcontext
 ---
+
+<!-- Model: claude-sonnet-5 · effort low. Chosen 2026-09-05 because surgical edits to known files against explicit ceilings — mechanical reconciliation, not open judgement.
+     Not hardcoded policy — a brain overrides it in Settings › Sleep or
+     `dreamcontext sleep config set specialists.sleep-state.model <id>`, and the choice is
+     re-injected into this frontmatter on every install so it survives `dreamcontext update`. -->
 
 # Sleep — State Specialist (Core + Changelog + Releases)
 

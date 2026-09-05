@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import type { SleepThresholds as SleepThresholdsPayload } from './sleepLevels';
 
 interface SessionRecord {
   session_id: string;
@@ -61,50 +62,30 @@ export interface SleepState {
   bookmarks?: Bookmark[];
   dashboard_changes: DashboardChange[];
   recall_mode?: RecallMode;
+  /** The brain's RESOLVED debt ladder from the server. Optional so an older
+   *  server (or a cached response) degrades to the shipped defaults. */
+  thresholds?: SleepThresholdsPayload;
 }
 
 export type { Bookmark, SessionRecord, DashboardChange };
 
-// Debt thresholds — MUST mirror the canonical source of truth in
-// src/lib/sleep-consolidation.ts (DEBT_DROWSY / DEBT_SLEEPY / DEBT_MUST_SLEEP).
-// This is a hand-copied mirror because the dashboard is a separate Vite package
-// with no import path into the CLI's src/; tests/unit/dashboard-sleep-thresholds
-// .test.ts parses this file and fails the build if it drifts from the backend
-// again (it silently did, twice: through the 2026-06-29 ×2 rescale and again
-// through the 2026-07-29 weighted-scorer rescale that landed these values).
-//
-// Alert 0–23 · Drowsy 24–39 · Sleepy 40–59 · Must Sleep 60+.
-export const DEBT_DROWSY = 24;
-export const DEBT_SLEEPY = 40;
-export const DEBT_MUST_SLEEP = 60;
-
-/** Debt value at which the bar reads "full" — a consolidation is required. */
-export const SLEEP_DEBT_MAX = DEBT_MUST_SLEEP;
-
-export function getSleepLevel(debt: number): string {
-  if (debt < DEBT_DROWSY) return 'Alert';
-  if (debt < DEBT_SLEEPY) return 'Drowsy';
-  if (debt < DEBT_MUST_SLEEP) return 'Sleepy';
-  return 'Must Sleep';
-}
-
-export function getSleepLevelKey(debt: number): string {
-  if (debt < DEBT_DROWSY) return 'alert';
-  if (debt < DEBT_SLEEPY) return 'drowsy';
-  if (debt < DEBT_MUST_SLEEP) return 'sleepy';
-  return 'must_sleep';
-}
-
-/**
- * Map sleep debt onto the Sleepy mascot's three moods, so the companion's face
- * mirrors how rested the project's memory is: wide awake while debt is low, lids
- * dropping as it climbs, fully asleep once a consolidation is overdue.
- */
-export function getSleepMood(debt: number): 'idle' | 'sleepy' | 'sleeps' {
-  if (debt < DEBT_SLEEPY) return 'idle';
-  if (debt < DEBT_MUST_SLEEP) return 'sleepy';
-  return 'sleeps';
-}
+// Debt thresholds and the level ladder live in `./sleepLevels` — a pure module
+// with no React/network imports, so the drift test can import and exercise it
+// (including the DYNAMIC path) instead of parsing it as text. Re-exported here
+// because every existing consumer imports them from this hook.
+export {
+  DEFAULT_DEBT_DROWSY,
+  DEFAULT_DEBT_SLEEPY,
+  DEFAULT_DEBT_MUST_SLEEP,
+  DEFAULT_SLEEP_THRESHOLDS,
+  sleepThresholds,
+  sleepDebtMax,
+  getSleepLevel,
+  getSleepLevelKey,
+  getSleepMood,
+  sleepRangeLabels,
+} from './sleepLevels';
+export type { SleepThresholds } from './sleepLevels';
 
 /**
  * The debt value every surface should SHOW and level on: the server's effective

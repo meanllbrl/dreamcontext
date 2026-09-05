@@ -21,6 +21,8 @@ import { RENDERS } from '../../lib/lab/types.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
 import { inspectJsonArray } from '../../lib/json-file.js';
 import { readSetupConfig, isLearningEnabled } from '../../lib/setup-config.js';
+import { hasInvalidSleepThresholds } from '../../lib/sleep-consolidation.js';
+import { isKnownSleepModel } from '../../lib/sleep-settings.js';
 import { hasPeopleLayout, listPeople, personFilePath } from '../../lib/people-store.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { readFrontmatter } from '../../lib/frontmatter.js';
@@ -364,6 +366,50 @@ function checkDataStructures(root: string): CheckResult[] {
  * remain, since a partial migration failure must not fail `doctor` outright;
  * it points at `dreamcontext update` to retry the pending migration.
  */
+/**
+ * Report the two ways a configured sleep setting can end up doing nothing:
+ *
+ *  - a NON-MONOTONIC threshold ladder, which `resolveSleepThresholds` discards
+ *    WHOLE (never half-applies) and falls back to the defaults for. The CLI and
+ *    the dashboard both refuse to write one, so reaching this state means the
+ *    file was hand-edited or arrived via a merge.
+ *  - an UNKNOWN specialist model (only reachable via `--allow-unknown` or a hand
+ *    edit). It is not necessarily wrong — it may simply be newer than this build
+ *    — but if it does not exist at run time the specialist dies mid-cycle, and
+ *    a warning here is far cheaper than that.
+ */
+function checkSleepSettings(root: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  const sleep = readSetupConfig(dirname(root))?.sleep;
+  if (!sleep) return results;
+
+  if (hasInvalidSleepThresholds(sleep)) {
+    const t = sleep.thresholds ?? {};
+    results.push({
+      name: 'Sleep thresholds',
+      status: 'warn',
+      message: `Configured thresholds are not strictly increasing `
+        + `(drowsy ${t.drowsy ?? 'default'}, sleepy ${t.sleepy ?? 'default'}, must-sleep ${t.mustSleep ?? 'default'}) `
+        + '— ALL of them are being ignored and the defaults are in force. '
+        + 'Fix with `dreamcontext sleep config set thresholds.<level> <n>` or `sleep config reset thresholds`.',
+    });
+  }
+
+  for (const [name, entry] of Object.entries(sleep.specialists ?? {})) {
+    if (entry?.model && !isKnownSleepModel(entry.model)) {
+      results.push({
+        name: 'Sleep specialist model',
+        status: 'warn',
+        message: `${name} is set to "${entry.model}", which this build does not know. `
+          + 'If it is newer than this release that is fine; if it does not exist, that specialist will fail '
+          + 'mid-cycle. Check with `dreamcontext sleep config`.',
+      });
+    }
+  }
+
+  return results;
+}
+
 function checkFeaturesMigrated(root: string): CheckResult {
   const oldRel = 'core/features';
   const oldAbs = join(root, oldRel);
@@ -1330,6 +1376,10 @@ export function registerDoctorCommand(program: Command): void {
           ? [checkJson(root, 'state/.platforms.json', 'Platform defaults', 'object')]
           : []),
       ];
+
+      // Sleep SETTINGS checks — a setting that is silently ignored is worse than
+      // no setting at all, so both ways that can happen are reported here.
+      results.push(...checkSleepSettings(root));
 
       // Sleep state specific check: detect corruption
       const sleepPath = join(root, 'state', '.sleep.json');

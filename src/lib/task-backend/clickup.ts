@@ -299,9 +299,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     this.recordLocalMutation(slug, 'push');
   }
 
-  async delete(slug: string): Promise<void> {
+  async delete(slug: string, opts: { absorbedBy?: string; reason?: string } = {}): Promise<void> {
     const remoteId = this.ledger.remoteIdFor(slug);
-    await super.delete(slug);
+    await super.delete(slug, opts);
     // Drop every local trace NOW; the remote deletion replays on next sync.
     this.ledger.removeMapping(slug);
     this.ledger.removeTaskSync(slug);

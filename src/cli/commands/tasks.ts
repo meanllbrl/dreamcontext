@@ -7,7 +7,9 @@ import { readSection, extractMermaidNodes, nodeStatus, countCheckboxes } from '.
 import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
 import { promptInput } from '../../lib/prompt.js';
 import { slugify, today } from '../../lib/id.js';
-import { success, error, header, warn } from '../../lib/format.js';
+import { success, error, header, warn, info } from '../../lib/format.js';
+import { readTombstones } from '../../lib/task-tombstones.js';
+import { assertTaskFilingBar, recordCycleTaskFiled, type FilingActor } from '../../lib/task-filing-bar.js';
 import { matchMember } from '../../lib/task-backend/member-match.js';
 import { writeBrainLocal } from '../../lib/setup-config.js';
 import { isMultiPersonVault, listPeople, PeopleStoreError } from '../../lib/people-store.js';
@@ -562,12 +564,29 @@ export function registerTasksCommand(program: Command): void {
     .option('--feature <name>', 'Feature PRD this task belongs to (sets related_feature + the feature\'s related_tasks)')
     .option('--field <key=value...>', 'Set a declared custom field (repeatable): --field team=platform --field story_points=8')
     .option('--allow-missing-required', 'Create even when required custom fields are unset (intentional draft)')
-    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; feature?: string; field?: string[]; allowMissingRequired?: boolean }) => {
+    .option('--by <actor>', 'Who is filing: human | sleep. During a sleep cycle a task filed as anything but `human` must clear the filing bar')
+    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; feature?: string; field?: string[]; allowMissingRequired?: boolean; by?: string }) => {
       const backend = getTaskBackend();
       const slug = slugify(name);
 
       if ((await backend.get(slug)) !== null) {
         error(`Task already exists: ${slug}.md`);
+        // Exit non-zero, like every other refusal on this path: a caller that
+        // checks the exit code was previously told the task had been created.
+        process.exitCode = 1;
+        return;
+      }
+
+      // The filing bar. Applies whenever a sleep cycle is live (or under
+      // DREAMCONTEXT_AUTO_SLEEP) unless the caller says it is a person — see
+      // src/lib/task-filing-bar.ts for why this is checked here and not in the
+      // storage layer.
+      const actor: FilingActor = opts.by === 'human' ? 'human' : opts.by === 'sleep' ? 'sleep' : 'unknown';
+      const contextRoot = ensureContextRoot();
+      const verdict = assertTaskFilingBar({ contextRoot, actor, why: opts.why, slug });
+      if (!verdict.allowed) {
+        error(verdict.reason ?? 'Refused by the sleep task-filing bar.');
+        process.exitCode = 1;
         return;
       }
 
@@ -623,6 +642,9 @@ export function registerTasksCommand(program: Command): void {
       const why = (opts.why ?? '').trim();
       if (!why) {
         error('Every task must say why it exists — pass -w/--why "<reason>".');
+        // Exit non-zero: this refusal used to return 0, so a script (or a sleep
+        // specialist) that checked the exit code was told the task was created.
+        process.exitCode = 1;
         return;
       }
       const version = opts.version || getActivePlanningVersion();
@@ -721,7 +743,11 @@ export function registerTasksCommand(program: Command): void {
         });
       } catch (err) {
         if (err instanceof TaskBackendError && err.code === 'already_exists') {
+          // This is the RACE-LOSING branch: the pre-check passed and the
+          // under-lock re-check found the file. Non-zero, like the pre-check's
+          // own refusal — a caller must be able to tell it did not get a task.
           error(`Task already exists: ${slug}.md`);
+          process.exitCode = 1;
           return;
         }
         throw err;
@@ -729,6 +755,8 @@ export function registerTasksCommand(program: Command): void {
       if (feature) {
         applyTaskFeatureLink(ensureContextRoot(), slug, feature);
       }
+      // Count it against this cycle's cap (no-op outside a cycle).
+      if (verdict.underBar) recordCycleTaskFiled(contextRoot, slug);
       success(`Task created: ${slug}.md`);
       if (feature) {
         console.log(chalk.dim(`  feature: ${feature.slug} (related_tasks updated)`));
@@ -815,10 +843,30 @@ export function registerTasksCommand(program: Command): void {
     .argument('<name>', 'Task slug or name')
     .description('Delete a task (propagates to the remote backend on sync)')
     .option('--yes', 'Skip the confirmation prompt')
-    .action(async (name: string, opts: { yes?: boolean }) => {
+    .option('--into <slug>', 'The task that ABSORBED this one — recorded so no sleep cycle re-files it')
+    .option('--reason <text>', 'Why it was retired (recorded on the tombstone)')
+    .action(async (name: string, opts: { yes?: boolean; into?: string; reason?: string }) => {
       const backend = getTaskBackend();
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
+
+      // Resolve --into to a real slug now: a tombstone pointing at a task that
+      // does not exist is a dead end that would silently allow the re-file.
+      let absorbedBy: string | undefined;
+      if (opts.into) {
+        const target = await resolveTaskSlug(backend, opts.into);
+        if (!target) {
+          error(`--into: no task matches "${opts.into}".`);
+          process.exitCode = 1;
+          return;
+        }
+        if (target === slug) {
+          error('--into: a task cannot absorb itself.');
+          process.exitCode = 1;
+          return;
+        }
+        absorbedBy = target;
+      }
 
       if (!opts.yes) {
         if (!process.stdin.isTTY) {
@@ -833,8 +881,34 @@ export function registerTasksCommand(program: Command): void {
         }
       }
 
-      await backend.delete(slug);
+      await backend.delete(slug, { ...(absorbedBy ? { absorbedBy } : {}), ...(opts.reason ? { reason: opts.reason } : {}) });
       success(`Task deleted: ${slug}${backend.name !== 'local' ? ' (remote deletion on next sync)' : ''}`);
+      if (absorbedBy) info(`Recorded as absorbed by ${absorbedBy} — sleep will log there instead of re-filing this.`);
+    });
+
+  tasks
+    .command('tombstones')
+    .description('List retired task slugs and what absorbed them (why sleep will not re-file them)')
+    .option('--json', 'Machine-readable output')
+    .action((opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const tombstones = readTombstones(root);
+      if (opts.json) {
+        console.log(JSON.stringify(tombstones, null, 2));
+        return;
+      }
+      if (tombstones.length === 0) {
+        info('No retired tasks recorded. A task deleted or renamed from here on leaves a marker.');
+        return;
+      }
+      console.log(header(`Retired tasks (${tombstones.length})`));
+      for (const t of tombstones) {
+        const where = t.absorbedBy
+          ? chalk.dim(' → absorbed by ') + chalk.white(t.absorbedBy)
+          : chalk.dim(' (dropped, not merged)');
+        console.log(`  ${chalk.dim(t.deletedAt.slice(0, 10))} ${t.slug}${where}`);
+        if (t.reason) console.log(`      ${chalk.dim(t.reason)}`);
+      }
     });
 
   // Rename a task — the slug-safe way (#77). Renaming changes the name-derived

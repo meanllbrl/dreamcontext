@@ -7,10 +7,16 @@ description: >
   alters body prose. Writes the ledger on completion via
   `dreamcontext migrations record`.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: claude-sonnet-4-5-20250929
+model: claude-sonnet-5
+effort: low
 skills:
   - dreamcontext
 ---
+
+<!-- Model: claude-sonnet-5 · effort low. Chosen 2026-09-05 because it applies a registered, deterministic structural migration. There is nothing to decide.
+     Not hardcoded policy — a brain overrides it in Settings › Sleep or
+     `dreamcontext sleep config set specialists.sleep-migration.model <id>`, and the choice is
+     re-injected into this frontmatter on every install so it survives `dreamcontext update`. -->
 
 # Sleep — Migration Specialist
 

@@ -8,6 +8,8 @@
  * sleep.ts so all existing importers keep compiling.
  */
 
+import type { SleepConfig } from './setup-config.js';
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 export interface SessionRecord {
@@ -157,6 +159,15 @@ export interface SleepState {
    * generateSnapshot reads this READ-ONLY — it never writes it.
    */
   pendingMigrationNotices: string[];
+  /**
+   * Slugs of the tasks THIS cycle has filed under the task-filing bar — what
+   * the per-cycle cap (`sleep.maxNewTasksPerCycle`) counts.
+   *
+   * Deliberately here rather than in its own file: it belongs to the epoch, so
+   * clearing it and clearing the lock are the same act (see `finalizeSleepState`).
+   * Absent on older `.sleep.json` files → back-filled to `[]`.
+   */
+  cycle_tasks_filed?: string[];
 }
 
 // ─── Sleepiness thresholds ───────────────────────────────────────────────────
@@ -273,6 +284,76 @@ export const SLEEP_COOLDOWN_MS = 3 * 60 * 60 * 1000; // 3 hours
  */
 export const DEBT_COOLDOWN_OVERRIDE = DEBT_MUST_SLEEP * 2;
 
+// ─── Tunable thresholds ──────────────────────────────────────────────────────
+
+/**
+ * The five debt boundaries a brain runs on, resolved ONCE per caller and passed
+ * down. The constants above are the DEFAULTS; `.config.json`'s `sleep.thresholds`
+ * block overrides them per brain (Settings › Sleep / `dreamcontext sleep config`).
+ *
+ * `deepAuthority` and `cooldownOverride` are DERIVED from the resolved
+ * `mustSleep`, not overridable on their own: the ratios (1.5× "you may delete
+ * things", 2× "the cooldown may be bypassed") encode a relationship between the
+ * three claims that a brain lowering its Must Sleep still wants to hold.
+ */
+export interface SleepThresholds {
+  drowsy: number;
+  sleepy: number;
+  mustSleep: number;
+  deepAuthority: number;
+  cooldownOverride: number;
+}
+
+export const DEFAULT_SLEEP_THRESHOLDS: SleepThresholds = {
+  drowsy: DEBT_DROWSY,
+  sleepy: DEBT_SLEEPY,
+  mustSleep: DEBT_MUST_SLEEP,
+  deepAuthority: DEBT_DEEP_AUTHORITY,
+  cooldownOverride: DEBT_COOLDOWN_OVERRIDE,
+};
+
+/** The default ratios `deepAuthority` / `cooldownOverride` hold to `mustSleep`. */
+const DEEP_AUTHORITY_RATIO = DEBT_DEEP_AUTHORITY / DEBT_MUST_SLEEP;   // 1.5
+const COOLDOWN_OVERRIDE_RATIO = DEBT_COOLDOWN_OVERRIDE / DEBT_MUST_SLEEP; // 2
+
+/**
+ * Merge a brain's overrides over the defaults.
+ *
+ * A partial override is normal (setting only `mustSleep` is the common case).
+ * A result that is NOT strictly increasing is not half-applied — the whole set
+ * falls back to defaults and `dreamcontext doctor` reports it, because a ladder
+ * where Sleepy sits above Must Sleep produces directives nobody can reason about.
+ */
+export function resolveSleepThresholds(cfg: SleepConfig | null | undefined): SleepThresholds {
+  const o = cfg?.thresholds;
+  if (!o) return DEFAULT_SLEEP_THRESHOLDS;
+
+  const drowsy = o.drowsy ?? DEBT_DROWSY;
+  const sleepy = o.sleepy ?? DEBT_SLEEPY;
+  const mustSleep = o.mustSleep ?? DEBT_MUST_SLEEP;
+  if (!(drowsy < sleepy && sleepy < mustSleep)) return DEFAULT_SLEEP_THRESHOLDS;
+
+  return {
+    drowsy,
+    sleepy,
+    mustSleep,
+    // Derived from the OVERRIDDEN base, never from the shipped constant.
+    deepAuthority: Math.round(mustSleep * DEEP_AUTHORITY_RATIO),
+    cooldownOverride: Math.round(mustSleep * COOLDOWN_OVERRIDE_RATIO),
+  };
+}
+
+/** True when `cfg.thresholds` is present but resolves to defaults (non-monotonic) —
+ *  the exact condition `dreamcontext doctor` warns on. */
+export function hasInvalidSleepThresholds(cfg: SleepConfig | null | undefined): boolean {
+  const o = cfg?.thresholds;
+  if (!o) return false;
+  const drowsy = o.drowsy ?? DEBT_DROWSY;
+  const sleepy = o.sleepy ?? DEBT_SLEEPY;
+  const mustSleep = o.mustSleep ?? DEBT_MUST_SLEEP;
+  return !(drowsy < sleepy && sleepy < mustSleep);
+}
+
 export interface SleepCooldownStatus {
   /** A completed consolidation is recent enough that directives must stay quiet. */
   active: boolean;
@@ -296,6 +377,7 @@ export function inspectSleepCooldown(
   state: Pick<SleepState, 'last_consolidated_at'>,
   nowMs: number,
   debt: number,
+  t: SleepThresholds = DEFAULT_SLEEP_THRESHOLDS,
 ): SleepCooldownStatus {
   const stamp = state.last_consolidated_at;
   if (!stamp) return { active: false, remainingMs: 0, overridden: false };
@@ -308,7 +390,7 @@ export function inspectSleepCooldown(
   }
 
   const remainingMs = SLEEP_COOLDOWN_MS - elapsed;
-  if (debt >= DEBT_COOLDOWN_OVERRIDE) return { active: false, remainingMs, overridden: true };
+  if (debt >= t.cooldownOverride) return { active: false, remainingMs, overridden: true };
   return { active: true, remainingMs, overridden: false };
 }
 
@@ -407,19 +489,22 @@ export function floorScoreForNeverFlushed(message: string | null | undefined): n
 }
 
 /** Human-readable sleepiness label for a debt value. */
-export function sleepinessLevel(debt: number): 'Alert' | 'Drowsy' | 'Sleepy' | 'Must Sleep' {
-  if (debt < DEBT_DROWSY) return 'Alert';
-  if (debt < DEBT_SLEEPY) return 'Drowsy';
-  if (debt < DEBT_MUST_SLEEP) return 'Sleepy';
+export function sleepinessLevel(
+  debt: number,
+  t: SleepThresholds = DEFAULT_SLEEP_THRESHOLDS,
+): 'Alert' | 'Drowsy' | 'Sleepy' | 'Must Sleep' {
+  if (debt < t.drowsy) return 'Alert';
+  if (debt < t.sleepy) return 'Drowsy';
+  if (debt < t.mustSleep) return 'Sleepy';
   return 'Must Sleep';
 }
 
 /** Debt-range bucket label for a debt value (e.g. "24-39", "60+"). */
-export function sleepinessRange(debt: number): string {
-  if (debt < DEBT_DROWSY) return `0-${DEBT_DROWSY - 1}`;
-  if (debt < DEBT_SLEEPY) return `${DEBT_DROWSY}-${DEBT_SLEEPY - 1}`;
-  if (debt < DEBT_MUST_SLEEP) return `${DEBT_SLEEPY}-${DEBT_MUST_SLEEP - 1}`;
-  return `${DEBT_MUST_SLEEP}+`;
+export function sleepinessRange(debt: number, t: SleepThresholds = DEFAULT_SLEEP_THRESHOLDS): string {
+  if (debt < t.drowsy) return `0-${t.drowsy - 1}`;
+  if (debt < t.sleepy) return `${t.drowsy}-${t.sleepy - 1}`;
+  if (debt < t.mustSleep) return `${t.sleepy}-${t.mustSleep - 1}`;
+  return `${t.mustSleep}+`;
 }
 
 /** Recompute total debt as the sum of session scores. */
@@ -439,9 +524,9 @@ const DEPTH_ORDER: ConsolidationDepth[] = ['light', 'standard', 'deep'];
  * `DEBT_MUST_SLEEP` (30) — see that constant for why the two were split.
  * "Consolidation is overdue" no longer implies "destructive ops are authorized".
  */
-function depthFromDebt(debt: number): ConsolidationDepth {
-  if (debt < DEBT_DROWSY) return 'light';
-  if (debt < DEBT_DEEP_AUTHORITY) return 'standard';
+function depthFromDebt(debt: number, t: SleepThresholds = DEFAULT_SLEEP_THRESHOLDS): ConsolidationDepth {
+  if (debt < t.drowsy) return 'light';
+  if (debt < t.deepAuthority) return 'standard';
   return 'deep';
 }
 
@@ -521,8 +606,9 @@ export interface DepthDecision {
 export function consolidationDepth(
   debt: number,
   opts: { userRequestedDeep?: boolean; agentBump?: number; catchup?: CatchupDebtSplit } = {},
+  t: SleepThresholds = DEFAULT_SLEEP_THRESHOLDS,
 ): DepthDecision {
-  const debtBase = depthFromDebt(debt);
+  const debtBase = depthFromDebt(debt, t);
 
   if (opts.userRequestedDeep) {
     return { depth: 'deep', reason: 'user requested deep consolidation', source: 'user' };
@@ -535,7 +621,7 @@ export function consolidationDepth(
   let capReason = '';
   const catchup = opts.catchup;
   if (catchup && debt > 0 && debtBase === 'deep' && catchup.ratio >= CATCHUP_DEEP_CAP_RATIO) {
-    const organicBase = depthFromDebt(catchup.organic);
+    const organicBase = depthFromDebt(catchup.organic, t);
     const floor = maxDepth('standard', organicBase);
     if (floor !== base) {
       base = floor;
@@ -907,6 +993,11 @@ export function finalizeSleepState(state: SleepState, summary: string, today: st
   next.last_consolidated_at = nowISO;
   next.sessions_since_last_sleep = 0;
   next.consolidation_depth = null;
+  // The per-cycle filing counter dies with the epoch it belongs to. Cleared in
+  // the SAME place the lock is cleared so the two can never disagree about
+  // which cycle is current — a stale counter would silently hold the cap down
+  // on the next cycle.
+  next.cycle_tasks_filed = [];
   return next;
 }
 
@@ -923,5 +1014,6 @@ function cloneState(state: SleepState): SleepState {
     dashboard_changes: state.dashboard_changes.map(c => ({ ...c })),
     compaction_log: state.compaction_log.map(c => ({ ...c })),
     pendingMigrationNotices: [...state.pendingMigrationNotices],
+    cycle_tasks_filed: [...(state.cycle_tasks_filed ?? [])],
   };
 }

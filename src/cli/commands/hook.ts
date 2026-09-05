@@ -12,9 +12,9 @@ import {
   inspectSleepLock,
   inspectSleepCooldown,
   formatCooldownRemaining,
-  DEBT_DROWSY,
-  DEBT_SLEEPY,
-  DEBT_MUST_SLEEP,
+  DEFAULT_SLEEP_THRESHOLDS,
+  resolveSleepThresholds,
+  type SleepThresholds,
   RHYTHM_SESSIONS,
   effectiveDebt,
   effectiveRhythm,
@@ -51,6 +51,8 @@ import { runAssetDriftRefresh } from './asset-drift.js';
 import { loadCatalog } from './install-skill.js';
 import { detectSessionStartTrigger, detectPromptTrigger, renderOffer } from '../../lib/initializer-detect.js';
 import { readSetupConfig, readBrainLocal } from '../../lib/setup-config.js';
+import { withSleepStateLock, autoSleepSidecarRunning } from '../../lib/sleep-state-lock.js';
+import { shouldStartAutoSleep, currentAutoSleepFingerprint } from '../../lib/auto-sleep.js';
 import { resolveBrainSyncEnabled } from '../../lib/git-sync/brain-repo.js';
 import {
   recordAgentSession, recordAgentFirstPrompt, readAgentSessionEntry, titleWorthyPrompt, UUID_RE,
@@ -800,9 +802,63 @@ function runTscCheckWithConfig(filePath: string, tsconfigPath: string): string |
   return `TypeScript errors in ${basename(filePath)}:\n${relevantErrors.join('\n')}`;
 }
 
+
+/**
+ * Resolve the auto-sleep nag state for THIS machine. Cheap and total: any
+ * failure reads as "off", which restores today's directives rather than
+ * silencing a brain that is not actually consolidating itself.
+ */
+function readAutoSleepNagState(contextRoot: string): AutoSleepNagState {
+  try {
+    const projectRoot = dirname(contextRoot);
+    const local = readBrainLocal(projectRoot);
+    if (!local?.autoSleep?.enabled) return { enabled: false, consentStale: false };
+    const stale = local.autoSleep.approvedFingerprint !== currentAutoSleepFingerprint(projectRoot);
+    return { enabled: true, consentStale: stale };
+  } catch {
+    return { enabled: false, consentStale: false };
+  }
+}
+
 // ─── Consolidation Directives ───────────────────────────────────────────────
 
-export function getConsolidationDirective(state: SleepState): string | null {
+/** What the directives need to know about background sleep. */
+export interface AutoSleepNagState {
+  enabled: boolean;
+  /** Enabled, but paused because the approved configuration changed. */
+  consentStale: boolean;
+}
+
+/**
+ * The ONE line that replaces every sleep directive while background sleep is on.
+ *
+ * The stale-consent case is the single exception to the silence: a pause that
+ * nobody is told about is a brain that quietly stopped consolidating, which is
+ * strictly worse than the nagging this feature removed.
+ */
+export function autoSleepNagLine(autoSleep: AutoSleepNagState): string {
+  if (autoSleep.consentStale) {
+    return 'Auto sleep is PAUSED — the sleep settings changed since you approved them. '
+      + 'Re-enable in Settings › Sleep or with `dreamcontext sleep auto on`. '
+      + 'Until then this brain is not consolidating itself.';
+  }
+  return 'Auto sleep is ON for this machine — never run, offer, or recommend a sleep cycle; '
+    + 'the brain consolidates itself in the background. '
+    + 'When you create a task, pass `--by human` so it is not counted against a background cycle.';
+}
+
+export function getConsolidationDirective(
+  state: SleepState,
+  t: SleepThresholds = DEFAULT_SLEEP_THRESHOLDS,
+  autoSleep: AutoSleepNagState = { enabled: false, consentStale: false },
+): string | null {
+  // C4 — when the brain consolidates ITSELF, every debt- and rhythm-driven
+  // directive is noise: there is nothing for the agent to do about it, and the
+  // owner's whole complaint was being nagged. One line replaces all of them.
+  // The ★★★ bookmark notice goes quiet too (the next background cycle
+  // consolidates them) — the owner asked for "no sleep messages at all".
+  if (autoSleep.enabled) return autoSleepNagLine(autoSleep);
+
   const { bookmarks } = state;
 
   // AC1 — pending-session provisional debt: sessions still awaiting analysis
@@ -821,7 +877,7 @@ export function getConsolidationDirective(state: SleepState): string | null {
   // silently wedged forever.
   const lock = inspectSleepLock(state, Date.now());
   if (lock.locked && !lock.stale) {
-    if (debt >= DEBT_DROWSY) {
+    if (debt >= t.drowsy) {
       return [
         `> Consolidation already in progress (started: ${lock.startedAt}). Do NOT dispatch another sleep agent.`,
         '',
@@ -842,9 +898,9 @@ export function getConsolidationDirective(state: SleepState): string | null {
   // afternoon crosses Must Sleep several times in a few hours and the brain asks
   // to consolidate again half an hour after it just did. Bypassed once debt
   // reaches DEBT_COOLDOWN_OVERRIDE so a genuinely enormous burst is never held.
-  const cooldown = inspectSleepCooldown(state, Date.now(), debt);
+  const cooldown = inspectSleepCooldown(state, Date.now(), debt, t);
   if (cooldown.active && criticalBookmarks.length === 0) {
-    if (debt >= DEBT_DROWSY) {
+    if (debt >= t.drowsy) {
       return [
         `> Consolidated recently; ${debt} debt has accrued since. Cooling down — do NOT consolidate`,
         `  again for another ${formatCooldownRemaining(cooldown.remainingMs)} unless the user asks.`,
@@ -855,11 +911,11 @@ export function getConsolidationDirective(state: SleepState): string | null {
     return null;
   }
 
-  if (debt >= DEBT_MUST_SLEEP) {
+  if (debt >= t.mustSleep) {
     return [
       '>>> CONSOLIDATION REQUIRED <<<',
       '',
-      `Sleep debt is ${debt} (threshold: ${DEBT_MUST_SLEEP}). Context files are stale and bloated.`,
+      `Sleep debt is ${debt} (threshold: ${t.mustSleep}). Context files are stale and bloated.`,
       ...(criticalBookmarks.length > 0
         ? [`${criticalBookmarks.length} critical bookmark(s) awaiting consolidation.`]
         : []),
@@ -882,18 +938,18 @@ export function getConsolidationDirective(state: SleepState): string | null {
       '',
     ].join('\n');
   }
-  if (debt >= DEBT_SLEEPY) {
+  if (debt >= t.sleepy) {
     return [
       '>> CONSOLIDATION RECOMMENDED <<',
       '',
-      `Sleep debt is ${debt}/${DEBT_MUST_SLEEP}. Context files are growing stale.`,
+      `Sleep debt is ${debt}/${t.mustSleep}. Context files are growing stale.`,
       ...(pendingLine ? [pendingLine] : []),
       'You MUST inform the user and recommend consolidation before starting new work.',
       'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-state (and sleep-product when signals warrant) in parallel, then `sleep done`.',
       '',
     ].join('\n');
   }
-  if (debt >= DEBT_DROWSY) {
+  if (debt >= t.drowsy) {
     return [
       `> Sleep debt is ${debt}. After completing the current task, you MUST offer to consolidate.`,
       ...(pendingLine ? [pendingLine] : []),
@@ -975,14 +1031,22 @@ export function writeAgentTurnState(envPath: string | undefined, state: 'working
  * recall injection, marketing nudge, version check, etc.) so the debt-threshold
  * behavior is unit-testable in isolation.
  *
- * - consolidation in progress: suppress unless debt >= DEBT_DROWSY (then a "do
+ * - consolidation in progress: suppress unless debt >= t.drowsy (then a "do
  *   not dispatch another sleep" note).
- * - debt >= DEBT_MUST_SLEEP: CONSOLIDATION REQUIRED.
+ * - debt >= t.mustSleep: CONSOLIDATION REQUIRED.
  * - critical (★★★) bookmark present: advisory regardless of debt.
- * - debt >= DEBT_SLEEPY: recommended. debt >= DEBT_DROWSY: offer after current task.
+ * - debt >= t.sleepy: recommended. debt >= t.drowsy: offer after current task.
  * - else: null (silent).
  */
-export function userPromptReminder(state: SleepState): string | null {
+export function userPromptReminder(
+  state: SleepState,
+  t: SleepThresholds = DEFAULT_SLEEP_THRESHOLDS,
+  autoSleep: AutoSleepNagState = { enabled: false, consentStale: false },
+): string | null {
+  // Same silence as the SessionStart directive — this one fires on EVERY user
+  // message, so it is where an unwanted nag is actually felt.
+  if (autoSleep.enabled) return autoSleepNagLine(autoSleep);
+
   const { bookmarks } = state;
 
   // AC1 — same effective-debt substitution as getConsolidationDirective:
@@ -993,7 +1057,7 @@ export function userPromptReminder(state: SleepState): string | null {
 
   const lock = inspectSleepLock(state, Date.now());
   if (lock.locked && !lock.stale) {
-    if (debt >= DEBT_DROWSY) {
+    if (debt >= t.drowsy) {
       return `Consolidation already in progress (started: ${lock.startedAt}). Do NOT dispatch another sleep agent.`;
     }
     return null;
@@ -1005,25 +1069,25 @@ export function userPromptReminder(state: SleepState): string | null {
   // it is where over-eager thresholds are actually felt — a 3-hour floor after a
   // completed sleep is what stops "consolidate now" from reappearing half an
   // hour later. Hand-tagged ★★★ bookmarks and DEBT_COOLDOWN_OVERRIDE still pass.
-  const cooldown = inspectSleepCooldown(state, Date.now(), debt);
+  const cooldown = inspectSleepCooldown(state, Date.now(), debt, t);
   if (cooldown.active && criticalBookmarks.length === 0) {
-    if (debt >= DEBT_DROWSY) {
+    if (debt >= t.drowsy) {
       return `Consolidated recently; ${debt} debt since. Cooling down for another `
         + `${formatCooldownRemaining(cooldown.remainingMs)} — do not consolidate again unless asked.`;
     }
     return null;
   }
 
-  if (debt >= DEBT_MUST_SLEEP) {
+  if (debt >= t.mustSleep) {
     return `Sleep debt is ${debt}${pendingSuffix}. CONSOLIDATION REQUIRED. Run sleep flow per SKILL.md (parallel specialist fan-out) NOW.`;
   }
   if (criticalBookmarks.length > 0) {
     return `${criticalBookmarks.length} critical bookmark(s) need consolidation. Run sleep flow per SKILL.md.`;
   }
-  if (debt >= DEBT_SLEEPY) {
+  if (debt >= t.sleepy) {
     return `Sleep debt is ${debt}${pendingSuffix}. Consolidation recommended before starting new work.`;
   }
-  if (debt >= DEBT_DROWSY) {
+  if (debt >= t.drowsy) {
     return `Sleep debt is ${debt}${pendingSuffix}. After completing the current task, offer to consolidate.`;
   }
   // AC1 — lowest-priority pending-only reminder, mirroring the directive's
@@ -1225,6 +1289,26 @@ function spawnDashboard(port: number): void {
 }
 
 /**
+ * Dispatch a background consolidation as a DETACHED process that outlives this
+ * hook and the whole session — the same shape as `spawnDashboard` above, for the
+ * same reason: the hook must never await the run.
+ *
+ * Windows is skipped deliberately: the cancel path relies on POSIX process
+ * groups, exactly as the automations runner does.
+ */
+function spawnAutoSleep(): void {
+  if (process.platform === 'win32') return;
+  const cliEntry = process.argv[1];
+  if (!cliEntry) return;
+  const child = spawn(process.execPath, [cliEntry, 'sleep', 'auto-run'], {
+    detached: true,
+    stdio: 'ignore',
+    cwd: process.cwd(),
+  });
+  child.unref();
+}
+
+/**
  * Recompute the used-asset drift cache in a DETACHED process. The compute uses
  * the real installers (async + log to stdout), so it must not run inline in this
  * sync, stdout-sensitive hook. `stdio: 'ignore'` discards the installer chatter;
@@ -1306,6 +1390,12 @@ export function registerHookCommand(program: Command): void {
       // timeout — the next finished turn re-records it.
       recordTabSessionFromHook(root, sessionId);
 
+      // D2 — the WHOLE read-modify-write is inside the lock, not just the write.
+      // The session ledger is rebuilt from a snapshot on every Stop, so a
+      // background sleep cycle's own Stop hook interleaving with this one would
+      // drop a session's score entirely. Fails OPEN (see withSleepStateLock): a
+      // hook must never hang or throw on a user's turn.
+      const stopLock = withSleepStateLock(root, () => {
       const state = readSleepState(root);
       const stoppedAt = new Date().toISOString();
 
@@ -1388,6 +1478,48 @@ export function registerHookCommand(program: Command): void {
       }
 
       writeSleepState(root, nextState);
+      return nextState;
+      });
+      // Losing this race against NOTHING is a curiosity; losing it against a live
+      // background cycle is the exact two-writer condition, and the user should
+      // see it without having to turn on debug logging.
+      if (!stopLock.locked) {
+        if (autoSleepSidecarRunning(root)) {
+          console.error('[dreamcontext] Sleep state was written without its lock while a background sleep is running — a session score may have been lost.');
+        } else if (process.env.DREAMCONTEXT_DEBUG) {
+          console.error('[stop] sleep-state lock timed out; wrote unlocked (no background sleep detected).');
+        }
+      }
+
+      // C3 — background auto-sleep. Evaluated AFTER the state write so the debt
+      // this turn just added is what the trigger sees, and dispatched detached
+      // so the hook never waits on a 40-minute run.
+      //
+      // The two guards below are why a background cycle cannot chain another:
+      // its own Stop hooks run with DREAMCONTEXT_AUTO_SLEEP=1, and a nested
+      // claude (the agent shelling out) is caught by `isNestedClaudeHook`.
+      // Claude Code may deliver the event as SubagentStop instead of Stop inside
+      // the run; the env flag covers either name.
+      try {
+        const nested = process.env.DREAMCONTEXT_AUTO_SLEEP === '1' || isNestedClaudeHook();
+        const projectRoot = dirname(root);
+        const decision = shouldStartAutoSleep({
+          contextRoot: root,
+          state: stopLock.value,
+          local: readBrainLocal(projectRoot),
+          thresholds: resolveSleepThresholds(readSetupConfig(projectRoot)?.sleep),
+          nowMs: Date.now(),
+          currentFingerprint: currentAutoSleepFingerprint(projectRoot),
+          nested,
+        });
+        if (decision.start) spawnAutoSleep();
+      } catch (autoErr) {
+        // A bug here must never break a turn — the worst case is that the brain
+        // does not consolidate itself and the user is nagged as before.
+        if (process.env.DREAMCONTEXT_DEBUG) {
+          console.error('[auto-sleep] evaluation failed:', (autoErr as Error).message ?? autoErr);
+        }
+      }
     });
 
   // True when THIS hook fires from a claude process NESTED inside the embedded tab's
@@ -1503,6 +1635,9 @@ export function registerHookCommand(program: Command): void {
         // non-fatal: doctor surfaces a missing taxonomy.json, sleep-product Pass C retries
       }
 
+      // Same lock discipline as the Stop hook: the catch-up rebuilds the whole
+      // session ledger from a snapshot, so an interleaved write loses scores.
+      const catchupLock = withSleepStateLock(root, () => {
       const state = readSleepState(root);
       let dirty = false;
 
@@ -1605,12 +1740,22 @@ export function registerHookCommand(program: Command): void {
       if (dirty) {
         writeSleepState(root, state);
       }
+      // Returned so the directive below reads the SAME snapshot this pass
+      // finalized, rather than re-reading the file outside the lock.
+      return state;
+      });
+      const state = catchupLock.value;
+      if (!catchupLock.locked && autoSleepSidecarRunning(root)) {
+        console.error('[dreamcontext] Session catch-up wrote sleep state without its lock while a background sleep is running.');
+      }
 
       // Generate and output snapshot
       const snapshot = generateSnapshot();
       if (!snapshot) process.exit(0);
 
-      const directive = getConsolidationDirective(state);
+      // Thresholds come from `.config.json` `sleep.thresholds` (defaults when
+      // unset) so the hook, the CLI, /api/sleep and the dashboard all read ONE source.
+      const directive = getConsolidationDirective(state, resolveSleepThresholds(readSetupConfig(dirname(root))?.sleep), readAutoSleepNagState(root));
       if (directive) {
         console.log(directive);
       }
@@ -1820,7 +1965,7 @@ export function registerHookCommand(program: Command): void {
       // is unit-testable. Returns null below the threshold (stay silent). The
       // "consolidation in progress" early-return must still short-circuit the
       // rest of this handler, so re-check that condition here.
-      const reminder = userPromptReminder(state);
+      const reminder = userPromptReminder(state, resolveSleepThresholds(readSetupConfig(dirname(root))?.sleep), readAutoSleepNagState(root));
       // A non-stale lock means a sleep is genuinely mid-cycle — short-circuit the
       // rest of the handler (initializer/recall gates) just like the reminder does.
       // A stale lock (crashed sleep) must NOT keep suppressing these forever.
@@ -1986,14 +2131,27 @@ export function registerHookCommand(program: Command): void {
                 // knowledge_access for each `knowledge` hit, then persist once.
                 // This feeds staleness/warm-knowledge tracking from real recall
                 // usage, not just explicit `knowledge touch` calls.
+                // This is a read-modify-write of the WHOLE state file, so it
+                // RE-READS inside the lock. The `state` this handler read at the
+                // top is minutes old by now — an awaited Haiku recall call sits
+                // between the two — and writing that stale object back would
+                // silently erase whatever a foreground Stop hook or a background
+                // sleep cycle landed in the meantime. Locking the write alone
+                // does not help when the read is what is stale.
+                const bumpLock = withSleepStateLock(root, () => {
+                const fresh = readSleepState(root);
                 let bumped = false;
                 for (const h of hits) {
                   if (h.doc.type === 'knowledge') {
-                    bumpKnowledgeAccess(state, h.doc.slug);
+                    bumpKnowledgeAccess(fresh, h.doc.slug);
                     bumped = true;
                   }
                 }
-                if (bumped) writeSleepState(root, state);
+                if (bumped) writeSleepState(root, fresh);
+                });
+                if (!bumpLock.locked && autoSleepSidecarRunning(root)) {
+                  console.error('[dreamcontext] Knowledge-access bump wrote sleep state without its lock while a background sleep is running.');
+                }
               }
 
               // ── Cross-vault LIVE READ (read-only federation) ──────────────
@@ -2144,6 +2302,9 @@ export function registerHookCommand(program: Command): void {
       const root = resolveContextRoot();
       if (!root) process.exit(0);
 
+      // PreCompact fires while the session is still live, so it races the Stop
+      // hook of a background cycle exactly like the others.
+      const compactLock = withSleepStateLock(root, () => {
       const state = readSleepState(root);
       const trigger = (input && typeof input.trigger === 'string') ? input.trigger : 'unknown';
 
@@ -2157,6 +2318,10 @@ export function registerHookCommand(program: Command): void {
       });
 
       writeSleepState(root, nextState);
+      });
+      if (!compactLock.locked && autoSleepSidecarRunning(root)) {
+        console.error('[dreamcontext] Pre-compact wrote sleep state without its lock while a background sleep is running.');
+      }
 
       // ── Pre-compaction capture: digest the live transcript NOW. ───────────
       // Compaction is where mid-session decisions die: the agent's context is

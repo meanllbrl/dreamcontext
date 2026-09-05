@@ -4,6 +4,7 @@ import {
   getSleepLevel,
   getSleepLevelKey,
   getSleepMood,
+  sleepThresholds,
   displayDebt,
   type SessionRecord,
   type DashboardChange,
@@ -155,9 +156,10 @@ export function SleepPage() {
   // the same value the CLI's consolidation directives threshold on.
   const debt = displayDebt(sleep);
   const provisional = sleep.provisional_debt ?? 0;
-  const level = getSleepLevel(debt);
-  const levelKey = getSleepLevelKey(debt);
-  const mood = getSleepMood(debt);
+  const th = sleepThresholds(sleep);
+  const level = getSleepLevel(debt, th);
+  const levelKey = getSleepLevelKey(debt, th);
+  const mood = getSleepMood(debt, th);
 
   // Split the changelog: entries dated after the last sleep will fold into the
   // next consolidation (surfaced up front, before the history); the rest is the

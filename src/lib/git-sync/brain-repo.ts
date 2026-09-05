@@ -217,6 +217,15 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     // and every `people/<slug>.md` DO sync; only the lock is machine-local (a
     // synced lock would read as "held" by a foreign PID on every clone).
     'people/.people.lock',
+    // Per-file task write locks + the background-sleep lock and its job sidecar.
+    // All three are LIVE PID STATE: a synced lock reads as held by a foreign PID
+    // on every clone, exactly the `people/.people.lock` precedent above. NOTE
+    // `state/.task-tombstones.json` is deliberately ABSENT — it is brain content
+    // and MUST sync, or a teammate's next cycle re-files a task somebody here
+    // deliberately consolidated away.
+    'state/.locks/',
+    'state/.auto-sleep.lock',
+    'state/.auto-sleep.json',
     '.obsidian/',
     'tmp/',
     '**/.env',
@@ -277,6 +286,11 @@ export const FULL_REPO_LOCAL_GITIGNORE_ENTRIES = [
   // Roster write lock — live PID state, same reasoning as the sync lock above.
   // The roster itself and the constitutions are DELIBERATELY absent: they sync.
   '_dream_context/people/.people.lock',
+  // Task write locks + the background-sleep lock and job sidecar — live PID
+  // state. `state/.task-tombstones.json` is deliberately absent: it syncs.
+  '_dream_context/state/.locks/',
+  '_dream_context/state/.auto-sleep.lock',
+  '_dream_context/state/.auto-sleep.json',
   '_dream_context/tmp/',
   // Lab analytics credentials — the example (key names only) still syncs.
   '_dream_context/lab/credentials.json',

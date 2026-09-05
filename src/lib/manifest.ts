@@ -16,6 +16,14 @@ export type ManagedFileKind =
 export interface ManagedFileEntry {
   version: string;
   kind: ManagedFileKind;
+  /**
+   * sha256 of the CANONICAL form of the content dreamcontext wrote here (agents
+   * only). It is the baseline `isCustomizedAgent` compares an installed file
+   * against, so a hand edit can be told apart from a package refresh. Absent on
+   * manifests written before this field existed — treated as "not customized",
+   * because a missing baseline must never produce a false alarm on upgrade.
+   */
+  baselineSha?: string;
 }
 
 export interface Manifest {
@@ -191,10 +199,15 @@ export function recordFile(
   relPath: string,
   version: string,
   kind: ManagedFileKind,
+  opts?: { baselineSha?: string },
 ): void {
   // Normalize to forward slashes.
   const normalized = relPath.split('\\').join('/');
-  manifest.files[normalized] = { version, kind };
+  manifest.files[normalized] = {
+    version,
+    kind,
+    ...(opts?.baselineSha ? { baselineSha: opts.baselineSha } : {}),
+  };
 }
 
 export function recordPack(manifest: Manifest, name: string, version: string): void {

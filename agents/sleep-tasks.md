@@ -6,10 +6,16 @@ description: >
   bumps statuses, creates new tasks for untracked work, attaches everything to the active
   planning version.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: claude-sonnet-4-5-20250929
+model: claude-opus-5
+effort: medium
 skills:
   - dreamcontext
 ---
+
+<!-- Model: claude-opus-5 · effort medium. Chosen 2026-09-05 because this specialist JUDGES what a session meant for the board — which work is real, which task absorbs it, what clears the filing bar. That is reasoning, not reconciliation, and it is the specialist the owner reported filing junk.
+     Not hardcoded policy — a brain overrides it in Settings › Sleep or
+     `dreamcontext sleep config set specialists.sleep-tasks.model <id>`, and the choice is
+     re-injected into this frontmatter on every install so it survives `dreamcontext update`. -->
 
 # Sleep — Tasks Specialist
 
@@ -34,6 +40,19 @@ If a session's work belongs in a different domain (e.g., an architectural decisi
 ## Inputs you'll receive
 
 A brief with sleep epoch, session IDs, active task slugs, planning version, optional user hint.
+
+**Hands-off tasks (background cycles only).** When the brief carries a
+`Hands-off tasks:` list, those slugs belong to a session the user is working in
+RIGHT NOW. Do not edit, log, insert into, or re-status any of them — not even to
+"just fix the status". A file lock stops two writers corrupting one file; it
+cannot stop you overwriting a decision the user made thirty seconds ago with a
+conclusion you drew from a transcript that predates it. Report each one under
+**"Deferred (hands-off)"** with the one line you WOULD have written, so the next
+cycle can pick it up. Everything else on the board is yours as usual.
+
+In a background cycle, task writes go through the **CLI** (`tasks log`,
+`tasks insert`, `tasks status`, `tasks field`) — those take the per-file lock.
+Reserve `Edit` for body prose on tasks that are NOT hands-off.
 
 ## Protocol
 
@@ -85,7 +104,47 @@ dreamcontext tasks insert <slug> notes "<follow-up / smaller piece>"
 
 **Sub-tasks (`parent_task`) are for genuinely large decomposition only** — an epic that legitimately splits into separable deliverables. Do not spawn a child task for a slice that fits as a user story or acceptance criterion in the parent. When in doubt, fold in.
 
-**Create a new task only when the rubric says "separate concern":**
+### The filing bar — clear ALL of it, or do not file
+
+Filing a task nobody asked for and nobody will do is the exact opposite of what
+consolidation is for: it makes the board something to be cleaned rather than
+something to be trusted. A 2026-09-06 audit of the 116 tasks this brain created
+since 2026-08-01 found the median task carries ~2,500 characters of
+justification and the thinnest real one carries 146 — and exactly ONE task had
+none at all. Be the 115, not the one.
+
+A new task must clear **every** line below:
+
+1. **It names a user, a friction and a cost from THIS session's evidence.** Not
+   "track X", not "consider Y", not "improve Z". If you cannot say who is hurt
+   and what it costs them, you do not yet have a task. *(A GitHub-issue-shaped
+   body — Scenario / Expected / Gap — satisfies this as well as a `## Why`
+   paragraph does; the format is not the point, the evidence is.)*
+2. **There is a next step an owner could start.** A task whose first action is
+   "work out what this means" is a question — put it in a bookmark.
+3. **It has no prior home.** Check BOTH, every time:
+   ```bash
+   dreamcontext memory recall "<the topic>" --types task   # includes state/archive/
+   dreamcontext tasks tombstones                            # deliberately retired slugs
+   ```
+   A slug on the tombstone list was consolidated away ON PURPOSE. Log on the
+   task that absorbed it. **Never re-file it** — the CLI refuses anyway.
+4. **It is not a one-line observation** (→ `dreamcontext memory remember` or a
+   bookmark) **and not already-shipped work** (→ a changelog entry).
+
+**The cap.** Read this brain's limit at the start of your pass:
+
+```bash
+dreamcontext sleep config          # "Max new tasks per cycle"
+```
+
+Rank your candidates by evidence and file at most that many. Going over is not
+possible — `tasks create` refuses — so the decision that matters is WHICH ones.
+Every candidate you do not file goes in your report under **"Candidates NOT
+filed (cap)"** with one line each. Never drop one silently; the next cycle (or
+the owner) should be able to pick it up.
+
+**Create a new task only when the rubric says "separate concern" AND it clears the bar:**
 
 ```bash
 # Ensure an active planning version exists (orchestrator should have done this; verify)
@@ -96,9 +155,16 @@ dreamcontext core releases add --ver vX.Y.Z --status planning --summary "<theme>
 # Create the task — auto-attaches to the active planning version.
 # Name = a short plain sentence describing the outcome (never a slug — the file
 # slug derives from the name). -w is MANDATORY: create refuses an empty why.
+# `--by sleep` names you as the filer; the bar applies either way (a live sleep
+# lock is the evidence, not the flag). `-w` must clear 40 characters and should
+# be far longer — see the filing bar above.
 dreamcontext tasks create "<short sentence describing the work>" --status in_progress --priority medium \
-  --description "<one-line scope>" -w "<why this work exists>"
+  --description "<one-line scope>" --by sleep -w "<who is hurt, by what, at what cost>"
 ```
+
+If `tasks create` refuses, it names the rule you missed — read it and act on it.
+Do not retry with padding to get over the character floor: that produces exactly
+the unreadable task the bar exists to prevent.
 
 New tasks scaffold lean — only `## Why` and `## Changelog` exist at birth. Add other sections via `tasks insert` only when there is real content for them; **never insert placeholder content to fill out a task's shape** (Lean Task Authoring Pattern).
 
@@ -244,7 +310,10 @@ Never silently delete a task, and never `completed` a task that was never actual
 ## sleep-tasks report
 - Updated: <slug> (in_progress → completed, "<done, validated, no review needed>"), <slug> (in_progress → in_review, "<the specific thing the user must verify>"), <slug> (logged)
 - Folded in (no new task): <existing-slug> — broadened scope + added 2 user stories / 1 criterion for <smaller-piece> instead of forking a duplicate
+- Filed: <k>/<cap> — read from `dreamcontext sleep config`
 - Created: <slug> (status: in_progress, attached to vX.Y.Z) — genuinely separate concern
+- Candidates NOT filed (cap): <one line each: what it was, and the evidence, so nobody has to re-derive it> | OR: none — every candidate cleared the bar and fitted the cap
+- Did not clear the filing bar: <one line each: what it was and which line it failed> | OR: none
 - Body reconciled: <slug> (dropped phase 1 from User Stories; replaced Technical Details auth section)
 - Person attribution: <slug> tagged person:ada (multi-person project, ada drove this cycle's work) | OR: single-person project — no person tags injected
 - Version readiness: vX.Y.Z — 4/5 tasks ready for review
@@ -254,6 +323,7 @@ Never silently delete a task, and never `completed` a task that was never actual
 - Recidivism flags: recurring-task:<slug>::"still todo after N cycles"::<slug> | OR: none this cycle
 - Recidivism actions: <slug> was already escalated (consecutive_cycles >= 3) → set in_review "recurred N cycles — needs your decision" instead of re-flagging | OR: none escalated
 - Cross-domain mentions: <slug> includes a memory-worthy decision about JWT — flagging for sleep-state
+- Deferred (hands-off): <slug> — <the one line you would have logged> | OR: none (foreground cycle, or nothing in play)
 - Skipped: <session_id> had no actionable task signal
 
 Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/task signal you saw but did NOT fold into a task changelog/body, with the reason>
@@ -262,6 +332,7 @@ Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/task 
 ## Rules
 
 1. **Dedup before creating.** Recall first; fold a smaller slice into the task that already covers it — broaden its title + insert sub-items — instead of forking a duplicate or a needless sub-task. A new task is only for a genuinely separate concern.
+1a. **Clear the filing bar, and never pad to get past it.** Every new task names a user, a friction and a cost from this session's evidence; has a next step; has no prior home (recall AND `tasks tombstones`); and is not a one-liner or already-shipped work. The cap is real and `tasks create` enforces it — so report what you did NOT file rather than dropping it. A refusal from the CLI names the rule you missed; fix the task or don't file it, but do not inflate the `--why` to get over the character floor.
 2. **Body = current truth, Changelog = history.** Don't let the body lag behind decisions.
 3. **Status reflects reality, not a reflex.** `completed` for done + low-risk + already-validated work; `in_review` only when a human genuinely must verify something (or to hand over a close decision on superseded/abandoned/obsoleted work). Never `completed` a task that was never actually done; never silently delete.
 4. **Always attach to a planning version.** No orphan work.

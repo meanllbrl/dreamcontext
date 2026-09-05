@@ -1,20 +1,21 @@
 import type { JSX } from 'react';
 import { FlowDiagram } from './FlowDiagram';
+import { useSleep, sleepThresholds, sleepRangeLabels } from '../../hooks/useSleep';
 import { SLEEP_FLOW_SPEC } from './flow-specs';
 import './SleepFlowSection.css';
 
-// Real debt thresholds from the sleep-consolidation feature: each session
-// scores 0–10 as a log-compressed WEIGHTED SUM over novel tokens, file changes,
-// tool calls and substance; debt accumulates across sessions until reset.
-// MUST mirror DEBT_DROWSY / DEBT_SLEEPY / DEBT_MUST_SLEEP in
-// src/lib/sleep-consolidation.ts — guarded by
-// tests/unit/dashboard-sleep-thresholds.test.ts.
-const DEBT_LEVELS: { level: string; range: string; note: string }[] = [
-  { level: 'Alert', range: '0–23', note: 'fresh — nothing to consolidate yet' },
-  { level: 'Drowsy', range: '24–39', note: 'consolidation offered' },
-  { level: 'Sleepy', range: '40–59', note: 'advisory note prepended' },
-  { level: 'Must Sleep', range: '60+', note: 'critical directive prepended' },
-];
+// Each session scores 0–10 as a log-compressed WEIGHTED SUM over novel tokens,
+// file changes, tool calls and substance; debt accumulates across sessions until
+// reset. The RANGES are no longer written down here — a brain sets its own
+// ladder in Settings › Sleep, so they are derived from the same `/api/sleep`
+// payload the header tracker levels on (`sleepRangeLabels`). Only the per-level
+// note, which is about behaviour rather than numbers, is static.
+const DEBT_LEVEL_NOTES: Record<string, string> = {
+  'Alert': 'fresh — nothing to consolidate yet',
+  'Drowsy': 'consolidation offered',
+  'Sleepy': 'advisory note prepended',
+  'Must Sleep': 'critical directive prepended',
+};
 
 // Each specialist owns a non-overlapping file domain and runs in parallel.
 const SPECIALISTS: { name: string; domain: string; always: boolean }[] = [
@@ -41,6 +42,10 @@ const SPECIALISTS: { name: string; domain: string; always: boolean }[] = [
  * supporting cards. Consumes the shared FlowDiagram engine via SLEEP_FLOW_SPEC.
  */
 export function SleepFlowSection(): JSX.Element {
+  // Same source as the header tracker: this brain's resolved ladder, not a copy.
+  const { data: sleep } = useSleep();
+  const debtLevels = sleepRangeLabels(sleepThresholds(sleep));
+
   return (
     <section className="about-section">
       <p className="about-kicker">How sleep works</p>
@@ -62,11 +67,11 @@ export function SleepFlowSection(): JSX.Element {
             crosses graduated thresholds, so consolidation urgency is never ambiguous.
           </p>
           <ul className="sleepf-debt">
-            {DEBT_LEVELS.map((d) => (
+            {debtLevels.map((d) => (
               <li key={d.level} className="sleepf-debt-row">
                 <span className="sleepf-debt-level">{d.level}</span>
                 <span className="sleepf-debt-range">{d.range}</span>
-                <span className="sleepf-debt-note">{d.note}</span>
+                <span className="sleepf-debt-note">{DEBT_LEVEL_NOTES[d.level]}</span>
               </li>
             ))}
           </ul>

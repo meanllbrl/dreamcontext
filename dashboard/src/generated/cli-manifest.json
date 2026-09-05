@@ -2088,6 +2088,61 @@
       ]
     },
     {
+      "path": "sleep auto",
+      "desc": "Background consolidation for THIS machine (off by default)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "sleep auto cancel",
+      "desc": "Stop a running background consolidation (asks first)",
+      "args": []
+    },
+    {
+      "path": "sleep auto off",
+      "desc": "Stop this machine from consolidating in the background",
+      "args": []
+    },
+    {
+      "path": "sleep auto on",
+      "desc": "Let this machine consolidate the brain in the background when debt is high",
+      "args": [],
+      "valueFlags": [
+        "--trigger"
+      ]
+    },
+    {
+      "path": "sleep auto status",
+      "desc": "Show whether background sleep is armed, and any running job",
+      "args": []
+    },
+    {
+      "path": "sleep auto-run",
+      "desc": "INTERNAL: run one background consolidation now (spawned detached by the Stop hook)",
+      "args": []
+    },
+    {
+      "path": "sleep config",
+      "desc": "Show this brain's sleep settings (debt thresholds, specialist models, task cap)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "sleep config reset",
+      "desc": "Clear one sleep setting, or all of them, back to the shipped defaults",
+      "args": [
+        "[key]"
+      ]
+    },
+    {
+      "path": "sleep config set",
+      "desc": "Set a sleep setting (thresholds.*, specialists.<name>.model|effort, max-new-tasks)",
+      "args": [
+        "<key>",
+        "<value>"
+      ]
+    },
+    {
       "path": "sleep debt",
       "desc": "Output current debt number (for programmatic use)",
       "args": []
@@ -2173,7 +2228,8 @@
         "--due",
         "--objectives",
         "--feature",
-        "--field"
+        "--field",
+        "--by"
       ]
     },
     {
@@ -2186,6 +2242,10 @@
       "desc": "Delete a task (propagates to the remote backend on sync)",
       "args": [
         "<name>"
+      ],
+      "valueFlags": [
+        "--into",
+        "--reason"
       ]
     },
     {
@@ -2342,6 +2402,11 @@
     {
       "path": "tasks tags",
       "desc": "List distinct task tags with counts",
+      "args": []
+    },
+    {
+      "path": "tasks tombstones",
+      "desc": "List retired task slugs and what absorbed them (why sleep will not re-file them)",
       "args": []
     },
     {

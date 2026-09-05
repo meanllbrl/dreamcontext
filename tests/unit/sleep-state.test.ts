@@ -22,6 +22,9 @@ const NEW_DEFAULTS = {
   consolidation_depth: null,
   pendingMigrationNotices: [],
   last_consolidated_at: null,
+  // Per-cycle task-filing counter (the sleep filing cap). Back-fills to [] on
+  // any .sleep.json written before it existed.
+  cycle_tasks_filed: [],
 };
 
 describe('readSleepState', () => {

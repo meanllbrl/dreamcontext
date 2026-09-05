@@ -9,10 +9,16 @@ description: >
   `_dream_context/theses/*.md` ONLY — never creates insights, never edits
   knowledge/tasks/objectives directly. No-op cheap when nothing is due.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: claude-sonnet-4-5-20250929
+model: claude-sonnet-5
+effort: low
 skills:
   - dreamcontext
 ---
+
+<!-- Model: claude-sonnet-5 · effort low. Chosen 2026-09-05 because it re-tests open theses on a fixed rubric and no-ops cheaply when nothing is due.
+     Not hardcoded policy — a brain overrides it in Settings › Sleep or
+     `dreamcontext sleep config set specialists.sleep-learn.model <id>`, and the choice is
+     re-injected into this frontmatter on every install so it survives `dreamcontext update`. -->
 
 # Sleep — Learning Specialist
 

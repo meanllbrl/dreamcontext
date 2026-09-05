@@ -36,6 +36,11 @@ export const SLEEP_AGENT_TITLE = 'Sleep';
  * it in lockstep with `buildSleepPrompt` (server) — pinned by
  * `tests/unit/sleep-subagent-dispatch.test.ts`.
  */
+// MIRRORS `SLEEP_AGENT_PROMPT` in src/lib/sleep-prompt.ts — the dashboard is a
+// separate Vite package with no import path into the CLI's src/, so the text is
+// hand-copied and `tests/unit/sleep-prompt-mirror.test.ts` fails the build if the
+// two drift. Both the Sleep button and the background auto-sleep dispatcher must
+// ask for the SAME cycle, or a background sleep quietly does something else.
 export const SLEEP_AGENT_PROMPT =
   'Think hard. Run a full dreamcontext memory consolidation ("sleep") for THIS project ' +
   'now, fully autonomously — do NOT ask any questions. Follow the project\'s dreamcontext ' +

@@ -15,6 +15,27 @@ Thresholds are calibrated against measured DAILY work volume (30 real days: medi
 | 40–59 | Sleepy | At session start: **inform user + recommend** consolidation before new work |
 | 60+ | Must sleep | **Consolidate**, before or right after the current task |
 
+**These numbers are DEFAULTS, not constants.** A brain sets its own ladder in Settings › Sleep or `dreamcontext sleep config` (`.config.json` `sleep.thresholds`); the derived deep-consolidation authority (×1.5) and cooldown override (×2) follow the configured Must Sleep. Read the live values with `dreamcontext sleep config` rather than assuming 24/40/60.
+
+
+### Auto sleep — when the brain consolidates itself
+
+A machine can be told to run the whole cycle in the background instead of asking:
+`dreamcontext sleep auto on` (default OFF, and **machine-local** — it never rides
+to teammates). When it is on, the Stop hook dispatches a detached headless session
+at the trigger level and **every sleep directive goes silent**; you get one line
+saying so. Do not run, offer, or recommend a sleep on such a machine — and pass
+`--by human` when you create a task, so it is not counted against a background
+cycle's filing cap.
+
+If that line says **PAUSED**, the approved settings changed (a specialist model, the
+task cap, the trigger, or a hand-edited sleep agent) and nothing is consolidating
+until someone re-approves with `dreamcontext sleep auto on`. Say so — a paused
+brain that nobody mentions is worse than the nagging this replaced.
+
+`dreamcontext sleep auto status` shows whether it is armed and any running job;
+`dreamcontext sleep auto cancel` stops one (it asks first).
+
 Also triggers an advisory: a **★★★ bookmark** exists (regardless of debt), or **12+ sessions** since last sleep.
 
 Injected directives (SessionStart + every user message via UserPromptSubmit when debt ≥24):

@@ -322,8 +322,14 @@ export interface TaskBackend {
   /** `entry` is the fully formatted changelog block (callers own the label format). */
   addChangelog(slug: string, entry: string, opts?: AddChangelogOptions): Promise<void>;
   complete(slug: string, summary?: string): Promise<TaskData>;
-  /** Delete a task (remote backends propagate the deletion on sync). */
-  delete(slug: string): Promise<void>;
+  /**
+   * Delete a task (remote backends propagate the deletion on sync).
+   *
+   * `absorbedBy` records WHERE the work went when the task was merged into
+   * another rather than dropped — it is written into the tombstone ledger so a
+   * later sleep cycle re-files nothing that somebody deliberately consolidated.
+   */
+  delete(slug: string, opts?: { absorbedBy?: string; reason?: string }): Promise<void>;
   /**
    * Rename a task: rewrite its name, move its file to the new name-derived slug,
    * and (on remote backends) re-key the sync mapping by the stable dcId so the

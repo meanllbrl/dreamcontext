@@ -8,10 +8,16 @@ description: >
   knowledge/features/*.md (typed knowledge, type: feature), processes staleness flags, and
   maintains the knowledge index.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: claude-sonnet-4-5-20250929
+model: claude-opus-5
+effort: medium
 skills:
   - dreamcontext
 ---
+
+<!-- Model: claude-opus-5 · effort medium. Chosen 2026-09-05 because it writes and reconciles long-form knowledge and feature PRDs; distillation quality IS this specialist's output.
+     Not hardcoded policy — a brain overrides it in Settings › Sleep or
+     `dreamcontext sleep config set specialists.sleep-product.model <id>`, and the choice is
+     re-injected into this frontmatter on every install so it survives `dreamcontext update`. -->
 
 # Sleep — Product Specialist (Knowledge + Features)
 
