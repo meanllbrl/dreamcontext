@@ -1,5 +1,80 @@
 [
   {
+    "date": "2026-09-05",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Wave 5 of the OpenUI experiment: the boundaries, and the capability they made room for.\n\nThe action gate turned out to be worth more than a defence. FollowUpBlock/FollowUpItem came back into the vocabulary because their action carries text and nothing else: clicking one passes through openuiAction.ts and is converted in TranscriptItem into an ordinary ask via toAction, the same validator every dream-actions button passes. One definition of what an ask may be, not two. Button stays out for a sharper reason than budget — it accepts Action([@OpenUrl(...)]), a second and ungated route to what dream-actions gates to https on the client and again in Rust.\n\nThe gate is a whitelist of one: only continue_conversation is accepted, open_url is refused by name so a dependency bump cannot quietly widen it, an unrecognised type falls through to null, the text is bounded at 400 characters, and only a string leaves the function — form state, urls and tool names have no way through. No action is accepted while the block is still streaming, because a follow-up clicked from a half-written block would send a question the answer had not finished proposing.\n\nBundle cost is now read from the build rather than asserted about the source: tests/unit/openui-bundle.test.ts checks the entry chunk for library fingerprints (recharts, openui-card, defaultChartPalette and two more) and that the split chunk is still over 1MB — a floor, because if it shrank the tree moved somewhere worse. A first version capped the count of 'openui' string hits in the entry at 12, which broke on a reworded settings string; a count that invites raising the number is not a measurement.",
+    "breaking": false,
+    "summary": "dream-ui gets its one interactive component and the gate that makes it safe",
+    "references": [
+      "task:openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali",
+      "file:dashboard/src/components/sleepy/chat/openuiAction.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-05",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Wave 4 of the OpenUI experiment, the axis dream-html needed three passes for. Nothing here reads a stylesheet: the theme is derived from the app's resolved tokens and the proof is computed pixels in a real Chromium against a real dashboard server.\n\nOpenUI ships a full design system, so out of the box the block brought Inter at 16px/1.5, its own greys and a dark mode driven by prefers-color-scheme. Three findings, each fixed and each locked: the composite text* tokens are font shorthands that bake weight, size, line height and family into one string, so overriding the primitives alone leaves every component at 16px Inter while the tokens look set; the chart palette is unreachable from CSS because useChartPalette reads it from React context, so the eight brand chart colours go through ThemeProvider; and the package card hugs its content, which left a bar chart drawn into 353px of a 1220px column because the transcript row is align-items:flex-start and width:100% does nothing to a flex item that is not stretched.\n\nThe dark-mode mismatch is the one that would have shipped silently: this app's theme is a data-theme attribute the user picks, not the OS preference. The harness forces the OS to dark in BOTH passes, so a light reader getting a dark block fails the run.\n\nMeasured, first try: transcript 15px vs block 15px, line height 26.25 vs 26.25, and the FACE at 687.9px vs 687.9px by rendered width — computed font-family reports the stack, not the face that won. Turkish is checked against the package's six capitalize rules with a non-vacuous guard that the fixture actually reaches one.\n\nNew: scripts/verify/openui-look.mjs (npm run verify:openui-look), 36 checks across both themes and three pane widths, plus tests/unit/openui-theme.test.ts for the derivation itself.",
+    "breaking": false,
+    "summary": "dream-ui looks like the transcript: theme derived from the app's tokens, proved by measurement in a real browser",
+    "references": [
+      "task:openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali",
+      "file:scripts/verify/openui-look.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-05",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Wave 3 of the OpenUI experiment. An open dream-ui fence is no longer hidden until it closes: the partial source is handed to the renderer as it arrives.\n\nThis is a deliberate exception to the surface's standing rule that half-written output never reaches the screen, and it is narrow. For markup that rule is right, because a partial document is a broken one; openui-lang is line-oriented and partial-tolerant, so a partial program is a smaller version of the same picture. Measured on a six-statement program: the card frame is on screen after statement one, the table after statement four, and a cut in the middle of a line renders the statements before it rather than throwing. dream-html cannot do this by construction. dream-view and dream-actions keep hiding until they close, and a test pins that.\n\nThree failure paths now have names instead of a spinner. A fence the answer never closed reports that it was left unfinished, using a done signal threaded from the transcript. A block that parses and draws NOTHING — this grammar's characteristic silent failure, and how the project's first hand-written sample behaved — is detected by asking the DOM whether anything appeared, because a parse-result check does not catch it. A parse error names its kind and never its text, since parser messages quote the source and raw openui-lang must not reach the transcript.\n\nThe measurement lives in tests/unit/openui-streaming.test.ts rather than in a comment: first visible component at 1 of 6 statements, no stage shrinking the picture, no prefix leaking source, no invalid fragment throwing.",
+    "breaking": false,
+    "summary": "dream-ui draws as it is written: the streaming exception, its three failure paths, and the measurement behind it",
+    "references": [
+      "task:openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali",
+      "file:tests/unit/openui-streaming.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-05",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Wave 2 of the OpenUI experiment. The agent can now actually write dream-ui: a session spawned while Answer rendering is set to OpenUI gets a different surface briefing, chosen at spawn so a running chat keeps the mode it was born with.\n\nThe vocabulary has ONE definition (dashboard/src/components/sleepy/chat/openuiLibrary.ts). The renderer renders against it and the agent's instructions are generated FROM it by Library.prompt(), committed via npm run gen:openui-briefing and pinned by a drift test that calls the same function. Nineteen components: the structures dream-html already draws, plus the charts it does not. Forms, buttons and follow-ups are deliberately excluded until the round trip that would make them mean anything exists.\n\nTwo defects in the generated output, found and closed: filtering a library's component LIST does not filter the component SCHEMAS, so Card's children union still named all 29 shipped components and promised a Form the renderer could not draw; and Library.prompt() emits its Action/Button section unconditionally (no option removes it), teaching an @OpenUrl navigation that would be a second, ungated path to what dream-actions already gates to https on both the client and the Rust side. The generator narrows the unions and drops the section, and a test walks every dropped component name to prove none survives anywhere.\n\nchat-surface.ts is now composed from three parts so one is swappable; the default briefing is proven byte-identical to the single template it replaced. Measured: default 9,670 characters, OpenUI 11,701, of which 5,890 is the generated vocabulary. The full library would generate 15,052 on its own.",
+    "breaking": false,
+    "summary": "OpenUI mode gets its briefing: a 19-component vocabulary, generated from the library and drift-checked",
+    "references": [
+      "task:openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali",
+      "file:src/server/chat-surface-openui.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-04",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Wave 1 (skeleton) of the OpenUI experiment. Settings -> Agents gains 'Answer rendering': written HTML (the shipped default) or OpenUI components (experimental). Stored as chatRender, an enum rather than a boolean because the modes are mutually exclusive and a third depiction (a built board) is already proposed. Strict-pick on both sides: only the exact string 'openui' selects it, so an untouched brain behaves exactly as before. The row disables itself on the Terminal screen, where no surface briefing is written at all.\n\nA dream-ui fence joins the single block alternation, so written order survives across all three fences; its byte and per-message caps are counted separately from dream-html. The renderer lives behind a lazy import: vite emits it as its own 2.07MB chunk and the main bundle contains no library code (recharts: 0 matches). Unlike dream-html this renders IN the app's React tree rather than in a sandboxed iframe, so the safety story is the closed component vocabulary instead of containment: toolProvider is pinned null, generated actions cannot act, and an error boundary keeps a bad block from taking the transcript down.\n\nThe setting gates the RENDER, not only the (Wave 2) briefing: a dream-ui block arriving while the mode is off degrades to a notice rather than mounting the renderer.",
+    "breaking": false,
+    "summary": "OpenUI: an experimental answer-rendering mode, off by default, behind its own lazy chunk",
+    "references": [
+      "task:openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali",
+      "file:dashboard/src/components/sleepy/chat/OpenUiView.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-02",
     "type": "chore",
     "scope": "diagrams",

@@ -281,6 +281,45 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - [x] **Scenes are drawn in theme ink**; only genuinely hot things (flame, weld, sparks) use `--color-warning`, so both themes work and no hex is baked in. Reduced-motion stands the animation down.
 - [x] Verified: dashboard tsc clean, dashboard build clean, 9 unit tests in `tests/unit/mascot-mode-gear.test.ts` (bare-face default, per-mode animation clocks, the reduced-motion stand-down, the no-hardcoded-colour rule, the picker wiring). Art judged against rendered frame strips at 100px and 26px in both themes.
 
+- [x] As a developer, I can choose how the agent DRAWS structured answers — written HTML (the
+      shipped default) or OpenUI components (experimental) — from Settings -> Agents -> "Answer
+      rendering", so I can trade the sandboxed iframe's isolation for a streaming grammar with
+      charts and follow-ups.
+
+### Answer rendering: the `dream-ui` mode (EXPERIMENTAL, off by default — 2026-09-05)
+
+A second expressive channel alongside `dream-html`. The agent writes **OpenUI Lang** (a compact
+line-oriented grammar, `github.com/thesysdev/openui`, MIT, no hosted service) inside a
+` ```dream-ui ` fence and a CLOSED component library renders it as real React components.
+Selected by `chatRender: 'html' | 'openui'` — an enum rather than a boolean because a third
+depiction (a built board) is proposed in `state/chat-depiction-becomes-a-built-board-*` and the
+three are mutually exclusive: one answer, one language.
+
+- [x] Off by default and per-session: only the exact string `openui` selects it, on both
+      coercers; the briefing is written to a file at spawn, so a running chat keeps the mode it
+      was born with and the Settings row says so. The row is disabled on the Terminal screen,
+      where no briefing is written at all.
+- [x] The setting gates the RENDER, not only the briefing: a `dream-ui` block arriving while the
+      mode is off degrades to a notice instead of mounting the renderer.
+- [x] ONE vocabulary definition (`openuiLibrary.ts`) feeds both the renderer and the agent's
+      instructions, which are GENERATED from it by `Library.prompt()`, committed, and pinned by
+      a drift test. 19 components: what `dream-html` already draws, plus charts.
+- [x] Measured budget: default briefing 9,670 chars, OpenUI variant 12,234, of which 6,423 is
+      the generated vocabulary. The full shipped library would generate 15,052 alone.
+- [x] The open fence is DRAWN as it is written — the one deliberate exception to "half-written
+      output never reaches the screen", justified by measurement: the card appears after
+      statement 1 of 6 and a mid-line cut renders rather than throws. `dream-html`,
+      `dream-view` and `dream-actions` still hide until they close.
+- [x] Three named failure paths: a fence the answer never closed, a block that parses and draws
+      NOTHING (this grammar's characteristic silent failure, detected by asking the DOM), and a
+      parse error whose KIND is shown and whose text never is (parser messages quote the source).
+- [x] The block is set in the transcript's own type: theme derived from the app's resolved
+      tokens, and proved by computed pixels in a real browser — 15px/15px, 26.25/26.25, and the
+      FACE at 687.9px/687.9px by rendered width. Follows the app's `data-theme`, never the OS's
+      `prefers-color-scheme`.
+- [ ] Wave 5 (boundaries) and Wave 6 (does the model actually write this grammar?) are open.
+
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
@@ -370,6 +409,28 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - **[2026-06-28] Sometype Mono load-before-open.** The WebGL glyph atlas is committed at `term.open()` time; loading the font after results in incorrect cell metrics. `FontFaceSet.load()` + await before `term.open()` is the required sequence.
 
 ## Technical Details
+
+### `dream-ui` (experimental answer rendering)
+
+- `dashboard/src/components/sleepy/chat/openuiLibrary.ts` — the 19-component vocabulary; the
+  SINGLE source for both the renderer and the generated briefing.
+- `dashboard/src/components/sleepy/chat/OpenUiView.tsx` — the seam (setting gate, error
+  boundary, pending/streaming slot). Small, eager, imports no OpenUI.
+- `dashboard/src/components/sleepy/chat/OpenUiRenderer.tsx` — the LAZY half: everything that
+  imports `@openuidev/*`. Emitted as its own ~2.07MB chunk; the entry chunk carries no library
+  code (`recharts`: 0 matches).
+- `dashboard/src/components/sleepy/chat/openuiTheme.ts` — theme derived from
+  `resolveChatKitTokens`, including the rebuilt composite type tokens and the chart palette.
+- `dashboard/src/components/sleepy/chat/openuiAction.ts` — the action gate: a whitelist of one
+  (`continue_conversation` -> text), refusing `open_url` by name.
+- `scripts/gen-openui-briefing.ts` + `.run.ts` — `npm run gen:openui-briefing`; output committed
+  to `src/server/chat-surface-openui.generated.ts` and drift-checked.
+- `src/server/chat-surface-openui.ts` — the variant briefing; `src/server/chat-surface.ts` is
+  now composed from three parts so one is swappable (the default stays byte-identical).
+- `src/server/routes/launcher.ts` (`readAgentUiChatRender`) + `routes/agent-chat.ts` — the
+  spawn-time choice.
+- Tests: `tests/unit/openui-{briefing,view,render,streaming,theme,bundle}.test.ts`; browser
+  harness `scripts/verify/openui-look.mjs` (`npm run verify:openui-look`).
 
 Architecture, key files, and dev-workflow notes are in `_dream_context/knowledge/desktop-beta-tauri-multivault.md`:
 - §"In-app Agent Terminal" — PTY bridge, bypassPermissions, prereq installer, and the 2026-07-01 readability polish (DOM renderer replacing WebGL, real JetBrains Mono load, calmed contrast, clipboard/selection/pane-dimming fixes) which supersedes the original WebGL-era design.

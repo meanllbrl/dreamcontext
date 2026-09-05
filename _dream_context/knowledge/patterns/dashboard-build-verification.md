@@ -36,3 +36,28 @@ symptom looks exactly like a bundler bug and is not one.
 
 **When a browser-level result contradicts the source, check the served entry first:**
 `diff <(grep -o 'index-[A-Za-z0-9_-]*\.js' dashboard/dist/index.html) <(grep -o 'index-[A-Za-z0-9_-]*\.js' dist/dashboard/index.html)`
+
+## Verification Must Run Against the Served Build (2026-09-05)
+
+**The trap that makes verification lie.** The dashboard served to a browser comes from
+`dist/dashboard`, not `dashboard/dist`. Running `cd dashboard && npm run build` compiles the
+UI but does NOT sync it to what the server actually serves — only the ROOT `npm run build`
+(which ends in `sync-dashboard-dist.mjs`) copies the built assets into place.
+
+A verification harness that runs against a browser pointed at `localhost:5174` can therefore
+report green while measuring a STALE bundle — one from whichever `build:cli` ran last — and
+the symptom looks exactly like the change working when it has not shipped yet.
+
+**Related footgun from the same session:** `npx tsc --noEmit` inside `dashboard/` passes where
+the `tsc -b` project build fails, because the dashboard-scoped check does not see the root
+types. So a wave can appear "done" (green compile, green harness) while the real build is
+broken.
+
+**The rule:** No wave is "done" until ROOT `npm run build` has run and exited 0. Verification
+against `localhost:5174` is verification against what WAS served, not what WILL be served —
+only the root build decides the latter.
+
+**Source:** Bookmark bm_e0isT4T2 (salience 3, 2026-09-05), from the OpenUI experiment. A real
+browser harness measured painted pixels against a months-old dashboard snapshot and reported
+success throughout multiple waves. The tell that caught it: the feature being verified did not
+exist in the bundle the browser was actually rendering.
