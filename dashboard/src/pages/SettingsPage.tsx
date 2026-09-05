@@ -1009,6 +1009,30 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                   </div>
                   <p className="settings-field-hint">{t('settings.agents.screen_hint')}</p>
 
+                  {/* Answer rendering — WHICH LANGUAGE the agent draws structured answers
+                      in, sitting directly under the screen it draws them on. An enum, not a
+                      checkbox: the modes are mutually exclusive (see `AgentChatRender`), and
+                      a third depiction is already proposed.
+
+                      DISABLED on the Terminal screen, deliberately. The choice only reaches
+                      the agent through the surface briefing, and that briefing is appended
+                      to a CHAT spawn alone — offering it here while it can do nothing is the
+                      exact "designed capability, unwired" failure this project has already
+                      paid for once. Disabled + a reason beats an active control that lies. */}
+                  <div className="settings-field-row">
+                    <label>{t('settings.agents.chat_render')}</label>
+                    <select
+                      className="settings-text-input"
+                      value={agentCfg.chatRender}
+                      disabled={!agentCfg.chatView}
+                      onChange={(e) => updateAgentCfg({ ...agentCfg, chatRender: e.target.value as AgentSettings['chatRender'] })}
+                    >
+                      <option value="html">{t('settings.agents.chat_render.html')}</option>
+                      <option value="openui">{t('settings.agents.chat_render.openui')}</option>
+                    </select>
+                  </div>
+                  <p className="settings-field-hint">{t('settings.agents.chat_render_hint')}</p>
+
                   {/* Quick open/close hotkey (in-app; default Ctrl+A). */}
                   <div className="settings-field-row">
                     <label>{t('settings.agents.hotkey')}</label>

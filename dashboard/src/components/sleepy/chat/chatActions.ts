@@ -57,7 +57,14 @@ export interface ChatAction {
 /** One rendered block, in the order the answer wrote it. */
 export type ChatBlock =
   | { kind: 'view'; view: ChatViewSpec }
-  | { kind: 'html'; html: string };
+  | { kind: 'html'; html: string }
+  /** EXPERIMENTAL (`chatRender: 'openui'`). `source` is OpenUI Lang — a compact,
+   *  line-oriented grammar — NOT markup, and it is never inserted into the DOM: the
+   *  renderer parses it against a closed component library and mounts typed components.
+   *  Kept as the raw source rather than a parsed tree because parsing belongs to the view
+   *  (it owns the library, and it is loaded lazily so a user who never enables the mode
+   *  never downloads it). */
+  | { kind: 'ui'; source: string };
 
 /**
  * One renderable RUN of an answer, in the order it was written — the unit the transcript
@@ -79,9 +86,10 @@ export type ChatSegment =
   | { kind: 'prose'; text: string }
   | { kind: 'view'; view: ChatViewSpec }
   | { kind: 'html'; html: string }
-  /** A fence that hasn't closed yet. `partial` is the markup written so far — empty for a
+  | { kind: 'ui'; source: string }
+  /** A fence that hasn't closed yet. `partial` is the source written so far — empty for a
    *  `view`, whose payload is JSON and has nothing legible to show mid-stream. */
-  | { kind: 'pending'; fence: 'html' | 'view'; partial: string };
+  | { kind: 'pending'; fence: 'html' | 'view' | 'ui'; partial: string };
 
 export interface ParsedAnswer {
   /**
@@ -125,6 +133,12 @@ export const MAX_HTML_BYTES = 256 * 1024;
 /** How many HTML bodies one answer may draw. An answer that needs a sixth is an answer that
  *  should have been one page. */
 export const MAX_HTMLS_PER_MESSAGE = 5;
+/** The same two bounds for `dream-ui`, counted SEPARATELY rather than shared. OpenUI Lang
+ *  claims to be far denser than markup for the same picture, so the byte ceiling is a
+ *  different unit of measure here — pinning them together would silently redefine one of
+ *  them the first time either is tuned. Same values today, different reasons. */
+export const MAX_UI_BYTES = 256 * 1024;
+export const MAX_UIS_PER_MESSAGE = 5;
 
 
 /**
@@ -156,12 +170,12 @@ const ACTION_FENCE_RE = /^([ \t]*)(```|~~~)[ \t]*dream-actions[ \t]*\r?\n([\s\S]
  * with both drawings above both explanations. Two sequential `.replace()` calls would lose
  * exactly that — every view before every html, whatever the author intended.
  */
-const BLOCK_FENCE_RE = /^([ \t]*)(```|~~~)[ \t]*dream-(view|html)[ \t]*\r?\n([\s\S]*?)\r?\n?\1\2[ \t]*$/gim;
+const BLOCK_FENCE_RE = /^([ \t]*)(```|~~~)[ \t]*dream-(view|html|ui)[ \t]*\r?\n([\s\S]*?)\r?\n?\1\2[ \t]*$/gim;
 /** Any fence still streaming — opened, never closed. Only ever the LAST thing in the text.
  *  One alternation covers all three names so a still-writing `dream-view` or `dream-html`
  *  (either can run 10-20KB before it closes) is hidden exactly like a still-writing
  *  `dream-actions` always has been — half-written markup must never flash on screen. */
-const OPEN_FENCE_RE = /^[ \t]*(```|~~~)[ \t]*dream-(actions|view|html)[ \t]*(\r?\n[\s\S]*)?$/im;
+const OPEN_FENCE_RE = /^[ \t]*(```|~~~)[ \t]*dream-(actions|view|html|ui)[ \t]*(\r?\n[\s\S]*)?$/im;
 /** `![alt](x.excalidraw.md)` or `[alt](x.excalidraw)` — the board form. */
 const BOARD_REF_RE = /!?\[[^\]]*\]\(\s*<?([^)\s>]+\.excalidraw(?:\.md)?)>?\s*\)/gi;
 
@@ -257,6 +271,7 @@ export function parseChatActions(raw: string): ParsedAnswer {
   const notices: string[] = [];
   let viewCount = 0;
   let htmlCount = 0;
+  let uiCount = 0;
 
   let body = text.replace(ACTION_FENCE_RE, (_m, _indent, _fence, json: string) => {
     actions.push(...parseActionBlock(json));
@@ -279,6 +294,22 @@ export function parseChatActions(raw: string): ParsedAnswer {
       // that didn't leaves nothing, exactly as before — a dropped block has no position.
       if (!view) return '';
       blocks.push({ kind: 'view', view });
+      return blockSlot(blocks.length - 1);
+    }
+
+    if (name.toLowerCase() === 'ui') {
+      if (uiCount >= MAX_UIS_PER_MESSAGE) {
+        notices.push(`An answer asked for more than ${MAX_UIS_PER_MESSAGE} UI blocks — the extra ones were dropped.`);
+        return '';
+      }
+      uiCount++;
+      const uiBytes = new TextEncoder().encode(payload).length;
+      if (uiBytes > MAX_UI_BYTES) {
+        notices.push(`A UI block was skipped — it is ${uiBytes} bytes, over the ${MAX_UI_BYTES / 1024}KB limit.`);
+        return '';
+      }
+      if (!payload.trim()) return '';
+      blocks.push({ kind: 'ui', source: payload });
       return blockSlot(blocks.length - 1);
     }
 
@@ -306,9 +337,12 @@ export function parseChatActions(raw: string): ParsedAnswer {
   // makes it look like something is being DRAWN there rather than stalled.
   const openMatch = OPEN_FENCE_RE.exec(body);
   const openName = openMatch?.[2]?.toLowerCase();
-  const pendingFence: 'html' | 'view' | null =
-    openName === 'html' ? 'html' : openName === 'view' ? 'view' : null;
-  const pendingPartial = pendingFence === 'html' ? (openMatch?.[3] ?? '') : '';
+  const pendingFence: 'html' | 'view' | 'ui' | null =
+    openName === 'html' ? 'html' : openName === 'view' ? 'view' : openName === 'ui' ? 'ui' : null;
+  // Carried for `ui` as well as `html`, even though nothing renders it yet: the partial IS
+  // the render once the streaming exception lands (Wave 3), and threading it now means that
+  // change touches the view alone, not this parser.
+  const pendingPartial = pendingFence === 'html' || pendingFence === 'ui' ? (openMatch?.[3] ?? '') : '';
   body = body.replace(OPEN_FENCE_RE, '');
 
   const boards: string[] = [];
@@ -357,7 +391,7 @@ function buildSegments(
   slotted: string,
   flatBody: string,
   blocks: ChatBlock[],
-  pendingFence: 'html' | 'view' | null,
+  pendingFence: 'html' | 'view' | 'ui' | null,
   pendingPartial: string,
 ): ChatSegment[] {
   const segments: ChatSegment[] = [];

@@ -283,6 +283,51 @@ describe('chatDefault* server/dashboard lockstep', () => {
   });
 });
 
+// `chatRender` picks WHICH LANGUAGE the agent draws structured answers in (Settings →
+// Agents → "Answer rendering"). It is an opt-in EXPERIMENT: the OpenUI mode renders in the
+// app's own React tree rather than behind the sandboxed iframe `dream-html` uses, so the
+// bar this describe holds is that nothing except the exact string 'openui' can ever select
+// it — a stale blob, a typo, a truthy value or a hand-edited store all land on 'html' and
+// therefore on today's shipped behaviour.
+describe('chatRender (answer rendering: written HTML vs OpenUI, experimental)', () => {
+  const CASES: unknown[] = [
+    undefined, null, '', 'html', 'openui', 'OpenUI', 'openui ', 'board', true, false, 1, 0, {}, ['openui'],
+  ];
+
+  it("defaults to 'html' when the key is absent — an untouched brain behaves exactly as before", () => {
+    expect(coerceServerAgentSettings({}).chatRender).toBe('html');
+    expect(coerceAgentSettings({}).chatRender).toBe('html');
+  });
+
+  it("only the exact string 'openui' opts in", () => {
+    expect(coerceServerAgentSettings({ chatRender: 'openui' }).chatRender).toBe('openui');
+    expect(coerceAgentSettings({ chatRender: 'openui' }).chatRender).toBe('openui');
+  });
+
+  it("every other value — including a near miss and a future mode — falls back to 'html'", () => {
+    for (const v of CASES.filter((v) => v !== 'openui')) {
+      expect(coerceServerAgentSettings({ chatRender: v }).chatRender, `server accepted ${JSON.stringify(v)}`).toBe('html');
+      expect(coerceAgentSettings({ chatRender: v as never }).chatRender, `dashboard accepted ${JSON.stringify(v)}`).toBe('html');
+    }
+  });
+
+  it('both coercers agree on every value in the table (server/dashboard lockstep)', () => {
+    for (const v of CASES) {
+      expect(
+        coerceServerAgentSettings({ chatRender: v }).chatRender,
+        `chatRender disagreement on ${JSON.stringify(v)}`,
+      ).toBe(coerceAgentSettings({ chatRender: v as never }).chatRender);
+    }
+  });
+
+  it('one bad field never takes the others down with it', () => {
+    const out = coerceServerAgentSettings({ chatRender: 'nonsense', chatDefaultModel: 'opus', renderer: 'dom' });
+    expect(out.chatRender).toBe('html');
+    expect(out.chatDefaultModel).toBe('opus');
+    expect(out.renderer).toBe('dom');
+  });
+});
+
 describe('chatPermissionMode (per vault, split out of the global blob)', () => {
   it('is NOT part of the app-global settings blob any more', () => {
     // The whole point of the split: a permission gate cannot ride a blob that every project

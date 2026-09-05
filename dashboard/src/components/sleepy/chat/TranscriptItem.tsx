@@ -6,7 +6,7 @@ import {
   useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens,
   inlineMediaKind, splitUserMedia, revealPath,
 } from './chatEntities';
-import { parseChatActions, type ChatAction } from './chatActions';
+import { parseChatActions, toAction, type ChatAction } from './chatActions';
 import { ActionRow } from './ActionRow';
 import { BoardEmbed } from './BoardEmbed';
 import { ChatBlockSegment, ChatViewNotices } from './ChatViews';
@@ -274,6 +274,23 @@ function AssistantMessage({
   // about to fill) shows no caret: its own placeholder is the liveness signal, and a caret
   // stranded in the paragraph above a card is exactly the "the stream went somewhere else"
   // reading this refactor exists to remove.
+  /**
+   * A follow-up inside a `dream-ui` block, turned into an ordinary `ask`.
+   *
+   * REUSES `toAction` rather than calling the host directly, and that is the point: the text
+   * goes through the exact validator every `dream-actions` button passes, so there is one
+   * definition of what an "ask" may be instead of two that drift. A host with no `onAction`
+   * (a read-only transcript, the sub-agent view) gets `undefined` and the follow-up renders
+   * inert, which is the same degradation a button already has there.
+   */
+  const askFromBlock = useMemo(() => {
+    if (!onAction) return undefined;
+    return (text: string) => {
+      const action = toAction({ label: text.slice(0, 80), action: 'ask', text });
+      if (action) onAction(action);
+    };
+  }, [onAction]);
+
   const lastProse = segments.reduce((acc, seg, i) => (seg.kind === 'prose' ? i : acc), -1);
   const caretAt = !item.done && lastProse === segments.length - 1 ? lastProse : -1;
 
@@ -299,11 +316,11 @@ function AssistantMessage({
         segment.kind === 'prose'
           ? <ProseSegment key={i} text={segment.text} onOpenFile={onOpenFile} caret={i === caretAt} />
           // A `view` this host cannot resolve renders nothing HERE and a notice below — see
-          // `hostNotices`. Everything else (html, and the pending slot for either fence) is
-          // drawn wherever it was written.
+          // `hostNotices`. Everything else (html, the experimental `ui`, and the pending slot
+          // for any of the fences) is drawn wherever it was written.
           : segment.kind === 'view' && !viewsAllowed
             ? null
-            : <ChatBlockSegment key={i} segment={segment} conversationId={conversationId} />
+            : <ChatBlockSegment key={i} segment={segment} conversationId={conversationId} done={item.done} onAsk={askFromBlock} />
       ))}
       {/* UNGATED, on purpose: the strip is what makes a drop honest, so it cannot itself be
           conditional on the capability that caused the drop. */}

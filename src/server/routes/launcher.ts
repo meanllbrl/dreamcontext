@@ -851,6 +851,14 @@ export async function handleSleepyConfigSet(
 
 type AgentUiDefaultAgent = 'claude';
 type AgentUiRenderer = 'webgl' | 'dom';
+/** How a Chat answer's STRUCTURED blocks are drawn. `html` = the agent writes HTML into a
+ *  network-less sandboxed iframe (`dream-html`, the shipped default). `openui` = the agent
+ *  writes OpenUI Lang and a closed component library renders it IN the app's own React tree
+ *  (EXPERIMENTAL — a different isolation posture, see `chat/OpenUiView.tsx`).
+ *  An ENUM rather than a boolean because a third depiction is already proposed (a built
+ *  board) and the three are mutually exclusive by construction: one answer, one language.
+ *  Mirrors dashboard/src/lib/agentSettings. */
+type AgentUiChatRender = 'html' | 'openui';
 interface AgentUiSettings {
   enabled: boolean;
   restoreTabs: boolean;
@@ -881,6 +889,12 @@ interface AgentUiSettings {
   /** Remembered default EFFORT level for a new Chat session, same menu, same empty-string
    *  = inherit-the-CLI contract as chatDefaultModel. Mirrors dashboard/src/lib/agentSettings. */
   chatDefaultEffort: string;
+  /** Which language the agent draws structured answers in — see {@link AgentUiChatRender}.
+   *  Resolved PER SPAWN (the surface briefing is written to a file at spawn time), so a
+   *  running session keeps the mode it started with and the Settings copy says so.
+   *  Meaningful only on the Chat surface: with `chatView:false` no briefing is written at
+   *  all, which is why the Settings row disables itself there rather than lying. */
+  chatRender: AgentUiChatRender;
 }
 const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
@@ -894,6 +908,7 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   chatPermissionMode: 'auto',
   chatDefaultModel: '',
   chatDefaultEffort: '',
+  chatRender: 'html',
 };
 
 function agentSettingsPath(): string {
@@ -940,6 +955,10 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     // which is not a failure state but the documented "inherit the CLI's own default".
     chatDefaultModel: sanitizeModel(typeof raw.chatDefaultModel === 'string' ? raw.chatDefaultModel : null),
     chatDefaultEffort: sanitizeEffort(typeof raw.chatDefaultEffort === 'string' ? raw.chatDefaultEffort : null),
+    // Opt-in EXPERIMENT: only the exact string 'openui' selects it. An absent key, an old
+    // blob, a typo, or anything else lands on the shipped default — so a brain that has
+    // never touched this setting behaves byte-for-byte as it did before the field existed.
+    chatRender: raw.chatRender === 'openui' ? 'openui' : 'html',
   };
 }
 
@@ -966,6 +985,28 @@ export function readAgentUiChatDefaults(): { model: string; effort: string } {
     return { model: s.chatDefaultModel, effort: s.chatDefaultEffort };
   } catch {
     return { model: '', effort: '' };
+  }
+}
+
+/**
+ * The app-global "Answer rendering" pick, read off disk — the ONE place a spawn learns which
+ * expressive channel to brief the agent for.
+ *
+ * Read at SPAWN, deliberately, and never after: the briefing is written to a file when the
+ * session starts, so a chat keeps the mode it was born with even if the setting changes
+ * under it. The Settings copy says exactly that ("Applies to new chats"), because the
+ * alternative — a running session whose vocabulary silently changes mid-conversation — would
+ * leave earlier blocks written in a notation the agent has since been told does not exist.
+ *
+ * Never throws: an unreadable or corrupt blob reads as the shipped default.
+ */
+export function readAgentUiChatRender(): 'html' | 'openui' {
+  try {
+    const p = agentSettingsPath();
+    if (!existsSync(p)) return 'html';
+    return coerceAgentSettings(JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>).chatRender;
+  } catch {
+    return 'html';
   }
 }
 

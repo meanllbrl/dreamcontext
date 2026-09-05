@@ -50,13 +50,26 @@
  * agent writes a promise the UI then breaks. Change one, change the other. Mechanically
  * pinned by `tests/unit/chat-surface-lockstep.test.ts` and `tests/unit/chat-html.test.ts`.
  */
-export const CHAT_SURFACE_BRIEFING = `# Surface: dreamcontext Chat (not a terminal)
+/**
+ * THE BRIEFING IN THREE PARTS, because one of them is now swappable.
+ *
+ * `CHAT_SURFACE_BRIEFING` below is composed from these and MUST stay byte-identical to the
+ * single template it used to be — `tests/unit/openui-briefing.test.ts` pins that, so this
+ * refactor cannot have changed what a default session is told, only where the text lives.
+ *
+ * The middle part is the one that varies: it teaches ONE expressive channel, and which
+ * channel depends on the user's "Answer rendering" setting. The head and tail are true of
+ * the surface either way.
+ */
+const BRIEFING_HEAD = `# Surface: dreamcontext Chat (not a terminal)
 
 Your reply renders as markdown in the dreamcontext desktop app's Chat view, where some of
 what you write becomes a real object the user can see and click. Use it. Paths are
 project-relative (an absolute one costs one consent click).
+`;
 
-## Draw it, don't narrate it
+/** The DEFAULT expressive channel: HTML the agent writes, drawn in a sandboxed frame. */
+const BRIEFING_DRAW_HTML = `## Draw it, don't narrate it
 
 Long flat prose is this surface's failure mode. You render real HTML inline: when what you
 explain has STRUCTURE — an architecture, a sequence, a trade-off, a plan, a set of numbers —
@@ -140,8 +153,14 @@ dc-gridline dc-axis-row dc-axis-text dc-legend dc-legend-swatch dc-f1..8 (fill) 
 For a chart, hand-roll inline SVG with \`dc-svg\` and the numbered color classes — never a
 chart library (nothing loads), never a hardcoded palette. Axis labels go in a \`dc-axis-row\`
 BELOW the svg: svg text scales with the viewBox, so 10px in a 320-wide box renders at 3x.
+`;
 
-## The rest of the surface
+/** Everything that is true of the surface whichever channel is in use — media, boards,
+ *  paths, sub-agent cards, PDFs, the highlighter, buttons, and the typed `dream-view`
+ *  blocks. Note it names `dream-html` in one place (the five-things list), which is why the
+ *  OpenUI variant is assembled with a small substitution rather than by concatenation
+ *  alone; see `chat-surface-openui.ts`. */
+const BRIEFING_REST = `## The rest of the surface
 
 - **Picture, clip, sound** — \`![caption](docs/shot.png)\` draws it inline. Video and audio
   must be a LINK, \`[demo](tmp/demo.mp4)\` — markdown has no video syntax; both play in place.
@@ -225,5 +244,24 @@ you send is ignored and drawn as a notice.
 
 Only name paths that exist — a wrong one renders as a dead card. At most ~4 buttons, and only
 for a real next step. Don't narrate the mechanism ("I'll draw you a diagram"), just write it.
-Nothing else about how you do the work changes.
+Nothing else about how you do the work changes.`;
+
+export const CHAT_SURFACE_BRIEFING = `${BRIEFING_HEAD}
+${BRIEFING_DRAW_HTML}
+${BRIEFING_REST}
 `;
+
+
+/**
+ * The parts, exported for the OpenUI variant and for the tests that pin this refactor.
+ *
+ * `BRIEFING_DRAW_HTML` is exported so `openui-briefing.test.ts` can assert the obvious thing
+ * the variant must get right: the HTML channel is ABSENT from it. An agent offered two ways
+ * to draw the same thing uses both, badly — and the second one would name a kit the OpenUI
+ * mode does not load.
+ */
+export const CHAT_BRIEFING_PARTS = {
+  head: BRIEFING_HEAD,
+  drawHtml: BRIEFING_DRAW_HTML,
+  rest: BRIEFING_REST,
+} as const;

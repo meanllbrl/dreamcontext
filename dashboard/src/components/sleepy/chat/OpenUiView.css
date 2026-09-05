@@ -1,0 +1,29 @@
+/**
+ * The `dream-ui` block's BOX — not its contents, which the OpenUI components own.
+ *
+ * Why this exists at all: the package's card hugs its content, so a block sat at ~353px
+ * inside a 1220px transcript column and a bar chart was drawn into a third of the space it
+ * had. That is the same family of defect as G4 on the `dream-html` side (a small block
+ * sprawling across 960px), inverted: content-hugging is right for a `dc-kv` and wrong for a
+ * chart, and the difference is that a chart has no natural width to hug.
+ *
+ * So the rule is: fill the column, and let the components decide their own heights.
+ */
+.chat-openui-block {
+  /* The transcript row is `display:flex; align-items:flex-start`, so a block is a flex item
+     whose cross size comes from its CONTENT — `width:100%` alone resolves against that and
+     changes nothing. `align-self: stretch` is what actually opts this one block into the
+     column, and it is scoped here so every other segment keeps hugging as it should. */
+  align-self: stretch;
+  width: 100%;
+  /* A wide table or a chart legend must not be able to widen the transcript column itself. */
+  contain: layout;
+}
+
+/* The card is the block's root component in every program (`root = Card(...)`). It stretches
+   to the box above rather than hugging, which is what gives a chart room to be read. */
+.chat-openui-block > *,
+.chat-openui-block .openui-card {
+  width: 100%;
+  box-sizing: border-box;
+}

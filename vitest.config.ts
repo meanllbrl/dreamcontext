@@ -16,6 +16,18 @@ export default defineConfig({
       // depend on it — so point the bare specifier at the dashboard's own copy rather than
       // hoisting the package up a level just to make a test resolve.
       marked: new URL('./dashboard/node_modules/marked/', import.meta.url).pathname,
+      // Same reason, one experiment further out: `tests/unit/openui-render.test.ts` renders
+      // a real OpenUI block to prove the grammar→components path works at all. React, its
+      // server renderer and the OpenUI packages are all DASHBOARD dependencies — the root
+      // package must not grow a React dependency to run one test — so each bare specifier
+      // is pointed at the dashboard's own copy. Longest-prefix first: `react-dom/server`
+      // must not be swallowed by the `react` entry.
+      'react-dom/server': new URL('./dashboard/node_modules/react-dom/server.node.js', import.meta.url).pathname,
+      'react-dom': new URL('./dashboard/node_modules/react-dom/', import.meta.url).pathname,
+      'react/jsx-runtime': new URL('./dashboard/node_modules/react/jsx-runtime.js', import.meta.url).pathname,
+      react: new URL('./dashboard/node_modules/react/', import.meta.url).pathname,
+      '@openuidev/react-lang': new URL('./dashboard/node_modules/@openuidev/react-lang/', import.meta.url).pathname,
+      '@openuidev/react-ui': new URL('./dashboard/node_modules/@openuidev/react-ui/', import.meta.url).pathname,
     },
   },
   test: {
