@@ -4,7 +4,6 @@ import { writeEnvelope } from '../../../lib/checklistStore';
 import type { ChatViewSpec, ChecklistViewSpec } from '../../../lib/chatViewSpec';
 import type { ChatSegment } from './chatActions';
 import { HtmlView, HtmlPending } from './HtmlView';
-import { OpenUiView, OpenUiPending } from './OpenUiView';
 import { InsightView } from './InsightView';
 import './ChatViews.css';
 
@@ -18,17 +17,16 @@ import './ChatViews.css';
  * card rendered above it and the card read as an attachment. `TranscriptItem` now walks the
  * segments itself and calls this once per block, in written order.
  *
- * Four kinds reach here: the agent's own HTML (`dream-html`, the surface's main expressive
+ * Three kinds reach here: the agent's own HTML (`dream-html`, the surface's main expressive
  * channel since 2026-08-26), the typed `dream-view` payloads that survived the retirement of
- * `chart`/`page` (a tracked metric's canonical rendering, an OS window, a shelf row), an
- * agent-written `dream-ui` block (EXPERIMENTAL — only ever present when the session was
- * spawned with `chatRender: 'openui'`), and a fence that hasn't closed yet — which now holds
- * its own slot instead of trailing the message as a pill.
+ * `chart`/`page` (a tracked metric's canonical rendering, an OS window, a shelf row), and a
+ * fence that hasn't closed yet — which now holds its own slot instead of trailing the
+ * message as a pill.
  *
  * Nothing here throws: every block arrived pre-validated from `lib/chatViewSpec.ts` (views)
  * or capped by byte size (html).
  */
-export function ChatBlockSegment({ segment, conversationId, done, onAsk }: {
+export function ChatBlockSegment({ segment, conversationId }: {
   segment: Exclude<ChatSegment, { kind: 'prose' }>;
   /**
    * OPTIONAL because two of the three segment kinds have no use for it: `html` is a sandboxed
@@ -39,23 +37,10 @@ export function ChatBlockSegment({ segment, conversationId, done, onAsk }: {
    * blocks cost the host anything.
    */
   conversationId?: string;
-  /** Whether the MESSAGE has finished streaming. Only a `pending` segment cares, and only in
-   *  the `ui` mode: an open fence in a finished message is not a block still arriving, it is
-   *  one that never closed — which is a failure to report, not a spinner to keep spinning. */
-  done?: boolean;
-  /** Hands a follow-up's TEXT to the conversation. Only a `ui` segment uses it, and only
-   *  once it has stopped streaming. */
-  onAsk?: (text: string) => void;
 }) {
   switch (segment.kind) {
     case 'html':
       return <HtmlView html={segment.html} />;
-    // Reachable only in the OpenUI mode, and harmless outside it: in the default mode the
-    // agent is never told the fence exists, so one arriving at all means either the setting
-    // is on or the agent invented it — and an invented one renders as a contained failure,
-    // not as raw grammar spilled into the transcript.
-    case 'ui':
-      return <OpenUiView source={segment.source} onAsk={onAsk} />;
     case 'view':
       return conversationId
         ? <ChatViewItem view={segment.view} conversationId={conversationId} />
@@ -65,7 +50,6 @@ export function ChatBlockSegment({ segment, conversationId, done, onAsk }: {
     // promise more than arrives. Proportion, not inconsistency.
     case 'pending':
       if (segment.fence === 'html') return <HtmlPending partial={segment.partial} />;
-      if (segment.fence === 'ui') return <OpenUiPending partial={segment.partial} done={done} />;
       return <PendingViewPill />;
   }
 }

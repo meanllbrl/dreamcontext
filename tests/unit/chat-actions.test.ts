@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  parseChatActions, parseActionBlock, toAction, MAX_UIS_PER_MESSAGE, MAX_UI_BYTES,
+  parseChatActions, parseActionBlock, toAction,
 } from '../../dashboard/src/components/sleepy/chat/chatActions.js';
 
 const fence = (json: string) => '```dream-actions\n' + json + '\n```';
@@ -139,74 +139,6 @@ describe('parseChatActions — boards', () => {
     const r = parseChatActions('![board](x.excalidraw.md)');
     expect(r.body).toBe('');
     expect(r.boards).toEqual(['x.excalidraw.md']);
-  });
-});
-
-describe('parseChatActions — dream-ui (OpenUI mode, experimental)', () => {
-  const ui = (src: string) => '```dream-ui\n' + src + '\n```';
-
-  it('lifts a closed fence out of the prose and keeps the SOURCE, not markup', () => {
-    const r = parseChatActions(`Here:\n\n${ui('root = Stack([chart])')}\n\nThat is the shape.`);
-    expect(r.blocks).toEqual([{ kind: 'ui', source: 'root = Stack([chart])' }]);
-    expect(r.body).toBe('Here:\n\nThat is the shape.');
-    expect(r.body).not.toContain('dream-ui');
-    expect(r.body).not.toContain('Stack');
-  });
-
-  it('keeps WRITTEN ORDER against the other two fences — one alternation, not three passes', () => {
-    const text = [
-      'One.',
-      ui('root = Stack([a])'),
-      'Two.',
-      '```dream-html\n<p>x</p>\n```',
-      'Three.',
-      ui('root = Stack([b])'),
-    ].join('\n\n');
-    const r = parseChatActions(text);
-    expect(r.blocks.map((b) => b.kind)).toEqual(['ui', 'html', 'ui']);
-    expect(r.segments.map((s) => s.kind)).toEqual(['prose', 'ui', 'prose', 'html', 'prose', 'ui']);
-  });
-
-  it('hides a still-open fence and reports it as pending, carrying the partial source', () => {
-    const r = parseChatActions('Drawing it.\n\n```dream-ui\nroot = Stack([\n  Chart(');
-    expect(r.body).toBe('Drawing it.');
-    expect(r.body).not.toContain('Stack');
-    expect(r.pendingView).toBe(true);
-    const last = r.segments[r.segments.length - 1];
-    expect(last.kind).toBe('pending');
-    if (last.kind === 'pending') {
-      expect(last.fence).toBe('ui');
-      // Threaded now so the streaming exception (Wave 3) is a change to the view alone.
-      expect(last.partial).toContain('Stack');
-    }
-  });
-
-  it('caps how many one answer may draw, and says so', () => {
-    const text = Array.from({ length: MAX_UIS_PER_MESSAGE + 2 }, (_, i) => ui(`root = Stack([${i}])`)).join('\n\n');
-    const r = parseChatActions(text);
-    expect(r.blocks.filter((b) => b.kind === 'ui')).toHaveLength(MAX_UIS_PER_MESSAGE);
-    expect(r.notices.some((n) => /more than \d+ UI blocks/.test(n))).toBe(true);
-  });
-
-  it('drops an over-sized body with a notice rather than mounting it', () => {
-    const r = parseChatActions(ui('x'.repeat(MAX_UI_BYTES + 1)));
-    expect(r.blocks).toHaveLength(0);
-    expect(r.notices.some((n) => /over the \d+KB limit/.test(n))).toBe(true);
-  });
-
-  it('counts its cap SEPARATELY from dream-html — one kind cannot exhaust the other', () => {
-    const html = Array.from({ length: 5 }, (_, i) => '```dream-html\n<p>' + i + '</p>\n```').join('\n\n');
-    const r = parseChatActions(`${html}\n\n${ui('root = Stack([a])')}`);
-    expect(r.blocks.filter((b) => b.kind === 'html')).toHaveLength(5);
-    expect(r.blocks.filter((b) => b.kind === 'ui')).toHaveLength(1);
-    expect(r.notices).toHaveLength(0);
-  });
-
-  it('drops an empty body without a notice — nothing was asked for', () => {
-    const r = parseChatActions('Text.\n\n```dream-ui\n   \n```');
-    expect(r.blocks).toHaveLength(0);
-    expect(r.notices).toHaveLength(0);
-    expect(r.body).toBe('Text.');
   });
 });
 

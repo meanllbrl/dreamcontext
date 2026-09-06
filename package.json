@@ -68,10 +68,7 @@
     "verify:chat-segments": "node scripts/verify/chat-segments.mjs",
     "announce:shots:meeting": "node e2e/announce-shots-meeting-room.mjs",
     "announce:shots:gap": "node e2e/announce-shots-gap.mjs",
-    "announce:shots:chat-html": "node e2e/announce-shots-chat-html.mjs",
-    "gen:openui-briefing": "vite-node scripts/gen-openui-briefing.run.ts",
-    "verify:openui-look": "node scripts/verify/openui-look.mjs",
-    "verify:openui-eval": "node scripts/verify/openui-eval.mjs"
+    "announce:shots:chat-html": "node e2e/announce-shots-chat-html.mjs"
   },
   "keywords": [
     "ai",

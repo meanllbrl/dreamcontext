@@ -17,8 +17,6 @@ import { resolveAgentSession } from '../../lib/agent-session-map.js';
 import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
-import { CHAT_SURFACE_BRIEFING_OPENUI } from '../chat-surface-openui.js';
-import { readAgentUiChatRender } from './launcher.js';
 import { modeBriefing, type ChatMode } from '../chat-modes.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
 import { clearSessionCheckout, enterSessionCheckout, exitSessionCheckout } from '../../lib/session-cwd.js';
@@ -591,12 +589,7 @@ export function startChatSession(
     // either way. `worktreeIsolationAllowed` never throws, and sits inside this try anyway
     // so an unexpected failure degrades to the un-briefed agent rather than a failed spawn.
     const modeBrief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot) });
-    // WHICH expressive channel this session is taught. Resolved here, once, because the
-    // briefing is a file written at spawn: the session keeps the mode it was born with, and
-    // the Settings copy promises exactly that. `openui` is the experiment (Settings → Agents
-    // → Answer rendering); anything else — including an unreadable blob — is the default.
-    const surface = readAgentUiChatRender() === 'openui' ? CHAT_SURFACE_BRIEFING_OPENUI : CHAT_SURFACE_BRIEFING;
-    const briefing = modeBrief ? `${surface}\n${modeBrief}` : surface;
+    const briefing = modeBrief ? `${CHAT_SURFACE_BRIEFING}\n${modeBrief}` : CHAT_SURFACE_BRIEFING;
     writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
     briefingArg = ['--append-system-prompt-file', brief];
     cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };

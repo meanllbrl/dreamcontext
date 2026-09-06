@@ -50,17 +50,8 @@
  * agent writes a promise the UI then breaks. Change one, change the other. Mechanically
  * pinned by `tests/unit/chat-surface-lockstep.test.ts` and `tests/unit/chat-html.test.ts`.
  */
-/**
- * THE BRIEFING IN THREE PARTS, because one of them is now swappable.
- *
- * `CHAT_SURFACE_BRIEFING` below is composed from these and MUST stay byte-identical to the
- * single template it used to be — `tests/unit/openui-briefing.test.ts` pins that, so this
- * refactor cannot have changed what a default session is told, only where the text lives.
- *
- * The middle part is the one that varies: it teaches ONE expressive channel, and which
- * channel depends on the user's "Answer rendering" setting. The head and tail are true of
- * the surface either way.
- */
+/** The surface's three sections, kept apart for reading only — they are concatenated
+ *  verbatim into {@link CHAT_SURFACE_BRIEFING} below and nothing else consumes them. */
 const BRIEFING_HEAD = `# Surface: dreamcontext Chat (not a terminal)
 
 Your reply renders as markdown in the dreamcontext desktop app's Chat view, where some of
@@ -157,9 +148,7 @@ BELOW the svg: svg text scales with the viewBox, so 10px in a 320-wide box rende
 
 /** Everything that is true of the surface whichever channel is in use — media, boards,
  *  paths, sub-agent cards, PDFs, the highlighter, buttons, and the typed `dream-view`
- *  blocks. Note it names `dream-html` in one place (the five-things list), which is why the
- *  OpenUI variant is assembled with a small substitution rather than by concatenation
- *  alone; see `chat-surface-openui.ts`. */
+ *  blocks. */
 const BRIEFING_REST = `## The rest of the surface
 
 - **Picture, clip, sound** — \`![caption](docs/shot.png)\` draws it inline. Video and audio
@@ -252,16 +241,3 @@ ${BRIEFING_REST}
 `;
 
 
-/**
- * The parts, exported for the OpenUI variant and for the tests that pin this refactor.
- *
- * `BRIEFING_DRAW_HTML` is exported so `openui-briefing.test.ts` can assert the obvious thing
- * the variant must get right: the HTML channel is ABSENT from it. An agent offered two ways
- * to draw the same thing uses both, badly — and the second one would name a kit the OpenUI
- * mode does not load.
- */
-export const CHAT_BRIEFING_PARTS = {
-  head: BRIEFING_HEAD,
-  drawHtml: BRIEFING_DRAW_HTML,
-  rest: BRIEFING_REST,
-} as const;

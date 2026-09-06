@@ -38,23 +38,6 @@ export type DefaultAgent = 'claude';
  *  edges, but the renderer can stutter when output redraws fast. */
 export type AgentRenderer = 'webgl' | 'dom';
 
-/** How a Chat answer's STRUCTURED blocks are drawn.
- *
- *  `html` — the agent writes HTML and it renders in a network-less sandboxed iframe
- *  (`dream-html`). This is the shipped default and the isolation story the surface was
- *  built on: `sandbox="allow-scripts"` with no `allow-same-origin`, CSP `default-src 'none'`.
- *
- *  `openui` — EXPERIMENTAL. The agent writes OpenUI Lang (a compact, line-oriented,
- *  streaming-first grammar) and a CLOSED component library renders it as real components in
- *  the app's OWN React tree. Different trade: the vocabulary is typed and finite (no raw
- *  markup reaches the DOM) but the render is in-process, not behind the iframe boundary.
- *
- *  An enum, not a boolean, for two reasons: the modes are mutually exclusive (one answer,
- *  one language — an agent offered both uses both badly), and a third depiction is already
- *  proposed (a built board), which a boolean would foreclose.
- *
- *  MIRRORS `AgentUiChatRender` in `src/server/routes/launcher.ts`. */
-export type AgentChatRender = 'html' | 'openui';
 
 export interface AgentSettings {
   /** Show the Agents surface at all (FAB / dock / overlay). Off → fully hidden. */
@@ -89,13 +72,6 @@ export interface AgentSettings {
   /** Remembered default EFFORT level for a new Chat session — same menu, same
    *  empty-string-means-inherit contract as {@link AgentSettings.chatDefaultModel}. */
   chatDefaultEffort: string;
-  /** Which language the agent draws structured answers in — see {@link AgentChatRender}.
-   *  Resolved PER SPAWN: the surface briefing is written to a file when the session starts,
-   *  so a running chat keeps the mode it was born with and a change here applies to NEW
-   *  chats. Meaningful only when {@link AgentSettings.chatView} is true — the Terminal
-   *  surface gets no briefing at all, so the Settings row disables itself there instead of
-   *  offering a choice that does nothing. */
-  chatRender: AgentChatRender;
   /** One-time marker that this blob has been through the "Chat is the default screen"
    *  flip (0.22). Before the flip, `chatView:false` was written into EVERY persisted
    *  blob as the old opt-out default, so a raw `false` is not evidence anybody chose
@@ -117,7 +93,6 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   screenMigrated: true,
   chatDefaultModel: '',
   chatDefaultEffort: '',
-  chatRender: 'html',
 };
 
 /** MIRRORED from `sanitizeModel` in `src/server/routes/agent-spawn-shared.ts`. The dashboard
@@ -163,9 +138,6 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
       ? r.chatDefaultModel : '',
     chatDefaultEffort: typeof r.chatDefaultEffort === 'string' && CHAT_DEFAULT_EFFORT_LEVELS.includes(r.chatDefaultEffort)
       ? r.chatDefaultEffort : '',
-    // Opt-in EXPERIMENT: only the exact string 'openui' selects it, so an absent key, an
-    // older blob or a typo all land on the shipped `html` behaviour. Same rule server-side.
-    chatRender: r.chatRender === 'openui' ? 'openui' : 'html',
     // NOTE: a legacy blob's `chatPermissionMode` is dropped here, on purpose — it is no
     // longer part of this shape. See {@link readChatPermissionMode}.
   };

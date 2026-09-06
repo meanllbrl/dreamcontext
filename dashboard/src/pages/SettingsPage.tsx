@@ -426,35 +426,6 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                       }
                     />
 
-                    {/* Answer rendering — WHICH LANGUAGE the agent draws structured answers
-                        in, sitting directly under the screen it draws them on. An enum, not a
-                        checkbox: the modes are mutually exclusive (see `AgentChatRender`), and
-                        a third depiction is already proposed.
-
-                        DISABLED on the Terminal screen, deliberately. The choice only reaches
-                        the agent through the surface briefing, and that briefing is appended
-                        to a CHAT spawn alone — offering it here while it can do nothing is the
-                        exact "designed capability, unwired" failure this project has already
-                        paid for once. Disabled + a reason beats an active control that lies. */}
-                    <SettingRow
-                      title={t('settings.agents.chat_render')}
-                      hint={agentCfg.chatView ? t('settings.agents.chat_render_hint') : t('settings.agents.chat_render.needs_chat')}
-                      more={t('settings.agents.chat_render_more')}
-                      tone={agentCfg.chatView ? 'default' : 'warn'}
-                      control={
-                        <select
-                          className="settings-text-input"
-                          aria-label={t('settings.agents.chat_render')}
-                          value={agentCfg.chatRender}
-                          disabled={!agentCfg.chatView}
-                          onChange={(e) => updateAgentCfg({ ...agentCfg, chatRender: e.target.value as AgentSettings['chatRender'] })}
-                        >
-                          <option value="html">{t('settings.agents.chat_render.html')}</option>
-                          <option value="openui">{t('settings.agents.chat_render.openui')}</option>
-                        </select>
-                      }
-                    />
-
                     {/* Quick open/close hotkey (in-app; default Ctrl+A). */}
                     <SettingRow
                       title={t('settings.agents.hotkey')}
