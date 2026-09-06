@@ -1,5 +1,19 @@
 [
   {
+    "id": "v0-27-0",
+    "date": "2026-09-07",
+    "version": "0.27.0",
+    "title": "One agent, every account you own",
+    "summary": "Your agent stops being one Claude account: sign in to all of them at once, watch the 5-hour and weekly limit on each, and let a turn move to a freer account before a limit stops it. Task statuses become yours to declare without touching GitHub or ClickUp, the brain consolidates itself on debt thresholds you set, and the app opens faster for four separate reasons.",
+    "tags": [
+      "agent",
+      "tasks",
+      "sleep",
+      "desktop"
+    ],
+    "story": "v0-27-0.json"
+  },
+  {
     "id": "v0-26-1",
     "date": "2026-08-27",
     "version": "0.26.1",

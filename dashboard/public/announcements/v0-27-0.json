@@ -1,0 +1,143 @@
+{
+  "hero": {
+    "eyebrow": "v0.27.0  ·  7 September 2026",
+    "headline": "One agent, every account you own",
+    "sub": "Your agent stops being one Claude account. Sign in to all of them, watch both limits on each, and let a turn move to a freer account before a limit stops it.",
+    "shot": {
+      "src": "shots/v0-27-0/agents-accounts.png",
+      "alt": "Settings, Agents: three Claude accounts in priority order, each with a 5-hour session bar and a weekly bar, and an auto-switch toggle below.",
+      "caption": "Settings → Agents. The order you drag them into IS the priority."
+    }
+  },
+  "blocks": [
+    {
+      "kind": "split",
+      "side": "left",
+      "title": "Every account, signed in at once",
+      "body": "Each account gets its own sandbox, so signing into a second one no longer signs you out of the first. A session picks the account it runs on, and you can read any account's limits without switching to it.",
+      "shot": {
+        "src": "shots/v0-27-0/agents-accounts-crop.png",
+        "alt": "Three account rows in priority order: the first at 34% of its 5-hour window and 61% of its weekly one, the second at 7% and 22%, the third at 88% and 73% drawn in amber.",
+        "caption": "Two bars per account — the 5-hour window and the 7-day one.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "points",
+      "title": "And when a limit does land",
+      "items": [
+        {
+          "title": "It moves before you notice",
+          "text": "The turn switches to a freer account rather than stopping. Auto-switch is a toggle; off, it reports the limit and changes nothing."
+        },
+        {
+          "title": "It steers on refusals, not forecasts",
+          "text": "The switch follows the limit the API actually refused, instead of the percentage it predicted you would hit."
+        },
+        {
+          "title": "Your order is the tie-break",
+          "text": "Between two equally free accounts, the one higher in your list wins — not the one earlier in the alphabet."
+        },
+        {
+          "title": "Every number says how old it is",
+          "text": "A usage reading carries its age, and tells you when a refresh could not move it. No silently stale percentage."
+        }
+      ]
+    },
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "Statuses are yours to declare",
+      "body": "Four statuses were hardcoded. Now a project declares its own in one file and they appear on the board. Nothing has to be created in GitHub or ClickUp first: each declared status rides under one of the four shipped ones, so the backend only ever sees the parent and carries your name as a label.",
+      "shot": {
+        "src": "shots/v0-27-0/task-board.png",
+        "alt": "A kanban board with five columns: To Do, In Progress, Blocked, In Review and Needs QA. Blocked and Needs QA were declared by this project.",
+        "caption": "Blocked and Needs QA exist because this project asked for them."
+      }
+    },
+    {
+      "kind": "split",
+      "side": "left",
+      "title": "The brain consolidates itself",
+      "body": "Sleep used to wait to be asked. Set the debt levels at which it offers, recommends, then requires a consolidation — and let this machine run the whole flow in the background when the debt gets high, so you stop being asked at all.",
+      "shot": {
+        "src": "shots/v0-27-0/sleep-thresholds.png",
+        "alt": "Settings → Sleep, showing the Drowsy, Sleepy and Must Sleep debt thresholds, a per-specialist model table, and a background-consolidation toggle.",
+        "caption": "Thresholds are shared with your team; background sleep stays on this machine."
+      }
+    },
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "Settings stopped repeating itself",
+      "body": "Four groups, one description each, and no Save button — a change applies when you make it. Two experiments also left the page this version: the OpenUI render mode, and Sleepy's notch capture bar.",
+      "shot": {
+        "src": "shots/v0-27-0/settings-nav.png",
+        "alt": "The Settings sidebar: Project, Memory, Integrations and This machine, with no Sleepy row.",
+        "caption": "One grammar for the whole page.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "note",
+      "text": "Sleepy the mascot is not going anywhere — it is the notch CAPTURE BAR that was removed, after an experiment that answered no. The mascot still keeps the Sleep page, and \"Sleepy\" is still the middle rung of the sleep-debt ladder."
+    },
+    {
+      "kind": "stats",
+      "items": [
+        {
+          "value": "~7s",
+          "label": "of frozen requests, gone",
+          "note": "the cross-vault team fetch ran on the server's event loop"
+        },
+        {
+          "value": "0",
+          "label": "network round-trips before first paint",
+          "note": "fonts ship in the bundle instead of loading from Google"
+        },
+        {
+          "value": "~1s",
+          "label": "of cold login shell, skipped",
+          "note": "the desktop app now caches where it found the CLI"
+        }
+      ]
+    },
+    {
+      "kind": "split",
+      "side": "left",
+      "title": "The app opens faster, for four separate reasons",
+      "body": "Nothing here is visible in a screenshot — it is four waits that no longer happen before the launcher is usable. Fonts were blocking first paint on a network request. The team fetch blocked every other request while it ran. Its first fire raced first paint. And the desktop shell paid a full cold shell to find the CLI, on every single launch.",
+      "shot": {
+        "src": "shots/v0-27-0/launcher.png",
+        "alt": "The dreamcontext launcher listing projects, each with its status dot.",
+        "caption": "The surface all four of those waits used to sit in front of."
+      }
+    },
+    {
+      "kind": "points",
+      "title": "Also in this version",
+      "items": [
+        {
+          "title": "A sub-agent's report is a card",
+          "text": "A finished sub-agent lands as its own named card in the transcript, instead of a wall the main agent re-types at you."
+        },
+        {
+          "title": "Plan and Develop end in a clean judge",
+          "text": "Both modes finish with a reviewer that has not read the conversation, rather than the agent marking its own work."
+        },
+        {
+          "title": "Lab reports pick one window",
+          "text": "A report declares a measurement window and every item inherits it, so 7-day and 30-day tiles stop sitting side by side. Opening one no longer re-queries everything it references."
+        },
+        {
+          "title": "The meeting room got four verbs",
+          "text": "Addressing an agent is free, ASK summons it, WAIT holds it, and a reply lands in the thread you are reading."
+        }
+      ]
+    }
+  ],
+  "closer": {
+    "title": "Add your second account",
+    "body": "Settings → Agents → Add an account. Drag the list into the order you want sessions to start in."
+  }
+}
