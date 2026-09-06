@@ -396,7 +396,7 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
    * press-to-switch shape, tabbing PAST a cold chip rebuilt it just to leave it again.
    *
    * NOT ⌘Tab, which is the combo the hand reaches for first: macOS gives it to the app
-   * switcher before any web view is offered it, so it cannot be bound at all — `lib/sleepy.ts`
+   * switcher before any web view is offered it, so it cannot be bound at all — `lib/agentSettings.ts`
    * refuses it in `RESERVED_HOTKEYS` for exactly this reason.
    *
    * Option rather than Control (which this was until 2026-08-14), because Control chords are

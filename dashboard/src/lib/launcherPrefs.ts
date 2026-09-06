@@ -10,7 +10,7 @@
  * So the server file is the source of truth (`~/.dreamcontext/launcher-ui.json`,
  * app-global — the launcher has no vault to scope it to) and `localStorage` is
  * the synchronous, flash-free mirror for the rest of THIS launch. Same shape as
- * `lib/sleepy.ts`'s config; see `knowledge/patterns/shared-local-config-split.md`.
+ * `lib/agentSettings.ts`'s config; see `knowledge/patterns/shared-local-config-split.md`.
  */
 import { api } from '../api/client';
 

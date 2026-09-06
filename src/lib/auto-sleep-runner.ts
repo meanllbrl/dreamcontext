@@ -42,7 +42,7 @@ export const SUSPEND_GAP_MS = 5 * 60_000;
 /**
  * The tool budget. File tools, Bash (the CLI) and Agent (the fan-out) are what
  * the flow needs; web and MCP are not. An unsupervised `bypassPermissions` run
- * gets no wider reach than the job requires — and unlike sleepy-chat this one
+ * gets no wider reach than the job requires — and unlike a read-only ask, this one
  * keeps the Agent tool, because the fan-out IS the flow.
  */
 export const AUTO_SLEEP_DISALLOWED_TOOLS = 'WebFetch,WebSearch,mcp__*';

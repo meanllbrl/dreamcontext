@@ -580,7 +580,7 @@ function fromStreamEvent(obj: Record<string, unknown>): ChatEvent {
  * An `assistant` frame's `message.content` is normally a single-element array (Claude
  * Code emits one content block per frame). A `tool_use` block surfaces as
  * `assistant-tool-use` — the fallback path for tool calls that don't arrive via
- * `content_block_start` (mirrors sleepy-chat.ts's belt-and-suspenders handling). A
+ * `content_block_start` (belt-and-suspenders handling). A
  * `tool_result` block (present on a USER-role frame echoing a tool's output back to the
  * model) surfaces as `tool-result`. A text/thinking block surfaces as
  * `assistant-text`/`assistant-thinking` — the AUTHORITATIVE full-block echo (the CLI can
@@ -986,7 +986,7 @@ export function toChatEvent(obj: Record<string, unknown>): ChatEvent {
  * Parse one raw NDJSON line into a typed event. Returns `null` for an empty/whitespace
  * line or a line that isn't valid JSON (a partial line mid-stream, or transport noise) —
  * the caller (chatSession's line buffer) should simply skip a `null` result, exactly like
- * the terminal/sleepy-chat NDJSON parsers already do.
+ * the terminal NDJSON parser already does.
  */
 export function parseChatLine(line: string): ChatEvent | null {
   const trimmed = line.trim();

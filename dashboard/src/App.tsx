@@ -1,10 +1,7 @@
-import { Component, useEffect, type ReactNode } from 'react';
+import { Component, type ReactNode } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createInstanceQueryClient } from './lib/instanceQueryClient';
 import { LauncherPage } from './pages/LauncherPage';
-import { CaptureBar } from './pages/CaptureBar';
-import { SleepyPerch } from './components/sleepy/SleepyPerch';
-import { applySleepyHotkey, readSleepyConfig, initSleepyFromServer, SLEEPY_CONFIG_KEY } from './lib/sleepy';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
 import { UpgradeRelaunchBanner } from './components/layout/UpgradeRelaunchBanner';
@@ -62,52 +59,10 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
  */
 const params = new URLSearchParams(window.location.search);
 const initialVault = params.get('vault');
-const captureMode = params.get('capture') === '1';
-const perchMode = params.get('perch') === '1';
 const checklistId = params.get('checklist');
 const meetingMode = params.get('meeting') === '1';
 
-/**
- * Owns the Sleepy global hotkey from the persistent launcher window. Registers on
- * mount and re-registers whenever the config changes in ANOTHER window (Settings
- * lives in a vault window) via the cross-window `storage` event — so the hotkey
- * survives opening/closing vault windows.
- */
-function SleepyHotkeyRegistrar() {
-  useEffect(() => {
-    // Seed from the server-persisted config (localStorage is empty on each
-    // launch's fresh port/origin), then register the hotkey.
-    void initSleepyFromServer().then((cfg) => applySleepyHotkey(cfg));
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === null || e.key === SLEEPY_CONFIG_KEY) {
-        void applySleepyHotkey(readSleepyConfig());
-      }
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, []);
-  return null;
-}
-
 export function App() {
-  // Notch quick-capture window (`?capture=1`) — its own transparent bar.
-  if (captureMode) {
-    return (
-      <ErrorBoundary>
-        <CaptureBar />
-      </ErrorBoundary>
-    );
-  }
-
-  // The always-on left-of-notch companion (`?perch=1`) — just the mascot.
-  if (perchMode) {
-    return (
-      <ErrorBoundary>
-        <SleepyPerch />
-      </ErrorBoundary>
-    );
-  }
-
   // The pinned checklist window (`?checklist=<id>`) — a separate, narrow-capability OS
   // window (plan §1.9). `ThemeProvider` is mandatory here, not decorative: it is what writes
   // `data-theme` onto <html>, which the whole dark palette (and `MarkdownPreview`, which
@@ -160,7 +115,6 @@ export function App() {
           <ThemeProvider>
             <I18nProvider>
               <UpgradeRelaunchBanner />
-              <SleepyHotkeyRegistrar />
               <LauncherPage />
               <ProjectSwitcher />
             </I18nProvider>

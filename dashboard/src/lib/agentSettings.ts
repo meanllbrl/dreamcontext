@@ -1,6 +1,6 @@
 /**
  * Agents (beta) surface preferences — feature on/off, restore-past-tabs, default
- * agent, and the in-app open/close hotkey. Mirrors lib/sleepy.ts's persistence
+ * agent, and the in-app open/close hotkey. Mirrors launcherPrefs.ts's persistence
  * shape: localStorage for the live launch + a server-side file
  * (~/.dreamcontext/agent-ui.json) that survives the app's per-launch origin reset.
  *

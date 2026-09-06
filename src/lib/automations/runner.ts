@@ -600,7 +600,7 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
 //      project's own SessionStart directives can otherwise hijack a simple ask.
 //   3. A guard system prompt telling it to ask and stop.
 //
-// Copied in structure from `src/server/routes/sleepy-chat.ts`, which documents
+// Copied in structure from the headless-claude runner pattern, which documents
 // this same hazard class and states the reason plainly: a single flag is not
 // enough. It also drops `--model`/`--effort`, because those are drawn from the
 // very manifest that is not approved yet.
@@ -610,7 +610,7 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
 // run; this conversation is read and discarded, never resumed.
 
 /** Orchestration tools removed from the question envelope. Mirrors
- *  `sleepy-chat.ts`'s list — same hazard, same answer. */
+ *  the same list — same hazard, same answer. */
 const QUESTION_DISALLOWED_TOOLS = [
   'Task', 'Skill', 'Agent', 'TaskCreate', 'TaskUpdate', 'TaskStop', 'Workflow',
   'CronCreate', 'CronDelete', 'CronList', 'SendMessage', 'RemoteTrigger',

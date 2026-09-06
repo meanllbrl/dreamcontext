@@ -37,7 +37,7 @@ const FALLBACK_BUS: EventTarget = new EventTarget();
  * What `useVault()` answers with NO provider above it — load-bearing, not a placeholder.
  *
  * `vault: null` makes `useApi()` return a client identical to the module `api`, so the
- * launcher, `CaptureBar`, `SleepyPerch` and the checklist window are byte-identical to
+ * launcher and the checklist window are byte-identical to
  * today. `isActive: true` so nothing outside a provider ever believes it is hidden and
  * quietly stops rendering or polling.
  */

@@ -1150,7 +1150,7 @@ describe('approval: never-approved still refuses outright', () => {
 describe('approval: a CHANGED manifest asks, in a weaker envelope', () => {
   it('spawns exactly once, in plan mode, with tools disallowed and NO bypassPermissions', async () => {
     // The session asking permission must not be able to do the thing it is
-    // asking about. A single flag is not enough — this mirrors sleepy-chat.ts,
+    // asking about. A single flag is not enough — this mirrors the headless runner,
     // which documents the same hazard class.
     createEditedAfterApproval();
     const { impl, calls } = capturingSpawn(QUESTION_JSON);

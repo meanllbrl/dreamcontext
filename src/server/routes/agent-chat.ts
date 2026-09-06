@@ -553,7 +553,7 @@ export function startChatSession(
   // the first USER stdin frame IMMEDIATELY after spawn — empirically (CLI 2.1.218), in
   // stream-json input mode the CLI emits `system:init` only AFTER the first stdin frame
   // arrives, so gating the prompt on init deadlocks a delegated session forever (stdin
-  // frames queue safely pre-init; sleepy-chat.ts has always written first, same as here).
+  // frames queue safely pre-init).
   let submitPrompt = initialPrompt;
   let deferredEnv: Record<string, string> = {};
   let cleanupDeferred = () => { /* nothing parked */ };

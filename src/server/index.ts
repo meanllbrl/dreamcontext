@@ -32,8 +32,6 @@ import {
   handleLauncherScaffold,
   handleLauncherDefaults,
   handleLauncherCatalog,
-  handleLauncherCapture,
-  handleLauncherCaptureStatus,
   handleLauncherStatus,
   handleLauncherLogo,
   handleLauncherLogoSet,
@@ -54,9 +52,7 @@ import {
   handleLauncherCloneCancel,
   handleSleepyVideo,
   handleSleepyAnim,
-  handleSleepyConfigGet,
-  handleSleepyConfigSet,
-  handleAgentSettingsGet,
+      handleAgentSettingsGet,
   handleAgentSettingsSet,
   handleLauncherUiGet,
   handleLauncherUiSet,
@@ -125,12 +121,6 @@ import {
 } from './routes/theses.js';
 import { handleBoardGet, handleBoardSharedPut, handleBoardLocalPut } from './routes/board.js';
 import { handleChatHtmlKitGet } from './routes/chat-html-kit.js';
-import {
-  handleSleepyChatSend,
-  handleSleepyChatStream,
-  handleSleepyChatHistory,
-  handleSleepyChatReset,
-} from './routes/sleepy-chat.js';
 import {
   handleAgentCapabilities,
   handleOpenTerminal,
@@ -341,10 +331,6 @@ export function buildRouter(): Router {
   router.get('/api/launcher/catalog', handleLauncherCatalog);
   router.post('/api/launcher/register', handleLauncherRegister);
   router.post('/api/launcher/scaffold', handleLauncherScaffold);
-  router.post('/api/launcher/capture', handleLauncherCapture);
-  router.get('/api/launcher/capture/status', handleLauncherCaptureStatus);
-  router.get('/api/launcher/sleepy-config', handleSleepyConfigGet);
-  router.post('/api/launcher/sleepy-config', handleSleepyConfigSet);
   router.get('/api/launcher/agent-settings', handleAgentSettingsGet);
   router.post('/api/launcher/agent-settings', handleAgentSettingsSet);
   // Launcher window preferences (Space vs List) — kept out of localStorage
@@ -377,14 +363,6 @@ export function buildRouter(): Router {
   router.post('/api/launcher/clone/cancel', handleLauncherCloneCancel);
   router.get('/api/sleepy/video', handleSleepyVideo);
   router.get('/api/sleepy/anim', handleSleepyAnim);
-
-  // Sleepy "Ask" — a real, read-only Claude Code conversation in the active
-  // vault, streamed over SSE. /stream is registered before the bare /chat GET
-  // (distinct exact paths; explicit order keeps intent clear).
-  router.get('/api/sleepy/chat/stream', handleSleepyChatStream);
-  router.post('/api/sleepy/chat/reset', handleSleepyChatReset);
-  router.get('/api/sleepy/chat', handleSleepyChatHistory);
-  router.post('/api/sleepy/chat', handleSleepyChatSend);
 
   // Agent terminal — real interactive Claude Code in the vault (desktop-only).
   // /capabilities is vault-agnostic; /open-terminal needs the active vault.

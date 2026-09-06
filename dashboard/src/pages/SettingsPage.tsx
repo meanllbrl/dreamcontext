@@ -22,12 +22,6 @@ import { LinkedRepos } from '../components/brain/LinkedRepos';
 import { readAutoCheckpointOnOpen, writeAutoCheckpointOnOpen } from '../lib/brainSyncPrefs';
 import { isDesktop } from '../lib/desktop';
 import {
-  readSleepyConfig,
-  writeSleepyConfig,
-  applySleepyHotkey,
-  type SleepyConfig,
-} from '../lib/sleepy';
-import {
   initAgentSettingsFromServer,
   writeAgentSettings,
   AGENT_SETTINGS_EVENT,
@@ -38,22 +32,6 @@ import {
   type AgentSettings,
 } from '../lib/agentSettings';
 import './SettingsPage.css';
-
-/** Build a Tauri accelerator (e.g. "Alt+Cmd+S") from a keydown; null if incomplete. */
-function accelFromKeyEvent(e: React.KeyboardEvent): string | null {
-  const mods: string[] = [];
-  if (e.metaKey) mods.push('Cmd');
-  if (e.ctrlKey) mods.push('Ctrl');
-  if (e.altKey) mods.push('Alt');
-  if (e.shiftKey) mods.push('Shift');
-  let key = e.key;
-  if (['Meta', 'Control', 'Alt', 'Shift'].includes(key)) return null; // modifier-only
-  if (key === ' ') key = 'Space';
-  else if (key.length === 1) key = key.toUpperCase();
-  else key = key.charAt(0).toUpperCase() + key.slice(1);
-  if (mods.length === 0) return null; // a global hotkey needs at least one modifier
-  return [...mods, key].join('+');
-}
 
 // ─── Platform options (duplicated client-side — can't import from src/lib) ────
 
@@ -85,7 +63,7 @@ const RECALL_MODE_OPTIONS: RecallModeOption[] = [
 // ─── Section navigation (in-page menu) ────────────────────────────────────────
 
 type SettingsSectionId =
-  | 'platforms' | 'format' | 'linkedrepos' | 'agents' | 'sleepy'
+  | 'platforms' | 'format' | 'linkedrepos' | 'agents'
   | 'memory' | 'sleep' | 'learning' | 'recall'
   | 'github' | 'teamsync' | 'clickup' | 'connections'
   | 'system';
@@ -126,7 +104,6 @@ const SETTINGS_NAV: SettingsNavGroup[] = [
       { id: 'format', labelKey: 'settings.nav.format', beta: true },
       { id: 'linkedrepos', labelKey: 'settings.nav.linkedrepos' },
       { id: 'agents', labelKey: 'settings.nav.agents', desktopOnly: true, beta: true },
-      { id: 'sleepy', labelKey: 'settings.nav.sleepy', desktopOnly: true, lab: true },
     ],
   },
   {
@@ -185,7 +162,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   const { data: config, isLoading: configLoading, isError: configError } = useConfig();
   const updateConfig = useUpdateConfig();
 
-  // Whether the desktop-only surfaces (Agents, Sleepy) are available here. The
+  // Whether the desktop-only surfaces (Agents) are available here. The
   // client-side `isDesktop()` (`window.__TAURI_INTERNALS__`) is unreliable in a
   // remote-loaded vault window — Tauri v2 doesn't inject its internals into the
   // http://localhost dashboard origin — so a genuine desktop session reads false
@@ -235,15 +212,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   const nativeMemorySave = useInstantSave();
   const brainToggleSave = useInstantSave();
 
-  // Sleepy notch quick-capture (desktop-only, persisted in localStorage; applies live).
-  const [sleepy, setSleepy] = useState<SleepyConfig>(() => readSleepyConfig());
-  const [capturingHotkey, setCapturingHotkey] = useState(false);
 
-  const updateSleepy = (next: SleepyConfig) => {
-    setSleepy(next);
-    writeSleepyConfig(next);
-    void applySleepyHotkey(next);
-  };
 
   // Agents (beta) surface prefs (desktop-only). Seeded from the server so the toggles
   // reflect the persisted truth; each change writes through (localStorage + server +
@@ -550,43 +519,6 @@ export function SettingsPage({ focus }: SettingsPageProps) {
               )}
             </>
           )}
-        </section>
-      )}
-      {activeSection === 'sleepy' && desktopSurfaces && (
-        <section className="settings-section">
-          <SectionHead titleKey="settings.nav.sleepy" descKey="settings.desc.sleepy" badge="lab" />
-          <SettingGroup>
-            <SettingRow
-              labelled
-              title={t('settings.sleepy.enable')}
-              hint={t('settings.desc.sleepy')}
-              control={<Toggle checked={sleepy.enabled} onChange={(next) => updateSleepy({ ...sleepy, enabled: next })} />}
-            />
-            {sleepy.enabled && (
-              <SettingRow
-                title={t('settings.sleepy.hotkey')}
-                hint={t('settings.sleepy.hotkey_hint')}
-                control={
-                  <input
-                    className="settings-text-input"
-                    readOnly
-                    value={capturingHotkey ? t('settings.sleepy.hotkey_capturing') : sleepy.hotkey}
-                    onFocus={() => setCapturingHotkey(true)}
-                    onBlur={() => setCapturingHotkey(false)}
-                    onKeyDown={(e) => {
-                      e.preventDefault();
-                      const accel = accelFromKeyEvent(e);
-                      if (accel) {
-                        updateSleepy({ ...sleepy, hotkey: accel });
-                        setCapturingHotkey(false);
-                        e.currentTarget.blur();
-                      }
-                    }}
-                  />
-                }
-              />
-            )}
-          </SettingGroup>
         </section>
       )}
       {activeSection === 'memory' && (
