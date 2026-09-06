@@ -1,31 +1,32 @@
 ---
-id: "feat_b__I_0z3"
-type: "feature"
-name: "claude-multi-account"
+id: feat_b__I_0z3
+type: feature
+name: claude-multi-account
 description: >-
   Connect several Claude accounts to the app, pick which one a session runs on,
   order them by drag-and-drop priority, and move a message to another account at
   a turn boundary before a limit lands. Credentials are never handled — each
   account is a CLAUDE_CONFIG_DIR sandbox the CLI signs into itself.
 pinned: false
-date: "2026-09-05"
-status: "in_review"
-created: "2026-09-05"
-updated: "2026-09-05"
+date: '2026-09-05'
+status: in_review
+created: '2026-09-05'
+updated: '2026-09-05'
 released_version: null
 product: desktop
 tags:
-  - "topic:agents"
-  - "topic:desktop"
-  - "topic:dashboard"
-  - "domain:security"
-  - "layer:frontend"
-  - "layer:backend"
+  - 'topic:agents'
+  - 'topic:desktop'
+  - 'topic:dashboard'
+  - 'domain:security'
+  - 'layer:frontend'
+  - 'layer:backend'
 related_tasks:
-  - multi-account-connect-several-claude-accounts-pick-one-per-session-auto-switch-before-a-limit-lands
-  - agents-hesap-paneli-okunur-olur-her-hesabin-iki-limiti-surukle-birak-oncelik-ve-yenile
+  - >-
+    multi-account-connect-several-claude-accounts-pick-one-per-session-auto-switch-before-a-limit-lands
+  - >-
+    agents-hesap-paneli-okunur-olur-her-hesabin-iki-limiti-surukle-birak-oncelik-ve-yenile
   - a-claude-account-switch-reaches-the-sessions-already-open
-  - sign-in-to-claude-from-settings-instead-of-typing-slash-login-in-a-terminal
   - automation-runs-must-degrade-gracefully-on-the-account-usage-limit
 ---
 

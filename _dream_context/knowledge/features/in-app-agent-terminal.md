@@ -65,8 +65,6 @@ related_tasks:
     a-finished-sub-agent-s-report-becomes-a-collapsed-card-in-the-transcript-instead-of-a-wall-the-main-agent-re-types
   - >-
     openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali
-  - >-
-    a-chat-tab-whose-session-object-died-draws-forever-and-nothing-heals-it
 type: feature
 name: in-app-agent-terminal
 description: ''

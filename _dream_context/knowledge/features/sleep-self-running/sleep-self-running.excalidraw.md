@@ -1,17 +1,20 @@
 ---
-
 name: sleep-self-running
 description: >-
-  The four capabilities shipped in the sleep umbrella (v0.26.3): per-brain tunable sleep settings
-  (debt ladder plus per-specialist model/effort injected into agent frontmatter and surviving
-  install), a deterministic filing bar and a tombstone ledger that stop sleep re-filing junk or
-  merged-away tasks, per-file locks and a hands-off set so a background cycle and the foreground
-  user cannot lose each other writes, and machine-local background auto-sleep dispatched by the
-  Stop hook under a consent fingerprint. Includes the 116-task audit that reframed the junk-task
-  complaint as a repetition problem, and evidence from a real validated background cycle.
-tags: [topic:sleep, kind:architecture, excalidraw]
+  The four capabilities shipped in the sleep umbrella (v0.26.3): per-brain
+  tunable sleep settings (debt ladder plus per-specialist model/effort injected
+  into agent frontmatter and surviving install), a deterministic filing bar and
+  a tombstone ledger that stop sleep re-filing junk or merged-away tasks,
+  per-file locks and a hands-off set so a background cycle and the foreground
+  user cannot lose each other writes, and machine-local background auto-sleep
+  dispatched by the Stop hook under a consent fingerprint. Includes the 116-task
+  audit that reframed the junk-task complaint as a repetition problem, and
+  evidence from a real validated background cycle.
+tags:
+  - 'topic:sleep'
+  - 'kind:architecture'
+  - 'topic:excalidraw'
 excalidraw-plugin: parsed
-
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 

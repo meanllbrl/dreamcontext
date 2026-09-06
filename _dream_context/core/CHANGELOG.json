@@ -1,5 +1,27 @@
 [
   {
+    "date": "2026-09-06",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Statuses were four hardcoded string literals; a project now declares extra ones in overrides/task.md frontmatter (statuses:), each carrying a semantic kind (open/active/review/done/cancelled), an order, a colour, optional remote aliases, and a parent status. src/lib/task-status.ts holds the model plus predicates, and roughly eight call sites that read status !== 'completed' as \"this task is live\" became isTerminal. The remote integration follows a hierarchy rather than trying to teach either backend a richer status model: a declared status lives UNDER one of the shipped four, GitHub gets a dc:<key> label auto-provisioned in the declared colour, and ClickUp gets the parent's real list status plus a dc:<key> tag — the remote only ever sees the parent it maps to, never the child directly. This project's own overrides/task.md now declares planned (under todo) and cancelled (under completed). A four-specialist multi-review (router, security, frontend, edge-cases) ran on the diff before this shipped and found four real Major defects, all fixed: pickMergedStatus's tie-break returned the first argument regardless of order, so two machines merging the same conflict could disagree (the existing symmetry test never exercised an actual tie); an un-normalised COMPLETED could slip past a literal done-comparison; the dashboard's two-write status reorder swallowed a failed second write; and the status dropdown rendered blank during the override-query load window. readTaskFile now preserves an unrecognised status instead of silently coercing it to todo, which correctly changes the project's zero-override byte-identical guarantee into a documented one (the docstring, not the behaviour, was the thing that needed fixing — coercing on a teammate's machine before they've pulled the override would push a lossy rewrite back).",
+    "breaking": false,
+    "summary": "Task statuses become project-declarable: overrides/task.md frontmatter adds statuses with kind/order/colour/parent, and GitHub/ClickUp sync maps them without extending the remote's own status set.",
+    "references": [
+      "file:src/lib/task-status.ts",
+      "file:src/lib/overrides.ts",
+      "file:src/lib/task-backend/status-mapping.ts",
+      "file:src/lib/task-backend/github-map.ts",
+      "file:src/lib/task-backend/clickup-map.ts",
+      "file:_dream_context/overrides/task.md",
+      "file:tests/unit/task-status.test.ts",
+      "file:tests/unit/clickup-statuses.test.ts",
+      "file:tests/unit/github-statuses.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-05",
     "type": "refactor",
     "scope": "settings",
