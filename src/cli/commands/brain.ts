@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { success, error, warn, info, header } from '../../lib/format.js';
 import { readSetupConfig, updateSetupConfig, readBrainLocal } from '../../lib/setup-config.js';
 import { runBrainSync, type SyncResult } from '../../lib/git-sync/sync-engine.js';
+import { runTeamFetch } from '../../lib/git-sync/team-fetch.js';
 import {
   resolveMode,
   resolveBrainSyncEnabled,
@@ -99,6 +100,20 @@ export function registerBrainCommand(program: Command): void {
       for (const b of blocks) error(`BLOCK ${b.excerpt}`);
       for (const w of warns) warn(`WARN  ${w.excerpt}`);
       if (blocks.length > 0) process.exitCode = 1;
+    });
+
+  // Hidden: the dashboard's team-fetch worker. The server spawns this as a CHILD
+  // process (POST /api/brain/team/fetch) so the synchronous git wrapper never blocks
+  // the server's event loop — a slow remote used to freeze every launcher request
+  // for the whole fetch. Prints one JSON document; never meant for humans.
+  brain
+    .command('team-fetch', { hidden: true })
+    .description('(internal) Pull-only team fetch across registered vaults, JSON out — the dashboard server\'s off-loop worker')
+    .option('--vault <name>', 'Only this registered vault')
+    .option('--json', 'Machine output (always on)')
+    .action(async (opts: { vault?: string }) => {
+      const results = await runTeamFetch({ vault: opts.vault });
+      process.stdout.write(JSON.stringify({ results }) + '\n');
     });
 
   brain

@@ -97,7 +97,33 @@ function resetPtyCache(): void { ptyAvailable = null; }
  * added to PATH in `~/.zshrc` (e.g. `~/.local/bin`), which only `-i` sources.
  * `cmd` is an internal whitelist literal, never user input (no injection).
  */
+/**
+ * Memo for the login-shell probes. Each probe forks an INTERACTIVE login shell
+ * (nvm/zshrc sourcing: ~1s on a typical Mac), and `/api/agent/capabilities` is
+ * polled every 30s from every window — three shells per poll per window was a
+ * steady CPU drain and a 1s answer. A found binary does not vanish within minutes;
+ * a missing one is re-probed sooner so a fresh install still flips to ready.
+ */
+const PROBE_HIT_TTL_MS = 5 * 60 * 1000;
+const PROBE_MISS_TTL_MS = 30 * 1000;
+const probeCache = new Map<string, { at: number; value: boolean }>();
+const probeInflight = new Map<string, Promise<boolean>>();
+
 function detectOnPath(cmd: 'claude' | 'npm', timeoutMs = 8000): Promise<boolean> {
+  const hit = probeCache.get(cmd);
+  if (hit && Date.now() - hit.at < (hit.value ? PROBE_HIT_TTL_MS : PROBE_MISS_TTL_MS)) return Promise.resolve(hit.value);
+  const inflight = probeInflight.get(cmd);
+  if (inflight) return inflight;
+  const p = detectOnPathUncached(cmd, timeoutMs).then((value) => {
+    probeCache.set(cmd, { at: Date.now(), value });
+    probeInflight.delete(cmd);
+    return value;
+  });
+  probeInflight.set(cmd, p);
+  return p;
+}
+
+function detectOnPathUncached(cmd: 'claude' | 'npm', timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const shell = process.env.SHELL || '/bin/zsh';
     let out = '';

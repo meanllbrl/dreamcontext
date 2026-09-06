@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { basename, dirname } from 'node:path';
+import { spawn } from 'node:child_process';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { readSetupConfig, updateSetupConfig, readBrainLocal } from '../../lib/setup-config.js';
@@ -20,7 +21,7 @@ import {
   canonicalRemote,
 } from '../../lib/git-sync/origin-setup.js';
 import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
-import { runTeamFetch } from '../../lib/git-sync/team-fetch.js';
+import { runTeamFetch, type TeamFetchVaultResult } from '../../lib/git-sync/team-fetch.js';
 import { readConflictReport } from '../../lib/git-sync/conflict-report.js';
 import { classifySyncError, type SyncFailure } from '../../lib/git-sync/failure.js';
 import { isPerProjectToken } from '../../lib/git-sync/token-fallback.js';
@@ -677,9 +678,49 @@ export async function handleBrainTeamFetch(
   const body = await parseJsonBody(req);
   const vault = typeof body?.vault === 'string' ? body.vault.trim() : undefined;
   try {
-    const results = await runTeamFetch({ vault });
+    const results = await teamFetchOffLoop(vault);
     sendJson(res, 200, { results });
   } catch (err) {
     sendError(res, 502, 'team_fetch_failed', (err as Error).message);
   }
+}
+
+/** Ceiling for the whole cross-vault fetch; each vault's own network op is already capped. */
+const TEAM_FETCH_CHILD_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Run the team fetch OFF the server's event loop. The git wrapper is synchronous
+ * (`execFileSync`), so an in-process fetch across N vaults froze every other request —
+ * launcher cards, logos, a freshly opened vault window — for the sum of N network
+ * round-trips (measured: ~7s with five synced vaults). The fetch is delegated to the
+ * CLI's hidden `brain team-fetch` verb in a child process, the same entry this server
+ * was started from. Falls back to in-process only when no CLI entry is known (tests).
+ */
+export function teamFetchOffLoop(vault?: string): Promise<TeamFetchVaultResult[]> {
+  const cliEntry = process.env.DREAMCONTEXT_CLI || process.argv[1];
+  if (!cliEntry || process.env.DREAMCONTEXT_TEAM_FETCH_INPROC === '1') return runTeamFetch({ vault });
+  return new Promise((resolve, reject) => {
+    const args = [cliEntry, 'brain', 'team-fetch', '--json'];
+    if (vault) args.push('--vault', vault);
+    let out = '';
+    let errOut = '';
+    const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } }, TEAM_FETCH_CHILD_TIMEOUT_MS);
+    child.stdout.on('data', (c: Buffer) => { out += c.toString('utf-8'); });
+    child.stderr.on('data', (c: Buffer) => { errOut += c.toString('utf-8'); });
+    child.on('error', (e) => { clearTimeout(timer); reject(e); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      // The verb prints exactly one JSON line; anything else on stdout is noise from
+      // a hook or a warning — take the last line that parses.
+      const lines = out.split('\n').map((l) => l.trim()).filter(Boolean).reverse();
+      for (const line of lines) {
+        try {
+          const parsed = JSON.parse(line) as { results?: TeamFetchVaultResult[] };
+          if (Array.isArray(parsed.results)) { resolve(parsed.results); return; }
+        } catch { /* not ours */ }
+      }
+      reject(new Error(`team fetch worker exited with code ${code}${errOut ? `: ${errOut.trim().slice(0, 300)}` : ''}`));
+    });
+  });
 }

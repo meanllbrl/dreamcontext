@@ -471,6 +471,16 @@ fn find_node() -> Option<String> {
 /// app silently falls back to its STALE bundled dist (the dashboard never updates).
 /// `-ilc` mirrors a real terminal — same fix the capture/chat pipelines already use.
 fn find_global_cli() -> Option<String> {
+    // Fast path: the path resolved on a previous launch. The interactive login shell
+    // below costs ~1s of a cold zshrc (nvm etc.) BEFORE any window exists, and the
+    // answer is stable across launches (npm upgrades keep the same bin symlink). A
+    // cached path that no longer exists (node version switch, uninstall) falls
+    // through to the shell and is rewritten.
+    if let Some(cached) = read_cli_path_cache() {
+        if Path::new(&cached).exists() {
+            return Some(cached);
+        }
+    }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let out = Command::new(&shell)
         .args(["-ilc", "command -v dreamcontext"])
@@ -483,7 +493,36 @@ fn find_global_cli() -> Option<String> {
     if path.is_empty() || !Path::new(&path).exists() {
         return None;
     }
+    write_cli_path_cache(&path);
     Some(path)
+}
+
+/// `~/.dreamcontext/desktop-cli-path` — one line, the last shell-resolved CLI path.
+fn cli_path_cache_file() -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    if home.is_empty() {
+        return None;
+    }
+    Some(Path::new(&home).join(".dreamcontext").join("desktop-cli-path"))
+}
+
+fn read_cli_path_cache() -> Option<String> {
+    let file = cli_path_cache_file()?;
+    let raw = std::fs::read_to_string(file).ok()?;
+    let line = raw.lines().next()?.trim();
+    if line.is_empty() {
+        return None;
+    }
+    Some(line.to_string())
+}
+
+fn write_cli_path_cache(path: &str) {
+    if let Some(file) = cli_path_cache_file() {
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(file, format!("{path}\n"));
+    }
 }
 
 /// Resolve the dreamcontext CLI entry to run.

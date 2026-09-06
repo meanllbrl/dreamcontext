@@ -1,5 +1,11 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+// Fonts ship IN the bundle (variable woff2 via @fontsource). They used to be a
+// render-blocking <link> to fonts.googleapis.com: first paint waited on a network
+// round-trip, and with no network the launcher sat blank for seconds.
+import '@fontsource-variable/inter';
+import '@fontsource-variable/plus-jakarta-sans';
+import '@fontsource-variable/jetbrains-mono';
 import { App } from './App';
 import { installExternalLinkHandler } from './lib/externalLinks';
 import { sweepExpiredPins } from './lib/pinStore';

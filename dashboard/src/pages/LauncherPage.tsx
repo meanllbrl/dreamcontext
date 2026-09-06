@@ -39,6 +39,8 @@ import './LauncherPage.css';
 
 /** How often the launcher checks every project's brain repo for team pushes (background, cache-friendly). */
 const TEAM_FETCH_INTERVAL_MS = 5 * 60 * 1000;
+/** First team fetch waits for the launcher to paint (see the mount effect). */
+const TEAM_FETCH_INITIAL_DELAY_MS = 3000;
 
 export function LauncherPage() {
   const { data, isLoading, isError, error } = useLauncherStatus();
@@ -74,10 +76,13 @@ export function LauncherPage() {
   // every registered project's brain repo, so the per-card chip reflects
   // teammates' pushes without the user opening each vault. Fires once on
   // mount, then on an interval — never on every render.
+  // The FIRST fetch is deferred past first paint: the server runs it in a child
+  // process, but it still forks node + git per vault, and the launcher's own
+  // status/logo/settings requests should land before that CPU is spent.
   useEffect(() => {
-    teamFetch.mutate(undefined);
+    const first = setTimeout(() => teamFetch.mutate(undefined), TEAM_FETCH_INITIAL_DELAY_MS);
     const id = setInterval(() => teamFetch.mutate(undefined), TEAM_FETCH_INTERVAL_MS);
-    return () => clearInterval(id);
+    return () => { clearTimeout(first); clearInterval(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
