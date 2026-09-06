@@ -1,5 +1,65 @@
 [
   {
+    "date": "2026-09-07",
+    "type": "chore",
+    "scope": "sleepy",
+    "description": "The Sleepy (Lab) notch capture feature is REMOVED on the owner's verdict, delivered on the Settings screen where it lived. Like OpenUI, the third outcome was accepted in advance, so this is the experiment's answer rather than a failure; it never left opt-in and nothing else depended on it.\n\nTHE WORD MEANS TWO THINGS IN THIS CODEBASE and only one is gone. Removed: the notch bar, its read-only Ask conversation, the perch companion, the global hotkey, hover-to-open. KEPT: SleepyMascot (drawn by SleepPage and the debt tracker), /api/sleepy/video and /api/sleepy/anim, the bundled Resources/sleepy clips, and the sleep-debt vocabulary (thresholds.sleepy, trigger 'sleepy', the Drowsy < Sleepy < Must Sleep ladder). Deleting those would have broken the threshold-driven sleep this same version ships.\n\nDashboard: CaptureBar (+css), SleepyPerch, lib/sleepy.ts, the unused useSleepyChat hook, both window modes and the hotkey registrar in App.tsx, the Settings section with its nav entry and six i18n keys. Server: routes/sleepy-chat.ts, /api/launcher/sleepy-config with ~/.dreamcontext/sleepy.json, and /api/launcher/capture plus its status poll (the bar was its only client) — the ephemeral run-state map shared with Sleep consolidation STAYS. Tauri shell 1071 to 619 lines: the NSPanel notch window and its JS-Rust bridge, the perch window, the CoreGraphics FFI that existed only to read the cursor, the geometry constants, three panel atomics, and ServerPort. tauri-nspanel and tauri-plugin-global-shortcut had no other consumer and are dropped with their four capability grants.\n\nVerified: cargo check clean with no warnings, tsc clean on CLI and dashboard, gen:cli-manifest no diff, 37 tests green in the three files nearest the removal.",
+    "breaking": false,
+    "summary": "The Sleepy notch capture bar, its Ask, its perch and its hotkey are removed; the mascot and the sleep-debt level of the same name stay.",
+    "references": [
+      "commit:8596538",
+      "file:_dream_context/state/remove-the-sleepy-notch-capture-feature.md"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-07",
+    "type": "perf",
+    "scope": "startup",
+    "description": "Four independent stalls between launching the app and being able to use it, each measured. (1) Fonts were a render-blocking link to fonts.googleapis.com with two preconnects: first paint waited on a round-trip and with no network the launcher sat blank; the three families now ship bundled as variable woff2. (2) The cross-vault team fetch ran in-process behind a SYNCHRONOUS git wrapper, blocking the server's event loop for the sum of N round-trips — measured ~7s with five synced vaults, during which launcher cards, logos and freshly opened windows all waited; it is delegated to a new hidden 'brain team-fetch' CLI verb in a child process, with an in-process escape hatch for tests and a 5-minute ceiling. (3) Even off-loop it forks node+git per vault, so the first fire is deferred 3s past first paint. (4) The desktop shell resolved the CLI through a cold interactive login shell (~1s of zshrc) before any window existed, and the claude/npm capability probes re-paid it every 30s per window; the CLI path is cached in ~/.dreamcontext/desktop-cli-path and revalidated by existence, the probes memoize with a 5-minute hit TTL and a 30-second miss TTL.\n\nAlso closed a gate failure on main: d60c52a committed the generated cli-manifest.json WITH a 'brain team-fetch' entry while the command itself was never committed, so tests/unit/cli-manifest.test.ts had been failing on HEAD.",
+    "breaking": false,
+    "summary": "Bundled fonts, an off-loop team fetch deferred past first paint, and a cached desktop CLI lookup — plus the cli-manifest gate failure on main.",
+    "references": [
+      "commit:bec210b"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-07",
+    "type": "chore",
+    "scope": "release",
+    "description": "Stamp 0.27.0 across the five version surfaces (package.json, desktop/package.json, tauri.conf.json, Cargo.toml, and Cargo.lock matched BY CRATE NAME rather than the bare version string, which also appears in dependencies) plus the two self-referential package-lock stamps. RELEASES.json gains the 0.27.0 row at status 'planning' — 'released' means the registry has it and nothing else — and 0.26.3 is flipped to 'superseded': it was cut 2026-08-28, passed every gate, and was never published while main took 52 more commits. That is the fifth row of that shape and the reason the standing publish checklist exists.",
+    "breaking": false,
+    "summary": "0.27.0 across the five version surfaces; 0.26.3 superseded, folded into this cut.",
+    "references": [
+      "file:_dream_context/core/RELEASES.json",
+      "file:_dream_context/state/pre-publish-checklist-v0-27-0.md"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-07",
+    "type": "chore",
+    "scope": "chat",
+    "description": "The experimental OpenUI render mode is REMOVED, and this entry is the record that the five 'Wave 1-5 of the OpenUI experiment' feat entries (2026-09-04 and 2026-09-05) describe a surface no shipped version contains. Read together they promised a mode the tarball does not have; read alone they would have written it into a release announcement.\n\nThe removal is the experiment's ANSWER, not a failure: the task's F3 criterion left keep / default / remove equally open and the third was accepted in advance. What it bought is recorded — a closed COMPONENT vocabulary does not fix 'a card stack is still read, not seen' any better than authored markup does, and that is now measured rather than assumed. Gone: four @openuidev packages and their lazy chunk, six dashboard modules, the generated briefing and its generator, the whole dream-ui fence (both regex alternations, byte/count ceilings, the streaming exception), the Settings 'Answer rendering' row and its six i18n keys, the chatRender field on both sides, seven unit test files and two verify harnesses. The briefing text was measured byte-for-byte identical before and after (9670 chars, empty diff), so what a default session is told did not change.\n\nNet effect on the 0.27.0 payload: ZERO. dream-html, the shipped default, is the only answer-rendering surface in the cut. Nothing in the What's New story may promise OpenUI.",
+    "breaking": false,
+    "summary": "OpenUI removed after the owner's verdict; the five wave entries describe a surface no shipped version contains, and the 0.27.0 payload is net zero.",
+    "references": [
+      "commit:70b448d",
+      "file:_dream_context/state/pre-publish-checklist-v0-27-0.md"
+    ],
+    "supersedes": "2026-09-05|chat",
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-06",
     "type": "feat",
     "scope": "tasks",
