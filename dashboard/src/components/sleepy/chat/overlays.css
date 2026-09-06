@@ -197,6 +197,15 @@
 .pdf-viewer-status.error { color: var(--color-error); }
 .pdf-viewer-blocked { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 
+/* ── "Couldn't show this" (chat/FileUnavailable.tsx) ──────────────────────────────────
+   The card a surface shows in place of a picture or a clip that never loaded. It is drawn
+   on two very different backgrounds — the panel's own surface and the image viewer's
+   near-black full-window scrim — so the text colour comes from the surface it lands in
+   (`.image-viewer-fallback` sets its own) rather than being fixed here. */
+.chat-unavailable { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.chat-unavailable-note { font-size: 12.5px; max-width: 46ch; text-align: center; color: var(--color-text-tertiary); }
+.chat-unavailable-note.error { color: var(--color-error); }
+
 /* A clip or a picture opened from the transcript fills the panel's width and is centred in
    it — the panel is the viewer, so nothing else competes for the space. Video sits on black
    because letterboxing against the panel's own surface reads as a broken layout. Audio is a

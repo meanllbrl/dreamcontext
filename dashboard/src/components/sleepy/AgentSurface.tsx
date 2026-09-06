@@ -2392,6 +2392,14 @@ export function AgentSurface() {
       // and this listener is on `window`, so it runs BEFORE the menu's own document-level
       // one and would otherwise collapse the whole surface out from under it.
       if (document.querySelector('.agent-tab-menu')) return;
+      // A file opened OVER the surface owns Esc too — the image viewer, the PDF viewer, a
+      // full-screen board. Each swallows the key itself, but this listener is registered on
+      // `window` the moment the overlay expands, which is BEFORE any of them mount: capture
+      // listeners on one node run in registration order, so ours fired first and collapsed
+      // the whole surface out from under the picture the user was closing (measured 09-06 by
+      // scripts/verify/chat-file-preview.mjs). Presence, not focus, for the same reason the
+      // two menus above use it: these portal to <body>.
+      if (document.querySelector('.image-viewer, .pdf-viewer, .fullscreen-overlay')) return;
       const ae = document.activeElement as Element | null;
       if (ae?.closest('.agent-pane-slot')) return;   // Claude's TUI owns Esc
       // Any centered command surface on top of us owns Esc — ⌘K palette, ⌘P switcher,

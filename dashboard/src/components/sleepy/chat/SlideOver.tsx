@@ -9,6 +9,7 @@ import {
   type Reference, type SubAgentRun,
 } from './chatEntities';
 import { peerForAgent, type PeerMention } from '../../../lib/agentComposer';
+import { FileUnavailable } from './FileUnavailable';
 import { FileActions } from './FileActions';
 import type { ChatItem } from '../chatSession';
 
@@ -91,21 +92,23 @@ function NumberedText({ content }: { content: string }) {
  * endpoint (range-streamed), so a clip seeks and a 40MB capture is never buffered whole.
  *
  * `onError` is the only honest failure story a media element gives us — no status code, no
- * reason — so the message names what to do next rather than guessing why. A file OUTSIDE
- * the project root is the common case and needs consent; the transcript's own inline card
- * is where that consent is asked, so this points back at it instead of duplicating it.
+ * reason — so the failure is handed to `FileUnavailable`, which ASKS the endpoint why and,
+ * for the common case (a file outside the project root), offers the consent right here. It
+ * used to point at the transcript's own inline card instead — but that card only exists when
+ * the answer referenced the file inline, and a path opened from a tool row has none, which
+ * left the panel telling the user to click something that was not on the screen.
  */
 function MediaPreview({ path, kind }: { path: string; kind: 'image' | 'video' | 'audio' }) {
   const { vault } = useVault();
   const [failed, setFailed] = useState(false);
-  const src = agentFileUrl(vault, path, { raw: true });
+  // Consent changes the SERVER's answer, so a granted file has to be re-requested; the new
+  // URL is also what makes the browser fetch rather than re-serve the failed response.
+  const [reload, setReload] = useState(0);
+  const base = agentFileUrl(vault, path, { raw: true });
+  const src = reload ? `${base}&reload=${reload}` : base;
+  const retry = () => { setFailed(false); setReload((n) => n + 1); };
   if (failed) {
-    return (
-      <p className="chat-slideover-status error">
-        Couldn't play this file — it may live outside the project (allow it from the card in
-        the chat), or be in a format this window can't decode.
-      </p>
-    );
+    return <FileUnavailable src={src} kind={kind} onGranted={retry} />;
   }
   if (kind === 'video') {
     return <video className="chat-slideover-media" src={src} controls preload="metadata" onError={() => setFailed(true)} />;

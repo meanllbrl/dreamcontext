@@ -571,6 +571,7 @@ const translations: Record<string, Record<string, string>> = {
     'imageViewer.fit': 'Fit to screen',
     'imageViewer.actual': 'Zoom to actual size',
     'imageViewer.hint': 'Scroll or pinch to zoom · drag to pan · double-click to fit',
+    'imageViewer.failed': 'This image couldn’t be loaded.',
     // ─── Brain repo (GitHub cloud sync) ─────────────────────────────────────
     'brain.sidebar.connect': 'Connect GitHub',
     'brain.sidebar.setup': 'Set up team sync',

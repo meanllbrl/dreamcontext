@@ -13,6 +13,15 @@ interface Props {
    *  path. A slot rather than built in, because this viewer also shows images that are only
    *  ever URLs (an announcement's screenshots), and those have no file to act on. */
   actions?: ReactNode;
+  /** Rendered in the stage INSTEAD of the picture when the bytes never arrive.
+   *
+   *  An `<img>` that fails renders the engine's broken-file glyph and says nothing — no
+   *  status, no reason, no way forward — which for a viewer that covers the whole window is
+   *  the emptiest screen the app can show. The caller knows what its own failures MEAN (a
+   *  file outside the project needs consent; a deleted one is simply gone), so the message
+   *  and any action belong to it; absent one, the viewer still says the picture didn't
+   *  load rather than drawing a broken glyph. */
+  fallback?: ReactNode;
   onClose: () => void;
 }
 
@@ -53,12 +62,16 @@ const FOCUSABLE = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"]
  * between here and the root — which is how a lightbox ends up trapped inside the
  * pane that opened it.
  */
-export function ImageViewer({ src, alt = '', caption, actions, onClose }: Props) {
+export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose }: Props) {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const failRef = useRef<HTMLDivElement | null>(null);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  /** The bytes never arrived. A `src` change clears it — which is also how a caller RETRIES
+   *  (see `Lightbox`: granting access re-requests the same file under a new URL). */
+  const [failed, setFailed] = useState(false);
   const [stage, setStage] = useState<{ w: number; h: number } | null>(null);
   const [view, setView] = useState<View>(FIT);
   const [grabbing, setGrabbing] = useState(false);
@@ -73,6 +86,7 @@ export function ImageViewer({ src, alt = '', caption, actions, onClose }: Props)
   useEffect(() => {
     setView(FIT);
     setNatural(null);
+    setFailed(false);
   }, [src]);
 
   useEffect(() => {
@@ -153,7 +167,7 @@ export function ImageViewer({ src, alt = '', caption, actions, onClose }: Props)
   // onWheel prop is ignored and the page behind would scroll while you zoom.
   useEffect(() => {
     const el = stageRef.current;
-    if (!el) return;
+    if (!el || failed) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       // A trackpad pinch arrives as ctrl+wheel (steeper per-tick); a plain wheel
@@ -164,7 +178,7 @@ export function ImageViewer({ src, alt = '', caption, actions, onClose }: Props)
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [zoomAround]);
+  }, [zoomAround, failed]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -259,7 +273,7 @@ export function ImageViewer({ src, alt = '', caption, actions, onClose }: Props)
    */
   const onStageClick = (e: ReactMouseEvent<HTMLDivElement>) => {
     if (press.current?.moved) return;
-    const r = imgRef.current?.getBoundingClientRect();
+    const r = (imgRef.current ?? failRef.current)?.getBoundingClientRect();
     if (r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return;
     onClose();
   };
@@ -286,29 +300,42 @@ export function ImageViewer({ src, alt = '', caption, actions, onClose }: Props)
         className="image-viewer-stage"
         data-zoomed={zoomed || undefined}
         data-grabbing={(grabbing && zoomed) || undefined}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endPointer}
-        onPointerCancel={endPointer}
+        data-failed={failed || undefined}
+        // Nothing to pan or pinch once the picture is gone — and leaving the drag on would
+        // put the stage's pointer CAPTURE between a click and the fallback's own button,
+        // which is exactly the case the click hit-test below already calls unreliable.
+        onPointerDown={failed ? undefined : onPointerDown}
+        onPointerMove={failed ? undefined : onPointerMove}
+        onPointerUp={failed ? undefined : endPointer}
+        onPointerCancel={failed ? undefined : endPointer}
         onClick={onStageClick}
-        onDoubleClick={onDoubleClick}
+        onDoubleClick={failed ? undefined : onDoubleClick}
       >
-        <img
-          ref={imgRef}
-          className="image-viewer-img"
-          src={src}
-          alt={alt}
-          draggable={false}
-          style={{ transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale})` }}
-          onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
-        />
+        {failed ? (
+          <div ref={failRef} className="image-viewer-fallback" role="status">
+            {fallback ?? <p>{t('imageViewer.failed')}</p>}
+          </div>
+        ) : (
+          <img
+            ref={imgRef}
+            className="image-viewer-img"
+            src={src}
+            alt={alt}
+            draggable={false}
+            style={{ transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale})` }}
+            onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+            // The only thing an `<img>` ever says about a failure. Everything the user then
+            // needs — why, and what to do — comes from `fallback`.
+            onError={() => setFailed(true)}
+          />
+        )}
       </div>
 
       <div className="image-viewer-foot">
         {caption && <div className="image-viewer-caption">{caption}</div>}
         {/* Above the zoom bar, not in it: these act on the FILE, the bar acts on the view. */}
         {actions && <div className="image-viewer-actions">{actions}</div>}
-        <div className="image-viewer-bar">
+        {!failed && <div className="image-viewer-bar">
           <button
             type="button"
             className="image-viewer-btn"
@@ -337,10 +364,10 @@ export function ImageViewer({ src, alt = '', caption, actions, onClose }: Props)
           >
             ＋
           </button>
-        </div>
+        </div>}
         {/* Only while fitted: once you have zoomed you have already discovered the
             gestures, and the hint is then just text over the thing you came to read. */}
-        {!zoomed && <p className="image-viewer-hint">{t('imageViewer.hint')}</p>}
+        {!zoomed && !failed && <p className="image-viewer-hint">{t('imageViewer.hint')}</p>}
       </div>
 
       <button

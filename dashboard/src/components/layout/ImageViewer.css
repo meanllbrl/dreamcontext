@@ -49,6 +49,34 @@
   -webkit-user-drag: none;
 }
 
+/* What stands where the picture would have been when the bytes never arrived. A card, not
+   bare text: the stage is a near-black full-window field, and a line of grey type floating in
+   the middle of it reads as a rendering failure rather than as an answer. The caller fills it
+   (see ImageViewer's `fallback`), so the colours are set here for anything it puts inside. */
+.image-viewer-fallback {
+  max-width: min(56ch, 86vw);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-lg, 12px);
+  background: rgba(20, 20, 26, 0.9);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* The card's own text, whatever component wrote it — the chat's failure line comes in with
+   its theme-token colour, which on this scrim is unreadable in a light theme. */
+.image-viewer-fallback p { color: rgba(255, 255, 255, 0.82); }
+.image-viewer-fallback p.error { color: #ff9d9d; }
+
+/* Nothing to zoom, nothing to grab. */
+.image-viewer-stage[data-failed] { cursor: default; }
+
 /* Controls float OVER the picture rather than taking a row from it, so "fits the
    screen" really is the whole screen. The container is click-through; only the
    controls themselves take the pointer. */
