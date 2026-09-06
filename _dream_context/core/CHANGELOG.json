@@ -1,5 +1,21 @@
 [
   {
+    "date": "2026-09-06",
+    "type": "chore",
+    "scope": "release",
+    "description": "0.27.0 IS ON THE REGISTRY. Published 2026-09-06T22:13:08Z; dist-tags.latest moved 0.26.2 -> 0.27.0 and dreamcontext-0.27.0.tgz resolves (shasum 80b37ae7). Tag v0.27.0 created on the release commit 46c11a4 and pushed AFTER the registry confirmed — never before (scar 1: a tag pointing at a version the registry does not have reads as published to every later cross-check). The tag fired desktop-release CI, which builds, signs and publishes the .app to the GitHub Release, so no release was created by hand.\n\nTHE PUBLISH TOOK TWO ATTEMPTS AND THE FIRST FAILURE LOOKED LIKE A SUCCESS. Attempt one reached npm far enough to STAGE 0.27.0 but never committed the metadata — the browser auth flow it opened was not completed. The registry then served 0.26.2 with no 0.27.0 anywhere (the version endpoint 404d), while a retry failed with 'E409 Cannot publish over previously staged version'. The right move was to WAIT, not to bump: staging clears on its own within minutes, and jumping to 0.27.1 would have burned a version over a transient registry state and forced a re-stamp of all five version surfaces, the release row and the announcement. It cleared and the publish landed about four minutes later.\n\nRELEASES 0.27.0 flipped planning -> released only now, because 'released' means the registry has it and nothing else.",
+    "breaking": false,
+    "summary": "0.27.0 published and tagged; the release record flipped to released only after the registry confirmed.",
+    "references": [
+      "commit:46c11a4",
+      "tag:v0.27.0",
+      "file:_dream_context/state/pre-publish-checklist-v0-27-0.md"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-07",
     "type": "chore",
     "scope": "sleepy",
