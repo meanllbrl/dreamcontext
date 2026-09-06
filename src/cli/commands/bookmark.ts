@@ -6,6 +6,8 @@ import { generateId } from '../../lib/id.js';
 import { success, error, header } from '../../lib/format.js';
 import { getTaskBackend } from '../../lib/task-backend/index.js';
 import type { TaskBackend } from '../../lib/task-backend/index.js';
+import { loadStatuses } from '../../lib/overrides.js';
+import { isTerminal } from '../../lib/task-status.js';
 import {
   OPEN_TASK_HINT_LIMIT,
   rankOpenTasks,
@@ -48,14 +50,16 @@ function hintsEnabled(): boolean {
   return process.env.DREAMCONTEXT_BOOKMARK_HINT !== '0';
 }
 
-/** Open (non-completed) tasks, most-likely-first, plus the total. Never throws. */
+/** Open (non-terminal) tasks, most-likely-first, plus the total. Never throws. */
 async function openTasks(
   backend: TaskBackend,
 ): Promise<{ candidates: OpenTaskRow[]; total: number }> {
   try {
+    const statuses = loadStatuses(ensureContextRoot());
     const rows: OpenTaskRow[] = await backend.list();
-    const open = rows.filter((t) => String(t.status).toLowerCase() !== 'completed');
-    return { candidates: rankOpenTasks(open, OPEN_TASK_HINT_LIMIT), total: open.length };
+    // Kind, not literal: a cancelled-kind task is as closed as a completed one.
+    const open = rows.filter((t) => !isTerminal(statuses, String(t.status)));
+    return { candidates: rankOpenTasks(open, OPEN_TASK_HINT_LIMIT, statuses), total: open.length };
   } catch {
     return { candidates: [], total: 0 };
   }

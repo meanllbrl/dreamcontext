@@ -320,6 +320,14 @@
       "args": []
     },
     {
+      "path": "brain team-fetch",
+      "desc": "(internal) Pull-only team fetch across registered vaults, JSON out — the dashboard server's off-loop worker",
+      "args": [],
+      "valueFlags": [
+        "--vault"
+      ]
+    },
+    {
       "path": "changelog",
       "desc": "Browse core/CHANGELOG.json chronologically (newest first)",
       "args": [],
@@ -2370,12 +2378,17 @@
     },
     {
       "path": "tasks status",
-      "desc": "Change a task's status (logs the change; stamps start_date on first in_progress if unset, due_date on completed)",
+      "desc": "Change a task's status (logs the change; stamps start_date on the first active-kind status if unset, due_date on completed)",
       "args": [
         "<name>",
         "<new-status>",
         "[reason...]"
       ]
+    },
+    {
+      "path": "tasks statuses",
+      "desc": "List this project's task statuses (shipped + declared in overrides/task.md) with kind, order and remote mapping",
+      "args": []
     },
     {
       "path": "tasks sync",

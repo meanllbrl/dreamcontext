@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useI18n } from '../../context/I18nContext';
+import { useStatusModel } from '../../hooks/useTasks';
 import { FilterPopover } from './FilterPopover';
 import { MultiSelectFilter } from './MultiSelectFilter';
 import { VersionFilter, type VersionFilterItem } from './VersionFilter';
@@ -217,13 +218,6 @@ function MilestoneIcon() {
 
 // ─── Data ───
 
-const STATUS_OPTIONS = [
-  { value: 'todo', label: 'To Do', color: 'var(--color-status-todo)' },
-  { value: 'in_progress', label: 'In Progress', color: 'var(--color-status-in-progress)' },
-  { value: 'in_review', label: 'In Review', color: 'var(--color-status-in-review)' },
-  { value: 'completed', label: 'Completed', color: 'var(--color-status-completed)' },
-];
-
 const PRIORITY_OPTIONS = [
   { value: 'critical', label: 'Critical', color: 'var(--color-priority-critical)' },
   { value: 'high', label: 'High', color: 'var(--color-priority-high)' },
@@ -309,6 +303,8 @@ export function TaskFilters({
   showAssignee,
   assigneeOptions = [],
 }: TaskFiltersProps) {
+  const sm = useStatusModel();
+  const statusOptions = useMemo(() => sm.order.map((k) => ({ value: k, label: sm.labelOf(k), color: sm.colorOf(k) })), [sm]);
   const { t } = useI18n();
   const [openPopover, setOpenPopover] = useState<string | null>(null);
   const [presetName, setPresetName] = useState('');
@@ -353,7 +349,7 @@ export function TaskFilters({
       <MultiSelectFilter
         id="status"
         label="Status"
-        options={STATUS_OPTIONS}
+        options={statusOptions}
         selected={filters.statusFilter}
         onChange={v => onFilterChange('statusFilter', v)}
         isOpen={openPopover === 'status'}

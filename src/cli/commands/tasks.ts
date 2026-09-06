@@ -19,7 +19,9 @@ import { getExistingReleases } from '../../lib/release-discovery.js';
 import { foldAscii } from '../../lib/fold-ascii.js';
 import { listObjectives } from '../../lib/objectives-store.js';
 import { resolveFeature, applyTaskFeatureLink, anyFeaturesExist } from '../../lib/feature-links.js';
-import { loadTaskOverride, fieldKey, type CustomFieldDef } from '../../lib/overrides.js';
+import { loadTaskOverride, loadStatuses, fieldKey, type CustomFieldDef } from '../../lib/overrides.js';
+import { isActive, isCancelled, isDone, isReview, statusKeys, type StatusDef } from '../../lib/task-status.js';
+import { describeStatusMappings } from '../../lib/task-backend/status-mapping.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import {
   isCalendarDate,
@@ -86,6 +88,21 @@ function parseObjectiveSlugs(raw: string): string[] | null {
 export { shouldStampStartDate } from '../../lib/task-dates.js';
 
 /**
+ * The project's status set (overrides/task.md → the shipped four), loaded once
+ * per process. Every status list, validation message and kind check in this
+ * file reads it, so a status declared by the project is accepted everywhere a
+ * shipped one is.
+ */
+let _statusSet: StatusDef[] | undefined;
+function statusSet(): StatusDef[] {
+  if (!_statusSet) _statusSet = loadStatuses(ensureContextRoot());
+  return _statusSet;
+}
+function statusList(): string {
+  return statusKeys(statusSet()).join(', ');
+}
+
+/**
  * Report the date stamps a status transition wrote, so no verb rewrites a
  * planned date silently. Prints nothing when the transition wrote no dates.
  */
@@ -94,13 +111,14 @@ function reportDateStamps(
   dates: TaskDateUpdates,
   prevDue: string | null | undefined,
 ): void {
+  const done = isDone(statusSet(), status);
   if (dates.start_date) {
-    console.log(chalk.dim(status === 'completed'
+    console.log(chalk.dim(done
       ? `  start date set to ${dates.start_date} (never started — closed same-day).`
       : `  start date set to ${dates.start_date} (work started).`));
   }
   if (dates.due_date) {
-    if (status === 'completed') {
+    if (done) {
       const replaced = prevDue && prevDue !== dates.due_date ? `, replacing the planned ${prevDue}` : '';
       console.log(chalk.dim(`  due date set to ${dates.due_date} (work finished)${replaced}.`));
     } else {
@@ -315,10 +333,18 @@ async function resolvePersonSlug(
 
 /** Render one task as a colorized human-readable line. */
 function renderTaskLine(t: TaskRecord, opts: { long?: boolean } = {}): string {
+  const defs = statusSet();
+  const def = defs.find((d) => d.key === t.status);
+  // Shipped statuses keep their historical colours; a declared status renders in
+  // its declared colour, else by kind (cancelled reads as struck-through).
   const statusColor =
     t.status === 'in_progress' ? chalk.yellow
     : t.status === 'in_review' ? chalk.magenta
     : t.status === 'completed' ? chalk.green
+    : def?.color ? chalk.hex(`#${def.color}`)
+    : def && isCancelled(defs, t.status) ? chalk.dim.strikethrough
+    : def && isActive(defs, t.status) ? chalk.yellow
+    : def && isReview(defs, t.status) ? chalk.magenta
     : chalk.white;
   const prio = t.priority !== '-' ? chalk.dim(` [${t.priority}]`) : '';
   // Foreign provenance (#177) rides on EVERY row (not just --long): a task that
@@ -424,8 +450,8 @@ export function registerTasksCommand(program: Command): void {
   tasks
     .command('list')
     .description('List tasks, with filters, grouping, tag discovery, and JSON output')
-    .option('-s, --status <status>', 'Filter by status (todo, in_progress, in_review, completed)')
-    .option('-a, --all', 'Show all tasks including completed')
+    .option('-s, --status <status>', 'Filter by status (todo, in_progress, in_review, completed, or any status declared in overrides/task.md — see `tasks statuses`)')
+    .option('-a, --all', 'Show all tasks including completed / cancelled')
     .option('--tag <tag>', 'Filter by tag (repeatable; AND semantics)', collectOption, [])
     .option('--any-tag <tag>', 'Filter by tag (repeatable; OR semantics)', collectOption, [])
     .option('--version <id>', 'Filter by version/milestone (e.g. S5, BACKLOG, memoryos-v2)')
@@ -446,7 +472,7 @@ export function registerTasksCommand(program: Command): void {
     }) => {
       const backend = getTaskBackend();
 
-      const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
+      const validStatuses = statusKeys(statusSet());
       if (opts.status && !validStatuses.includes(opts.status)) {
         error(`Status must be one of: ${validStatuses.join(', ')}`);
         return;
@@ -469,7 +495,7 @@ export function registerTasksCommand(program: Command): void {
 
       // Tag discovery: visibility filters only (status/all), other narrowing ignored.
       if (opts.tags) {
-        const visible = await backend.list({ status: opts.status, all: opts.all });
+        const visible = await backend.list({ status: opts.status, all: opts.all, statuses: statusSet() });
         const counts = collectTags(visible);
         if (opts.json) { console.log(JSON.stringify(counts, null, 2)); return; }
         if (counts.length === 0) { console.log(chalk.dim('No tags.')); return; }
@@ -484,6 +510,7 @@ export function registerTasksCommand(program: Command): void {
       const filter: TaskFilter = {
         status: opts.status,
         all: opts.all,
+        statuses: statusSet(),
         tags: opts.tag,
         anyTags: opts.anyTag,
         version: opts.version,
@@ -514,7 +541,7 @@ export function registerTasksCommand(program: Command): void {
 
       console.log(header('Tasks'));
       if (opts.groupBy) {
-        for (const g of groupTasks(matched, opts.groupBy as GroupBy)) {
+        for (const g of groupTasks(matched, opts.groupBy as GroupBy, statusSet())) {
           console.log(`\n  ${chalk.bold(g.key)} ${chalk.dim(`(${g.tasks.length})`)}`);
           for (const t of g.tasks) console.log(renderTaskLine(t, { long: opts.long }));
         }
@@ -549,7 +576,7 @@ export function registerTasksCommand(program: Command): void {
     .option('-d, --description <desc>', 'Task description')
     .option('-p, --priority <priority>', 'Priority (critical, high, medium, low)')
     .option('-u, --urgency <level>', 'Urgency (critical, high, medium, low)')
-    .option('-s, --status <status>', 'Status (todo, in_progress, in_review, completed)')
+    .option('-s, --status <status>', 'Status (todo, in_progress, in_review, completed, or any status declared in overrides/task.md)')
     .option('-t, --tags <tags>', 'Comma-separated tags')
     .option('-w, --why <why>', 'Why is this task needed?')
     .option('-v, --version <version>', 'Version/milestone')
@@ -591,7 +618,7 @@ export function registerTasksCommand(program: Command): void {
       }
 
       const validPriorities = ['critical', 'high', 'medium', 'low'];
-      const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
+      const validStatuses = statusKeys(statusSet());
 
       const priority = opts.priority || 'medium';
       if (!validPriorities.includes(priority)) {
@@ -1279,15 +1306,16 @@ export function registerTasksCommand(program: Command): void {
       reportDateStamps('completed', dateUpdatesForStatus('completed', current, today()), current?.due_date);
     });
 
-  // Change status (todo, in_progress, in_review, completed)
+  // Change status (todo, in_progress, in_review, completed, or a declared status)
   tasks
     .command('status')
     .argument('<name>')
-    .argument('<new-status>', 'todo, in_progress, in_review, or completed')
+    .argument('<new-status>', 'todo, in_progress, in_review, completed, or any status declared in overrides/task.md (`tasks statuses`)')
     .argument('[reason...]', 'Optional reason for the status change')
-    .description('Change a task\'s status (logs the change; stamps start_date on first in_progress if unset, due_date on completed)')
+    .description('Change a task\'s status (logs the change; stamps start_date on the first active-kind status if unset, due_date on completed)')
     .action(async (name: string, newStatus: string, reasonParts: string[]) => {
-      const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
+      const defs = statusSet();
+      const validStatuses = statusKeys(defs);
       if (!validStatuses.includes(newStatus)) {
         error(`Status must be one of: ${validStatuses.join(', ')}`);
         return;
@@ -1297,15 +1325,19 @@ export function registerTasksCommand(program: Command): void {
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
 
-      // Hard gate: can't move a task to a ready/done state with required fields empty.
-      if (newStatus === 'completed' || newStatus === 'in_review') {
+      // Hard gate: can't move a task to a ready/done state (done- or review-kind)
+      // with required fields empty. A cancelled-kind status is neither — abandoned
+      // work never had to be complete.
+      if (isDone(defs, newStatus) || isReview(defs, newStatus)) {
         const cur = await backend.get(slug);
-        if (blockOnMissingRequired(newStatus === 'completed' ? 'complete' : 'move to in_review', slug, cur?.custom_fields, ensureContextRoot(),
+        if (blockOnMissingRequired(isDone(defs, newStatus) ? 'complete' : `move to ${newStatus}`, slug, cur?.custom_fields, ensureContextRoot(),
             (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
       }
 
       const reason = reasonParts.join(' ').trim();
-      const headerLabel = newStatus === 'completed' ? 'Completed' : `Status → ${newStatus}`;
+      const headerLabel = isDone(defs, newStatus) ? 'Completed'
+        : isCancelled(defs, newStatus) ? 'Cancelled'
+        : `Status → ${newStatus}`;
       const logContent = reason
         ? `### ${today()} - ${headerLabel}\n- ${reason}`
         : `### ${today()} - ${headerLabel}`;
@@ -1317,12 +1349,40 @@ export function registerTasksCommand(program: Command): void {
       // dateUpdatesForStatus). Only fetch the task on the transitions that can
       // stamp, so the other status changes stay a single write.
       const now = today();
-      const stamping = newStatus === 'in_progress' || newStatus === 'completed';
+      const stamping = isActive(defs, newStatus) || isDone(defs, newStatus);
       const before = stamping ? await backend.get(slug) : null;
-      const dates = stamping ? dateUpdatesForStatus(newStatus, before, now) : {};
+      const dates = stamping ? dateUpdatesForStatus(newStatus, before, now, defs) : {};
       await backend.updateFields(slug, { status: newStatus, updated_at: now, ...dates });
       success(`Task ${slug} → ${newStatus}`);
       reportDateStamps(newStatus, dates, before?.due_date);
+    });
+
+  // Read-only view of the project's status set + how each maps to the remotes
+  tasks
+    .command('statuses')
+    .description('List this project\'s task statuses (shipped + declared in overrides/task.md) with kind, order and remote mapping')
+    .option('--json', 'Emit the status set as JSON')
+    .action(async (opts: { json?: boolean }) => {
+      const rows = describeStatusMappings(ensureContextRoot(), statusSet());
+      if (opts.json) {
+        console.log(JSON.stringify(rows.map(({ remote_list_cached: _c, ...r }) => r), null, 2));
+        return;
+      }
+      console.log(header('Task statuses'));
+      const w = Math.max(...rows.map((r) => r.key.length));
+      for (const r of rows) {
+        const src = r.shipped ? chalk.dim('shipped') : chalk.cyan(`under ${r.parent}`);
+        const remote = r.remote_status
+          ? `remote list: ${r.remote_status}${r.marker ? ` + ${r.marker} tag` : ''}`
+          : r.remote_list_cached ? chalk.yellow('remote list: NO MATCH — not even the parent; add one in the provider UI') : chalk.dim('remote list: (statuses not cached)');
+        console.log(`  ${r.key.padEnd(w)}  ${r.label.padEnd(14)} ${r.kind.padEnd(9)} order ${String(r.order).padStart(3)}  #${r.color}  ${src}`);
+        console.log(chalk.dim(`  ${''.padEnd(w)}  github: ${r.github}  ·  ${remote}`));
+      }
+      console.log(chalk.dim(
+        '\nEvery declared status lives UNDER one of the four shipped ones: a cloud backend only ever sees'
+        + '\nthe PARENT, and the child rides beside it as its `dc:<key>` marker — so nothing has to be'
+        + '\ncreated on the provider. Declare more in `_dream_context/overrides/task.md` or in Settings.',
+      ));
     });
 
   // Log entry (cross-session continuity)

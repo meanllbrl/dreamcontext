@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Task } from '../../hooks/useTasks';
+import { useStatusModel } from '../../hooks/useTasks';
 import { TaskCard } from './TaskCard';
 import {
   QUADRANTS,
@@ -29,7 +30,9 @@ interface LastMove {
 }
 
 export function EisenhowerMatrix({ tasks, onTaskClick, onTaskMove }: EisenhowerMatrixProps) {
-  const activeTasks = tasks.filter(t => t.status !== 'completed');
+  const sm = useStatusModel();
+  // Live tasks only — terminal by KIND, so a cancelled-kind task gets no quadrant.
+  const activeTasks = tasks.filter(t => !sm.isTerminal(t.status));
   const [dragOverKey, setDragOverKey] = useState<QuadrantKey | null>(null);
   const [draggingSlug, setDraggingSlug] = useState<string | null>(null);
   const [lastMove, setLastMove] = useState<LastMove | null>(null);

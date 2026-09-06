@@ -6,7 +6,7 @@ import '../../lib/markdownMark';
 import mermaid from 'mermaid';
 import panzoom from 'panzoom';
 import type { Task, RiceFields, RiceInput } from '../../hooks/useTasks';
-import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers, useFeatureOptions, useSyncStatus, useTaskOverrides } from '../../hooks/useTasks';
+import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers, useFeatureOptions, useSyncStatus, useTaskOverrides, useStatusModel } from '../../hooks/useTasks';
 import { useObjectives } from '../../hooks/useObjectives';
 import { confirmAction } from '../../lib/desktop';
 import { useTaxonomy } from '../../hooks/useTaxonomy';
@@ -436,6 +436,7 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const remoteBacked = syncStatus === undefined ? true : syncStatus.backend !== 'local';
   const { data: featureOptions } = useFeatureOptions();
   const { data: customFieldDefs } = useTaskOverrides();
+  const sm = useStatusModel();
   const { data: taxonomy } = useTaxonomy();
   const { data: versions } = usePlanningVersions();
   const { data: objectives = [] } = useObjectives();
@@ -1071,10 +1072,15 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                   value={task.status}
                   onChange={e => handleStatusChange(e.target.value)}
                 >
-                  <option value="todo">{t('tasks.todo')}</option>
-                  <option value="in_progress">{t('tasks.in_progress')}</option>
-                  <option value="in_review">{t('tasks.in_review')}</option>
-                  <option value="completed">{t('tasks.completed')}</option>
+                  {/* The task's OWN status is always offered, even when the status
+                      set has not loaded yet (the shipped four until /api/task-overrides
+                      resolves) or when it names a status this machine does not declare.
+                      Without it a controlled <select> has no matching <option> and the
+                      browser renders the field blank — a task silently misreporting its
+                      own status in the surface you edit it from. */}
+                  {(sm.order.includes(task.status) ? sm.order : [...sm.order, task.status]).map((k) => (
+                    <option key={k} value={k}>{['todo', 'in_progress', 'in_review', 'completed'].includes(k) ? t(`tasks.${k}`) : sm.labelOf(k)}</option>
+                  ))}
                 </select>
               </TaskField>
 

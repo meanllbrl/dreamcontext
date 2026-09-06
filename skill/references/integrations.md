@@ -16,7 +16,7 @@ This reference covers everything beyond the local markdown brain. **If a user as
 
 #### What it does
 - **Bidirectional sync** (`push`, `pull`, or `both`) between local task files and a ClickUp list.
-- **Status mapping** between dreamcontext statuses (`todo/in_progress/in_review/completed`) and ClickUp statuses.
+- **Status mapping** between dreamcontext statuses (`todo/in_progress/in_review/completed` plus any declared in `overrides/task.md`) and ClickUp statuses. **A declared status never needs a ClickUp status created for it:** it tries its own names first (its `clickup:` aliases and label, matched before the built-in fold — so remote `Cancelled` maps to a declared cancelled-kind status, and still folds to `completed` when nothing is declared), then falls back to its **parent's** status, which every list can express, with a `dc:<key>` tag carrying the child. On pull that tag wins only while it still agrees with the list status, so a human moving the task in ClickUp beats a stale tag.
 - **RICE + custom fields**: provisions recommended ClickUp custom fields (urgency, summary, RICE reach/impact/confidence/effort, …) and round-trips them. **User-declared custom fields** (from `overrides/task.md`) also round-trip — `select` → native drop_down, others → native list field. See "Task format & custom-field overrides" in [tasks-and-features.md](tasks-and-features.md).
 - **Date ranges**: a task's planned `start` and `due`/end both map to ClickUp's native start/due fields (push, pull, LWW-merge, and clear all symmetric).
 - **Assignees**: `person:<slug>` tags map to ClickUp members bidirectionally (multi-assignee; the full `assignees[]` set survives push/pull). Names **resolve against the live roster** — exact/fuzzy match canonicalizes to the member's slug, an ambiguous name aborts, an unmatched name warns (recorded but won't sync, never silently reassigned to the token owner). See "People & assignees" in [tasks-and-features.md](tasks-and-features.md).
@@ -92,13 +92,18 @@ against it:
 The fix is still ideally one list per project; the above makes a shared list safe when
 that isn't possible.
 
+**Declared statuses need nothing here** — they ride under a parent (see above). The note below is about the SHIPPED four.
+
 **Set the list's statuses in the ClickUp UI BEFORE the first sync to a new list.**
 ClickUp API v2 cannot write folder/list statuses (`PUT /folder/{id}` with
 `override_statuses` returns `override_statuses:false`), so dreamcontext cannot create
-them for you. If a dreamcontext status (`todo`/`in_progress`/`in_review`) has no name
+them for you — this includes every status you declare in `overrides/task.md`. If a
+dreamcontext status (`todo`/`in_progress`/`in_review`, or a declared one) has no name
 match on the list, the push omits the field and ClickUp stamps the list's first open
 status — every task landing in e.g. `backlog`. The sync warns when this is about to
-happen; heal it by adding the status in the UI, then:
+happen (naming the declared label), and `dreamcontext doctor` lists every declared
+status the cached list lacks plus how many synced tasks would be reclassified on the
+next pull; heal it by adding the status in the UI (or a `clickup:` alias), then:
 ```bash
 dreamcontext tasks sync --refresh-meta   # bypass the hourly meta cache
 ```
@@ -126,7 +131,7 @@ The same backend interface, talking **plain GitHub Issues over REST** (no GraphQ
 
 #### What it does
 - **Bidirectional sync** (`push`/`pull`/`both`) between local task files and a repo's Issues.
-- **Status mapping:** `completed` → issue **closed** `state_reason: completed`; `todo`/`in_progress`/`in_review` → **open** + a `dc:*` sub-status label (`dc:in-progress`, `dc:in-review`; `todo` = no label); reopen → **open** `state_reason: reopened`.
+- **Status mapping (via the PARENT):** every status resolves to one of the four shipped statuses — itself, or the `parent` a declared status lives under — and that is all GitHub sees. Parent `completed` (the done status, and every `cancelled`-kind status) → issue **closed** `state_reason: completed`; a declared child also carries its **`dc:<key>` label** (never `not_planned` — see below); every other known status → **open** + a `dc:<key>` sub-status label (`dc:in-progress`, `dc:in-review`, `dc:planned`…; `todo` = no label); reopen (a terminal status → a live one) → **open** `state_reason: reopened`. Labels for declared statuses are **auto-provisioned in their declared colour** before the first push that needs them (the hourly label-provision throttle is bypassed when the status set changes). A status key this machine does not declare sends **no state at all** (it cannot reopen or close an issue) but still emits its `dc:<key>` label, so a teammate's label is never stripped; on pull such a label is recorded as `completed` (closed) / `todo` (open) with a warning in the sync report — a downgrade, never a delete — and self-corrects once `overrides/task.md` is pulled.
 - **Soft-delete (the one divergence from ClickUp):** `tasks delete` **closes** the issue as `state_reason: not_planned` — it NEVER hard-deletes (GitHub REST can't, and issue history is preserved). Inbound, a `not_planned` close removes the local mirror (any unsaved local edits are preserved to `.conflicts/` first).
 - **Fields as labels:** priority/urgency/tags/version ride as labels (`priority:*`, `urgency:*`, `version:*`, plus your plain tags). RICE stays local-only (no native custom fields on plain issues — see Tier-2).
 - **User custom fields + dates in the body:** override-declared `select` fields become `<key>:<value>` labels; other custom fields land in a `<!-- dc:fields -->` block, and a task's start/due dates in a `<!-- dc:dates -->` block — both composed above the prose and stripped before the 3-way merge so they never pollute the body diff.

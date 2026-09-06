@@ -63,6 +63,8 @@ export interface SyncStateFile {
   lastMetaRefreshAt?: number;
   lastReconcileAt?: number;
   lastLabelProvisionAt?: number;
+  /** Fingerprint of the status set the labels were last provisioned for (GitHub). */
+  labelProvisionStatusSet?: number;
   /**
    * Local-image → hosted-asset bridge (GitHub task images). Push uploads a local
    * image once and rewrites the wire reference to the hosted URL; pull maps that
@@ -443,6 +445,7 @@ export class SyncLedger {
       delete state.members;
       delete state.lastMetaRefreshAt;
       delete state.lastLabelProvisionAt;
+      delete state.labelProvisionStatusSet;
       state.watermark = null;
       // The committed id-map still binds every local slug to the OLD container's
       // remote ids, none of which exist in the new one — so the deletion sweep
@@ -520,11 +523,11 @@ export class SyncLedger {
     this.writeSyncState(state);
   }
 
-  readThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt'): number | null {
+  readThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt' | 'labelProvisionStatusSet'): number | null {
     return this.readSyncState()[key] ?? null;
   }
 
-  writeThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt', at: number): void {
+  writeThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt' | 'labelProvisionStatusSet', at: number): void {
     const state = this.readSyncState();
     state[key] = at;
     this.writeSyncState(state);

@@ -6,15 +6,31 @@
  *
  * Mirrors `clickup-map.ts`. Two intentional divergences forced by plain
  * Issues over REST (see knowledge/decision-github-task-backend.md):
- *  - GitHub issues have no free-form status: the 4-state dreamcontext status
- *    degrades to `state` (open|closed) + `state_reason` + a `dc:*` sub-status
- *    label for the open states.
+ *  - GitHub issues have no free-form status: a dreamcontext status (the shipped
+ *    four plus any the project declares in overrides/task.md) degrades to
+ *    `state` (open|closed) + `state_reason` + a `dc:<key>` sub-status label.
+ *    `not_planned` is EXCLUSIVELY the soft-delete signal; a cancelled-kind
+ *    status closes as `completed` + its `dc:<key>` label.
  *  - GitHub issues have no native priority/urgency: those (plus tags + version)
  *    ride as LABELS, with reserved prefixes carving the structured ones out.
  */
 
 import { foldAscii } from '../fold-ascii.js';
 import { splitChangelogEntries, normalizeEntry } from './clickup-map.js';
+import {
+  DEFAULT_STATUSES,
+  DONE_STATUS_KEY,
+  dcLabelFor,
+  doneStatus,
+  findStatus,
+  isCancelled,
+  isDone,
+  isKnown,
+  parentOf,
+  keyFromDcLabel,
+  normalizeStatusKey,
+  type StatusDef,
+} from '../task-status.js';
 
 // Re-export the shared changelog helpers so callers can import the whole
 // changelog-comment surface from one module (parity with clickup-map).
@@ -79,35 +95,39 @@ export const STATE_REASON_REOPENED = 'reopened' as const;
  */
 export const DELETED_SENTINEL = '__deleted__' as const;
 
-/** Sub-status labels for the OPEN states. `todo` has NO label (absence = todo). */
-const STATUS_TO_LABEL: Record<string, string | null> = {
-  todo: null,
-  in_progress: `${DC_PREFIX}in-progress`,
-  in_review: `${DC_PREFIX}in-review`,
-};
-
-const LABEL_TO_STATUS: Record<string, string> = {
-  [`${DC_PREFIX}in-progress`]: 'in_progress',
-  [`${DC_PREFIX}in-review`]: 'in_review',
-  [`${DC_PREFIX}todo`]: 'todo',
-};
-
-/** The wire patch a dreamcontext status maps to (state + optional reason). */
+/**
+ * The wire patch a dreamcontext status maps to. `state` is OPTIONAL: for a
+ * status key the loaded set does not declare the patch carries NO state and no
+ * state_reason — the issue's open/closed state is left exactly as it is, so a
+ * schema-drifted machine can never reopen an issue the user deliberately closed.
+ */
 export interface GitHubStatePatch {
-  state: 'open' | 'closed';
+  state?: 'open' | 'closed';
   state_reason?: 'completed' | 'not_planned' | 'reopened';
 }
 
 /**
- * Map a dreamcontext status to the GitHub `state`/`state_reason` patch.
- * - `completed` → closed+completed (the ONLY status that closes an issue).
- * - `todo`/`in_progress`/`in_review` → open (sub-status rides a label, see
- *   `subStatusLabel`); when `reopen` is true an open patch also carries
- *   `state_reason: reopened` (an issue moving closed → open).
- * Unknown statuses fall back to open (treated as todo).
+ * Map a dreamcontext status to the GitHub `state`/`state_reason` patch — via the
+ * status's PARENT, one of the four shipped statuses, so a declared status needs
+ * nothing created on the remote:
+ * - parent `completed` (the done status, and every cancelled-kind status)
+ *                             → closed + completed. A cancelled-kind status is
+ *                               told apart by its `dc:<key>` label, see
+ *                               `subStatusLabel`. NEVER `not_planned`: that is
+ *                               EXCLUSIVELY the soft-delete signal
+ *                               (decision-github-task-backend.md).
+ * - any other KNOWN parent    → open (sub-status rides a label); when `reopen`
+ *                               is true the open patch carries `state_reason: reopened`.
+ * - an UNKNOWN status key     → {} — state and state_reason OMITTED entirely.
+ *                               Never infer "open" from a key we do not understand.
  */
-export function statusToGitHub(status: string, opts?: { reopen?: boolean }): GitHubStatePatch {
-  if (status === 'completed') {
+export function statusToGitHub(
+  status: string,
+  opts?: { reopen?: boolean; statuses?: readonly StatusDef[] },
+): GitHubStatePatch {
+  const defs = opts?.statuses ?? DEFAULT_STATUSES;
+  if (!isKnown(defs, status)) return {};
+  if (parentOf(defs, status) === DONE_STATUS_KEY) {
     return { state: 'closed', state_reason: STATE_REASON_COMPLETED };
   }
   if (opts?.reopen) {
@@ -121,33 +141,81 @@ export function deleteToGitHub(): GitHubStatePatch {
   return { state: 'closed', state_reason: STATE_REASON_NOT_PLANNED };
 }
 
-/** The `dc:*` sub-status label for a status, or null (todo / completed → none). */
-export function subStatusLabel(status: string): string | null {
-  return STATUS_TO_LABEL[status] ?? null;
+/**
+ * The `dc:*` sub-status label for a status, or null for `todo` and the done
+ * status (`completed`) — absence of a label is todo; a bare close is done.
+ *
+ * STRING-DERIVED, never gated on finding a def in the loaded set: a key this
+ * machine does not recognise still yields `dc:<key>`. The label PATCH replaces
+ * the whole set, so a def-gated lookup would let a schema-drifted machine strip
+ * another machine's `dc:*` label on any unrelated push (the anti-strip rule).
+ */
+export function subStatusLabel(status: string, _statuses: readonly StatusDef[] = DEFAULT_STATUSES): string | null {
+  const key = normalizeStatusKey(status);
+  if (!key || key === 'todo' || key === DONE_STATUS_KEY) return null;
+  return dcLabelFor(key);
 }
 
-/** Derive the open-issue sub-status from its label set. Default `todo`. */
-export function statusFromLabels(labelNames: string[]): string {
+/**
+ * Derive the open-issue sub-status from its label set. Default `todo`. A
+ * `dc:*` label naming a status the loaded set does not declare is skipped
+ * (the caller warns; see `unknownDcLabels`), so the mirror records `todo`
+ * rather than a key this machine cannot reason about.
+ */
+export function statusFromLabels(labelNames: string[], statuses: readonly StatusDef[] = DEFAULT_STATUSES): string {
   for (const name of labelNames) {
-    const status = LABEL_TO_STATUS[name.toLowerCase()];
-    if (status) return status;
+    const key = keyFromDcLabel(name);
+    if (!key) continue;
+    if (key === 'todo') return 'todo';
+    // An OPEN issue is by definition live: a stale terminal label (dc:cancelled
+    // left on an issue someone reopened on github.com) does not make it cancelled.
+    const def = findStatus(statuses, key);
+    if (def && def.kind !== 'done' && def.kind !== 'cancelled') return def.key;
   }
   return 'todo';
 }
 
 /**
+ * The `dc:*` labels on an issue that name NO status in the loaded set — the
+ * schema-drift signal a pull surfaces in its SyncReport (non-destructive: the
+ * status downgrades, nothing is deleted, and it self-corrects once this machine
+ * pulls `overrides/task.md`).
+ */
+export function unknownDcLabels(
+  labels: Array<{ name: string } | string> | string[] | null | undefined,
+  statuses: readonly StatusDef[] = DEFAULT_STATUSES,
+): string[] {
+  const out: string[] = [];
+  for (const name of labelNamesOf(labels)) {
+    const key = keyFromDcLabel(name);
+    if (!key || key === 'todo') continue;
+    if (!isKnown(statuses, key)) out.push(name);
+  }
+  return out;
+}
+
+/**
  * Map a GitHub issue back to a dreamcontext status:
- *  - closed + `completed`          → `completed`
- *  - closed + `not_planned`        → `DELETED_SENTINEL` (remove local mirror)
- *  - closed + anything else (null) → `completed` (treat a bare close as done)
+ *  - closed + `not_planned`        → `DELETED_SENTINEL` (remove local mirror). UNCHANGED —
+ *                                    this is the soft-delete signal and nothing else.
+ *  - closed + `completed` / null   → a `dc:*` label resolving to a CANCELLED-kind status
+ *                                    wins, else the done status (`completed`). A machine
+ *                                    that does not know the label records `completed`.
  *  - open                          → status from the `dc:*` label (default todo)
  */
-export function statusFromGitHub(issue: Pick<GitHubIssue, 'state' | 'state_reason' | 'labels'>): string {
+export function statusFromGitHub(
+  issue: Pick<GitHubIssue, 'state' | 'state_reason' | 'labels'>,
+  statuses: readonly StatusDef[] = DEFAULT_STATUSES,
+): string {
   if (issue.state === 'closed') {
     if (issue.state_reason === STATE_REASON_NOT_PLANNED) return DELETED_SENTINEL;
-    return 'completed';
+    for (const name of labelNamesOf(issue.labels)) {
+      const key = keyFromDcLabel(name);
+      if (key && isCancelled(statuses, key)) return findStatus(statuses, key)!.key;
+    }
+    return doneStatus(statuses).key;
   }
-  return statusFromLabels(labelNamesOf(issue.labels));
+  return statusFromLabels(labelNamesOf(issue.labels), statuses);
 }
 
 // ─── Labels (priority / urgency / tags / version + dc:* sub-status) ───────────

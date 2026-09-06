@@ -1,7 +1,8 @@
 import type { Task } from '../../hooks/useTasks';
+import { DEFAULT_STATUS_MODEL, type StatusModel } from '../../lib/statusModel';
 
-/** Status → CSS color var, shared across the time-axis task views. */
-export const STATUS_COLOR_VAR: Record<Task['status'], string> = {
+/** SHIPPED status → CSS color var. Live views use `StatusModel.colorOf` (declared statuses included). */
+export const STATUS_COLOR_VAR: Record<string, string> = {
   todo: '--color-status-todo',
   in_progress: '--color-status-in-progress',
   in_review: '--color-status-in-review',
@@ -76,7 +77,7 @@ export function isoWeekday(d: Date): number {
  *
  * Returns null for unscheduled tasks (no due date) — callers tray them off.
  */
-export function taskSpan(task: Task): { start: string; end: string; overdue: boolean } | null {
+export function taskSpan(task: Task, sm: StatusModel = DEFAULT_STATUS_MODEL): { start: string; end: string; overdue: boolean } | null {
   const due = dateOf(task.due_date);
   if (!due) return null;
   // Defensive: pick up a future `start_date` field if the model gains one.
@@ -85,6 +86,7 @@ export function taskSpan(task: Task): { start: string; end: string; overdue: boo
   const candidate = explicitStart ?? created ?? due;
   // Start can never be after the due date — clamp to a single-day marker.
   const start = candidate <= due ? candidate : due;
-  const overdue = task.status !== 'completed' && due < todayISO();
+  // Terminal by KIND — a cancelled-kind task is never overdue.
+  const overdue = !sm.isTerminal(task.status) && due < todayISO();
   return { start, end: due, overdue };
 }

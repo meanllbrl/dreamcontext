@@ -18,7 +18,8 @@ import {
   hasPeopleLayout, isMultiPersonVault, listPeople, personFilePath, PeopleStoreError,
 } from '../../lib/people-store.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
-import { loadTaskOverride, renderOverrideBriefing } from '../../lib/overrides.js';
+import { loadStatuses, loadTaskOverride, renderOverrideBriefing, hasCustomStatuses } from '../../lib/overrides.js';
+import { DEFAULT_STATUSES, isActive, isTerminal, statusKeys, statusKind, type StatusDef } from '../../lib/task-status.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
 import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge, compareVersions } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
@@ -199,6 +200,11 @@ const TASKS_FOOTER =
   '(search: `dreamcontext memory recall "<q>" --types task` · filter/browse: `dreamcontext tasks list '
   + '[-s todo|in_progress|in_review|completed | -a] [--version <sprint>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] '
   + '[--objective <slug>] [--feature <slug>]`)';
+/** The tasks footer, teaching the project's ACTUAL status keys when it declares extra ones. */
+function tasksFooter(statuses: readonly StatusDef[]): string {
+  if (!hasCustomStatuses(statuses)) return TASKS_FOOTER;
+  return TASKS_FOOTER.replace('-s todo|in_progress|in_review|completed', `-s ${statusKeys(statuses).join('|')}`);
+}
 const BOOKMARKS_FOOTER =
   '(all bookmarks: `dreamcontext bookmark list`)';
 const FEATURES_FOOTER =
@@ -395,9 +401,15 @@ interface ActiveTaskEntry {
  * along as a ` [status]` marker on the slug — the exceptions are the signal.
  */
 const QUIET_TASK_STATUSES = new Set(['in_progress', 'todo', 'planned']);
+/** Quiet by literal (the historical set) OR by kind: any open-/active-kind status is routine. */
+function isQuietStatus(status: string, statuses: readonly StatusDef[]): boolean {
+  if (QUIET_TASK_STATUSES.has(status)) return true;
+  const kind = statusKind(statuses, status);
+  return kind === 'open' || kind === 'active';
+}
 
-export function sortTaskEntriesByActivity(entries: ActiveTaskEntry[]): ActiveTaskEntry[] {
-  const statusRank = (s: string): number => (s === 'in_progress' ? 0 : s === 'blocked' ? 1 : 2);
+export function sortTaskEntriesByActivity(entries: ActiveTaskEntry[], statuses: readonly StatusDef[] = DEFAULT_STATUSES): ActiveTaskEntry[] {
+  const statusRank = (s: string): number => (isActive(statuses, s) ? 0 : s === 'blocked' ? 1 : 2);
   const prioRank = (p: string): number =>
     p === 'critical' ? 0 : p === 'high' ? 1 : p === 'medium' ? 2 : 3;
   return [...entries].sort((a, b) =>
@@ -415,12 +427,14 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
   // Declared custom fields (from overrides/task.md) — used to surface each task's
   // custom-field VALUES inline so the agent sees them without opening the file.
   const declaredFields = loadTaskOverride(root)?.customFields ?? [];
+  const statuses = loadStatuses(root);
 
   for (const file of taskFiles) {
     try {
       const { data } = readFrontmatter(file);
       const status = String(data.status ?? 'unknown');
-      if (status === 'completed') continue;
+      // Terminal by KIND: a cancelled-kind task is as closed as a completed one.
+      if (isTerminal(statuses, status)) continue;
       const slug = basename(file, '.md');
       // Display the HUMAN name from frontmatter, never the slug: legacy slugs
       // dropped Turkish letters wholesale ("retmen-fte-yeniden-tasar-m…"), and
@@ -529,16 +543,17 @@ function resolveActiveTaskPath(root: string): string | null {
     } catch { /* fall through to heuristic */ }
   }
 
-  // 2. Heuristic: most recently modified in_progress task
+  // 2. Heuristic: most recently modified active-kind task
   const taskFiles = fg.sync('*.md', { cwd: stateDir, absolute: true });
   type Candidate = { path: string; mtime: number };
   const candidates: Candidate[] = [];
+  const statuses = loadStatuses(root);
 
   for (const file of taskFiles) {
     try {
       const { data } = readFrontmatter(file);
       const status = String(data.status ?? '');
-      if (status !== 'in_progress') continue;
+      if (!isActive(statuses, status)) continue;
       let mtime = 0;
       try {
         mtime = statSync(file).mtimeMs;
@@ -1471,13 +1486,14 @@ export function measureSnapshot(
   // CHAR budget, with the remainder named slug-by-slug. Item counts were the bug
   // here: 8 entries is 3KB on one vault and 900 chars on another.
   const activeTasks = getActiveTaskEntries(root);
+  const taskStatuses = loadStatuses(root);
   if (activeTasks.length > 0) {
     // Level 0: every active entry in full, file order — small vaults keep
     // their whole board, byte-identical.
     parts.push('## Active Tasks\n');
     parts.push(activeTasks.map((t) => t.text).join('\n'));
     parts.push('');
-    parts.push(TASKS_FOOTER);
+    parts.push(tasksFooter(taskStatuses));
     parts.push('');
 
     // Demoted design (Fable judge verdict, owner-approved 2026-07-30):
@@ -1491,11 +1507,11 @@ export function measureSnapshot(
     //   4. The filter-teaching footer.
     // Contract: every active task is ACCOUNTED FOR — detailed, named, or
     // counted; the three sum to the true total.
-    const sorted = sortTaskEntriesByActivity(activeTasks);
+    const sorted = sortTaskEntriesByActivity(activeTasks, taskStatuses);
     const renderTasks = (detailChars: number, detailMax: number, exceptionsChars: number): string => {
       const detailCandidates = [
         sorted[0],
-        ...sorted.slice(1).filter((e) => e.status === 'in_progress'),
+        ...sorted.slice(1).filter((e) => isActive(taskStatuses, e.status)),
       ];
       const detailed: typeof sorted = [];
       let used = 0;
@@ -1510,14 +1526,14 @@ export function measureSnapshot(
       const rest = sorted.filter((e) => !detailedSet.has(e));
 
       const attention = rest.filter((e) =>
-        !QUIET_TASK_STATUSES.has(e.status) || e.status === 'in_progress' || e.priority === 'critical');
+        !isQuietStatus(e.status, taskStatuses) || isActive(taskStatuses, e.status) || e.priority === 'critical');
       const routine = rest.filter((e) => !attention.includes(e));
 
       const out: string[] = ['## Active Tasks\n'];
       out.push(...detailed.map((e) => e.text));
       if (attention.length > 0) {
         out.push(namedRosterTail(
-          attention.map((e) => (e.status === 'in_progress' && e.priority === 'critical'
+          attention.map((e) => (isActive(taskStatuses, e.status) && e.priority === 'critical'
             ? `${e.name} [critical]`
             : `${e.name} [${e.status}]`)), exceptionsChars,
           'task(s) needing attention', '`dreamcontext tasks list`',
@@ -1531,7 +1547,7 @@ export function measureSnapshot(
           ? `- (+${routine.length} more active task(s), all ${[...byStatus.keys()][0]} — see commands below)`
           : `- (+${routine.length} more active task(s), not listed: ${breakdown} — see commands below)`);
       }
-      out.push('', TASKS_FOOTER, '');
+      out.push('', tasksFooter(taskStatuses), '');
       return out.join('\n');
     };
     flushDemotable('tasks', [
@@ -1668,10 +1684,11 @@ export function measureSnapshot(
     const stateDir = join(root, 'state');
     if (existsSync(stateDir)) {
       const taskFiles = fg.sync('*.md', { cwd: stateDir, absolute: true });
+      const statuses = loadStatuses(root);
       for (const file of taskFiles) {
         try {
           const { data } = readFrontmatter(file);
-          if (String(data.status ?? '') === 'completed') continue;
+          if (isTerminal(statuses, String(data.status ?? ''))) continue;
           taskNames.push(basename(file, '.md').toLowerCase());
           if (Array.isArray(data.tags)) {
             taskTags.push(...data.tags.map((t: string) => String(t).toLowerCase()));

@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { Task } from '../../hooks/useTasks';
+import { useStatusModel } from '../../hooks/useTasks';
 import {
   type CardProps,
   assigneeHue, assigneeInitials, dueInfo, fmtUpdated, levelLabel, prioColor, tagHue, taskAssignees,
@@ -72,7 +73,8 @@ function AvatarStack({ slugs, ring, nameOf }: { slugs: string[]; ring: string; n
 }
 
 export function BoardCard({ task, cardProps: cp, dragging, variant = 'board', assigneeName, onClick, onContextMenu, onDragStart, onDragEnd }: BoardCardProps) {
-  const di = dueInfo(task);
+  const sm = useStatusModel();
+  const di = dueInfo(task, sm);
   const rice = taskRice(task);
   const ver = task.version;
   const assignees = taskAssignees(task);

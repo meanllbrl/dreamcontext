@@ -1,4 +1,5 @@
 import { normalizeRice, type RiceFields } from './rice.js';
+import { DEFAULT_STATUSES, isTerminal, sortByOrder, type StatusDef } from './task-status.js';
 
 /**
  * A normalized, display-ready view of a task's frontmatter. Pure data — no I/O.
@@ -38,8 +39,14 @@ export const GROUP_BY_FIELDS: readonly GroupBy[] = ['tag', 'version', 'priority'
 export interface TaskFilter {
   /** Exact status match. Takes precedence over `all`. */
   status?: string;
-  /** Include completed tasks (default: completed are hidden). */
+  /** Include terminal (done / cancelled-kind) tasks (default: hidden). */
   all?: boolean;
+  /**
+   * The project's status set (`loadStatuses(contextRoot)`). Drives which
+   * statuses count as terminal for the default visibility rule and the
+   * `-g status` group order. Defaults to the shipped four.
+   */
+  statuses?: readonly StatusDef[];
   /** Task must carry ALL of these tags (AND). */
   tags?: string[];
   /** Task must carry AT LEAST ONE of these tags (OR). */
@@ -73,7 +80,6 @@ export interface TagCount {
 }
 
 const PRIORITY_ORDER = ['critical', 'high', 'medium', 'low'];
-const STATUS_ORDER = ['todo', 'in_progress', 'in_review', 'completed'];
 
 export const NONE_KEY: Record<GroupBy, string> = {
   tag: '(untagged)',
@@ -148,11 +154,13 @@ export function toTaskRecord(
  */
 export function filterTasks(tasks: TaskRecord[], filter: TaskFilter = {}): TaskRecord[] {
   return tasks.filter((t) => {
-    // Status visibility: explicit --status wins; otherwise hide completed unless --all.
+    // Status visibility: explicit --status wins; otherwise hide TERMINAL
+    // (done- or cancelled-kind) tasks unless --all. Kind, not literal: a
+    // declared cancelled status is hidden exactly like completed.
     if (filter.status) {
       if (!ieq(t.status, filter.status)) return false;
     } else if (!filter.all) {
-      if (ieq(t.status, 'completed')) return false;
+      if (isTerminal(filter.statuses ?? DEFAULT_STATUSES, t.status)) return false;
     }
 
     if (filter.tags && filter.tags.length > 0) {
@@ -185,13 +193,15 @@ export function filterTasks(tasks: TaskRecord[], filter: TaskFilter = {}): TaskR
   });
 }
 
-function groupRank(groupBy: GroupBy, key: string): number {
+function groupRank(groupBy: GroupBy, key: string, statuses: readonly StatusDef[]): number {
   if (groupBy === 'priority') {
     const i = PRIORITY_ORDER.indexOf(key.toLowerCase());
     return i === -1 ? 99 : i;
   }
   if (groupBy === 'status') {
-    const i = STATUS_ORDER.indexOf(key.toLowerCase());
+    // Pipeline order comes from the status set's `order`, so a declared status
+    // slots exactly where the project put it; unknown keys sort last.
+    const i = sortByOrder(statuses).findIndex((s) => s.key === key.toLowerCase().replace(/-/g, '_'));
     return i === -1 ? 99 : i;
   }
   // tag / version: push the "none" bucket last, alphabetical otherwise.
@@ -204,7 +214,11 @@ function groupRank(groupBy: GroupBy, key: string): number {
  * order of the field (priority/status vocab, else alphabetical), with the
  * empty bucket last.
  */
-export function groupTasks(tasks: TaskRecord[], groupBy: GroupBy): TaskGroup[] {
+export function groupTasks(
+  tasks: TaskRecord[],
+  groupBy: GroupBy,
+  statuses: readonly StatusDef[] = DEFAULT_STATUSES,
+): TaskGroup[] {
   const map = new Map<string, TaskRecord[]>();
   const push = (key: string, t: TaskRecord) => {
     const arr = map.get(key);
@@ -226,7 +240,7 @@ export function groupTasks(tasks: TaskRecord[], groupBy: GroupBy): TaskGroup[] {
   }
 
   return [...map.keys()]
-    .sort((a, b) => groupRank(groupBy, a) - groupRank(groupBy, b) || a.localeCompare(b, 'en', { sensitivity: 'base' }))
+    .sort((a, b) => groupRank(groupBy, a, statuses) - groupRank(groupBy, b, statuses) || a.localeCompare(b, 'en', { sensitivity: 'base' }))
     .map((key) => ({ key, tasks: map.get(key)! }));
 }
 

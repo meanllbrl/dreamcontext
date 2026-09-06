@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import type { Task } from '../../hooks/useTasks';
+import { useStatusModel } from '../../hooks/useTasks';
 import {
-  STATUS_COLOR_VAR, MONTH_LONG, WEEKDAY_SHORT,
+  MONTH_LONG, WEEKDAY_SHORT,
   formatISO, todayISO, dateOf, isoWeekday,
 } from './calendar-utils';
 import './TaskCalendar.css';
@@ -20,6 +21,7 @@ interface DayCell {
 const MAX_CHIPS = 3;
 
 export function TaskCalendar({ tasks, onTaskClick }: TaskCalendarProps) {
+  const sm = useStatusModel();
   const now = new Date();
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
@@ -138,12 +140,12 @@ export function TaskCalendar({ tasks, onTaskClick }: TaskCalendarProps) {
               </div>
               <div className="task-cal-cell-tasks">
                 {dayTasks.slice(0, MAX_CHIPS).map(task => {
-                  const overdue = task.status !== 'completed' && cell.date < today;
+                  const overdue = !sm.isTerminal(task.status) && cell.date < today;
                   return (
                     <button
                       key={task.slug}
                       className={`task-cal-chip ${overdue ? 'task-cal-chip--overdue' : ''}`}
-                      style={{ '--chip-color': `var(${STATUS_COLOR_VAR[task.status]})` } as React.CSSProperties}
+                      style={{ '--chip-color': sm.colorOf(task.status) } as React.CSSProperties}
                       onClick={() => onTaskClick(task)}
                       title={`${task.name} · ${task.status.replace('_', ' ')}${overdue ? ' · overdue' : ''}`}
                     >

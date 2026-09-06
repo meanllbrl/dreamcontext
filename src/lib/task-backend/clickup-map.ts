@@ -6,6 +6,15 @@
  */
 import { foldAscii } from '../fold-ascii.js';
 import { parseProjectTag, stripProjectTags } from './provenance.js';
+import {
+  DEFAULT_STATUSES,
+  findStatus,
+  isShipped,
+  keyFromDcLabel,
+  parentOf,
+  subStatusMarker,
+  type StatusDef,
+} from '../task-status.js';
 
 /** ClickUp REST v2 task shape (the subset we read/write). */
 export interface ClickUpTask {
@@ -64,13 +73,46 @@ const STATUS_FROM_CLICKUP: Record<string, string> = {
 };
 
 /**
+ * The ClickUp status-name candidates for a status of the loaded set, in
+ * preference order: its declared `clickup:` aliases, its label, its key with
+ * spaces, then (for a shipped key) the historical candidate chain.
+ */
+function candidatesFor(status: string, statuses: readonly StatusDef[]): string[] {
+  const def = findStatus(statuses, status);
+  const out: string[] = [];
+  for (const a of def?.clickup ?? []) out.push(a);
+  const shipped = STATUS_CANDIDATES[def?.key ?? status];
+  if (shipped) {
+    // A shipped key keeps its historical chain FIRST, so a project that declares
+    // nothing maps exactly as before; declared aliases still win above it.
+    out.push(...shipped);
+  } else if (def) {
+    out.push(def.label.toLowerCase(), def.key.replace(/_/g, ' '));
+  } else {
+    out.push(...STATUS_CANDIDATES.todo);
+  }
+  return [...new Set(out)];
+}
+
+/**
  * Map a dreamcontext status to a status the list ACCEPTS.
  * `available` = the list's status set (cached at sync time); when known and
  * no candidate exists on the list, returns null — the caller omits the field
- * rather than triggering a remote 400.
+ * rather than triggering a remote 400 (and warns: ClickUp cannot create a
+ * status via its API, so the user must add it in the ClickUp UI).
  */
-export function statusToClickUp(status: string, available?: string[] | null): string | null {
-  const candidates = STATUS_CANDIDATES[status] ?? STATUS_CANDIDATES.todo;
+export function statusToClickUp(
+  status: string,
+  available?: string[] | null,
+  statuses: readonly StatusDef[] = DEFAULT_STATUSES,
+): string | null {
+  // A DECLARED status tries its own names first (so a list that really does
+  // carry "Cancelled" gets the honest value), then FALLS BACK to its PARENT's
+  // chain — one of the four shipped statuses, which every list can express.
+  // That fallback is why a declared status needs nothing created in ClickUp.
+  const parent = parentOf(statuses, status);
+  const own = candidatesFor(status, statuses);
+  const candidates = isShipped(status) ? own : [...new Set([...own, ...candidatesFor(parent, statuses)])];
   if (!available || available.length === 0) return candidates[0];
   const folded = available.map(foldAscii);
   for (const c of candidates) {
@@ -80,9 +122,75 @@ export function statusToClickUp(status: string, available?: string[] | null): st
   return null;
 }
 
-export function statusFromClickUp(remote: string | undefined | null): string {
+// ─── Sub-status tag (the carrier for a declared status) ──────────────────────
+//
+// ClickUp only ever sees one of the four shipped statuses (see statusToClickUp),
+// so the CHILD identity rides beside it as a `dc:<key>` TAG — the same carrier
+// pattern `version:<v>` already uses. Nothing has to be created remotely: tags
+// are free-form. Shipped statuses emit NO tag (the list status already says it),
+// which is what keeps a project that declares nothing byte-identical.
+
+/** The `dc:<key>` tag a status rides as, or null for the four shipped ones. */
+export function subStatusTag(status: string, statuses: readonly StatusDef[] = DEFAULT_STATUSES): string | null {
+  return subStatusMarker(statuses, status);
+}
+
+/** The status key a `dc:*` tag names, or null for any other tag. */
+export function subStatusFromTags(tagNames: readonly string[]): string | null {
+  for (const name of tagNames) {
+    const key = keyFromDcLabel(name);
+    if (key) return key;
+  }
+  return null;
+}
+
+/**
+ * Resolve the local status of a pulled task: the `dc:<key>` tag WHEN it still
+ * agrees with the remote's own status, else the plain fold.
+ *
+ * The agreement check is what keeps a human's move authoritative. We wrote the
+ * tag when we pushed; if someone then dragged the task from Complete to In
+ * Progress in ClickUp, the tag is STALE and the remote status must win. Both
+ * sides are compared by PARENT, because the parent is the only thing ClickUp
+ * ever carried.
+ */
+export function resolveStatusFromClickUp(
+  remoteStatus: string | undefined | null,
+  tagNames: readonly string[],
+  statuses: readonly StatusDef[] = DEFAULT_STATUSES,
+): string {
+  const base = statusFromClickUp(remoteStatus, statuses);
+  const tagged = subStatusFromTags(tagNames);
+  if (!tagged) return base;
+  const child = findStatus(statuses, tagged);
+  if (!child || isShipped(child.key)) return base;
+  return parentOf(statuses, child.key) === parentOf(statuses, base) ? child.key : base;
+}
+
+/**
+ * Map a ClickUp status name to a dreamcontext status. ORDER IS THE FIX:
+ *  1. an EXACT (folded) match against a declared status's `clickup:` aliases,
+ *     its label or its spaced key — FIRST, before anything else;
+ *  2. the shipped exact table (`STATUS_FROM_CLICKUP`);
+ *  3. the fuzzy fold, UNCHANGED: `/cancel/` still folds to `completed`, so a
+ *     project that declares nothing sees no reclassification of its history.
+ * A declared cancelled-kind status therefore resolves ONLY through step 1 —
+ * the fuzzy chain structurally cannot return it.
+ */
+export function statusFromClickUp(
+  remote: string | undefined | null,
+  statuses: readonly StatusDef[] = DEFAULT_STATUSES,
+): string {
   if (!remote) return 'todo';
   const s = foldAscii(remote);
+  for (const def of statuses) {
+    // Declared aliases for any status; label / spaced key only for a DECLARED
+    // (non-shipped) status — a shipped key's spellings already live in the
+    // exact table + fuzzy fold below, byte-identical to before.
+    const aliases = [...(def.clickup ?? [])];
+    if (!(def.key in STATUS_CANDIDATES)) aliases.push(def.label, def.key.replace(/_/g, ' '));
+    if (aliases.some((a) => foldAscii(a) === s)) return def.key;
+  }
   if (STATUS_FROM_CLICKUP[s]) return STATUS_FROM_CLICKUP[s];
   // Custom list statuses fold by intent.
   if (/review|qa|test/.test(s)) return 'in_review';
@@ -124,10 +232,18 @@ export function priorityFromClickUp(p: ClickUpTask['priority']): string {
 
 // ─── Tags (version rides the tags as `version:<v>`) ───────────────────────
 
-export function tagsToClickUp(tags: string[], version: string | null): string[] {
+export function tagsToClickUp(
+  tags: string[],
+  version: string | null,
+  status?: string | null,
+  statuses: readonly StatusDef[] = DEFAULT_STATUSES,
+): string[] {
   const out = [...tags];
   if (version) out.push(`version:${version}`);
-  return out;
+  // The declared sub-status rides here; shipped statuses add nothing.
+  const sub = status ? subStatusTag(status, statuses) : null;
+  if (sub) out.push(sub);
+  return [...new Set(out)];
 }
 
 /**
@@ -150,17 +266,20 @@ export function canonicalizeVersion(version: string | null, known: readonly stri
 export function tagsFromClickUp(
   remote: ClickUpTask['tags'],
   knownVersions: readonly string[] = [],
-): { tags: string[]; version: string | null; project: string | null } {
+): { tags: string[]; version: string | null; project: string | null; subStatus: string | null } {
   const names = (remote ?? []).map((t) => t.name).filter(Boolean);
   const versionTag = names.find((n) => n.startsWith('version:'));
-  // `version:` and `dcproject:` are synthetic — they ride the remote tags but
-  // never live as plain local tags (version has its own field; the project
-  // stamp becomes `source_project` provenance).
-  const plainTags = stripProjectTags(names.filter((n) => !n.startsWith('version:')));
+  // `version:`, `dcproject:` and `dc:` are synthetic — they ride the remote tags
+  // but never live as plain local tags (version has its own field; the project
+  // stamp becomes `source_project` provenance; `dc:` is the sub-status carrier).
+  const plainTags = stripProjectTags(
+    names.filter((n) => !n.startsWith('version:') && keyFromDcLabel(n) === null),
+  );
   return {
     tags: plainTags,
     version: canonicalizeVersion(versionTag ? versionTag.slice('version:'.length) : null, knownVersions),
     project: parseProjectTag(names),
+    subStatus: subStatusFromTags(names),
   };
 }
 

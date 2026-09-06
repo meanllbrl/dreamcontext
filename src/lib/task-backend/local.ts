@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import fg from 'fast-glob';
-import { loadTaskOverride } from '../overrides.js';
+import { loadStatuses, loadTaskOverride } from '../overrides.js';
+import { DEFAULT_STATUSES, normalizeStatusKey, statusKeys, type StatusDef } from '../task-status.js';
 import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../frontmatter.js';
 import { insertToSection, listSections, readSection } from '../markdown.js';
 import { generateId, slugify, today } from '../id.js';
@@ -199,8 +200,17 @@ function readSectionSafe(filePath: string, sectionName: string): string {
   }
 }
 
-/** Read a task file into the full TaskData view (moved from server/routes/tasks.ts). */
-export function readTaskFile(filePath: string): TaskData {
+/**
+ * Read a task file into the full TaskData view (moved from server/routes/tasks.ts).
+ * `statuses` is the project's loaded status set. A KNOWN status reads as its
+ * key (hyphens normalised); an UNKNOWN non-empty status is PRESERVED verbatim
+ * rather than coerced to `todo` — the file may carry a status a teammate
+ * declared in an `overrides/task.md` this machine has not pulled yet, and
+ * coercing it would let the next push reopen a closed issue / strip its label
+ * (task-status.ts: unknown always fails SAFE and is named by `doctor`). Only an
+ * empty status falls back to `todo`.
+ */
+export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = DEFAULT_STATUSES): TaskData {
   const slug = basename(filePath, '.md');
   const { data, content } = readFrontmatter<Record<string, unknown>>(filePath);
 
@@ -209,10 +219,29 @@ export function readTaskFile(filePath: string): TaskData {
     sections = listSections(filePath);
   } catch { /* no sections */ }
 
-  // Normalize status: accept both hyphens and underscores (e.g. "in-progress" → "in_progress")
-  const rawStatus = ((data.status as string) ?? 'todo').replace(/-/g, '_');
-  const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
-  const status = validStatuses.includes(rawStatus) ? rawStatus : 'todo';
+  // Normalize the status to its key form — hyphens to underscores AND lowercased
+  // (`In-Progress` / `COMPLETED` are the same status as `in_progress` / `completed`).
+  // Case folding matters beyond tidiness: several surfaces still compare the done
+  // status literally (there is exactly one), and an un-lowercased `COMPLETED` would
+  // slip past them.
+  //
+  // An unrecognised key is PRESERVED, not rewritten to `todo`. This is the ONE
+  // deliberate divergence from the pre-declarable behaviour, and it is a real
+  // behaviour change even for a project that declares nothing (a stray status in
+  // an existing task file now surfaces as itself rather than reading as `todo`).
+  //
+  // It is the safer side of the trade: gating the preservation on the override
+  // file existing would coerce a teammate's declared status to `todo` on exactly
+  // the machine that has not pulled `overrides/task.md` yet — silently rewriting
+  // their data, then pushing the rewrite back. The unknown-fails-safe doctrine
+  // covers the fallout: an unknown status is never terminal, never deleted,
+  // never reopened, never buried by a merge. See the header of ../overrides.ts.
+  //
+  // `statuses` is accepted so the signature reads honestly at every call site
+  // even though the fallback no longer depends on it.
+  void statusKeys;
+  const rawStatus = normalizeStatusKey(data.status);
+  const status = rawStatus || 'todo';
 
   return {
     slug,
@@ -260,6 +289,13 @@ export class LocalTaskBackend implements TaskBackend {
   readonly name: string = 'local';
 
   constructor(protected readonly stateDir: string) {}
+
+  private _statusDefs?: StatusDef[];
+  /** The project's status set (overrides/task.md → shipped four), cached per instance. */
+  protected statusDefs(): StatusDef[] {
+    if (this._statusDefs === undefined) this._statusDefs = loadStatuses(dirname(this.stateDir));
+    return this._statusDefs;
+  }
 
   protected taskPath(slug: string): string {
     return join(this.stateDir, `${slug}.md`);
@@ -324,14 +360,14 @@ export class LocalTaskBackend implements TaskBackend {
         all.push(toTaskRecord(data, basename(file, '.md'), file));
       } catch { /* skip unreadable */ }
     }
-    return filter ? filterTasks(all, filter) : all;
+    return filter ? filterTasks(all, { statuses: this.statusDefs(), ...filter }) : all;
   }
 
   async get(slug: string): Promise<TaskData | null> {
     if (!isSafeTaskSlug(slug)) return null;
     const path = this.taskPath(slug);
     if (!existsSync(path)) return null;
-    return readTaskFile(path);
+    return readTaskFile(path, this.statusDefs());
   }
 
   async create(input: CreateTaskInput): Promise<TaskData> {
@@ -478,7 +514,7 @@ ${input.why || '(To be defined)'}
       }
     }
 
-    return readTaskFile(filePath);
+    return readTaskFile(filePath, this.statusDefs());
   }
 
   async updateFields(
@@ -501,7 +537,7 @@ ${input.why || '(To be defined)'}
       } else {
         updateFrontmatterFields(path, fields);
       }
-      return readTaskFile(path);
+      return readTaskFile(path, this.statusDefs());
     });
   }
 

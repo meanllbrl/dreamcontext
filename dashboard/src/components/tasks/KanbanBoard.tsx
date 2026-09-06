@@ -1,13 +1,13 @@
 import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers } from '../../hooks/useTasks';
+import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel } from '../../hooks/useTasks';
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
 import { useVersions, useActiveVersion } from '../../hooks/useVersions';
 import { useBoardState } from '../../hooks/useBoard';
 import { confirmAction } from '../../lib/desktop';
 import {
   type Dim, type SaveScope,
-  PRIO_ORDER, STATUS_META, STATUS_ORDER,
+  PRIO_ORDER,
   dimGet, dimGroups, dueInfo, filterTasks, levelLabel, prioColor, sortTasks, taskAssignees,
 } from './boardModel';
 import { BoardViewTabs } from './BoardViewTabs';
@@ -36,6 +36,7 @@ const distinct = (xs: string[]): string[] => Array.from(new Set(xs));
 type PendingSave = { mode: 'save' | 'create'; name?: string } | null;
 
 export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
+  const sm = useStatusModel();
   const s = useBoardState();
   const { data: tasks = [], isLoading } = useTasks();
   const { data: members = [] } = useTaskMembers();
@@ -106,8 +107,8 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   );
 
   // ── filtering / grouping ──────────────────────────────────────────────────────
-  const filtered = useMemo(() => filterTasks(tasks, s.filters, s.search, versionMeta), [tasks, s.filters, s.search, versionMeta]);
-  const groupOpts = useMemo(() => ({ versionOrder: versionsForFilter, assignees }), [versionsForFilter, assignees]);
+  const filtered = useMemo(() => filterTasks(tasks, s.filters, s.search, versionMeta, sm), [tasks, s.filters, s.search, versionMeta, sm]);
+  const groupOpts = useMemo(() => ({ versionOrder: versionsForFilter, assignees, statuses: sm }), [versionsForFilter, assignees, sm]);
 
   const columns: { data: BoardColumnData; colKey: string }[] = useMemo(() => {
     return dimGroups(s.groupBy, filtered, groupOpts).map((col) => {
@@ -129,17 +130,18 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
 
   const viewCounts = useMemo(() => {
     const m: Record<string, number> = {};
-    s.views.forEach((v) => { m[v.id] = filterTasks(tasks, v.config.filters, v.config.search, versionMeta).length; });
+    s.views.forEach((v) => { m[v.id] = filterTasks(tasks, v.config.filters, v.config.search, versionMeta, sm).length; });
     return m;
-  }, [s.views, tasks, versionMeta]);
+  }, [s.views, tasks, versionMeta, sm]);
 
   // ── at-risk alert ──────────────────────────────────────────────────────────────
   const atRisk = useMemo(() => {
-    const open = tasks.filter((t) => t.status !== 'completed');
+    // Live = not terminal by KIND (a cancelled-kind task never enters the banner).
+    const open = tasks.filter((t) => !sm.isTerminal(t.status));
     let overdue = 0, today = 0, soon = 0;
-    open.forEach((t) => { const di = dueInfo(t); if (!di) return; if (di.kind === 'overdue') overdue++; else if (di.kind === 'today') today++; else if (di.kind === 'soon' || di.kind === 'week') soon++; });
+    open.forEach((t) => { const di = dueInfo(t, sm); if (!di) return; if (di.kind === 'overdue') overdue++; else if (di.kind === 'today') today++; else if (di.kind === 'soon' || di.kind === 'week') soon++; });
     return { overdue, today, soon };
-  }, [tasks]);
+  }, [tasks, sm]);
   const showAlert = !dismissedAlert && (atRisk.overdue > 0 || atRisk.today > 0);
 
   // ── drag + drop (patch the grouped dimension) ───────────────────────────────────
@@ -173,9 +175,9 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     setCtxMenu({ x: e.clientX, y: e.clientY, task });
   }, []);
   const ctxSetStatus = useCallback((task: Task, status: string) => {
-    if (task.status !== status) { updateTask.mutate({ slug: task.slug, updates: { status } as Partial<Task> }); flash(`Moved to ${STATUS_META[status]?.label ?? status}`); }
+    if (task.status !== status) { updateTask.mutate({ slug: task.slug, updates: { status } as Partial<Task> }); flash(`Moved to ${sm.labelOf(status)}`); }
     setCtxMenu(null);
-  }, [updateTask, flash]);
+  }, [updateTask, flash, sm]);
   const ctxSetPriority = useCallback((task: Task, priority: string) => {
     if (task.priority !== priority) { updateTask.mutate({ slug: task.slug, updates: { priority } as Partial<Task> }); flash(`Priority → ${levelLabel(priority)}`); }
     setCtxMenu(null);
@@ -413,6 +415,7 @@ function TaskContextMenu({ menu, agentReady, onClose, onOpen, onDelegate, onSetS
   onSendToBacklog: (t: Task) => void;
   onDelete: (t: Task) => void;
 }) {
+  const sm = useStatusModel();
   const { task } = menu;
   // The collapsed menu is short now (≈ 220×190px, +34 for the Delegate row); submenus fly
   // out to the side.
@@ -466,17 +469,17 @@ function TaskContextMenu({ menu, agentReady, onClose, onOpen, onDelegate, onSetS
         {/* Move to status — collapsed, flyout submenu */}
         <div style={{ position: 'relative' }} onMouseEnter={() => setOpenSub('status')} onMouseLeave={() => setOpenSub(null)}>
           <div className="bd-row" onClick={() => setOpenSub(s => (s === 'status' ? null : 'status'))} style={{ ...row, ...(openSub === 'status' ? { background: 'var(--color-bg-secondary)' } : {}) }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_META[task.status]?.color ?? 'var(--color-text-tertiary)', flex: '0 0 auto' }} />
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: sm.colorOf(task.status), flex: '0 0 auto' }} />
             <span style={{ flex: 1 }}>Move to status</span>
-            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{STATUS_META[task.status]?.label ?? task.status}</span>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{sm.labelOf(task.status)}</span>
             {chevron}
           </div>
           {openSub === 'status' && (
             <div className="bd-pop" style={flyout}>
-              {STATUS_ORDER.map((st) => (
+              {sm.order.map((st) => (
                 <div key={st} className="bd-row" onClick={() => onSetStatus(task, st)} style={row}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_META[st].color, flex: '0 0 auto' }} />
-                  <span style={{ flex: 1 }}>{STATUS_META[st].label}</span>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: sm.colorOf(st), flex: '0 0 auto' }} />
+                  <span style={{ flex: 1 }}>{sm.labelOf(st)}</span>
                   {task.status === st && <span style={{ color: 'var(--color-accent)', fontSize: 12 }}>✓</span>}
                 </div>
               ))}

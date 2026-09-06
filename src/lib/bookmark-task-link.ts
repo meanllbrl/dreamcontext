@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isSafeTaskSlug } from './task-backend/local.js';
+import { DEFAULT_STATUSES, isActive, isTerminal, type StatusDef } from './task-status.js';
 
 /**
  * bookmark-task-link — the `--task` address on a bookmark: how it is defaulted,
@@ -78,15 +79,19 @@ export function shortDate(value: string): string {
 }
 
 /**
- * Rank the open tasks a missing `--task` most likely meant: `in_progress`
- * first, then most recently touched. `completed` is dropped — same visibility
- * rule as bare `tasks list`, so what the hint offers is exactly what that
- * command would have shown.
+ * Rank the open tasks a missing `--task` most likely meant: `active`-kind
+ * first, then most recently touched. TERMINAL tasks (done- or cancelled-kind)
+ * are dropped — same visibility rule as bare `tasks list`, so what the hint
+ * offers is exactly what that command would have shown.
  */
-export function rankOpenTasks<T extends OpenTaskRow>(tasks: T[], limit = OPEN_TASK_HINT_LIMIT): T[] {
-  const statusRank = (s: string): number => (s.toLowerCase() === 'in_progress' ? 0 : 1);
+export function rankOpenTasks<T extends OpenTaskRow>(
+  tasks: T[],
+  limit = OPEN_TASK_HINT_LIMIT,
+  statuses: readonly StatusDef[] = DEFAULT_STATUSES,
+): T[] {
+  const statusRank = (s: string): number => (isActive(statuses, s) ? 0 : 1);
   return tasks
-    .filter((t) => String(t.status).toLowerCase() !== 'completed')
+    .filter((t) => !isTerminal(statuses, String(t.status)))
     .sort(
       (a, b) =>
         statusRank(String(a.status)) - statusRank(String(b.status))

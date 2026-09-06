@@ -1,10 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   useTaskOverrideDoc,
   useRemoveCustomFieldDef,
+  useAddStatusDef,
+  useRemoveStatusDef,
   type CustomFieldDef,
+  type StatusDef,
 } from '../../hooks/useTasks';
 import { AddCustomFieldForm } from '../tasks/AddCustomFieldForm';
+import { AddStatusForm } from '../tasks/AddStatusForm';
+import { buildStatusModel, DEFAULT_STATUSES, SHIPPED_STATUS_KEYS, parentOf } from '../../lib/statusModel';
 import './TaskOverrideEditor.css';
 
 /**
@@ -18,8 +23,12 @@ import './TaskOverrideEditor.css';
 export function TaskOverrideEditor() {
   const { data, isLoading } = useTaskOverrideDoc();
   const removeField = useRemoveCustomFieldDef();
+  const removeStatus = useRemoveStatusDef();
+  const reorderStatus = useAddStatusDef();
   const [raw, setRaw] = useState('');
   const [editing, setEditing] = useState<CustomFieldDef | null>(null);
+  const [editingStatus, setEditingStatus] = useState<StatusDef | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   useEffect(() => {
     setRaw(data?.raw ?? '');
@@ -27,6 +36,55 @@ export function TaskOverrideEditor() {
 
   const warnings = data?.warnings ?? [];
   const fields = data?.customFields ?? [];
+  const statuses = useMemo(() => buildStatusModel(data?.statuses ?? DEFAULT_STATUSES).defs, [data?.statuses]);
+  const shippedKeys = data?.shippedStatusKeys ?? SHIPPED_STATUS_KEYS;
+  const model = useMemo(() => buildStatusModel(statuses), [statuses]);
+
+  /**
+   * Move a status one slot up/down by swapping `order` with its neighbour. Both
+   * rows are written (a shipped key only gets its order rewritten — kind stays).
+   */
+  /** Any status write in flight — every row action is gated on it (no double-fire). */
+  const busy = reorderStatus.isPending || removeStatus.isPending;
+
+  /**
+   * Move a status one slot up/down by swapping `order` with its neighbour.
+   *
+   * The swap is TWO writes (the file holds one entry per status), so the second
+   * runs in the first's `onSuccess` and MUST report its own failure: without an
+   * `onError` there, a failed second write leaves a HALF-APPLIED swap — one
+   * status moved, the other not — and the user sees a silent no-op. `busy` also
+   * gates the buttons so a second click cannot race the in-flight pair against a
+   * stale `statuses` snapshot.
+   */
+  const move = (idx: number, dir: -1 | 1) => {
+    const a = statuses[idx];
+    const b = statuses[idx + dir];
+    if (!a || !b || busy) return;
+    // Equal orders (declaration-order tie) need a real gap to swap: nudge by 1.
+    const orderA = a.order === b.order ? b.order + (dir === 1 ? 1 : -1) : b.order;
+    const orderB = a.order;
+    const payload = (d: StatusDef, order: number) => ({
+      name: d.label, key: d.key, order, color: d.color, remoteAliases: d.clickup,
+      ...(shippedKeys.includes(d.key) ? {} : { kind: d.kind, parent: parentOf(d) }),
+    });
+    const failed = (e: unknown, which: string) =>
+      setStatusError(`Reorder ${which}: ${(e as Error).message} — the order may be half-applied; reload Settings.`);
+    setStatusError(null);
+    reorderStatus.mutate(payload(a, orderA), {
+      onSuccess: () => reorderStatus.mutate(payload(b, orderB), { onError: (e) => failed(e, 'second write failed') }),
+      onError: (e) => failed(e, 'first write failed'),
+    });
+  };
+
+  const onRemoveStatus = (key: string) => {
+    setStatusError(null);
+    if (editingStatus?.key === key) setEditingStatus(null);
+    removeStatus.mutate(key, {
+      // 409 while tasks still carry the status — the server names the count.
+      onError: (e) => setStatusError((e as Error).message),
+    });
+  };
 
   return (
     <section className="settings-section">
@@ -109,6 +167,63 @@ export function TaskOverrideEditor() {
       {editing
         ? <AddCustomFieldForm key={editing.key} initial={editing} onClose={() => setEditing(null)} />
         : <AddCustomFieldForm key="add" />}
+
+      <h3 className="tov-subtitle">Statuses</h3>
+      <p className="settings-field-hint">
+        The four shipped statuses are locked (rename, reorder or recolour them, never remove or re-kind them).
+        Add your own — <em>Planned</em>, <em>Cancelled</em>, anything — <strong>under one of the four</strong>,
+        with a <strong>kind</strong> that tells every surface how to treat it: a <code>cancelled</code>-kind task
+        leaves progress counts and is never overdue; an <code>active</code>-kind one stamps the start date.{' '}
+        <strong>Cloud sync only ever sees the parent</strong>, so nothing has to be created on GitHub or ClickUp —
+        the child rides beside it as its <code>dc:&lt;key&gt;</code> label/tag and round-trips.
+      </p>
+
+      <div className="tov-preview" aria-label="Board column preview" data-testid="status-preview">
+        {model.order.map((k) => (
+          <div key={k} className={`tov-col${model.isTerminal(k) ? ' tov-col--terminal' : ''}`}>
+            <span className="tov-status-swatch" style={{ background: model.colorOf(k) }} />
+            <span className="tov-col-label">{model.labelOf(k)}</span>
+            <span className="tov-col-kind">{model.kindOf(k)}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="tov-fields" data-testid="status-list">
+        {statuses.map((st, idx) => {
+          const locked = shippedKeys.includes(st.key);
+          return (
+            <div className="tov-field" key={st.key}>
+              <span className="tov-status-swatch" style={{ background: model.colorOf(st.key) }} />
+              <span className="tov-field-name">{st.label}</span>
+              <span className={`tov-field-req${locked ? ' tov-field-req--on' : ''}`}>{locked ? 'shipped · locked' : `under ${model.labelOf(parentOf(st))}`}</span>
+              <span className="tov-field-meta">
+                key <code>{st.key}</code> · kind {st.kind} · order {st.order}
+                {st.color ? ` · #${st.color}` : ''}
+                {st.clickup?.length ? ` · clickup: ${st.clickup.join(', ')}` : ''}
+              </span>
+              <div className="tov-field-actions">
+                <button type="button" className="tov-edit" title="Move up" aria-label={`Move ${st.label} up`} disabled={busy || idx === 0} onClick={() => move(idx, -1)}>↑</button>
+                <button type="button" className="tov-edit" title="Move down" aria-label={`Move ${st.label} down`} disabled={busy || idx === statuses.length - 1} onClick={() => move(idx, 1)}>↓</button>
+                <button type="button" className="tov-edit" title="Edit status" aria-label={`Edit status ${st.label}`} disabled={busy} onClick={() => setEditingStatus(st)}>✎</button>
+                <button
+                  type="button"
+                  className="tov-remove"
+                  title={locked ? 'Shipped statuses cannot be removed' : 'Remove status'}
+                  aria-label={`Remove status ${st.label}`}
+                  disabled={busy || locked}
+                  onClick={() => onRemoveStatus(st.key)}
+                >×</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {statusError && <div className="acf-error" role="alert">⚠ {statusError}</div>}
+
+      {editingStatus
+        ? <AddStatusForm key={editingStatus.key} initial={editingStatus} onClose={() => setEditingStatus(null)} />
+        : <AddStatusForm key="add-status" />}
 
       {warnings.length > 0 && (
         <ul className="tov-warnings">

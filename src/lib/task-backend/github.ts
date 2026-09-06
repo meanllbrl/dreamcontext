@@ -23,11 +23,13 @@ import {
   splitChangelogEntries,
   statusFromGitHub,
   statusToGitHub,
+  unknownDcLabels,
   DELETED_SENTINEL,
   type GitHubComment,
   type GitHubIssue,
 } from './github-map.js';
-import { RECOMMENDED_LABELS } from './github-fields.js';
+import { recommendedLabels } from './github-fields.js';
+import { isTerminal, statusSetFingerprint } from '../task-status.js';
 import {
   ASSETS_BRANCH,
   assetRemotePath,
@@ -480,7 +482,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       })),
     );
 
-    for (const def of [...RECOMMENDED_LABELS, ...fieldLabels]) {
+    // Every status of the loaded set (shipped + declared) gets its `dc:<key>`
+    // label in its declared colour — the auto-create half of declarable statuses.
+    for (const def of [...recommendedLabels(this.statusDefs()), ...fieldLabels]) {
       if (present.has(def.name.toLowerCase())) {
         existing.push(def.name);
         continue;
@@ -597,9 +601,21 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         // proper colors (GitHub would otherwise auto-create them gray). Throttled
         // to once per hour (a labels GET per sync would be wasteful), best-effort:
         // a failure here must never break the sync.
+        //
+        // The throttle is BYPASSED when the project's status set changed since
+        // the last provision (a status declared in overrides/task.md between two
+        // windows): its `dc:<key>` label must exist, in its declared colour,
+        // before the PATCH that applies it — the pull/push below runs after.
         const lastProvision = this.ledger.readThrottle('lastLabelProvisionAt');
-        if (lastProvision === null || this.nowMs() - lastProvision >= GitHubTaskBackend.META_REFRESH_MS) {
+        const statusFp = statusSetFingerprint(this.statusDefs());
+        const provisionedFor = this.ledger.readThrottle('labelProvisionStatusSet');
+        if (
+          lastProvision === null
+          || this.nowMs() - lastProvision >= GitHubTaskBackend.META_REFRESH_MS
+          || provisionedFor !== statusFp
+        ) {
           this.ledger.writeThrottle('lastLabelProvisionAt', this.nowMs());
+          this.ledger.writeThrottle('labelProvisionStatusSet', statusFp);
           await this.createMissingLabels(this.getAdapter(), owner, repo, false);
         }
       } catch (err) {
@@ -825,9 +841,10 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       report.created++;
 
       // If the local status closes the issue, PATCH it now (a fresh issue is
-      // open). statusToGitHub maps completed→closed/completed; open states are a
-      // no-op (already open + labels applied).
-      const patch = statusToGitHub(task.status);
+      // open). statusToGitHub maps done/cancelled-kind→closed/completed; open
+      // states are a no-op (already open + labels applied); an unknown status
+      // key carries no state at all.
+      const patch = statusToGitHub(task.status, { statuses: this.statusDefs() });
       if (patch.state === 'closed') {
         const closed = await adapter.request<GitHubIssue>(
           'PATCH',
@@ -839,14 +856,17 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     } else {
       // UPDATE: ONE PATCH carries title + body + the full label set + assignees
       // + the state/state_reason for the status. We detect a reopen (the base
-      // snapshot was completed, the local task is now active) so GitHub records
-      // `state_reason: reopened` rather than a bare open.
+      // snapshot was TERMINAL — done or cancelled, both closed on GitHub — and the
+      // local task is now live) so GitHub records `state_reason: reopened` rather
+      // than a bare open. For an UNKNOWN status key the patch carries no state,
+      // so the issue's open/closed state is left untouched.
+      const defs = this.statusDefs();
       const baseFm = entry?.base_snapshot
         ? (matter(entry.base_snapshot.body).data as Record<string, unknown>)
         : null;
-      const wasClosed = (baseFm?.status as string | undefined) === 'completed';
-      const reopening = wasClosed && task.status !== 'completed';
-      const patch = statusToGitHub(task.status, { reopen: reopening });
+      const wasClosed = isTerminal(defs, baseFm?.status as string | undefined);
+      const reopening = wasClosed && !isTerminal(defs, task.status);
+      const patch = statusToGitHub(task.status, { reopen: reopening, statuses: defs });
 
       const updated = await adapter.request<GitHubIssue>(
         'PATCH',
@@ -857,7 +877,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
             body,
             labels,
             assignees,
-            state: patch.state,
+            ...(patch.state ? { state: patch.state } : {}),
             ...(patch.state_reason ? { state_reason: patch.state_reason } : {}),
           },
         },
@@ -1277,13 +1297,26 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     const remoteTime = githubTimeMs(issue.updated_at);
 
     // closed + not_planned → soft-delete: remove the local mirror (symmetry
-    // with our own delete()). Detect via the map's DELETED_SENTINEL.
-    const remoteStatusRaw = statusFromGitHub(issue);
+    // with our own delete()). Detect via the map's DELETED_SENTINEL. This branch
+    // is the ONLY reader of not_planned and is untouched by declared statuses.
+    const remoteStatusRaw = statusFromGitHub(issue, this.statusDefs());
     if (remoteStatusRaw === DELETED_SENTINEL) {
       await this.applyRemoteSoftDelete(remoteId, remoteTime, report);
       return;
     }
     let remoteStatus = remoteStatusRaw;
+    // SCHEMA DRIFT, non-destructive: a `dc:*` label naming a status this machine's
+    // set does not declare (another machine pulled a newer overrides/task.md).
+    // The status is recorded as the best-known fallback (completed for a closed
+    // issue, todo for an open one), nothing is deleted, and it self-corrects on
+    // the first sync after this machine pulls the override. Say so.
+    const driftLabels = unknownDcLabels(issue.labels, this.statusDefs());
+    if (driftLabels.length > 0) {
+      report.warnings.push(
+        `pull #${remoteId}: label ${driftLabels.join(', ')} names a status this project's status set does not declare — ` +
+        `recorded as '${remoteStatus}' instead (nothing deleted). Pull the latest overrides/task.md to sync it exactly.`,
+      );
+    }
 
     // ECHO GATE (#185) — skip a remote state we ourselves just wrote. Per-task,
     // because the push no longer advances the global pull watermark: doing so
@@ -1505,7 +1538,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       const localSub = localPushLabels.find((l) => l.toLowerCase().startsWith('dc:'));
       const remoteSub = remoteLabelSet.find((l) => l.toLowerCase().startsWith('dc:'));
       if ((localSub ?? null) === (remoteSub ?? null)) {
-        remoteStatus = local.status === 'completed' ? remoteStatus : local.status;
+        remoteStatus = isTerminal(this.statusDefs(), local.status) ? remoteStatus : local.status;
       }
     }
 

@@ -6,6 +6,7 @@ import { fmtShort } from './roadmap-forecast';
 import { useUpdateObjective, useAddDependency, useRemoveDependency, useDeleteObjective, type ObjectiveMetric, type UpdateObjectivePatch } from '../../hooks/useObjectives';
 import { useLabInsights, useUpdateBinding } from '../../hooks/useLab';
 import { confirmAction } from '../../lib/desktop';
+import { useStatusModel } from '../../hooks/useTasks';
 import { DateRangePicker } from './DateRangePicker';
 import { DependencyPicker } from './DependencyPicker';
 import { InsightPicker } from './InsightPicker';
@@ -45,6 +46,7 @@ export function ObjectiveDetailPanel({
   onOpenThesis = () => {},
   onOpenHypothesisBoard = () => {},
 }: Props) {
+  const sm = useStatusModel();
   const update = useUpdateObjective();
   const addDep = useAddDependency();
   const removeDep = useRemoveDependency();
@@ -399,7 +401,7 @@ export function ObjectiveDetailPanel({
           ) : (
             <div className="odp-tasklist">
               {item.tasks.map((t) => {
-                const tm = RM_TASK[t.status] ?? { label: t.status, color: 'var(--color-text-tertiary)' };
+                const tm = RM_TASK[t.status] ?? { label: sm.labelOf(t.status).toLowerCase(), color: sm.colorOf(t.status) };
                 return (
                   <div key={t.slug} className="odp-task">
                     <span className="odp-task-dot" style={{ background: tm.color }} />

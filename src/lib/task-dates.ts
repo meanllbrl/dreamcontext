@@ -22,6 +22,7 @@
  *     what was planned. A task finished without ever having a start went from
  *     not-started straight to done, so it gets today at BOTH ends.
  */
+import { DEFAULT_STATUSES, isActive, isDone, type StatusDef } from './task-status.js';
 
 /** True for a real calendar date in YYYY-MM-DD form (rejects e.g. 2026-13-40). */
 export function isCalendarDate(value: unknown): value is string {
@@ -90,8 +91,12 @@ export interface TaskDateUpdates {
  * never overwritten, and no other transition stamps anything — so this only ever
  * captures a previously-unrecorded start.
  */
-export function shouldStampStartDate(newStatus: string, currentStart: string | null | undefined): boolean {
-  return newStatus === 'in_progress' && !currentStart;
+export function shouldStampStartDate(
+  newStatus: string,
+  currentStart: string | null | undefined,
+  statuses: readonly StatusDef[] = DEFAULT_STATUSES,
+): boolean {
+  return isActive(statuses, newStatus) && !currentStart;
 }
 
 /**
@@ -107,16 +112,20 @@ export function dateUpdatesForStatus(
   newStatus: string,
   current: TaskDateWindow | null | undefined,
   now: string,
+  statuses: readonly StatusDef[] = DEFAULT_STATUSES,
 ): TaskDateUpdates {
   const start = current?.start_date ?? null;
   const due = current?.due_date ?? null;
 
-  if (shouldStampStartDate(newStatus, start)) {
+  // Kind-driven: any `active`-kind status stamps the real start, the `done`
+  // status stamps the real end. A cancelled-kind status stamps NOTHING — an
+  // abandoned task has no real end date.
+  if (shouldStampStartDate(newStatus, start, statuses)) {
     const shifted = dueDateAfterStartMove(start, due, now);
     return { start_date: now, ...(shifted ? { due_date: shifted } : {}) };
   }
 
-  if (newStatus === 'completed') {
+  if (isDone(statuses, newStatus)) {
     // No start on a finished task means it went straight from not-started to
     // done, so `now` is both ends of the (same-day) window. Otherwise only the
     // end is stamped — and a still-future planned start clamps it rather than

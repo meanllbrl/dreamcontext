@@ -16,7 +16,8 @@ import {
   priorityFromClickUp,
   priorityToClickUp,
   splitChangelogEntries,
-  statusFromClickUp,
+  resolveStatusFromClickUp,
+  subStatusTag,
   statusToClickUp,
   tagsFromClickUp,
   tagsToClickUp,
@@ -40,6 +41,7 @@ import {
   type FieldBinding,
 } from './clickup-fields.js';
 import { customFieldsFor, loadTaskOverride, type CustomFieldDef } from '../overrides.js';
+import { keyFromDcLabel, parentOf, SHIPPED_STATUS_KEYS } from '../task-status.js';
 import { getActivePlanningVersion } from '../active-version.js';
 import { getExistingReleases } from '../release-discovery.js';
 import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
@@ -829,17 +831,26 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // Map the status against the list's actual status set; an unmappable
     // status is OMITTED (the remote keeps its value) instead of 400-ing.
     const listStatuses = this.ledger.readListStatuses();
-    const mappedStatus = statusToClickUp(task.status, listStatuses);
+    const statusDefs = this.statusDefs();
+    const mappedStatus = statusToClickUp(task.status, listStatuses, statusDefs);
     // Omitting the status is safe on an UPDATE but NOT honest on a CREATE: with
     // no status in the payload ClickUp stamps the list's first open status, so
     // an in_progress task silently materialises as e.g. 'backlog' and looks like
     // data loss (#184/#178). The push can't do better — the list genuinely has no
     // matching status — but it must not stay quiet about it.
     if (mappedStatus === null && listStatuses.length > 0) {
+      // A DECLARED status falls back to its PARENT's spellings, so reaching here
+      // means the list carries none of the FOUR shipped statuses' names either —
+      // a genuinely unusual list, not a missing declared status.
+      const def = statusDefs.find((d) => d.key === task.status);
+      const under = def && !SHIPPED_STATUS_KEYS.includes(def.key)
+        ? ` (declared in overrides/task.md as "${def.label}", under \`${parentOf(statusDefs, def.key)}\`)`
+        : '';
       report.warnings.push(
-        `push ${slug}: status '${task.status}' matches none of the list's statuses ` +
-        `(${listStatuses.join(', ')}) — ClickUp will stamp its first open status instead. ` +
-        `Add a matching status to the list in the ClickUp UI, then re-run ` +
+        `push ${slug}: status '${task.status}'${under} matches none of the list's statuses ` +
+        `(${listStatuses.join(', ')}) — not even its parent's — so ClickUp will stamp its first open status instead. ` +
+        `ClickUp's API cannot create statuses: give the list a status matching one of ` +
+        `${SHIPPED_STATUS_KEYS.join('/')} in the ClickUp UI (or declare a \`clickup:\` alias), then re-run ` +
         `\`dreamcontext tasks sync --refresh-meta\`.`,
       );
     }
@@ -909,7 +920,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         ...fields,
         // person: tags stay local — the remote has real assignees.
         // dcproject: stamps the row so a shared-list pull can tell it apart (#177).
-        tags: this.withProjectStamp(tagsToClickUp(stripPersonTags(task.tags), task.version)),
+        tags: this.withProjectStamp(tagsToClickUp(stripPersonTags(task.tags), task.version, task.status, this.statusDefs())),
         assignees: assigneeIds,
       };
       let created: ClickUpTask;
@@ -989,6 +1000,23 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       }
       if (desiredVersionTag && !liveTagNames.includes(desiredVersionTag) && !toAdd.includes(desiredVersionTag)) {
         toAdd.push(desiredVersionTag);
+      }
+
+      // dc:<key> is the SUB-STATUS carrier and is single-valued exactly like
+      // version:. ClickUp only ever receives the status's PARENT, so this tag is
+      // the only thing that tells a declared child (`cancelled`) apart from the
+      // shipped parent (`completed`) on the way back. Reconcile against the LIVE
+      // remote tags so a status change never leaves a stale `dc:*` behind — a
+      // stale one would be ignored on pull (it no longer agrees with the list
+      // status) but would still read as a lie on the ClickUp board.
+      const desiredSubTag = subStatusTag(task.status, this.statusDefs());
+      for (const live of liveTagNames) {
+        if (keyFromDcLabel(live) !== null && live !== desiredSubTag && !toRemove.includes(live)) {
+          toRemove.push(live);
+        }
+      }
+      if (desiredSubTag && !liveTagNames.includes(desiredSubTag) && !toAdd.includes(desiredSubTag)) {
+        toAdd.push(desiredSubTag);
       }
 
       // dcproject: is a static stamp — self-heal it onto rows this project owns
@@ -1382,7 +1410,14 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       .filter(Boolean);
 
     const { tags: remoteTags, version: remoteVersion } = tagsFromClickUp(remote.tags, this.knownVersions());
-    let remoteStatus = statusFromClickUp(remote.status?.status);
+    // The `dc:<key>` tag carries a DECLARED sub-status the list status itself
+    // cannot express; it only wins while it still agrees with that list status,
+    // so a human's move in ClickUp always beats a stale tag.
+    let remoteStatus = resolveStatusFromClickUp(
+      remote.status?.status,
+      (remote.tags ?? []).map((t) => t.name).filter(Boolean),
+      this.statusDefs(),
+    );
     const remotePriority = priorityFromClickUp(remote.priority);
     const remoteDesc = (remote.description ?? '').replace(/\r\n/g, '\n').trim();
     const remoteDue = dueDateFromClickUp(remote.due_date);
@@ -1550,7 +1585,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // without a review status as "in progress"), the remote did not really
     // move — don't let the folded value overwrite the richer local one.
     const remoteRawStatus = remote.status?.status ? foldAscii(remote.status.status) : null;
-    const wouldPush = statusToClickUp(local.status, this.ledger.readListStatuses());
+    const wouldPush = statusToClickUp(local.status, this.ledger.readListStatuses(), this.statusDefs());
     if (remoteRawStatus !== null && wouldPush !== null && foldAscii(wouldPush) === remoteRawStatus) {
       remoteStatus = local.status;
     }

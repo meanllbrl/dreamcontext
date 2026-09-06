@@ -159,6 +159,119 @@ describe('CLI commands (integration)', () => {
     });
   });
 
+  describe('tasks — project-declared statuses (overrides/task.md `statuses:`)', () => {
+    const OVERRIDE = [
+      '---',
+      'statuses:',
+      '  - { name: Planned, key: planned, kind: open, order: 5, color: c5def5 }',
+      '  - { name: Cancelled, key: cancelled, kind: cancelled, order: 99, color: cfd3d7, clickup: [cancelled, canceled] }',
+      '---',
+      '',
+    ].join('\n');
+
+    function declare(): void {
+      mkdirSync(join(tmpDir, '_dream_context', 'overrides'), { recursive: true });
+      writeFileSync(join(tmpDir, '_dream_context', 'overrides', 'task.md'), OVERRIDE, 'utf-8');
+    }
+
+    beforeEach(() => {
+      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+    });
+
+    it('`tasks statuses` lists the shipped four when nothing is declared, and the declared set otherwise (with remote mapping)', () => {
+      const shipped = run('tasks statuses --json', tmpDir);
+      expect(JSON.parse(shipped).map((r: { key: string }) => r.key)).toEqual(['todo', 'in_progress', 'in_review', 'completed']);
+      declare();
+      const rows = JSON.parse(run('tasks statuses --json', tmpDir));
+      expect(rows.map((r: { key: string }) => r.key)).toEqual(['todo', 'planned', 'in_progress', 'in_review', 'completed', 'cancelled']);
+      const cancelled = rows.find((r: { key: string }) => r.key === 'cancelled');
+      expect(cancelled).toMatchObject({ kind: 'cancelled', shipped: false, color: 'cfd3d7', github: 'closed+completed dc:cancelled' });
+      const human = run('tasks statuses', tmpDir);
+      expect(human).toContain('cancelled');
+      expect(human).toContain('declared');
+    });
+
+    it('`tasks status <t> cancelled` works, `tasks list` hides it, `-s cancelled` finds it, `--all` shows it', () => {
+      declare();
+      run('tasks create drop-me -d "Drop" -p low -w "test why"', tmpDir);
+      run('tasks create keep-me -d "Keep" -p low -w "test why"', tmpDir);
+      const out = run('tasks status drop-me cancelled "superseded by keep-me"', tmpDir);
+      expect(out).toContain('drop-me → cancelled');
+      const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'drop-me.md'), 'utf-8');
+      expect(content).toMatch(/status:\s*"?cancelled"?/);
+      expect(content).toContain('Cancelled');
+      expect(content).toContain('superseded by keep-me');
+      // A cancelled task stamps no dates.
+      expect(content).not.toMatch(/due_date:\s*"?\d{4}/);
+
+      expect(run('tasks list', tmpDir)).not.toContain('drop-me');
+      expect(run('tasks list', tmpDir)).toContain('keep-me');
+      expect(run('tasks list -s cancelled', tmpDir)).toContain('drop-me');
+      expect(run('tasks list --all', tmpDir)).toContain('drop-me');
+      // The declared status is accepted at creation too; an undeclared one is not.
+      run('tasks create later -d "Later" -s planned -w "test why"', tmpDir);
+      expect(readFileSync(join(tmpDir, '_dream_context', 'state', 'later.md'), 'utf-8')).toMatch(/status:\s*"?planned"?/);
+      expect(run('tasks create nope -s on_hold -w "test why"', tmpDir)).toContain('Status must be one of: todo, planned, in_progress, in_review, completed, cancelled');
+    });
+
+    it('without the override, `cancelled` is rejected exactly as before (zero-behaviour-change gate)', () => {
+      run('tasks create plain -d "Plain" -w "test why"', tmpDir);
+      const out = run('tasks status plain cancelled', tmpDir);
+      expect(out).toContain('Status must be one of: todo, in_progress, in_review, completed');
+    });
+
+    it('a cancelled task leaves the snapshot\'s Active Tasks and the bookmark open-task hint', () => {
+      declare();
+      run('tasks create gone-task -d "Gone" -p high -w "test why"', tmpDir);
+      run('tasks create live-task -d "Live" -p high -s in_progress -w "test why"', tmpDir);
+      run('tasks status gone-task cancelled', tmpDir);
+      const snap = run('snapshot', tmpDir);
+      expect(snap).toContain('live-task');
+      expect(snap).not.toContain('gone-task');
+      const hint = run('bookmark add "Decision: a thing"', tmpDir);
+      expect(hint).not.toContain('gone-task');
+    });
+
+    it('doctor warns on a task whose status is outside the declared set, naming the file and the fix', () => {
+      declare();
+      writeFileSync(
+        join(tmpDir, '_dream_context', 'state', 'odd.md'),
+        '---\nname: odd\nstatus: on_hold\ncreated_at: "2026-09-01"\nupdated_at: "2026-09-01"\n---\n## Why\nx\n',
+        'utf-8',
+      );
+      const out = run('doctor', tmpDir);
+      expect(out).toContain("state/odd.md: status 'on_hold' is not in this project's status set");
+      expect(out).toContain('2 declared statuses');
+    });
+
+    it('doctor reports that a declared status the list lacks rides under its parent as a dc tag', () => {
+      declare();
+      writeFileSync(
+        join(tmpDir, '_dream_context', 'state', '.config.json'),
+        JSON.stringify({ platforms: [], packs: [], multiProduct: false, setupVersion: '0.0.0', disableNativeMemory: true, taskBackend: 'clickup', cloudTaskManagement: true, clickup: { teamId: 't', spaceId: 's', listId: 'l', changelogTarget: 'comments' } }),
+        'utf-8',
+      );
+      writeFileSync(
+        join(tmpDir, '_dream_context', 'state', '.tasks-sync.json'),
+        JSON.stringify({ watermark: null, tasks: {}, listStatuses: ['to do', 'in progress', 'complete'] }),
+        'utf-8',
+      );
+      writeFileSync(
+        join(tmpDir, '_dream_context', 'state', 'later.md'),
+        '---\nname: later\nstatus: planned\ncreated_at: "2026-09-01"\nupdated_at: "2026-09-01"\n---\n## Why\nx\n',
+        'utf-8',
+      );
+      const out = run('doctor', tmpDir);
+      // The list carries none of the declared names — and that is FINE now: each
+      // rides under its parent with a dc tag, so nothing must be created remotely.
+      expect(out).toContain("'planned' (\"Planned\") has no status of its own on the ClickUp list");
+      expect(out).toContain('rides as `todo` + the `dc:planned` tag');
+      expect(out).toContain("'cancelled' (\"Cancelled\") has no status of its own");
+      expect(out).toContain('rides as `completed` + the `dc:cancelled` tag');
+      expect(out).not.toContain('ClickUp list has no status for');
+    });
+  });
+
   describe('tasks', () => {
     beforeEach(() => {
       run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);

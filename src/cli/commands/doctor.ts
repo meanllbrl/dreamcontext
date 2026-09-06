@@ -5,7 +5,11 @@ import chalk from 'chalk';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { header } from '../../lib/format.js';
 import { listUnfencedDataStructures } from '../../lib/data-structures-migration.js';
-import { hasTaskOverride, loadTaskOverride } from '../../lib/overrides.js';
+import { hasTaskOverride, loadTaskOverride, hasCustomStatuses } from '../../lib/overrides.js';
+import { DEFAULT_STATUSES, SHIPPED_STATUS_KEYS, isKnown, normalizeStatusKey, parentOf, statusKeys, type StatusDef } from '../../lib/task-status.js';
+import { foldAscii } from '../../lib/fold-ascii.js';
+import { statusToClickUp, statusFromClickUp } from '../../lib/task-backend/clickup-map.js';
+import { SyncLedger } from '../../lib/task-backend/sync-state.js';
 import { listObjectives, getObjective, isSafeObjectiveSlug, isCalendarDate, OBJECTIVE_STATUSES } from '../../lib/objectives-store.js';
 import { auditFeatureLinks, reconcileFeatureLinks, type LinkAudit } from '../../lib/feature-links.js';
 import { buildRoadmapModel } from '../../lib/roadmap-model.js';
@@ -453,11 +457,140 @@ function checkOverrides(root: string): CheckResult[] {
   }));
   if (ov.warnings.length === 0) {
     const n = ov.customFields.length;
+    const declared = ov.statuses.length - SHIPPED_STATUS_KEYS.length;
     results.push({
       name: 'Task override',
       status: 'ok',
-      message: `${rel} (${n} custom field${n === 1 ? '' : 's'})`,
+      message: `${rel} (${n} custom field${n === 1 ? '' : 's'}${declared > 0 ? `, ${declared} declared status${declared === 1 ? '' : 'es'}` : ''})`,
     });
+  }
+  results.push(...checkStatusSet(root, ov.statuses));
+  return results;
+}
+
+/**
+ * Status-set health (task_adYgpCxk):
+ *  - a task file whose `status` names no key in the set (a typo, or a status
+ *    declared on another machine whose override has not been pulled) — each
+ *    file named, with the fix;
+ *  - ClickUp: every declared status the cached list-status set cannot map
+ *    (ClickUp's API cannot create statuses, so this is the ONLY surface that
+ *    tells the user to add it in the ClickUp UI);
+ *  - PRE-FLIGHT RECLASSIFICATION: how many already-synced tasks would come back
+ *    with a DIFFERENT status on the next pull under the current override (a
+ *    status the remote cannot carry round-trips as the remote's own value).
+ */
+function checkStatusSet(root: string, statuses: readonly StatusDef[]): CheckResult[] {
+  const results: CheckResult[] = [];
+  const stateDir = join(root, 'state');
+  const unknown: Array<{ file: string; status: string }> = [];
+  const counts = new Map<string, number>();
+  if (existsSync(stateDir)) {
+    for (const f of readdirSync(stateDir)) {
+      if (!f.endsWith('.md')) continue;
+      try {
+        const { data } = readFrontmatter<Record<string, unknown>>(join(stateDir, f));
+        const raw = data.status;
+        if (raw === undefined || raw === null || String(raw).trim() === '') continue;
+        const key = normalizeStatusKey(raw);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+        if (!isKnown(statuses, key)) unknown.push({ file: `state/${f}`, status: String(raw) });
+      } catch { /* unreadable task — other checks own that */ }
+    }
+  }
+  for (const u of unknown) {
+    results.push({
+      name: 'Task status',
+      status: 'warn',
+      message:
+        `${u.file}: status '${u.status}' is not in this project's status set (${statusKeys(statuses).join(', ')}). `
+        + 'Declare it under `statuses:` in overrides/task.md (or pull the teammate\'s override), or fix the value with `dreamcontext tasks status <slug> <key>`.',
+    });
+  }
+
+  // ClickUp: declared statuses the list cannot carry.
+  let cfg: ReturnType<typeof readSetupConfig> = null;
+  try { cfg = readSetupConfig(dirname(root)); } catch { /* no config — local backend */ }
+  if (cfg?.taskBackend === 'clickup' && hasCustomStatuses(statuses)) {
+    let listStatuses: string[] = [];
+    try { listStatuses = new SyncLedger(root).readListStatuses(); } catch { /* no ledger yet */ }
+    if (listStatuses.length > 0) {
+      // A declared status falls back to its PARENT's status, so it always lands.
+      // Only a list missing even the parent's spellings is genuinely unmappable.
+      const unmapped = statuses.filter((d) => statusToClickUp(d.key, listStatuses, statuses) === null);
+      for (const d of unmapped) {
+        results.push({
+          name: 'Task status',
+          status: 'warn',
+          message:
+            `ClickUp list has no status for '${d.key}' ("${d.label}") or for its parent '${parentOf(statuses, d.key)}' — `
+            + `its ${counts.get(d.key) ?? 0} task(s) would push without a status. ClickUp's API cannot create statuses: `
+            + `add a matching status in the ClickUp UI (or a \`clickup:\` alias in overrides/task.md), then \`dreamcontext tasks sync --refresh-meta\`.`,
+        });
+      }
+      // The declared statuses that ride as a `dc:<key>` tag under a parent —
+      // informational, so the user knows what the ClickUp board will show.
+      const carried = statuses.filter(
+        (d) => !SHIPPED_STATUS_KEYS.includes(d.key)
+          && statusToClickUp(d.key, listStatuses, statuses) !== null
+          && !listStatuses.some((ls) => foldAscii(ls) === foldAscii(d.label)),
+      );
+      for (const d of carried) {
+        results.push({
+          name: 'Task status',
+          status: 'ok',
+          message:
+            `'${d.key}' ("${d.label}") has no status of its own on the ClickUp list, so it rides as `
+            + `\`${parentOf(statuses, d.key)}\` + the \`dc:${d.key.replace(/_/g, '-')}\` tag — it round-trips correctly. `
+            + `Add "${d.label}" to the list in the ClickUp UI if you want it visible as its own column.`,
+        });
+      }
+      // PRE-FLIGHT RECLASSIFICATION — two directions, both silent otherwise.
+      //
+      // (a) LOCAL side: a local status that does not round-trip through the list
+      //     (push → the list's spelling → pull → fold back) comes back different.
+      let reclassified = 0;
+      for (const [key, n] of counts) {
+        const pushed = statusToClickUp(key, listStatuses, statuses);
+        const back = pushed === null ? null : statusFromClickUp(pushed, statuses);
+        if (back !== null && back !== key) reclassified += n;
+      }
+      if (reclassified > 0) {
+        results.push({
+          name: 'Task status',
+          status: 'warn',
+          message:
+            `${reclassified} task(s) would be RECLASSIFIED on the next ClickUp pull: their status maps onto a list status that folds back to a different key. `
+            + 'Add the missing list statuses (or `clickup:` aliases) before syncing.',
+        });
+      }
+      // (b) REMOTE side, the one that bites an EXISTING list: a list status the
+      //     declaration now binds (e.g. the list already had "Cancelled", which
+      //     used to fold to `completed`) changes the status every task sitting in
+      //     it pulls down as. Desirable, usually — but never silent. The count
+      //     cannot be known offline (the ledger stores the local mirror, not each
+      //     task's remote raw status), so name the statuses and the exact change.
+      for (const listStatus of listStatuses) {
+        const before = statusFromClickUp(listStatus, DEFAULT_STATUSES);
+        const after = statusFromClickUp(listStatus, statuses);
+        if (before === after) continue;
+        results.push({
+          name: 'Task status',
+          status: 'warn',
+          message:
+            `PRE-FLIGHT: every task currently in the ClickUp status "${listStatus}" will pull down as '${after}' `
+            + `instead of '${before}' on the next sync (your \`statuses:\` declaration now binds that name). `
+            + `Intended? Then sync. If not, drop the \`clickup:\` alias or rename the list status first — `
+            + '`dreamcontext tasks statuses` shows every binding.',
+        });
+      }
+    } else {
+      results.push({
+        name: 'Task status',
+        status: 'warn',
+        message: 'ClickUp list statuses are not cached yet — run `dreamcontext tasks sync --refresh-meta` so doctor can check every declared status against the list.',
+      });
+    }
   }
   return results;
 }

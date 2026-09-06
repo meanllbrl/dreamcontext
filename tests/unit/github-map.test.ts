@@ -53,8 +53,10 @@ describe('status push mapping (dreamcontext → GitHub state/state_reason)', () 
     });
   });
 
-  it('an unknown status degrades to an open issue (treated as todo)', () => {
-    expect(statusToGitHub('on_hold')).toEqual({ state: 'open' });
+  it('an unknown status OMITS state/state_reason — it can never reopen an issue the user closed', () => {
+    // Was `{ state: 'open' }` before task_adYgpCxk: a key this machine does not
+    // declare must leave the issue's open/closed state exactly as it is.
+    expect(statusToGitHub('on_hold')).toEqual({});
   });
 
   it('delete is a SOFT delete: close as not_planned (no hard delete on REST)', () => {

@@ -1,5 +1,6 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
 import type { Task } from '../../hooks/useTasks';
+import { useStatusModel } from '../../hooks/useTasks';
 import { TaskCard } from './TaskCard';
 import './RiceScatter.css';
 
@@ -16,13 +17,6 @@ const IMPACT_MAX = 5;
 const QUADRANT_EFFORT = 2;
 const QUADRANT_IMPACT = 3;
 
-const STATUS_COLOR_VAR: Record<Task['status'], string> = {
-  todo: '--color-status-todo',
-  in_progress: '--color-status-in-progress',
-  in_review: '--color-status-in-review',
-  completed: '--color-status-completed',
-};
-
 function logEffort(e: number): number {
   return Math.log2(Math.max(e, 0.01) + 1);
 }
@@ -37,6 +31,7 @@ function isFullyRated(task: Task): boolean {
 }
 
 export function RiceScatter({ tasks, onTaskClick }: RiceScatterProps) {
+  const sm = useStatusModel();
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 800, height: 480 });
   const [unscoredOpen, setUnscoredOpen] = useState(false);
@@ -56,8 +51,8 @@ export function RiceScatter({ tasks, onTaskClick }: RiceScatterProps) {
     return () => ro.disconnect();
   }, []);
 
-  // Filter out completed by default (matches EisenhowerMatrix behavior)
-  const active = useMemo(() => tasks.filter(t => t.status !== 'completed'), [tasks]);
+  // Live tasks only — terminal by KIND (done or cancelled), matching EisenhowerMatrix.
+  const active = useMemo(() => tasks.filter(t => !sm.isTerminal(t.status)), [tasks, sm]);
   const rated = useMemo(() => active.filter(isFullyRated), [active]);
   const unscored = useMemo(() => active.filter(t => !isFullyRated(t)), [active]);
 
@@ -224,7 +219,7 @@ export function RiceScatter({ tasks, onTaskClick }: RiceScatterProps) {
           const cy = yScale(r.impact!);
           const radius = radiusFromReach(r.reach!);
           const opacity = opacityFromConfidence(r.confidence!);
-          const colorVar = STATUS_COLOR_VAR[task.status];
+          const dotColor = sm.colorOf(task.status);
           const isHover = hoverSlug === task.slug;
 
           return (
@@ -233,7 +228,7 @@ export function RiceScatter({ tasks, onTaskClick }: RiceScatterProps) {
               cx={cx}
               cy={cy}
               r={radius}
-              fill={`var(${colorVar})`}
+              fill={dotColor}
               fillOpacity={opacity}
               stroke="var(--color-bg)"
               strokeWidth={isHover ? 2.5 : 1.5}

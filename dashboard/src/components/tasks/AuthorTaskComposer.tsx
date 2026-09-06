@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useVault } from '../../context/VaultContext';
 import { authorTaskWithAgent } from '../../lib/authorTaskAgent';
 import { SparkIcon } from '../sleepy/TypeIcons';
-import { PRIO_ORDER, STATUS_ORDER, STATUS_META, levelLabel } from './boardModel';
+import { PRIO_ORDER, levelLabel } from './boardModel';
+import { useStatusModel } from '../../hooks/useTasks';
 import './TaskCreateModal.css';
 
 interface AuthorTaskComposerProps {
@@ -28,8 +29,9 @@ interface AuthorTaskComposerProps {
 export function AuthorTaskComposer({ onClose, onStarted, initialStatus }: AuthorTaskComposerProps) {
   // The board this composer was opened from names the project the new task belongs to.
   const { vault, bus } = useVault();
+  const sm = useStatusModel();
   const [idea, setIdea] = useState('');
-  const [status, setStatus] = useState(initialStatus && (STATUS_ORDER as readonly string[]).includes(initialStatus) ? initialStatus : '');
+  const [status, setStatus] = useState(initialStatus && sm.order.includes(initialStatus) ? initialStatus : '');
   const [priority, setPriority] = useState('');
   const [bypass, setBypass] = useState(true);
   const [error, setError] = useState('');
@@ -112,8 +114,8 @@ export function AuthorTaskComposer({ onClose, onStarted, initialStatus }: Author
               <span className="field-label">Column (optional)</span>
               <select className="field-select" value={status} onChange={(e) => setStatus(e.target.value)}>
                 <option value="">Let the agent decide</option>
-                {STATUS_ORDER.map((st) => (
-                  <option key={st} value={st}>{STATUS_META[st]?.label ?? st}</option>
+                {sm.order.map((st) => (
+                  <option key={st} value={st}>{sm.labelOf(st)}</option>
                 ))}
               </select>
             </label>

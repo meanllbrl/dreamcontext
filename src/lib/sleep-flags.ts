@@ -13,6 +13,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJsonArray, writeJsonArray } from './json-file.js';
+import { DEFAULT_STATUSES, isTerminal, type StatusDef } from './task-status.js';
 
 export interface SleepFlag {
   /** Stable identity for the recurring problem, e.g. `recurring-task:<slug>`. */
@@ -167,6 +168,7 @@ export function planCuratorTask(
   orphanCount: number,
   existing: { slug: string; status: string } | null,
   absorbing?: { slug: string; status: string } | null,
+  statuses: readonly StatusDef[] = DEFAULT_STATUSES,
 ): CuratorTaskPlan {
   const slug = CURATOR_TASK_SLUG;
   const name = 'Curator pass: orphan tags';
@@ -175,12 +177,14 @@ export function planCuratorTask(
   if (orphanCount < ORPHAN_TAG_CURATOR_THRESHOLD) {
     return { action: 'none', slug, name, description };
   }
-  if (existing && existing.status !== 'completed') {
+  // TERMINAL by kind: a cancelled curator task is as closed as a completed one —
+  // it is recreated, never "refreshed" back to life.
+  if (existing && !isTerminal(statuses, existing.status)) {
     return { action: 'refresh', slug, name, description };
   }
   // The chore's own file is gone or done — but if the work was ABSORBED by a
   // task that is still open, that task is where the count belongs.
-  if (absorbing && absorbing.status !== 'completed') {
+  if (absorbing && !isTerminal(statuses, absorbing.status)) {
     return { action: 'refresh-absorbing', slug: absorbing.slug, name, description };
   }
   return { action: 'create', slug, name, description };

@@ -12,15 +12,28 @@ import { resolveFeature, applyTaskFeatureLink } from '../../lib/feature-links.js
 import { PeopleStoreError, listPeople } from '../../lib/people-store.js';
 import {
   loadTaskOverride,
+  loadStatuses,
   readTaskOverrideRaw,
   writeTaskOverrideDoc,
   upsertCustomField,
   removeCustomField,
+  upsertStatus,
+  removeStatus,
   fieldKey,
   SYNC_TARGETS,
   type CustomFieldType,
   type SyncTarget,
+  type StatusDefInput,
+  type TaskOverride,
 } from '../../lib/overrides.js';
+import {
+  DEFAULT_STATUSES,
+  SHIPPED_STATUS_KEYS,
+  STATUS_KINDS,
+  normalizeStatusKey,
+  statusKeys,
+  type StatusKind,
+} from '../../lib/task-status.js';
 import {
   getTaskBackend,
   getTaskSyncStatus,
@@ -80,8 +93,25 @@ function validateCustomFields(
 }
 
 /**
- * GET /api/task-overrides — the active task override schema (custom-field defs +
- * presence), so the dashboard can render typed inputs. Empty/absent → no fields.
+ * The override payload every /api/task-overrides* route answers with: the
+ * custom-field defs, the EFFECTIVE status set (the shipped four when no
+ * override exists — the dashboard always has a set to render), the keys that
+ * are locked (shipped), and the validation warnings.
+ */
+function overridePayload(ov: TaskOverride | null): Record<string, unknown> {
+  return {
+    present: ov !== null,
+    customFields: ov?.customFields ?? [],
+    statuses: ov?.statuses ?? DEFAULT_STATUSES.map((s) => ({ ...s })),
+    shippedStatusKeys: SHIPPED_STATUS_KEYS,
+    warnings: ov?.warnings ?? [],
+  };
+}
+
+/**
+ * GET /api/task-overrides — the active task override schema (custom-field defs,
+ * the status set + presence), so the dashboard can render typed inputs and
+ * status-aware columns. Absent → no fields, the shipped four statuses.
  */
 export async function handleTaskOverrides(
   _req: IncomingMessage,
@@ -89,12 +119,7 @@ export async function handleTaskOverrides(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
-  const ov = loadTaskOverride(contextRoot);
-  sendJson(res, 200, {
-    present: ov !== null,
-    customFields: ov?.customFields ?? [],
-    warnings: ov?.warnings ?? [],
-  });
+  sendJson(res, 200, overridePayload(loadTaskOverride(contextRoot)));
 }
 
 /** GET /api/task-overrides/doc — the RAW override markdown (for the Settings editor). */
@@ -106,12 +131,7 @@ export async function handleTaskOverrideDocGet(
 ): Promise<void> {
   const raw = readTaskOverrideRaw(contextRoot);
   const ov = loadTaskOverride(contextRoot);
-  sendJson(res, 200, {
-    present: raw !== '',
-    raw,
-    customFields: ov?.customFields ?? [],
-    warnings: ov?.warnings ?? [],
-  });
+  sendJson(res, 200, { ...overridePayload(ov), present: raw !== '', raw });
 }
 
 /** PUT /api/task-overrides/doc — write the RAW override markdown verbatim. */
@@ -147,11 +167,7 @@ export async function handleTaskOverrideDocSave(
     target: 'overrides/task.md',
     summary: 'Edited the task format override',
   });
-  sendJson(res, 200, {
-    present: ov !== null,
-    customFields: ov?.customFields ?? [],
-    warnings: ov?.warnings ?? [],
-  });
+  sendJson(res, 200, overridePayload(ov));
 }
 
 const FIELD_TYPES: CustomFieldType[] = ['text', 'number', 'select', 'date'];
@@ -201,7 +217,7 @@ export async function handleTaskOverrideAddField(
     target: 'overrides/task.md',
     summary: `Defined custom field '${name}' (${type})`,
   });
-  sendJson(res, 200, { present: true, customFields: ov.customFields, warnings: ov.warnings });
+  sendJson(res, 200, overridePayload(ov));
 }
 
 /** DELETE /api/task-overrides/fields/:key — remove a custom-field definition. */
@@ -212,11 +228,93 @@ export async function handleTaskOverrideRemoveField(
   contextRoot: string,
 ): Promise<void> {
   const ov = removeCustomField(contextRoot, params.key ?? '');
-  sendJson(res, 200, {
-    present: ov !== null,
-    customFields: ov?.customFields ?? [],
-    warnings: ov?.warnings ?? [],
+  sendJson(res, 200, overridePayload(ov));
+}
+
+/**
+ * POST /api/task-overrides/statuses — add or replace ONE status definition
+ * (matched by key). A shipped key may be relabelled / reordered / recoloured
+ * but never re-kinded; a new status needs a kind (never `done`).
+ */
+export async function handleTaskOverrideAddStatus(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) { sendError(res, 400, 'invalid_body', 'Request body must be JSON.'); return; }
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  const keyRaw = typeof body.key === 'string' ? body.key.trim() : '';
+  if (!name && !keyRaw) { sendError(res, 400, 'missing_name', 'Status name is required.'); return; }
+  const kind = body.kind === undefined || body.kind === null || body.kind === '' ? undefined : String(body.kind).toLowerCase();
+  if (kind !== undefined && !(STATUS_KINDS as readonly string[]).includes(kind)) {
+    sendError(res, 400, 'invalid_kind', `kind must be one of: ${STATUS_KINDS.join(', ')}`);
+    return;
+  }
+  const parent = typeof body.parent === 'string' && body.parent.trim() ? body.parent.trim() : undefined;
+  if (parent !== undefined && !SHIPPED_STATUS_KEYS.includes(normalizeStatusKey(parent))) {
+    sendError(res, 400, 'invalid_parent', `parent must be one of: ${SHIPPED_STATUS_KEYS.join(', ')}`);
+    return;
+  }
+  const order = body.order === undefined || body.order === null || body.order === '' ? undefined : Number(body.order);
+  if (order !== undefined && !Number.isFinite(order)) { sendError(res, 400, 'invalid_order', 'order must be a number.'); return; }
+  const color = typeof body.color === 'string' && body.color.trim() ? body.color.trim() : undefined;
+  const remoteAliases = Array.isArray(body.remoteAliases) ? body.remoteAliases.map((a: unknown) => String(a).trim()).filter(Boolean) : undefined;
+  const input: StatusDefInput = { name: name || keyRaw, key: keyRaw || undefined, kind: kind as StatusKind | undefined, parent, order, color, remoteAliases };
+  let ov: TaskOverride;
+  try {
+    ov = upsertStatus(contextRoot, input);
+  } catch (err) {
+    sendError(res, 400, 'invalid_status_def', (err as Error).message);
+    return;
+  }
+  recordDashboardChange(contextRoot, {
+    entity: 'task',
+    action: 'update',
+    target: 'overrides/task.md',
+    summary: `Defined task status '${input.name}'${kind ? ` (${kind})` : ''}`,
   });
+  sendJson(res, 200, overridePayload(ov));
+}
+
+/**
+ * DELETE /api/task-overrides/statuses/:key — remove a DECLARED status. 400 for
+ * a shipped key (locked), 409 with the in-use count while any task still
+ * carries the status (the dashboard has no reassignment flow — the user moves
+ * those tasks first, then the delete goes through).
+ */
+export async function handleTaskOverrideRemoveStatus(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const key = normalizeStatusKey(params.key ?? '');
+  if (!key) { sendError(res, 400, 'invalid_key', 'Status key is required.'); return; }
+  if (SHIPPED_STATUS_KEYS.includes(key)) {
+    sendError(res, 400, 'shipped_status', `Shipped status "${key}" cannot be removed.`);
+    return;
+  }
+  const inUse = (await backendFor(contextRoot).list({ status: key })).length;
+  if (inUse > 0) {
+    sendError(res, 409, 'status_in_use', `${inUse} task(s) still carry status "${key}" — move them first.`);
+    return;
+  }
+  let ov: TaskOverride | null;
+  try {
+    ov = removeStatus(contextRoot, key);
+  } catch (err) {
+    sendError(res, 400, 'invalid_status_def', (err as Error).message);
+    return;
+  }
+  recordDashboardChange(contextRoot, {
+    entity: 'task',
+    action: 'update',
+    target: 'overrides/task.md',
+    summary: `Removed task status '${key}'`,
+  });
+  sendJson(res, 200, overridePayload(ov));
 }
 
 /**
@@ -889,7 +987,8 @@ export async function handleTasksUpdate(
   // start is validated like any other — a patch that pairs a status change with
   // an inverted explicit due date is rejected instead of writing start>due.
   if (updates.status) {
-    const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
+    const statuses = loadStatuses(contextRoot);
+    const validStatuses = statusKeys(statuses);
     if (!validStatuses.includes(updates.status as string)) {
       sendError(res, 400, 'invalid_status', `Status must be one of: ${validStatuses.join(', ')}`);
       return;
@@ -906,6 +1005,7 @@ export async function handleTasksUpdate(
         due_date: (updates.due_date !== undefined ? updates.due_date : existing.due_date) as string | null,
       },
       today(),
+      statuses,
     );
     for (const field of ['start_date', 'due_date'] as const) {
       const value = stamped[field];

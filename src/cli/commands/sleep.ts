@@ -50,6 +50,7 @@ import {
   planCuratorTask,
   CURATOR_TASK_SLUG,
 } from '../../lib/sleep-flags.js';
+import { loadStatuses } from '../../lib/overrides.js';
 import { readDedupDigest, renderDedupDigest } from '../../lib/embeddings/dedup-log.js';
 import { scanDigests, planDigestGc, runDigestGc } from '../../lib/session-digest.js';
 import { collectBrainDirty, renderBrainDirtyWarning } from '../../lib/brain-dirty.js';
@@ -754,6 +755,7 @@ export function registerSleepCommand(program: Command): void {
           buckets.orphan.length,
           existingTask ? { slug: existingTask.slug, status: existingTask.status } : null,
           absorbing,
+          loadStatuses(root),
         );
         if (plan.action === 'create') {
           await backend.create({

@@ -534,7 +534,7 @@ function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcom
     return { result: blocked, needsTaskSync: false };
   }
 
-  const resolution = d.resolveConflicts(gitCwd, mergeResult.conflicts, { fullRepo: ctx.mode === 'full-repo' });
+  const resolution = d.resolveConflicts(gitCwd, mergeResult.conflicts, { fullRepo: ctx.mode === 'full-repo', contextRoot });
   const needsTaskSync = computeNeedsTaskSync(config, resolution.resolved);
 
   // CODE conflict (full-repo, a file outside `_dream_context/`): git's semantic

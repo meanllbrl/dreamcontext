@@ -8,8 +8,10 @@ The auto-loaded snapshot already lists every non-completed task with status, pri
 
 ### Lifecycle
 ```
-todo → in_progress → in_review → completed
+todo → in_progress → in_review → completed          # the shipped four — always present
 ```
+A project can **declare more statuses** (e.g. `planned`, `cancelled`) in `_dream_context/overrides/task.md`, each **under one of the four above** — see "Task format, custom-field & status overrides" below. Every status carries a semantic **kind** (`open | active | review | done | cancelled`), and every derived behaviour reads the kind, never the literal: a `cancelled`-kind task is terminal (hidden from `tasks list`, never overdue, out of roadmap progress on both sides, closes its GitHub issue) without being "done". `dreamcontext tasks statuses` prints the project's set with its remote mapping.
+
 The sleep agent picks the status that matches reality: `completed` for work that's demonstrably done, low-risk, already validated; `in_review` only when a human genuinely must verify (a behavior change, a design decision, a risky/critical-path change). It does not reflexively park everything in `in_review`, and it closes finished work — so tasks neither rot in `todo` nor rot half-closed in `in_review`.
 
 ### Create
@@ -39,7 +41,8 @@ Sections: `why`, `user_stories`, `acceptance_criteria`, `workflow`, `constraints
 ```bash
 dreamcontext tasks log <name> "what was done"        # changelog entry — MANDATORY each session
 dreamcontext tasks status <name> in_progress "reason" # bump status; first in_progress auto-stamps start_date if unset, completed stamps due_date with the real end
-dreamcontext tasks status <name> in_review "reason"  # bump status (logs automatically)
+dreamcontext tasks status <name> in_review "reason"  # bump status (logs automatically; any declared status key works too)
+dreamcontext tasks statuses                        # the project's status set: key, kind, order, colour, GitHub/ClickUp mapping
 dreamcontext tasks complete <name> "summary"         # mark complete
 dreamcontext tasks delete <name> --yes               # delete (propagates to remote on sync)
 ```
@@ -133,8 +136,8 @@ dreamcontext tasks list --objective <slug>            # all tasks serving an obj
 ```
 
 **The computed model** (per objective, from `roadmap --json`):
-- **Progress** = completed ÷ total member tasks (each objective counts over its OWN member set — a shared task contributes to each independently).
-- **Rollup status** (real enum): all `completed`→`done` 🟢 · any `in_progress`→`active` 🔵 · any `in_review`→`review` 🟡 · else `not_started` ⚪. A manual `--status` override wins (`status_source: override`).
+- **Progress** = done ÷ total member tasks, by KIND (each objective counts over its OWN member set — a shared task contributes to each independently). A `cancelled`-kind task leaves BOTH the numerator and the denominator — abandoned work is neither progress nor remaining work.
+- **Rollup status** (real enum, by kind): all live members `done`→`done` 🟢 · any `active`-kind→`active` 🔵 · any `review`-kind→`review` 🟡 · else `not_started` ⚪. Cancelled members are ignored, so an objective whose remaining tasks are all cancelled rolls up `done`. A manual `--status` override wins (`status_source: override`).
 - **Forecast cascade — full transitive DAG:** `forecast_start = max(earliest member start, max(forecast_end of dependencies))`; `forecast_end = max(latest member due, forecast_start)`. A slip anywhere propagates to ALL transitive dependents (diamond shapes included).
 - **Milestone forecast:** an objective with NO dated tasks of its own but WITH dependencies inherits its forecast from its latest dependency (finish-to-start) — so a pure milestone ("launch", which only depends on others) slips when an upstream slips. Only an objective with neither dated tasks nor a forecastable dependency stays `null` ("unforecastable") — and a null-forecast objective still never drags its dependents to "now".
 - **Slipping** 🔴 = `forecast_end > target_date` (the PO's committed date). The model also exposes `slip_days` (how many days late) and `slip_upstream` (the auto-derived cause — the dependency slug(s) responsible, else empty = the objective's own tasks overrun). Surfaced in the snapshot and the board.
@@ -396,7 +399,7 @@ name: "Implement auth middleware"
 description: "Add JWT validation to protected routes"
 priority: "high"          # critical | high | medium | low
 urgency: "medium"         # critical | high | medium | low (Eisenhower axis)
-status: "todo"            # todo | in_progress | in_review | completed
+status: "todo"            # todo | in_progress | in_review | completed — or any key declared in overrides/task.md
 created_at: "2026-02-25"
 updated_at: "2026-02-25"
 tags: []                  # includes person:<slug> for assignees
@@ -415,17 +418,26 @@ Files live at `_dream_context/state/<slug>.md`. Lookup is fuzzy: exact slug → 
 
 ---
 
-## Task format & custom-field overrides (optional)
+## Task format, custom-field & status overrides (optional)
 
-A project can override the default task shape AND declare its own custom fields by adding **`_dream_context/overrides/task.md`**. Absent this file, everything behaves exactly as the defaults above (zero regression).
+A project can override the default task shape, declare its own custom fields AND declare its own task statuses by adding **`_dream_context/overrides/task.md`**. Absent this file, everything behaves exactly as the defaults above (zero regression).
 
-The file carries two things:
+The file carries three things:
+
+- **Frontmatter `statuses:`** — extra task statuses, each living **under one of the shipped four**. Each entry: `name` (label), `key` (stable frontmatter value — ALWAYS write it explicitly; defaults to the snake_cased name), `kind` (`open | active | review | cancelled` — `done` is reserved for `completed`, exactly one done-kind status ever), `parent` (which of `todo`/`in_progress`/`in_review`/`completed` it rides under; defaults from the kind — `cancelled` → `completed`), `order` (pipeline position; the shipped four sit at 0 / 10 / 20 / 30, so `5` slots between `todo` and `in_progress`), optional `color` (6-hex — the GitHub label colour and the dashboard swatch) and optional `clickup` (list-status name aliases). The **kind drives everything**: `active` stamps the start date and counts as "being worked"; `review` triggers the required-field gate; `cancelled` is terminal — hidden by default, never overdue / at-risk / in the Eisenhower matrix, out of roadmap progress on both sides, and never the task a bookmark hint offers. The shipped four can be relabelled / reordered / recoloured but never removed or re-kinded. Every invalid entry (bad kind, non-hex colour, duplicate or reserved key, a collision with a custom-field key, a second done-kind) is dropped with a warning `doctor` shows — never fatal.
+  - **THE PARENT IS THE WIRE.** A cloud backend only ever sees the parent — one of the four it already understands — so **a declared status needs nothing created on the provider**. The child's identity rides beside it as a `dc:<key>` marker and round-trips.
+  - **GitHub**: the parent gives the open/closed state (parent `completed` → closed + `state_reason: completed`), and the `dc:<key>` label is auto-provisioned in the declared colour. `not_planned` stays EXCLUSIVELY the soft-delete signal (see integrations.md). A status key the local set does not know never reopens or closes an issue and never strips another machine's label.
+  - **ClickUp**: the API cannot create list statuses, and it never has to. A declared status tries its own names first (so a list that really carries "Cancelled" gets the honest value — declare a `clickup:` alias when the list spells it differently), then falls back to the parent's status, with the `dc:<key>` **tag** carrying the child. On pull the tag wins only while it still agrees with the list status, so **a human moving the task in ClickUp always beats a stale tag**. `doctor` reports which declared statuses ride as a tag and flags any list status whose meaning your declaration changes.
+  - The set travels with the brain by **git only**; a teammate who has not pulled the override sees the status downgraded (closed → `completed`, open → `todo`), never deleted, with a warning in the sync report — it self-corrects on their next pull.
 
 - **Frontmatter `custom_fields:`** — a user-defined field schema. Each field: `name`, `type` (`text` | `number` | `select` | `date`), optional `key` (the stable field id / `custom_fields:` map key — defaults to the snake_cased `name`, so a rename keeps the same id), `required` (`true` ⇒ the agent MUST set it on every task; default optional), `ask` (`true` ⇒ the field is a HUMAN judgment the agent must NOT guess — it asks you for the value at task-creation time; default false), `options` (for `select`), `sync` (`[clickup, github]`, default both), and optional `prompt` (a system instruction telling the agent HOW to fill the field — surfaced in your snapshot + every sub-agent briefing).
 - **Body** — the task TEMPLATE the CLI scaffolds from, plus an optional `## Agent Instructions` section that sub-agents read at runtime (it is stripped from scaffolded tasks).
 
 ```markdown
 ---
+statuses:
+  - { name: Planned, key: planned, kind: open, order: 5, color: c5def5 }
+  - { name: Cancelled, key: cancelled, kind: cancelled, order: 99, color: cfd3d7, clickup: [cancelled, canceled, "won't do"] }
 custom_fields:
   - { name: "Team", type: select, required: true, options: [platform, growth, infra], sync: [clickup, github], prompt: "The squad that owns the touched files." }
   - { name: "Story Points", key: story_points, type: number, sync: [clickup, github] }

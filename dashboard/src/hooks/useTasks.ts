@@ -1,5 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { useApi } from '../context/VaultContext';
+import { buildStatusModel, DEFAULT_STATUSES, type StatusDef, type StatusModel } from '../lib/statusModel';
+
+export type { StatusDef, StatusKind, StatusModel } from '../lib/statusModel';
 
 export interface RiceFields {
   reach: number | null;
@@ -18,7 +22,8 @@ export interface Task {
   description: string;
   priority: 'critical' | 'high' | 'medium' | 'low';
   urgency: 'critical' | 'high' | 'medium' | 'low';
-  status: 'todo' | 'in_progress' | 'in_review' | 'completed';
+  /** A status key of the project's status set (the shipped four + any declared in overrides/task.md). */
+  status: string;
   created_at: string;
   updated_at: string;
   tags: string[];
@@ -264,22 +269,56 @@ export function useStartSyncJob() {
   });
 }
 
-/** The active task custom-field schema (from overrides/task.md). Empty when none. */
-export function useTaskOverrides() {
+export interface TaskOverridesResponse {
+  present: boolean;
+  customFields: CustomFieldDef[];
+  /** The EFFECTIVE status set (shipped four + declared), sorted by order. */
+  statuses: StatusDef[];
+  /** The locked keys (cannot be removed or re-kinded). */
+  shippedStatusKeys: string[];
+  warnings: string[];
+}
+
+function useTaskOverridesQuery() {
   const api = useApi();
   return useQuery({
     queryKey: ['task-overrides'],
-    queryFn: () => api.get<{ present: boolean; customFields: CustomFieldDef[] }>('/task-overrides'),
-    select: (d) => d.customFields ?? [],
+    queryFn: () => api.get<TaskOverridesResponse>('/task-overrides'),
     staleTime: 10 * 60 * 1000,
   });
 }
 
-export interface TaskOverrideDoc {
-  present: boolean;
+/** The active task custom-field schema (from overrides/task.md). Empty when none. */
+export function useTaskOverrides() {
+  const q = useTaskOverridesQuery();
+  return { ...q, data: q.data?.customFields ?? [] };
+}
+
+/**
+ * The project's status model — column order, per-status label/colour and the
+ * kind predicates (`isTerminal` & co). The shipped four until the override
+ * query lands; every task view reads it instead of a hardcoded status list.
+ */
+export function useStatusModel(): StatusModel {
+  const q = useTaskOverridesQuery();
+  const statuses = q.data?.statuses;
+  return useMemo(() => buildStatusModel(statuses && statuses.length > 0 ? statuses : DEFAULT_STATUSES), [statuses]);
+}
+
+export interface TaskOverrideDoc extends TaskOverridesResponse {
   raw: string;
-  customFields: CustomFieldDef[];
-  warnings: string[];
+}
+
+export interface AddStatusInput {
+  name: string;
+  key?: string;
+  kind?: 'open' | 'active' | 'review' | 'done' | 'cancelled';
+  /** Which shipped status it lives under (the remote carrier). */
+  parent?: string;
+  order?: number;
+  color?: string;
+  /** Remote-backend (ClickUp) status-name aliases. */
+  remoteAliases?: string[];
 }
 
 /** The RAW override markdown (for the Settings editor). */
@@ -326,6 +365,28 @@ export function useRemoveCustomFieldDef() {
   return useMutation({
     mutationFn: (key: string) =>
       api.del<{ customFields: CustomFieldDef[] }>(`/task-overrides/fields/${encodeURIComponent(key)}`),
+    onSuccess: () => invalidateOverrides(queryClient),
+  });
+}
+
+/** Add or replace one status definition (project-wide, written to overrides/task.md). */
+export function useAddStatusDef() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: (input: AddStatusInput) =>
+      api.post<TaskOverridesResponse>('/task-overrides/statuses', input),
+    onSuccess: () => invalidateOverrides(queryClient),
+  });
+}
+
+/** Remove a declared status by key. The server answers 409 while tasks still carry it. */
+export function useRemoveStatusDef() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: (key: string) =>
+      api.del<TaskOverridesResponse>(`/task-overrides/statuses/${encodeURIComponent(key)}`),
     onSuccess: () => invalidateOverrides(queryClient),
   });
 }

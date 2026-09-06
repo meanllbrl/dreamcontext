@@ -13,6 +13,8 @@ import { TASKS_MAP_REL } from '../task-backend/paths.js';
 import { PEOPLE_JSON_REL, PEOPLE_SCHEMA_VERSION } from '../people-store.js';
 import { inspectJsonArray } from '../json-file.js';
 import { addPath, readOursTheirsBase } from './git.js';
+import { loadStatuses } from '../overrides.js';
+import { DEFAULT_STATUSES, pickMergedStatus, type StatusDef } from '../task-status.js';
 
 /**
  * Deterministic merge engine for the brain-repo sync engine — see
@@ -262,16 +264,17 @@ export function mergeTasksMapJson(_base: string, ours: string, theirs: string): 
 }
 
 // ─── state/*.md (tasks) — furthest status wins + changelog union + body merge
+//
+// "Furthest" is `statusRank` over the project's status set (task-status.ts):
+// pipeline order for live statuses, any terminal status beats a live one, done
+// beats cancelled. A status this machine does NOT know is preserved and named
+// in the merge (the unknown side comes from a machine carrying a newer
+// `overrides/task.md`); two unknowns resolve by `updated_at`, then key — so the
+// answer never depends on which machine runs the merge.
 
-const STATUS_ORDER = ['todo', 'in_progress', 'in_review', 'completed'];
-
-function furthestStatus(a: unknown, b: unknown): unknown {
-  const as = typeof a === 'string' ? a : undefined;
-  const bs = typeof b === 'string' ? b : undefined;
-  const ai = as ? STATUS_ORDER.indexOf(as) : -1;
-  const bi = bs ? STATUS_ORDER.indexOf(bs) : -1;
-  if (bi > ai) return bs;
-  return as ?? bs;
+export interface MergeTaskMdOptions {
+  /** The project's status set; defaults to the shipped four. */
+  statuses?: readonly StatusDef[];
 }
 
 function extractChangelogEntries(body: string): string[] {
@@ -301,8 +304,11 @@ export function mergeTaskMd(
   base: string,
   ours: string,
   theirs: string,
+  opts: MergeTaskMdOptions = {},
 ): {
   merged: string;
+  /** Status keys the loaded set did not recognise (preserved, never buried) — for the report. */
+  unknownStatuses?: string[];
   /**
    * Set ONLY on an add/add of two DISTINCT tasks (no common ancestor AND
    * differing `id:` dcId) — two people independently created a task under the
@@ -328,7 +334,12 @@ export function mergeTaskMd(
     return { merged: keeper, sibling: { content: sibling } };
   }
 
-  const winnerStatus = furthestStatus(oursParsed.data?.status, theirsParsed.data?.status);
+  const pick = pickMergedStatus(
+    opts.statuses ?? DEFAULT_STATUSES,
+    { status: oursParsed.data?.status, updated_at: oursParsed.data?.updated_at },
+    { status: theirsParsed.data?.status, updated_at: theirsParsed.data?.updated_at },
+  );
+  const winnerStatus = pick.status;
 
   const oursEntries = extractChangelogEntries(oursParsed.content);
   const theirsEntries = extractChangelogEntries(theirsParsed.content);
@@ -348,7 +359,7 @@ export function mergeTaskMd(
     ...(winnerStatus !== undefined ? { status: winnerStatus } : {}),
   };
   const merged = matter.stringify(mergedBody, mergedData);
-  return { merged, sibling: null };
+  return { merged, sibling: null, ...(pick.unknown.length > 0 ? { unknownStatuses: pick.unknown } : {}) };
 }
 
 // ─── knowledge/** (incl. knowledge/features/**) and anything unclassified ──
@@ -381,9 +392,20 @@ export interface MergeResult {
    * untouched in the tree with git's native conflict markers.
    */
   deferredToHuman: { path: string; class: MergeClass }[];
+  /**
+   * Human-facing notes about a resolved file — today: a task whose merged
+   * status is a key this machine's status set does not declare (kept, never
+   * buried; pull `overrides/task.md` to learn it). Absent/empty when nothing to say.
+   */
+  notes?: string[];
 }
 
 export interface ResolveConflictsOptions {
+  /**
+   * The brain root (`…/_dream_context`) whose `overrides/task.md` declares the
+   * project's status set — drives the task-status merge. Absent → shipped four.
+   */
+  contextRoot?: string;
   /**
    * full-repo mode: the WHOLE project is the synced unit, so a conflicted path
    * NOT under `_dream_context/` is real code — classify it as `code` and defer
@@ -453,6 +475,12 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
   const resolved: string[] = [];
   const deferredToAgent: { path: string; class: MergeClass }[] = [];
   const deferredToHuman: { path: string; class: MergeClass }[] = [];
+  const notes: string[] = [];
+  let statuses: readonly StatusDef[] | undefined;
+  const statusSet = (): readonly StatusDef[] => {
+    if (!statuses) statuses = opts.contextRoot ? loadStatuses(opts.contextRoot) : DEFAULT_STATUSES;
+    return statuses;
+  };
 
   for (const relPath of reorderTaskMdFirst(conflicts, opts)) {
     // A real code file in full-repo mode never touches the semantic merge — it
@@ -485,8 +513,11 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
         mergedContent = mergeTasksMapJson(base, ours, theirs).merged;
         break;
       case 'task-md': {
-        const taskResult = mergeTaskMd(base, ours, theirs);
+        const taskResult = mergeTaskMd(base, ours, theirs, { statuses: statusSet() });
         mergedContent = taskResult.merged;
+        for (const key of taskResult.unknownStatuses ?? []) {
+          notes.push(`${relPath}: kept status '${key}', which this machine's status set does not declare — pull overrides/task.md to learn it.`);
+        }
         if (taskResult.sibling) {
           const siblingPath = reslugSiblingPath(cwd, relPath);
           writeFileSync(join(cwd, siblingPath), taskResult.sibling.content, 'utf-8');
@@ -515,5 +546,5 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
     }
   }
 
-  return { resolved, deferredToAgent, deferredToHuman };
+  return { resolved, deferredToAgent, deferredToHuman, notes };
 }

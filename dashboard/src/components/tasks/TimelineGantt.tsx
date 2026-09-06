@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { useUpdateTask } from '../../hooks/useTasks';
+import { useUpdateTask, useStatusModel } from '../../hooks/useTasks';
 import { TaskCard } from './TaskCard';
-import { taskAssignee, STATUS_META, STATUS_ORDER } from './boardModel';
+import { taskAssignee } from './boardModel';
 import {
   MONTH_SHORT,
   formatISO, todayISO, parseISO, addDays, diffDays, taskSpan,
@@ -59,6 +59,7 @@ const rangeLabel = (start: string, end: string) =>
   start === end ? fmtShort(start) : `${fmtShort(start)} → ${fmtShort(end)}`;
 
 export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
+  const sm = useStatusModel();
   const [unscheduledOpen, setUnscheduledOpen] = useState(false);
   const [zoom, setZoom] = useState<number | null>(null);
   const updateTask = useUpdateTask();
@@ -100,7 +101,7 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
       for (const t of tasks) {
         const o = prev[t.slug];
         if (!o) continue;
-        const span = taskSpan(t);
+        const span = taskSpan(t, sm);
         if (span && span.start === o.start && span.end === o.end) {
           delete next[t.slug];
           changed = true;
@@ -114,7 +115,7 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
     const sched: ScheduledRow[] = [];
     const unsched: Task[] = [];
     for (const task of tasks) {
-      const span = taskSpan(task);
+      const span = taskSpan(task, sm);
       if (!span) {
         unsched.push(task);
         continue;
@@ -286,10 +287,10 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
   return (
     <div className={`gantt ${dragPreview ? 'gantt--dragging' : ''}`}>
       <div className="gantt-legend">
-        {STATUS_ORDER.map(s => (
+        {sm.order.map(s => (
           <span key={s} className="gantt-legend-item">
-            <span className="gantt-legend-swatch" style={{ background: STATUS_META[s].color }} />
-            {STATUS_META[s].label}
+            <span className="gantt-legend-swatch" style={{ background: sm.colorOf(s) }} />
+            {sm.labelOf(s)}
           </span>
         ))}
         <span className="gantt-legend-spacer" />
@@ -378,7 +379,7 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
                       style={{
                         left: offset * dayW,
                         width: barW,
-                        background: STATUS_META[task.status].color,
+                        background: sm.colorOf(task.status),
                       }}
                       onPointerDown={(e) => beginDrag(e, row, 'move')}
                       onClick={() => { if (!movedRef.current) onTaskClick(task); }}

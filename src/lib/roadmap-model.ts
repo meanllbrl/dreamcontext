@@ -3,6 +3,8 @@ import { join, basename } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
 import { today } from './id.js';
+import { loadStatuses } from './overrides.js';
+import { DEFAULT_STATUSES, isActive, isCancelled, isDone, isReview, type StatusDef } from './task-status.js';
 import {
   listObjectives,
   type Objective,
@@ -189,12 +191,18 @@ export function topoSortObjectives(
   return { sorted, cycleWarning: null };
 }
 
-/** Rollup status from member task statuses (real enum, spec-fixed). */
-export function computeRollupStatus(tasks: RoadmapTaskRef[]): ObjectiveStatus {
-  if (tasks.length === 0) return 'not_started';
-  if (tasks.every((t) => t.status === 'completed')) return 'done';
-  if (tasks.some((t) => t.status === 'in_progress')) return 'active';
-  if (tasks.some((t) => t.status === 'in_review')) return 'review';
+/**
+ * Rollup status from member task statuses (real enum, spec-fixed), read by
+ * KIND. Cancelled-kind tasks are not members for this purpose: an objective
+ * whose remaining tasks are all cancelled rolls up as done, and one whose only
+ * tasks are cancelled is not_started (nothing live, nothing finished).
+ */
+export function computeRollupStatus(tasks: RoadmapTaskRef[], statuses: readonly StatusDef[] = DEFAULT_STATUSES): ObjectiveStatus {
+  const live = tasks.filter((t) => !isCancelled(statuses, t.status));
+  if (live.length === 0) return 'not_started';
+  if (live.every((t) => isDone(statuses, t.status))) return 'done';
+  if (live.some((t) => isActive(statuses, t.status))) return 'active';
+  if (live.some((t) => isReview(statuses, t.status))) return 'review';
   return 'not_started';
 }
 
@@ -281,6 +289,7 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
   const objectives = listObjectives(contextRoot);
   const taskRefs = loadTaskRefs(contextRoot);
   const knownSlugs = new Set(objectives.map((o) => o.slug));
+  const statuses = loadStatuses(contextRoot);
 
   // Join: task → objectives (many-to-many). Unknown slugs warn, never fail.
   const membersOf = new Map<string, RoadmapTaskRef[]>();
@@ -346,15 +355,18 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
   const out: RoadmapObjective[] = [];
   for (const o of sorted) {
     const tasks = (membersOf.get(o.slug) ?? []).sort((a, b) => a.slug.localeCompare(b.slug));
-    const done = tasks.filter((t) => t.status === 'completed').length;
-    const total = tasks.length;
+    // Cancelled-kind tasks leave BOTH the numerator and the denominator: abandoned
+    // work is neither progress nor remaining work.
+    const counted = tasks.filter((t) => !isCancelled(statuses, t.status));
+    const done = counted.filter((t) => isDone(statuses, t.status)).length;
+    const total = counted.length;
     // A Key Result metric, when present, is the progress source — task counts are still
     // surfaced (done/total) but no longer drive pct or the computed status.
     const metric = o.metric;
     const taskPct = total === 0 ? null : Math.round((done / total) * 100);
     const pct = metric ? metricProgressPct(metric) : taskPct;
 
-    const computed = metric ? computeMetricStatus(metric) : computeRollupStatus(tasks);
+    const computed = metric ? computeMetricStatus(metric) : computeRollupStatus(tasks, statuses);
     const status = o.status ?? computed;
 
     // Forecast. Dependencies contribute their (already-cascaded) forecast_end;

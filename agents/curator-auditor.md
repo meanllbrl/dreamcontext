@@ -98,7 +98,8 @@ orphan tasks to the right planning version (the current sprint is `dreamcontext 
 If `_dream_context/overrides/task.md` exists it declares the project's custom task shape — audit
 task files against it: flag tasks whose declared **`required`** custom fields are UNSET (a worker
 must set them via `tasks field`, and a status-bump to `completed`/`in_review` will hard-fail until
-they are), and flag tasks with an inconsistent `start_date`/`due_date` range (start &gt; due, or any
+they are), flag tasks whose `status` is not in the project's status set (`dreamcontext tasks statuses`;
+a declared cancelled-kind status is the right target for a never-done RETIRE), and flag tasks with an inconsistent `start_date`/`due_date` range (start &gt; due, or any
 date present on a `backlog`-tagged task — the two are mutually exclusive).
 
 **`versions`** — reconcile release/version statuses so they are tidy and internally consistent.

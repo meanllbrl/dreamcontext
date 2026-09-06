@@ -201,7 +201,8 @@ dreamcontext tasks log <slug> "<one-line summary of what was done or decided>"
 > **Project override — check first.** If `_dream_context/overrides/task.md` exists, this project has a CUSTOM task shape. READ it before reconciling: follow ITS section names and `## Agent Instructions`, not the defaults below, and keep each declared `custom_fields` value current via `dreamcontext tasks field <slug> <key> <value>` (these sync to ClickUp/GitHub). The SubagentStart briefing flags when an override is active. Absent the file, use the default shape below.
 >
 > Two custom-field rules that bite in the **autonomous** sleep context:
-> 1. **`required: true` fields hard-fail.** `dreamcontext tasks create` and any transition to `completed`/`in_review` exit non-zero when a required field is unset. If you must close a task whose required field is genuinely unknowable autonomously, set it via `tasks field` first; only as a last resort pass `--allow-missing-required`, and flag the gap in your report.
+> 0. **Declared statuses.** The override may declare extra statuses (`statuses:` frontmatter — your briefing lists each with its kind and the shipped status it lives UNDER; `dreamcontext tasks statuses` prints the set). Use their keys with `tasks status`. If a **cancelled-kind** status exists (e.g. `cancelled`), that is where superseded / abandoned / obsoleted work goes — it leaves every progress count and is never live — instead of the `in_review "confirm close"` fallback below, which exists only for projects without one.
+> 1. **`required: true` fields hard-fail.** `dreamcontext tasks create` and any transition to a `done`- or `review`-kind status (`completed`/`in_review`) exit non-zero when a required field is unset. If you must close a task whose required field is genuinely unknowable autonomously, set it via `tasks field` first; only as a last resort pass `--allow-missing-required`, and flag the gap in your report.
 > 2. **`ask: true` fields are human judgment — never fabricate them.** There is no user in a sleep cycle, so leave an unset `ask` field unset and name it in your report so the user fills it next session. Inventing a value to satisfy a `required` gate corrupts the data.
 
 The task body (Why, User Stories, Acceptance Criteria, Constraints & Decisions, Technical Details, Notes) is *current state*. The Changelog is *history*. If the user pivoted mid-session — "we're skipping phase 1", "dropping the offline requirement", "switching the auth approach" — the body must reflect the new plan, not the old one with a buried changelog note.
@@ -271,7 +272,7 @@ dreamcontext tasks list          # every non-completed task, with updated dates
 | Situation | Action |
 |---|---|
 | A task is partly obsoleted by the pivot | Reconcile its body (step 3): drop the obsolete user stories / criteria, replace stale Technical Details. Keep what's still relevant. |
-| A task is **wholly** made irrelevant by the pivot | Don't silently delete. `dreamcontext tasks status <slug> in_review "obsoleted by <pivot> — confirm close"` — closing someone's planned work is the user's call. |
+| A task is **wholly** made irrelevant by the pivot | Don't silently delete. With a cancelled-kind status declared: `dreamcontext tasks status <slug> cancelled "obsoleted by <pivot>"`. Otherwise `dreamcontext tasks status <slug> in_review "obsoleted by <pivot> — confirm close"` — closing someone's planned work is the user's call. |
 | A task now belongs to a different milestone/version | Fix its `version:` frontmatter (Edit the field directly — there's no status-time version verb) so it attaches to the right planning version. |
 
 **(b) Staleness.** For each task whose `updated` is **21+ days old** and that no session in this cycle touched, pick one:
@@ -279,9 +280,9 @@ dreamcontext tasks list          # every non-completed task, with updated dates
 | Situation | Action |
 |---|---|
 | Work was actually done but never logged | Reconcile it now (steps 3-4) — that's a capture failure, fix it. If it's done + validated, `completed`; if it needs eyes, `in_review`. |
-| Superseded / absorbed by another task | Log a final entry naming the successor, then `dreamcontext tasks status <slug> in_review "superseded by <other-slug> — confirm close"`. |
+| Superseded / absorbed by another task | Log a final entry naming the successor, then `dreamcontext tasks status <slug> cancelled "superseded by <other-slug>"` when a cancelled-kind status is declared, else `… in_review "superseded by <other-slug> — confirm close"`. |
 | Still genuinely planned, just not started | Leave it, but verify its priority isn't inflated — a `high` task untouched for a month is not high priority; downgrade via Edit. |
-| Abandoned / no longer relevant | `dreamcontext tasks status <slug> in_review "stale 21+ days, appears abandoned — confirm close"`. |
+| Abandoned / no longer relevant | `dreamcontext tasks status <slug> cancelled "stale 21+ days, abandoned"` when a cancelled-kind status is declared, else `… in_review "stale 21+ days, appears abandoned — confirm close"`. |
 
 **(c) Tagging.** Tags drive recall — sharpen them every cycle. Normalize every task's frontmatter `tags` to the taxonomy vocab (`dreamcontext taxonomy vocab`), and *add* missing facets (area / type / feature) where a task is under-tagged. A well-tagged backlog is found; a poorly-tagged one is re-derived blind.
 
@@ -302,7 +303,7 @@ For everything NOT yet escalated, report new/continuing recurrence as a flag spe
 
 **Insight-bound Key Results are hands-off.** Some objectives are *measured*, not asserted: a Lab insight (`_dream_context/lab/insights/<slug>.md`) may carry `binding: {objective: <slug>}`, meaning `lab bind` seeded — and every `lab sync` rewrites — that objective's `metric.current`. Before any metric write, check for a feeder: `dreamcontext lab list --json` and look for a manifest whose `binding.objective` equals the objective's slug (one feeder max per objective). If bound, do NOT write `metric.current` — your number would be overwritten at the next sync and blurs measured-vs-asserted provenance. If the feeding insight's cache looks stale or errored (`dreamcontext lab show <slug>` → old `fetchedAt` / `error` set), say so in your report so the user refreshes it. **Sleep NEVER runs `lab sync`** — that's a standing decision (credential exposure, latency, non-determinism); refreshing is always an explicit user/agent action outside sleep.
 
-Never silently delete a task, and never `completed` a task that was never actually done — for superseded/abandoned/obsoleted work, `in_review` with an explicit reason hands the close decision to the user. List every grooming action in your report.
+Never silently delete a task, and never `completed` a task that was never actually done — for superseded/abandoned/obsoleted work use the project's cancelled-kind status when one is declared (it is terminal without claiming completion); otherwise `in_review` with an explicit reason hands the close decision to the user. List every grooming action in your report.
 
 ## Return — short report
 

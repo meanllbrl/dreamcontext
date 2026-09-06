@@ -125,7 +125,7 @@ dreamcontext tasks list --status in_review
 dreamcontext tasks list --status completed
 ```
 
-If every task linked to the active planning version is `completed` (or only `in_review` remains and the user has been verifying), surface release readiness in your report.
+If every task linked to the active planning version is `completed` (or only `in_review` remains and the user has been verifying), surface release readiness in your report. A task in a declared cancelled-kind status is terminal too — it neither blocks readiness nor counts as shipped work.
 
 **In a project that ships a What's New feed, "does this version have its page?" is part of that readiness.** The feed holds exactly ONE announcement per version, so a released version with no entry is a hole in the release history that nobody notices until much later. Check the manifest (in this repo, `dashboard/public/announcements.json`) for the version you are calling ready, and if it has none, say so in your report — do not write the announcement yourself. Authoring one is the `announcements` skill's job: it needs real screenshots (and now clips) captured by driving the app, which is awake work.
 

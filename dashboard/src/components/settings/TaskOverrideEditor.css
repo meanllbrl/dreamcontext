@@ -168,3 +168,73 @@
 }
 
 .tov-preview-label code { font-family: var(--font-mono); }
+
+/* ─── Statuses section ─── */
+.tov-subtitle {
+  margin: var(--space-5) 0 var(--space-1);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.tov-status-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.tov-field-actions button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.tov-preview {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding: var(--space-2);
+  margin: var(--space-2) 0;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.tov-col {
+  flex: 1 0 120px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+}
+
+.tov-col--terminal {
+  opacity: 0.7;
+}
+
+.tov-col-label {
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.tov-col-kind {
+  margin-left: auto;
+  color: var(--color-text-tertiary);
+}
+
+.tov-parent-hint {
+  margin: 0 0 var(--space-2);
+  padding-left: 104px;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+.tov-parent-hint code {
+  font-family: var(--font-mono);
+}

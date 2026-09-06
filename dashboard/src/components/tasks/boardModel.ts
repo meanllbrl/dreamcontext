@@ -12,6 +12,7 @@
  * `mergeBoard()` folds them into the runtime view list the UI renders.
  */
 import type { Task } from '../../hooks/useTasks';
+import { DEFAULT_STATUS_MODEL, type StatusModel } from '../../lib/statusModel';
 
 // ─── Enums ──────────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,12 @@ export type SortDir = 'asc' | 'desc';
 export type DueFilter = 'all' | 'overdue' | 'today' | 'risk' | 'has' | 'none';
 export type SaveScope = 'shared' | 'local';
 
+/**
+ * The SHIPPED status order/meta — the defaults `DEFAULT_STATUS_MODEL` is built
+ * from. Live views read the project's model via `useStatusModel()` (which adds
+ * any status declared in overrides/task.md); these constants stay for the
+ * pure helpers' defaults and for callers outside React.
+ */
 export const STATUS_ORDER = ['todo', 'in_progress', 'in_review', 'completed'] as const;
 export const PRIO_ORDER = ['critical', 'high', 'medium', 'low'] as const;
 export const URG_ORDER = ['critical', 'high', 'medium', 'low'] as const;
@@ -336,9 +343,10 @@ function fmtShort(s: string): string {
   const d = new Date(s + 'T00:00:00');
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
-export function dueInfo(t: Task): DueInfo | null {
+export function dueInfo(t: Task, sm: StatusModel = DEFAULT_STATUS_MODEL): DueInfo | null {
   const due = taskDue(t);
-  if (t.status === 'completed' || !due) return null;
+  // Terminal by KIND — a cancelled-kind task is never overdue.
+  if (sm.isTerminal(t.status) || !due) return null;
   const d = new Date(due + 'T00:00:00').getTime();
   const diff = Math.round((d - startOfToday()) / 86_400_000);
   if (diff < 0) return { label: `Overdue ${-diff}d`, glyph: '⚑', kind: 'overdue', color: 'var(--color-error)', bg: 'var(--color-error-subtle)' };
@@ -347,8 +355,8 @@ export function dueInfo(t: Task): DueInfo | null {
   if (diff <= 7) return { label: `${diff}d left`, glyph: '○', kind: 'week', color: 'var(--color-accent)', bg: 'var(--color-accent-soft)' };
   return { label: fmtShort(due), glyph: '', kind: 'far', color: 'var(--color-text-tertiary)', bg: 'var(--color-bg-tertiary)' };
 }
-export function isAtRisk(t: Task): boolean {
-  const di = dueInfo(t);
+export function isAtRisk(t: Task, sm: StatusModel = DEFAULT_STATUS_MODEL): boolean {
+  const di = dueInfo(t, sm);
   return !!di && (di.kind === 'overdue' || di.kind === 'today' || di.kind === 'soon' || di.kind === 'week');
 }
 export function fmtUpdated(s: string | undefined): string {
@@ -452,7 +460,7 @@ function matchVersionField(version: string, fld: FieldFilter | undefined, meta: 
   return true;
 }
 
-export function filterTasks(tasks: Task[], f: BoardFilters, search: string, versionMeta: VersionMeta = EMPTY_VERSION_META): Task[] {
+export function filterTasks(tasks: Task[], f: BoardFilters, search: string, versionMeta: VersionMeta = EMPTY_VERSION_META, sm: StatusModel = DEFAULT_STATUS_MODEL): Task[] {
   const q = (search || '').trim().toLowerCase();
   return tasks.filter((t) => {
     if (!matchField(t.status, f.status)) return false;
@@ -464,10 +472,10 @@ export function filterTasks(tasks: Task[], f: BoardFilters, search: string, vers
     if (f.tags.exc.length && f.tags.exc.some((tg) => t.tags.includes(tg))) return false;
     if (f.minRice) { const r = taskRice(t); if (!(r != null && r >= f.minRice)) return false; }
     if (f.due !== 'all') {
-      const di = dueInfo(t);
+      const di = dueInfo(t, sm);
       if (f.due === 'overdue' && !(di && di.kind === 'overdue')) return false;
       if (f.due === 'today' && !(di && di.kind === 'today')) return false;
-      if (f.due === 'risk' && !isAtRisk(t)) return false;
+      if (f.due === 'risk' && !isAtRisk(t, sm)) return false;
       if (f.due === 'has' && !taskDue(t)) return false;
       if (f.due === 'none' && taskDue(t)) return false;
     }
@@ -511,10 +519,20 @@ export interface DimGroup { key: string; label: string; color: string; tasks: Ta
 export function dimGroups(
   dim: Dim,
   tasks: Task[],
-  opts: { versionOrder: string[]; assignees: { value: string; label: string; color: string }[] },
+  opts: { versionOrder: string[]; assignees: { value: string; label: string; color: string }[]; statuses?: StatusModel },
 ): DimGroup[] {
   if (dim === 'status') {
-    return STATUS_ORDER.map((k) => ({ key: k, label: STATUS_META[k].label, color: STATUS_META[k].color, tasks: tasks.filter((t) => t.status === k) }));
+    const sm = opts.statuses ?? DEFAULT_STATUS_MODEL;
+    const cols = sm.order.map((k) => ({ key: k, label: sm.labelOf(k), color: sm.colorOf(k), tasks: tasks.filter((t) => t.status === k) }));
+    // A status outside the loaded set (declared on a machine whose override this
+    // one has not pulled) still gets a column — unknown fails SAFE, never hidden.
+    const known = new Set(sm.order);
+    for (const t of tasks) {
+      if (known.has(t.status)) continue;
+      known.add(t.status);
+      cols.push({ key: t.status, label: t.status, color: 'var(--color-text-tertiary)', tasks: tasks.filter((x) => x.status === t.status) });
+    }
+    return cols;
   }
   if (dim === 'priority') {
     return PRIO_ORDER.map((k) => ({ key: k, label: levelLabel(k), color: prioColor(k), tasks: tasks.filter((t) => t.priority === k) }));

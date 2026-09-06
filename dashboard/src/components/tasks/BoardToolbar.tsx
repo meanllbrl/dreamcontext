@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect, useLayoutEffect, type CSSProperties } from 'react';
 import type { Task } from '../../hooks/useTasks';
+import { useStatusModel } from '../../hooks/useTasks';
 import { HardRefreshChip, SyncChip, useCloudSync } from './SyncChip';
 import type { BoardState } from '../../hooks/useBoard';
 import { VersionsPopover } from './VersionsPopover';
 import { SparkIcon } from '../sleepy/TypeIcons';
 import {
   type BoardFilters, type CardProps, type Dim, type DueFilter, type Layout, type SortKey,
-  DIMS, DIM_LABEL, PRIO_ORDER, SORT_LABEL, STATUS_ORDER, STATUS_META, URG_ORDER,
+  DIMS, DIM_LABEL, PRIO_ORDER, SORT_LABEL, URG_ORDER,
   BACKLOG_RE, VV_BACKLOG, VV_COMPLETED, VV_CURRENT,
   dimGet, levelLabel, prioColor, taskAssignees, taskVersion, urgColor,
 } from './boardModel';
@@ -80,6 +81,7 @@ const excBtn = (on: boolean): CSSProperties => ({ flex: '0 0 auto', width: 22, h
 interface FieldOpt { value: string; label: string; color: string | null; count: number }
 
 export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilter, activeVersion, releasedVersions, openMenu, setOpenMenu, onNewTask, onAuthorWithAgent, agentReady, flash }: BoardToolbarProps) {
+  const sm = useStatusModel();
   const [filterPane, setFilterPane] = useState<keyof BoardFilters | null>(null);
   const f = s.filters;
   const toggle = (m: MenuKey) => { setOpenMenu(openMenu === m ? null : m); if (m !== 'filter') setFilterPane(null); };
@@ -99,7 +101,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
     }).length;
 
   const fieldOpts = (key: keyof BoardFilters): FieldOpt[] => {
-    if (key === 'status') return STATUS_ORDER.map((k) => ({ value: k, label: STATUS_META[k].label, color: STATUS_META[k].color, count: countBy('status', k) }));
+    if (key === 'status') return sm.order.map((k) => ({ value: k, label: sm.labelOf(k), color: sm.colorOf(k), count: countBy('status', k) }));
     if (key === 'priority') return PRIO_ORDER.map((k) => ({ value: k, label: levelLabel(k), color: prioColor(k), count: countBy('priority', k) }));
     if (key === 'urgency') return URG_ORDER.map((k) => ({ value: k, label: levelLabel(k), color: urgColor(k), count: countBy('urgency', k) }));
     if (key === 'version') return [...versionsForFilter, 'none']

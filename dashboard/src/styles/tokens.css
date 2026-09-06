@@ -29,14 +29,14 @@
   --space-28: 144px;
 
   /* ─── Typography — ClickUp dual-stack: Plus Jakarta Sans display, Inter body ─── */
-  --font-family-display: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Inter Variable', 'Inter', 'Segoe UI', Roboto, sans-serif;
-  --font-family-text: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-family-display: 'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Inter Variable', 'Inter', 'Segoe UI', Roboto, sans-serif;
+  --font-family-text: 'Inter Variable', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-family: var(--font-family-text);
-  /* JetBrains Mono is the loaded webfont (index.html: wght 400/500/700). 'Sometype Mono'
+  /* JetBrains Mono Variable is the bundled webfont (main.tsx: @fontsource-variable). 'Sometype Mono'
      was previously first but was NEVER loaded, so all mono text silently fell back to
      JetBrains Mono @400 with faux-bold. Make the loaded font the primary so weights and
      glyph metrics are real. */
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   --zoom: 1;
 
@@ -219,6 +219,7 @@
   --color-status-in-progress: var(--color-deep-violet);
   --color-status-in-review: var(--color-error);
   --color-status-completed: hsl(142 71% 40%);
+  --color-status-cancelled: var(--color-graphite);
 
   /* ─── Shadows — ClickUp's subtle elevation philosophy ─── */
   --shadow-sm: rgba(13, 21, 48, 0.04) 0px 4px 4px 0px;
@@ -330,6 +331,7 @@
   --color-status-in-progress: #9d8cff;
   --color-status-in-review: var(--color-error);
   --color-status-completed: #4ade80;
+  --color-status-cancelled: #7c8396;
 
   --color-priority-critical: #ff5a5f;
   --color-priority-high: #ffae3b;

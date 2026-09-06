@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { findStatus, type StatusDef, type StatusKind } from './task-status.js';
 
 // ─── Status & Priority Badges ───────────────────────────────────────────────
 
@@ -21,10 +22,23 @@ const PRIORITY_COLORS: Record<string, (s: string) => string> = {
   low: (s) => chalk.dim(s),
 };
 
+const KIND_COLORS: Record<StatusKind, (s: string) => string> = {
+  open: (s) => chalk.yellow(s),
+  active: (s) => chalk.cyan(s),
+  review: (s) => chalk.magenta(s),
+  done: (s) => chalk.dim(s),
+  cancelled: (s) => chalk.dim.strikethrough(s),
+};
+
 /**
- * Colorize a status value.
+ * Colorize a status value. With a status set: the declared 6-hex colour first,
+ * then the kind's colour, then the literal map (so a bare `formatStatus(s)`
+ * renders exactly as before).
  */
-export function formatStatus(status: string): string {
+export function formatStatus(status: string, statuses?: readonly StatusDef[]): string {
+  const def = statuses ? findStatus(statuses, status) : null;
+  if (def?.color && /^[0-9a-f]{6}$/i.test(def.color)) return chalk.hex(`#${def.color}`)(status);
+  if (def) return KIND_COLORS[def.kind](status);
   const colorFn = STATUS_COLORS[status.toLowerCase()] ?? ((s: string) => s);
   return colorFn(status);
 }
