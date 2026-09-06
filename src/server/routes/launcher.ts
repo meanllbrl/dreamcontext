@@ -1115,6 +1115,56 @@ export async function handleSleepyAnim(
 }
 
 /**
+ * The SERVER half of a lockstep pair. The HTTP endpoint that used to call this
+ * (`POST /api/launcher/capture` with `mode: 'sleep'`) went with the Sleepy notch bar
+ * it shared, and the dashboard now runs a consolidation as a real chat session via
+ * `dashboard/src/lib/sleepAgent.ts`. This stays because that mirror must not drift:
+ * `tests/unit/sleep-subagent-dispatch.test.ts` pins the two texts to each other, and
+ * the sub-agent fan-out clause below is the whole reason the pair exists.
+ *
+ * Build the headless-claude prompt for "Sleep" mode: run a full dreamcontext
+ * memory consolidation for THIS project, autonomously, then report a short
+ * summary. No user text involved, so nothing to injection-escape.
+ *
+ * The desktop Sleep button bypasses `dreamcontext sleep start`, so the caller
+ * resolves the consolidation depth and passes it in. The prompt injects a
+ * destructive-authorization line ONLY at `deep` (per `isDestructiveAllowed`);
+ * at light/standard it injects an explicit non-destructive guard so the agent
+ * never silently merges/summarize-replaces/deletes knowledge from this path.
+ *
+ * It also states the sub-agent fan-out in the user's own voice. Claude Code appends
+ * "Do not call the AgentTool unless the user requested it" to every Opus 5 system
+ * prompt, which outranks SKILL.md and collapsed sleep into inline specialist passes;
+ * this prompt IS the user turn, so the request has to be here. Kept in lockstep with
+ * the desktop `SLEEP_AGENT_PROMPT` by `tests/unit/sleep-subagent-dispatch.test.ts`.
+ */
+export function buildSleepPrompt(depth: ConsolidationDepth): string {
+  const depthLine = isDestructiveAllowed(depth)
+    ? `This is a DEEP consolidation: you ARE authorized to perform destructive/expensive ` +
+      `knowledge ops (merge-with-delete, summarize-and-replace still-valid detail, archive/` +
+      `delete stale files) — but first copy any file you will merge/replace/delete to ` +
+      `\`_dream_context/knowledge/.archive/<slug>-<YYYYMMDD>.md\` (create the dir if absent).`
+    : `This is a ${depth.toUpperCase()} consolidation: do NOT merge, summarize-and-replace, ` +
+      `or delete any knowledge. Only create/extend/retag/tick. If you spot merge or deletion ` +
+      `candidates, FLAG them in your report instead of acting on them.`;
+  return (
+    `Think hard. Run a dreamcontext memory consolidation ("sleep") for THIS project ` +
+    `now, fully autonomously — do NOT ask any questions. Follow the project's ` +
+    `dreamcontext sleep/consolidation flow: pin the epoch with \`dreamcontext sleep ` +
+    `start\`, reconcile the task/changelog/knowledge/feature files to current truth ` +
+    `as warranted (prefer updating existing entities over creating new ones), then ` +
+    `close the cycle with \`dreamcontext sleep done "<one-paragraph summary>"\` to ` +
+    `reset the debt. ${depthLine} I am explicitly requesting the sub-agent fan-out: ` +
+    `dispatch the sleep specialists as PARALLEL sub-agents via the Agent tool ` +
+    `(sleep-tasks + sleep-state always; sleep-product when knowledge/feature signals ` +
+    `warrant; sleep-migration only if \`dreamcontext migrations pending\` has output) — ` +
+    `do NOT run those passes inline in your own context. When finished, reply with a ` +
+    `SHORT GitHub-flavored Markdown summary (a few bullets) of what was consolidated. ` +
+    `Keep it concise.`
+  );
+}
+
+/**
  * GET /api/launcher/defaults — absolute paths the onboarding quiz prefills with
  * (the user's home + a suggested `~/projects` parent). Read-only, vault-agnostic.
  */

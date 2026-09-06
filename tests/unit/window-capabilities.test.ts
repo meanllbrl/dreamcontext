@@ -35,8 +35,10 @@ const LABELS: Record<string, string> = {
   'vault (sanitised)': vaultWindowLabel('weird name.with/chars'),
   checklist: checklistWindowLabel('acme-storefront', 'asc-key'),
   meetingRoom: 'meeting-room',
-  sleepy: 'sleepy',
-  sleepyPerch: 'sleepy-perch',
+  // NOTE: `sleepy` and `sleepy-perch` were removed in 0.27.0 along with the Lab notch
+  // capture feature. Their grants came out of the default capability in the same
+  // commit — a window label left here after its window is gone asserts nothing, and a
+  // grant left behind would widen the default capability for no window at all.
 };
 
 /** Tauri capability `windows` entries are globs with `*` as the only wildcard. */
