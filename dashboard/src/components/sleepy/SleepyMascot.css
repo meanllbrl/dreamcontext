@@ -243,6 +243,10 @@
 .smascot-wears-plan .smascot-eye { height: 22px; }
 .smascot-wears-develop .smascot-eyes { transform: translateY(4px); }
 .smascot-wears-develop .smascot-eye { height: 19px; border-radius: 6px; }
+/* J.A.R.V.I.S looks straight AT you — it is the only mode that is a conversation, so the
+   eyes stay open and level rather than dropping to a pair of hands. */
+.smascot-wears-jarvis .smascot-eyes { transform: translateY(2px); }
+.smascot-wears-jarvis .smascot-eye { height: 24px; }
 
 /* ── PLAN · writing ─────────────────────────────────────────────────────
    The pencil travels the squiggle and the ink appears under its tip — one shared 3.8s
@@ -291,6 +295,42 @@
 .smascot-spark--h1 { animation: smascot-hitspark 3.4s ease-out infinite; }
 .smascot-spark--h2 { animation: smascot-hitspark2 3.4s ease-out infinite; }
 .smascot-spark--h3 { animation: smascot-hitspark3 3.4s ease-out infinite; }
+
+/* ── J.A.R.V.I.S · listen, then answer ──────────────────────────────────
+   One 3.2s clock, two beats. 0–46% LISTENING: the bars stay low and ripple right-to-left
+   into the mic, arcs hidden. 46–52% the turn. 52–96% ANSWERING: the bars swell and the
+   ripple runs the other way, out of the capsule, with two arcs blooming off it. Every
+   element below reads the SAME percentages — move one and move them all.
+
+   The per-bar `animation-delay` is what makes the ripple, and it is NEGATIVE so every bar is
+   already mid-loop on the first frame: a positive delay would leave the row flat and dead
+   for a third of a second every time a face mounts, which at 26px reads as broken. */
+.smascot-vu-bar {
+  fill: color-mix(in srgb, var(--color-text) 24%, transparent);
+  stroke: var(--gear-ink);
+  stroke-width: 2;
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: smascot-vu 3.2s ease-in-out infinite;
+}
+.smascot-vu-bar--1 { animation-delay: -0.00s; }
+.smascot-vu-bar--2 { animation-delay: -0.09s; }
+.smascot-vu-bar--3 { animation-delay: -0.18s; }
+.smascot-vu-bar--4 { animation-delay: -0.27s; }
+.smascot-vu-bar--5 { animation-delay: -0.36s; }
+.smascot-mic {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: smascot-mic 3.2s ease-in-out infinite;
+}
+.smascot-say {
+  stroke: var(--gear-ink);
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: 0% 50%;
+}
+.smascot-say--1 { animation: smascot-say1 3.2s ease-out infinite; }
+.smascot-say--2 { animation: smascot-say2 3.2s ease-out infinite; }
 
 /* The gear rides with the eyes when a mood changes their height. */
 .smascot-asking .smascot-gear { top: -34px; }
@@ -497,6 +537,50 @@
   .smascot-anvil,
   .smascot-hammer,
   .smascot-spark,
+  .smascot-vu-bar,
+  .smascot-mic,
+  .smascot-say,
   .smascot-q span,
   .smascot-zzz span { animation: none !important; }
+}
+
+
+/* ── J.A.R.V.I.S keyframes ──────────────────────────────────────────────── */
+
+/* The bar meter. Low and busy while listening, tall and deliberate while answering — the
+   AMPLITUDE difference is what carries the two beats once the shape is gone at 26px. */
+@keyframes smascot-vu {
+  0%   { transform: scaleY(0.28); }
+  12%  { transform: scaleY(0.52); }
+  24%  { transform: scaleY(0.34); }
+  36%  { transform: scaleY(0.58); }
+  46%  { transform: scaleY(0.30); }
+  52%  { transform: scaleY(0.75); }
+  62%  { transform: scaleY(1.35); }
+  72%  { transform: scaleY(0.85); }
+  82%  { transform: scaleY(1.5); }
+  92%  { transform: scaleY(0.7); }
+  100% { transform: scaleY(0.28); }
+}
+
+/* The capsule leans in a little to listen and settles back to answer. */
+@keyframes smascot-mic {
+  0%, 40%   { transform: rotate(0deg) translateY(0); }
+  20%       { transform: rotate(-3deg) translateY(-1px); }
+  56%, 100% { transform: rotate(0deg) translateY(0); }
+}
+
+/* Two arcs off the capsule, on the ANSWER beat only. The second trails the first, so the
+   sound reads as travelling outward rather than as two rings switching on together. */
+@keyframes smascot-say1 {
+  0%, 50%  { opacity: 0; transform: scale(0.6); }
+  58%      { opacity: 0.9; transform: scale(1); }
+  88%      { opacity: 0.25; transform: scale(1.12); }
+  96%, 100% { opacity: 0; transform: scale(1.12); }
+}
+@keyframes smascot-say2 {
+  0%, 58%  { opacity: 0; transform: scale(0.6); }
+  68%      { opacity: 0.7; transform: scale(1); }
+  90%      { opacity: 0.18; transform: scale(1.15); }
+  97%, 100% { opacity: 0; transform: scale(1.15); }
 }

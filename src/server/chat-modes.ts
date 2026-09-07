@@ -20,9 +20,8 @@
  * change the other; `tests/unit/chat-mode-mirror.test.ts` pins the pair.
  */
 
-/** Every mode the client may ask for. `jarvis` is rendered DISABLED in the composer (badge
- *  "Soon") and has no behaviour — it is listed here so the sanitizer's allowlist and the
- *  menu's rows come from one place, not so it can be selected. */
+/** Every mode the client may ask for. All four are real: `jarvis` was a disabled stub
+ *  ("Soon") until the voice work landed, and is now selectable like the rest. */
 export const CHAT_MODES = ['basic', 'plan', 'develop', 'jarvis'] as const;
 export type ChatMode = typeof CHAT_MODES[number];
 
@@ -203,6 +202,49 @@ ${WORKTREE_DECLARE}
 `;
 
 /**
+ * J.A.R.V.I.S — voice in, voice out.
+ *
+ * DELIBERATELY THE SHORTEST BRIEFING HERE, and that is the design rather than an oversight.
+ * A long brief in a spoken mode is the exact failure this mode exists to avoid: every extra
+ * instruction is another thing the agent might dutifully narrate at a person who is waiting
+ * to hear one sentence. Plan's briefing can afford paragraphs because nobody listens to it.
+ *
+ * The three rules that carry the mode:
+ *   • Two or three sentences, plain talk. Everything written here is READ ALOUD, and markdown
+ *     does not survive that — an em dash gets no pause, a file path is spelled out slash by
+ *     slash, a URL outlasts the sentence around it.
+ *   • Show, don't recite. The moment an answer has structure, it goes on the SCREEN as a
+ *     `dream-html` block while the voice says one sentence about it. This is also why the
+ *     client's chunker had to become fence-aware: this instruction guarantees that most real
+ *     replies in this mode contain a fenced block.
+ *   • Say that voice input may have been jargon-corrected. This is the NAMED CARRIER for that
+ *     warning (Slice 2's correction pass): a server-side log flag would not do, because the
+ *     whole point is that the caution lands in the MODEL's context. It says "may have been"
+ *     because the briefing is static and cannot know whether a given turn was corrected —
+ *     the honest framing, and it still earns its place on the byte-identical path where the
+ *     owner was never shown a confirmation at all.
+ *
+ * Everything else about J.A.R.V.I.S's behaviour is Basic's; it inherits the worktree clause
+ * for the same reason Basic does.
+ */
+const JARVIS_BRIEFING = `# Mode: J.A.R.V.I.S
+
+You are being SPOKEN to, and everything you write is read back aloud.
+
+- **Two or three sentences. Never more.** Plain talk. No headings, no bullets, no markdown,
+  no em dashes, no code, no file paths, no URLs — none of that survives being read aloud.
+- **Show, don't recite.** The moment an answer has structure (numbers, options, a plan, an
+  architecture), say one sentence like "bak, ekrana koyuyorum" and put the detail on screen
+  as a \`dream-html\` block. The voice carries the point; the screen carries the detail.
+- **Narrate the work.** One sentence before a long tool run, one sentence about what you
+  found on the way back.
+- Mirror the user's language, Turkish or English.
+- Voice input reaching this session may have been jargon-corrected against the project
+  vocabulary, so treat an odd-looking command as worth confirming rather than as certainly
+  verbatim.
+`;
+
+/**
  * The system-prompt append for `mode`, or `''` for a mode that adds nothing.
  *
  * ── `basic` is no longer empty, and that is a REVERSAL ────────────────────────────────
@@ -216,8 +258,8 @@ ${WORKTREE_DECLARE}
  *
  * `plan` is deliberately excluded: it opens with "Do not edit code in this session", so a
  * worktree rule there is prose that rides every turn of every planning session to say
- * nothing. `jarvis` still returns `''` — it is unselectable in the UI and `sanitizeChatMode`
- * coerces it away before it ever reaches here, so that arm is defence in depth, not a feature.
+ * nothing. `jarvis` DOES get it, for the same reason `basic` does: it carries the same tools,
+ * so it can fork the brain the same way.
  *
  * Pure — `worktreeAllowed` is passed in rather than resolved here, so this stays a
  * string-in/string-out function the tests can drive across every combination without a
@@ -234,6 +276,6 @@ export function modeBriefing(mode: ChatMode, opts: { worktreeAllowed: boolean })
     case 'basic':
       return worktree;
     case 'jarvis':
-      return '';
+      return JARVIS_BRIEFING + worktree;
   }
 }

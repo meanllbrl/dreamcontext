@@ -145,6 +145,9 @@ import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent
 import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
+import {
+  handleVoiceStt, handleVoiceTts, handleVoiceStatus, handleVoiceConfigPut, handleVoiceCorrect,
+} from './routes/agent-voice.js';
 import { handleAgentDownload } from './routes/agent-download.js';
 import { handleAgentSessionsGet, handleAgentSessionsPut } from './routes/agent-sessions.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
@@ -422,6 +425,23 @@ export function buildRouter(): Router {
   // Image drop → write under the active vault's temp dir (desktop-gated, vault-scoped:
   // NOT vault-agnostic, so it resolves contextRoot from the X-Dreamcontext-Vault header).
   router.post('/api/agent/drop', handleAgentDrop);
+  // J.A.R.V.I.S mode's two audio legs. Desktop-gated, and the ONLY routes in this server
+  // that spend money — hence the server-side concurrency and rate caps in
+  // `lib/voice/limits.ts` rather than a client-side limit that a direct POST walks past.
+  //
+  // CLASSIFICATION AGAINST `VAULT_AGNOSTIC_PREFIXES` (below), stated because the list is a
+  // prefix match and a route nobody classified gets whichever answer its path happens to
+  // collide with. `/stt` is vault-SCOPED — Slice 2's correction pass reads the lexicon out
+  // of the vault's brain, so the request has to say which vault it means. `/tts`, `/status`
+  // and `/config` are vault-AGNOSTIC: speech reads no project state, and the key and the
+  // preferences belong to the MACHINE, not to any one project.
+  router.post('/api/agent/voice/stt', handleVoiceStt);
+  // Vault-SCOPED for the same reason as /stt, and more literally: it reads the lexicon out
+  // of this project's brain.
+  router.post('/api/agent/voice/correct', handleVoiceCorrect);
+  router.post('/api/agent/voice/tts', handleVoiceTts);
+  router.get('/api/agent/voice/status', handleVoiceStatus);
+  router.put('/api/agent/voice/config', handleVoiceConfigPut);
   // An export the PAGE produced (a `dream-html` PNG/HTML) written into ~/Downloads, so the
   // surface can name the file it just made and offer to reveal it. Vault-agnostic: it
   // writes to the user's home, not into any project's brain. Desktop-gated.
@@ -622,7 +642,7 @@ export function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team', '/api/meeting'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/brain/auth', '/api/brain/team', '/api/meeting'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

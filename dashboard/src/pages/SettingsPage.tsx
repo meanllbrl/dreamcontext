@@ -9,6 +9,7 @@ import { TaskOverrideEditor } from '../components/settings/TaskOverrideEditor';
 import { SETTINGS_ICONS } from '../components/settings/SettingsIcons';
 import { CloudTaskSync } from '../components/settings/CloudTaskSync';
 import { SettingGroup, SettingRow, SettingChoice, Toggle } from '../components/settings/SettingRow';
+import { VoiceSettings } from '../components/settings/VoiceSettings';
 import { useInstantSave, SaveMark } from '../components/settings/useInstantSave';
 import { useAgentCapabilities } from '../hooks/useAgentCapabilities';
 import { useAuthStatus, useBrainSettings, useBrainStatus, useUpdateBrainSettings } from '../hooks/useBrainStatus';
@@ -699,6 +700,11 @@ export function SettingsPage({ focus }: SettingsPageProps) {
       <section className="settings-section">
         <SectionHead titleKey="settings.nav.system" descKey="settings.desc.system" />
         <SystemDependencies />
+        {/* Voice lives in the MACHINE group because its key belongs to the machine, not to a
+            project: `~/.dreamcontext/voice.json`, the same place Claude accounts and the
+            vault registry live. In a project section it would be a per-vault secret, and a
+            team sync would carry it. */}
+        <VoiceSettings />
       </section>
       )}
 

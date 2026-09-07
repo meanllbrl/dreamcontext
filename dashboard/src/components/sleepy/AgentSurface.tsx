@@ -217,11 +217,17 @@ interface SavedMeta {
  * travelling onward — the same discipline the server's `coerceMeta` applies on the way in.
  *
  * DISABLED rows are excluded, which is why this filters rather than just testing membership.
- * `CHAT_MODE_ROWS` is the MENU's list, and it carries J.A.R.V.I.S so the capability can be
- * announced as "Soon" — but the server's `sanitizeChatMode` coerces `jarvis` straight back to
- * Basic (agent-spawn-shared.ts), so accepting it here would let the client hold a mode the
- * spawn can never honour: the roster would say Develop-or-J.A.R.V.I.S while every process ran
- * Basic. Matching the server's allowlist exactly keeps the two from disagreeing.
+ * `CHAT_MODE_ROWS` is the MENU's list, and a row in it may be ANNOUNCED without being
+ * spawnable — that is what `disabled` means. Accepting such a row here would let the client
+ * hold a mode the spawn cannot honour, and the roster would say one thing while every process
+ * ran another. The filter's job is to track a mode's real SPAWNABILITY, not its presence in
+ * the menu.
+ *
+ * No row is disabled today. J.A.R.V.I.S was the one — announced as "Soon" while
+ * `sanitizeChatMode` coerced it back to Basic — and this comment used to state that as a
+ * standing invariant ("the spawn can never honour it"). The voice work made that false: the
+ * coercion is gone and jarvis now spawns like any other mode. The MECHANISM is kept because
+ * the shape recurs; what changed is that it currently gates nothing.
  */
 function knownChatMode(v: unknown): ChatMode | undefined {
   return CHAT_MODE_ROWS.some((r) => r.id === v && !r.disabled) ? (v as ChatMode) : undefined;

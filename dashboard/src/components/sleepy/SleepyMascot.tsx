@@ -4,8 +4,8 @@ import './SleepyMascot.css';
 export type SleepyMood = 'idle' | 'sleepy' | 'sleeps' | 'thinking' | 'working' | 'waving' | 'asking';
 
 /**
- * The chat modes Sleepy WEARS something for. Basic (and the unpickable J.A.R.V.I.S) map to
- * `null` — the bare face, byte-for-byte the look every surface had before modes existed.
+ * The chat modes Sleepy WEARS something for. Basic maps to `null` — the bare face,
+ * byte-for-byte the look every surface had before modes existed.
  *
  * Mode is a SHAPE channel on purpose, never a colour one: mood already owns every hue and
  * animation in this file (green scanning = working, magenta wide-eyed = asking …), and a
@@ -21,12 +21,18 @@ export type SleepyMood = 'idle' | 'sleepy' | 'sleeps' | 'thinking' | 'working' |
  * The mouth is hidden while a mode is worn: the work happens where the smile was, and mood
  * still speaks through the eyes (plus, in the dock, the chip's own colour and "?" bubble).
  */
-export type SleepyGear = 'plan' | 'develop';
+export type SleepyGear = 'plan' | 'develop' | 'jarvis';
 
 /** Which gear a mode wears, if any. Total over `ChatMode` so a new mode is a silent bare face
- *  rather than a crash. */
+ *  rather than a crash.
+ *
+ *  J.A.R.V.I.S joined the set when the voice work landed. It mapped to `null` before that,
+ *  alongside Basic, because the mode was announced and unpickable — and because the test
+ *  pinning this passed either way, the choice would otherwise have shipped silently
+ *  undecided. It is the owner's call that it gets one: Plan and Develop each have one, and a
+ *  mode you TALK to is at least as distinct as a mode that plans. */
 export function gearForMode(mode: ChatMode | undefined): SleepyGear | null {
-  return mode === 'plan' || mode === 'develop' ? mode : null;
+  return mode === 'plan' || mode === 'develop' || mode === 'jarvis' ? mode : null;
 }
 
 /** Base design size the mascot is drawn at; `size` scales the whole thing. */
@@ -41,7 +47,8 @@ interface SleepyMascotProps {
    *  the menu-bar-height tab — just the face. */
   compact?: boolean;
   /** The chat mode this face belongs to. Basic (the default, and anything absent) draws the
-   *  bare face; Plan writes on paper, Develop works the forge. See {@link gearForMode}. */
+   *  bare face; Plan writes on paper, Develop works the forge, J.A.R.V.I.S listens and
+   *  answers. See {@link gearForMode}. */
   mode?: ChatMode;
 }
 
@@ -104,7 +111,37 @@ function Gear({ kind }: { kind: SleepyGear }) {
   return (
     <svg className="smascot-gear" width="92" height="112" viewBox="0 0 92 112" fill="none" aria-hidden>
       <g transform="translate(15,32)" className="smascot-gear-line" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-        {kind === 'plan' ? (
+        {kind === 'jarvis' ? (
+          /* J.A.R.V.I.S — listen, then answer. A microphone on the left and a row of level
+             bars across the mouth. The bars ripple RIGHT-TO-LEFT and stay low while it is
+             listening, then swell and sweep LEFT-TO-RIGHT out of the mic while it answers;
+             two arcs bloom off the capsule on the reply. That reversal is the whole loop, and
+             it is what still reads at 26px when the mic itself is three pixels wide: the
+             direction and the height of the motion say which half of a conversation you are
+             looking at. Same discipline as the other two — an action, not a costume, and
+             drawn in the theme's ink so mood keeps every hue in this file. */
+          <g className="smascot-scene">
+            {/* Microphone — capsule, yoke, stand. Sits where the left corner of the smile was. */}
+            <g className="smascot-mic">
+              <rect className="smascot-gear-fill-soft" x="4" y="39" width="11" height="16" rx="5.5" />
+              <path d="M0.5 50 a9 9 0 0 0 18 0" strokeWidth="2.4" />
+              <path d="M9.5 59 V63" strokeWidth="2.4" />
+              <path d="M4.5 63 H14.5" strokeWidth="2.4" />
+            </g>
+            {/* The two arcs that bloom off the capsule when it speaks. */}
+            <path className="smascot-say smascot-say--1" d="M21 43 a10 10 0 0 1 0 14" strokeWidth="2.4" fill="none" />
+            <path className="smascot-say smascot-say--2" d="M26 39 a16 16 0 0 1 0 22" strokeWidth="2.4" fill="none" />
+            {/* Level bars. Centred on y=50 and scaled about their own middles, so a bar grows
+                in BOTH directions like a real meter rather than sprouting from a baseline. */}
+            <g className="smascot-vu">
+              <rect className="smascot-vu-bar smascot-vu-bar--1" x="31" y="44" width="4" height="12" rx="2" />
+              <rect className="smascot-vu-bar smascot-vu-bar--2" x="38" y="44" width="4" height="12" rx="2" />
+              <rect className="smascot-vu-bar smascot-vu-bar--3" x="45" y="44" width="4" height="12" rx="2" />
+              <rect className="smascot-vu-bar smascot-vu-bar--4" x="52" y="44" width="4" height="12" rx="2" />
+              <rect className="smascot-vu-bar smascot-vu-bar--5" x="59" y="44" width="4" height="12" rx="2" />
+            </g>
+          </g>
+        ) : kind === 'plan' ? (
           /* PLAN — a sheet of paper and a big cartoon pencil. Two lines are already written;
              the pencil writes the third as a handwriting SQUIGGLE that appears under its tip,
              then hops right and dots the full stop. That loop IS the mode — thinking on

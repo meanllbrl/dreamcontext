@@ -9,7 +9,7 @@ import { DownloadNote } from '../../layout/DownloadNote';
 import { deliverDownload, deliveredNote, type ExportNote } from '../../../lib/exportDownload';
 import {
   buildChatSrcdoc, resolveChatKitTokens, readHeightMessage, readSnapshotMessage, htmlOutline,
-  CHAT_HTML_SANDBOX, HTML_PENDING_HEIGHT, HEIGHT_REQUEST_KEY, SNAPSHOT_REQUEST_KEY,
+  CHAT_HTML_SANDBOX, CHAT_HTML_ALLOW, HTML_PENDING_HEIGHT, HEIGHT_REQUEST_KEY, SNAPSHOT_REQUEST_KEY,
   type HtmlSnapshot,
 } from './chatHtmlKit';
 import {
@@ -202,6 +202,7 @@ function HtmlFrame({ html, overrideCss, mode, title, reading, frameRefOut }: {
       className="chat-htmlview-frame"
       title={title}
       sandbox={CHAT_HTML_SANDBOX}
+      allow={CHAT_HTML_ALLOW}
       srcDoc={srcdoc}
       onLoad={mode === 'card' ? askForHeight : undefined}
       style={{

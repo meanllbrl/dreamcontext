@@ -431,6 +431,64 @@
 }
 .chat-cmp-send.is-stop:hover { filter: brightness(1.08); }
 
+/* Push-to-talk (J.A.R.V.I.S mode, desktop only). An OUTLINED disc at rest, like Queue —
+   the filled solid belongs to "this goes now", and holding the mic is not sending yet.
+   While recording it fills red and breathes, which is the same visual grammar as Stop
+   because it is the same kind of state: something is running and you can end it. */
+.chat-cmp-mic:not(:disabled) {
+  cursor: pointer;
+  border-color: var(--color-border-hover);
+  color: var(--color-text-secondary);
+}
+.chat-cmp-mic:not(:disabled):hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+.chat-cmp-send.chat-cmp-mic.is-recording {
+  background: var(--color-error);
+  border-color: transparent;
+  color: #fff;
+  animation: chat-cmp-mic-pulse 1.4s ease-in-out infinite;
+}
+@keyframes chat-cmp-mic-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.28); }
+}
+/* Motion is decoration here — the fill already says "recording". */
+@media (prefers-reduced-motion: reduce) {
+  .chat-cmp-send.chat-cmp-mic.is-recording { animation: none; }
+}
+
+/* A refused or failed take says so in the row. A take that was rejected client-side looks
+   exactly like one that was never recorded, and the difference matters. */
+.chat-cmp-voice-note {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+}
+/* A transcript the corrector CHANGED, waiting for the owner's own keypress. Body-contrast
+   rather than tertiary, because this one is asking for a decision instead of reporting. */
+.chat-cmp-voice-note.is-confirm { color: var(--color-text-secondary); }
+.chat-cmp-voice-op {
+  margin: 0 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text);
+  background: var(--color-bg-tertiary);
+}
+/* HOW LOUDLY, never WHETHER. A replacement far from what was spoken is worth a second look,
+   so it is drawn warmer — and a near one still stops for confirmation just the same. */
+.chat-cmp-voice-op.is-far {
+  color: var(--color-warning, var(--color-text));
+  background: color-mix(in srgb, var(--color-warning, var(--color-accent)) 16%, transparent);
+}
+
 /* ── Toolbar (inside the card, under a hairline) ──────────────────────────────────── */
 
 /* ONE ROW at every width — never wrapped. Wrapping split a ~430px pane into a lopsided

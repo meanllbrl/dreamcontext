@@ -15,5 +15,21 @@
   <string>dreamcontext reads project folders in your Downloads to discover and open dreamcontext vaults.</string>
   <key>NSRemovableVolumesUsageDescription</key>
   <string>dreamcontext reads project folders on removable volumes to discover and open dreamcontext vaults.</string>
+  <!--
+    Microphone. J.A.R.V.I.S mode is push-to-talk: the WebView calls getUserMedia({audio})
+    while the mic button is held. The app is NOT sandboxed (see entitlements.plist), so this
+    usage string is the ONLY missing macOS piece — no new capability and no entitlement is
+    required, and without it WKWebView's getUserMedia is denied outright rather than
+    prompting.
+
+    Scope note, because the grant this unlocks is process-wide and wry does not narrow it:
+    wry 0.55.1 grants WKWebView media capture unconditionally, discarding the requesting
+    origin and frame. Once this prompt is satisfied once, nothing at the OS or WebKit layer
+    distinguishes the composer's own mic button from markup an agent rendered into a
+    sandboxed iframe. That gap is closed one layer up, by SANDBOX_ALLOW in
+    dashboard/src/lib/sandboxHtml.ts — every iframe drawing authored HTML carries allow="".
+  -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>dreamcontext records your voice while you hold the microphone button in J.A.R.V.I.S mode, so you can speak to your agent instead of typing.</string>
 </dict>
 </plist>

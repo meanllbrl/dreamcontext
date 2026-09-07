@@ -51,17 +51,29 @@ describe('chat modes — client menu <-> server allowlist mirror', () => {
     }
   });
 
-  it('J.A.R.V.I.S is announced but unpickable — a badge AND the disabled flag', () => {
-    // The pair is the point: `disabled` without a badge is a dead row the user pokes at, and
-    // a badge without `disabled` is a selectable mode with no behaviour behind it.
+  it('J.A.R.V.I.S is a REAL row now — no badge, no disabled flag (AC1)', () => {
+    // This assertion is the inverse of the one it replaces. It used to require the PAIR —
+    // `disabled` plus a "Soon" badge — because the pair was what kept the announcement
+    // honest: `disabled` without a badge is a dead row the user pokes at, and a badge without
+    // `disabled` is a selectable mode with no behaviour behind it. The mode has behaviour
+    // now, so both come off together, and the same reasoning is what makes that safe.
     const jarvis = CHAT_MODE_ROWS.find((r) => r.id === 'jarvis');
-    expect(jarvis?.disabled).toBe(true);
-    expect(jarvis?.badge).toBeTruthy();
+    expect(jarvis?.disabled).toBeFalsy();
+    expect(jarvis?.badge).toBeFalsy();
   });
 
-  it('no OTHER row is disabled — a mode the server briefs must be selectable', () => {
+  it('NO row is disabled — every mode the server briefs is selectable', () => {
     const disabled = CHAT_MODE_ROWS.filter((r) => r.disabled).map((r) => r.id);
-    expect(disabled).toEqual(['jarvis']);
+    expect(disabled).toEqual([]);
+  });
+
+  it('the badge/disabled PAIR is still enforced for whatever gets announced next', () => {
+    // The mechanism outlives J.A.R.V.I.S's use of it: a future unbuilt mode must carry both
+    // or neither, so nothing ships half-announced the way this one nearly shipped
+    // half-enabled.
+    for (const row of CHAT_MODE_ROWS) {
+      expect(Boolean(row.disabled), `mode "${row.id}"`).toBe(Boolean(row.badge));
+    }
   });
 
   it('chatModeRow falls back to the default rather than returning undefined', () => {

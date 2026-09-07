@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { buildSrcdoc, resolveKitTokens, HTML_KIT_SANDBOX } from './labHtmlKit';
+import { buildSrcdoc, resolveKitTokens, HTML_KIT_SANDBOX, HTML_KIT_ALLOW } from './labHtmlKit';
 
 /**
  * The html/v1 card body: `cache.html` drawn in a NETWORK-LESS sandboxed iframe.
@@ -52,6 +52,7 @@ export function HtmlInsightBody({ html, title, full = false }: {
       className="lab-html-body"
       title={`${title} — script-rendered body`}
       sandbox={HTML_KIT_SANDBOX}
+      allow={HTML_KIT_ALLOW}
       srcDoc={srcdoc}
       style={{
         width: '100%',

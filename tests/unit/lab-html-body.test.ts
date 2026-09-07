@@ -19,6 +19,7 @@ import {
   buildSrcdoc,
   HTML_KIT_CSP,
   HTML_KIT_SANDBOX,
+  HTML_KIT_ALLOW,
   LAB_HTML_KIT_CSS,
 } from '../../dashboard/src/components/lab/labHtmlKit.js';
 
@@ -135,6 +136,15 @@ describe('the sandboxed iframe (security pins — C5 unit half)', () => {
     expect(HTML_KIT_SANDBOX).not.toContain('allow-same-origin');
   });
 
+  it('the permissions allow-list is EMPTY — no microphone, camera or geolocation', () => {
+    // Why the Lab's copy of this pin matters MORE than Chat's, not less: a Chat block is
+    // drawn in reply to something the owner just asked for, while an insight body renders
+    // itself on load, every session, with no attention-drawing moment. Script output is the
+    // same "a teammate can sync it into the repo" trust class as any other authored markup.
+    expect(HTML_KIT_ALLOW).toBe('');
+    expect(HTML_KIT_ALLOW).not.toMatch(/microphone|camera|geolocation|display-capture/);
+  });
+
   it('the srcdoc CSP blocks every network fetch class', () => {
     expect(HTML_KIT_CSP).toContain("default-src 'none'");
     expect(HTML_KIT_CSP).toContain("style-src 'unsafe-inline'");
@@ -177,6 +187,21 @@ describe('the sandboxed iframe (security pins — C5 unit half)', () => {
     expect(source).toContain('sandbox={HTML_KIT_SANDBOX}');
     expect(source).toContain('srcDoc={srcdoc}');
     expect(source).not.toMatch(/sandbox=["'][^"']*allow-same-origin/);
+  });
+
+  it('HtmlInsightBody mounts the EMPTY permissions list too', () => {
+    const source = readFileSync(join(DASH, 'HtmlInsightBody.tsx'), 'utf-8');
+    expect(source).toContain('allow={HTML_KIT_ALLOW}');
+    expect(source).not.toMatch(/allow=["'][^"']*(microphone|camera|geolocation)/);
+  });
+
+  it('LabAppFrame — the THIRD site — mounts both pinned constants', () => {
+    // The app frame imports from lib/sandboxHtml directly rather than through this kit, so
+    // it is the site most easily missed when the other two are updated together.
+    const source = readFileSync(join(DASH, 'LabAppFrame.tsx'), 'utf-8');
+    expect(source).toContain('sandbox={SANDBOX_GRANT}');
+    expect(source).toContain('allow={SANDBOX_ALLOW}');
+    expect(source).not.toMatch(/allow=["'][^"']*(microphone|camera|geolocation)/);
   });
 
   it('the card swaps to the html body; the detail panel keeps the typed TWIN', () => {

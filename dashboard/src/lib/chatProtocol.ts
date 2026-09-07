@@ -149,7 +149,7 @@ export type ChatEvent =
    *  block (observed empirically — "pong" arrived only in the assistant frame), so the echo
    *  is the AUTHORITATIVE full text that upgrades (or, for synthetic local-command replies
    *  like "Set effort level to low", creates) the transcript item. */
-  | { kind: 'assistant-text'; text: string; synthetic: boolean; turnUsage?: TurnUsage }
+  | { kind: 'assistant-text'; text: string; synthetic: boolean; parentToolUseId?: string; turnUsage?: TurnUsage }
   | { kind: 'assistant-thinking'; text: string; turnUsage?: TurnUsage }
   /** The CLI has no usable credentials, so the turn never reached the API. Empirically
    *  verified against CLI 2.1.220 in an isolated unauthenticated HOME: the frame is an
@@ -710,7 +710,24 @@ function fromAssistant(obj: Record<string, unknown>): ChatEvent {
     if (isAuthFailure(obj, block.text)) return { kind: 'auth-required', text: block.text };
     // `<synthetic>` marks a locally-generated reply (e.g. `/effort`'s "Set effort level to
     // low") — no stream deltas ever accompany it, so the reducer appends it as a done item.
-    return { kind: 'assistant-text', text: block.text, synthetic: message.model === '<synthetic>', turnUsage };
+    //
+    // `parentToolUseId` rides along HERE for the same reason it rides on the two branches
+    // above, and its absence was a real gap rather than a deliberate omission: the value is
+    // computed once, a few lines up, and was simply not attached to this branch. The tool
+    // branches have been dropping sub-agent frames since the leak was found; the TEXT branch
+    // could not, because the event had nowhere to carry the answer. So a sub-agent's text
+    // block arriving as a top-level `assistant` frame rendered in the main transcript as if
+    // this conversation had said it — and in J.A.R.V.I.S mode it would then be SPOKEN as the
+    // main conversation's own words, out of order with the real turn. Fixed before the speech
+    // queue was wired to this event, deliberately: wiring first would have made a rendering
+    // bug audible before it was fixed.
+    return {
+      kind: 'assistant-text',
+      text: block.text,
+      synthetic: message.model === '<synthetic>',
+      parentToolUseId,
+      turnUsage,
+    };
   }
   if (blockType === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
     return { kind: 'assistant-thinking', text: block.thinking, turnUsage };

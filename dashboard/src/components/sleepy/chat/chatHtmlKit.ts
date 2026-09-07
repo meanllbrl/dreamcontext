@@ -25,13 +25,18 @@
  * No React, no CSS imports — importable by root vitest with a `.js` specifier.
  */
 import {
-  SANDBOX_CSP, SANDBOX_GRANT, resolveTokens, buildSandboxSrcdoc,
+  SANDBOX_CSP, SANDBOX_GRANT, SANDBOX_ALLOW, resolveTokens, buildSandboxSrcdoc,
 } from '../../../lib/sandboxHtml';
 
 /** Re-exported under Chat-local names so a reader of this surface never has to know the
  *  Lab exists — but they are the SAME constants, deliberately (see `lib/sandboxHtml.ts`). */
 export const CHAT_HTML_CSP = SANDBOX_CSP;
 export const CHAT_HTML_SANDBOX = SANDBOX_GRANT;
+
+/** The permissions allow-list — EMPTY, so a `dream-html` block reaches no microphone,
+ *  camera or geolocation. Separate from the sandbox because `allow` and `sandbox` are
+ *  independent attributes and neither implies the other (see `lib/sandboxHtml.ts`). */
+export const CHAT_HTML_ALLOW = SANDBOX_ALLOW;
 
 /**
  * The kit, embedded as a TS string so it survives every toolchain (vitest stubs `.css?raw`

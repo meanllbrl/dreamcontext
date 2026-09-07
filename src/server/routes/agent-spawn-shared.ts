@@ -100,10 +100,13 @@ export function sanitizeEffort(v: string | null): string {
 
 /**
  * Chat-mode gate. Anything outside {@link CHAT_MODES} resolves to {@link DEFAULT_CHAT_MODE}
- * (`basic`) — and so does `jarvis`, which is rendered disabled in the composer and has no
- * behaviour to select. The value never reaches a shell (it selects a briefing string, not an
- * argv element), so this is an allowlist for CORRECTNESS rather than for injection: an
- * unknown mode must degrade to plain Claude Code, never to a half-applied one.
+ * (`basic`). The value never reaches a shell (it selects a briefing string, not an argv
+ * element), so this is an allowlist for CORRECTNESS rather than for injection: an unknown
+ * mode must degrade to plain Claude Code, never to a half-applied one.
+ *
+ * `jarvis` used to be coerced away here alongside the unknown values, because the row was
+ * rendered disabled and had no behaviour behind it. It has one now, so the special case is
+ * gone and all four members of {@link CHAT_MODES} pass through.
  *
  * It lives HERE, beside `sanitizeUuid`/`sanitizeModel`/`sanitizeEffort`, because this file is
  * the single trust boundary every `claude`-spawning upgrade reads its URL params through —
@@ -111,7 +114,7 @@ export function sanitizeEffort(v: string | null): string {
  * has no business carrying a system prompt.
  */
 export function sanitizeChatMode(v: string | null): ChatMode {
-  if (!v || v === 'jarvis') return DEFAULT_CHAT_MODE;
+  if (!v) return DEFAULT_CHAT_MODE;
   return (CHAT_MODES as readonly string[]).includes(v) ? (v as ChatMode) : DEFAULT_CHAT_MODE;
 }
 

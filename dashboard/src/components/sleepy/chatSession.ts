@@ -1,4 +1,5 @@
 import { ApiClient } from '../../api/client';
+import { SpeechQueue } from '../../lib/voice/speechQueue';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { raiseAskAttention } from '../../lib/attention';
@@ -397,6 +398,10 @@ export interface ChatSession {
   answerQuestion: (requestId: string, questions: QuestionSpec[], picked: Record<string, string>) => void;
   /** Ask the server to interrupt the in-flight turn (Stop button while busy). */
   interrupt: () => void;
+  /** Silence spoken audio and bank the autoplay activation. Called by the composer's mic
+   *  button, synchronously inside the press handler (see the implementation for why both
+   *  jobs have to happen there). A no-op outside J.A.R.V.I.S mode. */
+  bargeInSpeech: () => void;
   /** Live model switch (`set_model` control request — verified on CLI 2.1.218). Applies to
    *  the NEXT turn; the CLI re-emits `system:init` with the new model, which updates
    *  `session.model`/`conv.model`, and the `control-ack` confirms or surfaces an error. */
@@ -559,6 +564,40 @@ export function createChatSession(
   // frame created it first.
   const toolCardPos = new Map<string, number>();
 
+  // ── J.A.R.V.I.S mode: speech ──────────────────────────────────────────────────────────
+  //
+  // Gated on the mode, so every other session allocates nothing and the branches below are
+  // dead code for them. `mode` is `readonly` on a session and changing it respawns a NEW
+  // session object (`AgentSurface.changeChatMode`), so there is no mid-session switch to
+  // defend against — the queue simply dies with the session that owned it. The guard is kept
+  // anyway because it is one comparison and it states the invariant where it is relied on.
+  const speech = mode === 'jarvis' ? new SpeechQueue() : null;
+
+  /**
+   * How many characters of each TEXT ITEM have already been handed to the speech queue,
+   * keyed by the reducer's OWN item id and never by the raw stream `index`.
+   *
+   * The index would be wrong in a way that only shows up on a real conversation: `block-start`
+   * creates a new item per index, and indices restart at 0 for EVERY message, so a tool
+   * round-trip produces a second text block at index 0 and index-keyed state would diff block
+   * B against block A's leftovers — speaking the wrong slice of the wrong paragraph.
+   *
+   * The no-delta case (AC8) is TWO items, not one item upgraded: `block-stop` marks the empty
+   * item `done` before `assistant-text` arrives, the "last non-done item of this kind" match
+   * below fails, and a NEW item is appended. Per-item tracking is right either way — the
+   * first item contributed 0 characters and the second is spoken in full, exactly once.
+   */
+  const spokenChars = new Map<string, number>();
+
+  /** Speak the part of `full` that item `itemId` has not contributed yet. */
+  function speakTail(itemId: string, full: string): void {
+    if (!speech) return;
+    const already = spokenChars.get(itemId) ?? 0;
+    if (full.length <= already) return;
+    speech.push(full.slice(already));
+    spokenChars.set(itemId, full.length);
+  }
+
   // Control requests THIS client sent and is awaiting a control-ack for, keyed by the
   // client-generated request id (contract: the server echoes it into the CLI frame).
   let ctrlSeq = 0;
@@ -635,6 +674,7 @@ export function createChatSession(
     answer,
     answerQuestion,
     interrupt,
+    bargeInSpeech,
     setModel,
     setEffort,
     setPermissionMode,
@@ -822,8 +862,12 @@ export function createChatSession(
         const items = conv.items.slice();
         const cur = items[pos];
         if (cur && (cur.kind === 'text' || cur.kind === 'thinking')) {
-          items[pos] = { ...cur, text: cur.text + ev.text };
+          const next = cur.text + ev.text;
+          items[pos] = { ...cur, text: next };
           conv = { ...conv, items };
+          // Fed live, so speech starts on the first closed sentence rather than at the end of
+          // the turn. Thinking is never spoken.
+          if (cur.kind === 'text') speakTail(cur.id, next);
         }
         return;
       }
@@ -875,6 +919,18 @@ export function createChatSession(
         // unless the last finished item of this kind already carries this exact text (the
         // echo raced AFTER block-stop; appending would duplicate the streamed bubble).
         const kind = ev.kind === 'assistant-text' ? 'text' : 'thinking';
+        // A SUB-AGENT's own text block, guarded the way the tool arms at the two `case`s
+        // above already are. Until `parentToolUseId` was attached to this event
+        // (chatProtocol.ts's `fromAssistant`, text branch) this arm had no way to ask the
+        // question, so a sub-agent's prose arriving as a top-level `assistant` frame landed
+        // in the main transcript unattributed. J.A.R.V.I.S mode raises the stakes rather than
+        // creating them: the speech queue reads text items, so an unguarded one would be read
+        // ALOUD as this conversation's own words, interleaved with the real turn.
+        //
+        // Scoped to `assistant-text` on purpose. The thinking arm shares this code path but
+        // not the exposure — thinking is never spoken — and widening the guard to it would
+        // change what the transcript renders for a reason this work has not established.
+        if (ev.kind === 'assistant-text' && ev.parentToolUseId) return;
         if (!(ev.kind === 'assistant-text' && ev.synthetic)) session.busy = true;
         let pos = -1;
         for (let i = conv.items.length - 1; i >= 0; i--) {
@@ -886,6 +942,9 @@ export function createChatSession(
           const cur = items[pos] as ChatTextItem | ChatThinkingItem;
           items[pos] = { ...cur, text: ev.text };
           conv = { ...conv, items };
+          // The echo is the AUTHORITATIVE full block. Only the tail beyond what this item
+          // already contributed is spoken, so a reply that DID stream is not read twice.
+          if (kind === 'text') speakTail(cur.id, ev.text);
         } else {
           const last = [...conv.items].reverse().find((it) => it.kind === kind);
           if (last && (last as ChatTextItem | ChatThinkingItem).text === ev.text) return;
@@ -893,6 +952,9 @@ export function createChatSession(
             kind, id: nextItemId(), index: -1, text: ev.text, done: true, ts: Date.now(),
           };
           conv = { ...conv, items: [...conv.items, item] };
+          // AC8's case: a short reply the CLI sent with NO deltas at all. This is a fresh
+          // item that has contributed nothing, so it is spoken in full — once.
+          if (kind === 'text') speakTail(item.id, ev.text);
         }
         return;
       }
@@ -1183,6 +1245,8 @@ export function createChatSession(
           lastResult: { success: ev.success, text: ev.text, costUsd: ev.costUsd, usage: ev.usage, numTurns: ev.numTurns, permissionDenials: ev.permissionDenials },
         };
         session.busy = false;
+        // The turn is over, so a trailing partial chunk will never be closed by more text.
+        speech?.flushTurn();
         // Finished while minimized (not looking at it) -> flag the dock's attention badge,
         // mirroring agentSession.ts's onSettle (no chime here — only a fresh question chimes).
         if (session.minimized && !session.attention) session.attention = true;
@@ -1308,7 +1372,41 @@ export function createChatSession(
    */
   function steer(text: string): boolean {
     if (!steerable()) return false;
+    // The owner just changed the subject mid-turn. Whatever is still playing belongs to the
+    // answer they are talking over.
+    silenceSpeech();
     return writeUser(text, { steered: true });
+  }
+
+  /**
+   * THE stop-and-clear entry point for spoken audio, called from exactly three places: the
+   * mic press (see {@link bargeInSpeech}), {@link interrupt}, and {@link steer}.
+   *
+   * The last two are the ones that get forgotten, and forgetting them is worse than having no
+   * barge-in at all: hitting Stop or steering would leave the abandoned answer playing to the
+   * end, so the agent audibly keeps arguing a point the owner has already retracted.
+   *
+   * `resume()` immediately after `stop()` is deliberate and safe. `stop()` bumps the queue's
+   * generation, so the abandoned turn's in-flight fetch bails on its own when it lands; the
+   * flag only needs to be back down for the NEXT turn, which may begin in the same breath.
+   */
+  function silenceSpeech(): void {
+    speech?.stop();
+    speech?.resume();
+  }
+
+  /**
+   * What the mic button calls, SYNCHRONOUSLY inside its own press handler.
+   *
+   * Two jobs in one call because both have to happen in that handler. Silencing is barge-in.
+   * `unlock()` banks WebKit's user activation on the shared audio element — by the time the
+   * agent's first sentence arrives we are many async hops from a real gesture, and autoplay
+   * is only permitted from inside one. Without it the first chunk of the first answer after
+   * launch is silently blocked, and the mode looks broken exactly once per session.
+   */
+  function bargeInSpeech(): void {
+    speech?.unlock();
+    silenceSpeech();
   }
 
   /** Whether {@link steer} would land right now — read by the composer to label ⏎ honestly
@@ -1445,6 +1543,9 @@ export function createChatSession(
   }
 
   function interrupt(): void {
+    // Before the socket check, on purpose: Stop must silence the audio even when the socket
+    // has already gone away, or a dead session keeps talking.
+    silenceSpeech();
     if (ws.readyState !== WebSocket.OPEN) return;
     try { ws.send(JSON.stringify({ type: 'interrupt' } as ClientControl)); } catch { /* best-effort */ }
     // Stop means stop — including whatever was lined up behind this turn. The queue is held,
@@ -1715,6 +1816,7 @@ export function createChatSession(
     // its way out — and, worse, keep this whole closure alive for a frame after the pane
     // that owned it stopped existing.
     renderFlush.cancel();
+    speech?.dispose();
     try { ws.close(); } catch { /* already closing */ }
     try { container.remove(); } catch { /* already detached */ }
   }

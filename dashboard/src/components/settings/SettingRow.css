@@ -301,3 +301,13 @@
   font-weight: var(--font-weight-medium);
   color: var(--color-text);
 }
+
+/* The Voice card's key field: input plus its Save/Clear buttons on one line. A control slot
+   that has to hold three things needs a row of its own — the default slot is sized for one. */
+.setting-row-control .voice-key-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}

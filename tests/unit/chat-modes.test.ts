@@ -31,14 +31,18 @@ import { canonicalRemote } from '../../src/lib/git-sync/origin-setup.js';
 import { linkedReposFilePath } from '../../src/lib/linked-repos.js';
 
 describe('sanitizeChatMode', () => {
-  it('passes the two modes that carry behaviour', () => {
+  it('passes every mode that carries behaviour', () => {
     expect(sanitizeChatMode('plan')).toBe('plan');
     expect(sanitizeChatMode('develop')).toBe('develop');
     expect(sanitizeChatMode('basic')).toBe('basic');
   });
 
-  it('coerces jarvis to basic — it is listed but unselectable, and has no behaviour', () => {
-    expect(sanitizeChatMode('jarvis')).toBe('basic');
+  it('passes jarvis THROUGH — the assertion this file used to make in reverse (AC1)', () => {
+    // Until the voice work landed this read `expect(sanitizeChatMode('jarvis')).toBe('basic')`,
+    // because the row was announced as "Soon" and had no behaviour behind it. Inverting it is
+    // the point of the change, not a casualty of it: the coercion in `sanitizeChatMode` was
+    // the single line standing between the menu and a real mode.
+    expect(sanitizeChatMode('jarvis')).toBe('jarvis');
   });
 
   it('coerces everything unknown, empty or hostile to basic', () => {
@@ -123,9 +127,40 @@ describe('modeBriefing', () => {
     }
   });
 
-  it('jarvis adds nothing either (defence in depth — the sanitizer coerces it away first)', () => {
-    expect(modeBriefing('jarvis', { worktreeAllowed: true })).toBe('');
-    expect(modeBriefing('jarvis', { worktreeAllowed: false })).toBe('');
+  it('jarvis carries a REAL briefing now — the second inverted assertion (AC1)', () => {
+    // Also once asserted in reverse (`toBe('')`). Both halves had to flip together: a
+    // sanitizer that passes the mode through to a briefing that is still empty would ship a
+    // selectable mode that behaves exactly like Basic.
+    const brief = modeBriefing('jarvis', { worktreeAllowed: false });
+    expect(brief).toContain('# Mode: J.A.R.V.I.S');
+    expect(brief).toMatch(/read back aloud/i);
+    expect(brief).toContain('dream-html');
+    // The named carrier for the correction-pass warning. A server-side log flag would not
+    // satisfy it — the caution has to land in the MODEL's context.
+    expect(brief).toMatch(/jargon-corrected/i);
+  });
+
+  it('the SPAWN PATH composes: the URL param survives the sanitizer and reaches the brief (AC1)', () => {
+    // The two halves AC1 names, joined the way `agent-chat.ts:591` joins them. Before this
+    // change the same expression returned Basic's briefing for a `?mode=jarvis` spawn, and
+    // nothing in the client would have shown it.
+    const brief = modeBriefing(sanitizeChatMode('jarvis'), { worktreeAllowed: false });
+    expect(brief).toContain('# Mode: J.A.R.V.I.S');
+    // The file the CLI receives is `CHAT_SURFACE_BRIEFING + '\n' + modeBrief`, so a
+    // non-empty mode brief is exactly what makes it into the system prompt.
+    expect(brief.length).toBeGreaterThan(0);
+  });
+
+  it('keeps the briefing SHORT — a long brief in a spoken mode is the failure it exists to avoid', () => {
+    const jarvis = modeBriefing('jarvis', { worktreeAllowed: false });
+    const develop = modeBriefing('develop', { worktreeAllowed: false });
+    expect(jarvis.length).toBeLessThan(develop.length);
+  });
+
+  it('jarvis inherits the worktree clause, for the same reason basic does — same tools, same brain', () => {
+    const forbidden = modeBriefing('jarvis', { worktreeAllowed: false });
+    expect(forbidden).toMatch(/Do NOT create a git worktree/);
+    expect(modeBriefing('jarvis', { worktreeAllowed: true })).toContain('EnterWorktree');
   });
 
   it('plan is the planning half: ask first, ground it, end with a task', () => {

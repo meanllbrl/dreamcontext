@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import { parseChatActions, MAX_HTML_BYTES, MAX_HTMLS_PER_MESSAGE } from '../../dashboard/src/components/sleepy/chat/chatActions.js';
 import {
   buildChatSrcdoc, readHeightMessage, htmlOutline, HEIGHT_BRIDGE, KIT_BEHAVIOUR, HEIGHT_MESSAGE_KEY, HEIGHT_REQUEST_KEY,
-  CHAT_HTML_CSP, CHAT_HTML_SANDBOX, CHAT_HTML_KIT_CSS, CHAT_KIT_TOKENS, CHAT_READING_TOKENS,
+  CHAT_HTML_CSP, CHAT_HTML_SANDBOX, CHAT_HTML_ALLOW, CHAT_HTML_KIT_CSS, CHAT_KIT_TOKENS, CHAT_READING_TOKENS,
   SNAPSHOT_MESSAGE_KEY, SNAPSHOT_REQUEST_KEY,
 } from '../../dashboard/src/components/sleepy/chat/chatHtmlKit.js';
 import { SANDBOX_FONT_CSS } from '../../dashboard/src/lib/sandboxFont.js';
@@ -107,6 +107,16 @@ describe('the sandbox is the boundary', () => {
     expect(CHAT_HTML_SANDBOX).not.toContain('allow-top-navigation');
     expect(CHAT_HTML_SANDBOX).not.toContain('allow-popups');
     expect(CHAT_HTML_SANDBOX).not.toContain('allow-forms');
+  });
+
+  it('grants NO device permission — `allow` is an allow-list, and ours is empty', () => {
+    // The uncovered class between the other two constants. `sandbox` governs origin,
+    // navigation, forms and popups; the CSP governs FETCHES. Neither says anything about
+    // getUserMedia, and after J.A.R.V.I.S mode's first push-to-talk the process holds a
+    // microphone grant that wry hands to any frame that asks (it discards origin and
+    // frame). An EMPTY allow-list is what stops a `dream-html` block being one of them.
+    expect(CHAT_HTML_ALLOW).toBe('');
+    expect(CHAT_HTML_ALLOW).not.toMatch(/microphone|camera|geolocation|display-capture/);
   });
 
   it("forbids every fetch: default-src 'none', and no source list that reaches the network", () => {
@@ -414,6 +424,17 @@ describe('the height bridge', () => {
     const source = readFileSync(join(CHAT_DIR, 'HtmlView.tsx'), 'utf-8');
     expect(source).toContain('sandbox={CHAT_HTML_SANDBOX}');
     expect(source).not.toMatch(/sandbox="[^"]*allow-same-origin/);
+  });
+
+  it('HtmlView also mounts the EMPTY permissions list — the constant alone is not the control', () => {
+    // `sandbox` and `allow` are INDEPENDENT attributes, so declaring SANDBOX_ALLOW in
+    // lib/sandboxHtml.ts does precisely nothing until this JSX site spells it out. That is
+    // not a hypothetical: an earlier draft of this work claimed "Chat and Lab both get it"
+    // from a single shared-constant edit, and the claim was false. This test reads the
+    // source so the wiring cannot be lost while the constant survives.
+    const source = readFileSync(join(CHAT_DIR, 'HtmlView.tsx'), 'utf-8');
+    expect(source).toContain('allow={CHAT_HTML_ALLOW}');
+    expect(source).not.toMatch(/allow="[^"]*(microphone|camera|geolocation)/);
   });
 });
 

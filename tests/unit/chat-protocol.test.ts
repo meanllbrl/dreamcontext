@@ -379,6 +379,38 @@ describe('parseChatLine — system:task_* (sub-agent lifecycle, state 9)', () =>
     expect((ev as { parentToolUseId?: string }).parentToolUseId).toBeUndefined();
   });
 
+  it("a sub-agent's TEXT block carries the frame attribution too — the branch that used to drop it (AC16)", () => {
+    // The gap this closes: `fromAssistant` computed `parentToolUseId` and attached it to the
+    // tool_use and tool_result branches, but not to the text branch, and the event type had
+    // no field to carry it. So a sub-agent's prose arriving as a top-level `assistant` frame
+    // was indistinguishable from the main agent's own. Harmless-looking as a rendering bug;
+    // in J.A.R.V.I.S mode the same block is read ALOUD as this conversation's own words.
+    const frame = JSON.stringify({
+      type: 'assistant',
+      parent_tool_use_id: AGENT_TOOL_USE_ID,
+      message: {
+        role: 'assistant',
+        model: 'claude-haiku-4-5-20251001',
+        content: [{ type: 'text', text: 'I searched the repo and found three call sites.' }],
+      },
+    });
+    expect(parseChatLine(frame)).toMatchObject({
+      kind: 'assistant-text',
+      text: 'I searched the repo and found three call sites.',
+      parentToolUseId: AGENT_TOOL_USE_ID,
+    });
+  });
+
+  it("the MAIN agent's own text carries NO parent id — so the guard never silences the real turn", () => {
+    const frame = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text: 'Bak, ekrana koyuyorum.' }] },
+    });
+    const ev = parseChatLine(frame);
+    expect(ev).toMatchObject({ kind: 'assistant-text', text: 'Bak, ekrana koyuyorum.' });
+    expect((ev as { parentToolUseId?: string }).parentToolUseId).toBeUndefined();
+  });
+
   it("a sidechain stream_event is dropped WHOLE — its block `index` is per-message and would splice a sub-agent's deltas into the parent's own text block", () => {
     const frame = JSON.stringify({
       type: 'stream_event',

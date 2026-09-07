@@ -23,9 +23,13 @@ export interface ChatModeRow {
   name: string;
   /** One line under the name: what picking this actually changes about how the agent works. */
   insight: string;
-  /** Chip beside the name. Only J.A.R.V.I.S carries one. */
+  /** Chip beside the name. Nothing carries one today — J.A.R.V.I.S wore "Soon" until the
+   *  voice work landed. Kept because announcing an unbuilt mode is a shape this menu has
+   *  needed once and will need again. */
   badge?: string;
-  /** Rendered, but unpickable — the row exists so the capability is announced, not offered. */
+  /** Rendered, but unpickable — the row exists so the capability is announced, not offered.
+   *  Read by `AgentSurface.knownChatMode()`, which is what makes it a real gate rather than
+   *  a styling flag: a disabled mode is one the spawn will not honour. */
   disabled?: boolean;
 }
 
@@ -40,13 +44,7 @@ export const CHAT_MODE_ROWS: readonly ChatModeRow[] = [
   { id: 'basic', name: 'Basic', insight: 'Plain Claude. No mode enabled.' },
   { id: 'plan', name: 'Plan', insight: 'Asks, drafts, gets reviewed, ends with a task.' },
   { id: 'develop', name: 'Develop', insight: 'Builds in waves, reviewed and validated.' },
-  {
-    id: 'jarvis',
-    name: 'J.A.R.V.I.S',
-    insight: 'Talk with the agent.',
-    badge: 'Soon',
-    disabled: true,
-  },
+  { id: 'jarvis', name: 'J.A.R.V.I.S', insight: 'Talk with the agent. It talks back.' },
 ];
 
 /** What a chat is in when nothing asked for anything else. There is deliberately no

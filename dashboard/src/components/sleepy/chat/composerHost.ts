@@ -53,6 +53,15 @@ export interface ComposerHost {
   steer(text: string): boolean;
   enqueue(text: string, opts?: { steerWhenPossible?: boolean }): void;
   interrupt(): void;
+  /**
+   * Silence spoken audio and bank the browser's autoplay activation, both synchronously.
+   *
+   * OPTIONAL because only a `ChatSession` in J.A.R.V.I.S mode has anything to silence — the
+   * meeting room has no speech queue, and asking it to implement a no-op would be asking it
+   * to know about a feature it does not have. The composer calls it with `?.()` from the mic
+   * press and from Stop; a host without it simply has nothing playing.
+   */
+  bargeInSpeech?(): void;
 }
 
 /** The slice of `ConversationModel` the composer reads. Mirrors those fields exactly. */

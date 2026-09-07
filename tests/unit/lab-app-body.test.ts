@@ -260,10 +260,24 @@ describe('appModel — pure lookups (the ONLY route the bridge has to spec/data)
 describe('LabAppFrame.tsx (security pins — source-text, no jsdom harness in this repo)', () => {
   const source = readFileSync(join(DASH, 'LabAppFrame.tsx'), 'utf-8');
 
-  it('imports the sandbox grant and CSP builder UNCHANGED from lib/sandboxHtml — never re-declares them', () => {
-    expect(source).toContain("import { SANDBOX_GRANT } from '../../lib/sandboxHtml'");
+  it('imports the sandbox constants UNCHANGED from lib/sandboxHtml — never re-declares them', () => {
+    // Both constants, from the shared module. The assertion names them individually rather
+    // than pinning the whole import line, so adding a THIRD shared constant later does not
+    // fail a test that is really about "these are not re-declared here".
+    expect(source).toMatch(/import \{[^}]*\bSANDBOX_GRANT\b[^}]*\} from '\.\.\/\.\.\/lib\/sandboxHtml'/);
+    expect(source).toMatch(/import \{[^}]*\bSANDBOX_ALLOW\b[^}]*\} from '\.\.\/\.\.\/lib\/sandboxHtml'/);
     expect(source).toContain('sandbox={SANDBOX_GRANT}');
     expect(source).not.toMatch(/sandbox=\{?["'][^"'}]*allow-same-origin/);
+  });
+
+  it('mounts the EMPTY permissions list — a Lab app cannot ask for the microphone', () => {
+    // `sandbox` and `allow` are independent attributes, so the constant existing in
+    // lib/sandboxHtml.ts proves nothing about this frame until this line is here. It matters
+    // most for the Lab: an app frame renders from script output with no user gesture in
+    // front of it, and after J.A.R.V.I.S mode's first push-to-talk the process holds a
+    // microphone grant that wry hands to any frame that asks.
+    expect(source).toContain('allow={SANDBOX_ALLOW}');
+    expect(source).not.toMatch(/allow=\{?["'][^"'}]*(microphone|camera|geolocation)/);
   });
 
   it('never authenticates by comparing event.origin — a sandboxed frame\'s origin is the string "null"', () => {

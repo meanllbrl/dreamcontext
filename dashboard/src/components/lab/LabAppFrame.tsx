@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { SANDBOX_GRANT } from '../../lib/sandboxHtml';
+import { SANDBOX_GRANT, SANDBOX_ALLOW } from '../../lib/sandboxHtml';
 import { resolveKitTokens } from './labHtmlKit';
 import { appPageIds, findAppPage, findDataset, type AppSpec, type DatasetBundle } from './appModel';
 import {
@@ -31,6 +31,9 @@ import {
  *
  * SECURITY (see labAppRuntime.ts's module doc for the full argument):
  *   - `sandbox={SANDBOX_GRANT}` — imported UNCHANGED from `lib/sandboxHtml.ts`.
+ *   - `allow={SANDBOX_ALLOW}` — the EMPTY permissions list, also unchanged. `sandbox` and
+ *     `allow` are independent attributes: the sandbox grant says nothing about device
+ *     permissions, so without this a Lab app could ask for the microphone.
  *   - Every inbound message is gated, in order: `event.source` identity
  *     (never `event.origin` — opaque for a sandboxed frame), the
  *     `__dreamLabApp` envelope shape, then the per-instance nonce.
@@ -266,6 +269,7 @@ export function LabAppFrame({
       className="lab-app-frame"
       title={`${title} — script-rendered app body`}
       sandbox={SANDBOX_GRANT}
+      allow={SANDBOX_ALLOW}
       srcDoc={instance.srcDoc}
       onLoad={handleLoad}
       style={style}

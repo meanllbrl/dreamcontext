@@ -1,4 +1,4 @@
-import { SANDBOX_CSP, SANDBOX_GRANT, resolveTokens, buildSandboxSrcdoc } from '../../lib/sandboxHtml';
+import { SANDBOX_CSP, SANDBOX_GRANT, SANDBOX_ALLOW, resolveTokens, buildSandboxSrcdoc } from '../../lib/sandboxHtml';
 
 /** The kit, embedded as a TS string so it survives every toolchain (vitest
  *  stubs `.css?raw` imports to empty). `lab-html-kit.css` next to this file
@@ -29,6 +29,12 @@ export const HTML_KIT_CSP = SANDBOX_CSP;
 
 /** The sandbox grant — scripts yes, same-origin NEVER (that would void the CSP). */
 export const HTML_KIT_SANDBOX = SANDBOX_GRANT;
+
+/** The permissions allow-list — EMPTY, so a script-authored insight body reaches no
+ *  microphone, camera or geolocation. This one matters MORE than Chat's, not less: an
+ *  insight body renders automatically on load, with no attention-drawing moment like
+ *  pressing a mic button (see `lib/sandboxHtml.ts`). */
+export const HTML_KIT_ALLOW = SANDBOX_ALLOW;
 
 /** The design tokens resolved into the srcdoc — the full kit surface: charts,
  *  surfaces/text/borders, status, spacing, typography, radii. */

@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
-import { pickFiles, pickFolders } from '../../../lib/desktop';
+import { pickFiles, pickFolders, isDesktop } from '../../../lib/desktop';
+import { useVoiceCapture } from '../../../lib/voice/useVoiceCapture';
+
+/** One aligned change the corrector proposed. Mirrors `src/lib/voice/align.ts`'s `AlignOp`
+ *  structurally rather than importing it: the dashboard is a separate build and does not
+ *  reach into the CLI's source tree. The route is the contract between them. */
+interface VoiceOp {
+  kind: 'equal' | 'substitute' | 'insert' | 'delete';
+  from: string;
+  to: string;
+  similarity?: number;
+}
 import { useVault } from '../../../context/VaultContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
 import { useAgentSessionStats, useClaudeAccounts, useUsageLimits } from '../../../hooks/useAgentCapabilities';
@@ -689,6 +700,168 @@ export function Composer({
    *  `queue` — the ⇡ button: hold for the NEXT turn whatever is happening now. */
   type SubmitMode = 'auto' | 'queue';
 
+  // ── J.A.R.V.I.S mode: push-to-talk ────────────────────────────────────────────────
+  //
+  // The mic is drawn ONLY in this mode and ONLY in the desktop app (AC15). The web dashboard
+  // has no microphone path at all — there is no Info.plist to carry a usage string and no
+  // WKWebView to grant against — so a button there would be a control that cannot work.
+  const voiceEnabled = mode === 'jarvis' && isDesktop();
+  /** The draft as it stood when the take began, so a transcript can tell "the owner typed
+   *  while I was transcribing" from "nothing changed". */
+  const draftAtTakeRef = useRef('');
+  /** Bumped to ask for a submit AFTER the draft state has landed. `commit` reads
+   *  `liveRef.current`, which is only refreshed by a render, so submitting in the same tick
+   *  as `setDraft` would send the PREVIOUS draft — a message the owner never spoke. */
+  const [voiceSubmitTick, setVoiceSubmitTick] = useState(0);
+  /** The correction pass is a VISIBLE state, not a silent dead gap after the button is
+   *  released — a second of nothing looks exactly like a take that failed. */
+  const [voiceCorrecting, setVoiceCorrecting] = useState(false);
+  const submitRef = useRef<(m?: SubmitMode) => void>(() => {});
+  const [voiceNotice, setVoiceNotice] = useState('');
+  /**
+   * A corrected transcript sitting in the box, waiting for the owner's own keypress.
+   *
+   * `awaiting-confirmation` is a REAL state, not the gap between two others. Confirm-on-change
+   * created a TERMINAL pending state that an earlier guard did not model: scoped to "still in
+   * STT or correction", the guard released the moment the corrected text landed, and a second
+   * mic press right then was unprotected.
+   *
+   * `text` is what is pending, so a hand-edit can be detected by comparison; `ops` is what
+   * changed, so the row can say it.
+   */
+  const [pending, setPending] = useState<{ text: string; ops: VoiceOp[] } | null>(null);
+
+
+  /**
+   * Run the correction pass over a raw transcript.
+   *
+   * Every failure is an AUTO path returning the RAW text, and that is not a fallback — it is
+   * the correct answer, because nothing was changed. A timeout, an error and a switched-off
+   * pass are indistinguishable to the owner for exactly that reason.
+   */
+  const runCorrection = useCallback(async (raw: string): Promise<{ text: string; ops: VoiceOp[]; auto: boolean }> => {
+    try {
+      const res = await fetch('/api/agent/voice/correct', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(vault ? { 'X-Dreamcontext-Vault': vault } : {}),
+        },
+        body: JSON.stringify({ text: raw }),
+      });
+      if (!res.ok) return { text: raw, ops: [], auto: true };
+      const body = await res.json() as { action?: string; text?: string; ops?: VoiceOp[] };
+      if (body.action !== 'confirm' || !body.text) return { text: raw, ops: [], auto: true };
+      return { text: body.text, ops: body.ops ?? [], auto: false };
+    } catch {
+      return { text: raw, ops: [], auto: true };
+    }
+  }, [vault]);
+
+  const onTranscript = useCallback((raw: string) => {
+    const typed = liveRef.current.draft;
+    // AC3f: an async transcript NEVER overwrites what the owner typed while it was in flight.
+    // The busy guard stops a second TAKE, but it cannot stop a keyboard, so the arriving text
+    // has to notice. Untouched, it becomes the message. Touched, it is appended and LEFT for
+    // the owner to send: their sentence is theirs to finish, and clobbering it — or sending a
+    // half-typed thought glued to a spoken one — is the failure this guards.
+    const untouched = typed === draftAtTakeRef.current;
+    setVoiceCorrecting(true);
+    void runCorrection(raw).then(({ text, ops, auto }) => {
+      setVoiceCorrecting(false);
+      const next = untouched ? text : `${typed.trimEnd()} ${text}`.trim();
+      setDraft(next);
+      session.syncDraft(next);
+      if (!untouched) {
+        setVoiceNotice('Added to what you typed — press send when it reads right.');
+        return;
+      }
+      if (auto) {
+        // Two ways to get here, and they mean the same thing: the corrector returned
+        // byte-identical text, or it never returned at all. Either way NOTHING was changed,
+        // so there is no basis for withholding it.
+        setVoiceSubmitTick((n) => n + 1);
+        return;
+      }
+      // AC3d, the criterion that must not regress. A machine-altered sentence is never
+      // spoken on the owner's behalf without the owner seeing what changed. This is a
+      // BEHAVIOURAL rule and not a numeric one: an adversarial search broke the phonetic
+      // veto that used to sit here in 11 of 21 dangerous pairs, and no threshold separates
+      // the legitimate substitutions from the hostile ones.
+      setPending({ text: next, ops });
+      setVoiceNotice('');
+    });
+  }, [session, runCorrection]);
+
+  const voice = useVoiceCapture({ vault, onTranscript });
+
+  useEffect(() => {
+    if (voiceSubmitTick > 0) submitRef.current('auto');
+  }, [voiceSubmitTick]);
+
+  // A pending transcript stops pending the moment the box no longer holds it — sent, cleared,
+  // or edited past recognition. Without this the row would keep offering to confirm text that
+  // is no longer there.
+  useEffect(() => {
+    if (pending && draft === '') setPending(null);
+  }, [pending, draft]);
+
+  /** Press. Synchronous on purpose: {@link ComposerHost.bargeInSpeech} both silences whatever
+   *  is playing (barge-in) and banks WebKit's autoplay activation, and the second only counts
+   *  inside a real gesture handler. */
+  const startTake = useCallback(() => {
+    if (!voiceEnabled || voice.busy || voiceCorrecting) return;
+    // AC3k — a second mic press OVER pending text, spelled out rather than left to chance.
+    if (pending) {
+      if (liveRef.current.draft !== pending.text) {
+        // Hand-edited: it is the owner's text now, and AC3f's promise extends to
+        // machine-produced pending text too.
+        setVoiceNotice('You edited this one — send or clear it before recording again.');
+        return;
+      }
+      // Untouched: tapping the mic while looking at a bad correction IS the owner choosing
+      // to redo it, and refusing there would be obstruction. The discarded transcript is
+      // logged so a correction nobody liked is still visible after the fact.
+      console.info('[voice] discarding an unconfirmed transcript to re-record');
+      setPending(null);
+      setDraft('');
+      session.syncDraft('');
+    }
+    setVoiceNotice('');
+    draftAtTakeRef.current = pending ? '' : liveRef.current.draft;
+    session.bargeInSpeech?.();
+    voice.start();
+  }, [voiceEnabled, voice, voiceCorrecting, pending, session]);
+
+  const endTake = useCallback(() => {
+    if (!voiceEnabled) return;
+    voice.stop();
+  }, [voiceEnabled, voice]);
+
+  // The keyboard half of push-to-talk: hold ⌥Space. Window-level rather than on the textarea,
+  // because the owner's hands may be nowhere near it — the whole point of the mode. `repeat`
+  // is ignored so a held key is one take, not one per auto-repeat tick, and the default is
+  // prevented because ⌥Space inserts a non-breaking space into a focused field on macOS.
+  useEffect(() => {
+    if (!voiceEnabled) return;
+    const down = (e: KeyboardEvent) => {
+      if (!e.altKey || e.code !== 'Space' || e.repeat) return;
+      e.preventDefault();
+      startTake();
+    };
+    const up = (e: KeyboardEvent) => {
+      // Released on the SPACE or on the modifier — letting go of ⌥ first is common enough
+      // that not handling it would strand the recorder open.
+      if (e.code === 'Space' || e.key === 'Alt') endTake();
+    };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+    };
+  }, [voiceEnabled, startTake, endTake]);
+
   const commit = (mode: SubmitMode) => {
     const { draft: text, busy: isBusy, connected: isConnected, quote: liveQuote } = liveRef.current;
     if (!isConnected) return;
@@ -767,6 +940,9 @@ export function Composer({
       commit(mode);
     });
   };
+  // Kept current so the voice path can submit from an effect without `submit` having to be
+  // declared above the hook that needs it.
+  submitRef.current = submit;
 
   // ONLY disconnection disables the textarea — it must stay focusable while Claude
   // works (a disabled textarea drops focus to <body>, killing surface-level chords).
@@ -1230,8 +1406,78 @@ export function Composer({
             otherwise have left "not this turn, the next one" with no way to say it at all.
             Both text buttons appear only once there is something to send, so an idle-handed
             Stop stays the single obvious control. */}
+        {/* Push-to-talk. Hold it, speak, let go — see `useVoiceCapture` for why the take is
+            gated on duration and RMS before a single byte is uploaded. Only in J.A.R.V.I.S
+            mode and only on the desktop (AC15). */}
+        {voiceEnabled && (
+          <button
+            type="button"
+            className={`chat-cmp-send chat-cmp-mic${voice.state === 'recording' ? ' is-recording' : ''}`}
+            // `onPointerDown`/`onPointerUp`, not `onClick`: press-and-hold has no click.
+            // `onPointerLeave` and `onPointerCancel` close the take when the finger slides off
+            // the button or the OS takes the pointer away, so the recorder cannot be left open
+            // with the macOS mic indicator lit.
+            onPointerDown={startTake}
+            onPointerUp={endTake}
+            onPointerLeave={endTake}
+            onPointerCancel={endTake}
+            // A real gesture is required for autoplay, and a context menu on a long press
+            // would swallow the pointerup that ends the take.
+            onContextMenu={(e) => e.preventDefault()}
+            disabled={!connected || voice.state === 'transcribing' || voiceCorrecting}
+            title={
+              voice.state === 'recording' ? `Recording — ${voice.elapsed}s. Let go to send.`
+                : voice.state === 'transcribing' ? 'Transcribing…'
+                  : voiceCorrecting ? 'Checking it against the project vocabulary…'
+                    : pending ? 'Hold to record again — this one is waiting for you to send it.'
+                      : voice.state === 'too-short' ? 'That was a tap — hold the button while you speak.'
+                        : voice.state === 'silent' ? 'Nothing was heard in that take.'
+                          : voice.state === 'unconfigured' ? (voice.error || 'Voice needs an OpenRouter key in Settings.')
+                            : voice.state === 'error' ? (voice.error || 'That take did not go through.')
+                              : 'Hold to speak (⌥Space)'
+            }
+            aria-label="Hold to speak"
+            aria-pressed={voice.state === 'recording'}
+          >
+            <span aria-hidden>{voice.state === 'transcribing' || voiceCorrecting ? '…' : '🎙'}</span>
+          </button>
+        )}
+        {/* AC3d's visible half. A machine-altered sentence is never sent on the owner's
+            behalf without them seeing WHAT changed — so the row names the substitutions
+            rather than just saying "please confirm", which would train itself away. */}
+        {voiceEnabled && pending && pending.ops.length > 0 && (
+          <span className="chat-cmp-voice-note is-confirm" role="status">
+            {'Changed '}
+            {pending.ops.slice(0, 3).map((op, i) => (
+              <span
+                key={`${op.kind}-${i}`}
+                // How LOUDLY, never WHETHER: a replacement far from what was spoken is drawn
+                // harder than a near one. The distance decides nothing else (see align.ts).
+                className={`chat-cmp-voice-op${(op.similarity ?? 1) < 0.6 ? ' is-far' : ''}`}
+              >
+                {op.kind === 'insert' ? `+${op.to}` : op.kind === 'delete' ? `−${op.from}` : `${op.from} → ${op.to}`}
+              </span>
+            ))}
+            {pending.ops.length > 3 ? ` +${pending.ops.length - 3} more` : ''}
+            {' — press send if that is right.'}
+          </span>
+        )}
+        {voiceEnabled && !pending && (voiceNotice || voiceCorrecting || voice.state === 'too-short' || voice.state === 'silent' || voice.state === 'error' || voice.state === 'unconfigured') && (
+          // Said in the row rather than only in a tooltip: a take that was refused looks
+          // exactly like one that was never recorded, and the owner needs to know which.
+          <span className="chat-cmp-voice-note">
+            {voiceNotice
+              || (voiceCorrecting ? 'Checking the vocabulary…'
+                : voice.state === 'too-short' ? 'Hold it while you speak.'
+                  : voice.state === 'silent' ? 'Nothing heard.'
+                    : voice.error)}
+          </span>
+        )}
+        {voiceEnabled && pending && voiceNotice && (
+          <span className="chat-cmp-voice-note">{voiceNotice}</span>
+        )}
         {busy && (
-          <button type="button" className="chat-cmp-send is-stop" title="Interrupt the in-flight turn (⌃C)" aria-label="Stop" onClick={() => session.interrupt()}>
+          <button type="button" className="chat-cmp-send is-stop" title="Interrupt the in-flight turn (⌃C)" aria-label="Stop" onClick={() => { session.bargeInSpeech?.(); session.interrupt(); }}>
             <span aria-hidden>■</span>
           </button>
         )}

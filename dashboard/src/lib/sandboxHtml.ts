@@ -50,6 +50,38 @@ export const SANDBOX_CSP =
 /** The sandbox grant — scripts yes, same-origin NEVER (that would void the CSP). */
 export const SANDBOX_GRANT = 'allow-scripts';
 
+/**
+ * The permissions-policy grant — EMPTY, denying every powerful device feature to authored
+ * markup: microphone, camera, geolocation, display-capture, the lot.
+ *
+ * WHY AN EMPTY STRING IS THE VALUE. `allow` is a permissions ALLOW-LIST, and an iframe
+ * carrying `allow=""` grants nothing. Omitting the attribute is NOT the same thing: a
+ * same-origin child (which `srcdoc` is, in the ways that matter here) inherits the parent's
+ * permission state by default, so "we never wrote `allow`" reads as "whatever the app has".
+ *
+ * WHY IT EXISTS AT ALL, given the sandbox and the CSP. Neither covers device permissions.
+ * `sandbox="allow-scripts"` governs origin, navigation, forms and popups; `SANDBOX_CSP`
+ * governs FETCHES — `default-src 'none'` stops the frame reaching the network and says
+ * nothing about `getUserMedia`. Between them there was an uncovered class, and one member of
+ * it is the microphone.
+ *
+ * WHY IT IS NOT THEORETICAL. wry 0.55.1 grants WKWebView media capture unconditionally,
+ * discarding the requesting origin and frame (`wry_web_view_ui_delegate.rs:126-137` →
+ * `WKPermissionDecision::Grant`), and the desktop app is non-sandboxed. So the moment one
+ * legitimate push-to-talk satisfies the process-wide TCC prompt, there is nothing BELOW this
+ * attribute — not in macOS, not in WebKit — that tells the composer's mic button apart from
+ * a `getUserMedia` call inside markup an agent wrote. This attribute is the boundary.
+ *
+ * WHY THE CONSTANT IS NOT THE CONTROL. `sandbox` and `allow` are INDEPENDENT attributes:
+ * defining this changes nothing until every JSX site that draws authored HTML spells it out.
+ * There are three, and the two Lab ones matter MORE rather than less — a Lab script's output
+ * renders automatically every session, with no attention-drawing moment like pressing a mic
+ * button. `tests/unit/chat-html.test.ts` and `tests/unit/lab-html-body.test.ts` read the
+ * component sources and pin all three, because a constant nobody uses is the exact failure
+ * this note exists to prevent.
+ */
+export const SANDBOX_ALLOW = '';
+
 export { SANDBOX_FONT_CSS } from './sandboxFont.js';
 
 /**
