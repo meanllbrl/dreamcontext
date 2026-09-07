@@ -5,15 +5,15 @@ name: chat-composer-shelf
 description: >-
   A shelf docked to the chat composer that holds pinned facts and progress rows
   outside the transcript, so session-critical information never scrolls away.
-  Supports dream-view pin and progress blocks, with tags wrapping to multiple
-  lines (no fold), progress detail opening as a floating popover, and loopback
-  URL clicks.
+  dream-view pin, progress and checkout blocks; tags wrap (no fold), progress
+  detail is a popover, loopback URLs are clickable, and the branch chip follows
+  the session into a LINKED repo's checkout — warning in amber when it cannot.
 pinned: false
 date: '2026-08-23'
-status: in_review
+status: active
 created: '2026-08-23'
-updated: '2026-08-29'
-released_version: null
+updated: '2026-09-07'
+released_version: 0.27.0
 tags:
   - 'topic:agents'
   - 'topic:desktop'
@@ -52,6 +52,8 @@ Both need a surface that PERSISTS and, for progress, one that is DERIVED from th
 - [x] As someone whose brain is split from its code, the branch chip names the LINKED repo checkout my session is actually working in — not the brain repo it was launched from.
 - [x] As the agent, I can STATE which checkout my work is happening in, so the chip is right even when the work is happening somewhere the session is not standing.
 - [x] As someone driving a run, when the agent writes into a checkout it never declared, the chip warns me instead of silently following an inferred signal.
+- [x] As the agent, I can WITHDRAW a checkout claim I made, handing the answer back to what the server can observe instead of pinning the chip to the project root.
+- [x] As someone driving a run, when my claim is REFUSED I am told so on the banner, instead of watching a chip that quietly never moved.
 
 ## Acceptance Criteria
 
@@ -84,10 +86,40 @@ Both need a surface that PERSISTS and, for progress, one that is DERIVED from th
 - [x] **A fifth `dream-view` type, `checkout`** — `{"type":"checkout","path":"…"}` plus `reset`, applied SERVER-side off the stream, gated exactly like a tool frame's path. The outcome is stated on the branch banner whether applied or refused.
 - [x] **A checkout claim OUTRANKS the transcript** — it is the only source that can describe work happening where the session is not standing; the transcript would otherwise overrule the very `cwd` the claim corrects.
 - [x] **The chip WARNS but never follows an inferred checkout** — write frames are counted per checkout; on a mismatch the chip keeps its label and wears an amber tone naming where the work landed. Writes under `_dream_context/` are excluded from the count.
+- [x] **Only WRITE tools are counted** — `Edit`/`Write`/`MultiEdit`/`NotebookEdit` `tool_use` blocks. Reads are ignored (looking across checkouts is ordinary) and `Bash` is ignored on purpose: its paths live inside a shell string, and a miss is the safe failure for a warning where a wrong parse is not.
+- [x] **The `_dream_context/` exclusion is matched on a path SEGMENT**, so `my_dream_context/` and `_dream_context.md` are not swept up.
+- [x] **The warning compares against the RESOLVED checkout**, so a session that claimed A and wrote into B is warned exactly like one that declared nothing; the count is composed per request, OUTSIDE the 12s git memo, so it never describes a state the user has already left.
+- [x] **`reset` withdraws a claim without pinning the project root** — the registry entry is deleted, so resolution falls back to claim -> transcript -> frames -> root and the answer returns to the observers. "I withdraw this" is not "I claim the root".
+- [x] **The client parses `checkout` only to stay quiet and refresh** — no unknown-type notice, nothing rendered, and `useShelf` invalidates the `agent-session-facts` query for that conversation so the chip moves with the sentence instead of at the next 15s poll.
 - [x] **Evidence** — `chat-shelf.mjs` 72/72 (was 60) and `chat-shelf-ui.mjs` 92/92 against a real server, a real browser, real `git worktree add` and real WS turns; 285 unit tests green over the touched suites; tsc clean in both roots.
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-08-28 - The gate asks what the VAULT GOVERNS, and `worktreeAllowed` is read at the vault
+Root cause, measured through the real resolver before the first edit: the owner's three panes were sessions whose newest transcript `cwd` was a worktree of the LINKED code repo, whose `--git-common-dir` has never equalled the brain repo's. `isSameRepository()` refused every one, `transcriptCheckout` returned null, and `resolveSessionDir` fell all the way back to the vault's project root — branch `main`, worktree false, on every pane.
+
+The fix widens the gate to the set `dreamcontext link` had ALREADY bound: the vault's own repo plus every linked repo present in `~/.dreamcontext/linked-repos.json` (`isGovernedCheckout`, replacing `isSameRepository`). The blast radius is unchanged in KIND — still "a checkout of a repository this vault governs" — only the definition of "governs" caught up with linked repos. A plain directory, a missing path, a file and a foreign repo all still answer false.
+
+Second defect found on the way, a different class: `SessionFacts.worktreeAllowed` was computed at the RESOLVED checkout, where a linked repo has no `.config.json` — so the field inverted to false precisely inside the worktree the vault had permitted. It is now read at the vault (`readSessionFacts`' `gateRoot`, a separate parameter from `dir` for exactly this reason). Nothing in the dashboard consumes the field yet and the briefing path always read it at the vault, so no behaviour regressed — a lie on the wire was removed.
+
+The frontend was untouched: `checkoutFact()` already rendered `name · branch` the moment the server stopped lying.
+
+### 2026-08-28 - A declaration is one statement the agent is accountable for; a file path is not
+Owner's question, answered first because it decided Part B's design: the shelf reads where the session STANDS — the transcript's newest `cwd` resolved to its checkout root — so an agent that keeps `cwd` in the brain repo (which it MUST; every dreamcontext CLI call runs there) while editing a linked worktree by absolute path was still reported as being in the brain repo.
+
+Closing that by following the newest EDIT was rejected: an agent reads and edits across several checkouts in one turn, and "the newest edit" would make the chip flicker between them mid-run. The `checkout` block is instead one statement the agent is accountable for, applied SERVER-side off the same NDJSON relay the `EnterWorktree` frames ride — never client-side, because a directive applied in the pane is a fact that exists only while someone is watching. Only complete `assistant` frames are read (a streaming delta cannot apply one twice), the LAST directive in an answer wins, and `reset` beats a contradictory `path`. Prose goes through the SAME `isGovernedCheckout` gate as a tool frame — prose is a WEAKER source than a tool result, not a stronger one.
+
+**Ordering was the real work.** The transcript deliberately outranks the frame registry; a claim stored the same way would have been overruled by the very `cwd` it exists to correct. The registry entry now carries a `claim` flag and `resolveSessionDir` asks claim -> transcript -> frames -> root.
+
+Two traps recorded because they cost hours and point at everything except the real cause: (1) the verify stand-in's fence was written with an escaped newline inside the harness's own template literal, so the generated script carried a raw newline inside a single-quoted string, died at parse, and the harness reported "turn timed out"; (2) the test's `CLAIM_SESSION_ID` was not hex, so `sanitizeUuid` rejected it and the server keyed nothing — the failure looked exactly like a broken directive reader for three debugging rounds.
+
+### 2026-08-28 - Owner chose WARN over auto-follow, and the detector is shared either way
+Given the measurement, option A (warn, never move) was picked over auto-setting the checkout from edit locations. The reason is recorded because it will be asked again: a file path is a side effect, not a statement; one turn writes into several checkouts; and a chip that renamed itself off an inferred signal leaves the user no way to tell a MEASURED checkout from a GUESSED one. The detector is shared, so flipping to option B later is a policy change, not a rewrite.
+
+Two defects the tests caught, both fixed before shipping: a `Write` into a directory that does not exist yet resolved to NO checkout — so the first file of a new feature was invisible and every file after it was not (now resolved from the nearest existing ancestor); and `repoToplevel` answers a realpath while an override checkout is whatever string the frame carried, so on macOS `/var` vs `/private/var` never compared equal and a session under a symlinked path would have been warned about writing into the checkout it was standing in (now canonicalised — the same trap `readWorktree` documents).
+
+DELIBERATELY NOT DONE: the briefing was not touched for Part C. This is a USER-facing warning and the agent already has the `checkout` block; spending the 8600-char budget to tell the agent it is being watched buys nothing.
 
 ### 2026-08-29 - The checkout is DETECTED, never guessed: Edit/Write frames already carry an absolute path
 
@@ -182,11 +214,15 @@ With an open row, .pin-shell.has-rows carries 12px top corners and no bottom bor
 - **`dashboard/src/lib/shelfModel.ts`** (305 lines) — shelf state machine: processViewBlock parses dream-view pin/progress blocks, applies ceiling (2 rows max), demotes oldest row to tag past ceiling, manages pin store + progress derivation.
 - **`dashboard/src/lib/pinStore.ts`** (149 lines) — persistent pin storage per conversation (IndexedDB via localforage), eviction at 24 pins, coerceEntry/coerceFact validation, flushPendingPins + lazy pagehide hook for durability.
 - **`dashboard/src/components/sleepy/chat/PinShelf.tsx`** — shelf render: tag line + optional open row, wrap layout for tags (no fold), loopback URL click handler, dismiss affordances.
+- **`dashboard/src/components/sleepy/chat/pinShelf.css` `.pin-chip.is-warn`** — the amber warn TONE on the branch chip (existing `--color-warning` token, no new glyph, no extra text). `marker` is deliberately NOT set for the warning: marker carries the design's uppercase treatment, so it retypeset `feat/pin-surface` as `FEAT/PIN-SURFACE`. `Banners.tsx` carries the matching `.chat-banner-branch.is-warn`.
+- **`dashboard/src/components/sleepy/chat/useShelf.ts`** — a parsed `checkout` view renders nothing and instead invalidates `['agent-session-facts', conversationId]`, so the chip moves with the sentence rather than at the next poll.
 - **`dashboard/src/components/sleepy/chat/ProgressPopover.tsx`** — floating popover for progress detail (header + criteria list + × dismiss).
 - **`dashboard/src/lib/chatViewSpec.ts`** — VIEW_TYPES definitions for pin + progress, caps (MAX_PINS_PER_CONVERSATION = 24, MAX_FACTS_PER_PIN = 6, NO per-line tag cap), parseViewBlock with notices.
 - **`src/server/routes/agent-shelf.ts`** — GET /api/agent/session-facts (resolves `?session=` through the checkout registry, then reads git THERE), GET /api/agent/task-progress (reads task file, derives percent from checkboxes, extracts latest changelog + first unticked criterion).
-- **`src/lib/session-facts.ts`** — SessionFacts (+ `worktreeName`) + readSessionFacts + UNKNOWN_SESSION_FACTS, 12s TTL memo, isRepo/branch/worktree via git commands, and the exported `gitCommonDir` that identifies a REPOSITORY (TTL-memoized, bounded 128).
-- **`src/lib/session-cwd.ts`** — the per-session checkout registry. A directory is accepted only when its `--git-common-dir` canonicalises to the project root's, i.e. a worktree of the SAME repo; bounded at 64 sessions, oldest-first eviction; a removed worktree falls back to the project root on the next read.
+- **`src/lib/session-facts.ts`** — SessionFacts (+ `worktreeName`, `elsewhere`) + readSessionFacts + UNKNOWN_SESSION_FACTS, 12s TTL memo, isRepo/branch/worktree via git commands, and the exported `gitCommonDir` that identifies a REPOSITORY (TTL-memoized, bounded 128). `worktreeAllowed` is computed at `gateRoot` (the VAULT), which defaults to `dir` — the memo key is `<dir> NUL <gateRoot>` when they differ.
+- **`src/lib/session-cwd.ts`** — the per-session checkout registry plus the GOVERNED gate. `isGovernedCheckout(dir, projectRoot)` accepts a directory whose `--git-common-dir` matches the vault's own repo OR any repo bound by `dreamcontext link` and present on this machine (`governedCommonDirs`, TTL-cached; replaced the old same-repository `isSameRepository`). A registry entry is `{dir, claim}` — `claim: true` means the agent DECLARED it, `claim: false` means an `EnterWorktree` frame was observed; `claimedCheckout()` exposes the former and `resolveSessionDir` asks claim -> transcript -> frames -> root. Bounded at 64 sessions, oldest-first eviction, re-insert on move so a long-lived session is not the one dropped; a removed worktree falls back to the project root on the next read.
+- **`src/server/checkout-directive.ts`** — reads the fifth `dream-view` type off the same NDJSON relay as the frame watcher, wired beside it in `agent-chat.ts`. Complete `assistant` frames only; last directive wins; `reset` beats a contradictory `path`; the accepted/refused outcome is sent on the existing `branch_start` banner rather than a new meta subtype.
+- **`src/lib/session-edits.ts`** — attributes write frames to a checkout root through `isGovernedCheckout`, counts per session, bounded and cleared on teardown. `readEditPaths` reads `Edit`/`Write`/`MultiEdit`/`NotebookEdit` only; `_dream_context/` paths excluded on a path SEGMENT; an unborn directory resolves from its nearest existing ancestor; roots canonicalised for the macOS `/var` symlink. `editsElsewhere()` is composed per request in the route, outside the 12s git memo.
 - **`src/server/worktree-frames.ts`** — reads `EnterWorktree`/`ExitWorktree` moves off the NDJSON relay `agent-chat.ts` already parses. The path comes from the tool RESULT, never the call.
 - **`src/lib/markdown.ts`** — firstUnticked + shared CHECKBOX_LINE_RE (extracted from countCheckboxes).
 - **`src/server/chat-surface.ts`** — CHAT_SURFACE_BRIEFING updated to document pin and progress types.
@@ -198,7 +234,9 @@ With an open row, .pin-shell.has-rows carries 12px top corners and no bottom bor
 - **`tests/unit/shelf-model.test.ts`** (22 tests) — ceiling enforcement, row-to-tag demotion, progress derivation.
 - **`tests/unit/task-progress.test.ts`** (17 tests) — percent calculation, states, notices for edge cases.
 - **`tests/unit/session-facts.test.ts`** (9 tests) — git probes, worktree detection, TTL memo.
-- **`tests/unit/session-cwd.test.ts`** (16 tests) — the same-repository gate against real `git worktree add`: sibling accepted; foreign repo, non-repo, missing dir, a file, a relative path all refused and the session KEEPS its previous checkout; removed-worktree fallback; bounded eviction.
+- **`tests/unit/session-cwd.test.ts`** — the GOVERNED gate against real `git worktree add`: a sibling of the vault's repo and a checkout of a LINKED repo both accepted; foreign repo, non-repo, missing dir, a file, a relative path all refused and the session KEEPS its previous checkout; removed-worktree fallback; bounded eviction; the `claim` flag's precedence.
+- **`tests/unit/checkout-directive.test.ts`** — the directive reader (12 tests) plus the claim -> transcript -> frames -> root precedence order (3).
+- **`tests/unit/session-edits.test.ts`** — write attribution, the write-tool-only rule, the `_dream_context/` segment exclusion, the unborn-directory ancestor walk, the realpath canonicalisation, per-session bounds and teardown. The chip-note test pins `marker` to whatever the UNWARNED chip had, so a CSS-level retypeset cannot pass again.
 - **`tests/unit/worktree-frames.test.ts`** (11 tests) — driven by frames captured from real transcripts (structure verbatim, paths anonymised): result-not-call, Created and Entered, errored tool moves nothing, ids consumed once, two watchers isolated.
 - **`tests/unit/agent-session-facts-route.test.ts`** (7 tests) — session scoping, no-id and unknown-id compatibility, two sessions two branches, non-UUID param ignored, desktop gate.
 - **`tests/unit/chat-surface-lockstep.test.ts`** — briefing examples execute through real parser, bidirectional coverage.
@@ -208,7 +246,7 @@ With an open row, .pin-shell.has-rows carries 12px top corners and no bottom bor
 
 ### Routes
 
-- **GET /api/agent/session-facts?session=&lt;uuid&gt;** — returns {branch, isRepo, worktree, mainRoot, worktreeName}. Answers for the checkout THAT SESSION is in; an absent or unknown id answers for the project root, which is the pre-2026-08-24 behaviour and keeps a fresh pane, a resumed conversation and the terminal view working. Branch via `git symbolic-ref --short HEAD`, worktree via `--git-common-dir` ≠ `--absolute-git-dir` (both realpaths to fix macOS /var symlink). The id is held to `sanitizeUuid` before it keys anything. Desktop-gated, 12s TTL memo.
+- **GET /api/agent/session-facts?session=&lt;uuid&gt;** — returns {branch, isRepo, worktree, mainRoot, worktreeName, elsewhere}. `elsewhere` is composed per request from `session-edits` (never memoized) and is what turns the chip amber. Answers for the checkout THAT SESSION is in; an absent or unknown id answers for the project root, which is the pre-2026-08-24 behaviour and keeps a fresh pane, a resumed conversation and the terminal view working. Branch via `git symbolic-ref --short HEAD`, worktree via `--git-common-dir` ≠ `--absolute-git-dir` (both realpaths to fix macOS /var symlink). The id is held to `sanitizeUuid` before it keys anything. Desktop-gated, 12s TTL memo.
 - **GET /api/agent/task-progress/:slug** — returns {percent, state, now, last, updatedAt, notice}. 400 invalid_slug before fs, 200 unknown-slug for well-formed-missing. Percent from countCheckboxes, null never NaN. Now = firstUnticked, last = latest changelog. Desktop-gated, vault-scoped.
 
 ### Key behaviors
@@ -220,6 +258,12 @@ With an open row, .pin-shell.has-rows carries 12px top corners and no bottom bor
 - **Loopback URL**: sanitizeLoopbackUrl post-parse, WHATWG URL normalized hostname compared against exactly localhost / 127.0.0.1 / [::1], rejects 0.0.0.0 / evil domains / credentials / javascript:, strips search + hash.
 
 ## Notes
+
+### The amber warn chip rides the 15s poll (known limitation, 0.27.0)
+The `checkout` claim gets an early refresh — `useShelf` invalidates the session-facts query the moment it parses one — but the WARNING does not, and cannot by the same route: a write is not an event the client hears about. So the chip turns amber up to one 15s poll after the write that triggered it. This was recorded as a limitation by the task, never as an unmet criterion; `scripts/verify/chat-shelf-ui.mjs` waits up to 25s for exactly this reason.
+
+### Two defects only a photograph could find
+Both were invisible to unit tests and were found by extending `chat-shelf-ui.mjs` to build a REAL linked worktree beside the scratch project. (1) THE WARNING WAS INVISIBLE — the reason lived only in the chip's native `title` tooltip, which is OS-rendered, cannot appear in a screenshot, and is a warning the user has to hover to discover. Fixed with the amber `.pin-chip.is-warn` tone. (2) THE CHIP RETYPESET ITSELF — `marker: true` had been set for the warning, and `marker` carries the design's uppercase treatment, so `feat/pin-surface` rendered `FEAT/PIN-SURFACE`; the unit test asserting "label unchanged" passed because the label STRING was unchanged and the transform is CSS. A third fix surfaced while shooting: the harness's two screenshot calls sat after the section-7 reload where the surface is collapsed, each wrapped in `.catch(() => {})`, so they had silently written nothing for as long as they existed.
 
 ### Phase 6 verification captured real screenshots
 Six screenshots from real Chromium against dist server in scratch HOME: resting shelf, 29 tags wrapping to 3 lines (no fold), progress row, progress popover, long pin expanded, background-commands tray. All measurements from getBoundingClientRect, never hand-computed CSS.
@@ -235,6 +279,15 @@ Original design had progress detail expand in-place (like long pins). Owner chan
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-07 - Released in 0.27.0 — the shelf follows a session into a linked code repo
+- Consolidated `[[the-shelf-follows-a-session-into-a-linked-code-repo-not-just-the-vault-s-own]]` (completed, version 0.27.0, released 2026-09-06) into this PRD. `released_version` 0.27.0, status in_review -> active.
+- Part A: the checkout gate became `isGovernedCheckout` — the vault's own repo OR any `dreamcontext link`ed repo present on this machine — so a split brain stops reporting the brain's branch for every session doing real work in the code repo's worktrees. `worktreeAllowed` moved to the vault's `gateRoot`.
+- Part B: a fifth `dream-view` type, `checkout` (`path` / `reset`), applied SERVER-side off the stream, gated exactly like a tool frame, outranking the transcript, with accepted AND refused outcomes stated on the `branch_start` banner.
+- Part C: writes counted per checkout (`session-edits.ts`), `_dream_context/` excluded on a path segment, the chip WARNS in amber and never moves.
+- Shipped as `95b0810` (2026-08-29, 29 files, +1578/-90 — one commit because B and C share three files and a parallel session held the checkout; verified out-of-tree from `git archive HEAD`).
+- Evidence: `verify:chat-shelf.mjs` 72/72 (was 60) and `verify:chat-shelf-ui.mjs` 92/92 against a real server, a real browser, a real `git worktree add` and real WS turns; 285 unit tests green over the touched suites; tsc clean in both roots.
+- Open: the amber warn chip still rides the 15s session-facts poll — a write is not an event the client hears about. Recorded as an unticked criterion above rather than closed.
 
 ### 2026-08-27 - dream-html rendering fixes (3 commits)
 - Height bridge handshake (dd8008e): synchronous listener in `useLayoutEffect`, retry ASK loop (250ms × 16), measurement stored with the body, bridge moved to `<head>`

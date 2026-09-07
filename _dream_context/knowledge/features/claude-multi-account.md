@@ -11,8 +11,8 @@ pinned: false
 date: '2026-09-05'
 status: in_review
 created: '2026-09-05'
-updated: '2026-09-05'
-released_version: null
+updated: '2026-09-07'
+released_version: 0.27.0
 product: desktop
 tags:
   - 'topic:agents'
@@ -60,6 +60,13 @@ and moving before the limit lands did not exist at all.
       never changes silently.
 - [x] As a user, when EVERY account is exhausted, I am told when work resumes, not just that it
       failed.
+- [x] As a user, when a limit has ALREADY landed my message is not simply lost — the refused turn
+      is carried to another account and re-sent, and the refusal is remembered so the next message
+      does not have to earn the same visible error again.
+- [x] As a user, I can tell whether THIS message was refused or whether it was moved because an
+      EARLIER one was — the two are never told the same sentence.
+- [x] As a user, I can understand what the settings under the account list actually do, and what
+      each group of them is for.
 
 ## Acceptance Criteria
 
@@ -101,7 +108,25 @@ and moving before the limit lands did not exist at all.
 - [x] Registry order is a real tie-break term (`orderedIds`), in both the measured branch and the
       last-resort branch — numbers still come first, so a busy top-row account loses to a free
       one. Omitting `orderedIds` preserves the old id ordering exactly.
-- [x] Threshold: probe at session ≥80%, switch at ≥90% or as soon as a `lockedReason` arrives.
+- [x] Percentages are the FORECAST path only: probe at session ≥80%, switch at ≥90% or as soon as a
+      `lockedReason` arrives (`shouldProbe` / `shouldSwitchAway` / `SWITCH_THRESHOLD_PERCENT`). The
+      LOAD-BEARING trigger is the API's own refusal — see the reversal below.
+- [x] A limit that has ALREADY landed is acted on, not only forecast: the refusal is read off the
+      stream (`claude-limit-signal.ts`), the turn is carried to another account and re-sent, and the
+      refusal is WRITTEN TO DISK (`claude-limit-rejections.ts` →
+      `~/.dreamcontext/claude-account-limits.json`) so the next message does not re-earn the error.
+- [x] A recorded rejection is ACCOUNT-wide, not pane-wide, and overrides that account's own
+      percentages. A stated reset beats a bounded 20-minute estimate (`DEFAULT_COOLDOWN_MS`, flagged
+      `estimated: true`); on collision the LONGER exile wins, so an estimate can never shorten a
+      known reset. If the file disappears, behaviour falls back and never costs a turn.
+- [x] `healthy-unmeasured` — the judge answered "signed in" but `/usage` publishes no percentages
+      for that account — is a LAST-RESORT candidate: never chosen in preference to a measured
+      account, and the result carries `unmeasured: true` so the banner says there is no number
+      behind it. `unknown` / `stale` are still never candidates.
+- [x] The wire and the banner keep `limit_hit` (THIS message was refused), `limit_known` (this
+      message did not fall; an earlier one did, so it was moved without trying) and `stayed_put`
+      (refused, nowhere better to go — shown only after a REAL refusal) apart, alongside
+      `limit_near`, `all_exhausted`, `needs_relogin` and `auto_switch_disabled`.
 - [x] When no candidate exists the message is neither blocked nor swallowed: it is sent on the
       current account and the honest limit error surfaces with the earliest reset time.
 - [x] One switch per conversation at a time — a second trigger while a restart is pending is a
@@ -149,6 +174,11 @@ and moving before the limit lands did not exist at all.
 - [x] `reorderClaudeAccounts` is defensive: unknown ids ignored, accounts the caller forgot kept
       at the end (a stale tab cannot drop an account by reordering), duplicate ids taken once,
       `autoSwitch` preserved.
+- [x] The settings under the account list say what they do: "Move a message to another account
+      before a limit lands" → "Auto-switch accounts near a limit" with a one-line explanation and a
+      folded detail; groups renamed ("Accounts" → "Claude accounts", "Surface" → "The agent panel",
+      "New sessions" → "What a new session starts with"). The panel's own copy states the order
+      rule: new sessions start at the top and a switch between equally free accounts follows it.
 - [ ] Manual owner checklist (owner's own two real accounts): add the second account from
       Settings, fill a session limit and watch the switch land mid-work with the transcript
       intact, change a running session's account, turn auto-switch off, delete a sandbox by hand
@@ -157,6 +187,36 @@ and moving before the limit lands did not exist at all.
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-09-05] REVERSAL — auto-switch steers on the API's actual refusal, not on a forecast
+  percent.** The ≥80/≥90 percentage trigger never opened on a real machine: the account that refused
+  a turn at 02:28 read session 6% three minutes later, and a cache whose windows carry a null
+  `resets_at` yields an EMPTY `limits[]`, so no threshold is established at all — two roads to the
+  same dead end. Percentages survive as the early-warning path; the load-bearing trigger is now the
+  refusal read off the stream.
+- **[2026-09-05] A refusal is REMEMBERED, not just reacted to once.** A post-hoc switch that forgets
+  has to be re-earned with a second visible error. Recorded to disk, account-wide; a bounded 20-min
+  estimate when no reset is stated (`estimated: true`), and the longer exile wins a collision so an
+  estimate can never shorten a known reset.
+- **[2026-09-05] An account we cannot MEASURE but the judge vouches for is a last-resort candidate
+  (`healthy-unmeasured`).** This was the difference between the feature working and not on the very
+  machine it shipped on: one measurable + one unmeasurable account produced `all_exhausted`. An
+  account we cannot VOUCH for (`unknown` / `stale`) is still never a candidate.
+- **[2026-09-05] `limit_hit` and `limit_known` are kept apart** on the wire and in the banner.
+  Telling both the same sentence is the same class of lie as silently changing the billed account.
+- **[2026-09-05] The per-turn `rate_limit_event` is a METER, not a refusal.** Its payload key is
+  `rate_limit_info`, its `status` is the authority, and `overageStatus: "rejected"` reads on a
+  perfectly healthy turn. Read as a refusal it disqualified every account on every message and
+  produced "Every account is at its limit" while the measured windows were 7% and 19%. An
+  unrecognized shape now returns `null` rather than a confidently wrong guess.
+- **[2026-09-05] The stale-reading auto-probe gates on the OLDEST reading, not the freshest.**
+  Gating on the freshest reproduced the reported bug — a busy account keeps itself fresh and masks
+  its quiet neighbour's hours-old number.
+- **[2026-09-05] A switch notice carries BOTH presentation and instruction**, so the copy handed to
+  the new session must be guarded (`armAccountSwitch` returns when the announced account is its
+  own). Unguarded, the new session re-moved itself, recursed, and left an orphan tab.
+- **Open, unexplained:** the on-screen "resets 4:10am (Europe/Istanbul)" never reconciled with the
+  live five_hour window's 04:19 UTC = 07:19 Istanbul. It gates nothing now (the system reads the
+  refusal, not the percentage), but it was not solved.
 - **[2026-09-05] The order is full priority, but numbers still win.** `orderedIds` became the last
   tie-break term in place of "smallest id". Alphabetical order was only there to be deterministic,
   yet it was quietly deciding which of two equally free accounts took the work.
@@ -198,10 +258,16 @@ resumes it — the most consequential consequence of the share/isolate split, pi
 assert.
 
 **Server.** `src/lib/claude-accounts.ts` (registry, `reorderClaudeAccounts`),
-`src/lib/claude-account-switch.ts` (`chooseAccount`, pure), `src/lib/claude-limit-signal.ts` +
-`claude-limit-rejections.ts` (frame reading), `src/lib/claude-usage-probe.ts`
-(`probeAccountUsage`), `src/server/routes/agent-accounts.ts` (list / login / reorder / refresh),
-the account-switch block of `src/server/routes/agent-chat.ts`, and the one-line `...accountEnv`
+`src/lib/claude-account-switch.ts` (`chooseAccount`, pure), `src/lib/claude-limit-signal.ts` (four
+readers over the refusal frame — structural first, the synthetic assistant TEXT last and locked to
+`model === '<synthetic>'`, because a false positive bills a healthy conversation to another
+account), `src/lib/claude-limit-rejections.ts` (`readAccountRejections` /
+`recordAccountRejection` / `clearAccountRejection`, `DEFAULT_COOLDOWN_MS = 20m`),
+`src/lib/claude-usage-probe.ts` (`probeAccountUsage`, incl. the `healthy-unmeasured` outcome),
+`src/server/routes/agent-accounts.ts` (list / login / reorder / refresh, wired at
+`src/server/index.ts:385-388`), the account-switch block of `src/server/routes/agent-chat.ts`
+(`shouldProbe` / `shouldSwitchAway` / `SWITCH_THRESHOLD_PERCENT`, passing the live `accounts` array
+as `orderedIds`), and the one-line `...accountEnv`
 addition in the shared automations spawn core (`src/lib/automations/runner.ts`).
 `~/.dreamcontext/app.json` holds `autoSwitch` (default ON);
 `~/.dreamcontext/claude-account-limits.json` holds recorded rejections.
@@ -247,6 +313,15 @@ account's usage".
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-07 - Reconciled for the 0.27.0 release
+- `released_version: 0.27.0` (released 2026-09-06). Consolidated the two now-completed tasks:
+  `multi-account-connect-several-claude-accounts-pick-one-per-session-auto-switch-before-a-limit-lands`
+  and `agents-hesap-paneli-okunur-olur-her-hesabin-iki-limiti-surukle-birak-oncelik-ve-yenile`.
+  Added the refusal-driven switch, the on-disk rejection memory, `healthy-unmeasured` as a
+  last-resort candidate, the limit_hit/limit_known/stayed_put honesty split, and the settings-copy
+  work; folded in the percentage-trigger REVERSAL. Status stays `in_review`: the owner's manual
+  two-real-account checklist is still unticked in the source task, so nothing here can tick it.
 
 ### 2026-09-05 - Created
 - Feature PRD created retrospectively at sleep from the two shipped tasks (multi-account, account

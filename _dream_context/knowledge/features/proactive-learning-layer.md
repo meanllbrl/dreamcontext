@@ -14,7 +14,7 @@ pinned: false
 date: '2026-07-20'
 status: in_review
 created: '2026-07-20'
-updated: '2026-09-02'
+updated: '2026-09-07'
 released_version: 0.20.0
 tags:
   - 'topic:sleep'
@@ -35,9 +35,9 @@ The brain consolidates what happened but never learns forward: no hypotheses, no
 
 ## User Stories
 
-- [ ] As the sleep-learn specialist, when I notice a pattern with enough supporting data, I create a thesis in `draft`; I promote it to `open` ONLY when I have real experience/evidence behind it — the layer is proactive but never sprays speculative theses.
-- [ ] As the sleep-learn specialist, each cycle I append a reasoning entry to every thesis I touched (the "understanding changelog"), so the next cycle's thinking inherits my chain of thought instead of starting cold.
-- [ ] As the sleep-learn specialist, I re-test open theses against fresh evidence (Lab insights, roadmap/objective movement, task outcomes, changelog, later connector digests) and flip them to `validated`/`invalidated` when their pre-registered predictions are borne out or contradicted — confidence is DERIVED from the evidence ledger, never asserted.
+- [x] As the sleep-learn specialist, when I notice a pattern with enough supporting data, I create a thesis in `draft`; I promote it to `open` ONLY when I have real experience/evidence behind it — the layer is proactive but never sprays speculative theses. *(Live: the layer is enabled on this project and `theses/` holds real theses, none of them speculative sprays.)*
+- [x] As the sleep-learn specialist, each cycle I append a reasoning entry to every thesis I touched (the "understanding changelog"), so the next cycle's thinking inherits my chain of thought instead of starting cold. *(Live: `theses/hybrid-recall-beats-bm25f.md` carries cycles 5–15 plus a CONDENSED overflow entry — the bounded LIFO distill rule firing in production.)*
+- [x] As the sleep-learn specialist, I re-test open theses against fresh evidence (Lab insights, roadmap/objective movement, task outcomes, changelog, later connector digests) and flip them to `validated`/`invalidated` when their pre-registered predictions are borne out or contradicted — confidence is DERIVED from the evidence ledger, never asserted. *(Live: `hybrid-recall-beats-bm25f` reached `validated` at confidence 0.88 with all three predictions `supported` off a multi-cycle evidence ledger.)*
 - [ ] As the sleep-learn specialist, when a thesis needs data nobody is tracking, I emit an instrumentation request ("create an insight to watch Y") as a decision ask in the cycle report — the user approves and wires the source next session; I never create insights autonomously during sleep.
 - [x] As a user, I can create a thesis in conversation ("I have a thesis: X improves Y") — the agent scaffolds it via CLI after confirming shape + predictions with me.
 - [x] As the main agent (awake, outside sleep), when the user hands me source material — a meeting note, a report, a discussion — I can propose theses extracted from it (offer-and-confirm, recall-dedup first, created as `draft` unless evidence already justifies `open`), so learning capture doesn't wait for a sleep cycle.
@@ -50,6 +50,9 @@ The brain consolidates what happened but never learns forward: no hypotheses, no
 - [x] As a user, I can disable the entire layer with one config switch: no sleep-learn dispatch, no CLI/snapshot noise, and the page reduced to its own off-state. **(Amended 2026-08-01, `3bed3d0`: the nav item is no longer hidden — see below.)**
 - [x] As a user who has never turned this on, I can still FIND it: the Hypotheses nav item stays in the rail for every project, dimmed with an `Off` tag, because the page that explains the layer and carries its Enable button was previously reachable only once the layer was already enabled.
 - [x] As the agent (any session), the dreamcontext skill has an Entity Router row + reference-file section for theses, so "create a thesis" routes correctly and future sessions know the subsystem exists.
+- [x] As a user, every surface that can form a thesis applies the SO-WHAT test before one is created — *if this is validated, what do we CHANGE, and which revenue-bearing outcome improves?* — so an observation that restates a metric never becomes a card I have to re-test each cycle. *(Shipped for 0.26.3, released in 0.27.0.)*
+- [x] As the agent forming a thesis, I am given the four-part anatomy to write against — a grounded COMPARISON (another funnel / segment / period), a causal MECHANISM, a LEVER I can pull, and an OUTCOME that matters — so I produce optimization claims rather than restated metrics, and I expect most extracted observations to FAIL the bar.
+- [x] As a user whose observation fails the bar, it is not thrown away: it lands as evidence on an existing thesis or as an insight note — never as a new hypothesis card.
 
 ## Acceptance Criteria
 
@@ -60,6 +63,8 @@ The brain consolidates what happened but never learns forward: no hypotheses, no
 - [x] sleep-learn specialist built: dedicated smart sub-agent (`agents/sleep-learn.md`), conditional dispatch rules ("sometimes wakes up — we decide when"), inputs (insights, roadmap, task outcomes, changelog, connector digests when available), authority boundaries (CRUD theses; never edits knowledge/tasks directly — promotion goes through sleep-product/decision asks), no-op cheap when nothing due.
 - [x] Instrumentation loop built: thesis→insight requests as offer-and-confirm decision asks (agent drafts the insight need; user approves + wires source/credentials via the existing Lab protocol); optional `blocked_on_instrumentation` signal on a thesis.
 - [x] Surfaces built: CLI verb set (`dreamcontext theses` — 17 verbs: create/predict/evidence/status/link/unlink/changelog/block/unblock/promote/retire/restore/enable/disable/candidates), `thesis` recall corpus type, dashboard thesis board page ("Hypotheses" — custom interactive UI with board/detail/create modals per user design), roadmap objective detail integration (Learning section), SessionStart snapshot line (open theses count / recent flips).
+- [x] Quality bar enforced at every formation surface: the SO-WHAT test and the four-part anatomy (comparison + mechanism + lever + revenue-bearing outcome) appear in `skill/references/learning.md` (top section + awake-capture step, mirrored into the installed `.claude/skills/` copy), `agents/sleep-learn.md` (formation gate + gotcha), the SKILL.md Entity Router thesis row, `ThesisCreateModal` subtitle + claim placeholder, and the `ThesisBoard` empty state.
+- [x] Activity list view fully retired: `ThesisListView.tsx`, the toolbar List/Board toggle, the `view`/`listFilter` prefs, the `ThesisViewMode`/`ThesisListFilter` types, `needsAttention`, and the `.thl-*` CSS are deleted — verified absent from `dashboard/src` at 0.27.0. The status kanban is the only rendering; unread dots + Mark-all-read stay on the cards. A stale stored `view` pref cannot resurrect the list (`mergePrefs` rebuilds a fresh object; pinned by a `verify:hypotheses` assertion). `verify:hypotheses` rewritten to the board-only contract, 13/13 green.
 - [x] Disable switch + docs built: single config flag (`learning.enabled` in `state/.config.json`, default OFF) gating dispatch, CLI surfacing, snapshot section, and dashboard page; skill docs complete (SKILL.md capability row + Entity Router row, new `references/learning.md`, cli-reference section, sleep.md conditional-dispatch row).
 
 ## Constraints & Decisions
@@ -108,10 +113,12 @@ The brain consolidates what happened but never learns forward: no hypotheses, no
 
 **Surfaces:**
 - CLI: `dreamcontext theses` (17 verbs: list/show/create/predict/evidence/status/link/unlink/changelog/block/unblock/promote/retire/restore/enable/disable/candidates); `thesis` corpus type in `buildCorpus`; SessionStart snapshot line (open count + recent flips), budget-demotable.
-- Dashboard: "Hypotheses" page (`HypothesesPage.tsx` — **always in the rail as of 2026-08-01**, dimmed with an `Off` tag when the layer is disabled; gated on `enabled === false`, never `!enabled`, because the field is `undefined` until the query resolves and a rail that says "off" for a beat before flipping to on is worse than one that does not label it yet) — thesis board (draft/open/validated/invalidated columns via `ThesisBoard/Column/Card/Toolbar.tsx`, confidence bar `ConfidenceBar.tsx`, evidence trail, understanding changelog timeline in `ThesisDetailModal.tsx`); roadmap objective detail gains a Learning section (`LearningSection.tsx` embedded in `ObjectiveDetailPanel.tsx`). Full-page off-state with enable CTA when disabled.
+- Dashboard: "Hypotheses" page (`HypothesesPage.tsx` — **always in the rail as of 2026-08-01**, dimmed with an `Off` tag when the layer is disabled; gated on `enabled === false`, never `!enabled`, because the field is `undefined` until the query resolves and a rail that says "off" for a beat before flipping to on is worse than one that does not label it yet) — the status kanban is the ONLY rendering (draft/open/validated/invalidated columns via `ThesisBoard.tsx` / `ThesisColumn.tsx` / `ThesisCard.tsx` / `ThesisBoardToolbar.tsx`, confidence bar `ConfidenceBar.tsx`, evidence trail, understanding changelog timeline in `ThesisDetailModal.tsx`; unread dots + Mark-all-read on the cards via `thesis-seen.ts`). The activity list view was deleted in the 0.26.3 payload that shipped in 0.27.0 — `ThesisListView.tsx`, the toolbar toggle, the `view`/`listFilter` prefs and the `.thl-*` CSS no longer exist; roadmap objective detail gains a Learning section (`LearningSection.tsx` embedded in `ObjectiveDetailPanel.tsx`). Full-page off-state with enable CTA when disabled.
 - Skill: SKILL.md capabilities row + Entity Router row ("form/track a hypothesis" → thesis, NOT knowledge) + new `references/learning.md` reference file (entity, formula, awake-capture offer-and-confirm protocol).
 
 **Disable switch:** `state/.config.json` flag (`learning.enabled`, default OFF until PO validates). Gates: sleep-flow dispatch mention, CLI discoverability output, snapshot section, and the dashboard page's CONTENT. It no longer gates the nav item itself (2026-08-01) — hiding the entrance hid the explainer and the Enable button from exactly the people who had never turned the layer on.
+
+**The quality bar (0.26.3 payload, released in 0.27.0).** A thesis is an OPTIMIZATION CLAIM, not an observation. Every formation surface states the SO-WHAT test and the four-part anatomy so the gate is applied wherever a thesis can be born — not only in the agent's head: `skill/references/learning.md` (+ the installed `.claude/skills/dreamcontext/references/learning.md` copy), `agents/sleep-learn.md`, the SKILL.md Entity Router thesis row, `ThesisCreateModal.tsx` (subtitle + claim placeholder carrying the worked comparison/mechanism/lever/outcome example), and `ThesisBoard.tsx`'s empty state. A failed observation is redirected, not discarded: evidence on an existing thesis, or an insight note.
 
 **Key files:**
 - `src/lib/theses/types.ts`, `confidence.ts` — `ThesisManifest`, `deriveConfidence()`, enums, `THESIS_RULE_PROMOTION_THRESHOLD`
@@ -119,7 +126,8 @@ The brain consolidates what happened but never learns forward: no hypotheses, no
 - `src/cli/commands/theses.ts` — 17 CLI verbs
 - `src/server/routes/theses.ts` — `GET /api/theses`, `POST /api/theses`, sub-routes for predictions/evidence/status/links/changelog/promote, `POST /api/learning/enable|disable`
 - `dashboard/src/hooks/useTheses.ts` — `useTheses()`, `useThesis(slug)`, mutations
-- `dashboard/src/components/theses/` — full board/detail/create UI tree
+- `dashboard/src/components/theses/` — board/detail/create UI tree: `ThesisBoard.tsx` (+ `.css`), `ThesisColumn.tsx`, `ThesisCard.tsx`, `ThesisBoardToolbar.tsx`, `ThesisDetailModal.tsx`, `ThesisCreateModal.tsx`, `ConfidenceBar.tsx`, `LearningSection.tsx`, `thesis-chrome.ts`, `thesis-seen.ts`, `theses.css` (no `ThesisListView.tsx`, no `.thl-*` CSS)
+- `npm run verify:hypotheses` — board-only Playwright contract, 13 assertions × 2 themes
 - `agents/sleep-learn.md` — the specialist
 - `tests/unit/theses-*.test.ts` — 8 test files (store, confidence, promotion, recall, doctor, learning-config, server-theses-routes)
 - `scripts/smoke-theses.mjs` — 20-assertion CLI smoke suite
@@ -127,10 +135,16 @@ The brain consolidates what happened but never learns forward: no hypotheses, no
 ## Notes
 
 - Ships **disabled by default** (`learning.enabled: false`) until the PO validates the layer on this project, then flips to on-by-default as an explicit follow-up.
-- The 4 sleep-learn user stories (first 4 in the list) tick at the first enabled sleep cycle — they describe runtime behavior that only happens when the layer is on and sleep runs.
+- The 4 sleep-learn user stories (first 4 in the list) described runtime behaviour that only happens once the layer is on and sleep runs. As of 2026-09-07 three of them are ticked against live artefacts in `theses/`. **Story 4 (instrumentation request → decision ask) remains UNTICKED**: no thesis on this project has yet carried `blocked_on_instrumentation: true` or produced an instrumentation decision ask, so the loop is built but unexercised — that is why `status` stays `in_review` rather than being promoted at 0.27.0.
 - **For you (PO):** (1) eyeball the dashboard Hypotheses board/detail/create UIs against the design export (`Hypothesis.dc.html`), (2) decide when to run `dreamcontext theses enable` on this project, (3) confirm the autonomous validation-method default (tests + build + CLI smoke — no visual E2E).
 
 ## Changelog
+
+### 2026-09-07 - Released in 0.27.0 (built for 0.26.3)
+- The thesis quality bar and the retired hypotheses list view REACHED USERS in **v0.27.0** (released 2026-09-06). They were built and cut as 0.26.3 on 2026-08-28 (release commit `4cdc9e3`) — a version that passed every gate but was never published to the registry, so `npm install dreamcontext@0.26.3` has always 404d. `RELEASES.json` records 0.26.3 as `superseded` and lists the payload under 0.27.0's tasks.
+- Consolidated task: `theses-quality-bar-hypotheses-must-be-optimization-claims-not-observations-retire-the-list-view` (completed 2026-08-28, `version: 0.27.0`). Task validation on record: dashboard tsc clean, 8117 unit tests green, `npm run build` exit 0, `verify:hypotheses` 13/13 including "a stale list pref cannot resurrect the list".
+- Verified against the 0.27.0 tree while writing this entry: `ThesisListView.tsx` and every `.thl-*` rule are absent from `dashboard/src` (the only surviving copy is inside an unrelated git worktree); `ThesisViewMode`/`ThesisListFilter`/`listFilter`/`needsAttention` survive only as a comment in `ThesisBoard.tsx` explaining that stale prefs are dropped; the SO-WHAT wording is present in `agents/sleep-learn.md`, both `learning.md` copies, `ThesisCreateModal.tsx:272/301` and `ThesisBoard.tsx:305`.
+- Runtime evidence that the layer is live, not just built: `learning.enabled: true` on this project and `theses/hybrid-recall-beats-bm25f.md` is `validated` at confidence 0.88 with all three pre-registered predictions `supported`, an evidence ledger, and an understanding changelog spanning cycles 5–15 plus a CONDENSED overflow entry.
 
 ### 2026-08-28 - The quality bar: a thesis is an optimization claim, not an observation; list view retired
 - QUALITY BAR (7f1a539): theses like "funnel step X loses 84%" or "page Y is broken" are observations that restate a metric — validating them changes nothing, so they clutter without driving revenue. The wanted shape is COMPARATIVE + CAUSAL + ACTIONABLE: "funnel A's page converts better than B's; B's high-friction opening depresses it — open B the way A opens to lift second-page rate and first-purchase revenue." THE SO-WHAT TEST now gates every formation surface (skill `references/learning.md`, `agents/sleep-learn.md`, SKILL.md Entity Router, create-modal subtitle/placeholder, board empty state): *if validated, what do we CHANGE, and which revenue-bearing outcome improves?* No answer → observation → evidence on an existing thesis or an insight note, never a new thesis. Anatomy: grounded COMPARISON + causal MECHANISM + LEVER + outcome that matters. Volume rule: most extracted observations SHOULD fail the bar

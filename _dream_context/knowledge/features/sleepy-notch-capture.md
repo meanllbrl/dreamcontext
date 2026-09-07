@@ -1,8 +1,8 @@
 ---
 id: feat_UF2kRQGT
-status: in_review
+status: deprecated
 created: '2026-06-14'
-updated: '2026-07-08'
+updated: '2026-09-07'
 released_version: v0.8.7
 tags:
   - frontend
@@ -10,12 +10,37 @@ tags:
   - domain
 related_tasks:
   - sleepy-notch-panel-redesign
+  - remove-the-sleepy-notch-capture-feature
 type: feature
 name: sleepy-notch-capture
 description: ''
 pinned: false
 date: '2026-06-14'
 ---
+
+> # ⛔️ RETIRED — REMOVED IN 0.27.0 (2026-09-06)
+>
+> **This feature no longer ships. Do not read anything below as a live capability.**
+> Removed on the owner's verdict on the Lab experiment, delivered on the Settings
+> screen where it lived. Removal task: `remove-the-sleepy-notch-capture-feature`
+> (commit `8596538`).
+>
+> **What was REMOVED:** the Sleepy (Lab) **notch capture bar**, its **Ask**
+> conversation, its **perch** companion, its **global hotkey** and hover-to-open,
+> and its **Tauri windows** (the NSPanel notch window + the perch window).
+>
+> **What was KEPT and is untouched — different things wearing one word:**
+> - the **Sleepy MASCOT** (`SleepyMascot.tsx/.css`, drawn by SleepPage and the
+>   header debt tracker), the routes that serve its clips
+>   (`GET /api/sleepy/video`, `GET /api/sleepy/anim`) and the bundled
+>   `Resources/sleepy` assets;
+> - the **sleep-debt level also called "sleepy"** (`thresholds.sleepy`, the
+>   trigger `sleepy`, the Drowsy < Sleepy < Must Sleep ladder). Deleting that
+>   vocabulary would have broken the threshold-driven sleep 0.27.0 ships.
+>
+> Everything below is kept as the **historical record** of why this feature
+> existed and how it worked — the checkboxes record what once shipped, not what
+> ships now.
 
 ## Why
 
@@ -77,6 +102,9 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 - [x] `build_perch_panel` builds hidden; `show_perch` and hover-to-open watcher are both gated on `is_enabled`.
 
 ## Constraints & Decisions
+
+- **[2026-09-06]** **REMOVED in 0.27.0 — the Lab experiment's answer, not a failure.** The owner's verdict, delivered on the Settings screen where the feature lived, was to remove it. Like OpenUI before it, the third outcome (remove) was accepted in advance, so this is the experiment reporting its result. Supporting reasoning recorded in the removal task: the feature never left opt-in (the enabled toggle defaulted to `false`), nothing else in the app depended on it, and leaving it in meant 0.27.0 shipping an opt-in surface nobody chose to keep — while its always-on perch window, global hotkey and notch hover-watch kept costing every launch.
+- **[2026-09-06]** **The word "sleepy" names two unrelated things in this codebase; only the Lab capture surface went.** Removal scope: the notch bar, its Ask conversation, its perch, its global hotkey and hover-to-open, and its Tauri windows. Deliberately kept: `SleepyMascot`, `/api/sleepy/video` and `/api/sleepy/anim`, the bundled `Resources/sleepy` clips, and the sleep-debt vocabulary (`thresholds.sleepy`, trigger `sleepy`). Two near-misses were caught during the removal and are worth carrying forward: the ephemeral `captureRuns` run-state map is **shared with Sleep consolidation** (a first pass deleted its declaration; it was restored and re-documented for its one remaining caller), and the mascot video/anim routes are **not** part of the capture bar.
 
 - **[2026-07-06]** **Never type into a spawned TUI's readline after a timing guess — pass the message positionally at spawn.** The original Sleep-agent auto-submit (2026-07-04) used client-side readline injection triggered by a busy→idle edge, guessing when Claude Code's prompt was ready. When an MCP server auth pause delayed the boot, the send fired before the readline was mounted, dropping the consolidation message and leaving the agent stalled on an empty prompt. The fix: pass the prompt to `claude` as a positional CLI arg (`claude … "$0"`) at spawn — the TUI starts with the message already submitted, eliminating the race. Client-side readline injection survives only for the "write-but-don't-send" composer skill-add case (where the user finishes the prompt). This constraint is load-bearing for any future auto-submit feature — a spawned interactive TUI's readline timing is never reliably detectable from outside.
 - **[2026-06-28]** **Non-activating NSPanel via `tauri-nspanel` v2.** The original `WebviewWindow` (decorations-free, always-on-top) activates dreamcontext when summoned from another app — the MacBook notch companion pattern requires the capture panel to steal keystrokes without stealing app focus. `tauri-nspanel` wraps `NSPanel` with `.isFloatingPanel = true` and `.becomesKeyOnlyIfNeeded = true`, giving non-activating floating panel behaviour not exposed by the Tauri window API.
@@ -169,6 +197,12 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-07 - RETIRED: feature removed in 0.27.0 (task `remove-the-sleepy-notch-capture-feature`)
+- Version **0.27.0** (released 2026-09-06) **removed** this feature; PRD status `in_review` → `deprecated`. Historical sections below are kept as the record of why it existed and why it went.
+- Removed (commit `8596538`): the notch capture bar (`CaptureBar.tsx/.css`), its Ask conversation (`src/server/routes/sleepy-chat.ts` and the unused `useSleepyChat` hook), the perch companion (`SleepyPerch.tsx`), `dashboard/src/lib/sleepy.ts`, the global hotkey registrar and both window modes in `App.tsx`, the Settings "Sleepy (Lab)" section with its nav entry and six i18n keys, `POST /api/launcher/capture` + its status poll, `GET|POST /api/launcher/sleepy-config` with `~/.dreamcontext/sleepy.json`, and 452 lines of the Tauri shell (NSPanel notch window + JS↔Rust bridge, perch window, CoreGraphics cursor FFI, geometry constants, three panel atomics, `ServerPort`). The `tauri-nspanel` and `tauri-plugin-global-shortcut` dependencies had no other consumer and were dropped with their four capability grants and the `sleepy` / `sleepy-perch` window labels.
+- Kept deliberately: `SleepyMascot`, `/api/sleepy/video` and `/api/sleepy/anim`, the bundled `sleepy` resource dir, and the sleep-debt "sleepy" level.
+- Verified at removal: `cargo check` clean with zero warnings, `tsc` clean on CLI and dashboard, `gen:cli-manifest` no diff, 37 tests green in the three nearest files.
 
 ### 2026-07-06 - Auto-submit race eliminated: prompt passed positionally at spawn (working tree)
 - **BREAKING the old auto-submit mechanism.** The 2026-07-04 "auto-types and submits" path (`initialPrompt` + busy/idle detection firing a client-side readline injection) was **racy** — during a slow boot (3 MCP servers need authentication), the send could fire before the prompt was ready, dropping the consolidation message and leaving the Sleep agent stalled on an empty prompt. The new mechanism passes the prompt to `claude` as a **positional CLI arg** at spawn via a `prompt` URL param (`src/server/routes/agent-terminal.ts`): the prompt is passed as the login shell's `$0` positional and referenced as `"$0"` after all flags → `claude … "<prompt>"` starts the interactive TUI with the first message already submitted, autonomously. Client-side readline injection survives ONLY for the "write-but-don't-send" composer skill-add case (the user finishes the prompt).

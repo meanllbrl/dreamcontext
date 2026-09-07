@@ -9,10 +9,10 @@ description: >-
   follow-up), one active thread with kept history
 pinned: false
 date: '2026-08-26'
-status: in_review
+status: active
 created: '2026-08-26'
-updated: '2026-09-02'
-released_version: null
+updated: '2026-09-07'
+released_version: 0.27.0
 tags:
   - 'topic:desktop'
   - 'topic:federation'
@@ -61,7 +61,10 @@ Peer mail addresses one vault; the user had no surface to address ALL agents at 
 - [x] `WAIT` parks the agent (`waiting` state + presence chip), resumes it when the named agents settle, releases on drain so a mutual wait cannot deadlock, one per agent per wave
 - [x] The coalesce splits by what the target could actually READ: still queued → silent (lossless); running past it or finished → banked and paid as ONE catch-up run, announced
 - [x] `reopenThread` — a reply carries its `threadId` and revives an archived thread through the same one-active door `createThread` uses
-- [x] Proven end to end by `npm run verify:meeting-room` (33 checks): real launcher-mode server, 3 scratch vaults, scripted claude echoing its own cwd, Playwright-driven UI, poll cadence measured (2s thinking / 10s idle / stopped when closed)
+- [x] A summons anchor tolerates the markers agents actually write: `- ASK @x`, `1. ASK @x`, `> ASK @x` all open the line (`ASK_LINE` in `meeting-delivery.ts`), because a question visibly asked that woke nobody is this feature's worst failure
+- [x] A `WAIT` is not a way around chain depth 1: a resumed run inherits its origin (`RunTask.asker`), so a resume that began life as a summons may not `ASK` further and still counts against `mentionRuns`
+- [x] A recognised sentinel the room cannot HONOUR is answered with a system line saying why, never published as prose — `PASS` and `WAIT` are both parsed unconditionally, on every path
+- [x] Proven end to end by `npm run verify:meeting-room` — 70/70 as of the 0.27.0 cut (was 52, was 33): real launcher-mode server, 3 scratch vaults, scripted claude echoing its own cwd, Playwright driving the actual room window, poll cadence measured (2s thinking / 10s idle / stopped when closed). §8a addressing summons nobody and the room says nothing; §8b a late ASK is caught up exactly once and SAYS catch-up; §10 WAIT holds, the sentinel never renders, and the resumed run proves it read the answer it waited for; §11 replying into an archived thread revives it without forking. `npm run verify:composer-shared` still 17/17
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
@@ -94,12 +97,20 @@ Store `src/lib/meeting-room.ts` (thread JSON, sync single-writer mutations, one-
 
 Since 0.26.2 the UI half is: window opener `openMeetingWindow` + `MEETING_WINDOW_LABEL` (`dashboard/src/lib/desktop.ts`) → route `?meeting=1` in `App.tsx` (Theme + QueryClient + I18n, no VaultProvider) → `components/meeting/MeetingRoom.tsx` (window shell, thread rail, presence strip) + `meetingHost.ts` (`meetingChatItem`, `rosterMention`, `useMeetingComposerHost`) rendering `chat/TranscriptItem`'s `ItemView` and `chat/Composer` over `chat/composerHost.ts`'s `ComposerHost`. `meetingRoom.css` keeps only what the room owns; the bodies and the composer are `ChatPane.css` + `chat/cards.css` + `chat/composer.css`, with `.meeting-main` wearing `.chat-pane` for the reading tokens and the auto-grow ceiling. Delivery-side: `RunTask.wave` + the orchestrator's per-thread wave ledger, and `runPeerHeadless`'s new `effort` option beside `model`.
 
+Since 0.27.0 the protocol half is the four verbs, all parsed in `src/lib/meeting-delivery.ts`: exported constants `MEETING_ASK`/`MEETING_WAIT` build the anchors `ASK_LINE` (tolerates `-`/`*`/`•`/`1.`/`>` openers) and `WAIT_OPENS`, read by `parseSummons` (line-scoped) and `parseWait` (strict sentinel — any letter surviving the mention strip means it was prose). `buildMeetingPrompt` prints ALREADY ANSWERING THIS ROUND from live participant state and offers only `idle` agents as `ASK` targets. `RunTask` gained `wave`, `asker`, `kind: 'wait-resume'` and `resumesWait`; `handleWait`/`parkOnWait` own the `waiting` `ParticipantRunState` and its presence chip, `flushMissed` pays the banked catch-up, and `enqueue()` returns a boolean so a cap-refused resume releases the chip. Store side: `reopenThread` (`src/lib/meeting-room.ts`) revives an archived thread through the same one-active door as `createThread`, reached by the reply route in `src/server/routes/meeting.ts` (sanitize precedes the revive). Desktop side: `desktop/src-tauri/capabilities/meeting.json` grants the `meeting-room` window label its chrome (narrow — no shell/global-shortcut/notification), because a window with no capability opens with zero permissions and `startDragging()` was ACL-denied; `window-capabilities.test.ts` asserts every mintable window label is matched, with a source tripwire on the `new WebviewWindow(` count.
+
 ## Notes
 
-Cost is accepted, not solved: a PASS still costs a full context load per agent per announcement — revisit with a cheap-triage stage if it stings. One orchestrator instance holds because only one launcher window exists; if that ever changes the thread-file writer needs a real lock. Possible later: CLI verbs so agents can post to the room from sessions.
+Cost is accepted, not solved: a PASS still costs a full context load per agent per announcement — revisit with a cheap-triage stage if it stings. One orchestrator instance holds because only one launcher window exists; if that ever changes the thread-file writer needs a real lock. Possible later: CLI verbs so agents can post to the room from sessions. NOT BUILT as of 0.27.0: the room has no byte channel — a dropped or pasted file does not reach the agents; tracked by `the-meeting-room-gets-its-own-byte-channel-so-a-dropped-or-pasted-file-reaches-every-agent` (BACKLOG). Kept out of the User Stories deliberately: it is a future capability, not an unfinished part of what shipped.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-07 - Released in 0.27.0
+- SHIPPED. `released_version: 0.27.0` (released 2026-09-06); status `in_review` → `active`. Consolidates `meeting-room-addressing-is-not-summoning-a-thread-you-can-read-is-a-thread-you-can-answer-and-an-agent-may-wait` (completed, 0.27.0), which also closed `a-coalesced-mention-must-still-reach-an-agent-whose-run-is-already-in-flight`
+- The release narrates it as the room's FOUR VERBS: addressing is free, `ASK` summons, `WAIT` holds, and a reply lands in the thread you are reading. Verified in code, not taken on the task's word: `MEETING_ASK`/`MEETING_WAIT` + `ASK_LINE`/`WAIT_OPENS` and `parseSummons`/`parseWait` in `src/lib/meeting-delivery.ts`, `reopenThread` in `src/lib/meeting-room.ts` reached by the reply route in `src/server/routes/meeting.ts`, and `desktop/src-tauri/capabilities/meeting.json` present for the `meeting-room` window label
+- Criteria added this pass (all met, code-verified): the `ASK` anchor tolerating list/quote markers; a `wait-resume` inheriting `asker` so a WAIT cannot buy chain depth 2; an unhonourable sentinel getting a system line instead of being published
+- Left OPEN deliberately (recorded in `## Notes`, not as a story): the room has no byte channel — a dropped or pasted file still does not reach the agents. Its task is BACKLOG and is not part of 0.27.0
 
 ### 2026-08-28 - Window capability, pre-build review corrections, four verbs
 - WINDOW CAPABILITY FIX (648a88a): the room's `meeting-room` label matched no capability file, so it opened with zero permissions and the title bar refused to drag (`startDragging()` ACL-denied). `capabilities/meeting.json` now grants window chrome (narrow scope: no shell/global-shortcut/notification). `window-capabilities.test.ts` asserts every window label is matched, with a source tripwire on `new WebviewWindow(` count

@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-09-05'
+updated: '2026-09-07'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -65,6 +65,8 @@ related_tasks:
     a-finished-sub-agent-s-report-becomes-a-collapsed-card-in-the-transcript-instead-of-a-wall-the-main-agent-re-types
   - >-
     openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali
+  - >-
+    sleepy-acts-out-the-chat-mode-the-mascot-shows-plan-and-develop-not-just-status
 type: feature
 name: in-app-agent-terminal
 description: ''
@@ -146,6 +148,14 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - [x] As a developer, right-clicking a tab offers Rename (the inline editor a double-click already opened, now with something that says so) and the "auto-name tabs" switch itself — so the two things I want while looking AT a tab are reachable from it instead of being an undiscoverable gesture and a preference three panels away in Settings.
 
 - [x] As a developer in Chat view, I can see session facts (branch, worktree, localhost:PORT) and long-run progress in a shelf docked to the composer — not scrolling away in the transcript — so I always know where I am and how far along a task is. (See [[chat-composer-shelf]] for full PRD.)
+
+- [x] As a developer, when I dispatch a sub-agent, its finished report arrives as its OWN collapsed card in the transcript — face, run name, subagent-type badge, how it ended, and the run's own one-line summary — instead of the main agent re-typing the whole report as prose I have to scroll past. One click opens the report in place as markdown; the body is not mounted until I ask. (0.27.0)
+
+- [x] As a developer, a `dream-html` block reads as PART of the transcript rather than an embedded foreign page: the same type size, leading and typefaces as the prose around it, my locale's casing rules, sentences that stay sentences, and no clipped numbers or columns at the width the chat pane actually gives it. (0.27.0)
+
+- [x] As a developer, I can take a rendered block OUT of the chat — PNG, PDF/print, a single self-contained HTML file, or copied to the clipboard as an image — so I can paste it into Slack or keep it, without a screenshot. (0.27.0)
+
+- [ ] As a developer, I can have a structured answer DRAWN as a built board (deterministic geometry — nodes, axes, lanes, a path) instead of authored markup, so it converts to visual memory at a glance. (Proposed in the depiction task's A–D; the owner put the board flip explicitly OUT OF SCOPE on 2026-09-06 — `dream-html` stays the depiction default. Not built: an inline board is still the live pan/zoom canvas, not a static SVG.)
 
 ## Acceptance Criteria
 
@@ -283,19 +293,92 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - [x] **Scenes are drawn in theme ink**; only genuinely hot things (flame, weld, sparks) use `--color-warning`, so both themes work and no hex is baked in. Reduced-motion stands the animation down.
 - [x] Verified: dashboard tsc clean, dashboard build clean, 9 unit tests in `tests/unit/mascot-mode-gear.test.ts` (bare-face default, per-mode animation clocks, the reduced-motion stand-down, the no-hardcoded-colour rule, the picker wiring). Art judged against rendered frame strips at 100px and 26px in both themes.
 
-- [x] As a developer, I can choose how the agent DRAWS structured answers — written HTML (the
-      shipped default) or OpenUI components (experimental) — from Settings -> Agents -> "Answer
-      rendering", so I can trade the sandboxed iframe's isolation for a streaming grammar with
-      charts and follow-ups.
+### `dream-html` blocks read as part of the transcript (0.27.0, task `chat-depiction-becomes-a-built-board-*` waves F + G)
 
-### Answer rendering: the `dream-ui` mode (EXPERIMENTAL, off by default — 2026-09-05)
+- [x] TYPOGRAPHY LOCKSTEP, proven by measured pixels rather than by CSS: the srcdoc body reads the
+      app's RESOLVED reading tokens (`--chat-text`, `--chat-line-height`) injected into `:root`
+      instead of a hardcoded 14px/1.55, and they are resolved from the HtmlView's OWN element
+      (they live on `.chat-pane`, not `documentElement`) with the srcdoc rebuilt on zoom change.
+      The whole kit type scale moved from fixed px to `em` so one body rule scales every string
+      in the block, and fullscreen derives from the same variable instead of its own 15px
+      constant.
+- [x] THE FACES TRAVEL WITH THE BLOCK: the frame could not load a webfont at all (srcdoc CSP
+      `default-src 'none'`), so it fell back to system-ui — measured at ~10% width difference on
+      the same string, which reads as "the size is wrong". All THREE kit faces are now embedded as
+      base64 `@font-face` in the srcdoc (body, display, mono) and `lib/sandboxHtml.ts` allows
+      exactly `font-src data:` — a data URI, not a network grant, and deliberately NOT
+      `font-src https:` or a host allow-list. Cost measured: ~214KB → ~337KB per block.
+- [x] SENTENCES STAY SENTENCES — the heaviest defect this surface has had ("hiçbir şey
+      anlaşılmıyor"). Eight kit containers were flex COLUMN, which makes every direct child
+      (including bare text runs and inline chips) its own flex item, so an ordinary sentence
+      containing a `dc-code` chip broke into three full-width lines. All eight returned to block
+      flow with rhythm from `> * + * { margin-top }`; the rhythm rules had to move to the END of
+      the stylesheet (equal specificity with `.dc-p { margin: 0 }`, later wins). Markup was
+      valid throughout and no unit test could see it — only layout can.
+- [x] LOCALE: the srcdoc carries the app's `lang`, so `text-transform: uppercase` stops
+      destroying Turkish (`değişiyor` → `DEĞİŞİYOR`, not `DEGISIYOR` with a dotless I).
+- [x] READABILITY, NOT FIT: `dc-compare` columns were sized by what would FIT (`minmax(230px)` →
+      27 characters per line in a 534px pane); the floor moved to a measured 380px and a
+      five-pane-width check asserts ≥40 characters per line. Wide tables degrade to horizontal
+      scroll (`dc-table-wrap`), `dc-grid--3/--4` step down through container queries, `dc-stat`
+      values shrink or wrap instead of clipping, and a small block can hug its content
+      (`dc-doc--hug`) instead of stretching across 960px.
+- [x] COLOUR DISCIPLINE: tone modifiers (`dc-flow-node--accent/good/bad/warn`) exist so a
+      highlighted node has a legitimate class, and the briefing states that a chart fill never
+      goes behind prose; `dc-funnel-bar`'s hardcoded `#fff` is gone (a brand override could erase
+      the label); the dead `--color-caution` token was dropped.
+- [x] EXPORT — a block can LEAVE the chat: the fullscreen bar offers PNG, PDF/print, a
+      self-contained single-file HTML, and copy-as-image, all built from ONE shared first step
+      (ask the frame for the picture it is currently showing, wrap it in a standalone document),
+      so "export" and "what I am looking at" cannot diverge. The export is self-contained — no
+      network request, theme + kit CSS embedded.
+- [~] SAVE / REPORT layer NOT shipped: a fifth "☆ Save" button that filed a block into the brain
+      as an artifact (with a Saved-blocks page and recall visibility) and a compose-blocks-into-a-
+      report surface were both built into the plan and RETIRED by the owner on 2026-09-02
+      ("sadece indirebilelim yeter"). The bar is four ways out and the block has no second home.
+      (The originating task ticks E2/E3; the code is the truth — the layer is gone.)
+- [ ] The board flip (that task's A–D: a built board replaces `dream-html` as the depiction
+      default, an inline board renders as a static SVG at rest) was NOT built and was put out of
+      scope by the owner on 2026-09-06. Inline boards remain the live pan/zoom canvas.
 
-A second expressive channel alongside `dream-html`. The agent writes **OpenUI Lang** (a compact
+- [~] WITHDRAWN 2026-09-06 — "choose how the agent draws structured answers (written HTML or
+      OpenUI components) from Settings -> Agents -> Answer rendering". The setting, the mode and
+      the `chatRender` enum were all removed with the experiment; `dream-html` is the only
+      renderer and there is no rendering choice to make. Kept here only so the ticked criteria
+      below are not read as live capability.
+
+### Answer rendering: the `dream-ui` experiment — ANSWERED AND REMOVED (0.27.0, 2026-09-06)
+
+A settled NEGATIVE decision, not a shipped capability. Between 2026-09-04 and 2026-09-06 a second
+expressive channel was built alongside `dream-html`: the agent wrote **OpenUI Lang** (a compact
 line-oriented grammar, `github.com/thesysdev/openui`, MIT, no hosted service) inside a
-` ```dream-ui ` fence and a CLOSED component library renders it as real React components.
-Selected by `chatRender: 'html' | 'openui'` — an enum rather than a boolean because a third
-depiction (a built board) is proposed in `state/chat-depiction-becomes-a-built-board-*` and the
-three are mutually exclusive: one answer, one language.
+` ```dream-ui ` fence and a CLOSED component library rendered it as real React components,
+selected by `chatRender: 'html' | 'openui'` and off by default. It shipped as an experiment with
+one question attached: **does a closed component vocabulary beat authored markup?**
+
+**The answer was no.** The owner saw the full showcase on 2026-09-06 and ruled "ben begenmedim,
+tamamen kaldir" — Wave 6's third possible outcome (`remove`), accepted in advance as a real one.
+The mode was removed end to end in commit `70b448d` (34 files, +2,064 / −10,835): the four
+`@openuidev` packages and their lazy chunk, six dashboard modules (`OpenUiView`,
+`OpenUiRenderer`, `openuiLibrary`, `openuiTheme`, `openuiAction`, `OpenUiView.css`), the
+generated briefing and its generator, the ENTIRE `dream-ui` fence (both regex alternations, the
+`MAX_UI_*` caps, the streaming exception, the pending branch), the `ChatViews` case, the
+`askFromBlock` bridge, the Settings row and its six i18n keys, the `chatRender` field on both
+coercers, seven unit test files and two verify harnesses. `chat-surface.ts` returned from a
+three-part swappable template to one. Verified in this repo on 2026-09-07: zero references to
+`openui` / `dream-ui` / `chatRender` in `src/`, `dashboard/src/`, `tests/` or `scripts/`, and
+zero `@openuidev` entries in either `package.json`.
+
+**The one risky thing was measured, not assumed:** the default briefing is byte-for-byte
+identical before and after removal (9,670 chars, empty diff) — a default session hears exactly
+what it heard. Full suite 8,905/8,905, `verify:chat-html` 138/138 and `verify:chat-segments`
+46/46 in real Chromium, both tsc clean.
+
+**`dream-html` therefore remains the ONLY renderer**, unchanged, and the owner's standing
+instruction is "take from OpenUI whatever is worth taking, otherwise leave it as it is".
+
+What the experiment PROVED, kept because it is the evidence behind the verdict and the input to
+any future attempt (all of it is history — none of this ships):
 
 - [x] Off by default and per-session: only the exact string `openui` selects it, on both
       coercers; the briefing is written to a file at spawn, so a running chat keeps the mode it
@@ -338,13 +421,32 @@ three are mutually exclusive: one answer, one language.
       "should not be drawn" questions correctly answered in prose. Cost: the ui block averaged
       1,426 chars and the whole answer 2,795 vs html's 3,386 — OpenUI mode is SHORTER. Latency
       difference is inside the noise (52.2s vs 50.8s).
-- [ ] Wave 6's one systematic violation is not yet fixed: the model stuffs the explanation INSIDE
-      the block — 9 strings over 200 chars across 4 answers, mostly in `StepsItem` descriptions,
-      while the briefing's own rule says the explanation belongs outside the block. Tightening the
-      prompt here is the highest-yield remaining change.
+- [~] Wave 6's one systematic violation was never fixed and now never will be: the model stuffs
+      the explanation INSIDE the block — 9 strings over 200 chars across 4 answers, mostly in
+      `StepsItem` descriptions, while the briefing's own rule says the explanation belongs
+      outside the block. Moot as of the removal; recorded because the same failure shape would
+      show up in any future closed-vocabulary attempt.
+- [x] TWO LIBRARY-SIDE DEFECTS found in the showcase rehearsal, and they are the sharpest part of
+      the verdict: (1) a `Callout` given a `visible?: <boolean>` argument drew NOTHING in both
+      SSR and a real browser with ZERO parse errors — a silent blank render, this grammar's worst
+      failure mode — because the signature NAMES a capability the generated prompt never teaches
+      the syntax for (`ListItem`'s action had the identical gap: `stripActionSection` dropped the
+      Action section while the signature still advertised "becomes clickable"). (2)
+      `FollowUpBlock`'s "Related Queries" heading is hardcoded English in the package with no
+      prop — a foreign heading in a Turkish transcript, the locale axis reappearing on the
+      dependency's side of the line. A closed vocabulary you do not own is only as closed as its
+      weakest signature.
 
 
 ## Constraints & Decisions
+
+- **[2026-09-06] THE OPENUI EXPERIMENT IS A CLOSED QUESTION: a closed component vocabulary did not beat authored markup, so `dream-html` is the only renderer.** Do not re-propose OpenUI (or an equivalent closed component library rendered in the app's own React tree) as an answer-rendering mode without new evidence. The experiment was pre-registered with three admissible outcomes — keep / make default / remove — and the third was accepted in advance; the owner returned `remove` after seeing the full showcase, which makes this the experiment's ANSWER, not its failure. What removal cost and how it was verified is in the section above. Two things stay on the record because they generalise: (a) the mode was built behind a per-session `chatRender` ENUM rather than a boolean specifically so a third depiction could arrive later — that reasoning survives the removal and the enum comes back from zero if a third renderer is ever built; (b) the model itself was NOT the limitation — claude-sonnet-5 wrote the unfamiliar grammar with 0 invented components and 0 parse errors, in SHORTER answers than `dream-html`. The verdict is about the look and the value of a closed vocabulary, not about capability.
+- **[2026-09-06] The board-as-default-depiction flip is OUT OF SCOPE, and the standing instruction is "take from OpenUI whatever is worth taking, otherwise leave `dream-html` as it is".** Two competing answers to one question (how do we show a structured answer) were live at once — a built board and OpenUI components; only one can be the default and neither is. The depiction default stays authored HTML, improved rather than replaced.
+- **[2026-09-02] A block leaves the chat as a FILE, not as a second home in the brain.** The export bar shipped with four ways out (PNG / PDF / single-file HTML / copy-as-image) and a fifth "☆ Save" button — which filed the block into the brain as an artifact and fed a Saved-blocks page — was retired by the owner before it landed: "sadece indirebilelim yeter". Consequence for anyone re-reading the originating request (six HTML files hand-written to the desktop in a week, none searchable): the answer is downloading, not a new indexed entity. Every export is built from one shared first step — snapshot the frame's CURRENT screen state and wrap it — because "export" and "what I am looking at" being different things would make the button a lie.
+- **[2026-09-02] A sub-agent's report is an OBJECT on screen, and the briefing must say so — the wall was the main agent's voice, not the UI's.** The transcript-eating report was diagnosed to the Agent tool's own description ("the agent's final report is not shown to the user — relay what matters"), which makes the model paste the report verbatim; the UI had been suppressing sub-agent tool calls and collapsing finished rows the whole time, while the report itself sat in the drill-in as a `JSON.stringify` dump. So the fix is two-sided: render the report as its own card AND put the counter-rule in `chat-surface.ts`. Two implementation rules are load-bearing: read the report from the run on EVERY render (a synchronous dispatch's card mounts on its `task_notification`, which arrives BEFORE the `tool_result` carrying the report — a `useState` initial value captures "no report" and never looks again), and treat the CLI's "Agent started in the background with ID: …" receipt as NOT a report (`isBackgroundReceipt`, three conditions together so a genuine multi-line report about background work survives). Deliberately not built: no eager fetch on landing (a ten-agent fan-out must not fire ten transcript reads for cards nobody opened) and no re-fetch on re-open.
+- **[2026-09-02] Flex column is a sentence shredder — the defect class no unit test can see.** Eight kit containers were `display: flex; flex-direction: column`, which promotes every direct child — including bare text runs and inline chips — to its own flex item, so a sentence containing an inline code chip rendered as three full-width lines. The markup was valid, every class was defined, and the whole suite was green; only layout could see it. Rule: rhythm between block children comes from `> * + * { margin-top }`, not from `gap` on a flex column, and those rhythm rules must sit at the END of the stylesheet or an equal-specificity `margin: 0` written later wins. Proven by a `runSentenceIntegrity` pass that measures whether an inline chip FLOWS inside its sentence.
+- **[2026-09-02] An embedded frame must carry its own faces, and readability is measured in characters per line, not in whether it fits.** The srcdoc CSP (`default-src 'none'`) blocks webfonts, so the block silently fell back to system-ui at ~10% different width — the fix is base64 `@font-face` for all three kit faces plus exactly `font-src data:`, which is a data-URI allowance and not a network grant (never `font-src https:`). Separately, `auto-fit` columns keep a column while it FITS, not while it READS: a 534px pane gave 27 characters per line. Size layout from the measured character count you want, and pin it with a fixture at the pane width the chat really has.
+
 <!-- LIFO: newest decision at top -->
 
 - **[2026-09-05] Validate the measuring instrument before you trust its verdict — the Wave 6 scorecard was wrong three times before it was right.** The first OpenUI scorecard read "33% blank render, 3 fabricated components" and was going to be reported as a model finding. All three were HARNESS bugs: (1) rendering in bare node — `document is not defined`, an environment limit, not a model error; (2) after moving to jsdom, recharts measures text with canvas, so cartesian charts CANNOT be measured headless at all — that is a measurement boundary the scorecard has to state, not a failure to score; (3) the "invented component" regex was scanning inside quoted strings and matched prose — `"Kuyruk (client)"`, `"JSONB (kısmi esneklik)"`, `"KB (gzip)"`. Real result: zero fabrications. A measuring instrument's own limits silently become the measured subject's faults, and the direction of that error is always flattering to the instrument. Rule: when a first-pass measurement reports a surprisingly BAD verdict about the subject, suspect the harness first, and re-run against a known-good case before reporting. Written up as the general shape in `knowledge/patterns/runtime-measurement-verification.md` §7. (The same run also cost a two-phase split: vite-node's dev server dies during long `claude` calls, so the expensive generation phase and the scoring phase must be separate runs, which also makes the scoring reproducible.)
@@ -436,27 +538,36 @@ three are mutually exclusive: one answer, one language.
 
 ## Technical Details
 
-### `dream-ui` (experimental answer rendering)
+### Answer rendering (current truth, 2026-09-07)
 
-- `dashboard/src/components/sleepy/chat/openuiLibrary.ts` — the 19-component vocabulary; the
-  SINGLE source for both the renderer and the generated briefing.
-- `dashboard/src/components/sleepy/chat/OpenUiView.tsx` — the seam (setting gate, error
-  boundary, pending/streaming slot). Small, eager, imports no OpenUI.
-- `dashboard/src/components/sleepy/chat/OpenUiRenderer.tsx` — the LAZY half: everything that
-  imports `@openuidev/*`. Emitted as its own ~2.07MB chunk; the entry chunk carries no library
-  code (`recharts`: 0 matches).
-- `dashboard/src/components/sleepy/chat/openuiTheme.ts` — theme derived from
-  `resolveChatKitTokens`, including the rebuilt composite type tokens and the chart palette.
-- `dashboard/src/components/sleepy/chat/openuiAction.ts` — the action gate: a whitelist of one
-  (`continue_conversation` -> text), refusing `open_url` by name.
-- `scripts/gen-openui-briefing.ts` + `.run.ts` — `npm run gen:openui-briefing`; output committed
-  to `src/server/chat-surface-openui.generated.ts` and drift-checked.
-- `src/server/chat-surface-openui.ts` — the variant briefing; `src/server/chat-surface.ts` is
-  now composed from three parts so one is swappable (the default stays byte-identical).
-- `src/server/routes/launcher.ts` (`readAgentUiChatRender`) + `routes/agent-chat.ts` — the
-  spawn-time choice.
-- Tests: `tests/unit/openui-{briefing,view,render,streaming,theme,bundle}.test.ts`; browser
-  harness `scripts/verify/openui-look.mjs` (`npm run verify:openui-look`).
+- `src/server/chat-surface.ts` — ONE briefing template again (the three-part swappable structure
+  built for the OpenUI variant was unwound with it), appended to a Chat spawn via
+  `--append-system-prompt-file`. It names `dream-html`, `dream-view`, `dream-actions`, board
+  embeds, media, clickable paths, `==highlight==`, and the sub-agent-report counter-rule.
+- `dashboard/src/components/sleepy/chat/chatHtmlKit.ts` — `CHAT_HTML_KIT_CSS` (the `dc-*`
+  vocabulary, `em` type scale, container queries, tone modifiers, `dc-table-wrap`,
+  `dc-doc--hug`), `CHAT_KIT_TOKENS` / `CHAT_READING_TOKENS`, `resolveChatKitTokens(el?)` and
+  `buildChatSrcdoc` (carries `lang`).
+- `dashboard/src/lib/sandboxHtml.ts` — the srcdoc CSP (`default-src 'none'; style-src
+  'unsafe-inline'; script-src 'unsafe-inline'; font-src data:`) and the embedded base64 faces.
+- `dashboard/src/components/sleepy/chat/HtmlView.tsx` + `htmlExport.ts` — the frame, the zoom/
+  theme re-injection, and the export bar (`buildStandaloneHtml`, `rasterize`, `copyBlobAsImage`,
+  `printStandalone`, `exportFilename`); `lib/exportDownload.ts` delivers the file.
+- `dashboard/src/components/sleepy/chat/SubAgentReport.tsx` + `chatEntities.ts`
+  (`runReportText`, `isBackgroundReceipt`, `reportFromHistory`, `reportStandfirst`,
+  `reportableRuns`) — the landed-report card and its two carriers.
+- `dashboard/src/components/sleepy/SleepyMascot.tsx` / `.css` (+ `agentStatus.ts`,
+  `chat/ComposerMenus.tsx`) — the face coordinate system and `gearForMode` (colour = status,
+  movement = mode).
+- Proof harnesses: `scripts/verify/chat-html.mjs` (143 checks incl. measured typography,
+  sentence integrity, characters-per-line at five pane widths),
+  `scripts/verify/chat-subagent-report.mjs` (42, both carriers, light + dark),
+  `scripts/verify/chat-segments.mjs`, `tests/unit/chat-surface-lockstep.test.ts`,
+  `tests/unit/mascot-mode-gear.test.ts`.
+- REMOVED 2026-09-06 (`70b448d`) and intentionally absent: `openuiLibrary.ts`, `OpenUiView.tsx`,
+  `OpenUiRenderer.tsx`, `openuiTheme.ts`, `openuiAction.ts`, `scripts/gen-openui-briefing.ts`,
+  `src/server/chat-surface-openui*.ts`, the `chatRender` setting on both coercers, and the four
+  `@openuidev` packages.
 
 Architecture, key files, and dev-workflow notes are in `_dream_context/knowledge/desktop-beta-tauri-multivault.md`:
 - §"In-app Agent Terminal" — PTY bridge, bypassPermissions, prereq installer, and the 2026-07-01 readability polish (DOM renderer replacing WebGL, real JetBrains Mono load, calmed contrast, clipboard/selection/pane-dimming fixes) which supersedes the original WebGL-era design.
@@ -494,6 +605,34 @@ Key files summary (post-2026-07-01 readability polish; 2026-07-04 basic-terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-07 — 0.27.0: two answers about how a chat answer should LOOK, one of them negative
+
+Consolidates four completed 0.27.0 tasks:
+`a-finished-sub-agent-s-report-becomes-a-collapsed-card-in-the-transcript-instead-of-a-wall-the-main-agent-re-types`,
+`chat-depiction-becomes-a-built-board-dream-html-stops-being-the-default-for-structure`,
+`openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali`,
+`sleepy-acts-out-the-chat-mode-the-mascot-shows-plan-and-develop-not-just-status`.
+
+- **The OpenUI answer-rendering mode was an EXPERIMENT and 0.27.0 ANSWERED it: removed.** A closed
+  component vocabulary did not beat authored markup; the owner's verdict on 2026-09-06 was the
+  pre-registered third outcome. Commit `70b448d` took out the packages, the six dashboard modules,
+  the generated briefing, the whole `dream-ui` fence, the Settings row and the `chatRender` enum —
+  34 files, +2,064 / −10,835 — and proved the default briefing byte-identical afterwards.
+  `dream-html` remains the only renderer. Verified against this repo on 2026-09-07: zero
+  `openui` / `dream-ui` / `chatRender` references anywhere in `src/`, `dashboard/src/`, `tests/`
+  or `scripts/`.
+- **`dream-html` was IMPROVED instead of replaced** (waves F + G of the depiction task): the
+  block now reads in the transcript's own type (measured pixels, three embedded faces under a
+  `font-src data:` CSP), keeps sentences whole (eight flex-column containers returned to block
+  flow), carries the app's locale, and is sized by characters-per-line rather than by what fits.
+  A block can also leave the chat — PNG / PDF / single-file HTML / copy-as-image.
+- **A landed sub-agent's report is a named card**, not a wall the main agent re-types; the
+  counter-rule lives in `chat-surface.ts` because the wall was the model's voice, not the UI's.
+- **Sleepy acts out the chat mode** — colour = status, movement = mode.
+- **Still open, deliberately:** the depiction-task board flip (A–D) was NOT built and is out of
+  scope by owner decision; the save-to-brain / report-compose layer was retired before it landed;
+  in-app plan mode remains the long-standing open AC.
 
 ### 2026-09-06 — A picture that can't be shown SAYS so, and offers the one click that fixes it
 

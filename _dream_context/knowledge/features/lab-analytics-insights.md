@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-09-02'
+updated: '2026-09-07'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -41,8 +41,8 @@ description: >-
   script sources into the brain: manifest + bounded cache, TTL sync, redacting
   credential layer, roadmap KR binding, snapshot/recall surfacing, and a Lab
   page whose cards resolve through a chart registry (eleven renders). In review:
-  dataset/v1 rows, app/v1 multi-page interactive apps, html/v1 hybrid cards, and
-  date-navigable My Reports. Full render list and payload contracts in the body.
+  dataset/v1 rows, app/v1 apps, html/v1 hybrid cards, and My Reports — since
+  0.27.0 a branded, window-honest template with optional AI commentary.
 pinned: false
 date: '2026-07-05'
 ---
@@ -118,6 +118,18 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] As a report consumer, I can define a My Report (`lab/reports/<slug>.md`) that composes existing insights into sections, navigate it by date (daily/weekly/monthly), and see every insight's as-of timestamp — honest-nothing when no snapshot exists for that date.
 - [x] As a report consumer, opening a report triggers a scoped sync-job (only the insights that report uses) with progressive section fill, so I'm not waiting for the whole board to sync before seeing my daily report.
 - [x] As a report consumer, I can print a report to PDF or export it as single-file HTML (with inlined CSS and data) or copy the whole thing as Markdown.
+
+### Reports template + AI commentary (v0.27.0, shipped 2026-09-06)
+
+- [x] As a report reader, every item names the measurement window its numbers cover next to the as-of stamp ("7-day · Aug 25 – Sep 1"), says "no declared window" when the source declared none, and "window unknown" for a dated series event — so I never read a 7-day tile and a 30-day tile as if they were the same thing.
+- [x] As a report reader, a section whose items mix ≥2 distinct windows shows a warning strip naming them, instead of silently composing incomparable tiles.
+- [x] As a report reader, the page reads as a dreamcontext document — brand masthead + gradient rule, display-face title, meta chips, prose reading panel with inline markdown, signing footer — not as a stack of dashboard cards.
+- [x] As a report reader, number items pack into a compact stat grid while chart/table items run full-width, so ten metrics are one screen and not ten 400px-tall cards.
+- [x] As a report consumer, the HTML and Markdown exports carry the same branded template, window chips and mix warnings as the page (HTML still self-contained), and the print stylesheet still prints clean.
+- [x] As a report reader, I can press **Analyze** on a report and get commentary written by a headless, pure-text `claude` run over the numbers already on the page — nothing generates without my click, and I can Regenerate.
+- [x] As a report reader, the commentary is DISTRIBUTED through the report — a general reading at the top plus slim per-section notes inside their own sections — not one block stacked at the end.
+- [x] As a report author, a report with no AI at all is first class: `commentary: false` removes the surface entirely and the API refuses generation with 409.
+- [x] As a report consumer, the exports carry the commentary in that same distributed layout, labelled AI-generated with its model and time.
 
 ### App insights (app/v1 — multi-page interactive apps, in_review 2026-08-26)
 
@@ -227,6 +239,31 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] G6 — **Skill docs (same change)**. SKILL.md Entity Router gained app-insight litmus tests ("multi-page dashboard", "let the script build its own UI"), cli-reference.md `lab body`/`lab query` verbs, tasks-and-features.md § App insights (the authoring contract this pattern secures — data mandatory, app optional, bridge API, security bound). Marker tests green.
 - [x] G7 — **Validation**. `tests/unit/lab-app.test.ts` (payload validation, caps, cache write, legacy series synth), `lab-app-body.test.ts` (srcdoc builder, shim injection order, CSP), `lab-app-route.test.ts` (routing, page resolution), `lab-app-query.test.ts` (WHERE/GROUP-BY/TOP query algebra). Runtime: `scripts/verify/lab-app-insight.mjs` (app routes, pages nav, `lab.navigate` works, `lab.data` returns numbers, full-screen toggle, `lab body`/`lab query` CLI, self-navigation teardown). Full suite green.
 
+### Reports template + window honesty (v0.27.0, task `reports-become-a-branded-dreamcontext-template-window-honest-items-designed-sections-native-export`)
+
+- [x] W1. `ResolvedReportItem` gains `window: {fromISO,toISO}|null` + `rangeKey: string|null` — live: matrix/funnel/datasets/app cache range, else derived from cache tweaks anchored at `fetchedAt`, NEVER the 30-day engine default; dated: snapshot range only, series events = null (a changed tweak must not relabel history). Flows into `lab report show --json`; text mode prints it too.
+- [x] W2. Every report item surface shows its window next to as-of — "7-day · Aug 25 – Sep 1", explicit "no declared window", dated series "window unknown".
+- [x] W3. A section mixing ≥2 distinct windows renders a warning strip naming them (`sectionWindowMix`, unit-tested); uniform / all-null sections render none.
+- [x] D1. ReportPage IS the dreamcontext Reports template: brand masthead + gradient rule, display-face title, meta chips, prose reading panel with inline markdown, signing footer. CSS 100% tokens (test pins no-hex).
+- [x] D2. Number items pack into a stat grid with the COMPACT card body; chart/table items full-width.
+- [x] D3. HTML export carries the same branded template (still self-contained, pins green) + window chips + mix warnings; Markdown export gains window/mix lines.
+- [x] D4. Print stylesheet keeps hiding chrome; the sheet prints clean.
+- [x] P1. `lab-reports` 22 + `lab-reports-ui` 15 + full suite 7760 green; new window/mix/markdown unit tests; dashboard `tsc -b` + CLI tsc clean; `npm run build` clean.
+- [x] P2. Runtime proof: `verify:lab-report-template` 21/21 (NEW, registered in package.json) + `verify:lab-breakdown-reports` 29/29 (no regression) + real-vault `calbuddy-marketing-haftalik` screenshots light+dark (24 window chips, 2 mixed-window warnings on real data) — `tmp/report-template-proof/`.
+
+### AI commentary (v0.27.0, task `reports-gain-an-optional-button-triggered-ai-commentary-layer-pure-text-headless-claude`)
+
+*(That task shipped with no Acceptance Criteria section — these are reconstructed from its changelog evidence and re-verified against the code on 2026-09-07.)*
+
+- [x] `src/lib/lab/report-commentary.ts`: dated store under `lab/reports/.commentary/<slug>/<dateKey>.md` (read/write + path safety) and `buildCommentaryPrompt` with hard rules — only the numbers embedded in the prompt, respect the declared windows, answer in the report's language, 2–5 paragraphs, 16KB cap.
+- [x] `runClaude` spawns `DREAMCONTEXT_CLAUDE_BIN || claude` with `-p <prompt> --model <m> --permission-mode plan` (prompt as an argv positional), a 180s watchdog and an injectable `runImpl` so the spawn path is testable.
+- [x] `src/server/lab-commentary-job.ts` is a 30s-socket-safe job registry with adopt semantics; `GET`/`POST /api/lab/reports/:slug/commentary` registered BEFORE `/api/lab/reports/:slug` (404 unknown report, 409 `commentary_disabled`, 400 bad date).
+- [x] CLI `dreamcontext lab report comment <slug> [--date --from --model]` runs the same generator and prints the commentary; the dated file lands in the store.
+- [x] Dashboard `CommentaryPanel` on ReportPage: brand-tinted, "AI COMMENTARY" kicker, Analyze → Regenerate, "AI-generated · model · time" label, error surface, gated on `commentaryEnabled` (`report.commentary !== false`).
+- [x] Distribution: the prompt asks for a general reading first, then `## <section title>` blocks with the section titles listed verbatim; `parseCommentarySections` is lenient (an invented heading folds into the summary — nothing is silently dropped) and splits the panel into a summary block plus slim in-section `report-ai-note` cards with an AI chip; both exports carry the same layout (`rp-commentary` summary + in-section `rp-ai-note`).
+- [x] Generation sees the free custom `from` range as well as the date (job, route and CLI all take `--from`).
+- [x] Evidence: `lab-report-commentary.test.ts` 9/9 (store round-trip + path safety, prompt honesty incl. prior continuity, cap/empty/disabled rejects, REAL spawn path via a fake binary — success, adopt, error settles and writes nothing), `lab-reports-ui` pins + export tests, full suite 7780/0, `verify:lab-report-template` 37/37 in real Chromium (summary in the panel, a section note inside ITS section, the panel not swallowing it).
+
 ### Funnel analytics (in_review, 2026-07-21)
 
 - [x] F1 — **Funnel payload contract + cache schema** written and versioned: adapter returns a funnel-set (funnels → meta/metrics/steps/segments + declared dimensions; `funnel-set/v1` shape); engine validates, caps (max 40 funnels, max 64 steps — over-cap keeps first 63 + the final step so Finish always survives, max 8 dimensions with top-8 values→Other, max 64 segment cells, max 400KB), and stores history snapshots per sync for deltas/trends. Legacy `Series[]` payloads under `render: funnel` still render (compact bar fallback) — no breakage of existing insights.
@@ -246,6 +283,17 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 ## Constraints & Decisions
 <!-- LIFO: newest at top -->
+
+### Reports become the branded template, and a window is a rendering requirement (2026-09-07, v0.27.0)
+
+- **[2026-09-02] The engine's silent 30-day default is NEVER reported as a window.** A window is either declared by the data (matrix/funnel/datasets/app cache range) or derived from the cache's own tweaks anchored at `fetchedAt` — otherwise the item says "no declared window". A plausible-looking default label on undeclared data is the exact failure the report surfaced.
+- **[2026-09-02] A changed tweak must not relabel history.** Dated items carry the snapshot's range only; a dated series event's window stays `null` ("window unknown"), because the tweak that produced it may have changed since. Pinned by test.
+- **[2026-09-02] Window honesty ships as the READ-ONLY half, on purpose.** The transient report-level range OVERRIDE (report `window` inheritance + per-item tweaks riding the scoped sync job) was explicitly left to the separate window task — this change ships the half the task itself named as valuable alone.
+- **[2026-09-01] Reports with no AI at all stay FIRST CLASS (owner).** `commentary: false` removes the surface entirely and the API refuses with 409 — the commentary layer is optional decoration over a report that must read completely without it.
+- **[2026-09-01] Commentary is button-triggered, never ambient (owner, asked and chosen).** Nothing generates on page open, on sync, or on a schedule; the reader presses Analyze. **Scheduled generation was deliberately NOT built** — an automation can still call `lab report comment` explicitly if it is ever wanted.
+- **[2026-09-01] Commentary is DISTRIBUTED, not one block (owner follow-up).** The prompt contract is "general reading first, then `## <section title>` blocks", with the section titles listed verbatim in the prompt; the parser is lenient — an invented heading folds into the summary rather than being dropped. A single terminal block was rejected: a reader reads a section and wants that section's note there.
+- **[2026-09-01] The commentary run is pure text with no tools and no writes by the model.** `claude -p … --permission-mode plan`, prompt as an argv positional, 180s watchdog, and a server-side job registry because a generation outlives the 30s socket. The SERVER writes the dated file; the model only returns prose.
+- **[2026-09-01] Only the numbers already embedded in the prompt.** The prompt forbids reaching for anything else and requires the declared windows be respected — a commentary that invents a number is worse than no commentary.
 
 ### App insights (render: app) ship with a sandboxed bridge + dataset/v1, CLI read surface (2026-08-26)
 
@@ -489,8 +537,32 @@ A tweak is not a preference, it is part of the QUESTION the tile answers: change
 
 **Tests (tests/unit/):** `lab-app` (22 — payload validation, caps, cache write, series synth), `lab-app-body` (18 — srcdoc builder, shim prepend order, CSP attrs, theme injection, nonce + teardown), `lab-app-route` (14 — routing, page resolution, URL codec), `lab-app-query` (19 — WHERE exact-match + multi-key AND, GROUP-BY aggregation, TOP cap, missing dataset). Runtime: `scripts/verify/lab-app-insight.mjs` (app routes, page nav pills work, `lab.navigate` switches pages, `lab.data` returns numbers, full-screen toggle, `lab body --page` prints text/md/html, `lab query --where` filters, self-navigation triggers teardown and stops the bridge). Full suite green.
 
+### Reports template + window honesty + AI commentary (v0.27.0, 2026-09-06)
+
+**Where the report surface lives now.** `dashboard/src/components/lab/reports/{ReportPage.tsx, ReportPage.css, reportModel.ts}` — the page and its pure export builders moved out of `dashboard/src/pages/` (the 2026-08-25 note above records the old path). Routing is unchanged (`labRoute.ts`, `/lab/reports/<slug>`).
+
+**Window honesty (engine, `src/lib/lab/reports-store.ts`).** `ResolvedReportItem` carries `window: {fromISO,toISO}|null` and `rangeKey: string|null`. Live resolution reads the typed range first (`cache.matrix?.range ?? cache.funnel?.range ?? cache.datasets?.range ?? cache.app?.range`), else `windowFromTweaks(cache.tweaks, cache.fetchedAt)` — explicit `from`/`to` outrank a relative `range`, and the engine's 30-day default is never emitted as a window. Dated resolution takes the snapshot's own `range` (`matrixSnap.range` / `funnelSnap.range`); a dated series event stays `window: null`. `lab report show --json` carries both fields and the text mode prints `window from→to` / `no declared window` / `window unknown` (+ the `[status]` chip).
+
+**Template (dashboard).** `ReportPage.tsx` renders the branded template: `report-masthead` (gradient mark + logotype + REPORTS kicker + gradient rule), display-face title, meta chips, prose as an accent-bordered reading panel through `parseInlineMarkdown` (escape-first `**bold**` / `` `code` ``), a window chip on every item (known / none / unknown tones), the `sectionWindowMix(items)` warning strip, and a signing footer. Number items get `report-item--stat` and the COMPACT `CardBody` in a flex stat grid (the detail-panel body rendered 400px-tall number cards); chart/table items stay full-width. CSS is 100% design tokens — a unit test pins no-hex.
+
+**Exports (`reportModel.ts`).** `reportToHtml` is rebuilt on an `rp-*` template stylesheet (kit CSS first, template second so the template's body rule wins) carrying masthead, window chips, mix warnings and notes; still self-contained (src/href/http pins green). Markdown export gained window + mix lines. `HTML_KIT_TOKENS` += `--font-family-display`, `--gradient-brand` (also fixed `lk-value` silently falling back to the body face inside iframes).
+
+**AI commentary.** `src/lib/lab/report-commentary.ts` = dated store (`lab/reports/.commentary/<slug>/<dateKey>.md`, `commentaryDateKey`/`commentaryPath`/`read`/`write`), `buildCommentaryPrompt` (only embedded numbers, respect windows, report language, 2–5 paragraphs, 16KB cap, prior-commentary continuity, section titles listed verbatim so the model can emit `## <title>` blocks), `runClaude` (spawns `DREAMCONTEXT_CLAUDE_BIN || claude` with `-p <prompt> --model <m> --permission-mode plan`, 180s watchdog, injectable `runImpl`) and `generateReportCommentary`. `src/server/lab-commentary-job.ts` is the job registry (30s-socket-safe, adopt semantics: `startLabCommentaryJob` / `currentLabCommentaryJob`). Routes in `src/server/routes/lab.ts`: `GET`/`POST /api/lab/reports/:slug/commentary` (registered before `/api/lab/reports/:slug`; 409 when `report.commentary === false`), and the report detail payload exposes `commentaryEnabled`. CLI: `dreamcontext lab report comment <slug> [--date --from --model]`. Dashboard: `CommentaryPanel` in `ReportPage.tsx` (Analyze → Regenerate, model + time label) plus `parseCommentarySections(body, sectionTitles)` in `reportModel.ts`, which splits the body into a summary and per-section notes rendered as `report-ai-note` cards in-page and `rp-commentary` + `rp-ai-note` in both exports.
+
+**Current truth about the surrounding work (NOT shipped by these two tasks).** The report *manifest* now also carries a `window: WindowSpec` (`'own'` or `last_N_unit`) with `reportTargetWindow(report, section, item, anchorISO, custom)` resolving item > section > view-time custom range > report > `date_nav` default, a `windowStatus` per item (`own|aligned|window|stale|missing|cannot`), a transient window cache and `lab report sync`; and the report page's open pass is now TTL-gated (`startJob.mutate({force: false, slugs, windows})` in `ReportPage.tsx`) so opening a report no longer re-queries every insight it references. Both landed inside 0.27.0 but belong to tasks still **in_progress** — `a-lab-report-cannot-choose-its-measurement-window-…` and `lab-request-budget-an-upstream-freshness-gate-…` — so they are described here, not ticked as delivered criteria of this PRD.
+
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-07 — Reports become the dreamcontext Reports template, with window honesty and optional AI commentary (v0.27.0)
+
+- **Consolidates tasks** `reports-become-a-branded-dreamcontext-template-window-honest-items-designed-sections-native-export` and `reports-gain-an-optional-button-triggered-ai-commentary-layer-pure-text-headless-claude` (both `completed`, version 0.27.0, released 2026-09-06).
+- **Report (owner, 2026-09-01):** reports looked like *"kötü componentlerin birleşmesi"* — the CSS was bad and nothing said the document came from dreamcontext. Underneath the aesthetics sat a correctness problem: a real report (`calbuddy-marketing-haftalik`) composed **21×7-day + 3×30-day + 2 windowless** tiles side by side with nothing on screen saying so.
+- **Shipped (window honesty, W1–W3):** `ResolvedReportItem.window` + `rangeKey` derived from the typed cache range or the cache's own tweaks anchored at `fetchedAt` — never the engine's silent 30-day default, and never a current tweak relabelling a dated snapshot. Every surface (page, exports, `lab report show` text + `--json`) names the window or says plainly there is none; a section mixing ≥2 windows renders a warning strip. On the real report that is 24 window chips and 2 mixed-window warnings — the exact silent mix the 2026-08-31 report described, now visible to readers AND to agents.
+- **Shipped (template, D1–D4):** brand masthead + gradient rule, display-face title, meta chips, prose reading panel with inline markdown, signing footer; number items in a compact stat grid (the first screenshot round caught 400px-tall number cards), charts/tables full-width; CSS 100% tokens (no-hex pinned); the same template in the self-contained HTML export, window/mix lines in the Markdown export, print stylesheet still clean.
+- **Shipped (AI commentary):** an OPTIONAL, button-triggered layer — `Analyze` starts a headless pure-text `claude -p … --permission-mode plan` run through a 30s-socket-safe job registry; the server writes a dated file under `lab/reports/.commentary/<slug>/`. After the owner's follow-up the commentary is **distributed** rather than stacked: a general reading at the top plus slim per-section notes inside their own sections, in the page and in both exports, always labelled with model and time. `commentary: false` removes the surface entirely — an AI-less report stays first class. Scheduled generation was deliberately not built.
+- **Evidence:** template pass — full suite 7760/0, `verify:lab-report-template` 21/21 (NEW) + `verify:lab-breakdown-reports` 29/29, real-data screenshots light+dark in `tmp/report-template-proof/`. Commentary pass — `lab-report-commentary.test.ts` 9/9 (incl. a REAL spawn through a fake binary), full suite 7780/0, `verify:lab-report-template` 37/37. Skill docs updated in the same change (tasks-and-features § Reports window honesty + commentary; cli-reference `report show --json` fields + `report comment`).
+- **PRD reconciliation:** `updated` → 2026-09-07; `status` stays `in_review` (the funnel filters/compare/deep-link/a11y stories and F14's PNG export are still open); `released_version` left at `v0.21.0` — it already names a version and setting a release is the user's call. Both task slugs were already in `related_tasks`.
 
 ### 2026-08-26 — The custom window applies once, clears cleanly, and stops lying (task `the-insights-custom-range-applies-a-window-nobody-can-clear-and-reloads-226kb-to-do-it`)
 

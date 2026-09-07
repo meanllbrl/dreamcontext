@@ -1,8 +1,8 @@
 ---
 id: feat_ControlPanel_v06
-status: in_review
+status: active
 created: '2026-05-31'
-updated: '2026-09-05'
+updated: '2026-09-07'
 released_version: v0.8.7
 tags:
   - control-panel
@@ -82,13 +82,13 @@ The dashboard was a read-only task/knowledge/brain viewer with no way to configu
 
 ### Slice 6 — Settings information architecture redesign (settings-dort-gruba-toplanir-…, 2026-09-05)
 
-- [x] A1. Left nav is four groups instead of nine flat rows: **PROJECT** (Platforms, Task Format, Agents, Sleepy, Linked repos) · **MEMORY** (Native memory, Learning, Recall) · **INTEGRATIONS** (GitHub, Team sync, ClickUp, Connections) · **THIS MACHINE** (Dependencies). Group headings are dividers, not clickable.
+- [x] A1. Left nav is four groups instead of nine flat rows. Group headings are dividers, not clickable. As of 0.27.0 (`SETTINGS_NAV` in `pages/SettingsPage.tsx`) the membership is: **PROJECT** (Platforms, Task Format, Linked repos, Agents) · **MEMORY** (Native memory, Sleep, Learning, Recall) · **INTEGRATIONS** (GitHub, Team sync, ClickUp, Connections) · **THIS MACHINE** (Dependencies). The group *structure* is this feature's contract; which sections sit inside it moves with the product — 0.27.0 removed Sleepy (the notch capture feature was deleted project-wide) and added Sleep (tunable debt thresholds) under MEMORY.
 - [x] A2/A14. Scope, not just formatting: the old single GitHub section held three unrelated concepts. Split into **GitHub** (account + Issues mirroring, 1414 → 804 chars), **Team sync** (its own setting under INTEGRATIONS: cloud-sync switch + repo + auto-checkpoint) and **Linked repos** (its own setting under PROJECT — it has nothing to do with where the brain syncs).
 - [x] A3. Nav rows carry no description; each section opens with ONE sentence. `settings.navdesc.*`, the long `settings.desc.*` and `brain.cloudSync.desc` deleted. "Cloud sync" appears once instead of seven times (verified).
 - [x] A4. The System section stopped being a feature list: rows are per DEPENDENCY (git / Claude Code CLI / node-pty), each saying "Needed by: …". A missing dependency appears as a `FeatureDepsNotice` at the top of the section that needs it, with "Open This machine".
 - [x] A5. The global Save button, the dirty state and `.settings-save-row` are gone. Platforms and native memory read straight from the server copy and PATCH on change; cloud-task text fields write on blur, selects and switches write immediately. The result is reported beside the control with `SaveMark`.
 - [x] A6. Failure is never silent: `useInstantSave` shows the error next to the control and does not auto-clear it; config-backed switches hold no local mirror, so after a failed write they show what is actually on disk.
-- [x] A9. One row grammar page-wide (`SettingRow` / `SettingGroup` / `Toggle` / `SettingChoice`): name + one line (62ch measure) left, control right, hairline between rows, grouped headers. The three previous layouts are gone — not one `.settings-checkbox-label` remains.
+- [x] A9. One row grammar page-wide (`SettingRow` / `SettingGroup` / `Toggle` / `SettingChoice`): name + one line (62ch measure) left, control right, hairline between rows, grouped headers. The three previous layouts are gone — no component renders `.settings-checkbox-label` any more (a dead rule for it still sits in `SettingsPage.css:279`; cosmetic leftover, no markup uses it).
 - [x] A10. Long copy was FOLDED, not deleted: a "Details" disclosure per row. The Agents section went 3,252 → 1,460 chars with the remainder in 8 folded blocks that open in place.
 - [x] A11. A disabled control states its reason — on the Terminal screen "Answer rendering" is disabled and the row reads "Only the Chat screen can carry this" in a warning tone.
 - [x] A12. No box-in-a-box: `OriginSetup` and `LinkedRepos` drop their own frame inside a row (CSS only — their logic was not touched); A17 added a `compact` prop so they stop repeating the section's own title and paragraph.
@@ -96,8 +96,18 @@ The dashboard was a read-only task/knowledge/brain viewer with no way to configu
 - [x] A7/A16. The sidebar's cloud-sync CTA (`focus.id='brain'`, wire name unchanged) now opens the **Team sync** section it is named after, not the middle of GitHub.
 - [x] A8/A13/A18. Verified in the REAL app three times as the redesign widened: isolated scratch vault + real dashboard server + Playwright — 15/15, then 5/5, then 7/7. A5 was proved against `GET /api/config` (on disk), not just the DOM. Full unit suite green (442 files / 8,090 tests).
 
+### Slice 7 — 0.27.0 ship verification (2026-09-06)
+
+- [x] A19. The four-group information architecture is what ships in 0.27.0 — `SETTINGS_NAV` is an array of four groups (`project` / `memory` / `integrations` / `machine`), not a flat row list.
+- [x] A20. The no-Save-button contract holds in the shipped code: no `settings-save-row`, no dirty state, no `persistCloudConfig` anywhere in `pages/SettingsPage.tsx`. Every write goes through `useInstantSave().save(...)` (platforms, native memory, team-sync switch) or a mutation fired straight from `onChange` (learning, recall, agents, auto-checkpoint); text fields write on blur. `SettingsPage.tsx` is 709 lines (was 1,139 before the redesign).
+- [x] A21. A bad value cannot be silently persisted: `useInstantSave.save()` returns `false` on failure so the caller reverts its optimistic state, `SaveMark` renders the error message beside the control and — unlike the `saved` mark, which clears after 1,800 ms — an error is NEVER auto-dismissed. Config-backed switches keep no local mirror, so a failed write leaves the control showing what is on disk.
+- [x] A22. Controls the server would reject are disabled with the reason stated in-row rather than left flippable: the team-sync switch reads `settings.teamsync.needsRepo` ("Pick a repository below first — there is nowhere to sync to yet.") when no origin exists, instead of round-tripping to a `400 no_origin`.
+
 ## Constraints & Decisions
 
+- **[2026-09-06]** SHIPPED in 0.27.0 with the four-group nav and the no-Save contract intact. What ships is NOT frozen membership: the Sleepy section left Settings with the notch-capture removal and a Sleep section (debt thresholds / per-specialist models) joined MEMORY in the same release. The feature owns the four groups and the row grammar; individual sections come and go inside them.
+- **[2026-09-06]** WHY auto-save replaced an explicit Save, restated because it is the load-bearing decision: the page ran TWO saving models side by side (Platforms + the ten cloud-task fields + native memory waited on a global button parked in the top-left corner; learning, recall, cloud sync, auto-checkpoint, Connections, Agents and Sleepy already wrote through on change) and nothing on screen said which control belonged to which. The button was disabled most of the time, and it was detached from the control being changed. Moving Save down into each section was REJECTED — two models side by side was the complaint itself, and per-section buttons would have made three.
+- **[2026-09-06]** WHAT GUARANTEES A BAD VALUE IS NOT SILENTLY PERSISTED, the reason removing Save is safe (three layers, all in code): (1) **Refuse it up front** — a control the server would reject is disabled and states its reason in-row (team-sync switch with no origin → "Pick a repository below first"), so the invalid write is never issued. (2) **Never swallow a failure** — `useInstantSave.save()` returns `false`, the caller reverts its optimistic state, and `SaveMark` prints the error beside the control; the `saved` mark auto-clears after 1,800 ms but an `error` mark never does. (3) **Never lie about disk** — config-backed switches hold no local mirror and re-render from the server copy, so a failed write shows the on-disk value, not the value the user attempted. Text fields commit on blur (not per keystroke), and Test/Provision call `flush()` first so a probe uses the value on screen.
 - **[2026-09-05]** CHOSEN: B + A (collapse into four groups + copy cleanup). The Save button is REMOVED entirely rather than moved down into each section — two saving models sitting side by side WAS the complaint. DEFERRED, not rejected: C (drop the nav for one long searchable list) can be layered on top of this structure later.
 - **[2026-09-05]** Memory was deliberately NOT collapsed into a single section: Native memory / Learning / Recall stay separate. That separation is the reason the grouped nav exists at all, and Recall is a four-option radio group — a subject on its own.
 - **[2026-09-05]** Planning board: `knowledge/settings-redesign/settings-redesign.excalidraw.md` (spec in the same folder). The diagnosis it captures: every section was forced to fill a navdesc+desc pair, on top of each switch's own label, paragraph and tooltip — which is how one screen came to say "Cloud sync" seven times.
@@ -127,6 +137,7 @@ The dashboard was a read-only task/knowledge/brain viewer with no way to configu
 - Pages: `SettingsPage` (platforms + packs + Memory toggle + Vaults), `PacksPage` (+ CSS); component `UpdateBadge` (mounted in `Header.tsx`).
 - `Sidebar.tsx` — collapsible + grouped nav (persisted); `App.tsx`/`Shell.tsx` routing; `I18nContext.tsx` keys.
 - **Settings redesign (2026-09-05).** New: `components/settings/useInstantSave.tsx` (per-control save state + `SaveMark`), `components/settings/SettingRow.{tsx,css}` (`SettingRow`/`SettingGroup`/`Toggle`/`SettingChoice`), `components/settings/CloudTaskSync.tsx` (per-provider task-mirroring form, lifted out of `SettingsPage`). Changed: `pages/SettingsPage.tsx` (1,139 → ~640 lines; `SETTINGS_NAV` is now an array of groups, `SectionHead` helper, Save/dirty/`persistCloudConfig` removed), `pages/SettingsPage.css`, `components/settings/SystemDependencies.tsx` (dependency-first render + `FeatureDepsNotice` export), `components/settings/SettingsIcons.tsx` (Learning/Recall/ClickUp/TeamSync/LinkedRepos icons; `SETTINGS_ICONS` keys realigned to the new section ids), `context/I18nContext.tsx` (17 orphan keys deleted, group + one-sentence keys added). No server change was needed: `PATCH /api/config` already does allow-listed partial merge, so field-level writes ride the existing route. The task token writes on blur via `POST /tasks/token`, and Test/Provision call `flush()` first so the probe uses the value on screen. The deep-link contract is preserved — the sidebar still sends `focus.id='brain'` and the page resolves it (`Sidebar.tsx` untouched).
+- **Current shape (verified 2026-09-07, 0.27.0).** `pages/SettingsPage.tsx` is 709 lines. `SETTINGS_NAV` holds four groups: `project` (`platforms`, `format` [beta], `linkedrepos`, `agents` [desktop-only, beta]) · `memory` (`memory`, `sleep`, `learning`, `recall`) · `integrations` (`github`, `teamsync`, `clickup`, `connections`) · `machine` (`system`). Three `useInstantSave()` instances (`platformsSave`, `nativeMemorySave`, `brainToggleSave`) carry the config-backed writes; the rest fire mutations directly from `onChange`. `components/settings/` now also holds `SleepSettings.{tsx,css}`, `TaskOverrideEditor.{tsx,css}`, `ClaudeAccounts.{tsx,css}`, `EmbeddingModelCard.tsx` and `ConnectionsManager.{tsx,css}` alongside the redesign's `useInstantSave.tsx` / `SettingRow.{tsx,css}` / `CloudTaskSync.tsx` / `SystemDependencies.{tsx,css}` / `SettingsIcons.tsx`. The Sleepy section is gone (removed with the notch capture feature in 0.27.0); no Save button, dirty state or `persistCloudConfig` remains.
 
 ### Tests
 
@@ -135,6 +146,11 @@ The dashboard was a read-only task/knowledge/brain viewer with no way to configu
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-07 - Reconciled against the 0.27.0 release
+- Consolidated task `settings-dort-gruba-toplanir-tekrarlayan-metin-teklenir-ve-save-dugmesi-kalkar` (completed 2026-09-06, version **0.27.0**). Status `in_review` → `active`: the redesign is live in the shipped dashboard, verified in code — four-group `SETTINGS_NAV`, no `settings-save-row` / dirty state / `persistCloudConfig`, every write through `useInstantSave` or a direct `onChange` mutation.
+- Added Slice 7 (A19–A22) recording the shipped four-group IA, the no-Save-button contract, the three layers that stop a bad value being silently persisted, and disabled-with-a-reason controls.
+- A1 corrected to current truth: Sleepy left Settings in 0.27.0 (notch capture removed) and a Sleep section (debt thresholds) joined MEMORY. Technical Details brought to the 0.27.0 component set.
 
 ### 2026-09-05 - Slice 6: Settings information architecture redesign
 - Nine flat sections → four groups; GitHub split into GitHub / Team sync / Linked repos; one row grammar with folded Details; the global Save button and dirty state deleted in favour of instant, per-control saves; System became dependency-first. Shipped in `7d8aac7`. Verified in the real app across three waves (15/15, 5/5, 7/7).

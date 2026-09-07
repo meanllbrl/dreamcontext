@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-07-26'
+updated: '2026-09-07'
 released_version: v0.19.0
 tags:
   - frontend
@@ -24,6 +24,8 @@ related_tasks:
     announcements-become-screenshot-driven-landing-pages-instead-of-excalidraw-boards
   - announcements-become-one-story-per-version-titled-by-version
   - announcements-can-hold-video-not-just-screenshots
+  - >-
+    launcher-acilisi-9-5s-den-0-4s-ye-team-fetch-event-loop-disina-cli-path-cache-probe-memo-fontlar-bundle-da
 type: feature
 name: web-dashboard
 description: ''
@@ -376,9 +378,13 @@ hook path every session runs through. Comments were reworded to stop naming Task
 - [x] `?page=<page>` deep-link support in `Shell.tsx` (explicit page param overrides remembered page, validated against page list); enables direct navigation to any page.
 - [x] `FlowDiagram` engine reused for the Council showcase (6-persona ring with CSS Motion Path comets); same composited animation system as the About page — zero jank at full and mini sizes.
 
+### Startup Performance (v0.27.0)
+- [x] The dashboard's first paint never blocks on a synchronous cross-vault git fetch: `POST /api/brain/team/fetch` delegates to a child process (`teamFetchOffLoop` → the hidden `brain team-fetch --json` verb) instead of running `execFileSync` git on the server's event loop, and the launcher's first fire is deferred 3s past mount. Measured with Playwright: the launcher's vault list paints in 0.3–0.4s (9.5s on 0.25.0).
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-09-06]** **Cross-vault work never runs on the server's event loop.** The git wrapper is `execFileSync`, so the in-process cross-vault fetch behind `POST /api/brain/team/fetch` blocked Node for the sum of N network round-trips — measured ~7s with five synced vaults — and every other request (launcher cards, logos, settings, a freshly opened vault window) queued behind it. Any work that loops registered vaults is delegated to a child process (`brain team-fetch`, spawned from the same CLI entry the server was started from, 5-minute ceiling, `DREAMCONTEXT_TEAM_FETCH_INPROC=1` keeps the in-process path for tests).
 - **[2026-07-18]** **Announcements content location and distribution.** `dashboard/public/announcements.json` ships as a static build asset (vite `publicDir` → `dist/dashboard/`) in the npm package, refreshed on every `dreamcontext upgrade`. A vault-local path (`_dream_context/core/ANNOUNCEMENTS.json`) would ship to NO npm user and is not scaffolded by `init` — all existing installs would see a permanently empty page. The public/ location means announcements are dreamcontext product news (goal-skill v2, major features) accessible to all installs, not per-vault team news. Fetch is cache-busted with `?v=__DC_VERSION__` (build-time constant) because the static server sets `Cache-Control: immutable, max-age=31536000` — without the query param a browser would freeze content for a year.
 - **[2026-07-18]** **Announcements unread state via seen-id set, not watermark.** localStorage holds the set of `id`s the user has seen (`dreamcontext.dashboard.announcementsSeen`). Ids are stable and dates can be backdated; a watermark (`lastSeenId`) would silently mis-count when a past announcement is added out of chronological order. The set costs ~5 extra lines and is exactly correct. Unread state is per-browser-profile (localStorage), not synced across machines or via the brain — matches the established flag pattern in `Sidebar.tsx`.
 - **[2026-07-18]** **Announcements pure logic in React-free module.** All unread/parse/seen-id logic lives in `dashboard/src/lib/announcements.ts` (no React, no `.css`, no `api/client` import) so root Vitest (`tests/unit/announcements.test.ts`) can import and test it. Dashboard tests are excluded by `vitest.config.ts` (`exclude: ['dashboard']`) and the dashboard has no jsdom/testing-library, so rendering logic in a `.tsx` component would be untestable without adding a whole dashboard test harness.
@@ -433,6 +439,16 @@ hook path every session runs through. Comments were reworded to stop naming Task
 - **[2026-02-25]** Editor: Markdown textarea with live preview. No heavy editor library for v1.
 
 ## Technical Details
+
+### Startup Performance (v0.27.0)
+Four independent stalls sat between launching the desktop app and being able to use it. All four were measured, and all four are fixed in commit `bec210b`:
+
+1. **Fonts were fetched from the network.** `dashboard/index.html` carried a render-blocking `fonts.googleapis.com` stylesheet link plus two preconnects — first paint waited on a round-trip, and with no network the launcher sat blank for seconds. The three families now ship bundled as variable woff2 via `@fontsource-variable` (`inter`, `plus-jakarta-sans`, `jetbrains-mono`), imported in `dashboard/src/main.tsx`; the `<link>` and preconnects are gone.
+2. **The team fetch froze every other request.** The git wrapper is `execFileSync`, so the in-process cross-vault fetch behind `POST /api/brain/team/fetch` blocked the server's event loop for the sum of N network round-trips — ~7s with five synced vaults — while launcher cards, logos and a freshly opened vault window all waited. `teamFetchOffLoop()` in `src/server/routes/brain.ts` now spawns the hidden `brain team-fetch --json` CLI verb (`src/cli/commands/brain.ts`) as a child process from the same entry the server was started from, parses the last JSON line off stdout, and kills a wedged child at a 5-minute ceiling. `DREAMCONTEXT_TEAM_FETCH_INPROC=1` keeps the in-process path for tests.
+3. **The first fetch raced first paint.** Even off-loop it forks node + git per vault. `LauncherPage.tsx` defers the initial fire by `TEAM_FETCH_INITIAL_DELAY_MS = 3000` so the launcher's own status/logo/settings requests land first; the 5-minute `TEAM_FETCH_INTERVAL_MS` is unchanged.
+4. **The desktop app resolved the CLI through a cold login shell, twice over.** `find_global_cli()` and the capabilities probes each fork `$SHELL -ilc` (~1s of zshrc/nvm) *before any window exists*, and `/api/agent/capabilities` is polled every 30s from every window. `desktop/src-tauri/src/lib.rs` now caches the resolved path in `~/.dreamcontext/desktop-cli-path` (`read_cli_path_cache`/`write_cli_path_cache`), revalidated by existence so a node-version switch or uninstall falls through to the shell and rewrites it; the `claude`/`npm` probes in `src/server/routes/agent-terminal.ts` memoize with `PROBE_HIT_TTL_MS = 5min` / `PROBE_MISS_TTL_MS = 30s`, so a fresh install still flips to ready quickly.
+
+**Measured before/after.** Launcher vault list: 9.5s on 0.25.0 → 0.3–0.4s on this build (Playwright). Cold server health with no cache file: 2.56s → 0.73s once `~/.dreamcontext/desktop-cli-path` exists (the login-shell lookup is skipped).
 
 ### Architecture
 - `src/server/` - Node HTTP server + REST API (bundled by tsup with CLI)
@@ -601,6 +617,9 @@ All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-07 — Startup stops paying four waits (v0.27.0)
+Consolidates task `launcher-acilisi-9-5s-den-0-4s-ye-team-fetch-event-loop-disina-cli-path-cache-probe-memo-fontlar-bundle-da` (commit bec210b). Four independent stalls on the path between launching the app and being able to use it: the render-blocking `fonts.googleapis.com` stylesheet, the event-loop-blocking cross-vault team fetch, that fetch racing first paint, and the desktop app's cold login-shell CLI lookup (twice over). Measured: launcher vault list 9.5s → 0.3–0.4s (Playwright); server health 2.56s cold → 0.73s once `~/.dreamcontext/desktop-cli-path` is written. Details under Technical Details → Startup Performance.
 
 ### 2026-08-27/28 — Announcements redesign: the release history is one document, not a teaser feed
 - ONE-PAGE RELEASE HISTORY (9bffd2d): What's New used to be a feed of cards (hero for newest, rail row for each older, click throws into separate full-screen reader). Finding what 0.24 gave you meant leaving the page, reading, coming back, losing your place. Every version now a section on ONE page — newest open on arrival, rest collapsed to version+title+one-line summary, opens IN PLACE. Opening a second release does not close the first (releases get compared). Deep-link focus (popup's "Read the full story", ⌘K) opens target and scrolls on frame after mount. Self-open guarded on `openIds === null` not mount (refetch can't reopen deliberately-collapsed section). Screenshot opens in full-window ImageViewer (zooms to pixel; a shot scaled to 980px column can hide detail). `split.side` deliberately ignored (alternating left/right down page made stories hard to read; both kinds now centred column). Field stays in schema so existing stories parse

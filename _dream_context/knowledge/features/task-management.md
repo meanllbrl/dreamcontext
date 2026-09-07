@@ -2,7 +2,7 @@
 id: feat_LDQn2Bi8
 status: in_review
 created: '2026-02-25'
-updated: '2026-09-06'
+updated: '2026-09-07'
 released_version: v0.19.0
 tags:
   - backend
@@ -100,6 +100,9 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] As a developer, I can run `dreamcontext tasks statuses` to see this project's full status set with kind, order, parent and remote mapping, so I never guess a status key.
 - [x] As a project maintainer, I can add / remove / reorder / recolour statuses in Settings → Task Format with a live board-column preview, with the shipped four locked and a delete refused while tasks still carry the status.
 - [x] As a PO, cancelled tasks leave BOTH the numerator and the denominator of objective progress, so an objective whose remaining tasks are all cancelled rolls up as done rather than stalling forever.
+- [x] As a project maintainer, a status I declare shows up as a REAL board column beside the shipped four and I can move tasks into it from the CLI (`tasks status <slug> <key>`), so a declared status is a first-class pipeline stage rather than a frontmatter string the UI ignores. Verified end to end during the 0.27.0 release capture (a demo vault declaring `Blocked` under `in_progress` and `Needs QA` under `in_review`).
+- [x] As an agent, I address a declared status by its NORMALIZED key (`needs-qa` in `overrides/task.md` is addressed as `needs_qa` on the CLI and in frontmatter), so a hyphenated declaration never leaves me guessing which spelling a command wants.
+- [ ] As a project maintainer, the public DEEP-DIVE wiki page describes declared statuses (parent + `dc:<key>` carrier) instead of the four hardcoded ones — STILL OPEN: that page lives in the GitHub wiki, a separate repo this checkout cannot edit.
 
 ## Acceptance Criteria
 
@@ -145,7 +148,7 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] `CustomFieldDef` supports `ask?: boolean`. When `ask: true`, `renderOverrideBriefing()` tags the field `[ASK THE USER]` in the briefing and emits an `ASK-FIRST:` rule block — agent asks the user for the value before creating the task (in interactive sessions) and leaves the field unset with a note in no-user contexts (sleep, autonomous reconcile). No CLI hard-fail for `ask` fields (leaving unset in no-user context is valid). Dashboard: `AddCustomFieldForm` has an "Ask me" toggle; `POST /api/task-overrides/fields` carries `ask` boolean. Architecture rationale: `[[decisions/decision-task-format-override-and-custom-fields]]`.
 - [x] `related_feature` (single-valued canonical slug) links a task to its feature PRD; `tasks create --feature`, `tasks feature <task> <ref|clear>` (mirrors `tasks objectives`); CLI nudges when a link is unset at creation time and features exist; server PATCH validates feature references (400 on unknown/ambiguous) and writes through to the feature's `related_tasks`; graph.ts draws task→feature edges by slug; snapshot renders each task's Feature inline.
 
-### Project-declared task statuses with a semantic kind (v0.26.3)
+### Project-declared task statuses with a semantic kind (shipped in v0.27.0, released 2026-09-06)
 - [x] `_dream_context/overrides/task.md` frontmatter accepts a `statuses:` list beside `custom_fields:`. Each entry: `name`/`key`, `kind` (`open|active|review|done|cancelled`), `parent` (one of the four SHIPPED keys — defaulted from the kind via `PARENT_BY_KIND`), `order` (shipped orders are spaced by 10 so a declared status slots between without renumbering), optional 6-hex `color`, optional `clickup:` name aliases. Validation mirrors `parseCustomFields` check for check (invalid kind, bad colour, duplicate derived key, collision with a shipped/custom-field/reserved key, shipped-key immutability, exactly one `done`-kind status always keyed `completed`); every failure warns and DROPS the entry, never throws. With no override file the behaviour is byte-for-byte identical to before.
 - [x] `src/lib/task-status.ts` is the single model: `StatusKind`, `StatusDef`, `DEFAULT_STATUSES`, `PARENT_BY_KIND`, and the predicates every derived behaviour reads — `isDone`, `isCancelled`, `isTerminal`, `isActive`, `isReview`, `isKnown`, `statusRank`, `pickMergedStatus`, `parentOf`, `childrenOf`, `subStatusMarker`, `statusSetFingerprint`, `dcLabelFor`/`keyFromDcLabel`.
 - [x] THE SWEEP: the eight sites that read `status !== 'completed'` as "this task is live" now read `isTerminal` — `boardModel.ts` `dueInfo`, `KanbanBoard` at-risk banner, `EisenhowerMatrix`, `RiceScatter`, `calendar-utils`, `bookmark.ts`, `bookmark-task-link.ts`, `sleep-flags.ts`. (`release-discovery.ts` is deliberately NOT converted — releases are about completed work.)
@@ -158,6 +161,8 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] Roadmap: cancelled-kind tasks leave BOTH the numerator and the denominator of objective progress; an objective whose remaining tasks are all cancelled rolls up as done. `task-dates.ts` stamps NOTHING on a cancel.
 - [x] Surfaces: read-only `dreamcontext tasks statuses` verb (kind, order, parent, remote mapping per status); `doctor` checks (unknown status keys in `state/*.md`, ClickUp list carrying neither a declared status NOR its parent, which declared statuses ride as a tag, pre-flight reclassification count, uncached list statuses); `POST /api/task-overrides/statuses` + `DELETE /api/task-overrides/statuses/:key` (409 + in-use count); `dashboard/src/lib/statusModel.ts` + `useStatusModel()` runtime model; Settings → Task Format **Statuses** editor (`AddStatusForm`) with the shipped four locked, add/remove/reorder/recolour and a live board-column preview.
 - [x] `renderOverrideBriefing()` surfaces the declared status set (with each child's parent) in the SessionStart snapshot and every sub-agent briefing, plus a rule block telling agents to send obsoleted work to the cancelled-kind status rather than `in_review`.
+- [x] STATUS KEYS ARE NORMALIZED, not literal: `normalizeStatusKey` trims, lowercases and folds `-` → `_`, so a status declared as `needs-qa` in `overrides/task.md` is addressed as `needs_qa` by `tasks status`, `tasks list -s`, frontmatter and every predicate; `dcLabelFor` folds back (`_` → `-`) for the wire name `dc:needs-qa` and `keyFromDcLabel` reverses it on pull. The two directions are deliberately spelled differently and this bit during the 0.27.0 release capture.
+- [x] SHIPPED IN 0.27.0 (released 2026-09-06) and verified live during the release capture: a demo vault declaring `Blocked` (parent `in_progress`) and `Needs QA` (parent `in_review`) in `overrides/task.md` rendered both as real Kanban columns beside the shipped four, and tasks moved into them from the CLI. That board is the screenshot in the 0.27.0 What's New story.
 - [ ] The DEEP-DIVE wiki page (github.com/meanllbrl/dreamcontext/wiki — a separate repo this checkout cannot edit) still describes the four hardcoded statuses; its task-sync section must mention declared statuses (parent + `dc:<key>` carrier). Every other doc surface moved in lockstep.
 
 ### Pull-path data-loss guards — local-only fields, poison-pill watermark, tag retry (v0.24.2)
@@ -205,6 +210,7 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 
 ## Constraints & Decisions
 
+- **[2026-09-07]** **A declared status key is NORMALIZED, never taken literally.** `normalizeStatusKey` trims, lowercases and folds `-` → `_`, so a status declared `needs-qa` in `overrides/task.md` is addressed as `needs_qa` everywhere local (CLI verbs, `tasks list -s`, frontmatter, every predicate), while the WIRE name folds back the other way — `dcLabelFor` emits `dc:needs-qa` and `keyFromDcLabel` reverses it on pull. The asymmetry is deliberate (GitHub label names read better hyphenated) and it bit during the 0.27.0 release capture, so it is recorded here: a declared key is never addressed in its hyphenated form.
 - **[2026-09-06]** **THE PARENT IS THE WIRE.** Task statuses became project-declarable data (`statuses:` in `overrides/task.md`) with a semantic `kind`, and every declared status lives UNDER one of the four shipped statuses. **A cloud backend only ever sees that parent**, so a declared status needs nothing created on the provider — which matters most for ClickUp, whose public API *cannot* create a list status. The child identity rides beside the parent in a channel the remote already tolerates (a `dc:<key>` GitHub label / a single-valued ClickUp tag, reconciled like `version:`), and on pull the carrier wins ONLY while its parent still equals the parent of the remote's own status — so a human moving the task in the provider's UI always beats a stale carrier. This replaced a shipped-and-then-superseded design where an unmappable ClickUp status produced a loud warning plus a `doctor` check telling the user to create the status by hand: a real failure mode with a manual remedy. The `doctor` check that remains is informational (which statuses ride as a tag) plus the genuinely broken case — a list carrying none of the four shipped spellings either. Generalized as `[[patterns/parent-on-the-wire-child-in-a-sidecar]]`; full record + the killed alternative: `[[decisions/decision-github-task-backend]]`.
 - **[2026-09-06]** **A cancelled status may NOT share GitHub's `not_planned`.** The obvious mapping (cancelled → `closed + state_reason: not_planned`, told apart from soft-delete by the `dc:cancelled` label) was killed by three review rounds, and each finding was structural: the label PATCH replaces the whole set, so a machine without the override strips the label on any unrelated edit and the next pull PERMANENTLY DELETES the mirror; the pure `statusFromGitHub` cannot see the local record a "was it cancelled?" guard would need; a human closing an issue as "not planned" on github.com never runs `deleteToGitHub()`, so a stale sub-status label would block that delete forever; clearing `dc:*` on delete would wipe every `priority:`/`version:`/user label with it; and legacy resurrection was deterministic, recreating deleted work as LIVE `in_progress` work. Cancelled therefore closes as `completed` + `dc:<key>`; the whole cost is cosmetic (github.com shows "Closed as completed" beside a grey label) and the worst residual failure drops from permanent deletion to a self-healing status downgrade. **Do not revert this.**
 - **[2026-09-06]** Invariants the status model holds: exactly ONE `done`-kind status, always keyed `completed` (this is what keeps the remaining literal `'completed'` checks in `ActivityHeatmap`/`TimelineGantt` correct without generalising them); the four shipped keys can be relabelled/reordered/recoloured but never removed or re-kinded; an unknown status key ALWAYS fails safe and is NAMED in the report — never deletes a mirror, never reopens a closed issue, never silently buried by a merge, never stripped off a remote label set (the same doctrine as `preserveLocalOnlyFields`, 2026-08-17). Deliberately OUT of scope: per-status workflow rules (allowed transitions, WIP limits), Projects-v2 GraphQL status fields (still Tier-2), a ClickUp `dc_status` dropdown, `tasks statuses add|remove` CLI verbs (the editor is the dashboard + the file), and status-set propagation over the task-sync wire — `overrides/task.md` travels by GIT ONLY, which is precisely why the schema-drift handling exists. Two known-and-not-fixed gaps recorded so they are not re-derived: `removeStatus`' 409 in-use gate is TOCTOU (bounded — an orphaned key fails safe everywhere), and `upsertStatus` does not check status-key vs custom-field-key collision at WRITE time, so the Settings editor accepts a status the read path then silently drops (carried forward as its own task).
@@ -243,9 +249,26 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 
 **Task file location**: `_dream_context/state/<slug>.md`
 
-**Project-declared task statuses (v0.26.3)** (`src/lib/task-status.ts`, `src/lib/task-backend/status-mapping.ts`, `src/lib/overrides.ts`, `dashboard/src/lib/statusModel.ts`) — pattern: `[[patterns/parent-on-the-wire-child-in-a-sidecar]]`, decision: `[[decisions/decision-github-task-backend]]`:
-- `task-status.ts` (pure, no I/O): `StatusKind = open|active|review|done|cancelled`; `StatusDef = {key,label,kind,parent,order,color?,clickup?}`; `DEFAULT_STATUSES` (the shipped four, orders spaced by 10); `PARENT_BY_KIND`; `KIND_COLORS`. Predicates: `isDone`/`isCancelled`/`isTerminal`/`isActive`/`isReview`/`isKnown`/`isShipped`, `statusKind`, `statusRank`, `pickMergedStatus`, `parentOf`, `childrenOf`, `doneStatus`, `statusKeys`, `sortByOrder`, `statusColor`, `subStatusMarker`, `dcLabelFor`/`keyFromDcLabel`, `statusSetFingerprint` (drives the label-provision throttle bypass).
+**Project-declared task statuses (shipped in v0.27.0, released 2026-09-06)** (`src/lib/task-status.ts`, `src/lib/task-backend/status-mapping.ts`, `src/lib/overrides.ts`, `dashboard/src/lib/statusModel.ts`) — pattern: `[[patterns/parent-on-the-wire-child-in-a-sidecar]]`, decision: `[[decisions/decision-github-task-backend]]`:
+- `task-status.ts` (pure, no I/O): `StatusKind = open|active|review|done|cancelled`; `StatusDef = {key,label,kind,parent,order,color?,clickup?}`; `DEFAULT_STATUSES` (the shipped four, orders spaced by 10); `PARENT_BY_KIND`; `KIND_COLORS`. Predicates: `isDone`/`isCancelled`/`isTerminal`/`isActive`/`isReview`/`isKnown`/`isShipped`, `statusKind`, `statusRank`, `pickMergedStatus`, `parentOf`, `childrenOf`, `doneStatus`, `statusKeys`, `sortByOrder`, `statusColor`, `subStatusMarker`, `dcLabelFor`/`keyFromDcLabel`, `statusSetFingerprint` (drives the label-provision throttle bypass), and `normalizeStatusKey` (trim + lowercase + `-`→`_`), which every lookup runs first so a declared `needs-qa` resolves as `needs_qa`.
 - `overrides.ts`: `TaskOverride.statuses` is the EFFECTIVE set (the shipped four, relabelled/reordered/recoloured by any matching entry, plus every valid declared status); `parseStatuses()` mirrors `parseCustomFields` discipline (warn-and-drop, never throw); `loadStatuses(contextRoot)` falls back to `DEFAULT_STATUSES`; `upsertStatus`/`removeStatus` mirror `upsertCustomField`/`removeCustomField` and ALWAYS write an explicit `key:` so a rename cannot orphan already-synced labels; `renderOverrideBriefing()` emits the set with parents plus the cancelled-kind rule block.
+- The `statuses:` schema as it exists today (this project's own `_dream_context/overrides/task.md` is the live example):
+```yaml
+statuses:
+  - name: Planned          # display label
+    key: planned           # optional; defaults to the normalized (snake_case) name
+    kind: open             # open | active | review | done | cancelled — drives EVERY derived behaviour
+    parent: todo           # one of the four shipped keys; defaults from kind via PARENT_BY_KIND
+    order: 5               # shipped orders are spaced by 10 so a declared status slots between
+    color: c5def5          # optional 6-hex, no '#': the GitHub label colour + dashboard swatch
+  - name: Cancelled
+    key: cancelled
+    kind: cancelled
+    parent: completed
+    order: 99
+    color: cfd3d7
+    clickup: [cancelled, canceled, "won't do"]   # optional pull-side exact-match aliases
+```
 - `status-mapping.ts`: `cachedRemoteListStatuses(contextRoot)` + `describeStatusMappings(contextRoot, statuses)` → the `StatusMappingRow[]` behind `tasks statuses` and the `doctor` ClickUp checks.
 - `github-map.ts`: state patch derived from `parentOf` (parent `completed` → closed + `state_reason: completed`); `subStatusLabel` string-derived; `GitHubStatePatch.state` optional (unknown key ⇒ no state fields at all). `github-fields.ts`: `RECOMMENDED_LABELS` is a function of the loaded set, so a declared status's `dc:<key>` label is provisioned in its colour.
 - `clickup-map.ts`: candidate chain from the loaded set, declared-alias EXACT match first (fuzzy fold untouched), parent fallback, `dc:<key>` tag as the child carrier, `dc:*` stripped out of a task's own tags, and the parent-agreement precedence check on pull.
@@ -268,7 +291,8 @@ name: "Implement auth middleware"
 description: "Add JWT validation to all protected routes"
 priority: "high"          # critical | high | medium | low
 urgency: "medium"         # critical | high | medium | low (Eisenhower axis)
-status: "todo"            # todo | in_progress | in_review | completed
+status: "todo"            # todo | in_progress | in_review | completed — PLUS any key declared
+                          # in `overrides/task.md` (`tasks statuses`); an unknown key is PRESERVED on read, never coerced
 created_at: "2026-02-25"
 updated_at: "2026-02-25"
 tags: []
@@ -375,6 +399,13 @@ custom_fields:          # populated by `tasks field` or dashboard; synced to Cli
 - The snapshot only shows a one-line summary per task. Agents needing full task context should `Read _dream_context/state/<task>.md` directly.
 
 ## Changelog
+
+### 2026-09-07 - Declared task statuses SHIPPED in 0.27.0 (released 2026-09-06)
+- Consolidated `task-statuses-become-project-declarable-data-with-a-semantic-kind-so-planned-cancelled-or-any-custom-status-syncs-to-github-and-clickup-without-a-code-change` (status `completed`, version 0.27.0). The 2026-09-06 entry below recorded this as "v0.26.3, in working tree"; it cut in **0.27.0** and the section labels in Acceptance Criteria and Technical Details were corrected to say so.
+- THE PARENT IS THE WIRE, re-verified against the code rather than the task's prose: `StatusDef.parent` (`src/lib/task-status.ts`) is one of the four shipped keys, defaulted via `PARENT_BY_KIND` (`cancelled → completed`, `open → todo`, `active → in_progress`, `review → in_review`); `statusToGitHub` derives its patch from `parentOf` alone (parent `completed` → `closed` + `state_reason: completed`, unknown key → `{}`), `subStatusLabel` is string-derived, and `clickup-map.ts` falls back to the parent's candidate chain with `subStatusTag`/`statusFromSubStatusTag` as the `dc:<key>` carrier, refined on pull only while `parentOf(child) === parentOf(remote status)`. Nothing is created on either provider.
+- Two ticked criteria added: the normalized-key rule (`needs-qa` declared → `needs_qa` addressed → `dc:needs-qa` on the wire) and the 0.27.0 release-capture proof (`Blocked`/`Needs QA` rendering as real board columns). Two ticked user stories added for the same, plus the open wiki story.
+- Technical Details now carries the live `statuses:` YAML schema and the frontmatter `status:` field's current truth (any declared key; an unknown key is preserved, never coerced).
+- Status stays `in_review`, NOT promoted: the DEEP-DIVE wiki page (a separate repo this checkout cannot edit) still describes the four hardcoded statuses. `released_version` stays `v0.19.0` — it already names an earlier cut and only the owner re-stamps it.
 <!-- LIFO: newest entry at top -->
 
 ### 2026-09-06 - Task statuses became project-declarable data with a semantic kind (v0.26.3, in working tree)
