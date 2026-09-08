@@ -146,7 +146,7 @@ import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentBo
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import {
-  handleVoiceStt, handleVoiceTts, handleVoiceStatus, handleVoiceConfigPut, handleVoiceCorrect,
+  handleVoiceStt, handleVoiceTts, handleVoiceWarm, handleVoiceStatus, handleVoiceConfigPut, handleVoiceCorrect,
 } from './routes/agent-voice.js';
 import { handleAgentDownload } from './routes/agent-download.js';
 import { handleAgentSessionsGet, handleAgentSessionsPut } from './routes/agent-sessions.js';
@@ -440,6 +440,7 @@ export function buildRouter(): Router {
   // of this project's brain.
   router.post('/api/agent/voice/correct', handleVoiceCorrect);
   router.post('/api/agent/voice/tts', handleVoiceTts);
+  router.post('/api/agent/voice/warm', handleVoiceWarm);
   router.get('/api/agent/voice/status', handleVoiceStatus);
   router.put('/api/agent/voice/config', handleVoiceConfigPut);
   // An export the PAGE produced (a `dream-html` PNG/HTML) written into ~/Downloads, so the
@@ -642,7 +643,7 @@ export function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/brain/auth', '/api/brain/team', '/api/meeting'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/brain/auth', '/api/brain/team', '/api/meeting'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

@@ -1,50 +1,82 @@
 /**
- * The capture gate (AC2's probe, AC5's silence gate).
+ * The capture path: the WAV the browser now encodes itself (AC2), and the silence gate that
+ * decides whether a take is uploaded at all (AC5).
  *
- * The pure halves of `useVoiceCapture` are exported precisely so they can be tested here,
- * without a microphone, a browser or a permission prompt. What is NOT provable from Node —
- * and is therefore on the manual checklist rather than faked into a green test — is which
- * container the real Tauri WKWebView actually reports as supported.
+ * The pure halves are exported precisely so they can be tested here, without a microphone, a
+ * browser or a permission prompt. What is NOT provable from Node — and is therefore on the
+ * manual checklist rather than faked into a green test — is the real WKWebView graph: that a
+ * ScriptProcessor delivers frames, and that the context resumes inside the gesture.
  */
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-  pickMimeType, rmsOf, judgeTake, stopVerdict,
-  CONTAINER_CANDIDATES, MIN_TAKE_MS, RMS_FLOOR,
+  rmsOf, judgeTake, stopVerdict, MIN_TAKE_MS, RMS_FLOOR,
 } from '../../dashboard/src/lib/voice/useVoiceCapture.js';
+import {
+  downsample, toPcm16, encodeWav, mergeChunks, wavFromTake, TARGET_SAMPLE_RATE,
+} from '../../dashboard/src/lib/voice/wavEncoder.js';
 
-describe('the container probe (AC2)', () => {
-  it('prefers webm/opus when the engine supports it — Chromium\'s answer', () => {
-    expect(pickMimeType((t) => t.startsWith('audio/webm'))).toBe('audio/webm;codecs=opus');
+// ── The WAV the app encodes itself (AC2) ────────────────────────────────────────────────
+//
+// The container probe this replaces is gone with `MediaRecorder`: transcription is a chat
+// completion whose `input_audio` format enum is `wav` or `mp3` ONLY, so producing anything
+// else is a 400 several seconds after the button is released, with no converter available in
+// a webview to save it.
+
+describe('the recorded WAV', () => {
+  it('is a real RIFF/WAVE file — mono, 16-bit, at the target rate', () => {
+    const wav = encodeWav(new Float32Array([0, 0.5, -0.5, 1]), TARGET_SAMPLE_RATE);
+    const view = new DataView(wav.buffer);
+    const ascii = (at: number, n: number) => String.fromCharCode(...wav.slice(at, at + n));
+    expect(ascii(0, 4)).toBe('RIFF');
+    expect(ascii(8, 4)).toBe('WAVE');
+    expect(view.getUint16(22, true)).toBe(1);                    // mono
+    expect(view.getUint32(24, true)).toBe(TARGET_SAMPLE_RATE);
+    expect(view.getUint16(34, true)).toBe(16);                   // bits per sample
+    expect(view.getUint32(4, true)).toBe(wav.length - 8);        // RIFF size covers the rest
+    expect(view.getUint32(40, true)).toBe(4 * 2);                // data size = samples × 2
+    expect(wav.length).toBe(44 + 8);
   });
 
-  it('falls through to mp4/AAC when webm is unsupported — WebKit\'s answer, and the reason this probe exists', () => {
-    // The hardcoded assumption this replaces (`audio/webm;codecs=opus`) throws SYNCHRONOUSLY
-    // from the MediaRecorder constructor on an engine that cannot produce it, killing voice
-    // input on the very first press. WebKit is the engine this feature ships in.
-    expect(pickMimeType((t) => t.startsWith('audio/mp4'))).toBe('audio/mp4;codecs=mp4a.40.2');
+  it('SATURATES a clipped sample instead of wrapping it', () => {
+    // Wrapping turns the loudest syllable of a sentence into a burst of noise — the one part
+    // of a take that most needed to be intelligible.
+    const pcm = toPcm16(new Float32Array([2, -2, 1, -1]));
+    expect(pcm[0]).toBe(32767);
+    expect(pcm[1]).toBe(-32768);
+    expect(pcm[2]).toBe(32767);
+    expect(pcm[3]).toBe(-32768);
   });
 
-  it('returns undefined when nothing matches, so MediaRecorder picks its own default', () => {
-    // Not an error: a recorder with no mimeType produces something it can definitely make,
-    // and the blob's own `type` then tells the server what arrived. Refusing to record
-    // because none of our guesses matched would be strictly worse.
-    expect(pickMimeType(() => false)).toBeUndefined();
+  it('downsamples by AVERAGING the window, not by dropping samples', () => {
+    // Decimation aliases: high frequencies fold back into the speech band as a metallic ring,
+    // on a signal whose whole job is to be recognised.
+    const input = new Float32Array([1, 0, 1, 0, 1, 0, 1, 0]);
+    const out = downsample(input, 48000, 24000);
+    expect(out.length).toBe(4);
+    for (const v of out) expect(v).toBeCloseTo(0.5, 6);
   });
 
-  it('treats a THROWING probe as a no rather than propagating it', () => {
-    expect(pickMimeType((t) => {
-      if (t.startsWith('audio/webm')) throw new TypeError('nope');
-      return t === 'audio/mp4';
-    })).toBe('audio/mp4');
+  it('leaves the samples alone when the device already runs at or below the target', () => {
+    const input = new Float32Array([0.1, 0.2, 0.3]);
+    expect(downsample(input, 16000, 16000)).toBe(input);
+    expect(downsample(input, 8000, 16000)).toBe(input);
   });
 
-  it('offers only containers the transcription endpoint accepts — there is no conversion step', () => {
-    const accepted = ['webm', 'mp4', 'ogg', 'wav', 'mp3', 'flac', 'aac'];
-    for (const c of CONTAINER_CANDIDATES) {
-      expect(accepted.some((a) => c.includes(a)), c).toBe(true);
-    }
+  it('joins the take\'s frames in order', () => {
+    const merged = mergeChunks([new Float32Array([1, 2]), new Float32Array([3]), new Float32Array([])]);
+    expect(Array.from(merged)).toEqual([1, 2, 3]);
+  });
+
+  it('encodes a whole take end to end at 16 kHz', () => {
+    // 48 kHz in, 16 kHz out: a third of the samples, a quarter of the bytes of the raw
+    // float frames — and those bytes get base64'd into a JSON body.
+    const frames = [new Float32Array(4800).fill(0.25), new Float32Array(4800).fill(-0.25)];
+    const wav = wavFromTake(frames, 48000);
+    const view = new DataView(wav.buffer);
+    expect(view.getUint32(24, true)).toBe(16000);
+    expect(view.getUint32(40, true)).toBe((9600 / 3) * 2);
   });
 });
 
@@ -127,5 +159,59 @@ describe('releasing the button (the orphaned-recorder race, found in review)', (
     // And the abandoned stream's tracks are stopped by hand, since `teardown()` reads
     // `streamRef` and that was deliberately never assigned.
     expect(afterAwait.slice(checkAt, assignAt)).toMatch(/stream\.getTracks\(\)\.forEach/);
+  });
+});
+
+// ── The meter has to be RUNNING before its number may veto anything ──────────────────────
+
+describe('the RMS meter measures the take, or does not veto it', () => {
+  const src = readFileSync('dashboard/src/lib/voice/useVoiceCapture.ts', 'utf-8');
+
+  it('opens the AudioContext INSIDE the gesture, before any await', () => {
+    // WebKit only starts a context for a real user gesture. `start()` runs synchronously from
+    // the pointerdown, so the context is built in its head — the same rule `SpeechQueue.unlock`
+    // follows for the playback element.
+    const start = src.slice(src.indexOf('const start = useCallback'));
+    const ctxAt = start.indexOf('new AudioContext()');
+    const awaitAt = start.indexOf('await navigator.mediaDevices.getUserMedia');
+    expect(ctxAt).toBeGreaterThan(-1);
+    expect(ctxAt).toBeLessThan(awaitAt);
+  });
+
+  it('RESUMES it — a context created outside a gesture stays suspended in WebKit', () => {
+    // The reported failure, and the reason it looked like a hardware problem: a suspended
+    // context's analyser returns a buffer of zeroes, so every take — however loudly spoken —
+    // scored an RMS of 0 and the gate refused it as silence. The context is built after
+    // `await getUserMedia`, so the press that started the take no longer counts as the
+    // gesture the autoplay policy wants.
+    expect(src).toMatch(/if \(ctx\.state === 'suspended'\) void ctx\.resume\(\)/);
+  });
+
+  it('records and measures the SAME frame, so the gate cannot disagree with the tape', () => {
+    // The failure this replaced was exactly that disagreement: an unresumed analyser reported
+    // silence for every take while the recorder captured the sentence perfectly well.
+    expect(src).toMatch(/chunksRef\.current\.push\(new Float32Array\(frame\)\);/);
+    expect(src).toMatch(/peakRef\.current = Math\.max\(peakRef\.current, rmsOf\(frame\)\);/);
+    expect(src).toMatch(/meteredFramesRef\.current \+= 1;/);
+  });
+
+  it('fails OPEN when the meter never measured — an absent number cannot refuse a sentence', () => {
+    // Same policy the missing-meter `catch` has always applied, now covering a meter that was
+    // present and reported nothing for reasons that have nothing to do with the room.
+    expect(src).toMatch(/const peak = meteredFramesRef\.current > 0 \? peakRef\.current : 1;/);
+  });
+
+  it('mutes the monitoring path — a ScriptProcessor must reach the destination to run', () => {
+    // Connected straight through, the owner hears themselves at full volume the moment they
+    // press the mic. Through a gain of zero, the node still runs and nothing is played.
+    expect(src).toMatch(/mute\.gain\.value = 0;/);
+    expect(src).toMatch(/mute\.connect\(ctx\.destination\);/);
+  });
+
+  it('resets the frame count at the START of every take, not only on teardown', () => {
+    // Otherwise take N+1 inherits take N's frames and a meter that has since stopped running
+    // would still be trusted.
+    const start = src.slice(src.indexOf('const start = useCallback'));
+    expect(start).toMatch(/meteredFramesRef\.current = 0;/);
   });
 });

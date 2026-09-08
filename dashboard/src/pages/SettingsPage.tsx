@@ -520,6 +520,18 @@ export function SettingsPage({ focus }: SettingsPageProps) {
               )}
             </>
           )}
+
+          {/* Voice sits LAST and FOLDED, because that is what it is: a beta surface of the
+              agent screen, not one of the settings this section is about. Open it and it is
+              the same grammar as every group above it; closed it costs one line and does not
+              compete with the account and hotkey rows for the first glance.
+
+              It is in the AGENT section rather than the machine one even though its key is
+              per-machine (`~/.dreamcontext/voice.json`, never a vault, so a team sync cannot
+              carry it): the owner reaches for it while thinking about how they talk to the
+              agent, not while auditing what is installed. The card's own text still says
+              where the key lives. */}
+          <VoiceSettings />
         </section>
       )}
       {activeSection === 'memory' && (
@@ -700,11 +712,6 @@ export function SettingsPage({ focus }: SettingsPageProps) {
       <section className="settings-section">
         <SectionHead titleKey="settings.nav.system" descKey="settings.desc.system" />
         <SystemDependencies />
-        {/* Voice lives in the MACHINE group because its key belongs to the machine, not to a
-            project: `~/.dreamcontext/voice.json`, the same place Claude accounts and the
-            vault registry live. In a project section it would be a per-vault secret, and a
-            team sync would carry it. */}
-        <VoiceSettings />
       </section>
       )}
 

@@ -16,6 +16,74 @@ security), 32 blocking findings raised and addressed:
   transcript that differs from the raw one in ANY way is never auto-submitted. That removed a
   whole defensive subsystem and closed four findings at once.
 
+## CORRECTION — 2026-09-07, from the owner's first real push-to-talk
+
+**The transport in this plan was wrong, and the plan's own escape hatch caught it.** Every
+model id below came from an announcement blog post rather than the models API, which the plan
+said out loud — but the mistake was one layer deeper than "an id was renamed": on OpenRouter
+today there is **no transcription or TTS model at all**. Both OpenAI-compatible routes ANSWER
+(`/audio/transcriptions` and `/audio/speech` validate a `model` field), and every id we asked
+for returns "Model … does not exist". Measured against the live API on the owner's key.
+
+What shipped instead, verified end to end through our own routes:
+
+| | Plan said | Actually |
+|---|---|---|
+| STT | `POST /audio/transcriptions`, multipart, `gpt-4o-mini-transcribe` | `POST /chat/completions`, base64 `input_audio` part, `openai/gpt-audio-mini` |
+| TTS | `POST /audio/speech`, mp3 out, `instructions` parameter | `POST /chat/completions`, `stream:true` + `modalities:['text','audio']`, pcm16 out |
+| Container | whatever `MediaRecorder` produced, "no conversion step anywhere" | the browser encodes its **own 16 kHz WAV** — upstream accepts `wav`/`mp3` only |
+
+Three consequences worth carrying forward:
+
+1. **The prompt is what makes a chat model a TTS engine — and it is NOT ENOUGH.** With a weak
+   instruction `gpt-audio-mini` ANSWERS the text instead of reading it ("Systems online." came
+   back as "Understood, everything seems stable…"). The verbatim rule fixed the one sentence
+   it was measured against, and that sample was too small: see the correction below.
+### Correction, 2026-09-07 — the prompt was never going to be enough on its own
+
+The owner's first real conversation in the mode surfaced three defects that one round of
+measurement had hidden. All three are the SAME failure underneath: when this model does not
+do the job it was asked to do, it answers the prompt instead — and nothing downstream could
+tell the difference.
+
+| Symptom the owner met | What was measured | What it is now |
+|---|---|---|
+| The voice "kept saying UNDERSTOOD" over a reply that said something else | 5 of 7 conversational lines came back as a fresh ANSWER, not a reading — every short sentence in a reply, so a whole answer's worth | Script framing + a two-turn few-shot (21/24), and `verbatim.ts` CHECKS the `audio.transcript` against the line: mismatch → one retry → drop the chunk |
+| The transcription prompt appeared in the chat as the owner's own message | 1.5 s of room tone, three takes, three verbatim echoes of the ask — submitted to a tool-enabled agent | The ask names a `NO_SPEECH` sentinel (3/3), and `echo.ts` drops a reply that is the ask, the sentinel, or commentary |
+| The chord opened the microphone in other tabs, and in another project's window | Every live chat pane is portaled and never unmounts, so N J.A.R.V.I.S sessions meant N `window` listeners and N microphones per press | `pushToTalkScope.ts` picks ONE owner per press: focused pane → the only visible one → last touched → nobody |
+
+Two lessons worth carrying past this feature:
+
+- **The residue is stochastic, so a prompt cannot be the fix.** The same sentence was read
+  correctly in one round and answered in the next. A prompt makes the failure rare; only a
+  check makes it harmless. Both halves ship, and neither is redundant.
+- **The `transcript` field on an audio delta was documented as "useless to us".** It is the
+  only evidence of what the owner is about to HEAR, and discarding it is what let a voice hold
+  a different conversation from the transcript for a whole session.
+
+What the fixes do NOT cover, measured and left honest: takes under about a second are
+unreliable on this provider whatever the prompt says ("Tamam" came back as "Tomorrow",
+"Thamar" and "afternoon" across prompts, part orderings and both audio models). A hallucinated
+word is undetectable from the server; the correction pass and the confirmation row are what
+stand behind it.
+
+2. **The silence gate had been vetoing every take**, and not because of the room: the meter's
+   `AudioContext` was created after `await getUserMedia`, so WebKit left it `suspended` and
+   the analyser returned zeroes. The context is now opened inside the gesture, and the tape
+   and the meter read the SAME frames, so the two can no longer disagree.
+3. **Measured cost and latency, on the owner's key:** a 3s take transcribes in ~1.3s for
+   ~$0.00007; 4.75s of speech generates in 1.7s (0.36x realtime, so the queue stays ahead of
+   playback). The `$15/1M characters` floor argument below is obsolete — this is priced in
+   audio tokens.
+
+Also changed at the owner's request, same day: the push-to-talk binding is configurable
+(Settings → Agents → Voice, folded, BETA), and a **latch** binding is supported — Caps Lock
+starts and ends the take, because macOS reports it as on/off rather than held, which makes the
+keyboard light the recording indicator. Everything below this line is the plan as it was
+approved; read it with this correction in hand.
+
+---
+
 ## Goal
 The chat composer's fourth mode becomes real: push-to-talk voice IN, spoken voice OUT
 (sentence-batched into a continuous queue), and a SHORT briefing that makes the agent speak

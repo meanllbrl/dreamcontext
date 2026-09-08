@@ -16,10 +16,48 @@ import './SettingRow.css';
  * something means reaching for the right one.
  */
 
-export function SettingGroup({ title, note, children }: { title?: string; note?: string; children: ReactNode }) {
+export function SettingGroup({ title, note, children, collapsible, defaultOpen, badge }: {
+  title?: string;
+  note?: string;
+  children: ReactNode;
+  /**
+   * Fold the whole group behind its own title.
+   *
+   * For a group that is real but SECONDARY — a beta surface at the bottom of a section that
+   * most people will never open. Folded it costs one line; open it is the same grammar as
+   * every other group, so nothing has to be learned twice. `<details>` rather than a state
+   * hook for the same reason `setting-row-more` is: the browser already owns this behaviour,
+   * including keyboard and find-in-page.
+   */
+  collapsible?: boolean;
+  defaultOpen?: boolean;
+  /** Rendered beside the title — a BETA chip, a count. */
+  badge?: ReactNode;
+}) {
+  if (collapsible) {
+    return (
+      <details className="setting-group setting-group--fold" open={defaultOpen}>
+        <summary className="setting-group-summary">
+          <span className="setting-group-summary-text">
+            <span className="setting-group-title">{title}</span>
+            {badge}
+          </span>
+        </summary>
+        <div className="setting-group-fold-body">
+          {note && <p className="setting-group-note">{note}</p>}
+          <div className="setting-rows">{children}</div>
+        </div>
+      </details>
+    );
+  }
   return (
     <div className="setting-group">
-      {title && <h3 className="setting-group-title">{title}</h3>}
+      {title && (
+        <h3 className="setting-group-title">
+          {title}
+          {badge}
+        </h3>
+      )}
       {note && <p className="setting-group-note">{note}</p>}
       <div className="setting-rows">{children}</div>
     </div>

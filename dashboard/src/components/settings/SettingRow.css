@@ -311,3 +311,84 @@
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+
+/* The push-to-talk field. A button rather than an input because what it captures is a
+   KEYPRESS, not text — and while it is capturing it has to LOOK live, since every chord
+   worth binding is one another handler would otherwise have answered. */
+.setting-row-control .voice-hotkey {
+  min-width: 108px;
+  font-variant-numeric: tabular-nums;
+}
+
+.setting-row-control .voice-hotkey.is-recording {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+/* ─── A folded group ───────────────────────────────────────────────────────────
+   The same group, one line tall until it is asked for. Used by the secondary
+   surfaces that sit at the BOTTOM of a section: real settings, but not the ones
+   the section is about, so they must not compete with them for the first glance. */
+.setting-group--fold {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--color-border);
+}
+
+.setting-group-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* 4px grid, and a hit target that spans the row rather than just the words. */
+  padding: var(--space-2) 0;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.setting-group-summary::-webkit-details-marker { display: none; }
+
+/* The caret is drawn rather than borrowed from the platform marker, so it can rotate
+   and so it sits on the text baseline in both WebKit and Chromium. */
+.setting-group-summary::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--color-text-tertiary);
+  border-bottom: 1.5px solid var(--color-text-tertiary);
+  transform: rotate(-45deg);
+  transition: transform 160ms ease;
+}
+
+.setting-group--fold[open] > .setting-group-summary::before {
+  transform: rotate(45deg);
+}
+
+.setting-group-summary:hover::before {
+  border-color: var(--color-text-secondary);
+}
+
+.setting-group-summary:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.setting-group-summary-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.setting-group-summary .setting-group-title {
+  margin: 0;
+}
+
+.setting-group-fold-body {
+  padding-top: var(--space-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setting-group-summary::before { transition: none; }
+}

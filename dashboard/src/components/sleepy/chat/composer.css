@@ -473,6 +473,12 @@
 /* A transcript the corrector CHANGED, waiting for the owner's own keypress. Body-contrast
    rather than tertiary, because this one is asking for a decision instead of reporting. */
 .chat-cmp-voice-note.is-confirm { color: var(--color-text-secondary); }
+
+/* The resting instruction: how to talk, in the binding the owner actually configured. It sits
+   under everything else on purpose — it must be readable and must never compete with the
+   composer itself, so it is quiet until the take starts. */
+.chat-cmp-voice-note.is-idle { opacity: 0.75; }
+.chat-cmp-voice-note.is-idle:has(+ *) { opacity: 0.75; }
 .chat-cmp-voice-op {
   margin: 0 4px;
   padding: 1px 5px;

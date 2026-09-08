@@ -9,7 +9,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-  createSpeechChunker, FALLBACK_CHUNK_CHARS, SpeechQueue,
+  createSpeechChunker, boundaryOf, CLAUSE_CHUNK_CHARS, FIRST_CLAUSE_CHUNK_CHARS,
+  HARD_CHUNK_CHARS, MIN_SPEAKABLE_CHARS, SpeechQueue,
 } from '../../dashboard/src/lib/voice/speechQueue.js';
 
 /** Feed `text` one character at a time — the worst case a stream can produce, and the one
@@ -85,13 +86,16 @@ describe('the fence-aware chunker', () => {
     expect(whole('Findings\nThree of them')).toEqual(['Findings', 'Three of them']);
   });
 
-  it('breaks unpunctuated text at a WORD boundary once past the fallback length', () => {
-    const long = 'bir iki uc dort bes alti yedi sekiz dokuz on birbucuk ikibucuk ucbucuk';
+  it('breaks unpunctuated text at a WORD boundary only past the HARD cap', () => {
+    // Reaching this means the text genuinely has no punctuation to break on. Below it, an
+    // ordinary long sentence is left WHOLE — cutting one at a space is what made speech read
+    // as a series of fragments with the intonation falling in the wrong places.
+    const long = `${'bir iki uc dort bes alti yedi sekiz dokuz on '.repeat(6)}son`;
+    expect(long.length).toBeGreaterThan(HARD_CHUNK_CHARS);
     const chunks = whole(long);
     expect(chunks.length).toBeGreaterThan(1);
     expect(chunks.join(' ')).toBe(long);            // nothing lost
     for (const c of chunks) expect(c).not.toMatch(/^\S*$|\s{2}/); // no mid-word cut artefacts
-    expect(chunks[0].length).toBeGreaterThanOrEqual(FALLBACK_CHUNK_CHARS - 12);
   });
 
   it('emits a short first sentence IMMEDIATELY rather than waiting for 40 characters (AC6)', () => {
@@ -300,5 +304,77 @@ describe('the speech queue', () => {
     q.flushTurn();
     await settle();
     expect(FakeAudio.played).toEqual(['no terminator']);
+  });
+});
+
+// ── Where a chunk ends ──────────────────────────────────────────────────────────────────
+
+describe('chunk boundaries follow PUNCTUATION, in Turkish and English alike', () => {
+  const whole = (text: string) => {
+    const c = createSpeechChunker();
+    return [...c.push(text), ...c.flush()];
+  };
+
+  it('never cuts an ordinary long sentence mid-clause', () => {
+    // The reported failure, in one line: 96 characters, one sentence, one chunk. The old rule
+    // broke at the last space past 40 and handed the model a fragment.
+    const sentence = 'Uyku dongusu tamamlandi ve gorevlerin tamami guncellendi bu yuzden simdi ozet cikarabilirim.';
+    expect(sentence.length).toBeGreaterThan(80);
+    expect(whole(sentence)).toEqual([sentence]);
+  });
+
+  it('takes a CLAUSE break in a long sentence, so a paragraph is not one enormous chunk', () => {
+    const long = 'Uyku dongusu tamamlandi ve butun gorevler guncellendi, ardindan iki karar kaydedildi ve rapor hazir.';
+    const chunks = whole(long);
+    expect(chunks.length).toBe(2);
+    expect(chunks[0].endsWith(',')).toBe(true);     // cut AT the comma, not before a word
+    expect(chunks.join(' ')).toBe(long);
+  });
+
+  it('lets the FIRST chunk go early — time-to-first-word is the latency that is felt', () => {
+    expect(FIRST_CLAUSE_CHUNK_CHARS).toBeLessThan(CLAUSE_CHUNK_CHARS);
+    const c = createSpeechChunker();
+    const first = c.push('Uyku dongusu tamamlandi, ardindan iki karar kaydedildi ve rapor hazir ');
+    expect(first.length).toBe(1);
+    expect(first[0]).toBe('Uyku dongusu tamamlandi,');
+  });
+
+  it('will NOT carve out a fragment too small to be worth a round trip', () => {
+    // Every chunk costs the same fixed generation time whatever its length, so a four-word
+    // fragment spends a whole request to buy a second of audio — and short addressed lines
+    // are also the ones the speech model is likeliest to answer instead of read.
+    const c = createSpeechChunker();
+    const out = c.push('Tamamdir efendim, uyku dongusunu simdi baslatiyorum ve sonra ozet cikaracagim ');
+    expect(out[0]).not.toBe('Tamamdir efendim,');
+    expect(MIN_SPEAKABLE_CHARS).toBeGreaterThan('Tamamdir efendim,'.length);
+  });
+
+  it('does not split a Turkish ORDINAL — "3. gorev" is not a sentence called "3."', () => {
+    // The one that would have been unmissable: a chunk consisting of the word "three".
+    expect(whole('3. gorev guncellendi. Bitti.')).toEqual(['3. gorev guncellendi.', 'Bitti.']);
+    expect(boundaryOf('3. gorev')).toBe(-1);
+  });
+
+  it('does not split a decimal or an abbreviation', () => {
+    expect(whole('Toplam 3.5 saat surdu.')).toEqual(['Toplam 3.5 saat surdu.']);
+    expect(whole('Gorevler, kararlar vb. seyler guncellendi.')).toEqual(['Gorevler, kararlar vb. seyler guncellendi.']);
+    expect(whole('Ask Dr. Ahmet about it.')).toEqual(['Ask Dr. Ahmet about it.']);
+    expect(whole('Tests, docs, etc. all pass.')).toEqual(['Tests, docs, etc. all pass.']);
+  });
+
+  it('does not split an initial', () => {
+    expect(whole('Rapor A. Yilmaz tarafindan yazildi.')).toEqual(['Rapor A. Yilmaz tarafindan yazildi.']);
+  });
+
+  it('still ends a real sentence immediately, however short', () => {
+    const c = createSpeechChunker();
+    expect(c.push('Tamam. ')).toEqual(['Tamam.']);
+  });
+
+  it('breaks on an em dash — the punctuation this project\'s own prose actually uses', () => {
+    const long = 'Uyku dongusu tamamlandi ve her sey guncel — geriye yalnizca ozet kaldi.';
+    const chunks = whole(long);
+    expect(chunks.length).toBe(2);
+    expect(chunks[0].endsWith('—')).toBe(true);
   });
 });

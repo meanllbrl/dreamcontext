@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import { pickFiles, pickFolders, isDesktop } from '../../../lib/desktop';
 import { useVoiceCapture } from '../../../lib/voice/useVoiceCapture';
+import {
+  parseHotkey, matchesHotkey, releasesHotkey, hotkeyLabel, isLatchKey, effectiveMode,
+} from '../../../lib/voice/hotkey';
+import { voicePrefs, refreshVoicePrefs, onVoicePrefs } from '../../../lib/voice/voicePrefs';
+import { registerPushToTalk, ownsPushToTalk } from '../../../lib/voice/pushToTalkScope';
+import { DEFAULT_PUSH_TO_TALK } from '../../../lib/voice/hotkeyDefaults';
 
 /** One aligned change the corrector proposed. Mirrors `src/lib/voice/align.ts`'s `AlignOp`
  *  structurally rather than importing it: the dashboard is a separate build and does not
@@ -647,10 +653,12 @@ export function Composer({
   const costUsd = lastResult?.costUsd ?? stats?.costUsd ?? null;
 
   // The ACCOUNT's 5-hour and weekly caps, stacked under the context bar in the usage popover.
-  // One 60s poll shared by every pane (see useUsageLimits); `usageLimits` drops any cap whose
-  // source is missing, stale or describing a window that has already rolled over — so an
-  // absent cap draws NO bar rather than an empty one.
-  const usageRes = useUsageLimits(connected).data ?? null;
+  // Keyed by THIS PANE'S account, because that is whose quota the next turn spends — a pane
+  // moved to another account by auto-switch was previously shown the primary account's bars.
+  // One 60s poll shared by every pane on the same account (see useUsageLimits); `usageLimits`
+  // drops any cap whose source is missing, stale or describing a window that has already
+  // rolled over — so an absent cap draws NO bar rather than an empty one.
+  const usageRes = useUsageLimits(connected, activeAccountId).data ?? null;
   // The connected accounts, fetched HERE for the same reason the usage limits are: they are
   // machine-global, one shared cache entry serves every pane, and threading them down through
   // three layers would buy nothing. `sessionPercent` comes off each account's OWN cached
@@ -732,6 +740,24 @@ export function Composer({
   const [pending, setPending] = useState<{ text: string; ops: VoiceOp[] } | null>(null);
 
 
+  /** The configured push-to-talk chord, read from the shared prefs cache and kept live: a
+   *  chord changed in Settings must reach a chat window that is already open, and the Voice
+   *  card publishes to this same cache the moment it saves. */
+  const [pushToTalk, setPushToTalk] = useState(voicePrefs().pushToTalk);
+  const [pushToTalkMode, setPushToTalkMode] = useState(voicePrefs().pushToTalkMode);
+  useEffect(() => {
+    if (!voiceEnabled) return;
+    // Load the local transcription model NOW rather than on the first press: it is a 1.5 GB
+    // read, and paying it while the owner is still deciding what to say costs them nothing.
+    void fetch('/api/agent/voice/warm', { method: 'POST' }).catch(() => {});
+    const adopt = (p: { pushToTalk: string; pushToTalkMode: 'hold' | 'toggle' }) => {
+      setPushToTalk(p.pushToTalk);
+      setPushToTalkMode(p.pushToTalkMode);
+    };
+    void refreshVoicePrefs().then(adopt);
+    return onVoicePrefs(adopt);
+  }, [voiceEnabled]);
+
   /**
    * Run the correction pass over a raw transcript.
    *
@@ -794,6 +820,10 @@ export function Composer({
   }, [session, runCorrection]);
 
   const voice = useVoiceCapture({ vault, onTranscript });
+  /** The capture state, readable from a window listener without re-binding it every take —
+   *  a listener rebuilt mid-take would be re-registered while the key is still down. */
+  const voiceStateRef = useRef(voice.state);
+  voiceStateRef.current = voice.state;
 
   useEffect(() => {
     if (voiceSubmitTick > 0) submitRef.current('auto');
@@ -838,29 +868,90 @@ export function Composer({
     voice.stop();
   }, [voiceEnabled, voice]);
 
-  // The keyboard half of push-to-talk: hold ⌥Space. Window-level rather than on the textarea,
-  // because the owner's hands may be nowhere near it — the whole point of the mode. `repeat`
-  // is ignored so a held key is one take, not one per auto-repeat tick, and the default is
-  // prevented because ⌥Space inserts a non-breaking space into a focused field on macOS.
+  // ── The keyboard half of push-to-talk ───────────────────────────────────────────────
+  //
+  // Window-level, because the owner's hands may be nowhere near the textarea — the whole
+  // point of the mode. The default prevented, because every chord worth binding is one
+  // something else already answers (the shipped ⌥Space types a non-breaking space).
+  //
+  // TWO WAYS TO OPERATE IT, and the second is not a luxury. HOLD is the safe default: the
+  // microphone cannot be left open, because letting go closes it. TOGGLE exists because
+  // holding a modifier chord through a whole sentence is unpleasant, and because a LATCH key
+  // cannot do anything else — macOS reports Caps Lock as `keydown` when the light comes on
+  // and `keyup` when it goes off, so there is no "held" state to read. Bound to Caps Lock the
+  // take runs for exactly as long as the light is lit, which makes the keyboard itself the
+  // recording indicator.
+  //
+  // The debounce is what makes toggle work across engines: a browser that reports Caps Lock
+  // as a physical press sends `keyup` milliseconds after `keydown`, and without the window
+  // that release would end the take instantly, every time.
+  const lastFlipRef = useRef(0);
+  // ── ONE composer answers the chord, not every mounted one ───────────────────────────
+  //
+  // A chat pane never unmounts while its session lives — AgentSurface portals EVERY live
+  // session's pane, garaging the ones that are not on screen — so "window-level" used to mean
+  // one press opening a microphone in every J.A.R.V.I.S session at once, including minimized
+  // ones, ones behind a collapsed overlay, and ones in another project's window. The registry
+  // picks a single owner at the moment of the press; see `pushToTalkScope.ts` for the order.
   useEffect(() => {
     if (!voiceEnabled) return;
+    return registerPushToTalk(() => rootRef.current);
+  }, [voiceEnabled]);
+
+  useEffect(() => {
+    if (!voiceEnabled) return;
+    const chord = parseHotkey(pushToTalk) ?? parseHotkey(DEFAULT_PUSH_TO_TALK);
+    if (!chord) return;
+    const mode = effectiveMode(pushToTalk, pushToTalkMode);
+    const latch = isLatchKey(chord.code);
+
+    /** Toggle: start if idle, end if recording — ignoring anything inside the debounce. */
+    const flip = () => {
+      const now = Date.now();
+      if (now - lastFlipRef.current < 250) return;
+      lastFlipRef.current = now;
+      if (voiceStateRef.current === 'recording') endTake();
+      else startTake();
+    };
+
     const down = (e: KeyboardEvent) => {
-      if (!e.altKey || e.code !== 'Space' || e.repeat) return;
+      if (e.repeat) return;
+      // A latch key arrives with no modifiers of its own, so it is matched on the code alone;
+      // an ordinary chord must match EXACTLY, or it would fire inside somebody else's binding.
+      const hit = latch ? e.code === chord.code : matchesHotkey(e, chord);
+      if (!hit) return;
+      // Not ours: another pane is the one on screen, or nothing chat-shaped is. Returning
+      // WITHOUT `preventDefault` matters — the owner is somewhere else entirely and the chord
+      // should behave as it does everywhere else in the app.
+      if (!ownsPushToTalk(rootRef.current)) return;
       e.preventDefault();
-      startTake();
+      if (mode === 'toggle') flip();
+      else startTake();
     };
+
     const up = (e: KeyboardEvent) => {
-      // Released on the SPACE or on the modifier — letting go of ⌥ first is common enough
-      // that not handling it would strand the recorder open.
-      if (e.code === 'Space' || e.key === 'Alt') endTake();
+      // The release is NOT ownership-checked the way the press is, and that asymmetry is
+      // deliberate: a take that started here must be closeable even if the owner clicked into
+      // another pane while still holding the key. `endTake` is a no-op when nothing is
+      // recording, so a release we never started costs nothing.
+      if (mode === 'toggle') {
+        // The latch's "off" press IS a keyup. Any other key's keyup ends nothing in toggle
+        // mode — that is the entire difference from hold.
+        if (latch && e.code === chord.code) flip();
+        return;
+      }
+      // Released on the base key or on ANY of the chord's modifiers — letting go of ⌥ first
+      // is common enough that not handling it would strand the recorder open.
+      if (releasesHotkey(e, chord)) endTake();
     };
+
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     return () => {
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
     };
-  }, [voiceEnabled, startTake, endTake]);
+  }, [voiceEnabled, pushToTalk, pushToTalkMode, startTake, endTake]);
 
   const commit = (mode: SubmitMode) => {
     const { draft: text, busy: isBusy, connected: isConnected, quote: liveQuote } = liveRef.current;
@@ -1434,7 +1525,9 @@ export function Composer({
                         : voice.state === 'silent' ? 'Nothing was heard in that take.'
                           : voice.state === 'unconfigured' ? (voice.error || 'Voice needs an OpenRouter key in Settings.')
                             : voice.state === 'error' ? (voice.error || 'That take did not go through.')
-                              : 'Hold to speak (⌥Space)'
+                              : effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
+                                ? `Press ${hotkeyLabel(pushToTalk)} to start, again to send`
+                                : `Hold to speak (${hotkeyLabel(pushToTalk)})`
             }
             aria-label="Hold to speak"
             aria-pressed={voice.state === 'recording'}
@@ -1462,7 +1555,27 @@ export function Composer({
             {' — press send if that is right.'}
           </span>
         )}
-        {voiceEnabled && !pending && (voiceNotice || voiceCorrecting || voice.state === 'too-short' || voice.state === 'silent' || voice.state === 'error' || voice.state === 'unconfigured') && (
+        {/* THE RESTING INSTRUCTION. Without it the mode is a microphone button and a secret:
+            the binding is configurable, so nothing on screen tells the owner whether to HOLD
+            it or PRESS it — and the two are opposites. It says the current binding in the
+            current mode, and gets out of the way the moment anything else has something to
+            report. */}
+        {voiceEnabled && !pending && !voiceNotice && !voiceCorrecting && voice.state !== 'error'
+          && voice.state !== 'unconfigured' && (
+          <span className="chat-cmp-voice-note is-idle">
+            {voice.state === 'recording'
+              ? (effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
+                ? `Listening — ${hotkeyLabel(pushToTalk)} again to send`
+                : `Listening — let go to send`)
+              : voice.state === 'transcribing' ? 'Transcribing…'
+                : voice.state === 'too-short' ? 'That was a tap — keep it down while you speak'
+                  : voice.state === 'silent' ? 'Nothing was heard — try again'
+                    : effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
+                      ? `Press ${hotkeyLabel(pushToTalk)} to speak, again to send`
+                      : `Hold ${hotkeyLabel(pushToTalk)} or the mic to speak`}
+          </span>
+        )}
+        {voiceEnabled && !pending && (voiceNotice || voiceCorrecting || voice.state === 'error' || voice.state === 'unconfigured') && (
           // Said in the row rather than only in a tooltip: a take that was refused looks
           // exactly like one that was never recorded, and the owner needs to know which.
           <span className="chat-cmp-voice-note">

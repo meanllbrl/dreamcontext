@@ -24,11 +24,23 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { normalizeHotkey, effectiveMode, type PushToTalkMode } from './hotkey.js';
 
 /** What lives in `voice.json`. Every field is optional — an absent file is a valid state. */
 export interface VoiceConfig {
-  /** The OpenRouter API key. The ONLY secret this feature has. */
+  /** The OpenRouter API key. The one this feature cannot work without. */
   openRouterKey?: string;
+  /**
+   * An OPTIONAL Groq key, used only for transcription.
+   *
+   * Why a second provider at all, when the rule was one key for everything: measured, the
+   * same take through OpenRouter's transcription endpoint took anywhere from 1.3s to 14.2s —
+   * the model is right but the routing is not something a push-to-talk button can depend on.
+   * Groq serves the same `whisper-large-v3-turbo` on its own hardware at 200x realtime and
+   * $0.04 an hour, with a free tier that covers this feature's whole usage. It is optional
+   * precisely because it is a second account: without it everything still works.
+   */
+  groqKey?: string;
   /** TTS voice name passed through to the speech endpoint. */
   voice?: string;
   /**
@@ -39,8 +51,45 @@ export interface VoiceConfig {
    * app, the fix is a pinned default here rather than a code change.
    */
   sttLanguage?: string;
+  /**
+   * Which transcriber to use.
+   *
+   * `cloud` is the DEFAULT, and the reason is measured rather than assumed. OpenRouter does
+   * serve a real speech recogniser after all — `openai/whisper-large-v3-turbo`, absent from
+   * the `/models` catalogue but present on the transcription endpoint — and it answers the
+   * owner's Turkish in ~0.7-1.1s for $0.0001 a take. That is the same speed as the local
+   * whisper it replaces, without 1.5 GB of resident model or a second of the laptop's CPU,
+   * which is the owner's stated preference: put the load on the API.
+   *
+   * `local` keeps whisper.cpp for offline or free-forever use; `auto` prefers local when it
+   * is installed and falls back to the cloud.
+   */
+  sttEngine?: 'auto' | 'local' | 'cloud';
   /** Whether the Slice-2 correction pass runs at all. Off degrades to the raw transcript. */
   correction?: boolean;
+  /**
+   * The push-to-talk chord, canonical form (see `hotkey.ts`). Configurable because the
+   * shipped default is not neutral: ⌥Space is Spotlight's alternate on some machines and a
+   * window-manager binding on others, and a push-to-talk key the OS eats first is a mode
+   * that looks broken with nothing on screen to say why.
+   */
+  pushToTalk?: string;
+  /**
+   * How the binding is operated: `hold` (speak while it is down) or `toggle` (one press
+   * starts, the next ends). Toggle exists because holding a modifier chord to speak is
+   * genuinely unpleasant, and because a latch key like Caps Lock cannot do anything else —
+   * macOS reports it as on/off, never as held.
+   */
+  pushToTalkMode?: PushToTalkMode;
+  /**
+   * Whether answers are SPOKEN. Off leaves push-to-talk and the on-screen structure exactly
+   * as they are — the mode is still worth having when the room is quiet or the owner is on a
+   * call, and it is also the cheap half: dictation costs a fraction of speech.
+   */
+  speech?: boolean;
+  /** Playback rate for spoken answers, applied to the audio element rather than sent
+   *  upstream — a rate the client owns cannot be a request that fails. */
+  speechRate?: number;
 }
 
 /** The default voice. A deep one — the closest this provider gets to the character. */
@@ -48,6 +97,26 @@ export const DEFAULT_VOICE = 'onyx';
 
 /** Language sentinel meaning "send no `language` parameter and let the model detect". */
 export const AUTO_LANGUAGE = 'auto';
+
+/** The default push-to-talk chord. ⌥Space, which is what the composer's tooltip said before
+ *  the key was configurable at all. */
+export const DEFAULT_PUSH_TO_TALK = 'Alt+Space';
+
+/** Hold is the default: it is the one that cannot leave the microphone open by accident. */
+export const DEFAULT_PUSH_TO_TALK_MODE: PushToTalkMode = 'hold';
+
+/** Default playback rate, and the range Settings offers. The bounds are narrow on purpose:
+ *  the character survives a modest speed-up and stops being calm and precise past it. */
+export const DEFAULT_SPEECH_RATE = 1;
+export const MIN_SPEECH_RATE = 0.75;
+export const MAX_SPEECH_RATE = 1.75;
+
+/** Clamp a rate into the offered range. Out-of-range input is CLAMPED rather than refused —
+ *  unlike the hotkey, every value here still produces working audio. */
+export function clampSpeechRate(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_SPEECH_RATE;
+  return Math.min(MAX_SPEECH_RATE, Math.max(MIN_SPEECH_RATE, Math.round(value * 100) / 100));
+}
 
 /** The register file. Injectable `home` for testability (precedent: `vaults.ts:39`). */
 export function voiceConfigPath(home: string = homedir()): string {
@@ -67,9 +136,24 @@ export function readVoiceConfig(home: string = homedir()): VoiceConfig {
     if (typeof raw.openRouterKey === 'string' && raw.openRouterKey.trim()) {
       out.openRouterKey = raw.openRouterKey.trim();
     }
+    if (typeof raw.groqKey === 'string' && raw.groqKey.trim()) out.groqKey = raw.groqKey.trim();
     if (typeof raw.voice === 'string' && raw.voice.trim()) out.voice = raw.voice.trim();
     if (typeof raw.sttLanguage === 'string') out.sttLanguage = raw.sttLanguage.trim();
+    if (raw.sttEngine === 'auto' || raw.sttEngine === 'local' || raw.sttEngine === 'cloud') {
+      out.sttEngine = raw.sttEngine;
+    }
     if (typeof raw.correction === 'boolean') out.correction = raw.correction;
+    // An unparseable chord is DROPPED, not carried: a hand-edited `voice.json` must degrade
+    // to the default binding rather than to a mode whose only input never fires.
+    if (typeof raw.pushToTalk === 'string') {
+      const chord = normalizeHotkey(raw.pushToTalk);
+      if (chord) out.pushToTalk = chord;
+    }
+    if (raw.pushToTalkMode === 'hold' || raw.pushToTalkMode === 'toggle') {
+      out.pushToTalkMode = raw.pushToTalkMode;
+    }
+    if (typeof raw.speech === 'boolean') out.speech = raw.speech;
+    if (typeof raw.speechRate === 'number') out.speechRate = clampSpeechRate(raw.speechRate);
     return out;
   } catch {
     return {};
@@ -93,7 +177,7 @@ function writeAtomic0600(filePath: string, content: string): void {
  * cannot blank the key it never rendered.
  */
 export function writeVoiceConfig(
-  patch: Partial<Record<keyof VoiceConfig, string | boolean | null | undefined>>,
+  patch: Partial<Record<keyof VoiceConfig, string | number | boolean | null | undefined>>,
   home: string = homedir(),
 ): VoiceConfig {
   const current = readVoiceConfig(home);
@@ -123,24 +207,58 @@ export function voiceApiKey(home: string = homedir()): string | null {
   return env && env.trim() ? env.trim() : null;
 }
 
+/** The Groq key, or null. Same env fallback as the OpenRouter one, same reason. */
+export function groqApiKey(home: string = homedir()): string | null {
+  const stored = readVoiceConfig(home).groqKey;
+  if (stored) return stored;
+  const env = process.env.GROQ_API_KEY;
+  return env && env.trim() ? env.trim() : null;
+}
+
 /** What Settings and the composer are allowed to know. Note `key` is a BOOLEAN: there is
  *  deliberately no route by which the key itself travels back to a client. */
 export interface VoiceStatus {
   key: boolean;
+  /** Whether a Groq key is set. Like `key`, a BOOLEAN: no route returns a key. */
+  groq: boolean;
   voice: string;
   sttLanguage: string;
+  sttEngine: 'auto' | 'local' | 'cloud';
   correction: boolean;
+  pushToTalk: string;
+  /** The mode as STORED. A latch key overrides it — see `pushToTalkMode` below. */
+  pushToTalkMode: PushToTalkMode;
+  speech: boolean;
+  speechRate: number;
 }
 
 export function voiceStatus(home: string = homedir()): VoiceStatus {
   const cfg = readVoiceConfig(home);
   return {
     key: Boolean(voiceApiKey(home)),
+    groq: Boolean(groqApiKey(home)),
     voice: cfg.voice || DEFAULT_VOICE,
     sttLanguage: cfg.sttLanguage || AUTO_LANGUAGE,
+    // `auto` again, and the reason is a measurement rather than a preference: the cloud
+    // model is right but its ROUTING is not dependable — the same 4.7s take came back in
+    // 1.3s, 9.2s, 14.2s and 1.3s through OpenRouter, where a warm local whisper answered in
+    // 0.85s every time. Auto prefers local when it is installed, cloud when it is not, and a
+    // Groq key (Settings) makes the cloud path fast and steady too.
+    sttEngine: cfg.sttEngine || 'auto',
     // Default ON, but the whole pass is behind AC6b: if the measured push-to-talk-to-submit
     // time blows the budget in the real app, this default flips to false and the pass
     // becomes an explicit opt-in. That is a one-line change here, by design.
     correction: cfg.correction !== false,
+    pushToTalk: cfg.pushToTalk || DEFAULT_PUSH_TO_TALK,
+    // REPORTED EFFECTIVE, not as stored: Caps Lock can only toggle, and a Settings card that
+    // showed "hold" for it would be describing a binding the composer will never honour.
+    pushToTalkMode: effectiveMode(
+      cfg.pushToTalk || DEFAULT_PUSH_TO_TALK,
+      cfg.pushToTalkMode || DEFAULT_PUSH_TO_TALK_MODE,
+    ),
+    // Both default ON: the mode's whole proposition is a spoken answer, and a feature that
+    // has to be switched on twice reads as broken the first time.
+    speech: cfg.speech !== false,
+    speechRate: cfg.speechRate ?? DEFAULT_SPEECH_RATE,
   };
 }

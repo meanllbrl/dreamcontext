@@ -2,6 +2,23 @@
  * The OpenRouter edge: the base URL, the model RESOLVER, and the rule that no upstream
  * response body ever leaves this module.
  *
+ * ── WHAT OPENROUTER ACTUALLY SERVES, MEASURED AGAINST THE LIVE API (2026-09-07) ─────────
+ * The plan this feature was built from said both OpenAI-compatible audio endpoints were
+ * available. They ANSWER — `/audio/transcriptions` and `/audio/speech` both validate a
+ * `model` field — but no model exists behind either: every id we asked for came back
+ * "Model … does not exist", and the catalogue holds no transcription or TTS model at all.
+ * The owner's first real push-to-talk is how we found out, exactly the failure mode AC3b was
+ * written to prevent, one layer further down than it was looking.
+ *
+ * Audio on OpenRouter today is CHAT COMPLETIONS on an omni model:
+ *   • IN  — a `input_audio` content part, base64, and the format enum is `wav` or `mp3`
+ *           ONLY (m4a/mp4/webm are refused, which is why the browser now records WAV).
+ *   • OUT — `stream: true` plus `modalities: ['text','audio']`; `mp3` is rejected while
+ *           streaming, so it arrives as headerless `pcm16` at 24 kHz and gets its RIFF
+ *           header back on this side (`wav.ts`).
+ * Measured on the owner's key: a 3-second take transcribes in ~1.2s for $0.00007, and 4.75s
+ * of speech generates in 1.7s — 0.36x realtime, so the queue stays ahead of playback.
+ *
  * WHY MODEL IDS ARE RESOLVED AND NEVER HARDCODED (AC3b). Every audio model id this plan
  * quotes came from an announcement blog post, not from the models API, and several were
  * written with a version suffix wildcard (`openai/gpt-4o-mini-tts-*`). A hardcoded id that
@@ -22,6 +39,16 @@
 import { voiceApiKey } from './config.js';
 
 export const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
+
+/**
+ * Groq's OpenAI-compatible base. The transcription request is byte-identical to
+ * OpenRouter's — same multipart, same field names — so supporting it is a base URL and a
+ * key, not an integration.
+ */
+export const GROQ_BASE = 'https://api.groq.com/openai/v1';
+
+/** Groq's id for the same model. Providers namespace differently; this one has no prefix. */
+export const GROQ_TRANSCRIPTION_MODEL = 'whisper-large-v3-turbo';
 
 /** Sent on every call so usage is attributable in the owner's OpenRouter dashboard. */
 export const OPENROUTER_HEADERS = {
@@ -55,26 +82,69 @@ export function logUpstream(scope: string, status: number, body: string, key?: s
 
 // ─── Model resolution ─────────────────────────────────────────────────────────
 
+/**
+ * ── THE AUDIO ENDPOINTS HAVE THEIR OWN NAMESPACE, AND `/models` DOES NOT LIST IT ─────────
+ *
+ * This cost a wrong conclusion, so it is written down rather than left to be rediscovered.
+ * `GET /models` returns CHAT models. The ids that `/audio/transcriptions` and `/audio/speech`
+ * accept are NOT in it — `openai/whisper-large-v3-turbo` transcribes perfectly well while
+ * being absent from the catalogue, and `google/gemini-3.1-flash-tts-preview` speaks while
+ * being absent from it too. Resolving an audio model against `/models` therefore reports
+ * "no model matched" for models that exist, which is exactly the error the owner saw.
+ *
+ * So the audio ids below are NOT resolved. They are tried in order against the endpoint
+ * itself, which is the only thing that actually knows.
+ */
+export const AUDIO_MODELS = {
+  /**
+   * Transcription, measured on the owner's key against the same Turkish take:
+   *
+   *   whisper-large-v3-turbo   704-1087ms   $0.000111   "Dremontext Taskını güncelle ve…"
+   *   gpt-4o-transcribe        1111ms       $0.000172   "Durayan jontext taskını…"
+   *   gpt-4o-mini-transcribe   1009ms       $0.000172   "Gramjon text taskını…"
+   *
+   * Whisper is both the cheapest and the most accurate here, and it is a REAL speech
+   * recogniser rather than an omni chat model doing its best — it needs no language hint, no
+   * anti-echo sentinel and no "please only transcribe" prompt.
+   */
+  transcription: [
+    'openai/whisper-large-v3-turbo',
+    'openai/gpt-4o-transcribe',
+  ],
+  /**
+   * Speech, also measured head to head, with the output fed BACK through whisper to score
+   * how faithfully each read the line:
+   *
+   *   gpt-audio-mini            1.4-1.8s for ~4.5s of audio (0.31-0.55x realtime)  fidelity 0.86-1.00
+   *   gemini-3.1-flash-tts      3.4-4.3s for ~4.5s of audio (0.75-1.37x realtime)  fidelity 0.80-1.00
+   *
+   * The chat model is 2.4x faster at equal fidelity, so it stays first. Gemini is a REAL TTS
+   * and cannot "answer the line instead of reading it", which is why it is second rather than
+   * absent: it is what the verbatim guard falls back to instead of dropping a chunk.
+   */
+  speech: ['openai/gpt-audio-mini', 'openai/gpt-audio'],
+  speechFallback: ['google/gemini-3.1-flash-tts-preview'],
+} as const;
+
+/** The catalogues we resolve against, in preference order. First live match wins. */
 /** The three catalogues we resolve against, in preference order. First live match wins. */
 export const MODEL_PREFERENCES = {
-  /** Transcription. `gpt-4o-mini-transcribe` first: cheapest, and fast enough for a take. */
-  transcription: [
-    'openai/gpt-4o-mini-transcribe',
-    'openai/gpt-4o-transcribe',
-    'openai/whisper-large-v3',
-    'google/chirp-3',
-  ],
-  /** Speech. The character lives in `instructions`, so switching voice later is a swap here. */
-  speech: [
-    'openai/gpt-4o-mini-tts',
-    'google/gemini-3.1-flash-tts-preview',
-    'mistralai/voxtral-mini-tts',
-  ],
-  /** The correction pass. Small and cheap — roughly $0.0001 a take. */
+  /** Kept only so a caller asking for a chat-catalogue model still resolves; the AUDIO ids
+   *  live in {@link AUDIO_MODELS} and are deliberately not resolved. */
+  transcription: ['openai/gpt-audio-mini'],
+  speech: ['openai/gpt-audio-mini'],
+  /**
+   * The correction pass, ordered by MEASUREMENT on the owner's key rather than by reputation.
+   * `gemini-2.5-flash-lite` answered in 615ms against `gpt-4o-mini`'s 1891ms — and it was
+   * also the more CONSERVATIVE of the two, fixing the one mangled product name and leaving
+   * the rest of the sentence alone, where gpt-4o-mini rewrote "insight" into "şifreler"
+   * (passwords). Both properties point the same way, which is unusual and worth writing down:
+   * the fast model is the safe one here, because this pass must repair jargon, not rephrase.
+   */
   correction: [
-    'openai/gpt-4o-mini',
     'google/gemini-2.5-flash-lite',
     'anthropic/claude-haiku-4.5',
+    'openai/gpt-4o-mini',
   ],
 } as const;
 
