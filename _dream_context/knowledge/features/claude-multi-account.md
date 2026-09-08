@@ -11,7 +11,7 @@ pinned: false
 date: '2026-09-05'
 status: in_review
 created: '2026-09-05'
-updated: '2026-09-07'
+updated: '2026-09-08'
 released_version: 0.27.0
 product: desktop
 tags:
@@ -28,6 +28,8 @@ related_tasks:
     agents-hesap-paneli-okunur-olur-her-hesabin-iki-limiti-surukle-birak-oncelik-ve-yenile
   - a-claude-account-switch-reaches-the-sessions-already-open
   - automation-runs-must-degrade-gracefully-on-the-account-usage-limit
+  - >-
+    auto-switch-brings-the-session-home-when-the-preferred-account-s-window-reopens
 ---
 
 ## Why
