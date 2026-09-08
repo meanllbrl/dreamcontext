@@ -488,7 +488,7 @@ export interface ClaudeExecOptions {
    * Callers must obtain this from `accountEnvFor(resolveConfigDir(...))`, never build it by
    * hand: the gate is what validates the id's shape and confines the path.
    */
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
   /**
    * Discard the child's stdout/stderr entirely instead of buffering it.
    *
@@ -532,7 +532,9 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
 
   const spawnOptions: Parameters<SpawnImpl>[2] = {
     cwd: opts.cwd,
-    // `opts.env` last: the per-account `CLAUDE_CONFIG_DIR` must win over an inherited one.
+    // `opts.env` last: the per-account `CLAUDE_CONFIG_DIR` must win over an inherited one —
+    // including account #0, whose entry is `undefined` and therefore REMOVES the inherited
+    // value rather than leaving it to redirect the child (see `accountEnvFor`).
     env: { ...process.env, PATH: claudeAwarePath(), ...(opts.env ?? {}) },
     stdio: opts.discardOutput ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
     detached: true,

@@ -230,27 +230,42 @@ describe('readUsageLimits — the `limits[]` fallback', () => {
 });
 
 /**
- * `agent-usage.ts` — the composer's own usage route — still calls `readUsageLimits()` with no
- * argument. It reports the machine's account, and multi-account did not change that. This
- * proves it: if someone ever threads a request value into THIS route, it fails and says why.
- * Other callers may legitimately pass a directory now, but only one that came from
- * `resolveConfigDir` and survived the reader's own confinement assertion.
+ * `agent-usage.ts` — the composer's own usage route — now takes an `?account=<id>`, because a
+ * pane running on a second account was being shown the PRIMARY account's bars. The invariant
+ * that matters did not change with it, and this is where it is pinned:
+ *
+ *   a request may choose the ACCOUNT. A request may never choose the PATH.
+ *
+ * The id goes through `resolveConfigDir` — the single gate that refuses a non-slug id, refuses
+ * an unregistered one, and asserts the resolved directory is either `homedir()` or inside the
+ * sandbox root. So the failure this guards is not "an argument was passed" any more; it is a
+ * value reaching the reader without having been through that gate.
  */
-describe('the route never lets a request choose which file is read', () => {
+describe('the route lets a request choose the ACCOUNT, never the PATH', () => {
   const repoRoot = new URL('../../', import.meta.url).pathname;
   const source = readFileSync(join(repoRoot, 'src/server/routes/agent-usage.ts'), 'utf-8');
 
-  it('calls readUsageLimits() with ZERO arguments', () => {
-    expect(source).toContain('readUsageLimits()');
-    // Any argument at all — `req`, a vault, a contextRoot — is the failure this guards.
-    expect(/readUsageLimits\(\s*[^)\s]/.test(source), 'readUsageLimits was called with an argument').toBe(false);
+  it('reads only a directory that came out of resolveConfigDir', () => {
+    expect(source).toContain('resolveConfigDir(');
+    // ONE call, with the ONE value. A raw query param, a vault, a contextRoot — any of those
+    // appearing here is the regression.
+    expect(source.match(/readUsageLimits\([^)]*\)/g)).toEqual(['readUsageLimits(configDir)']);
   });
 
-  it('never reaches homedir()/userInfo() itself — the lib owns that decision', () => {
-    expect(source).not.toContain('homedir');
-    expect(source).not.toContain('userInfo');
+  it('builds no path of its own — no node:os, no node:path, no env', () => {
+    // Asserted on the IMPORTS, not on a substring of the file: the doc comment names
+    // `homedir()` in order to explain what the gate guarantees.
+    expect(source).not.toMatch(/from\s*'node:os'/);
+    expect(source).not.toMatch(/from\s*'node:path'/);
+    expect(source).not.toContain('CLAUDE_CONFIG_DIR');
+    expect(source).not.toContain('process.env');
   });
 
+  it('an id it cannot resolve answers with an EMPTY reading, never an error', () => {
+    // A bar is not an action: a 500 here would surface a failure the user cannot act on, in
+    // place of a popover that simply draws nothing.
+    expect(source).toMatch(/catch\s*\{[\s\S]*?EMPTY_USAGE_LIMITS/);
+  });
   it('the lib honours $HOME (homedir), never os.userInfo().homedir which ignores it', () => {
     const lib = readFileSync(join(repoRoot, 'src/lib/claude-usage.ts'), 'utf-8');
     expect(lib).toContain('homedir()');

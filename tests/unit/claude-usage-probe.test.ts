@@ -1,17 +1,23 @@
 /**
  * `claude-usage-probe.ts` — reading an account's limits WITHOUT switching to it.
  *
- * ── The finding this file exists to pin ───────────────────────────────────────────────
- * THE EXIT CODE IS NOT THE SUCCESS CRITERION. Measured on a real CLI (2.1.260): in a config
- * dir with no credential, `claude -p "/usage" --output-format json` exits in ~772ms with
- * code 0, `is_error: false`, `subtype: "success"`, returns an empty cost summary instead of a
- * usage report, and writes NO `cachedUsageUtilization`. An implementation that trusts the
- * exit code reads a signed-out account as "healthy but numberless" and the needs-relogin
- * signal is never born — worse than a hang, because it looks like success.
+ * ── Two findings are pinned here ─────────────────────────────────────────────────────
+ * 1. THE ANSWER IS ON STDOUT. Measured 2026-09-07 (CLI 2.1.259), the CLI throttles the
+ *    `cachedUsageUtilization` write to once per 5 minutes (`Uso = 300000` in its bundle), so
+ *    an account read in the last five minutes prints a full report and leaves the file
+ *    untouched. This file's earlier version defined success as "the file moved", which made
+ *    every busy account unmeasurable, drew "not measured" across Settings, and left
+ *    auto-switch picking by register order with the real percentages unread on disk.
  *
- * So every case below drives the probe through its INJECTED spawn, and what decides the
- * outcome is what happened to the cache on disk: `fetchedAtMs` advancing, and `accountUuid`
- * matching the register.
+ * 2. THE EXIT CODE IS NOT THE SUCCESS CRITERION EITHER. Also measured: in a config dir with
+ *    no credential the probe exits in ~772ms with code 0, `is_error: false`,
+ *    `subtype: "success"` and an empty cost summary instead of a report. An implementation
+ *    that trusts the exit code reads a signed-out account as "healthy but numberless" and
+ *    the needs-relogin signal is never born — worse than a hang, because it looks like
+ *    success.
+ *
+ * So every case below drives the probe through its INJECTED spawn, and the outcome is decided
+ * by what came back on stdout, then by the cache's own age and `accountUuid`.
  */
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -99,6 +105,114 @@ beforeEach(() => {
   writeClaudeAccounts([registered], HOME);
 });
 
+/** The verbatim envelope `claude -p "/usage" --output-format json` prints: the report lives
+ *  in `result`, alongside cost accounting and a session id that this codebase never reads. */
+function envelope(report: string): string {
+  return JSON.stringify({
+    is_error: false, num_turns: 0, total_cost_usd: 0, subtype: 'success',
+    session_id: '538c6ae3-fffa-434c-a86b-f09eb46d0788', result: report,
+  });
+}
+
+const LIVE_REPORT = [
+  'You are currently using your subscription to power your Claude Code usage',
+  '',
+  'Current session: 44% used · resets Sep 5 at 3:00pm (UTC)',
+  'Current week (all models): 51% used · resets Sep 9 at 2:59am (UTC)',
+].join('\n');
+
+describe('ok — the LIVE REPORT is believed first, whatever the cache did', () => {
+  it('reads the report even though the cache never moved (the 5-minute write throttle)', () => {
+    // THE REGRESSION. Cache present, recent-looking, and deliberately NOT rewritten by the
+    // child — exactly what the CLI does when it was written less than 5 minutes ago. The old
+    // criterion called this `healthy-unmeasured`; there are two percentages right here.
+    writeSandboxConfig({
+      oauthAccount: { accountUuid: ACCOUNT_UUID },
+      cachedUsageUtilization: usageCache({ fetchedAtMs: Date.now() - 60_000, percent: 3 }),
+    });
+
+    return probeAccountUsage(SANDBOX, {
+      home: HOME,
+      authStatus: noJudge as never,
+      runProbe: async () => ({ timedOut: false, stdout: envelope(LIVE_REPORT) }),
+    }).then((res) => {
+      expect(res.status).toBe('ok');
+      if (res.status !== 'ok') return;
+      // The REPORT's numbers, not the cache's 3%.
+      expect(res.limits.limits.map((l) => l.percent)).toEqual([44, 51]);
+      expect(res.limits.fetchedAtMs).toBeGreaterThan(Date.now() - 5_000);
+    });
+  });
+
+  it('reads a bare report too, for a CLI that ignores --output-format', async () => {
+    writeSandboxConfig({ oauthAccount: { accountUuid: ACCOUNT_UUID } });
+    const res = await probeAccountUsage(SANDBOX, {
+      home: HOME,
+      authStatus: noJudge as never,
+      runProbe: async () => ({ timedOut: false, stdout: LIVE_REPORT }),
+    });
+    expect(res.status).toBe('ok');
+    if (res.status === 'ok') expect(res.limits.limits[0]!.percent).toBe(44);
+  });
+
+  it('carries a LOCK from the cache onto the live reading — the one fact the report omits', async () => {
+    const cache = usageCache({ fetchedAtMs: Date.now() - 60_000 }) as unknown as
+      { utilization: Record<string, Record<string, unknown>> };
+    cache.utilization.five_hour!.locked_reason = 'weekly_limit_reached';
+    writeSandboxConfig({ oauthAccount: { accountUuid: ACCOUNT_UUID }, cachedUsageUtilization: cache });
+
+    const res = await probeAccountUsage(SANDBOX, {
+      home: HOME,
+      authStatus: noJudge as never,
+      runProbe: async () => ({ timedOut: false, stdout: envelope(LIVE_REPORT) }),
+    });
+    expect(res.status).toBe('ok');
+    // A locked window is never an auto-switch candidate whatever the percent beside it says,
+    // so losing the lock on the way to a fresher percent would be a downgrade.
+    if (res.status === 'ok') {
+      expect(res.limits.limits.find((l) => l.key === 'session')?.lockedReason).toBe('weekly_limit_reached');
+    }
+  });
+});
+
+describe('ok — the cache, when it moved or is inside the write throttle', () => {
+  it('a cache younger than the throttle IS a reading, even with no report at all', async () => {
+    // The throttle is the ONLY reason a fetch would not have rewritten it, so its numbers are
+    // at most five minutes old. Calling that "unmeasured" is what broke the feature.
+    writeSandboxConfig({
+      oauthAccount: { accountUuid: ACCOUNT_UUID },
+      cachedUsageUtilization: usageCache({ fetchedAtMs: Date.now() - 60_000, percent: 12 }),
+    });
+
+    const res = await probeAccountUsage(SANDBOX, {
+      home: HOME,
+      authStatus: noJudge as never,
+      runProbe: async () => ({ timedOut: false }),
+    });
+    expect(res.status).toBe('ok');
+    if (res.status === 'ok') expect(res.limits.limits.find((l) => l.key === 'session')?.percent).toBe(12);
+  });
+
+  it('a cache OLDER than the throttle that did not move is not a reading — it escalates', async () => {
+    // Past the throttle the CLI would have rewritten the file had it fetched anything. It
+    // did not, so nothing here was measured now, and the honest next step is to ask the
+    // judge why rather than to serve an old number as a fresh one.
+    writeSandboxConfig({
+      oauthAccount: { accountUuid: ACCOUNT_UUID },
+      cachedUsageUtilization: usageCache({ fetchedAtMs: Date.now() - 20 * 60_000 }),
+    });
+
+    const j = judge({ loggedIn: true, email: 'b@example.com' });
+    const res = await probeAccountUsage(SANDBOX, {
+      home: HOME,
+      authStatus: j.fn as never,
+      runProbe: async () => ({ timedOut: false }),
+    });
+    expect(res.status).toBe('healthy-unmeasured');
+    expect(j.calls).toHaveLength(1);
+  });
+});
+
 describe('ok — the cache refreshed AND belongs to this account', () => {
   it('returns the fresh reading', async () => {
     writeSandboxConfig({ oauthAccount: { accountUuid: ACCOUNT_UUID }, cachedUsageUtilization: usageCache({ fetchedAtMs: 1_000 }) });
@@ -158,6 +272,24 @@ describe('stale — the refreshed cache belongs to a DIFFERENT account', () => {
 
     expect(res.status).toBe('stale');
     // The dangerous failure would be reporting 2% and picking this account as the emptiest.
+    expect(JSON.stringify(res)).not.toContain('"percent"');
+  });
+
+  it('discards a perfectly readable REPORT too — identity outranks every source', async () => {
+    // A directory signed in as someone else prints a valid report for the WRONG quota pool.
+    // The check has to guard the report as well as the cache, or the fix to one reopens the
+    // hole in the other.
+    writeSandboxConfig({
+      oauthAccount: { accountUuid: 'uuid-somebody-else' },
+      cachedUsageUtilization: usageCache({ fetchedAtMs: Date.now() - 60_000, accountUuid: 'uuid-somebody-else' }),
+    });
+
+    const res = await probeAccountUsage(SANDBOX, {
+      home: HOME,
+      authStatus: noJudge as never,
+      runProbe: async () => ({ timedOut: false, stdout: envelope(LIVE_REPORT) }),
+    });
+    expect(res.status).toBe('stale');
     expect(JSON.stringify(res)).not.toContain('"percent"');
   });
 });

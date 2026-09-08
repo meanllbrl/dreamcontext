@@ -38,12 +38,15 @@ import './ClaudeAccounts.css';
  * numbers is the one moment worth spending the spawns on, and it cannot storm because it is
  * gated on staleness and fires once per mount.
  *
- * MEASURED on the owner's own machine while fixing this: a probe of the Max account came
- * back `healthy-unmeasured` — signed in, but `claude -p "/usage"` publishes no percentages
- * for it (see claude-usage-probe.ts). Its cache still holds real numbers, written by the CLI
- * during ordinary use; the refresh button simply cannot move them. So a refresh that could
- * not measure an account SAYS SO on that account's row. A generic "1 could not be read"
- * would have left the same question the owner arrived with: why is this one not updating?
+ * ── Why "not measured" used to be on every row (2026-09-07) ───────────────────────────
+ * The panel was telling the truth about a probe that was asking the wrong question. It
+ * treated "Claude rewrote its usage cache" as the definition of a successful reading, and the
+ * CLI throttles that write to once per 5 minutes — so any account read in the last five
+ * minutes answered with fresh numbers on stdout and left the file untouched, and every row
+ * said "not measured" while the toolbar said "Nothing could be re-read". The probe now reads
+ * the report itself (claude-usage-report.ts), so a refresh that cannot measure an account is
+ * genuinely unusual — and when it happens the row still SAYS SO, per account, because a
+ * generic "1 could not be read" leaves the question it was meant to answer: which one, and why?
  *
  * ── Order is the priority, all the way down ───────────────────────────────────────────
  * The top account is the one new sessions start on (position 0 IS `preferred`, server-side in
@@ -248,13 +251,12 @@ export function ClaudeAccounts() {
   /** What a probe outcome means for the person reading the row. */
   const probeExplanation = (why: string): string => {
     if (why === 'healthy-unmeasured') {
-      // Deliberately not "Claude never publishes this": a back-to-back refresh can also
-      // land here when the cache did not change between the two probes. The claim stays to
-      // what was actually observed — this refresh got no percentage.
-      return 'This refresh got no percentage back for this account. Its number updates as the account is used.';
+      // The claim stays at what was actually observed: signed in, asked, no percentage in the
+      // answer. Not "Claude never publishes this for you" — one silent answer is not a rule.
+      return 'This account is signed in, but Claude answered without any usage percentages for it.';
     }
     if (why === 'needs-relogin') return 'Signed out — sign in again to read its usage.';
-    if (why === 'stale') return 'The reading that came back belonged to a different account, so it was discarded.';
+    if (why === 'stale') return 'That account folder is signed in as a different account, so the reading was discarded.';
     return 'Its usage could not be read this time.';
   };
 

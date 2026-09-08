@@ -364,7 +364,27 @@ export function isRealHomeConfigDir(dir: string, home: string = homedir()): bool
   return resolve(dir) === resolve(home);
 }
 
-/** The env a spawn merges to run as this account. Empty for account #0 (nothing to set). */
-export function accountEnvFor(configDir: string, home: string = homedir()): Record<string, string> {
-  return isRealHomeConfigDir(configDir, home) ? {} : { CLAUDE_CONFIG_DIR: configDir };
+/**
+ * The env a spawn merges to run as this account.
+ *
+ * Account #0 does not "set nothing" — it explicitly CLEARS `CLAUDE_CONFIG_DIR`. The variable
+ * cannot express the default (it relocates BOTH `~/.claude.json` and `~/.claude` under one
+ * directory, so no value points at the real pair), which leaves removal as the only way to
+ * say "the machine's own account". Node omits an `undefined` value from a child's env, so a
+ * plain spread over `process.env` still expresses it.
+ *
+ * MEASURED 2026-09-07, and it is not hypothetical: a probe of the PRIMARY account, run from a
+ * process that itself inherited `CLAUDE_CONFIG_DIR` from a sandbox account (any `claude`
+ * session exports it, so any dreamcontext command started inside one has it), read the
+ * SANDBOX account's usage and attributed it to the primary — 9% session where the primary was
+ * at 98%. Nothing downstream can catch that: a usage report carries no identity, and the
+ * cache's `accountUuid` was the primary's own. The only place it can be prevented is here.
+ */
+export function accountEnvFor(
+  configDir: string,
+  home: string = homedir(),
+): Record<string, string | undefined> {
+  return isRealHomeConfigDir(configDir, home)
+    ? { CLAUDE_CONFIG_DIR: undefined }
+    : { CLAUDE_CONFIG_DIR: configDir };
 }

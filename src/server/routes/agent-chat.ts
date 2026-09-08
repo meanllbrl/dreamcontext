@@ -34,7 +34,7 @@ import {
 } from '../../lib/claude-accounts.js';
 import { ensureSandbox, ensureSharedMcpConfig } from '../../lib/claude-account-sandbox.js';
 import { probeAccountUsage } from '../../lib/claude-usage-probe.js';
-import { readUsageLimits } from '../../lib/claude-usage.js';
+import { readUsageLimits, usageReadingIsCurrent } from '../../lib/claude-usage.js';
 import {
   SWITCH_THRESHOLD_PERCENT, chooseAccount, shouldProbe, shouldSwitchAway, type AccountReading,
 } from '../../lib/claude-account-switch.js';
@@ -450,6 +450,17 @@ const INTERRUPT_WATCHDOG_MS = 5000;
 /** After escalating to SIGINT, how long to wait before SIGKILL. */
 const INTERRUPT_KILL_GRACE_MS = 1500;
 
+/**
+ * How often ONE pane may spend a usage probe on a reading it cannot trust — a cache that is
+ * absent, or older than the ceiling Claude Code itself applies to its own.
+ *
+ * The probe is free in money and ~4s in wall clock, and it runs BEFORE the turn is sent, so
+ * an ungated version would put those seconds in front of every message a pane sends while its
+ * account stays unread. A minute is short enough that the first message after a quiet spell
+ * still arms auto-switch, and long enough that a conversation never pays twice.
+ */
+const BLIND_PROBE_COOLDOWN_MS = 60_000;
+
 /** How long a chat's `claude` child may outlive its WebSocket to finish an in-flight turn.
  *
  *  A `claude -p --input-format stream-json` process whose stdin stays open waits for the
@@ -635,7 +646,7 @@ export function startChatSession(
     // claude-aware PATH: `claude` installs into ~/.local/bin, which no default PATH
     // contains — without this the login shell 127s whenever the install's `export
     // PATH` echo never reached the user's rc. See src/lib/claude-path.ts.
-    env: { ...process.env, PATH: claudeAwarePath(), ...tabEnv, ...deferredEnv, ...accountEnv } as Record<string, string>,
+    env: { ...process.env, PATH: claudeAwarePath(), ...tabEnv, ...deferredEnv, ...accountEnv } as NodeJS.ProcessEnv,
   });
 
   // Liveness guard (mirrors agent-terminal.ts:1408's `if (!alive) return;`): a stale
@@ -997,6 +1008,13 @@ export function startChatSession(
   let switchGate: Promise<unknown> = Promise.resolve();
 
   /**
+   * When this pane last spent a probe on a reading too old to TRUST (as opposed to one that
+   * looks near a limit). Per pane on purpose: no module state to reason about, and one pane's
+   * blind spell cannot silence another's check.
+   */
+  let lastBlindProbeAt = 0;
+
+  /**
    * Ask every account where the next turn should go, and announce the answer.
    *
    * Extracted so the PRE-EMPTIVE path (percent nearing the threshold) and the POST-HOC path
@@ -1171,8 +1189,17 @@ export function startChatSession(
         text, 'limit_known', { id: activeAccountId, problem: 'unknown' }, standingRefusal.until);
     }
 
+    // A reading we cannot TRUST is not a reason to skip the check — it is the reason to make
+    // it. `shouldProbe` can only answer from percentages, so an account whose cache is absent
+    // or past the ceiling Claude Code itself applies (`USAGE_CACHE_MAX_AGE_MS`) took the
+    // silent "nothing to see here" path and auto-switch never armed at all — the account most
+    // likely to be in that state is a quiet one nobody has read for hours. The probe is free;
+    // the cooldown is what stops a pane that keeps reading nothing from paying ~4s a message.
     let active = readUsageLimits(accountConfigDir);
-    if (!shouldProbe(active)) return false;
+    const blind = !usageReadingIsCurrent(active)
+      && Date.now() - lastBlindProbeAt > BLIND_PROBE_COOLDOWN_MS;
+    if (!blind && !shouldProbe(active)) return false;
+    if (blind) lastBlindProbeAt = Date.now();
 
     // Past the probe threshold: refresh the ACTIVE account for real before acting on a
     // possibly stale cache.

@@ -199,9 +199,10 @@ function runProbe(dir: string, timeoutMs?: number): Promise<ClaudeAuthStatus> {
     // claude-aware, so `~/.local/bin` installs resolve without an rc edit.
     const bin = findClaudeBin();
     const shell = process.env.SHELL || '/bin/zsh';
-    // `accountEnvFor` sets `CLAUDE_CONFIG_DIR` for a sandbox and sets NOTHING for the real
-    // HOME — the two are not interchangeable: `CLAUDE_CONFIG_DIR=$HOME` would move the CLI's
-    // projects directory to `~/projects`, which is not where the real transcripts live.
+    // `accountEnvFor` sets `CLAUDE_CONFIG_DIR` for a sandbox and REMOVES it for the real HOME.
+    // The three states are not interchangeable: `CLAUDE_CONFIG_DIR=$HOME` would move the CLI's
+    // projects directory to `~/projects`, and leaving an INHERITED value in place would ask
+    // this judge about whichever account the parent process happened to be running as.
     const env = { ...process.env, PATH: claudeAwarePath(), ...accountEnvFor(dir) } as NodeJS.ProcessEnv;
     let child: ReturnType<typeof spawn>;
     try {

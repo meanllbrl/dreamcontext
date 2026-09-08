@@ -104,15 +104,21 @@ const NO_USAGE_LIMITS: UsageLimitsResponse = { limits: [], fetchedAtMs: null };
  * Code refreshes its own cache. Keying by `claudeId` at the 5s cadence would re-read the same
  * file N times a tick for N open panes and learn nothing new.
  *
- * The query key carries no id for exactly that reason: every pane's popover subscribes to ONE
- * cache entry, so concurrent fetches dedupe and the 60s timer is shared rather than
- * per-observer. Falls back to an empty list, which the popover renders as no bars at all.
+ * The query key carries the ACCOUNT, and nothing else — not the pane, not the conversation.
+ * Panes on the same account share one cache entry, so concurrent fetches dedupe and the 60s
+ * timer is shared rather than per-observer; panes on DIFFERENT accounts no longer share a
+ * reading, which is the bug this argument fixes. Until 2026-09-07 every pane was shown the
+ * PRIMARY account's bars: measured on the owner's machine, 98% session on a popover whose pane
+ * was actually running at 3%. Falls back to an empty list, which draws no bars at all.
  */
-export function useUsageLimits(enabled: boolean) {
+export function useUsageLimits(enabled: boolean, accountId = '') {
   const api = useApi();
+  const path = accountId
+    ? '/agent/usage-limits?account=' + encodeURIComponent(accountId)
+    : '/agent/usage-limits';
   return useQuery({
-    queryKey: ['agent-usage-limits'],
-    queryFn: () => api.get<UsageLimitsResponse>('/agent/usage-limits'),
+    queryKey: ['agent-usage-limits', accountId],
+    queryFn: () => api.get<UsageLimitsResponse>(path),
     enabled,
     refetchInterval: enabled ? 60_000 : false,
     staleTime: 55_000,

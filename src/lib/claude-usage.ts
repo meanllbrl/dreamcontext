@@ -79,6 +79,41 @@ export interface UsageLimitsResponse {
 export const EMPTY_USAGE_LIMITS: UsageLimitsResponse = { limits: [], fetchedAtMs: null };
 
 /**
+ * The CLI's own WRITE THROTTLE on this cache, read out of the 2.1.259 bundle (`Uso = 300000`):
+ * it refuses to rewrite `cachedUsageUtilization` while the existing entry for the same account
+ * is younger than 5 minutes, however fresh the numbers it just fetched are.
+ *
+ * Two consequences, and both are load-bearing:
+ *   • "the file did not move" is NOT evidence that a probe failed — see claude-usage-report.ts;
+ *   • a cache younger than this IS current, because the only thing standing between it and a
+ *     rewrite is the throttle. So a reading this fresh needs no probe to be trusted.
+ */
+export const USAGE_CACHE_WRITE_THROTTLE_MS = 5 * 60_000;
+
+/**
+ * The CLI's own READ ceiling on this cache, from the same bundle (`Bso = 3600000`): past an
+ * hour it discards its cached utilization and returns nothing rather than show it.
+ *
+ * Mirrored here so nothing in this codebase presents as a MEASUREMENT what Claude Code itself
+ * would refuse to use. The surfaces may still LABEL an older reading ("read 3h ago"); what they
+ * must not do is let it decide which account gets billed for the next turn.
+ */
+export const USAGE_CACHE_MAX_AGE_MS = 60 * 60_000;
+
+/**
+ * Which weekly cap BINDS — the one rule, in one place, because two readers apply it: the cache
+ * reader below and the live-report parser in `claude-usage-report.ts`.
+ *
+ * An account can carry two weekly numbers: `weekly_all` (every model) and `weekly_scoped` (one
+ * model). Two near-identical bars are noise, so ONE is drawn: whichever cap is hit FIRST. The
+ * scoped one replaces the all-models one only when it is strictly higher, and then it carries
+ * its model name so the user can see which cap is binding.
+ */
+export function weeklyBindsOnScoped(allPercent: number | null, scopedPercent: number | null): boolean {
+  return scopedPercent !== null && (allPercent === null || scopedPercent > allPercent);
+}
+
+/**
  * MIRRORED from `readJsonSafe` (src/server/routes/agent-terminal.ts:914) rather than
  * imported: `src/lib/` must not depend on `src/server/routes/`, which would invert the
  * layering (routes compose lib, never the reverse). Four lines is the right price for
@@ -189,20 +224,12 @@ export function readUsageLimits(home: string = homedir()): UsageLimitsResponse {
   // carries one and not the other.
   const session = pick(fromSummary(util.five_hour), () => findLimit(entries, 'session'));
 
-  // Weekly: same fallback, then the BINDING-CAP rule.
-  //
-  // The account can carry two weekly numbers: `weekly_all` (every model) and
-  // `weekly_scoped` (one model). In the observed sample they sit three points apart, and
-  // two near-identical bars are noise rather than information. So ONE bar is drawn, and it
-  // is whichever cap the user hits FIRST: the scoped one replaces the all-models one only
-  // when its percent is strictly higher, and then it carries its model name so the user can
-  // see which cap is binding. If only one of the two is readable, that one is the bar.
+  // Weekly: same fallback, then the BINDING-CAP rule — see `weeklyBindsOnScoped`. In the
+  // observed sample the two weekly numbers sit three points apart, and if only one of them is
+  // readable, that one is the bar.
   const weeklyAll = pick(fromSummary(util.seven_day), () => findLimit(entries, 'weekly_all'));
   const scoped = findLimit(entries, 'weekly_scoped');
-  const weekly = scoped.percent !== null
-    && (weeklyAll.percent === null || scoped.percent > weeklyAll.percent)
-    ? scoped
-    : weeklyAll;
+  const weekly = weeklyBindsOnScoped(weeklyAll.percent, scoped.percent) ? scoped : weeklyAll;
 
   const limits = [toWire('session', session), toWire('weekly', weekly)]
     .filter((w): w is UsageLimitWire => w !== null);
@@ -212,4 +239,16 @@ export function readUsageLimits(home: string = homedir()): UsageLimitsResponse {
 /** `primary` when it has a percent, else whatever the fallback finds. */
 function pick(primary: Candidate, fallback: () => Candidate): Candidate {
   return primary.percent !== null ? primary : fallback();
+}
+
+/**
+ * Is this reading something we may DECIDE on — as opposed to something we may only display?
+ *
+ * True when it carries at least one window and its stamp is inside {@link USAGE_CACHE_MAX_AGE_MS},
+ * the ceiling Claude Code itself applies. Anything else means "we do not know", and the honest
+ * response to not knowing is to spend a (free) probe, never to act on the last number seen.
+ */
+export function usageReadingIsCurrent(reading: UsageLimitsResponse, now: number = Date.now()): boolean {
+  if (reading.limits.length === 0 || reading.fetchedAtMs === null) return false;
+  return Math.max(0, now - reading.fetchedAtMs) <= USAGE_CACHE_MAX_AGE_MS;
 }

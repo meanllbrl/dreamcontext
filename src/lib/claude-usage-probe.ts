@@ -6,50 +6,61 @@ import { claudeAwarePath, findClaudeBin } from './claude-path.js';
 import { accountEnvFor, assertConfinedConfigDir, listClaudeAccounts } from './claude-accounts.js';
 import { ensureSandbox } from './claude-account-sandbox.js';
 import { claudeAuthStatus, PROBE_TIMEOUT_MS } from './claude-auth.js';
-import { readUsageLimits, type UsageLimitsResponse } from './claude-usage.js';
+import { readUsageLimits, USAGE_CACHE_WRITE_THROTTLE_MS, type UsageLimitsResponse } from './claude-usage.js';
+import { parseUsageReport, withLockedReasons } from './claude-usage-report.js';
 
 /**
  * Read an account's CURRENT limits WITHOUT switching to it.
  *
- * `claude -p "/usage" --output-format json` is free: measured 2026-09-04 (CLI 2.1.260) it
- * answers in under 1.2s with `num_turns: 0` and `total_cost_usd: 0`, and — the part that
- * makes this feature possible at all — it REFRESHES `<configDir>/.claude.json`'s
- * `cachedUsageUtilization`. So the answer does not have to be parsed out of prose; it is
- * read afterwards by the structured reader we already own (`readUsageLimits`). Being free is
- * what lets the switch threshold sit HIGH, and a high threshold is what stops a session being
- * moved off its account for no reason.
+ * `claude -p "/usage" --output-format json` is free: measured 2026-09-07 (CLI 2.1.259) it
+ * answers in ~4s with `num_turns: 0` and `total_cost_usd: 0`. Being free is what lets the
+ * switch threshold sit HIGH, and a high threshold is what stops a session being moved off its
+ * own account for no reason.
  *
- * ── THE EXIT CODE IS NOT THE SUCCESS CRITERION ────────────────────────────────────────
- * This was MEASURED, and it rots the obvious implementation: in a config dir with no
- * credential, the probe exits in ~772ms with code 0, `is_error: false`, `subtype: "success"`,
- * returns an EMPTY COST SUMMARY instead of a usage report, and writes NO
- * `cachedUsageUtilization` at all. An implementation that trusts the exit code therefore
- * reads a signed-out account as "healthy but numberless", and the needs-relogin signal is
- * never born. That is WORSE than a hang, because it looks like success.
+ * ── THE ANSWER IS ON STDOUT. THE CACHE IS THE FALLBACK. ───────────────────────────────
+ * This file used to define success as "`cachedUsageUtilization.fetchedAtMs` moved", and that
+ * criterion is wrong most of the time. The CLI throttles that write to once per 5 minutes
+ * (`Uso = 300000` in the 2.1.259 bundle, and reproduced both ways on one account minutes
+ * apart — see claude-usage-report.ts for the measurement). So every account with a live
+ * session, and every account probed twice in a row, answered with fresh numbers on stdout
+ * while the file deliberately stood still — and the probe called that "no numbers came back".
+ * Everything downstream inherited it: Settings drew "not measured", and auto-switch fell
+ * through to a last-resort pick in register order while real percentages sat unread.
  *
- * So the probe succeeded only if, after the child exits, `<configDir>/.claude.json`'s
- * `cachedUsageUtilization.fetchedAtMs` is NEWER than what was read before the spawn AND its
- * sibling `accountUuid` is the one the register holds for this account.
+ * So the order of belief is now:
+ *   1. THE REPORT the child just printed — throttled by nothing, and stamped `now`;
+ *   2. the cache, when it MOVED or is younger than the CLI's own write throttle (which is the
+ *      only reason a fetch would not have rewritten it);
+ *   3. nothing — escalate once to the authoritative judge to find out WHY.
+ *
+ * ── THE EXIT CODE IS STILL NOT THE SUCCESS CRITERION ──────────────────────────────────
+ * Also measured: in a config dir with no credential the probe exits in ~772ms with code 0,
+ * `is_error: false`, `subtype: "success"` and an EMPTY cost summary instead of a usage report.
+ * An implementation that trusts the exit code reads a signed-out account as "healthy but
+ * numberless" and the needs-relogin signal is never born — worse than a hang, because it
+ * looks like success. Hence step 3, and hence no `catch` that turns silence into zero.
+ *
+ * ── What of the child's output is READ ────────────────────────────────────────────────
+ * Only `result`, and only percentages and reset times are extracted from it. The envelope
+ * also carries `session_id` and cost accounting; none of it is copied, logged, or returned.
  */
 
 export type ProbeOutcome =
-  /** The cache refreshed and belongs to this account. `limits` is a fresh reading. */
+  /** A reading we trust: the live report, or a cache that is current. Never a zero-fill. */
   | { status: 'ok'; limits: UsageLimitsResponse }
-  /** The cache belongs to a DIFFERENT account. The reading is discarded, never used. */
+  /** The directory's credential belongs to a DIFFERENT account. The reading is discarded. */
   | { status: 'stale'; reason: string }
   /** The authoritative judge says this directory holds no working credential. */
   | { status: 'needs-relogin'; reason: string }
   /**
-   * Signed in, but this account publishes NO usage numbers — a narrower, more useful claim
-   * than `unknown`. MEASURED 2026-09-05 on a Max account: `claude -p "/usage"` answers with
-   * a prose behaviour report ("Last 24h · 4831 requests · 53 sessions…") that contains no
-   * percentages at all, writes no `cachedUsageUtilization`, and exits 0 — while
-   * `auth status --json` reports `loggedIn: true, subscriptionType: "max"`.
+   * Signed in, and yet neither the report nor the cache yielded a percentage.
    *
-   * Collapsing that into `unknown` made such an account permanently ineligible, so on a
-   * machine with one measurable and one unmeasurable account auto-switch could only ever
-   * answer "every account is at its limit". It is a LAST-RESORT candidate instead — see
-   * `chooseAccount`.
+   * This used to be the COMMON outcome, because the probe demanded a cache write the CLI
+   * throttles; with the report read directly it is what it always claimed to be — the genuine
+   * "this account publishes no numbers" case. It stays a LAST-RESORT candidate rather than an
+   * ineligible one (see `chooseAccount`): on a machine with one measurable and one
+   * unmeasurable account, refusing it would make auto-switch answer "every account is at its
+   * limit" and switch nowhere.
    */
   | { status: 'healthy-unmeasured'; reason: string }
   /** We genuinely could not tell. NEVER counted as zero usage. */
@@ -61,12 +72,23 @@ interface CacheStamp {
   accountUuid: string | null;
 }
 
+/** What a spawn reports back. `stdout` is the report; absent means nothing was captured. */
+export interface ProbeRun {
+  timedOut: boolean;
+  error?: string;
+  stdout?: string;
+}
+
 /** The probe's total budget. The judge escalation is taken OUT of this, never added to it. */
 export const USAGE_PROBE_TIMEOUT_MS = 20_000;
 
+/** The measured report is ~1.5 KB. Past this the child is not answering `/usage`, and an
+ *  unbounded read of another process's stdout is not something to hold in memory. */
+const PROBE_STDOUT_CAP = 256 * 1024;
+
 export interface ProbeDeps {
   /** Injectable for tests: resolves once the child has exited. */
-  runProbe?: (configDir: string, timeoutMs: number) => Promise<{ timedOut: boolean; error?: string }>;
+  runProbe?: (configDir: string, timeoutMs: number) => Promise<ProbeRun>;
   /** Injectable for tests: the authoritative judge. */
   authStatus?: typeof claudeAuthStatus;
   home?: string;
@@ -98,8 +120,30 @@ function readCacheStamp(configDir: string): CacheStamp {
   };
 }
 
-/** Spawn `claude -p "/usage" --output-format json` in `configDir`. Output is not parsed. */
-function defaultRunProbe(configDir: string, timeoutMs: number): Promise<{ timedOut: boolean; error?: string }> {
+/**
+ * The usage report out of whatever the child printed.
+ *
+ * `--output-format json` prints one envelope whose `result` holds the report. A line-delimited
+ * stream (a future default, or a CLI that ignores the flag) is handled by trying each line;
+ * anything that is not JSON at all is handed over as-is, since the parser is line-based and
+ * reads plain report text perfectly well. Only `result` is ever taken from the envelope.
+ */
+function reportText(stdout: string | undefined): string {
+  if (typeof stdout !== 'string' || !stdout) return '';
+  const text = stdout.slice(0, PROBE_STDOUT_CAP);
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{')) continue;
+    try {
+      const result = asRecord(JSON.parse(trimmed))?.result;
+      if (typeof result === 'string' && result) return result;
+    } catch { /* not this line — try the next, then fall through to the raw text */ }
+  }
+  return text;
+}
+
+/** Spawn `claude -p "/usage" --output-format json` in `configDir` and capture its report. */
+function defaultRunProbe(configDir: string, timeoutMs: number): Promise<ProbeRun> {
   return new Promise((resolveOut) => {
     const bin = findClaudeBin();
     const shell = process.env.SHELL || '/bin/zsh';
@@ -111,16 +155,25 @@ function defaultRunProbe(configDir: string, timeoutMs: number): Promise<{ timedO
 
     let child: ReturnType<typeof spawn>;
     try {
+      // stdout is PIPED now — it is where the answer is. stderr stays ignored: it carries
+      // update notices and warnings, never the report.
       child = bin
-        ? spawn(bin, ['-p', '/usage', '--output-format', 'json'], { stdio: ['ignore', 'ignore', 'ignore'], env })
-        : spawn(shell, ['-ilc', 'claude -p "/usage" --output-format json'], { stdio: ['ignore', 'ignore', 'ignore'], env });
+        ? spawn(bin, ['-p', '/usage', '--output-format', 'json'], { stdio: ['ignore', 'pipe', 'ignore'], env })
+        : spawn(shell, ['-ilc', 'claude -p "/usage" --output-format json'], { stdio: ['ignore', 'pipe', 'ignore'], env });
     } catch (err) {
       resolveOut({ timedOut: false, error: (err as Error)?.message ?? String(err) });
       return;
     }
 
+    let stdout = '';
+    child.stdout?.on('data', (chunk: Buffer) => {
+      // Drained on every chunk (a full pipe buffer would deadlock the child) but bounded:
+      // past the cap the bytes are dropped rather than accumulated.
+      if (stdout.length < PROBE_STDOUT_CAP) stdout += chunk.toString('utf-8');
+    });
+
     let settled = false;
-    const done = (v: { timedOut: boolean; error?: string }) => {
+    const done = (v: ProbeRun) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -132,28 +185,35 @@ function defaultRunProbe(configDir: string, timeoutMs: number): Promise<{ timedO
     }, timeoutMs);
 
     child.on('error', (e) => done({ timedOut: false, error: e.message }));
-    // The exit code is read but NOT used as the criterion — see the module header.
-    child.on('close', () => done({ timedOut: false }));
+    // `close`, not `exit`: it waits for stdout's EOF, so the report is complete. The exit code
+    // is not read at all — see the module header.
+    child.on('close', () => done({ timedOut: false, stdout }));
   });
 }
 
 /**
  * Probe one account. Never throws.
  *
- * The four-way discrimination:
- *   • cache refreshed + uuid matches                 → `ok`
- *   • cache refreshed + uuid is someone else's       → `stale` (the reading is DISCARDED)
- *   • cache did not move (or has never existed)      → ESCALATE ONCE to the judge
- *   • timeout / spawn failure                        → `unknown`
+ * The discrimination, in the order belief is granted:
+ *   • timeout / spawn failure                            → `unknown` (nothing was learnt)
+ *   • the dir's credential is someone else's             → `stale` (the reading is DISCARDED)
+ *   • the report printed percentages                     → `ok`
+ *   • the cache moved, or is inside the write throttle   → `ok`
+ *   • neither                                            → ESCALATE ONCE to the judge
  *
- * ── Why a non-refresh escalates ───────────────────────────────────────────────────────
- * A non-refresh cannot explain itself, and the two causes behind it look different on disk.
+ * ── Why identity is checked FIRST ─────────────────────────────────────────────────────
+ * A config dir signed into a different account than the register records prints a perfectly
+ * parseable report — for the WRONG quota pool. Attributing it would put a switch decision on
+ * another account's numbers, so the check now guards every source rather than only the cache.
+ *
+ * ── Why a non-answer escalates ────────────────────────────────────────────────────────
+ * A missing answer cannot explain itself, and the two causes behind it look different on disk.
  * Both were MEASURED. A directory that NEVER held a credential (a sandbox deleted by hand) has
  * no `oauthAccount` and no cache. A directory whose credential BROKE (token expired, seat
  * revoked, or `claude auth logout` run inside that `CLAUDE_CONFIG_DIR`) keeps its stale
- * `oauthAccount` AND its stale `cachedUsageUtilization` verbatim, moves no `fetchedAtMs`, and
- * still exits 0/success. So discriminating on "neither a cache nor an oauthAccount" alone
- * would drop the PROBABLY MORE COMMON cause into `unknown`.
+ * `oauthAccount` AND its stale `cachedUsageUtilization` verbatim, prints no report, and still
+ * exits 0/success. So discriminating on "neither a cache nor an oauthAccount" alone would drop
+ * the PROBABLY MORE COMMON cause into `unknown`.
  *
  * `claude auth status --json` separates them cleanly — measured in that same broken directory,
  * it ignores the stale mirror and answers `loggedIn: false`. This is deliberately the
@@ -191,25 +251,36 @@ export async function probeAccountUsage(
   if (run.error) return { status: 'unknown', reason: run.error.slice(0, 400) };
 
   const after = readCacheStamp(dir);
-  const refreshed = after.fetchedAtMs !== null
-    && (before.fetchedAtMs === null || after.fetchedAtMs > before.fetchedAtMs);
-
-  if (refreshed) {
-    const expected = expectedAccountUuid(dir, home);
-    if (expected !== null && after.accountUuid !== null && after.accountUuid !== expected) {
-      return {
-        status: 'stale',
-        reason: 'The refreshed usage cache belongs to a different account — the reading was discarded.',
-      };
-    }
-    return { status: 'ok', limits: readUsageLimits(dir) };
+  const expected = expectedAccountUuid(dir, home);
+  if (expected !== null && after.accountUuid !== null && after.accountUuid !== expected) {
+    return {
+      status: 'stale',
+      reason: 'That account directory is signed in as a different account — the reading was discarded.',
+    };
   }
 
-  // ── The cache did not move. Escalate exactly once, inside the remaining budget.
-  const spent = Date.now() - startedAt;
-  const remaining = USAGE_PROBE_TIMEOUT_MS - spent;
+  const now = Date.now();
+  const cached = readUsageLimits(dir);
+
+  // ── 1. The live report: what the child just printed, stamped now.
+  const live = parseUsageReport(reportText(run.stdout), now);
+  if (live) return { status: 'ok', limits: withLockedReasons(live, cached, now) };
+
+  // ── 2. The cache. It counts when it MOVED (the CLI fetched and wrote), or when it is inside
+  //      the write throttle — in which case the throttle is the ONLY reason it did not move,
+  //      so the numbers in it are at most `USAGE_CACHE_WRITE_THROTTLE_MS` old. Both are
+  //      readings; an older, unmoved cache is not, and falls through to the judge.
+  const moved = after.fetchedAtMs !== null
+    && (before.fetchedAtMs === null || after.fetchedAtMs > before.fetchedAtMs);
+  const age = after.fetchedAtMs === null ? Number.POSITIVE_INFINITY : Math.max(0, now - after.fetchedAtMs);
+  if (cached.limits.length > 0 && (moved || age <= USAGE_CACHE_WRITE_THROTTLE_MS)) {
+    return { status: 'ok', limits: cached };
+  }
+
+  // ── 3. No answer at all. Escalate exactly once, inside the remaining budget.
+  const remaining = USAGE_PROBE_TIMEOUT_MS - (Date.now() - startedAt);
   if (remaining <= 0) {
-    return { status: 'unknown', reason: 'The usage cache did not refresh and there was no budget left to check why.' };
+    return { status: 'unknown', reason: 'No usage came back and there was no budget left to check why.' };
   }
   const judged = await authStatus(dir, Math.min(remaining, PROBE_TIMEOUT_MS));
   if (judged.loggedIn === false) {
@@ -222,14 +293,14 @@ export async function probeAccountUsage(
   if (judged.loggedIn === true && !judged.error) {
     return {
       status: 'healthy-unmeasured',
-      reason: 'This account is signed in but reports no usage numbers, so its remaining quota is unknown.',
+      reason: 'This account is signed in but reported no usage numbers, so its remaining quota is unknown.',
     };
   }
   return {
     status: 'unknown',
     reason: judged.error
-      ? `The usage cache did not refresh: ${judged.error}`
-      : 'The usage cache did not refresh, and the account still reports as signed in.',
+      ? `No usage came back: ${judged.error}`
+      : 'No usage came back, and the account still reports as signed in.',
   };
 }
 

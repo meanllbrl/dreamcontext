@@ -143,11 +143,26 @@ describe('assertConfinedConfigDir', () => {
   });
 });
 
-describe('accountEnvFor — account #0 sets NOTHING', () => {
-  it('is empty for the real HOME', () => {
-    // CLAUDE_CONFIG_DIR=$HOME is NOT the same as unset: it would move the CLI's projects
-    // directory to ~/projects, which is not where the real transcripts live.
-    expect(accountEnvFor(HOME, HOME)).toEqual({});
+describe('accountEnvFor — account #0 CLEARS the variable, it does not merely skip it', () => {
+  it('REMOVES CLAUDE_CONFIG_DIR for the real HOME', () => {
+    // Not `{}`. `CLAUDE_CONFIG_DIR=$HOME` is not the same as unset either — the variable
+    // relocates both `~/.claude.json` and `~/.claude` under one directory, so no value names
+    // the real pair. Removal is the only way to say "the machine's own account", and it has to
+    // be said: measured 2026-09-07, an INHERITED value (every `claude` session exports one)
+    // made a probe of the primary account read a sandbox account's usage and report it as the
+    // primary's. `undefined` is how a spread expresses removal — Node omits such a key from
+    // the child's environment.
+    expect(accountEnvFor(HOME, HOME)).toEqual({ CLAUDE_CONFIG_DIR: undefined });
+    expect('CLAUDE_CONFIG_DIR' in accountEnvFor(HOME, HOME)).toBe(true);
+  });
+
+  it('a spread of it actually clears an inherited value', () => {
+    // The mechanism, pinned where it is relied on: `{ ...inherited, ...accountEnvFor(HOME) }`
+    // must leave a key Node will drop, not the sandbox path it inherited.
+    const inherited = { CLAUDE_CONFIG_DIR: sandboxDirFor('b', HOME), PATH: '/usr/bin' };
+    expect({ ...inherited, ...accountEnvFor(HOME, HOME) }).toEqual({
+      CLAUDE_CONFIG_DIR: undefined, PATH: '/usr/bin',
+    });
   });
 
   it('sets CLAUDE_CONFIG_DIR for a sandbox', () => {
