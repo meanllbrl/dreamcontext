@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { basename, dirname, join } from 'node:path';
-import { existsSync, readdirSync, statSync, chmodSync, readFileSync, writeFileSync, rmSync, watchFile, unwatchFile } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync, chmodSync, readFileSync, writeFileSync, rmSync, watchFile, unwatchFile } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
@@ -49,46 +49,100 @@ export { handleAgentPromptToken } from './agent-spawn-shared.js';
 // ─── Gating ─────────────────────────────────────────────────────────────────
 
 /**
+ * Where `node-pty` is installed when the running CLI has no writable package dir.
+ *
+ * The Tauri .app ships `Contents/Resources/dist/index.js` with NO package.json at
+ * ANY ancestor, so there is no package root to install a native module into — and
+ * the bundle is code-signed and replaced wholesale on update, so installing into it
+ * would invalidate the signature and vanish on the next upgrade. A user-level dir
+ * has neither problem: always writable, and it survives app updates.
+ */
+export function nativeModulesDir(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'native');
+}
+
+/** Create the native-module dir with a minimal private manifest, so `npm install`
+ *  treats it as its own project instead of walking up and adopting $HOME. */
+export function ensureNativeModulesDir(home: string = homedir()): string {
+  const dir = nativeModulesDir(home);
+  mkdirSync(dir, { recursive: true });
+  const manifest = join(dir, 'package.json');
+  if (!existsSync(manifest)) {
+    writeFileSync(manifest, `${JSON.stringify({
+      name: 'dreamcontext-native',
+      version: '0.0.0',
+      private: true,
+      description: 'Native modules for the dreamcontext desktop app — managed by the in-app installer.',
+    }, null, 2)}\n`, 'utf-8');
+  }
+  return dir;
+}
+
+/** The bases node-pty may resolve from, in priority order: the CLI's own
+ *  node_modules (npm install / dev link), then the user-level native dir. */
+function ptyResolveBases(): string[] {
+  return [import.meta.url, join(nativeModulesDir(), 'package.json')];
+}
+
+/**
  * node-pty 1.x ships prebuilt binaries, but npm's tarball extraction drops the
- * execute bit on macOS's `spawn-helper` — so `import('node-pty')` SUCCEEDS yet
+ * execute bit on macOS's `spawn-helper` — so LOADING node-pty succeeds yet
  * `pty.spawn` then dies with `posix_spawnp failed`. Restore +x on every shipped
  * spawn-helper (prebuilds + any local build) before we rely on node-pty. Idempotent
  * and cheap; runs once. Survives any install path (dev link, `npm i -g`, app).
  */
 function ensurePtyHelperExecutable(): void {
-  try {
-    const require = createRequire(import.meta.url);
-    const root = dirname(dirname(require.resolve('node-pty'))); // …/node-pty/lib/index.js → …/node-pty
-    const candidates: string[] = [join(root, 'build', 'Release', 'spawn-helper')];
-    const prebuilds = join(root, 'prebuilds');
-    if (existsSync(prebuilds)) {
-      for (const d of readdirSync(prebuilds)) candidates.push(join(prebuilds, d, 'spawn-helper'));
-    }
-    for (const p of candidates) {
-      if (!existsSync(p)) continue;
-      const mode = statSync(p).mode;
-      if ((mode & 0o111) !== 0o111) chmodSync(p, mode | 0o755);
-    }
-  } catch { /* best-effort; a real spawn failure still degrades gracefully */ }
+  for (const base of ptyResolveBases()) {
+    try {
+      // …/node-pty/lib/index.js → …/node-pty
+      const root = dirname(dirname(createRequire(base).resolve('node-pty')));
+      const candidates: string[] = [join(root, 'build', 'Release', 'spawn-helper')];
+      const prebuilds = join(root, 'prebuilds');
+      if (existsSync(prebuilds)) {
+        for (const d of readdirSync(prebuilds)) candidates.push(join(prebuilds, d, 'spawn-helper'));
+      }
+      for (const p of candidates) {
+        if (!existsSync(p)) continue;
+        const mode = statSync(p).mode;
+        if ((mode & 0o111) !== 0o111) chmodSync(p, mode | 0o755);
+      }
+      return;
+    } catch { /* not resolvable from this base — try the next */ }
+  }
+}
+
+/**
+ * Load node-pty from wherever it actually lives. A native module can't be bundled,
+ * so it is either in the CLI's own node_modules (found by node's normal walk-up from
+ * dist/index.js) or in the user-level native dir the in-app installer targets when
+ * the CLI IS the read-only .app bundle. node-pty is plain CJS (no `type`, no
+ * `exports`), so `require` hands back its exports with no ESM-interop ambiguity.
+ *
+ * `undefined` ⇒ not yet probed, `null` ⇒ absent (the terminal degrades to
+ * "Open in Terminal" and the Setup panel offers the install).
+ */
+let ptyModule: typeof import('node-pty') | null | undefined;
+function loadNodePty(): typeof import('node-pty') | null {
+  if (ptyModule !== undefined) return ptyModule;
+  for (const base of ptyResolveBases()) {
+    try {
+      ptyModule = createRequire(base)('node-pty') as typeof import('node-pty');
+      ensurePtyHelperExecutable();
+      return ptyModule;
+    } catch { /* try the next base */ }
+  }
+  ptyModule = null;
+  return ptyModule;
 }
 
 /** node-pty is a native module; it may be absent in the bundled-only first-run app. */
-let ptyAvailable: boolean | null = null;
-async function hasNodePty(): Promise<boolean> {
-  if (ptyAvailable !== null) return ptyAvailable;
-  try {
-    await import('node-pty');
-    ensurePtyHelperExecutable();
-    ptyAvailable = true;
-  } catch {
-    ptyAvailable = false;
-  }
-  return ptyAvailable;
+function hasNodePty(): boolean {
+  return loadNodePty() !== null;
 }
 
-/** Bust the memoized node-pty probe so the next capabilities check re-imports
+/** Bust the memoized node-pty probe so the next capabilities check re-resolves
  *  (e.g. right after the in-app installer materialised node-pty on disk). */
-function resetPtyCache(): void { ptyAvailable = null; }
+function resetPtyCache(): void { ptyModule = undefined; }
 
 /**
  * Is a command resolvable on the user's PATH, as the embedded terminal will see
@@ -347,16 +401,27 @@ function pruneInstallRuns(): void {
 }
 
 /**
- * The package root of the running CLI (nearest ancestor with a package.json),
- * walking up from the entry module. `node-pty` is installed HERE so it resolves
- * from the bundled `dist/index.js` exactly as the runtime `import('node-pty')`
- * does (node walks up to `<root>/node_modules`). Returns null if not found.
+ * The package root of the running CLI — the nearest ancestor of the entry module
+ * whose package.json IS the dreamcontext package. `node-pty` is installed HERE so
+ * it resolves from `dist/index.js` by node's normal walk-up to `<root>/node_modules`.
+ *
+ * The name check is load-bearing, not belt-and-braces: the .app ships
+ * `Contents/Resources/dist/index.js` with no package root of its own, so a bare
+ * "nearest package.json" walk escapes the bundle entirely and adopts whatever
+ * unrelated manifest it meets first (a stray `~/package.json`, `/tmp/package.json`)
+ * — silently installing a native module into someone else's project. No dreamcontext
+ * manifest ⇒ null, and the caller falls back to `nativeModulesDir()`.
  */
-function cliPackageRoot(): string | null {
-  let dir = process.argv[1] ? dirname(process.argv[1]) : '';
+export function cliPackageRoot(entry: string | undefined = process.argv[1]): string | null {
+  let dir = entry ? dirname(entry) : '';
   if (!dir) return null;
   for (let i = 0; i < 8; i++) {
-    if (existsSync(join(dir, 'package.json'))) return dir;
+    const manifest = join(dir, 'package.json');
+    if (existsSync(manifest)) {
+      try {
+        if ((JSON.parse(readFileSync(manifest, 'utf-8')) as { name?: unknown }).name === 'dreamcontext') return dir;
+      } catch { /* unreadable/!JSON — not ours; keep walking */ }
+    }
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
@@ -378,11 +443,16 @@ function installPlan(target: Exclude<InstallTarget, 'claude-path'>): { script: s
     // manual command instead (installPlan returns null there).
     return process.platform === 'darwin' ? { script: 'xcode-select --install' } : null;
   }
-  // node-pty: install into the CLI's own package so the server can import it. Pinned
-  // to the declared range; `--no-save` leaves the package manifest untouched.
-  const root = cliPackageRoot();
-  if (!root) return null;
-  return { script: 'npm install node-pty@^1.1.0 --no-save', cwd: root };
+  // node-pty is NATIVE, so it can't be bundled — it has to be installed somewhere
+  // the server can resolve it from (see `ptyResolveBases`). Pinned to the declared
+  // range; `--no-save` leaves the target manifest untouched.
+  //   • npm install / dev link → the CLI's own package root, where node's normal
+  //     walk-up from dist/index.js finds it.
+  //   • the .app bundle → there IS no package root above Contents/Resources/dist,
+  //     and the bundle is signed + replaced on update, so install into the
+  //     user-level native dir instead.
+  const cwd = cliPackageRoot() ?? ensureNativeModulesDir();
+  return { script: 'npm install node-pty@^1.1.0 --no-save', cwd };
 }
 
 /**
@@ -434,7 +504,9 @@ export async function handleAgentInstall(
       sendError(res, 501, 'no_install_path', 'Automatic git install is macOS-only — install git with your system package manager (e.g. `apt install git`).');
       return;
     }
-    sendError(res, 500, 'no_install_path', "Couldn't locate the CLI package to install node-pty into.");
+    // Unreachable for 'pty' (it falls back to the user-level native dir), but a
+    // 500 beats silently minting a run that installs nowhere.
+    sendError(res, 500, 'no_install_path', "Couldn't find a writable directory to install node-pty into.");
     return;
   }
 
@@ -666,11 +738,12 @@ export function attachAgentTerminal(server: Server): void {
     const deferPrompt = url.searchParams.get('deferPrompt') === '1';
 
     void (async () => {
-      let pty: typeof import('node-pty');
+      // `loadNodePty` (not a bare `import('node-pty')`) so the .app's user-level
+      // native dir counts as an install location — see nativeModulesDir().
+      const pty = loadNodePty();
+      if (!pty) { rejectUpgrade(socket, 501); return; }
       let WebSocketServer: typeof import('ws').WebSocketServer;
       try {
-        pty = await import('node-pty');
-        ensurePtyHelperExecutable();
         ({ WebSocketServer } = await import('ws'));
       } catch { rejectUpgrade(socket, 501); return; }
 
