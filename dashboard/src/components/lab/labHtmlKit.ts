@@ -60,7 +60,77 @@ export function resolveKitTokens(): Record<string, string> {
   return resolveTokens(HTML_KIT_TOKENS);
 }
 
-/** The complete srcdoc: CSP meta FIRST, resolved tokens, kit, then the body.
+/** Child → host: "my content is this tall". */
+export const HTML_HEIGHT_MESSAGE_KEY = '__dreamLabHtmlHeight';
+/** Host → child: "tell me again", answered past the bridge's own dedupe. A
+ *  measurement nobody can confirm arrived is a body frozen at its floor — the
+ *  defect the Chat surface already paid for (chatHtmlKit.ts). */
+export const HTML_HEIGHT_REQUEST_KEY = '__dreamLabHtmlMeasure';
+
+/**
+ * The height leg, and the ONLY thing that crosses this frame's boundary.
+ *
+ * WHY IT EXISTS. The reference promises script authors that height is automatic
+ * ("no fixed card size to fight"). `app/v1` delivered that through its bridge
+ * (labAppRuntime.ts); `html/v1` — documented as "simply the one-page, no-bridge
+ * case of it" — was drawn at a hard-coded 232px, so a body taller than the box
+ * fell into the iframe's own scrollbar and the author's only lever was to shrink
+ * the type until it fit. That pushes an author to override the kit's typography
+ * scale, which is the opposite of why the kit exists (owner report 2026-09-08).
+ *
+ * WHY IT LOOSENS NOTHING. The grant is still `allow-scripts` alone and the CSP
+ * is still `default-src 'none'`; the payload is one number. `'*'` as the target
+ * origin is correct and not a shortcut: a frame sandboxed without
+ * `allow-same-origin` has the opaque origin "null", so it cannot name the
+ * parent's origin and the parent cannot verify one. The host therefore
+ * authenticates by SOURCE (`event.source === iframe.contentWindow`), which an
+ * unrelated frame cannot forge, and this side answers only its own parent.
+ *
+ * Deliberately NOT the app bridge's envelope: there is no nonce and no inbound
+ * data channel here, because `html/v1` has no data channel to protect — the
+ * numbers were baked into the markup at sync time. One number out, one boolean
+ * in, and the frame stays the no-bridge case in every sense that matters.
+ */
+export const HTML_HEIGHT_BRIDGE = `(function () {
+  var last = -1;
+  function report(force) {
+    if (!document.body) return;
+    var h = Math.ceil(document.body.getBoundingClientRect().height);
+    if (h === last && !force) return;
+    last = h;
+    parent.postMessage({ ${HTML_HEIGHT_MESSAGE_KEY}: h }, '*');
+  }
+  window.addEventListener('message', function (event) {
+    if (event.source !== parent || !event.data) return;
+    if (event.data.${HTML_HEIGHT_REQUEST_KEY} === true) report(true);
+  });
+  function start() {
+    if (window.ResizeObserver) new ResizeObserver(function () { report(false); }).observe(document.body);
+    // An author's own inline script may open a detail or switch a tab on click.
+    document.addEventListener('click', function () { setTimeout(function () { report(false); }, 0); }, true);
+    report(true);
+  }
+  if (document.body) start();
+  else document.addEventListener('DOMContentLoaded', start);
+  // A late web font or an image finishing decode changes the height after the
+  // observer's first callback, so load is a second chance, not a duplicate.
+  window.addEventListener('load', function () { report(false); });
+})();`;
+
+/** A height off the wire, or null when it is not a number to act on. Clamping
+ *  is the HOST's job (it depends on where the body is drawn — see
+ *  HtmlInsightBody), so this only validates. */
+export function readHtmlHeightMessage(data: unknown): number | null {
+  if (!data || typeof data !== 'object') return null;
+  const raw = (data as Record<string, unknown>)[HTML_HEIGHT_MESSAGE_KEY];
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return null;
+  return Math.ceil(raw);
+}
+
+/** The complete srcdoc: CSP meta FIRST, resolved tokens, kit, the height
+ *  bridge, then the body — the bridge precedes the body deliberately, or an
+ *  author's unclosed element can swallow the script and the body sits at its
+ *  floor forever (see buildSandboxSrcdoc's `headScript`).
  *  `scheme` MUST match the embedding page's theme: a transparent iframe stays
  *  transparent only when embedder and content agree on their used color-scheme
  *  — on a mismatch Chromium paints an opaque white canvas behind the body,
@@ -70,5 +140,7 @@ export function buildSrcdoc(
   tokens: Record<string, string>,
   scheme: 'light' | 'dark' = 'light',
 ): string {
-  return buildSandboxSrcdoc({ html, css: LAB_HTML_KIT_CSS, tokens, scheme });
+  return buildSandboxSrcdoc({
+    html, css: LAB_HTML_KIT_CSS, tokens, scheme, headScript: HTML_HEIGHT_BRIDGE,
+  });
 }

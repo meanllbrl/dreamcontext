@@ -21,6 +21,10 @@ import {
   HTML_KIT_SANDBOX,
   HTML_KIT_ALLOW,
   LAB_HTML_KIT_CSS,
+  HTML_HEIGHT_BRIDGE,
+  HTML_HEIGHT_MESSAGE_KEY,
+  HTML_HEIGHT_REQUEST_KEY,
+  readHtmlHeightMessage,
 } from '../../dashboard/src/components/lab/labHtmlKit.js';
 
 const DASH = join(import.meta.dirname, '../../dashboard/src/components/lab');
@@ -215,5 +219,102 @@ describe('the sandboxed iframe (security pins — C5 unit half)', () => {
     const htmlAt = panel.indexOf('<HtmlInsightBody');
     const typedAt = panel.indexOf('<DetailBody', htmlAt);
     expect(typedAt).toBeGreaterThan(htmlAt);
+  });
+});
+
+describe('automatic height — the promise the reference already made (owner report 2026-09-08)', () => {
+  it('the srcdoc carries the height bridge, BEFORE the author body', () => {
+    // Order is load-bearing: an unclosed element in the author's markup makes
+    // the parser swallow everything after it. A bridge that never runs leaves
+    // the body at its pending height for the whole session.
+    const doc = buildSrcdoc('<div class="lk-value">42</div>', {});
+    const scriptAt = doc.indexOf('ResizeObserver');
+    expect(scriptAt).toBeGreaterThan(-1);
+    expect(scriptAt).toBeLessThan(doc.indexOf('<div class="lk-value">42</div>'));
+  });
+
+  it('the bridge measures on resize, on click and on load — not once', () => {
+    // Once is exactly what the fixed 232px box was: a late web font, an image
+    // decoding, or the author's own script filling a number in all change the
+    // height AFTER the first callback.
+    expect(HTML_HEIGHT_BRIDGE).toContain('ResizeObserver');
+    expect(HTML_HEIGHT_BRIDGE).toContain("addEventListener('load'");
+    expect(HTML_HEIGHT_BRIDGE).toContain("addEventListener('click'");
+    expect(HTML_HEIGHT_BRIDGE).toContain('DOMContentLoaded');
+  });
+
+  it('the bridge answers a host RE-ASK past its own dedupe', () => {
+    // Delivery you cannot retry is delivery you cannot trust: the host's
+    // listener attaching one beat after the frame already spoke used to freeze
+    // Chat's blocks at their floor permanently.
+    expect(HTML_HEIGHT_BRIDGE).toContain(HTML_HEIGHT_REQUEST_KEY);
+    expect(HTML_HEIGHT_BRIDGE).toContain('report(true)');
+    expect(HTML_HEIGHT_BRIDGE).toContain('event.source !== parent');
+  });
+
+  it('the bridge carries ONE NUMBER out and nothing else — no data channel', () => {
+    // html/v1 stays the no-bridge case in the sense that matters: no nonce
+    // envelope because there is no dataset to scope, and no way to ask for one.
+    expect(HTML_HEIGHT_BRIDGE).toContain(`${HTML_HEIGHT_MESSAGE_KEY}: h`);
+    expect(HTML_HEIGHT_BRIDGE).not.toContain('innerHTML');
+    expect(HTML_HEIGHT_BRIDGE).not.toMatch(/fetch|XMLHttpRequest|sendBeacon/);
+  });
+
+  it('adding the bridge loosened NOTHING — same grant, same CSP', () => {
+    expect(HTML_KIT_SANDBOX).not.toContain('allow-same-origin');
+    expect(buildSrcdoc('<b>x</b>', {})).toContain(HTML_KIT_CSP);
+  });
+
+  it('readHtmlHeightMessage takes a number off the wire and rejects everything else', () => {
+    expect(readHtmlHeightMessage({ [HTML_HEIGHT_MESSAGE_KEY]: 612.4 })).toBe(613);
+    expect(readHtmlHeightMessage({ [HTML_HEIGHT_MESSAGE_KEY]: 0 })).toBe(0);
+    expect(readHtmlHeightMessage({ [HTML_HEIGHT_MESSAGE_KEY]: -1 })).toBeNull();
+    expect(readHtmlHeightMessage({ [HTML_HEIGHT_MESSAGE_KEY]: NaN })).toBeNull();
+    expect(readHtmlHeightMessage({ [HTML_HEIGHT_MESSAGE_KEY]: '600' })).toBeNull();
+    expect(readHtmlHeightMessage({ someOtherFrame: 600 })).toBeNull();
+    expect(readHtmlHeightMessage(null)).toBeNull();
+    expect(readHtmlHeightMessage('600')).toBeNull();
+  });
+
+  it('the host authenticates by SOURCE, listens in a LAYOUT effect, and re-asks', () => {
+    const source = readFileSync(join(DASH, 'HtmlInsightBody.tsx'), 'utf-8');
+    // Origin is the opaque "null" for a frame with no same-origin grant, so an
+    // origin check would accept every other sandboxed frame on the page.
+    expect(source).toContain('event.source !== frameRef.current.contentWindow');
+    expect(source).not.toMatch(/event\.origin/);
+    // A passive effect can be flushed after the frame has already posted.
+    expect(source).toContain('useLayoutEffect');
+    expect(source).toContain('onLoad={askForHeight}');
+    expect(source).toContain(`{ [HTML_HEIGHT_REQUEST_KEY]: true }`);
+    // The measurement travels WITH the body it measured — no reset effect.
+    expect(source).toContain("measured?.html === html");
+  });
+
+  it('the CARD is capped and the DETAIL is not — and the card bounds match app/v1', () => {
+    const html = readFileSync(join(DASH, 'HtmlInsightBody.tsx'), 'utf-8');
+    const app = readFileSync(join(DASH, 'LabAppFrame.tsx'), 'utf-8');
+    // The cap is the BOARD GRID's, not the author's: one 900px tile would set
+    // its whole grid row's height and strand its neighbours in whitespace. It
+    // must be the same number app/v1 uses, or the two body contracts drift and
+    // the reference cannot describe both.
+    for (const pin of ['CARD_MIN_HEIGHT = 120', 'CARD_MAX_HEIGHT = 320']) {
+      expect(html).toContain(pin);
+      expect(app).toContain(pin);
+    }
+    // The detail panel is where a long body is READ — effectively uncapped,
+    // same as the app surface's page mode.
+    expect(html).toContain('FULL_MAX_HEIGHT = 20000');
+    expect(app).toContain('PAGE_MAX_HEIGHT = 20000');
+    // And no hard-coded box is left anywhere: the old `height: full ? 420 : 232`.
+    expect(html).not.toMatch(/height:\s*full\s*\?/);
+  });
+
+  it('the reference documents the cap instead of promising an unbounded card', () => {
+    // The defect was not only the code: an author who trusts "no fixed card
+    // size to fight" writes content first and discovers the box second. The
+    // cap has to be visible on the author's side.
+    const tf = readFileSync(join(import.meta.dirname, '../../skill/references/tasks-and-features.md'), 'utf-8');
+    expect(tf).toMatch(/320/);
+    expect(tf).toMatch(/html\/v1[^\n]*height|[Hh]eight[^\n]*html\/v1/);
   });
 });
