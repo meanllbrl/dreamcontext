@@ -201,6 +201,8 @@ export type ChatEvent =
       email?: string;
       organizationName?: string;
       sessionPercent?: number;
+      /** The destination's weekly window, so the banner never names only the cheap one. */
+      weeklyPercent?: number;
       earliestResetAt?: number;
       rejected?: Array<{ id: string; why: string }>;
       pendingText?: string;
@@ -921,6 +923,7 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       ...(str(obj.email) ? { email: str(obj.email)! } : {}),
       ...(str(obj.organizationName) ? { organizationName: str(obj.organizationName)! } : {}),
       ...(typeof obj.sessionPercent === 'number' ? { sessionPercent: obj.sessionPercent } : {}),
+      ...(typeof obj.weeklyPercent === 'number' ? { weeklyPercent: obj.weeklyPercent } : {}),
       ...(typeof obj.earliestResetAt === 'number' ? { earliestResetAt: obj.earliestResetAt } : {}),
       ...(rejected && rejected.length > 0 ? { rejected } : {}),
       ...(str(obj.pendingText) ? { pendingText: str(obj.pendingText)! } : {}),

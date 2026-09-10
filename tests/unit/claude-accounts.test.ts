@@ -24,10 +24,14 @@ import {
   resolveConfigDir,
   sandboxDirFor,
   setPreferredClaudeAccount,
+  setSwitchPolicy,
+  switchStrategyFor,
+  switchWeightsFor,
   upsertClaudeAccount,
   writeClaudeAccounts,
   type ClaudeAccount,
 } from '../../src/lib/claude-accounts.js';
+import { DEFAULT_SWITCH_WEIGHTS } from '../../src/lib/claude-account-switch.js';
 
 const HOME = mkdtempSync(join(tmpdir(), 'dc-accounts-'));
 const REAL_HOME = process.env.HOME;
@@ -283,5 +287,52 @@ describe('the register file is written atomically', () => {
 describe('homedir() is honoured, so nothing here can touch the developer\'s real files', () => {
   it('the fixture HOME really is homedir() for this process', () => {
     expect(homedir()).toBe(HOME);
+  });
+});
+
+describe('the switch policy — which rule picks the next account, and its coefficients', () => {
+  it('an absent file reads as the documented defaults', () => {
+    expect(switchStrategyFor(HOME)).toBe('score');
+    expect(switchWeightsFor(HOME)).toEqual(DEFAULT_SWITCH_WEIGHTS);
+  });
+
+  it('round-trips a mode', () => {
+    writeClaudeAccounts([zero], HOME);
+    setSwitchPolicy({ strategy: 'sequential' }, HOME);
+    expect(switchStrategyFor(HOME)).toBe('sequential');
+  });
+
+  it('round-trips coefficients, and sanitises them on the way in', () => {
+    writeClaudeAccounts([zero], HOME);
+    setSwitchPolicy({ weights: { session: 2, weekly: -5, order: 0 } as never }, HOME);
+    // The negative one falls back on its own; the other two are kept, including the 0.
+    expect(switchWeightsFor(HOME)).toEqual({ session: 2, weekly: DEFAULT_SWITCH_WEIGHTS.weekly, order: 0 });
+  });
+
+  it('setting the mode does not reset the coefficients, or the reverse', () => {
+    writeClaudeAccounts([zero], HOME);
+    setSwitchPolicy({ weights: { session: 3, weekly: 7, order: 1 } }, HOME);
+    setSwitchPolicy({ strategy: 'sequential' }, HOME);
+    expect(switchWeightsFor(HOME)).toEqual({ session: 3, weekly: 7, order: 1 });
+    setSwitchPolicy({ weights: { session: 4, weekly: 8, order: 2 } }, HOME);
+    expect(switchStrategyFor(HOME)).toBe('sequential');
+  });
+
+  it('an account mutation PRESERVES the policy — every write in this file goes through one writer', () => {
+    writeClaudeAccounts([zero], HOME);
+    setSwitchPolicy({ strategy: 'sequential', weights: { session: 3, weekly: 9, order: 4 } }, HOME);
+    // The three operations a user does far more often than they touch this setting.
+    upsertClaudeAccount(account(), HOME);
+    reorderClaudeAccounts([account().id, zero.id], HOME);
+    setPreferredClaudeAccount(zero.id, HOME);
+    expect(switchStrategyFor(HOME)).toBe('sequential');
+    expect(switchWeightsFor(HOME)).toEqual({ session: 3, weekly: 9, order: 4 });
+    expect(autoSwitchEnabled(HOME)).toBe(true);
+  });
+
+  it('a corrupt or unknown value reads as the default rather than throwing', () => {
+    writeFileSync(claudeAccountsFilePath(HOME), '{"accounts":[],"switchStrategy":"roulette","switchWeights":"nope"}');
+    expect(switchStrategyFor(HOME)).toBe('score');
+    expect(switchWeightsFor(HOME)).toEqual(DEFAULT_SWITCH_WEIGHTS);
   });
 });

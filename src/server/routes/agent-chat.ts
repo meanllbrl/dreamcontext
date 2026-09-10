@@ -31,6 +31,7 @@ import { claudeAwarePath } from '../../lib/claude-path.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
 import {
   accountEnvFor, autoSwitchEnabled, isRealHomeConfigDir, listClaudeAccounts, resolveConfigDir,
+  switchStrategyFor, switchWeightsFor,
 } from '../../lib/claude-accounts.js';
 import { ensureSandbox, ensureSharedMcpConfig } from '../../lib/claude-account-sandbox.js';
 import { probeAccountUsage } from '../../lib/claude-usage-probe.js';
@@ -1051,6 +1052,10 @@ export function startChatSession(
       // The register's own order IS the user's priority (Settings → Agents, drag to reorder).
       orderedIds: accounts.map((a) => a.id),
       rejectedUntil: readAccountRejections(),
+      // Read at DECISION time, not at spawn time: a mode changed in Settings takes effect on
+      // the next turn of every open pane, without a restart.
+      strategy: switchStrategyFor(),
+      weights: switchWeightsFor(),
     });
 
     // Nothing eligible, or the winner is the account we are already on.
@@ -1094,6 +1099,9 @@ export function startChatSession(
       organizationName: target.organizationName,
       fromAccountId: activeAccountId,
       ...(choice.sessionPercent === undefined ? {} : { sessionPercent: choice.sessionPercent }),
+      // Both windows, so the banner can never announce a fresh 5-hour window on an account
+      // whose WEEK is nearly gone — the thing that made the 2026-09-10 switch look arbitrary.
+      ...(choice.weeklyPercent === undefined ? {} : { weeklyPercent: choice.weeklyPercent }),
       ...(choice.unmeasured ? { unmeasured: true } : {}),
       ...(previousResetAt === undefined ? {} : { earliestResetAt: previousResetAt }),
       rejected: choice.rejected,
@@ -1188,6 +1196,23 @@ export function startChatSession(
       return decideAndAnnounce(
         text, 'limit_known', { id: activeAccountId, problem: 'unknown' }, standingRefusal.until);
     }
+
+    // ── `sequential` stops here ───────────────────────────────────────────────────────
+    // Everything below this line is the FORECAST: probe the active account, compare it to a
+    // threshold, and move before the wall. That is precisely what draining in order refuses
+    // to do — the top account is meant to serve until the API itself says no. Bailing here
+    // also skips the probe subprocess entirely, so the mode costs nothing per message.
+    //
+    // The two paths that DO still move a sequential session are both above or elsewhere: the
+    // standing refusal just handled, and the post-hoc `onLimitRejected` that records a
+    // refusal the moment the API states one.
+    //
+    // KNOWN, AND THE SAME GAP BOTH MODES HAVE: a session already moved down the list does not
+    // jump back the instant the top account's window reopens — nothing re-evaluates until the
+    // account it is on is itself refused, and then the chooser picks the top eligible one, so
+    // it walks back rather than snapping back. Closing that is the `auto-switch brings the
+    // session home` task, which is where it belongs for BOTH strategies.
+    if (switchStrategyFor() === 'sequential') return false;
 
     // A reading we cannot TRUST is not a reason to skip the check — it is the reason to make
     // it. `shouldProbe` can only answer from percentages, so an account whose cache is absent

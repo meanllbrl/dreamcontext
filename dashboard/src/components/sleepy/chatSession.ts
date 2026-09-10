@@ -254,6 +254,10 @@ export interface ConversationModel {
     email?: string;
     organizationName?: string;
     sessionPercent?: number;
+    /** The destination's WEEKLY window. Dropping it here made the banner's "name both
+     *  windows" behaviour unreachable: `chatProtocol` parsed it, the reducer discarded it,
+     *  and `tsc` stayed quiet because narrowing an optional field is not a type error. */
+    weeklyPercent?: number;
     earliestResetAt?: number;
     /** The winner is signed in but publishes no usage numbers — the banner says so. */
     unmeasured?: boolean;
@@ -993,6 +997,7 @@ export function createChatSession(
             ...(ev.email ? { email: ev.email } : {}),
             ...(ev.organizationName ? { organizationName: ev.organizationName } : {}),
             ...(ev.sessionPercent === undefined ? {} : { sessionPercent: ev.sessionPercent }),
+            ...(ev.weeklyPercent === undefined ? {} : { weeklyPercent: ev.weeklyPercent }),
             ...(ev.earliestResetAt === undefined ? {} : { earliestResetAt: ev.earliestResetAt }),
             ...(ev.unmeasured ? { unmeasured: true } : {}),
             ...(ev.rejected ? { rejected: ev.rejected } : {}),

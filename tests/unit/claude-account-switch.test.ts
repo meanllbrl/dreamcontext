@@ -12,9 +12,11 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  DEFAULT_SWITCH_WEIGHTS,
   PROBE_THRESHOLD_PERCENT,
   SWITCH_THRESHOLD_PERCENT,
   chooseAccount,
+  sanitizeSwitchWeights,
   shouldProbe,
   shouldSwitchAway,
   type AccountReading,
@@ -48,10 +50,54 @@ const reading = (id: string, session: number | null, weekly: number | null, over
 const T = { threshold: SWITCH_THRESHOLD_PERCENT };
 
 describe('the emptiest eligible account wins', () => {
-  it('picks the lowest session usage', () => {
+  it('picks the lowest SCORE, which is both windows together and not the session alone', () => {
+    // a: 70 + 2·20 = 110   b: 12 + 2·30 = 72   c: 40 + 2·10 = 60  (no order given, so the
+    // order term is identical for all three and cannot decide it)
     const res = chooseAccount([reading('a', 70, 20), reading('b', 12, 30), reading('c', 40, 10)], T);
-    expect(res.accountId).toBe('b');
-    expect(res.sessionPercent).toBe(12);
+    expect(res.accountId).toBe('c');
+    expect(res.sessionPercent).toBe(40);
+    expect(res.weeklyPercent).toBe(10);
+  });
+
+  it('the 2026-09-10 regression: a spent WEEK does not win on a fresh 5-hour window', () => {
+    // Exactly what the owner screenshotted. Under the old "lowest session" rule ouromedia
+    // won on 1% while three quarters of its week was already gone.
+    const res = chooseAccount(
+      [reading('ottoapps', 26, 6), reading('ouromedia', 1, 75), reading('gmail', 4, 27)],
+      { ...T, orderedIds: ['nativeminds', 'ottoapps', 'ouromedia', 'gmail'] },
+    );
+    // ottoapps 26 + 12 + 5·1 = 43   ouromedia 1 + 150 + 5·2 = 161   gmail 4 + 54 + 5·3 = 73
+    expect(res.accountId).toBe('ottoapps');
+    expect(res.score).toBe(43);
+  });
+
+  it('the order is a real term, not only a tie-break: near-equal accounts follow the list', () => {
+    // gmail is barely freer on paper (4/27 vs 26/6 is 58 vs 38 once the week is weighed),
+    // and even without that the list decides between accounts in similar shape.
+    const res = chooseAccount(
+      [reading('second', 20, 10), reading('third', 18, 12)],
+      { ...T, orderedIds: ['second', 'third'] },
+    );
+    expect(res.accountId).toBe('second');
+  });
+
+  it('a weight of 0 switches its term off — {session:0, weekly:0, order:1} is strict priority', () => {
+    const res = chooseAccount(
+      [reading('a', 80, 80), reading('z', 1, 1)],
+      { ...T, orderedIds: ['a', 'z'], weights: { session: 0, weekly: 0, order: 1 } },
+    );
+    expect(res.accountId).toBe('a');
+  });
+
+  it('an account the caller gave no order for does not have its score swamped by the order term', () => {
+    // `position` answers MAX_SAFE_INTEGER for an unknown id, which is right for a tie-break
+    // and catastrophic inside a sum. The score term is bounded instead.
+    const res = chooseAccount(
+      [reading('known', 60, 40), reading('stranger', 1, 1)],
+      { ...T, orderedIds: ['known'] },
+    );
+    expect(res.accountId).toBe('stranger');
+    expect(Number.isFinite(res.score)).toBe(true);
   });
 
   it('weighs the WEEKLY window too — a fresh 5-hour window on an exhausted week is not eligible', () => {
@@ -272,17 +318,28 @@ describe('the register order is the tie-break — the priority the user dragged 
     expect(res.accountId).toBe('z');
   });
 
-  it('order NEVER outranks the numbers — a busier top account still loses', () => {
+  it('order does not outrank a big gap in the numbers — a much busier top account still loses', () => {
     const res = chooseAccount([reading('a', 10, 5), reading('z', 80, 5)], { ...T, orderedIds: ['z', 'a'] });
     expect(res.accountId).toBe('a');
   });
 
-  it('the account already serving still wins a tie, whatever the order says', () => {
+  it('the account already serving still wins a true tie, whatever the order says', () => {
+    // With the order WEIGHED, two accounts at the same percentages are no longer tied — the
+    // list separates them. A genuine tie needs the order term switched off, and that is the
+    // case this rule is actually about: never move a session for nothing.
     const res = chooseAccount(
       [reading('a', 20, 5), reading('z', 20, 5)],
-      { ...T, orderedIds: ['z', 'a'], currentId: 'a' },
+      { ...T, orderedIds: ['z', 'a'], currentId: 'a', weights: { session: 1, weekly: 2, order: 0 } },
     );
     expect(res.accountId).toBe('a');
+  });
+
+  it('with the order weighed, identical accounts follow the list rather than the id', () => {
+    const res = chooseAccount(
+      [reading('a', 20, 5), reading('z', 20, 5)],
+      { ...T, orderedIds: ['z', 'a'] },
+    );
+    expect(res.accountId).toBe('z');
   });
 
   it('falls back to the id when no order is given — the old behaviour, unchanged', () => {
@@ -302,5 +359,239 @@ describe('the register order is the tie-break — the priority the user dragged 
     );
     expect(res.accountId).toBe('z');
     expect(res.unmeasured).toBe(true);
+  });
+});
+
+describe('what the `order` weight actually costs as the list grows', () => {
+  it('the spread is order x (N-1), so the default suits a SHORT list', () => {
+    // Eight accounts, default weights. The bottom row carries 5*7 = 35 points before a single
+    // percent is counted, so the top row can win while being genuinely freer-looking numbers
+    // behind it. This is the intended shape of a weighted order term, not a bug — but it is
+    // the reason `order` wants LOWERING on a long list, and it is asserted rather than left
+    // to a comment nobody re-derives.
+    const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+    const res = chooseAccount(
+      [reading('a', 20, 10), reading('h', 5, 5)],   // a: 40 + 0   h: 15 + 35 = 50
+      { ...T, orderedIds: ids },
+    );
+    expect(res.accountId).toBe('a');
+
+    // The same machine with `order: 1` — one step is worth a single point — answers the way
+    // a user with eight accounts would expect.
+    const tuned = chooseAccount(
+      [reading('a', 20, 10), reading('h', 5, 5)],
+      { ...T, orderedIds: ids, weights: { session: 1, weekly: 2, order: 1 } },
+    );
+    expect(tuned.accountId).toBe('h');
+  });
+
+  it('a big enough gap still beats the order term at any list length', () => {
+    const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+    const res = chooseAccount([reading('a', 70, 60), reading('h', 1, 1)], { ...T, orderedIds: ids });
+    expect(res.accountId).toBe('h');
+  });
+});
+
+describe('fractional weights do not defeat the tie-break through float error', () => {
+  // These two readings are the real thing, found by search rather than assumed: under weights
+  // {0.1, 0.2, 0} they are mathematically tied and differ by 2.22e-16 as doubles.
+  //   current(session 0, weekly 6) -> 0.1*0 + 0.2*6 = 1.2000000000000002
+  //   other  (session 2, weekly 5) -> 0.1*2 + 0.2*5 = 1.2
+  const W = { session: 0.1, weekly: 0.2, order: 0 };
+
+  it('THE CANARY: the raw sums really are unequal, so this suite tests something', () => {
+    // An earlier version of this test used inputs that turned out to be BIT-IDENTICAL, so it
+    // passed with the pre-fix `!==` comparator too and pinned nothing. This assertion fails
+    // loudly if the inputs ever stop demonstrating the bug they were chosen for.
+    //
+    // `raw` mirrors the production sum TERM FOR TERM, including the order term, so it cannot
+    // quietly drift from the formula it is guarding — leaving that term out would make the
+    // canary accidentally correct only while `W.order` happens to be 0.
+    const raw = (session: number, weekly: number, place: number) =>
+      W.session * session + W.weekly * weekly + W.order * place;
+    expect(raw(0, 6, 1)).not.toBe(raw(2, 5, 0));
+    expect(Math.abs(raw(0, 6, 1) - raw(2, 5, 0))).toBeLessThan(1e-12);
+  });
+
+  it('two mathematically tied scores stay tied, so the serving account does not move', () => {
+    const res = chooseAccount(
+      [reading('current', 0, 6), reading('other', 2, 5)],
+      { ...T, orderedIds: ['other', 'current'], currentId: 'current', weights: W },
+    );
+    expect(res.accountId).toBe('current');
+  });
+
+  it('and a real difference still decides', () => {
+    const res = chooseAccount(
+      [reading('current', 30, 10), reading('other', 1, 2)],
+      { ...T, orderedIds: ['other', 'current'], currentId: 'current', weights: W },
+    );
+    expect(res.accountId).toBe('other');
+  });
+
+  it('the comparator is CONSISTENT — a rounded score is an equivalence relation, a tolerance is not', () => {
+    // THE ACTUAL HAZARD, not a decorative large number. These weights put the scores at
+    //   a = 1_000_000_000     b = 1_000_000_000.9     c = 1_000_000_001.8
+    // where a relative tolerance of 1e-9·|score| is ≈1.0, so it calls a≈b and b≈c while a<c —
+    // a non-transitive comparator, which makes `Array.prototype.sort`'s answer
+    // implementation-defined. (An earlier version of this test used scores 1e9/2e9/3e9, which
+    // a tolerance separates just as cleanly; it demonstrated nothing.)
+    //
+    // Rounding cannot produce that shape at any magnitude, so the three stay distinct and the
+    // lowest wins deterministically.
+    const weights = { session: 1e9, weekly: 0.9, order: 0 };
+    const res = chooseAccount(
+      [reading('a', 1, 0), reading('b', 1, 1), reading('c', 1, 2)],
+      { ...T, orderedIds: ['a', 'b', 'c'], weights },
+    );
+    expect(res.accountId).toBe('a');
+    expect(res.score).toBe(1_000_000_000);
+  });
+});
+
+describe('the `sequential` strategy — drain the list in order, move only on a real refusal', () => {
+  const S = { ...T, strategy: 'sequential' as const, orderedIds: ['first', 'second', 'third'] };
+
+  it('the top account serves even when it is nearly spent and a freer one is below it', () => {
+    // The whole point of the mode. Under `score` this would move; here 88% is not a reason.
+    const res = chooseAccount([reading('first', 88, 46), reading('second', 2, 3)], S);
+    expect(res.accountId).toBe('first');
+    expect(res.sessionPercent).toBe(88);
+    expect(res.weeklyPercent).toBe(46);
+  });
+
+  it('a percentage PAST the threshold is still not a reason to move — only a refusal is', () => {
+    const res = chooseAccount([reading('first', 99, 99), reading('second', 2, 3)], S);
+    expect(res.accountId).toBe('first');
+  });
+
+  it('an actual refusal hands the turn to the NEXT account in the list, not the freest', () => {
+    const res = chooseAccount(
+      [reading('first', 99, 99), reading('second', 40, 40), reading('third', 1, 1)],
+      { ...S, rejectedUntil: { first: { until: NOW + HOUR, window: 'session' } }, now: NOW },
+    );
+    expect(res.accountId).toBe('second');
+    expect(res.rejected).toContainEqual({
+      id: 'first', why: 'the API refused its last turn on the session limit',
+    });
+  });
+
+  it('walks down the list as each account is refused in turn', () => {
+    const res = chooseAccount(
+      [reading('first', 99, 99), reading('second', 40, 40), reading('third', 90, 90)],
+      {
+        ...S,
+        rejectedUntil: {
+          first: { until: NOW + HOUR, window: 'session' },
+          second: { until: NOW + HOUR, window: 'weekly' },
+        },
+        now: NOW,
+      },
+    );
+    expect(res.accountId).toBe('third');
+  });
+
+  it('a rejection expires AT `until`, not after it — the boundary, pinned', () => {
+    // `refusal.until > now`, so the instant the clock reaches the stated reset the account is
+    // eligible again. Consistent with how `resetsAt` is read everywhere else, and now locked:
+    // flipping this to `>=` would exile an account for one extra evaluation.
+    const res = chooseAccount(
+      [reading('first', 5, 5), reading('second', 1, 1)],
+      { ...S, rejectedUntil: { first: { until: NOW, window: 'session' } }, now: NOW },
+    );
+    expect(res.accountId).toBe('first');
+  });
+
+  it('returns to the top the moment its window reopens', () => {
+    const res = chooseAccount(
+      [reading('first', 5, 40), reading('second', 1, 1)],
+      { ...S, currentId: 'second', rejectedUntil: { first: { until: NOW - 1, window: 'session' } }, now: NOW },
+    );
+    expect(res.accountId).toBe('first');
+  });
+
+  it('does NOT prefer the account already serving over a higher-priority one', () => {
+    // `score` keeps a session put on a tie; draining in order must not, or a session stays
+    // stranded below the top of the list forever after one refusal expires.
+    const res = chooseAccount([reading('first', 50, 50), reading('second', 1, 1)], { ...S, currentId: 'second' });
+    expect(res.accountId).toBe('first');
+  });
+
+  it('an unreadable or stale reading is NOT a disqualification here — no percentage is consulted', () => {
+    const res = chooseAccount(
+      [{ id: 'first', problem: 'unknown' }, reading('second', 1, 1)],
+      S,
+    );
+    expect(res.accountId).toBe('first');
+    expect(res.unmeasured).toBe(true);
+    expect(res.sessionPercent).toBeUndefined();
+  });
+
+  it('but a locked window is, because that is the API stating a fact rather than a forecast', () => {
+    const res = chooseAccount(
+      [reading('first', 10, 10, { lockedReason: 'weekly_limit' }), reading('second', 80, 80)],
+      S,
+    );
+    expect(res.accountId).toBe('second');
+    expect(res.rejected).toContainEqual({ id: 'first', why: 'a usage window is already locked' });
+  });
+
+  it('and so is an identity that needs signing in again', () => {
+    const res = chooseAccount([{ id: 'first', problem: 'needs-relogin' }, reading('second', 80, 80)], S);
+    expect(res.accountId).toBe('second');
+    expect(res.rejected).toContainEqual({ id: 'first', why: 'needs to sign in again' });
+  });
+
+  it('every account refused: null, with the earliest reset so the surface can say WHEN', () => {
+    const res = chooseAccount(
+      [reading('first', 10, 10), reading('second', 10, 10)],
+      {
+        ...S,
+        rejectedUntil: {
+          first: { until: NOW + 3 * HOUR, window: 'session' },
+          second: { until: NOW + HOUR, window: 'session' },
+        },
+        now: NOW,
+      },
+    );
+    expect(res.accountId).toBeNull();
+    expect(res.earliestResetAt).toBe(NOW + HOUR);
+  });
+
+  it('never reports a `score` — nothing was weighed', () => {
+    const res = chooseAccount([reading('first', 10, 10)], S);
+    expect(res.score).toBeUndefined();
+  });
+});
+
+describe('sanitizeSwitchWeights', () => {
+  it('keeps usable numbers, including 0', () => {
+    expect(sanitizeSwitchWeights({ session: 0, weekly: 3.5, order: 12 }))
+      .toEqual({ session: 0, weekly: 3.5, order: 12 });
+  });
+
+  it('falls back per FIELD, so one bad number does not reset the other two', () => {
+    expect(sanitizeSwitchWeights({ session: 4, weekly: -1, order: 'x' }))
+      .toEqual({ session: 4, weekly: DEFAULT_SWITCH_WEIGHTS.weekly, order: DEFAULT_SWITCH_WEIGHTS.order });
+  });
+
+  it('a non-finite weight would make every score identical, so it is refused', () => {
+    expect(sanitizeSwitchWeights({ session: Infinity, weekly: NaN, order: 5 }))
+      .toEqual({ ...DEFAULT_SWITCH_WEIGHTS, order: 5 });
+  });
+
+  it('junk of any shape reads as the defaults', () => {
+    for (const junk of [null, undefined, 'weights', 42, []]) {
+      expect(sanitizeSwitchWeights(junk)).toEqual(DEFAULT_SWITCH_WEIGHTS);
+    }
+  });
+});
+
+describe('the strategy is opt-in — every caller written before it behaves exactly as it did', () => {
+  it('an omitted strategy scores', () => {
+    const bare = chooseAccount([reading('a', 88, 5), reading('b', 4, 5)], T);
+    const explicit = chooseAccount([reading('a', 88, 5), reading('b', 4, 5)], { ...T, strategy: 'score' });
+    expect(bare.accountId).toBe('b');
+    expect(explicit.accountId).toBe(bare.accountId);
   });
 });

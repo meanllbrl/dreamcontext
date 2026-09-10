@@ -135,6 +135,7 @@ export function AccountSwitchBanner({ move, onDismiss }: {
     accountId: string;
     email?: string;
     sessionPercent?: number;
+    weeklyPercent?: number;
     earliestResetAt?: number;
     unmeasured?: boolean;
     rejected?: Array<{ id: string; why: string }>;
@@ -149,9 +150,16 @@ export function AccountSwitchBanner({ move, onDismiss }: {
 
   // How the destination is described. A last-resort pick has no percentage behind it and says
   // so — see the header. Anything else names the window it landed on, when we measured one.
+  // BOTH windows, never just the 5-hour one. Naming only the session window told the user
+  // "its 5-hour window is at 1%" about an account with 75% of its WEEK already spent — the
+  // number that actually explained the move was the one the sentence left out.
+  const windows = [
+    move.sessionPercent === undefined ? '' : `5-hour ${Math.round(move.sessionPercent)}%`,
+    move.weeklyPercent === undefined ? '' : `weekly ${Math.round(move.weeklyPercent)}%`,
+  ].filter(Boolean).join(' · ');
   const landed = move.unmeasured
     ? ` · its usage could not be read, so this is a best available choice`
-    : move.sessionPercent === undefined ? '' : ` · its 5-hour window is at ${Math.round(move.sessionPercent)}%`;
+    : windows === '' ? '' : ` · ${windows}`;
 
   const message = move.switched
     ? (move.reason === 'needs_relogin'

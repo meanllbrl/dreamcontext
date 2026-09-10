@@ -2,6 +2,14 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import {
+  DEFAULT_SWITCH_STRATEGY,
+  DEFAULT_SWITCH_WEIGHTS,
+  asSwitchStrategy,
+  sanitizeSwitchWeights,
+  type SwitchStrategy,
+  type SwitchWeights,
+} from './claude-account-switch.js';
 
 /**
  * The multi-account REGISTER — which Claude accounts this machine knows, and for each one
@@ -60,6 +68,17 @@ export interface ClaudeAccountRegistry {
    * file is for.
    */
   autoSwitch?: boolean;
+  /**
+   * WHICH rule auto-switch uses to pick the next account. Absent = `score`, the behaviour
+   * every machine had before the setting existed.
+   *
+   * It lives beside `autoSwitch` for the same reason that flag does: this file is the cold,
+   * machine-local, atomically-written home of account POLICY, and `app.json` is rewritten
+   * wholesale by `writeAppManifest` on every install.
+   */
+  switchStrategy?: SwitchStrategy;
+  /** The `score` strategy's coefficients. Each falls back to its default on its own. */
+  switchWeights?: SwitchWeights;
 }
 
 export class ClaudeAccountError extends Error {
@@ -196,6 +215,45 @@ export function setAutoSwitchEnabled(enabled: boolean, home: string = homedir())
   writeClaudeAccounts(listClaudeAccounts(home), home, enabled);
 }
 
+/** The registry object, or null when there is no readable file. Never throws. */
+function readRegistry(home: string): Record<string, unknown> | null {
+  const filePath = claudeAccountsFilePath(home);
+  if (!existsSync(filePath)) return null;
+  try {
+    return asRecord(JSON.parse(readFileSync(filePath, 'utf-8')));
+  } catch {
+    return null;
+  }
+}
+
+/** Which rule picks the next account. An unreadable or unknown value reads as the default. */
+export function switchStrategyFor(home: string = homedir()): SwitchStrategy {
+  return asSwitchStrategy(readRegistry(home)?.switchStrategy) ?? DEFAULT_SWITCH_STRATEGY;
+}
+
+/** The `score` strategy's coefficients, each falling back to its own default. */
+export function switchWeightsFor(home: string = homedir()): SwitchWeights {
+  return sanitizeSwitchWeights(readRegistry(home)?.switchWeights ?? DEFAULT_SWITCH_WEIGHTS);
+}
+
+/**
+ * Set the strategy, its weights, or both — the accounts and `autoSwitch` are preserved.
+ *
+ * Partial on purpose: the UI writes the mode and the coefficients from two different
+ * controls, and neither should be able to reset the other by not mentioning it.
+ */
+export function setSwitchPolicy(
+  policy: { strategy?: SwitchStrategy; weights?: SwitchWeights },
+  home: string = homedir(),
+): { strategy: SwitchStrategy; weights: SwitchWeights } {
+  const next = {
+    strategy: policy.strategy ?? switchStrategyFor(home),
+    weights: policy.weights ? sanitizeSwitchWeights(policy.weights) : switchWeightsFor(home),
+  };
+  writeClaudeAccounts(listClaudeAccounts(home), home, undefined, next);
+  return next;
+}
+
 /** The account new sessions start on: the preferred one, else account #0, else null. */
 export function preferredClaudeAccount(home?: string): ClaudeAccount | null {
   const accounts = listClaudeAccounts(home);
@@ -214,12 +272,22 @@ export function writeClaudeAccounts(
   accounts: ClaudeAccount[],
   home: string = homedir(),
   autoSwitch?: boolean,
+  /** The switch policy to store. Omitted = keep whatever is on disk. */
+  policy?: { strategy: SwitchStrategy; weights: SwitchWeights },
 ): void {
   const filePath = claudeAccountsFilePath(home);
   mkdirSync(dirname(filePath), { recursive: true });
-  // Preserve the existing setting when the caller is only touching the accounts.
+  // Preserve the existing settings when the caller is only touching the accounts. Every
+  // account mutation in this file goes through here, so a reorder or a removal must not be
+  // able to silently reset the switch policy to its defaults.
   const keep = autoSwitch === undefined ? autoSwitchEnabled(home) : autoSwitch;
-  const registry: ClaudeAccountRegistry = { accounts, autoSwitch: keep };
+  const keepPolicy = policy ?? { strategy: switchStrategyFor(home), weights: switchWeightsFor(home) };
+  const registry: ClaudeAccountRegistry = {
+    accounts,
+    autoSwitch: keep,
+    switchStrategy: keepPolicy.strategy,
+    switchWeights: keepPolicy.weights,
+  };
   const tmp = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   writeFileSync(tmp, JSON.stringify(registry, null, 2) + '\n', 'utf-8');
   renameSync(tmp, filePath);

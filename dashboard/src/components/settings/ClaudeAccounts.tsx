@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../../context/VaultContext';
-import { useClaudeAccounts, type ClaudeAccountWire } from '../../hooks/useAgentCapabilities';
+import {
+  useClaudeAccounts,
+  type ClaudeAccountWire,
+  type SwitchStrategy,
+  type SwitchWeights,
+} from '../../hooks/useAgentCapabilities';
 import { SettingRow, Toggle } from './SettingRow';
+import { AccountSwitchPolicy, DEFAULT_WEIGHTS } from './AccountSwitchPolicy';
 import './ClaudeAccounts.css';
 
 /**
@@ -156,6 +162,8 @@ export function ClaudeAccounts() {
 
   const serverAccounts = data?.accounts ?? [];
   const autoSwitch = data?.autoSwitch ?? true;
+  const strategy: SwitchStrategy = data?.switchStrategy ?? 'score';
+  const savedWeights: SwitchWeights = data?.switchWeights ?? DEFAULT_WEIGHTS;
 
   // A local order wins while it matches the server's SET of accounts; reconciling on the id
   // list rather than the objects means a background refetch cannot fight a row mid-drag, but
@@ -176,18 +184,39 @@ export function ClaudeAccounts() {
 
   /** Every mutation reports its own failure in place. A silent no-op on a row that manages
    *  credentials is the wrong way to fail. */
-  const run = useCallback(async (tag: string, fn: () => Promise<unknown>) => {
+  /**
+   * Run one mutation with the page's busy/error plumbing. RETURNS whether it worked, because
+   * a caller holding optimistic state has to be able to put it back: a control that shows a
+   * value the server refused is a lie about what is on disk.
+   */
+  const run = useCallback(async (tag: string, fn: () => Promise<unknown>): Promise<boolean> => {
     setBusy(tag);
     setError('');
     try {
       await fn();
       refresh();
+      return true;
     } catch (e) {
       setError((e as Error)?.message || 'That did not work.');
+      // Re-read even on failure. The server is the truth about what was stored, and a caller
+      // that guessed wrong needs the real answer to come back rather than nothing at all.
+      refresh();
+      return false;
     } finally {
       setBusy('');
     }
   }, [refresh]);
+
+  const saveStrategy = useCallback((next: SwitchStrategy) => {
+    if (next === strategy) return;
+    void run('strategy', () => api.post('/agent/accounts/switch-policy', { strategy: next }));
+  }, [api, run, strategy]);
+
+  /** Only the coefficients that CHANGED — the route takes a partial patch. */
+  const saveWeights = useCallback(
+    (patch: Partial<SwitchWeights>) => run('weights', () => api.post('/agent/accounts/switch-policy', { weights: patch })),
+    [api, run],
+  );
 
   const addAccount = useCallback(async () => {
     const email = addEmail.trim();
@@ -475,6 +504,19 @@ export function ClaudeAccounts() {
               />
             }
           />
+
+          {/* The MODE. Only drawn when auto-switch is on and there is something to switch
+              between — a rule for picking among accounts is not a setting on a machine with
+              one account, and it is not a setting at all when nothing switches. */}
+          {autoSwitch && accounts.length > 1 && (
+            <AccountSwitchPolicy
+              strategy={strategy}
+              savedWeights={savedWeights}
+              busy={busy}
+              onSaveStrategy={saveStrategy}
+              onSaveWeights={saveWeights}
+            />
+          )}
         </div>
 
         {error && <p className="dc-acct-warn">{error}</p>}

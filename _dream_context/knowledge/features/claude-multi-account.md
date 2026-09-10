@@ -11,7 +11,7 @@ pinned: false
 date: '2026-09-05'
 status: in_review
 created: '2026-09-05'
-updated: '2026-09-08'
+updated: '2026-09-10'
 released_version: 0.27.0
 product: desktop
 tags:
@@ -30,6 +30,8 @@ related_tasks:
   - automation-runs-must-degrade-gracefully-on-the-account-usage-limit
   - >-
     auto-switch-brings-the-session-home-when-the-preferred-account-s-window-reopens
+  - auto-switch-iki-mod-agirlikli-puan-ve-sirayla-tuketme
+  - yanan-pencereyi-harcayan-ve-eve-donen-akilli-secim
 ---
 
 ## Why
@@ -103,13 +105,43 @@ and moving before the limit lands did not exist at all.
 
 ### Auto-switch
 
-- [x] `chooseAccount(readings, {threshold, orderedIds})` is PURE and takes usage readings as
-      arguments — no I/O, so every case is a unit test. It picks the lowest session usage whose
-      session AND weekly windows are both under threshold and whose `lockedReason` is empty.
-- [x] An `unknown` or `stale` reading is NEVER a candidate and is never counted as zero.
-- [x] Registry order is a real tie-break term (`orderedIds`), in both the measured branch and the
-      last-resort branch — numbers still come first, so a busy top-row account loses to a free
-      one. Omitting `orderedIds` preserves the old id ordering exactly.
+> **IN FLIGHT, NOT IN 0.27.0 — read the next four criteria with this caveat.** The `strategy` /
+> `weights` switch policy (`score` + `sequential`, the Settings → Agents control, the relative-
+> tolerance tie-break) is dated **2026-09-10** and is **uncommitted working-tree work under
+> multi-reviewer review** as of this writing. It is ticked because the code exists and its unit
+> tests pass (`tests/unit/claude-account-switch.test.ts`,
+> `tests/unit/agent-accounts-switch-policy-route.test.ts` — 76 assertions green), NOT because it
+> shipped. `released_version: 0.27.0` on this file refers to the account registry, the picker and
+> the panel; **the switch-policy block below is post-0.27.0 and is in no release yet.** Whoever
+> reconciles this next: if the work landed, delete this banner; if it was abandoned, untick the
+> four criteria rather than leaving them to read as shipped.
+
+- [x] `chooseAccount(readings, {threshold, orderedIds, strategy, weights})` is PURE and takes
+      usage readings as arguments — no I/O, so every case is a unit test.
+- [x] TWO strategies, chosen by the user in Settings → Agents (`switchStrategy` in the register,
+      default `score`). They are two different answers to what a second account is FOR, and the
+      owner's answer differs by week, so it is a setting rather than a constant.
+- [x] `score`: an account is eligible when its session AND weekly windows are both under
+      threshold and its `lockedReason` is empty; among the eligible, the lowest
+      `session·session% + weekly·weekly% + order·placeInList` serves. Coefficients default to
+      1 / 2 / 5 and are user-settable; `0` switches a term off. **This replaced "lowest session
+      usage wins" on 2026-09-10** — that rule gated the weekly window at the threshold and then
+      ignored it, so an account with 75% of its WEEK spent beat one with 6% because its 5-hour
+      window happened to be fresh. The scarcest quota was spent for the most abundant reason.
+- [x] `sequential`: percentages are not consulted at all. The top account in the user's list
+      serves every turn until the API ACTUALLY refuses one, then the next does. The pre-emptive
+      probe/threshold path is skipped entirely in this mode, so it costs nothing per message;
+      only a standing refusal or the post-hoc rejection path moves a session.
+- [x] An `unknown` or `stale` reading is NEVER a candidate under `score` and is never counted as
+      zero. Under `sequential` it IS eligible — that mode consults no percentage, so there is
+      nothing for a missing one to invalidate. A locked window and `needs-relogin` disqualify
+      under BOTH, because neither is a forecast.
+- [x] Registry order (`orderedIds`) is a weighed TERM under `score` and the sole ordering under
+      `sequential`. Its cost is linear: across N accounts the spread between top and bottom row
+      is `order·(N-1)`, so the default of 5 suits a handful of accounts and wants lowering on a
+      long list. Omitting `orderedIds` preserves the old id ordering exactly.
+- [x] Scores are compared with a relative tolerance, so fractional coefficients cannot defeat the
+      "the account already serving stays put on a tie" rule through binary float error.
 - [x] Percentages are the FORECAST path only: probe at session ≥80%, switch at ≥90% or as soon as a
       `lockedReason` arrives (`shouldProbe` / `shouldSwitchAway` / `SWITCH_THRESHOLD_PERCENT`). The
       LOAD-BEARING trigger is the API's own refusal — see the reversal below.

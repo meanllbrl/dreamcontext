@@ -17,8 +17,12 @@ import {
   sandboxDirFor,
   setAutoSwitchEnabled,
   setPreferredClaudeAccount,
+  setSwitchPolicy,
+  switchStrategyFor,
+  switchWeightsFor,
   upsertClaudeAccount,
 } from '../../lib/claude-accounts.js';
+import { asSwitchStrategy, sanitizeSwitchWeights } from '../../lib/claude-account-switch.js';
 import { ensureSandbox, sandboxHasIdentity } from '../../lib/claude-account-sandbox.js';
 import { claudeAuthStatus } from '../../lib/claude-auth.js';
 import { readUsageLimits, type UsageLimitWire } from '../../lib/claude-usage.js';
@@ -112,7 +116,12 @@ export async function handleAgentAccountsList(req: IncomingMessage, res: ServerR
     };
   });
 
-  sendJson(res, 200, { accounts: wire, autoSwitch: autoSwitchEnabled(home) });
+  sendJson(res, 200, {
+    accounts: wire,
+    autoSwitch: autoSwitchEnabled(home),
+    switchStrategy: switchStrategyFor(home),
+    switchWeights: switchWeightsFor(home),
+  });
 }
 
 /**
@@ -330,4 +339,68 @@ export async function handleAgentAccountsAutoSwitch(req: IncomingMessage, res: S
   }
   setAutoSwitchEnabled(body.enabled);
   sendJson(res, 200, { autoSwitch: body.enabled });
+}
+
+/**
+ * POST /api/agent/accounts/switch-policy — `{ strategy?, weights? }`.
+ *
+ * Both halves are optional and are applied independently: the mode picker and the
+ * coefficient fields are separate controls, and setting one must not reset the other.
+ *
+ * A rejected value is a 422 rather than a silent fallback to the default. A coefficient the
+ * server quietly rewrote would leave the user reading a number the chooser is not using,
+ * which is the same class of lie as switching the billed account without saying so.
+ */
+export async function handleAgentAccountsSwitchPolicy(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!guard(req, res)) return;
+  const body = await parseJsonBody(req);
+  const patch: { strategy?: 'score' | 'sequential'; weights?: { session: number; weekly: number; order: number } } = {};
+
+  if (body?.strategy !== undefined) {
+    const strategy = asSwitchStrategy(body.strategy);
+    if (!strategy) {
+      sendError(res, 422, 'bad_request', '`strategy` must be "score" or "sequential".');
+      return;
+    }
+    patch.strategy = strategy;
+  }
+
+  if (body?.weights !== undefined) {
+    const raw = body.weights;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      sendError(res, 422, 'bad_request', '`weights` must be an object.');
+      return;
+    }
+    const rec = raw as Record<string, unknown>;
+    // A PARTIAL patch merges over what is saved, so `{ weights: { order: 7 } }` moves one
+    // coefficient and leaves the other two alone — the same independence `strategy` already
+    // has. Requiring all three made one slider's request able to fail on the other two, and
+    // contradicted the per-field contract `sanitizeSwitchWeights` documents.
+    //
+    // A key that IS present must still be valid: a present-but-wrong value is 422, never a
+    // silent fall back to the default, because a coefficient the server quietly rewrote
+    // leaves the user reading a number the chooser is not using.
+    const current = switchWeightsFor();
+    const merged = { ...current };
+    for (const key of ['session', 'weekly', 'order'] as const) {
+      // `hasOwnProperty`, not `in`: `in` walks the prototype chain, so a polluted
+      // `Object.prototype.session` would read as a key the caller sent.
+      if (!Object.prototype.hasOwnProperty.call(rec, key)) continue;
+      const n = rec[key];
+      if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) {
+        sendError(res, 422, 'bad_request', `\`weights.${key}\` must be a number of 0 or more.`);
+        return;
+      }
+      merged[key] = n;
+    }
+    patch.weights = sanitizeSwitchWeights(merged);
+  }
+
+  if (patch.strategy === undefined && patch.weights === undefined) {
+    sendError(res, 422, 'bad_request', 'Send `strategy`, `weights`, or both.');
+    return;
+  }
+
+  const saved = setSwitchPolicy(patch);
+  sendJson(res, 200, { switchStrategy: saved.strategy, switchWeights: saved.weights });
 }

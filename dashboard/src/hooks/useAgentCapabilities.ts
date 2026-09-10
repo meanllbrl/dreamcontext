@@ -143,12 +143,29 @@ export interface ClaudeAccountWire {
   fetchedAtMs: number | null;
 }
 
+/** How auto-switch picks the next account. Mirrors `SwitchStrategy` on the server. */
+export type SwitchStrategy = 'score' | 'sequential';
+
+/** The `score` strategy's coefficients. Mirrors `SwitchWeights` on the server. */
+export interface SwitchWeights {
+  session: number;
+  weekly: number;
+  order: number;
+}
+
 export interface ClaudeAccountsResponse {
   accounts: ClaudeAccountWire[];
   autoSwitch: boolean;
+  switchStrategy: SwitchStrategy;
+  switchWeights: SwitchWeights;
 }
 
-const NO_ACCOUNTS: ClaudeAccountsResponse = { accounts: [], autoSwitch: true };
+const NO_ACCOUNTS: ClaudeAccountsResponse = {
+  accounts: [],
+  autoSwitch: true,
+  switchStrategy: 'score',
+  switchWeights: { session: 1, weekly: 2, order: 5 },
+};
 
 /**
  * The connected accounts (`GET /api/agent/accounts`).

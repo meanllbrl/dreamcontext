@@ -142,6 +142,51 @@
   border-top: 1px solid var(--color-border);
 }
 
+/* The score coefficients. Indented under the choice list so they read as belonging to the
+   option above them, and laid out as label / field / explanation so the number is never a
+   bare box the user has to guess the meaning of. */
+.dc-acct-weights {
+  margin: var(--space-2) 0 0 var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.dc-acct-weight {
+  display: grid;
+  grid-template-columns: 8.5rem 5.5rem 1fr;
+  align-items: center;
+  gap: var(--space-2);
+}
+.dc-acct-weight-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+}
+.dc-acct-weight-input {
+  width: 100%;
+  text-align: right;
+}
+.dc-acct-weight-note {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.45;
+}
+.dc-acct-weight-formula {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.dc-acct-weight-formula span {
+  color: var(--color-text-tertiary);
+}
+
+/* Narrow: the three-column row cannot hold, so the note drops under its own field. */
+@media (max-width: 640px) {
+  .dc-acct-weights { margin-left: 0; }
+  .dc-acct-weight { grid-template-columns: 1fr 5.5rem; }
+  .dc-acct-weight-note { grid-column: 1 / -1; }
+}
+
 .dc-acct-head {
   display: flex;
   align-items: center;
