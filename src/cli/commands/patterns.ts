@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { dirname } from 'node:path';
 import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
-import { loadPatterns, matchPatterns, syncPatternShims } from '../../lib/patterns.js';
+import { loadPatterns, loadPatternsReporting, matchPatterns, syncPatternShims } from '../../lib/patterns.js';
 import { success, error, info } from '../../lib/format.js';
 
 /**
@@ -27,7 +27,7 @@ export function registerPatternsCommand(program: Command): void {
     .option('--json', 'Machine-readable output')
     .action((opts: { json?: boolean }) => {
       const root = ensureContextRoot();
-      const docs = loadPatterns(root);
+      const { patterns: docs, skipped } = loadPatternsReporting(root);
 
       if (opts.json) {
         console.log(JSON.stringify(
@@ -54,7 +54,20 @@ export function registerPatternsCommand(program: Command): void {
       for (const p of docs) {
         console.log(`  ${chalk.bold(p.name)}  ${chalk.dim(`/${p.slashName}`)}`);
         if (p.description) console.log(`    ${chalk.dim(p.description)}`);
-        console.log(`    ${chalk.dim(`triggers: ${[...p.keys].sort().join(', ')}`)}`);
+        // A pattern that derives NO keys can never fire, whatever its content —
+        // a name written entirely in a non-Latin script folds to nothing, and so
+        // does one made only of category words ("best-practices-guide"). Silent
+        // in the corpus, so it is loud here.
+        if (p.keys.size === 0) {
+          console.log(`    ${chalk.yellow('⚠ no triggers could be derived — this pattern can never fire automatically. Add `triggers: [<words a user would say>]` to its frontmatter.')}`);
+        } else {
+          console.log(`    ${chalk.dim(`triggers: ${[...p.keys].sort().join(', ')}`)}`);
+        }
+        console.log();
+      }
+      for (const s of skipped) {
+        console.log(`  ${chalk.red('✗')} ${chalk.bold(s.file)}`);
+        console.log(`    ${chalk.red(`skipped — ${s.reason}`)}`);
         console.log();
       }
       info(`${docs.length} pattern${docs.length === 1 ? '' : 's'}. Triggers are derived automatically — add \`triggers:\` to a pattern only to teach it a word its name does not contain.`);
@@ -68,7 +81,9 @@ export function registerPatternsCommand(program: Command): void {
       const root = ensureContextRoot();
       const projectRoot = dirname(root);
       const result = syncPatternShims(projectRoot, root);
-      const total = loadPatterns(root).length;
+      const { patterns, skipped } = loadPatternsReporting(root);
+      const total = patterns.length;
+      for (const s of skipped) error(`skipped ${s.file} — ${s.reason}`);
       if (result.written.length === 0 && result.removed.length === 0) {
         info(`"/" entries already match the vault (${total} pattern${total === 1 ? '' : 's'}).`);
         return;

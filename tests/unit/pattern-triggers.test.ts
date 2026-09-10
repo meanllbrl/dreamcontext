@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -14,6 +14,10 @@ import {
   syncPatternShimsIfStale,
   selectForInjection,
   patternsFingerprint,
+  loadPatternsReporting,
+  commandsDir,
+  MAX_PATTERN_FILE_BYTES,
+  FIRST_MATCH_CEILING_FACTOR,
   MAX_PATTERN_MATCHES,
 } from '../../src/lib/patterns.js';
 
@@ -297,13 +301,20 @@ describe('"/" shims', () => {
 });
 
 describe('injection — the pattern arrives IN the turn, not as a path', () => {
-  it('injects the top match in full even when it alone overruns the budget', () => {
-    // Half a pattern is worse than a pointer to all of it, and the single most
-    // relevant one is exactly what the user asked to stop fetching by hand.
+  it('never demotes the top match to a pointer, even on a tiny budget', () => {
+    // The single most relevant pattern is exactly what the user asked to stop
+    // fetching by hand, so it is exempt from the budget — bounded only by
+    // FIRST_MATCH_CEILING_FACTOR, which a real pattern never reaches.
     const hits = matchPatterns('özetle', loadPatterns(ROOT));
     const plan = selectForInjection(hits, 10);
     expect(plan.inline).toHaveLength(1);
+    expect(plan.pointers).toHaveLength(0);
+  });
+
+  it('injects a normal-sized pattern whole', () => {
+    const plan = selectForInjection(matchPatterns('özetle', loadPatterns(ROOT)));
     expect(plan.inline[0].body).toContain('Kalıp');
+    expect(plan.inline[0].body).not.toContain('truncated');
   });
 
   it('strips frontmatter so the turn carries the argument, not the bookkeeping', () => {
@@ -381,5 +392,139 @@ describe('the keep-them-true rule ships in the hook, not only in prose', () => {
     const sleepAgent = readFileSync(join(__dirname, '..', '..', 'agents', 'sleep-product.md'), 'utf-8');
     expect(sleepRef).toContain('Sleep does NOT fold user corrections into patterns');
     expect(sleepAgent).toContain('Never fold a user correction into a pattern');
+  });
+});
+
+describe('review findings — regression locks', () => {
+  // Every case below was a real defect found by the multi-reviewer pass on
+  // f03c001. The two Critical ones were reproduced end-to-end first.
+
+  it('C1: refuses a symlinked pattern instead of printing what it points at', () => {
+    // Reproduced before the guard: `knowledge/patterns/x.md ->
+    // ../../lab/credentials.json` printed `{"apiKey":"…"}` into a live prompt.
+    mkdirSync(join(ROOT, 'lab'), { recursive: true });
+    const secret = join(ROOT, 'lab', 'credentials.json');
+    writeFileSync(secret, '{"apiKey":"SECRET_VALUE_123"}', 'utf-8');
+    const link = join(ROOT, 'knowledge', 'patterns', 'plan-ozeti-leak.md');
+    symlinkSync('../../lab/credentials.json', link);
+
+    const { patterns, skipped } = loadPatternsReporting(ROOT);
+    expect(patterns.map((p) => p.slug)).not.toContain('plan-ozeti-leak');
+    expect(skipped.some((s) => s.file.endsWith('plan-ozeti-leak.md'))).toBe(true);
+    // And nothing that DOES load carries the secret.
+    const plan = selectForInjection(matchPatterns('plan özeti', patterns));
+    for (const { body } of plan.inline) expect(body).not.toContain('SECRET_VALUE_123');
+
+    rmSync(link);
+    rmSync(secret);
+  });
+
+  it('C1: refuses a pattern reached through a symlinked DIRECTORY', () => {
+    // `lstat` on the leaf sees a regular file here — only the realpath
+    // containment check catches it.
+    const outside = join(PROJECT, 'outside-vault');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'sneaky-thing.md'), '---\nname: Sneaky\n---\n\n# Sneaky\n\nSECRET_VALUE_456\n', 'utf-8');
+    const linkedDir = join(ROOT, 'knowledge', 'patterns', 'linked');
+    symlinkSync(outside, linkedDir);
+
+    const { patterns } = loadPatternsReporting(ROOT);
+    expect(patterns.map((p) => p.slug)).not.toContain('sneaky-thing');
+
+    rmSync(linkedDir);
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('C1: refuses an oversized pattern rather than reading it on every prompt', () => {
+    const big = join(ROOT, 'knowledge', 'patterns', 'enormous-thing.md');
+    writeFileSync(big, `---\nname: Enormous Thing\n---\n\n# Enormous Thing\n\n${'x'.repeat(MAX_PATTERN_FILE_BYTES + 1)}`, 'utf-8');
+    const { patterns, skipped } = loadPatternsReporting(ROOT);
+    expect(patterns.map((p) => p.slug)).not.toContain('enormous-thing');
+    expect(skipped.some((s) => s.file.endsWith('enormous-thing.md'))).toBe(true);
+    rmSync(big);
+  });
+
+  it('C2: injected prose is delimited and labelled as a project document', () => {
+    const HOOK_SRC = readFileSync(join(__dirname, '..', '..', 'src', 'cli', 'commands', 'hook.ts'), 'utf-8');
+    expect(HOOK_SRC).toContain('BEGIN PROJECT DOCUMENT');
+    expect(HOOK_SRC).toContain('END PROJECT DOCUMENT');
+    // The line that keeps the feature intact while closing the escalation:
+    // engineering guidance is followed, conduct instructions are not.
+    expect(HOOK_SRC).toContain('Follow its ENGINEERING ');
+    expect(HOOK_SRC).toContain('STOP and report');
+  });
+
+  it('M3: truncates an over-ceiling top match instead of injecting it unbounded', () => {
+    const huge = join(ROOT, 'knowledge', 'patterns', 'verbose-ozet-thing.md');
+    writeFileSync(huge, `---\nname: Verbose Ozet Thing\n---\n\n# Verbose Ozet Thing\n\n${'y'.repeat(5000)}`, 'utf-8');
+    const hits = matchPatterns('verbose ozet thing', loadPatterns(ROOT));
+    const plan = selectForInjection(hits, 100);
+    expect(plan.inline[0].body.length).toBeLessThanOrEqual(100 * FIRST_MATCH_CEILING_FACTOR + 200);
+    expect(plan.inline[0].body).toContain('truncated');
+    rmSync(huge);
+  });
+
+  it('M4: reports a pattern whose frontmatter will not parse, instead of dropping it in silence', () => {
+    const broken = join(ROOT, 'knowledge', 'patterns', 'broken-yaml-thing.md');
+    writeFileSync(broken, '---\nname: [unclosed\n  bad: : indent\n---\n\n# Broken\n', 'utf-8');
+    const { patterns, skipped } = loadPatternsReporting(ROOT);
+    const loadedOk = patterns.some((p) => p.slug === 'broken-yaml-thing');
+    const reported = skipped.some((s) => s.file.endsWith('broken-yaml-thing.md'));
+    // Either it parsed, or it was reported — what must never happen is both
+    // "absent from the corpus" and "absent from the skip list".
+    expect(loadedOk || reported).toBe(true);
+    rmSync(broken);
+  });
+
+  it('M5: an existing pattern keeps its "/" name when a colliding neighbour appears', () => {
+    const a = 'zzzz-aaaa-bbbb-cccc-dddd-eeee-ffff-gggg-one';
+    const b = 'zzzz-aaaa-bbbb-cccc-dddd-eeee-ffff-gggg-two';
+    writePattern(a, `name: Collide One\ndescription: x`);
+    const before = loadPatterns(ROOT).find((p) => p.slug === a)!.slashName;
+
+    writePattern(b, `name: Collide Two\ndescription: x`);
+    const after = loadPatterns(ROOT).find((p) => p.slug === a)!.slashName;
+    const other = loadPatterns(ROOT).find((p) => p.slug === b)!.slashName;
+
+    // The guarantee that matters: a "/" name never comes to mean a DIFFERENT
+    // pattern. Under the old counter scheme the bare name went to whichever
+    // slug sorted first, so adding a neighbour silently repointed an existing
+    // command at someone else's prose. Now both colliding patterns take a
+    // suffix derived from their own slug — `a` is renamed once, which is
+    // visible, but `b` can never inherit the name `a` used to answer to.
+    expect(other).not.toBe(before);
+    expect(other).not.toBe(after);
+    // And the outcome is a pure function of the slug set: recomputing is stable.
+    expect(loadPatterns(ROOT).find((p) => p.slug === a)!.slashName).toBe(after);
+
+    rmSync(join(ROOT, 'knowledge', 'patterns', `${a}.md`));
+    rmSync(join(ROOT, 'knowledge', 'patterns', `${b}.md`));
+  });
+
+  it('M6: notices its own output going missing, not just the patterns changing', () => {
+    rmSync(join(ROOT, 'state', '.patterns-shims.json'), { force: true });
+    syncPatternShimsIfStale(PROJECT, ROOT);
+    expect(syncPatternShimsIfStale(PROJECT, ROOT)).toBeNull();
+
+    // Wipe the generated menu by hand — the patterns themselves did not change.
+    rmSync(commandsDir(PROJECT), { recursive: true, force: true });
+    const healed = syncPatternShimsIfStale(PROJECT, ROOT);
+    expect(healed, 'a wiped commands dir must trigger a re-sync').not.toBeNull();
+    expect(healed!.written.length).toBeGreaterThan(0);
+  });
+
+  it('M7: does not write the shared cache while another process holds the lock', () => {
+    rmSync(join(ROOT, 'state', '.patterns-shims.json'), { force: true });
+    const lockPath = join(ROOT, 'state', '.patterns-shims.json.lock');
+    mkdirSync(join(ROOT, 'state'), { recursive: true });
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, at: Date.now() }), 'utf-8');
+
+    // Losing the race is harmless — the loser re-syncs next session — so it
+    // must back off rather than write over the holder.
+    expect(syncPatternShimsIfStale(PROJECT, ROOT)).toBeNull();
+    expect(existsSync(join(ROOT, 'state', '.patterns-shims.json'))).toBe(false);
+
+    rmSync(lockPath, { force: true });
+    expect(syncPatternShimsIfStale(PROJECT, ROOT)).not.toBeNull();
   });
 });

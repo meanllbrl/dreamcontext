@@ -50,9 +50,13 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, relative } from 'node:path';
+import {
+  existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join, relative, sep } from 'node:path';
 import fg from 'fast-glob';
+import { acquireFileLock, releaseFileLock } from './file-lock.js';
 import matter from 'gray-matter';
 import { foldAscii } from './fold-ascii.js';
 
@@ -317,19 +321,88 @@ export function patternsDir(contextRoot: string): string {
 }
 
 /**
+ * Largest pattern file this module will read.
+ *
+ * The hook reads every pattern on every prompt, so an oversized file is not
+ * merely wasteful — it is paid again on each turn, inside a hook the harness
+ * will eventually time out. Patterns are prose held to a ~150-line discipline;
+ * a quarter of a megabyte is far past anything legitimate, so refusing to read
+ * beyond it costs nothing real and bounds the hot path.
+ */
+export const MAX_PATTERN_FILE_BYTES = 256 * 1024;
+
+/**
+ * Is this glob match a file we are willing to open?
+ *
+ * A pattern is supposed to be a markdown file the project wrote. `fast-glob`
+ * matches a SYMLINK by its own name, and `readFileSync` then returns whatever
+ * it points at — so `knowledge/patterns/x.md -> ../../lab/credentials.json`
+ * makes the hook print that credentials file straight into the agent's
+ * context. This was reproduced end-to-end before the guard existed: a fake
+ * vault with such a link leaked `{"apiKey":"…"}` into a live prompt.
+ *
+ * That matters because the vault is not always authored by the person running
+ * the agent — dreamcontext syncs a shared brain repo across a team, and a
+ * pattern file gets far less scrutiny in review than code does. So a link
+ * committed by anyone with vault write access would exfiltrate a local secret
+ * from every teammate's machine.
+ *
+ * `lstatSync` rejects the link itself; the `realpathSync` containment check
+ * additionally catches a link ABOVE the file (a symlinked subdirectory), which
+ * `lstat` on the leaf would miss. Size is checked here too so a single guard
+ * governs everything that opens a pattern.
+ */
+export function isReadablePatternFile(file: string, dir: string): boolean {
+  try {
+    const link = lstatSync(file);
+    if (link.isSymbolicLink() || !link.isFile()) return false;
+    if (link.size > MAX_PATTERN_FILE_BYTES) return false;
+    const real = realpathSync(file);
+    const realDir = realpathSync(dir);
+    return real === realDir || real.startsWith(realDir + sep);
+  } catch {
+    // Unreadable or vanished between glob and stat — not ours to open.
+    return false;
+  }
+}
+
+/**
  * Load every pattern in the vault, with its triggers already derived.
  *
  * Excalidraw boards that live in a pattern subfolder are skipped: they are
  * illustrations of a pattern, not the pattern document.
  */
 export function loadPatterns(contextRoot: string): PatternDoc[] {
+  return loadPatternsReporting(contextRoot).patterns;
+}
+
+export interface PatternLoadResult {
+  patterns: PatternDoc[];
+  /**
+   * Files that exist under `knowledge/patterns/` but could not become patterns:
+   * unparseable frontmatter, a symlink, an oversized file, an unreadable one.
+   *
+   * These used to be swallowed in silence, which reintroduced — one layer down
+   * — the exact bug this whole feature exists to fix: a pattern the project
+   * believes is governing behaviour while nothing actually reads it. A YAML
+   * typo was enough, and no command, log, or listing would have said so.
+   */
+  skipped: Array<{ file: string; reason: string }>;
+}
+
+/** {@link loadPatterns}, plus the files it had to refuse and why. */
+export function loadPatternsReporting(contextRoot: string): PatternLoadResult {
   const dir = patternsDir(contextRoot);
-  if (!existsSync(dir)) return [];
+  const skipped: PatternLoadResult['skipped'] = [];
+  if (!existsSync(dir)) return { patterns: [], skipped };
   const files = fg.sync('**/*.md', { cwd: dir, absolute: true, ignore: ['**/*.excalidraw.md'] });
   const out: PatternDoc[] = [];
-  const usedSlash = new Map<string, number>();
 
   for (const file of files.sort()) {
+    if (!isReadablePatternFile(file, dir)) {
+      skipped.push({ file: relative(contextRoot, file), reason: 'not a readable regular file inside knowledge/patterns (symlink, oversized, or unreadable)' });
+      continue;
+    }
     try {
       const { data, content } = matter(readFileSync(file, 'utf-8'));
       const fm = data as Record<string, unknown>;
@@ -356,28 +429,48 @@ export function loadPatterns(contextRoot: string): PatternDoc[] {
       ]);
       for (const k of keys) context.delete(k);
 
-      let slash = slashNameFor(slug);
-      const seen = usedSlash.get(slash) ?? 0;
-      usedSlash.set(slash, seen + 1);
-      if (seen > 0) slash = `${slash}-${seen + 1}`;
-
       out.push({
         slug,
         file,
         relPath: relative(contextRoot, file).replace(/\\/g, '/'),
         name,
         description: oneLine(fm.description ?? fm.summary),
-        slashName: slash,
+        slashName: slashNameFor(slug),
         keys,
         context,
         bodyKeys: foldKeys(content),
         authored: authoredTriggers.length > 0,
       });
-    } catch {
-      // An unreadable or malformed pattern must never break the prompt hook.
+    } catch (err) {
+      // Must never break the prompt hook — but must never be silent either.
+      skipped.push({ file: relative(contextRoot, file), reason: (err as Error).message ?? 'unreadable' });
     }
   }
-  return out;
+  return { patterns: disambiguateSlashNames(out), skipped };
+}
+
+/**
+ * Give every pattern a `/` name that is unique AND stable.
+ *
+ * `slashNameFor` truncates, so two long slugs can collide. Resolving that with
+ * a counter over the iteration order was wrong in a way that only shows up
+ * later: the suffix depended on alphabetical position, so adding an unrelated
+ * pattern that sorted earlier could silently hand `/pattern-foo-bar` to a
+ * DIFFERENT file — and because the shim sync runs automatically, the swap would
+ * be written to disk with nothing said. A user with muscle memory for a command
+ * would then get someone else's "decided way of doing things" injected.
+ *
+ * The suffix is therefore derived from the full slug, which does not move when
+ * its neighbours change.
+ */
+function disambiguateSlashNames(docs: PatternDoc[]): PatternDoc[] {
+  const counts = new Map<string, number>();
+  for (const d of docs) counts.set(d.slashName, (counts.get(d.slashName) ?? 0) + 1);
+  return docs.map((d) => {
+    if ((counts.get(d.slashName) ?? 0) < 2) return d;
+    const suffix = createHash('sha256').update(d.slug).digest('hex').slice(0, 6);
+    return { ...d, slashName: `${d.slashName}-${suffix}` };
+  });
 }
 
 // ─── Matching ───────────────────────────────────────────────────────────────
@@ -646,6 +739,9 @@ export function syncPatternShims(projectRoot: string, contextRoot: string): Shim
  */
 export const DEFAULT_INJECTION_BUDGET = 12000;
 
+/** A shim sync that has not finished in this long left a dead lock behind. */
+const SHIM_LOCK_STALE_MS = 30_000;
+
 export function injectionBudget(): number {
   const raw = process.env.DREAMCONTEXT_PATTERN_BUDGET;
   if (raw === undefined) return DEFAULT_INJECTION_BUDGET;
@@ -670,6 +766,16 @@ export interface InjectionPlan {
  * only while the running total stays inside the budget, so a long tail degrades
  * to pointers instead of flooding the turn.
  */
+/**
+ * Absolute ceiling for the top match, which is otherwise exempt from the
+ * budget. "Exempt" was written to mean "a whole pattern always gets in", but as
+ * code it meant "no limit at all": one oversized file would flood every
+ * matching turn forever. A multiple of the budget keeps the intent (a normal
+ * pattern is never truncated — the vault's largest is ~15k) while capping the
+ * pathological case.
+ */
+export const FIRST_MATCH_CEILING_FACTOR = 3;
+
 export function selectForInjection(
   matches: PatternMatch[],
   budget = injectionBudget(),
@@ -692,6 +798,15 @@ export function selectForInjection(
 
     const first = i === 0 && budget > 0;
     if (!first && used + body.length > budget) { pointers.push(match); continue; }
+    if (first) {
+      const ceiling = budget * FIRST_MATCH_CEILING_FACTOR;
+      if (body.length > ceiling) {
+        // Truncation is a last resort, so it says so rather than pretending the
+        // pattern ended — a silently halved argument is how a rule gets
+        // misapplied.
+        body = `${body.slice(0, ceiling)}\n\n[… truncated — read ${match.pattern.relPath} in full before relying on this pattern]`;
+      }
+    }
     inline.push({ match, body });
     used += body.length;
   }
@@ -707,13 +822,30 @@ export function selectForInjection(
  * the set, and an edited one changes its own mtime (which matters because the
  * shim carries the pattern's name and description).
  */
-export function patternsFingerprint(contextRoot: string): string {
+export function patternsFingerprint(contextRoot: string, projectRoot?: string): string {
   const dir = patternsDir(contextRoot);
-  if (!existsSync(dir)) return 'none';
-  const files = fg.sync('**/*.md', { cwd: dir, absolute: true, ignore: ['**/*.excalidraw.md'] }).sort();
   const parts: string[] = [];
-  for (const f of files) {
-    try { parts.push(`${basename(f)}:${Math.round(statSync(f).mtimeMs)}`); } catch { /* skipped */ }
+  if (existsSync(dir)) {
+    const files = fg.sync('**/*.md', { cwd: dir, absolute: true, ignore: ['**/*.excalidraw.md'] }).sort();
+    for (const f of files) {
+      try { parts.push(`${basename(f)}:${Math.round(statSync(f).mtimeMs)}`); } catch { /* skipped */ }
+    }
+  }
+  // The OUTPUT side belongs in the fingerprint too. Hashing only the pattern
+  // sources meant that deleting a shim by hand — or a `git clean`, or restoring
+  // a checkout without `.claude/` — left the cache saying "in sync" while the
+  // menu stayed broken, with no self-healing path and nothing to tell the user.
+  // Since the whole promise of this cache is "you never run a command", the
+  // cache has to notice when its own output went missing.
+  if (projectRoot) {
+    const cmds = commandsDir(projectRoot);
+    if (existsSync(cmds)) {
+      try {
+        parts.push(`|shims:${readdirSync(cmds).filter((n) => n.startsWith('pattern-') && n.endsWith('.md')).sort().join(',')}`);
+      } catch { /* unreadable — treated as absent, which forces a re-sync */ }
+    } else {
+      parts.push('|shims:none');
+    }
   }
   return createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 16);
 }
@@ -728,19 +860,48 @@ export function patternsFingerprint(contextRoot: string): string {
  */
 export function syncPatternShimsIfStale(projectRoot: string, contextRoot: string): ShimSyncResult | null {
   const cachePath = join(contextRoot, 'state', '.patterns-shims.json');
-  const fingerprint = patternsFingerprint(contextRoot);
+  const fingerprint = patternsFingerprint(contextRoot, projectRoot);
   try {
     const cached = JSON.parse(readFileSync(cachePath, 'utf-8')) as { fingerprint?: string };
     if (cached.fingerprint === fingerprint) return null;
   } catch {
     // No cache, or an unreadable one — fall through and sync.
   }
-  const result = syncPatternShims(projectRoot, contextRoot);
+
+  // Two Claude sessions in one checkout both hit SessionStart, and this is a
+  // read-compare-write over shared files. `knowledge/patterns/
+  // pid-lockfile-concurrent-json.md` is this project's decided answer to that
+  // exact shape and records having been needed three times already; the first
+  // version of this function ignored it, which a review caught. Losing the race
+  // is harmless here (the loser simply re-syncs next session), so a failed
+  // acquire returns rather than spins.
+  const lockPath = `${cachePath}.lock`;
+  if (!acquireFileLock(lockPath, Date.now(), SHIM_LOCK_STALE_MS)) return null;
   try {
-    mkdirSync(dirname(cachePath), { recursive: true });
-    writeFileSync(cachePath, `${JSON.stringify({ fingerprint }, null, 2)}\n`, 'utf-8');
-  } catch {
-    // A vault we cannot write to still got its shims; it just re-checks next time.
+    // Re-read INSIDE the lock: the holder we queued behind may have just done
+    // the work, and redoing it would rewrite files for nothing.
+    try {
+      const cached = JSON.parse(readFileSync(cachePath, 'utf-8')) as { fingerprint?: string };
+      if (cached.fingerprint === fingerprint) return null;
+    } catch { /* still no usable cache */ }
+
+    const result = syncPatternShims(projectRoot, contextRoot);
+    try {
+      mkdirSync(dirname(cachePath), { recursive: true });
+      // Recomputed AFTER the sync, not reused from above: the fingerprint now
+      // covers the generated shims too, so the pre-sync value describes a state
+      // that no longer exists and every later session would re-sync once for
+      // nothing. (Caught by the M6 regression test, which is the point of it.)
+      const settled = patternsFingerprint(contextRoot, projectRoot);
+      // Write-then-rename so a concurrent reader never sees a half-written file.
+      const tmp = `${cachePath}.${process.pid}.tmp`;
+      writeFileSync(tmp, `${JSON.stringify({ fingerprint: settled }, null, 2)}\n`, 'utf-8');
+      renameSync(tmp, cachePath);
+    } catch {
+      // A vault we cannot write to still got its shims; it re-checks next time.
+    }
+    return result;
+  } finally {
+    releaseFileLock(lockPath);
   }
-  return result;
 }
