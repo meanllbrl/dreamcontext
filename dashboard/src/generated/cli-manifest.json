@@ -1825,6 +1825,29 @@
       ]
     },
     {
+      "path": "patterns",
+      "desc": "Browse project patterns, sync their \"/\" entries, and test what a prompt triggers",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "patterns list",
+      "desc": "List every pattern with its \"/\" name and derived triggers",
+      "args": []
+    },
+    {
+      "path": "patterns match",
+      "desc": "Show which patterns a prompt would trigger, and why",
+      "args": [
+        "<prompt...>"
+      ]
+    },
+    {
+      "path": "patterns sync",
+      "desc": "Regenerate the \"/\" menu entries from knowledge/patterns/",
+      "args": []
+    },
+    {
       "path": "peer",
       "desc": "Talk to a connected project: send notes, ask questions, hand over commands",
       "args": [],

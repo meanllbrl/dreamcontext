@@ -31,6 +31,7 @@ import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
 import { syncPeerAgents } from '../../lib/peer-agent-gen.js';
+import { syncPatternShims } from '../../lib/patterns.js';
 
 // ─── Hook Constants (Claude) ───────────────────────────────────────────────
 
@@ -847,6 +848,24 @@ export async function installCoreForPlatform(
     }
   } catch {
     // Best-effort: a missing envoy must never fail an install.
+  }
+
+  // Per-pattern "/" entries. GENERATED like the peer envoys above, not copied
+  // from the package: they are derived from THIS vault's knowledge/patterns/,
+  // so there is nothing to ship and nothing stable to record in the manifest.
+  // `syncPatternShims` owns its own namespace via a marker inside each file and
+  // reconciles the whole set here, so a pattern added, renamed, or deleted since
+  // the last run is reflected on the next setup/update.
+  try {
+    const shims = syncPatternShims(projectRoot, join(projectRoot, '_dream_context'));
+    if (shims.written.length > 0 || shims.removed.length > 0) {
+      installed.push(platformPrefixed(
+        platform,
+        `.claude/commands/ ${chalk.dim(`(${shims.written.length} pattern "/" entr${shims.written.length === 1 ? 'y' : 'ies'})`)}`,
+      ));
+    }
+  } catch {
+    // Best-effort: a malformed pattern must never fail an install.
   }
 
   {

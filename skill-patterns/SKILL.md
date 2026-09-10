@@ -21,6 +21,13 @@ pattern content of its own; always read the live files.
    (see the dreamcontext skill's Entity Router).
 
 Do not copy pattern text into this file; do not edit patterns from here without
-offer-and-confirm. Per-pattern "/" entries (generated shims) arrive with the
-knowledge-workflows shim mechanism when that feature is built — this skill is the
-interim, drift-free bridge.
+offer-and-confirm.
+
+**You are usually not the first to know.** A pattern that the user's message
+actually names is already in your context: the `UserPromptSubmit` hook runs a
+deterministic gate and prints matching patterns with a MUST-READ directive. This
+skill is the BROWSE surface for the other cases — "what do we have", "load the X
+one". Each pattern also has its own generated `/` entry
+(`.claude/commands/pattern-<name>.md`, kept in sync by `dreamcontext patterns
+sync`). To see what a phrase would trigger, run
+`dreamcontext patterns match "<prompt>"`.

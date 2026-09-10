@@ -40,6 +40,7 @@ import { registerFeedbackCommand } from './commands/feedback.js';
 import { registerMigrationsCommand } from './commands/migrations.js';
 import { registerBrainCommand } from './commands/brain.js';
 import { registerLinkCommand } from './commands/link.js';
+import { registerPatternsCommand } from './commands/patterns.js';
 
 /**
  * The command TREE, with no entrypoint attached.
@@ -128,6 +129,7 @@ export function createProgram(): Command {
   registerCoreCommand(program);
   registerFeaturesCommand(program);
   registerKnowledgeCommand(program);
+  registerPatternsCommand(program);
   registerTasksCommand(program);
   registerRoadmapCommand(program);
   registerLabCommand(program);

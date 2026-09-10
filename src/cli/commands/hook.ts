@@ -35,6 +35,7 @@ import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { buildCorpus, bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
+import { loadPatterns, matchPatterns, selectForInjection, syncPatternShimsIfStale } from '../../lib/patterns.js';
 import { hybridSearch, hybridReady } from '../../lib/embeddings/hybrid.js';
 import {
   crossVaultRecall,
@@ -1625,6 +1626,21 @@ export function registerHookCommand(program: Command): void {
       const sid = input && typeof input.session_id === 'string' ? input.session_id : '';
       if (sid) recordTabSessionFromHook(root, sid);
 
+      // Keep the per-pattern "/" entries in step with the vault, WITHOUT anybody
+      // running a command. A pattern added, renamed, or retired since the last
+      // session would otherwise leave the menu stale until the next
+      // setup/update/sleep — and "do I have to redo this in every project?" is
+      // exactly the question this answers: no, each project maintains its own.
+      // Fingerprint-gated, so the steady state is one stat() per pattern and
+      // zero writes. Wrapped: a read-only checkout must never break the hook.
+      try {
+        if (process.env.DREAMCONTEXT_PATTERNS_HOOK !== '0') {
+          syncPatternShimsIfStale(dirname(root), root);
+        }
+      } catch (shimErr) {
+        if (process.env.DREAMCONTEXT_DEBUG) console.error('[patterns] shim sync:', (shimErr as Error).message ?? shimErr);
+      }
+
       // Seed core/taxonomy.json on installs that predate the taxonomy system, so
       // tagging behaviors work from the very first session after an upgrade —
       // no user action, no waiting for a sleep cycle. Never overwrites; wrapped
@@ -2194,6 +2210,86 @@ export function registerHookCommand(program: Command): void {
           }
         } catch (recallErr) {
           if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] error:', (recallErr as Error).message ?? recallErr);
+        }
+      }
+
+      // ── Project patterns (deterministic gate) ────────────────────────────
+      // Patterns are the project's DECIDED ways of doing things, and several of
+      // them say so in their own body ("bu kalıp her plan sunumunda zorunludur").
+      // As ordinary knowledge docs they competed for a top-3 recall slot and
+      // usually lost, so a pattern that declared itself mandatory was silently
+      // ignored — the failure this gate exists to end.
+      //
+      // Deliberately NOT part of the recall block above:
+      //  · it has its OWN budget, so a pattern can never be crowded out by three
+      //    unrelated tasks that happened to score higher;
+      //  · it is deterministic (identity-key match, no model in the loop), so it
+      //    behaves the same on every machine and can be reproduced offline with
+      //    `dreamcontext patterns match "<prompt>"`;
+      //  · it emits a MUST-READ directive rather than a candidate list, which is
+      //    only defensible because the matcher is tuned for precision over
+      //    recall (see lib/patterns.ts for the measured operating point) — a
+      //    gate that fires wrongly is one the agent learns to ignore. The first
+      //    shipped version proved that the hard way: it fired three patterns off
+      //    a routine status message because "test", "code" and "file" each
+      //    happened to be unique among 42 filenames. Evidence now scales with
+      //    prompt length, so a long dump needs more than one incidental word.
+      //
+      // Triggers are DERIVED from each pattern's own filename and name, so this
+      // works on a vault whose owner has never heard of the feature and has
+      // never authored a trigger. Own try/catch: never break the prompt.
+      if (process.env.DREAMCONTEXT_PATTERNS_HOOK !== '0') {
+        try {
+          const prompt = String((input as Record<string, unknown>).prompt ?? '');
+          if (prompt.trim().length >= 3) {
+            const hits = matchPatterns(prompt, loadPatterns(root));
+            if (hits.length > 0) {
+              // INJECT the prose, don't point at it. A pointer plus a directive
+              // still depends on the agent choosing to open the file, and the
+              // owner's report was precisely that the pattern "does not get
+              // loaded" — so the matched patterns are pasted into the turn and
+              // are simply THERE. Overflow past the budget degrades to the old
+              // pointer form rather than dropping silently.
+              const plan = selectForInjection(hits);
+              const lines: string[] = ['', `— Project patterns (${hits.length} triggered) —`];
+              lines.push(
+                '  ⛔ These are DECIDED ways of doing things in this project, not suggestions. ' +
+                  'FOLLOW them; do not re-derive an approach one already settles.',
+              );
+              // The second clause is the one the owner asked for, and it is HERE
+              // rather than in skill prose on purpose — see
+              // knowledge/patterns/hook-delivered-must-not-miss-rules.md. A
+              // pattern that the user has just contradicted is worse than no
+              // pattern: it will keep being injected, keep being obeyed, and the
+              // same correction will keep being typed. Folding the correction
+              // back in is therefore part of THIS task, not a sleep chore — by
+              // the time sleep runs, the reasoning that produced the correction
+              // is gone and only its conclusion survives.
+              lines.push(
+                '  ⛔ AND KEEP THEM TRUE: if the user contradicts, narrows, or extends one of these ' +
+                  'patterns — or the two of you settle on something it does not say — you MUST update ' +
+                  'that pattern file BEFORE you finish this task. Not at the end of the session, not ' +
+                  'in sleep. Edit the pattern where it is wrong (do not just append), keep it short, ' +
+                  'and say in your reply which pattern you changed and what changed. If you judge the ' +
+                  'correction to be one-off rather than a rule, say so and leave the pattern alone — ' +
+                  'but say it out loud, do not silently skip it.',
+              );
+              for (const { match, body } of plan.inline) {
+                lines.push('');
+                lines.push(`  ▼ ${match.pattern.name}  —  ${match.pattern.relPath}`);
+                for (const line of body.split('\n')) lines.push(`  │ ${line}`);
+              }
+              if (plan.pointers.length > 0) {
+                lines.push('');
+                lines.push('  Also matched — READ these in full before acting (they did not fit inline):');
+                for (const h of plan.pointers) lines.push(`    ${h.pattern.relPath}  (${h.pattern.name})`);
+              }
+              console.log(lines.join('\n'));
+              hadRecallHits = true;
+            }
+          }
+        } catch (patternErr) {
+          if (process.env.DREAMCONTEXT_DEBUG) console.error('[patterns] error:', (patternErr as Error).message ?? patternErr);
         }
       }
 
