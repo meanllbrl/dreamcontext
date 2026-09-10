@@ -1,7 +1,7 @@
 ---
 id: multi-reviewer-pattern
 name: "Multi-Reviewer Pattern (router + niche specialists)"
-description: "Productized multi-agent code review pattern: router classifies diffs by tier + domain, dispatches niche skill-aware specialists in parallel, main agent reads all reports and synthesizes directly (no coordinator sub-agent). Dreamcontext-native innovation: each specialist declares required skills in YAML frontmatter. Distinct from the pre-implementation three-reviewer-parallel-mandates pattern and the post-implementation sub-agent-iterative-reviewer pattern. v1.1: coordinator removed 2026-05-26."
+description: "Productized multi-agent code review pattern: router classifies diffs by tier + domain, dispatches niche skill-aware specialists in parallel, main agent reads all reports and synthesizes directly (no coordinator sub-agent). Dreamcontext-native innovation: each specialist declares required skills in YAML frontmatter. Distinct from the pre-implementation three-reviewer-parallel-mandates pattern and the post-implementation sub-agent-iterative-reviewer pattern. v1.1: coordinator removed 2026-05-26. v1.2 (2026-09-10): a specialist report is a hypothesis the orchestrator must verify — including against fabricated rule citations — and the pattern is no longer 'untested on a real diff'."
 tags: ["architecture", "decisions", "topic:agents"]
 pinned: false
 date: "2026-07-20"
@@ -109,11 +109,48 @@ Key distinctions vs external peers: dreamcontext specialists are skill-document-
 - Style or formatting passes — those are not worth specialist time and will produce mostly `nit` findings with no material signal.
 - When you need an answer in seconds — specialist dispatch adds latency. For a quick gut-check, use the `reviewer` agent.
 
-## Known Limitations (v1)
+## A specialist's report is a HYPOTHESIS, not a finding (added 2026-09-10)
 
-- **Untested on a real diff.** The architecture is theory-verified (drawn from external case studies and internal code review). Router classification thresholds will require iteration on first real non-trivial PR.
+The single most important rule for the orchestrator, and the one that was missing from v1:
+**verify every specialist claim against the real code before acting on it.** A specialist writes
+with total confidence and no accountability; the orchestrator is the only place a wrong claim can
+be caught.
+
+Observed over four rounds on one real diff (the account-switch policy, 2026-09-10). Claims the
+orchestrator checked and **rejected**:
+
+| Claim | Why it was rejected |
+|---|---|
+| "the order term is unbounded" | The arithmetic was right; the *characterization* was wrong. A true statement can still be a wrong finding. |
+| "lost-update race in the register file" | Real — but pre-existing and a **documented deliberate trade-off**. Acting on it would have broken a written decision. A finding must be checked against the decision record, not only against the code. |
+| "500-line component ceiling / maintainability bomb" | **A FABRICATED ATTRIBUTION** — cited to a skill file that contains no such rule. Raised twice, including quoted verbatim back in round 2. |
+
+The fabrication is the one to internalise. A specialist cited a project rule **that does not
+exist**, and it survived a round because it was re-quoted rather than re-checked. Two defences:
+
+- **Grep for the rule before you enforce it.** If a report cites a project standard, the citation
+  is checkable in seconds and must be checked. Confident prose is not evidence.
+- **Re-quoting is not re-verifying.** Carrying a finding forward into the next round launders it
+  into fact. Every round re-verifies from source, including findings it already "knows".
+
+When a claim is rejected but the underlying change is still an improvement, **keep the change on
+its own merits** and say so — rejecting the *reasoning* is not the same as rejecting the *edit*.
+
+Related failure the same session caught in its own work: **a test that cannot fail.** A tie-break
+test fed two bit-identical inputs (`0.5` and `0.5`), so it passed under the old comparator too. The
+fix was to find a genuinely differing pair (`1.2000000000000002` vs `1.2`, Δ 2.22e-16) and add a
+**canary test** asserting the raw values really do differ — so the test proves the thing it claims
+to prove.
+
+## Known Limitations
+
+- ~~**Untested on a real diff.**~~ **Superseded 2026-09-10** — heavily exercised on real diffs
+  (19 touches in the 2026-09-02→10 window alone, including a four-round run on the account-switch
+  policy). The router's tier/domain classification held up; what needed adding was the report-
+  verification discipline above, not a threshold change.
 - **No diff-ingestion convenience.** The user must manually pass the diff or file list to `/multi-review`. A future version could auto-detect the current branch's diff against main.
 - **No test coverage.** There are no automated tests for router classification or output format correctness.
+- **Specialists do not know what the others found.** Deduplication and cross-checking are entirely the orchestrator's job, which is exactly why the verification pass above cannot be skipped.
 
 ## Sources
 
@@ -139,4 +176,6 @@ The architecture summary in "The Pattern" section above remains correct with the
 
 ## Last Verified
 
-2026-07-20 — pattern still current; shipped roster (7 files) and coordinator-removed architecture unchanged since v1.1.
+2026-09-10 — pattern current and now real-diff-proven (19 touches in the 2026-09-02→10 window).
+Shipped roster (7 files) and coordinator-removed architecture unchanged since v1.1. v1.2 adds the
+report-verification rule and retires the "untested on a real diff" limitation.

@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_n2DoRyoR",
+    "version": "0.28.0",
+    "date": "",
+    "summary": "Voice becomes a real input, and the account layer learns its own policy. J.A.R.V.I.S mode gets a real transcriber (whisper-large-v3-turbo), a measured TTS path and a settings home, all on one OpenRouter key. The multi-account layer, shipped in 0.27.0, is corrected where it mattered most: usage is read from the CLI’s own /usage report rather than a cache it deliberately does not write, and a user-set auto-switch policy is in flight. Plus the in-app terminal can install its native module inside the .app, and an html/v1 Lab card sizes to its content.",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_Hg5k13Vj",
     "version": "0.27.0",
     "date": "2026-09-06",

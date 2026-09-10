@@ -1,7 +1,7 @@
 ---
 id: sub-agent-iterative-reviewer-pattern
 name: "Sub-Agent with Iterative Reviewer Pattern"
-description: "Pattern for orchestrating parallel sub-agent workstreams with a holistic reviewer sub-agent doing final sign-off. Used in v0.4 multi-workstream session to catch cross-domain regressions and scope creep."
+description: "Pattern for orchestrating parallel sub-agent workstreams with a holistic reviewer sub-agent doing final sign-off. Used in v0.4 multi-workstream session to catch cross-domain regressions and scope creep. 2026-09-10 adds the loop's exit criterion (one full round with zero VERIFIED findings), the fix-induced regression cascade, and re-aiming lenses between rounds."
 tags: ["architecture", "decisions"]
 pinned: false
 date: "2026-07-20"
@@ -47,6 +47,38 @@ Skip when:
 - Work is a single coherent workstream (reviewer adds no value over a self-review pass).
 - Workstreams share file domains (parallel writes cause conflicts; serialize instead).
 
+## When does the loop STOP? (added 2026-09-10)
+
+The pattern above says how to run a round. It never said when to stop, and "iterate until it is
+perfect" is not a criterion — it is a mood. Observed over a four-round run on one real diff
+(account-switch policy, 2026-09-10):
+
+**The exit criterion is: one FULL round passes with ZERO verified findings.** Not "no critical
+findings", not "the reviewer says it looks good" — a complete round that turns up nothing once
+every claim has been checked. In that run, four rounds went by and the criterion was still not met.
+Naming it up front is what stopped the loop from ending on fatigue instead of on evidence.
+
+**Expect fix-induced regressions — they are the normal output of round N+1, not a sign the process
+failed.** Every round in that run found defects **introduced by the previous round's fix**:
+
+- round 1's optimistic-ref fix was itself Critical in round 2 (never rolled back on POST failure);
+- round 2's rollback over-reverted in round 3.
+
+The consequence for the loop: **a round that only re-reviews the original diff is not a round.**
+Each round must review the *current* state including the previous round's edits, or the loop
+converges on a diff nobody has actually read.
+
+**Re-aim the lenses between rounds; do not just re-run them.** Round 4 deliberately DROPPED the
+security specialist with a stated reason (round 3 had returned a zero-finding PASS and the delta
+touched no security surface) and re-pointed edge-cases at the server side, because three rounds had
+all piled onto the same React component. A fixed roster re-run every round spends its budget where
+the last round already looked.
+
+**Every finding is verified before it is acted on** — see the "a specialist's report is a
+HYPOTHESIS" section of `[[patterns/multi-reviewer-pattern]]`, including the fabricated rule citation
+that survived a round by being re-quoted rather than re-checked. Carrying an unverified finding into
+the next round launders it into fact.
+
 ## Relationship to other review patterns
 
 - **vs `multi-review` skill** (2026-05-24): the `/multi-review` skill is the productized, post-implementation evolution of this pattern. It adds a **router** (classifies tier + picks specialists by domain) and a **niche-specialist roster** (security / cloud-functions / frontend / edge-cases) instead of one holistic reviewer. Use `/multi-review` for any non-trivial diff that crosses domains; this pattern survives for in-session multi-workstream orchestration where the work itself is sub-agent-driven.
@@ -59,4 +91,6 @@ Skip when:
 
 ## Last Verified
 
-2026-07-20 — pattern still valid; `/multi-review` (productized evolution) remains distinct from this in-session multi-workstream orchestration pattern.
+2026-09-10 — pattern still valid and heavily exercised (9 touches in the 2026-09-02→10 window).
+`/multi-review` (productized evolution) remains distinct from this in-session multi-workstream
+orchestration pattern. Extended this cycle with the stop condition and the regression cascade.

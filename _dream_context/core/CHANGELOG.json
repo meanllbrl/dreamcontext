@@ -1,5 +1,209 @@
 [
   {
+    "date": "2026-09-10",
+    "type": "docs",
+    "scope": "announcements",
+    "description": "Add the 0.27.0 What’s New story. One page for the release with six screenshots, every one taken from this cut’s own build, headlined by the multi-account panel with the rest of the version following in descending order of who cares; the startup work carries its measured numbers in a stats block rather than asking a still to show four waits that no longer happen. Captured over the demo vault set and never the real registry — two of these scenes are the worst possible things to shoot on a real machine, since the account list names every Claude account the author is signed into and the board names their work, so the capture runs under a fake $HOME with synthetic accounts, synthetic usage caches and a synthetic project. The privacy test caught an email address that had reached an alt string even so, and the alts now describe rows by position and percentage.",
+    "breaking": false,
+    "summary": "The 0.27.0 What’s New page: six screenshots from this cut’s own build, captured over the demo vault set under a fake $HOME rather than the real registry",
+    "references": [
+      "commit:94640d84",
+      "file:dashboard/public/announcements.json",
+      "knowledge:synthetic-fixtures-for-published-artifacts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-10",
+    "type": "fix",
+    "scope": "lab",
+    "description": "Fix html/v1 Lab cards being drawn in a frame fixed at 232 pixels, which silently cut any body that needed more and pushed authors to shrink the type until it fit — the opposite of why the kit exists. The body already knew its own height, since app/v1 pages have measured and reported themselves since they shipped; html/v1 now uses the same bridge (a ResizeObserver plus a load/click re-check for late fonts and images) and the host resizes to match, under the same clamps LabAppFrame applies: a card preview between 120 and 320px, because that bound belongs to the board grid where one 900px tile would set its whole row’s height and strand its neighbours in whitespace, and an effectively unbounded detail view. 232 stays as the pre-measurement height so a card previously drawn at it does not jump.",
+    "breaking": false,
+    "summary": "An html/v1 card body sizes to its own content instead of being cut at a fixed 232px, using the same measurement bridge app/v1 pages already had",
+    "references": [
+      "commit:776e8cba"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-10",
+    "type": "fix",
+    "scope": "terminal",
+    "description": "Fix the in-app terminal’s native dependency install. node-pty cannot be bundled and has to be installed somewhere the server can resolve from, but the install target was the CLI’s own package root, which does not exist in the .app: the Tauri bundle ships Contents/Resources/dist/index.js with no package.json at any ancestor, and it is code-signed and replaced wholesale on update, so installing into it would invalidate the signature and vanish on the next upgrade. There is now a user-level target at ~/.dreamcontext/native, created with its own minimal manifest so npm treats it as a project rather than walking up and adopting $HOME, and node-pty resolves from either base — the package root first for npm install and dev links, the native dir second. Loading is also checked properly, since the module can load while its macOS binary is unusable.",
+    "breaking": false,
+    "summary": "node-pty installs to a user-level ~/.dreamcontext/native target the desktop app can actually write, instead of a CLI package root that does not exist inside the .app",
+    "references": [
+      "commit:1f3f22ed"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-10",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Fix the collapsed sidebar rail’s sync row. The row had moved into its own .sidebar-brain-sync-row div while the collapsed-rail rule that stacks it still targeted the outer .sidebar-brain-sync, so in the icon-only rail the GitHub mark and the settings gear sat shoulder to shoulder in a 44px strip, breaking the single column of centered glyphs every other item follows. Collapsed now hides the gear — Settings is already its own rail item and the gear only deep-links to the same page — and centers the GitHub mark. The expanded sidebar is unchanged.",
+    "breaking": false,
+    "summary": "The collapsed rail’s sync row is one centered icon instead of two crammed side by side in a 44px strip",
+    "references": [
+      "commit:eee86e91"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-10",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Fix an image that exists on disk but cannot be displayed. A screenshot the transcript named opened the lightbox as the engine’s broken-file glyph on a full-window black screen: the file sat outside the project root, so /agent/file answered its one fixable refusal (403 needs_grant) and the <img> reported it the only way an <img> can, silently. Inline media had asked for consent since 07-25, but the lightbox never did, and the panel pointed at an inline card that does not exist for a path the answer never rendered inline. ImageViewer gains a fallback slot drawn in the stage on the image’s error, with the zoom bar and hint dropping with it and a src change clearing the state (which is also how a retry works), and chat/FileUnavailable.tsx is the shared card: one ranged byte at the same URL tells consent from gone from undrawable, and Allow access grants the path the SERVER resolved. Used by both the lightbox and the slide-over’s MediaPreview.",
+    "breaking": false,
+    "summary": "A picture that cannot be shown says why and offers the one click that fixes it, instead of opening the lightbox as a broken-file glyph on a black screen",
+    "references": [
+      "commit:67cb1e9d",
+      "file:dashboard/src/components/sleepy/chat/FileUnavailable.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-10",
+    "type": "change",
+    "scope": "chat",
+    "description": "Remove the saved-blocks artifact layer three days after it shipped, on the owner’s verdict that downloading is enough, confirmed before deleting because the Turkish \"kalsın\" reads both ways and this is hard to undo. Worth recording rather than quietly dropping: the layer was built, proven and ticked (E2/E3, 21 verify checks) and then retired unused — the request behind it was never \"let the block live somewhere\" but \"let me get the block out\", which the export bar answers on its own. Removed: the Save control and its naming form, the Saved blocks page with its nav entry and icon, the four /api/artifacts routes, artifacts-store.ts, artifactReport.ts, and recall’s artifact channel.",
+    "breaking": false,
+    "summary": "Retire the saved-blocks artifact layer — the request was \"let me get the block out\", and the export bar already answers it; Save, the Saved blocks page, /api/artifacts and recall’s artifact channel are removed",
+    "references": [
+      "commit:d2cd43ce"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ],
+    "supersedes": "2026-09-02|chat"
+  },
+  {
+    "date": "2026-09-10",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Fix two content losses in the dream-html kit, both invisible to any test that reads strings because only layout is a witness. The kit’s tabs were CSS-only in a very particular sense — they required a hidden <input type=\"radio\"> per panel with the tab as a <label for> — while the briefing said only that dc-tabs need none, so an author wrote the obvious <button class=\"dc-tab\">, no radios existed to check, the sole un-hiding rule (input:checked) never matched, and every .dc-panel stayed display:none: two panels of real content, valid markup, every class defined, nothing failing, and the reader saw an empty box under a tab bar. The stat tile’s value, label and note collapsed onto one line. Both are corrected so an author writing the documented markup gets the content they wrote.",
+    "breaking": false,
+    "summary": "The dream-html kit stops losing an author’s content: tabs render without a hidden radio per panel, and a stat tile’s value, label and note stop running together into one line",
+    "references": [
+      "commit:20c24b27"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-10",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Fix silent block exports. Pressing PNG/HTML in a block export bar, and the same buttons in Lab reports, reported nothing on the happy path — the bar’s own comment claimed every button reports its outcome, which was true of failures and of Copy and false of success, which returned null. The cause is the webview download contract rather than a missed toast: an <a download> hands the page no path, no completion event and no error, because the destination is chosen inside WKWebView’s download delegate (~/Downloads, \" (1)\" on collision) and never told to the page, making \"say where it landed\" unbuildable on that mechanism. The write moved to where the path is known: a new POST /api/agent/download writes the bytes and returns the absolute path, so the toast can name the destination and offer to reveal it. This is the one route that writes outside the project root. A follow-up fixes its filename sanitizer, found by running the real route against a desktop-mode server: the filter was [^\\w.\\-() ] and JavaScript’s \\w is ASCII-only, so \"fırsat radarı — plan özeti.png\" was written as \"f_rsat radar_ _ plan _zeti.png\"; it now uses \\p{L}\\p{N} with the u flag, leaving the security property untouched (no path separator, no traversal, no control character, same extension allowlist).",
+    "breaking": false,
+    "summary": "A block export says where the file landed and offers to reveal it, via a new POST /api/agent/download that writes to ~/Downloads and returns the absolute path",
+    "references": [
+      "commit:34e43cd6",
+      "commit:675e7caf",
+      "file:src/server/routes/agent-download.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-10",
+    "type": "fix",
+    "scope": "sleepy",
+    "description": "Restore buildSleepPrompt after the Sleepy notch removal deleted /api/launcher/capture on the finding that the notch bar was its only client. That held for the endpoint’s learn and ask modes but not its third: the handler also had a sleep mode, and buildSleepPrompt was defined in the same region. The function is the server half of a lockstep pair with dashboard/src/lib/sleepAgent.ts that tests/unit/sleep-subagent-dispatch.test.ts pins text-to-text, and the clause they share is the one asking for the sleep specialists as parallel sub-agents — Claude Code appends \"do not call the AgentTool unless the user requested it\" to every Opus 5 system prompt, so that request must live in a literal user turn or sleep silently collapses into inline passes. Caught by the release gates. The learn and ask prompt builders stay deleted because they really did belong to the notch bar, and the restored function carries a note that its HTTP caller is gone and the dashboard now runs a consolidation as a real chat session.",
+    "breaking": false,
+    "summary": "Restore buildSleepPrompt — the removed capture endpoint served three features, not one, and its sleep mode is the server half of a lockstep pair pinned by test",
+    "references": [
+      "commit:319e3551",
+      "file:dashboard/src/lib/sleepAgent.ts",
+      "file:tests/unit/sleep-subagent-dispatch.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-10",
+    "type": "fix",
+    "scope": "accounts",
+    "description": "Fix three causes of a broken account-usage read, all found by running the real CLI rather than reading it. The probe treated a moved fetchedAtMs in <configDir>/.claude.json as its success criterion, but Claude Code’s own bundle returns early when that cache is under five minutes old — so every account with a live session, and every account probed twice in a row, answers /usage with fresh numbers on stdout and deliberately leaves the file untouched. Reproduced both ways on one account minutes apart: a 3-minute-old cache did not move, and the same command with fetchedAtMs backdated six hours rewrote it. The report on stdout is now the reading (parsed by claude-usage-report.ts) and the cache is the fallback; a reading older than the ceiling Claude Code applies to its own cache is not trusted, and a pane holding one spends a probe to replace it, gated to once a minute per pane because the probe costs ~4s in front of a turn. Also fixes the usage query key so the popover stops drawing the primary account’s bars for every pane.",
+    "breaking": false,
+    "summary": "Usage is read from the CLI’s own /usage report on stdout, not from a cache it deliberately does not write — fixing \"not measured\" everywhere and the wrong account’s bars in the popover",
+    "references": [
+      "commit:7c45d321",
+      "file:src/lib/claude-usage-report.ts",
+      "feature:claude-multi-account"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-10",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Turn the composer’s fourth mode from a dead \"Soon\" row into a working voice mode. Push-to-talk in (hold the mic or Alt+Space), spoken answers out, and a deliberately short briefing that makes the agent answer in two or three plain sentences while putting any structure on screen as a dream-html block instead of reading it aloud. Everything routes through OpenRouter on one key at ~/.dreamcontext/voice.json (mode 0600, per-machine so a team sync cannot carry it); no OpenAI key is read or requested. A changed transcript never auto-submits — project jargon is repaired after transcription and anything the corrector alters waits in the composer with the change marked, so auto-submit is reachable only when the output is byte-identical or the corrector never returned; this replaced a 0.75 phonetic veto that an adversarial search broke on 11 of 21 dangerous pairs. The follow-up corrects the premise the mode shipped on, found by the owner’s first real push-to-talk and measured against the live API: OpenRouter serves /audio/speech and /audio/transcriptions but their model ids are NOT in the /models catalogue, so resolving against it reported \"no model matched\" for models that work. Transcription is now openai/whisper-large-v3-turbo (a real recogniser, ~0.7-1.1s, $0.0001 a take, detects its own language so nothing has to ask which is being spoken), replacing an omni chat model that answered the question back when it could not hear the audio. Speech stays openai/gpt-audio-mini because it measured faster (0.31-0.55x realtime vs gemini-3.1-flash-tts-preview’s 0.75-1.37x at equal fidelity), with Gemini wired as the rescue path so a chunk the chat model refuses twice is spoken rather than dropped into silence.",
+    "breaking": false,
+    "summary": "J.A.R.V.I.S mode becomes real: push-to-talk in, spoken answers out, a whisper-large-v3-turbo transcriber, and a settings home — all on one OpenRouter key",
+    "references": [
+      "commit:3d86451e",
+      "commit:e425dc02",
+      "file:dashboard/src/lib/voice"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-10",
+    "type": "feat",
+    "scope": "sleep",
+    "description": "Make sleep self-driving and tunable. The debt ladder, each specialist’s model and effort, and the per-cycle task cap were constants in the source; they are now a per-brain `sleep: {}` block in .config.json read from one place by the hook, the CLI, /api/sleep and the dashboard, which drops the dashboard’s hand-copied thresholds (they had drifted twice) in favour of the resolved ladder off the payload. Model and effort are injected into .claude/agents/sleep-*.md at the single copy site so a choice survives install-skill, setup and update. Reading is defensive because the Stop hook runs it every turn — a bad field falls back rather than throwing — while writing is loud and names the rule broken. Adds a bar against junk tasks: an audit of all 116 tasks filed since 2026-08-01 found the median carries ~2,500 chars of justification and exactly one had none (the auto-filed curator chore, resurrected every cycle since 2026-07-18), so the 40-char floor guards against the empty template rather than judging quality, and the real fix is a tombstone ledger where delete/rename records where the work went and `tasks delete --into` names the absorbing task.",
+    "breaking": false,
+    "summary": "The brain consolidates itself on thresholds you set: the debt ladder, per-specialist model/effort and the task cap move from source constants to a per-brain sleep block in .config.json",
+    "references": [
+      "commit:ff7aa674",
+      "feature:sleep-consolidation",
+      "file:src/lib/sleep-consolidation.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-10",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Add multi-account support for the Claude agent. Each account gets its own CLAUDE_CONFIG_DIR credential store, so N accounts stay signed in at once and switching is a respawn with a different env rather than a logout/login round trip — no token is ever held by dreamcontext. Because projectsDirectory follows the config dir, each sandbox symlinks back to the real ~/.claude/projects, which is the only reason --resume survives a switch; resolveConfigDir is the single gate that validates the id (it becomes a directory name). A free `claude -p \"/usage\" --output-format json` probe (under 1.2s, num_turns 0, $0) reads any account’s 5h and 7d limits WITHOUT switching to it, and its success criterion is deliberately not the exit code — a config dir with no credential exits 0 with an empty cost summary, so success is a moved fetchedAtMs plus a matching accountUuid, and a non-refresh escalates exactly once to distinguish never-logged-in from broken-credential. On the server, a chat WebSocket takes &account=<id> and auto-switch evaluates BEFORE the turn reaches the CLI, since a threshold that fires after the limit is exceeded only acts once the user has already seen the error; if nothing qualifies the message is never swallowed — the turn goes out and the honest limit error surfaces with the earliest reset beside it. The client adds the account picker, a switch notice on its own server frame (auth-changed is fingerprinted over ~/.claude.json, which a sandbox switch never touches, so it could not have fired), and the Settings account list, reusing resumeChatSession and awaitResumeHandoff so the transcript-loss race stays closed. Also fixes the reader to ask for locked_reason rather than lockedReason: every field in a real cachedUsageUtilization is snake_case, so the locked-window guard had never once fired and a locked account stayed an eligible auto-switch target — missed by three review rounds because the fixture was hand-written beside the code in the same wrong spelling, and is now transcribed verbatim from disk.",
+    "breaking": false,
+    "summary": "Multi-account Claude agents: per-account CLAUDE_CONFIG_DIR sandboxes keep N accounts signed in, every account’s limits are readable without switching, and a session picks the account its turn runs on",
+    "references": [
+      "commit:18614074",
+      "commit:ba0cfff5",
+      "commit:2cd43c82",
+      "commit:0ec0e3c4",
+      "commit:5a5ba17d",
+      "commit:e44f68c6",
+      "feature:claude-multi-account",
+      "file:src/lib/claude-accounts.ts",
+      "file:src/lib/claude-account-switch.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-06",
     "type": "chore",
     "scope": "release",

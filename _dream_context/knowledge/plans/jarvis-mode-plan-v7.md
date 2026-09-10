@@ -1,5 +1,25 @@
 # PLAN v7 — J.A.R.V.I.S mode (dreamcontext chat surface)
 
+> ## ⚠️ SUPERSEDED — this is the historical PLAN, not current truth
+>
+> **Current truth lives in `[[features/jarvis-voice-mode]]`.** The mode shipped
+> (`3d86451e`, `e425dc02`); read the PRD for what it actually does.
+>
+> **Two claims below are now known to be WRONG and must not be quoted:**
+>
+> 1. The "CORRECTION — 2026-09-07" section states that **OpenRouter serves no transcription
+>    or TTS model at all**. That is false. The audio endpoints have **their own namespace,
+>    invisible in `/models`** — real ASR and TTS are there. Resolving an audio model against
+>    the `/models` catalogue is what produced the "Model … does not exist" error, and the
+>    conclusion drawn from it was the wrong one. The shipped transcriber is
+>    `openai/whisper-large-v3-turbo` on the transcription endpoint.
+> 2. The model ids in "Verified facts" came from an announcement blog post, not the models
+>    API — the plan says so itself, and the plan was right to. None of them should be treated
+>    as verified.
+>
+> Kept unedited as the record of how the design was reasoned about, including the review
+> rounds that changed the safety model. Retire at a deep cycle if it stops earning its keep.
+
 Repo: /Users/mehmetnuraydin/projects/dreamcontext
 
 REVISION HISTORY — three full review rounds by four lenses (critic, pragmatist, edge-cases,
