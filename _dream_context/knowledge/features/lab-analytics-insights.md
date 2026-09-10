@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-09-07'
+updated: '2026-09-10'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -283,6 +283,43 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 ## Constraints & Decisions
 <!-- LIFO: newest at top -->
+
+### An html/v1 card body sizes to its content, and the 320px cap belongs to the GRID (2026-09-08, `776e8cba`)
+
+- **The fixed height was never a decision — it was an omission.** `html/v1` simply never got
+  updated when `app/v1` landed. The evidence is on the record: the task
+  `script-authored-insights-become-multi-page-interactive-apps-not-fixed-height-cards` names the
+  hardcoded `232px card / 420px detail` **in its problem statement** and then scoped its fix to
+  `app/v1` only, with its P5 review recording `HtmlInsightBody.tsx` + `labHtmlKit.ts` as
+  "deliberately-unowned files… git diff is EMPTY". Worth keeping because the two look identical
+  from outside: a deliberate constraint and a forgotten file both present as a hard-coded number.
+  The user-visible cost was authors shrinking their type until it fit — the opposite of why the
+  kit exists.
+- **There are TWO height bridges, and that separation IS deliberate.** `app/v1` uses an injected
+  `reportHeight` + ResizeObserver (`labAppRuntime.ts`, mirrored in `lab-app-runtime.js`) clamped by
+  `LabAppFrame.tsx clampHeightForMode`; `html/v1` uses `labHtmlKit.ts HTML_HEIGHT_BRIDGE` clamped by
+  `HtmlInsightBody.tsx clampHeight`. They are separate because `html/v1` has **no nonce and no data
+  channel** — there is no data to protect. `html/v1` now uses the same *shape* (ResizeObserver plus
+  a load/click re-check for late fonts and images), not the same code path.
+- **The clamps are the board grid's, not the author's**, and both files carry identical numbers on
+  purpose: card `120…320`, page/detail `200…20000` (effectively uncapped), full-screen unclamped.
+  One 900px tile would set its whole grid row's height and strand its neighbours in whitespace.
+  `PENDING_HEIGHT = 232` survives as the pre-measurement height so an existing card does not
+  visibly jump on first paint.
+- **Author guidance, settled and previously unwritten:** there is no height field in the manifest;
+  `size: l` is a **column-span** lever (`grid-column: span 2`), never a height lever; and
+  `render: app` buys **nothing** on the board — `CARD_MAX_HEIGHT` is 320 in both by design. What
+  `app` buys is surfaces `html/v1` does not have (`/lab/<slug>`, `?fs=1`). The reference rule
+  "reach for `app` the moment it needs more than one page" is about **pages, not height** —
+  converting to `app` to escape the cap is cargo-culting.
+- **Known and deliberately not changed:** a third, older clamp `.lab-card-body { max-height: 280px }`
+  (`InsightCard.css`, commit `d7be8b70`) applies to every card body and is **tighter than the 320**
+  the iframes clamp to, so a body measuring 281–320px gets a scrollbar on the wrapper div rather
+  than on the iframe. Flagged, left alone.
+- **Provenance:** diagnosed from a peer project (`h-f_dreamcontext`) via the cross-vault peer
+  report, credited in `scripts/verify/lab-html-height.mjs` ("owner report via peer project,
+  2026-09-08"). Whether that verify script passes in real Chromium was explicitly marked NOT
+  measured at the time of the report.
 
 ### Reports become the branded template, and a window is a rendering requirement (2026-09-07, v0.27.0)
 

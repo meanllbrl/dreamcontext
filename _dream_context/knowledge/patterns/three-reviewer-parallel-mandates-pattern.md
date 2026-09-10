@@ -106,6 +106,46 @@ The v0.6 control-panel shipped three slices, each validated by goal-skill orches
 
 **Pattern refinement: security reviewer phase-reads.** In slice 1 the security reviewer's iteration-2 review evaluated the unwritten codebase state rather than the v2 plan. This is a known model failure mode when the reviewer infers implementation state from review round number. Mitigation: the plan prompt should explicitly state which phase the reviewer is in and that it is reviewing the plan document, not the implemented code.
 
+## The FOUR-lens, MULTI-ROUND variant (added 2026-09-10 — two independent occurrences)
+
+The structure above is three lenses in a single round. Both of this window's large plan reviews
+ran a **fourth lens (edge-cases) over three-plus rounds**, and independently produced the same
+meta-finding — which is what promotes it from an anecdote to part of the pattern.
+
+| Plan | Rounds | Outcome |
+|---|---|---|
+| `claude-multi-account` | 3 (of 5 total) | R1: all four NEEDS_WORK, 15 blocking. R2: pragmatist SOLID, 5 new blocking. R3–5: all SOLID. |
+| `[[plans/jarvis-mode-plan-v7]]` | 3 | 32 blocking findings across v1→v7. |
+
+**The finding both runs recorded: NO finding repeated. Each round found the NEW layer the previous
+one opened.** That is the argument for multi-round, and it is not the same argument as multi-lens.
+Multiple lenses widen a single round; multiple rounds reach depth a single round *cannot* reach at
+any width, because the later layers are not visible until the earlier ones are resolved. A single
+round of four lenses is not a substitute for three rounds of four lenses.
+
+Two corollaries worth having in advance:
+
+- **Add edge-cases as a fourth standing lens for anything with real inputs.** In both runs it
+  carried findings the other three structurally could not: the multi-account run's "we reuse the
+  existing respawn path" was FALSE (two lenses converged on it), and the J.A.R.V.I.S run's
+  adversarial search is what broke the phonetic veto.
+- **A round may change the SAFETY MODEL rather than patch it, and that is the best outcome
+  available.** J.A.R.V.I.S v7 replaced a numeric phonetic threshold — broken in 11 of 21
+  adversarial pairs, flagged by two independent lenses — with a behavioural rule ("a changed
+  transcript never auto-submits"). That **removed a whole defensive subsystem and closed four
+  findings at once**. When two lenses independently break the same numeric guard, stop tuning the
+  number and look for the rule that makes it unnecessary.
+
+The most expensive findings in both runs were **false factual premises about the existing
+codebase**, not design flaws — e.g. multi-account's "the project trust map carries no credentials"
+was simply wrong (6 of 27 entries carry their own `mcpServers`). Point at least one lens at the
+plan's claims *about what the code already does*, and make it verify them against the code.
+
+For the post-implementation counterparts, see `[[patterns/multi-reviewer-pattern]]` (verify every
+specialist claim) and `[[patterns/sub-agent-iterative-reviewer-pattern]]` (when the loop stops).
+
 ## Last verified
 
-2026-07-24 (sleep consolidation — pattern remains in active use; council v2 and goal-skill continue to use parallel pragmatist/critic/security reviewers).
+2026-09-10 — in active use; council v2 and goal-skill continue to use parallel
+pragmatist/critic/security reviewers. Extended this cycle with the four-lens multi-round variant,
+evidenced by two independent plan reviews in the 2026-09-02→10 window.
