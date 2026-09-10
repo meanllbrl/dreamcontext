@@ -15,6 +15,7 @@ updated: "2026-09-10"
 released_version: null
 product: desktop
 tags:
+  - 'topic:voice'
   - 'topic:desktop'
   - 'topic:agents'
   - 'topic:dashboard'

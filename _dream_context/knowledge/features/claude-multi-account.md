@@ -105,16 +105,18 @@ and moving before the limit lands did not exist at all.
 
 ### Auto-switch
 
-> **IN FLIGHT, NOT IN 0.27.0 — read the next four criteria with this caveat.** The `strategy` /
-> `weights` switch policy (`score` + `sequential`, the Settings → Agents control, the relative-
-> tolerance tie-break) is dated **2026-09-10** and is **uncommitted working-tree work under
-> multi-reviewer review** as of this writing. It is ticked because the code exists and its unit
-> tests pass (`tests/unit/claude-account-switch.test.ts`,
-> `tests/unit/agent-accounts-switch-policy-route.test.ts` — 76 assertions green), NOT because it
-> shipped. `released_version: 0.27.0` on this file refers to the account registry, the picker and
-> the panel; **the switch-policy block below is post-0.27.0 and is in no release yet.** Whoever
-> reconciles this next: if the work landed, delete this banner; if it was abandoned, untick the
-> four criteria rather than leaving them to read as shipped.
+> **COMMITTED 2026-09-10 (`d116ff51`) BUT NOT IN ANY RELEASE — read the next four criteria with
+> this caveat.** The `strategy` / `weights` switch policy (`score` + `sequential`, the
+> Settings → Agents control, the relative-tolerance tie-break) landed on `main` after four rounds
+> of multi-review; its unit tests pass (`tests/unit/claude-account-switch.test.ts`,
+> `tests/unit/agent-accounts-switch-policy-route.test.ts` — 76 assertions green).
+> `released_version: 0.27.0` on this file refers to the account registry, the picker and the
+> panel, all of which shipped 2026-09-06 — **the switch-policy block below is post-0.27.0 and is
+> in no release yet.** Delete this banner when the next version ships it.
+>
+> The triggering observation is worth keeping: with one account nearly untouched (5-hour 26%,
+> weekly 6%), auto-switch moved the session to one at 5-hour 1% / weekly 75%. The scarcest quota
+> on the machine was spent for the most abundant reason.
 
 - [x] `chooseAccount(readings, {threshold, orderedIds, strategy, weights})` is PURE and takes
       usage readings as arguments — no I/O, so every case is a unit test.

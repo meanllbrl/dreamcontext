@@ -1,3 +1,20 @@
+---
+name: jarvis-mode-plan-v7
+type: knowledge
+description: >-
+  SUPERSEDED historical plan for J.A.R.V.I.S voice mode. Current truth is
+  features/jarvis-voice-mode. Kept for the design reasoning and the three
+  four-lens review rounds; two of its factual claims are known wrong (see the
+  banner at the top).
+tags:
+  - 'topic:voice'
+  - 'topic:agents'
+  - 'topic:desktop'
+  - 'kind:archive'
+pinned: false
+date: '2026-09-07'
+---
+
 # PLAN v7 — J.A.R.V.I.S mode (dreamcontext chat surface)
 
 > ## ⚠️ SUPERSEDED — this is the historical PLAN, not current truth

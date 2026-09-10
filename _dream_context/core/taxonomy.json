@@ -53,7 +53,9 @@
       "topic:automations",
       "topic:task",
       "topic:memory",
-      "topic:build"
+      "topic:build",
+      "topic:voice",
+      "topic:codex"
     ]
   },
   "bareTags": [
