@@ -1,6 +1,25 @@
 [
   {
     "date": "2026-09-10",
+    "type": "feat",
+    "scope": "patterns",
+    "description": "Patterns stopped being ordinary knowledge competing for a recall slot and became a first-class, deterministically-fired layer: the prompt hook injects a matching pattern's full prose, with triggers derived from each pattern's own filename and H1 rather than authored. A multi-reviewer pass on the first version caught two Critical findings before ship — symlink-following vault reads (arbitrary local-file exfiltration, reproduced end-to-end) and an unlabelled mandatory-injection channel — plus five Major findings (unbounded budget-exempt match, silent malformed-pattern drops, slash-name collisions, a fingerprint blind to generated shims, an unlocked shared cache write), all closed with regression tests. Evidence required to fire a pattern now scales with prompt length after the first version mis-fired three patterns off a routine status message. Sleep correspondingly stops folding user corrections into pattern content — the awake agent updates a contradicted pattern before finishing the task, and sleep reports an unupdated one as a missed awake rule instead of rewriting it.",
+    "breaking": false,
+    "summary": "Patterns fire and inject themselves via a deterministic gate; sleep stops folding corrections into pattern content",
+    "references": [
+      "commit:f03c001",
+      "commit:3b66ef1",
+      "file:src/lib/patterns.ts",
+      "file:src/cli/commands/hook.ts",
+      "knowledge:hook-delivered-must-not-miss-rules",
+      "knowledge:pid-lockfile-concurrent-json"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-10",
     "type": "docs",
     "scope": "announcements",
     "description": "Add the 0.27.0 What’s New story. One page for the release with six screenshots, every one taken from this cut’s own build, headlined by the multi-account panel with the rest of the version following in descending order of who cares; the startup work carries its measured numbers in a stats block rather than asking a still to show four waits that no longer happen. Captured over the demo vault set and never the real registry — two of these scenes are the worst possible things to shoot on a real machine, since the account list names every Claude account the author is signed into and the board names their work, so the capture runs under a fake $HOME with synthetic accounts, synthetic usage caches and a synthetic project. The privacy test caught an email address that had reached an alt string even so, and the alts now describe rows by position and percentage.",

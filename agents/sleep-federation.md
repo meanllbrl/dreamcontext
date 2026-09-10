@@ -1,12 +1,15 @@
 ---
 name: sleep-federation
 description: >
-  Sleep-cycle specialist for CROSS-PROJECT FEDERATION: drains the peer-digest
-  inbox into first-class local knowledge, then distributes recall-filtered,
-  consent-gated digests into connected peers' inboxes. Dispatched conditionally
-  when `.connections.json` has active links OR the federation inbox has pending
-  entries. Owns ONLY federation state — never touches native local knowledge,
-  tasks, or product files. Order is ALWAYS drain-then-distribute.
+  RETIRED — DO NOT DISPATCH. This specialist implemented the COPY-based
+  federation digest pipeline (drain the peer inbox into local knowledge, then
+  distribute consent-gated digests into peers' inboxes). Federation is now a
+  LIVE, READ-ONLY reference: peers are read at recall time and nothing is copied
+  across vault boundaries, so `federation drain` / `federation sync` are inert
+  no-ops and the sleep flow no longer fires this agent. Dispatching it wastes a
+  cycle and returns nothing. A peer that should LEARN something is told through
+  `dreamcontext peer send` / `peer ask`, not through a sleep digest. The file is
+  kept, not deleted, so the offline-mirror redesign has something to resume from.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: claude-sonnet-5
 effort: low

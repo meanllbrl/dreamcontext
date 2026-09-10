@@ -11,7 +11,7 @@ date: "2026-07-24"
 
 When parallel agent sessions invoke the same CLI subcommand that does a read-modify-write on a shared JSON file (e.g., `dreamcontext council verdict` during concurrent persona runs, marketing store updates, task-backend sync ledger writes), a race condition causes the second writer to silently drop the first writer's changes. The PID lockfile pattern closes this race with a POSIX-portable atomic lock primitive.
 
-**Observed 3 times** (council verdicts, marketing store, task-backend sync ledger) → recurring pattern.
+**Observed 4 times** (council verdicts, marketing store, task-backend sync ledger, patterns shim fingerprint) → recurring pattern.
 
 ## The Pattern
 
@@ -92,7 +92,21 @@ Apply this pattern to **any future shared-state CLI command that parallel agents
 - Council verdicts during concurrent persona runs
 - Marketing store appends from parallel campaign agents
 - Task-backend sync ledger updates
+- Pattern shim fingerprint writes (`state/.patterns-shims.json`) from concurrent SessionStart hooks
 - Any read-modify-write on a JSON file that multiple CLI invocations touch
+
+## 4th occurrence (2026-09-10) — and what it proves about written patterns
+
+`state/.patterns-shims.json` holds the sha256 fingerprint plus the generated shim list for per-pattern `/` entries. `syncPatternShimsIfStale()` runs on **SessionStart**, which is the most concurrent entry point in the product: open three Claude Code sessions in one vault at once and three processes read-modify-write that file simultaneously. Without serialization, the losing writer's shim list is dropped and the `/` menu silently diverges from the vault's actual pattern set. The write went through `acquireFileLock` + **re-read inside the lock** + **write-then-rename** (`src/lib/patterns.ts`) — the re-read is what makes it correct, since a value read before acquiring the lock is stale by the time the lock is held.
+
+The instructive part is not the fix. **The author of that cycle's code violated this very pattern**, wrote a bare read-modify-write, and it was `/multi-review` — not the author — that caught it, in a repo where this pattern was already written down, already had three recorded occurrences, and was sitting in `knowledge/patterns/`.
+
+That is evidence of two things at once:
+
+1. **The pattern is real.** A fourth independent occurrence in a subsystem nobody anticipated (a hook writing a UI-generation fingerprint) is exactly what "recurring" means.
+2. **A written pattern does not fire retrospectively.** Documentation that has to be *remembered* is documentation that gets missed under exactly the conditions it was written for. The pattern's existence had no causal effect on the code being written; it only helped a reviewer who happened to look.
+
+That gap — written but not delivered — is precisely what patterns auto-injection closes: this file's prose is now injected into the turn when a prompt is about it, rather than waiting to be recalled by someone who already suspects it applies. This occurrence is the canonical argument for that feature, and it should be read as such.
 
 ## Why O_EXCL over flock/advisory locks
 
@@ -103,6 +117,7 @@ Apply this pattern to **any future shared-state CLI command that parallel agents
 - First observed in council v2 (2026-07-20) — concurrent persona verdict writes
 - Second occurrence in marketing store (2026-07-22)
 - Third occurrence in task-backend sync-state (inferred 2026-07-23)
+- Fourth occurrence in `state/.patterns-shims.json` (2026-09-10) — caught in review, not in authoring
 - Recorded in [[2.memory]] 2026-07-23 as ★★★ 3rd occurrence → RECURRING PATTERN
 
 ## Sources
@@ -110,5 +125,6 @@ Apply this pattern to **any future shared-state CLI command that parallel agents
 - `file:src/lib/council.ts`
 - `file:src/lib/marketing/store.ts`
 - `file:src/lib/task-backend/sync-state.ts` (inferred)
+- `file:src/lib/patterns.ts` — `acquireFileLock` + re-read-inside-lock + write-then-rename around `state/.patterns-shims.json`
 - `bookmark:council-v2-review-closeout-fail-fix-pass`
 - `changelog:2026-07-23|council`
