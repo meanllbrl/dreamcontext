@@ -787,6 +787,13 @@ export class SpeechQueue {
         const grant = this.focusHold ? await this.focusHold : OPEN_GRANT;
         if (this.stopped || gen !== this.generation) return;
         if (!grant.granted) {
+          // NOT SPEAKING, and say so at once. The signal rises in `enqueue`, before the
+          // server has ruled on who owns the speaker — which is right, because it has to be
+          // up before the first chunk plays. When the ruling comes back a refusal, this turn
+          // will never be heard, so the composer must stop offering to silence it. Left to
+          // `releaseFocus`, the fall waits out the 800 ms grace and the refused pane shows a
+          // violet rail and a Hush button for most of a second, over silence.
+          this.setSpeaking(false);
           if (!this.muted) {
             this.muted = true;
             // Say it. An answer that is simply not read, in the mode whose whole proposition

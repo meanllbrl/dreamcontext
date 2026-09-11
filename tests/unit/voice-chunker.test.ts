@@ -962,3 +962,50 @@ describe('a refusal must not outlive its turn', () => {
     off();
   });
 });
+
+/**
+ * THE SEAM between the speaking signal and the speaker floor.
+ *
+ * `enqueue` raises the signal before the server has ruled on who owns the speaker — it has to,
+ * because the rail must be up before the first chunk plays. So the refusal path is the one
+ * place the signal can be left asserting something that turned out to be false.
+ */
+describe('the speaking signal and a refused speaker', () => {
+  beforeEach(() => { vi.stubGlobal('window', new EventTarget()); });
+
+  it('falls IMMEDIATELY when the speaker is refused, not after the grace window', async () => {
+    // Without this the refused pane shows a violet rail and a Hush button for ~800 ms, over
+    // audio that never played and cannot be silenced.
+    const client: FocusClient = {
+      hold: async () => ({ granted: false, holder: 'other', ducked: false, gain: 1, paused: [] }),
+      release: () => {},
+    };
+    const q = new SpeechQueue('s1', fetcherThat(), client);
+    const seen: boolean[] = [];
+    q.onSpeaking((v) => seen.push(v));
+    q.push('one here. two here. ');
+    await settle();
+    expect(FakeAudio.played).toEqual([]);
+    // Rose on enqueue (correctly — the ruling had not arrived), then fell on the refusal.
+    expect(seen).toEqual([false, true, false]);
+  });
+
+  it('still rises normally on the turn AFTER a refusal', async () => {
+    // The fall must not latch: the next turn re-asks, and a granted one speaks.
+    let answer = false;
+    const client: FocusClient = {
+      hold: async () => ({ granted: answer, holder: answer ? 's1' : 'other', ducked: false, gain: 1, paused: [] }),
+      release: () => {},
+    };
+    const q = new SpeechQueue('s1', fetcherThat(), client);
+    const seen: boolean[] = [];
+    q.onSpeaking((v) => seen.push(v));
+    q.push('one here. ');
+    await settle();
+    answer = true;
+    q.push('two here. ');
+    await settle();
+    expect(FakeAudio.played).toEqual(['two here.']);
+    expect(seen).toEqual([false, true, false, true]);
+  });
+});
