@@ -10,7 +10,7 @@ updated: "2026-09-10"
 - Decide on clear choices and explain why; never ask permission on an obvious path. **"devam" means keep going autonomously**, no check-ins (2026-09-08, 4th obs).
 - **The agent does the whole release except `npm login` and `npm publish`** (2026-09-13, 2nd obs): version surfaces, checklist, announcement, tag — all agent work; the two npm commands are his hand, and the release record only flips to `released` after the registry confirms.
 - **Don't commit unless asked** — parallel sessions sweep in-flight work. When asked: commit everything and push, as separate coherent commits per logical unit.
-- **Verify in the real app, not just in tests** (2026-09-08, 4th obs): full local desktop rollout, confirm in the installed `.app`, then report done.
+- **Verify in the real app, not just in tests** (2026-09-11, 5th obs): full local desktop rollout, confirm in the installed `.app`, then report done. Voice UI is `isDesktop()`-gated — say so plainly when a browser test can't reach it, don't claim verification tests didn't give.
 - **Short answers, lead with the conclusion** — "in a nutshell", even for architecture questions.
 - **No em dashes.** No implementation detail in user-facing copy; label an unfinished capability honestly (J.A.R.V.I.S shipped marked ALPHA, "not even beta", 2026-09-13). Rich content in context files; template placeholders are failure.
 - **Brand**: meansoft (company), dreamcontext (product), GitHub org meanllbrl.

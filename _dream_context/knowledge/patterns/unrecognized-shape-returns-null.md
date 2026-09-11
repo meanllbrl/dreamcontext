@@ -88,4 +88,7 @@ Do not apply to cosmetics — a missing display label may absolutely fall back t
   well-formed, but was computed for display and then reused as a gate.
 - `runtime-measurement-verification` §7 — the same error class one level up: a measuring harness's
   own limits arriving disguised as the subject's faults.
+- `fail-open-toward-the-observable-state` — the ACTING half of this one. This pattern says an
+  unknown must be reported as unknown; that one says which way to degrade once you know the check
+  is unavailable. Read honestly (`null`), then fail toward the state the user can see or hear.
 - `knowledge/features/claude-multi-account.md` — where both cases shipped.

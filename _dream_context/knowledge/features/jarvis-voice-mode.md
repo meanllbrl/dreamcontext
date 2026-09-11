@@ -56,11 +56,26 @@ produces a lie the user cannot detect because they only ever hear the output.
 - [x] As an owner, I can turn speech OFF and keep dictation, because the mode is still worth
       having on a call, and dictation is the cheap half.
 - [x] As an owner with several chat panes open, one keypress records into exactly ONE of them.
+- [x] As an owner, I can SEE that the microphone heard me while I speak — a live level meter in the
+      composer — because a take that heard nothing and a take that was never recorded used to be
+      pixel-identical, and I only found out by waiting for a transcript that never arrived.
+- [x] As an owner, the composer tells me its state without moving anything: the card's own edge
+      carries the colour, so the send button does not jump while I aim at it.
+- [x] As an owner, a repaired word is marked ON the word, so I do not have to map a list of changes
+      back onto my own sentence.
+- [x] As an owner, when the agent starts speaking, whatever the machine was already playing gets out
+      of the way by itself, and comes back exactly as I left it when the answer ends.
+- [x] As an owner with two J.A.R.V.I.S panes open, only ONE of them speaks — and the one that stayed
+      quiet says so on screen rather than losing its answer silently.
+- [x] As an owner, I can silence an answer I no longer want read (**Hush**) without killing the turn
+      that is producing it.
 - [ ] As an owner, I can run the whole mode offline on local whisper with no key at all —
       `local` and `auto` engines exist and are wired, but the offline path has not been through
       the owner's own end-to-end checklist.
 - [ ] Manual owner checklist: a full spoken conversation in Turkish and in English, a deliberate
-      mis-hearing to confirm it does not auto-submit, and the mode with speech off.
+      mis-hearing to confirm it does not auto-submit, and the mode with speech off. The audio-focus
+      half was run LIVE on 2026-09-11 against real macOS volume and passed the machine-facing
+      items; three remain and are named with their reason in the acceptance criteria below.
 
 ## Acceptance Criteria
 
@@ -119,6 +134,92 @@ produces a lie the user cannot detect because they only ever hear the output.
       network token, CSRF check) was scoped to no-cost file operations. An authenticated LAN peer
       is not stopped by any of the global guards.
 
+### The composer — the HUD rail (2026-09-11)
+
+- [x] The microphone is a DRAWN glyph (`MicIcon`, stroked SVG on `currentColor`), not the 🎙 emoji:
+      an emoji is a different picture on every platform and **cannot take the state colour**, which
+      is the one job the button now has.
+- [x] The card's state is ONE attribute — `data-voice` on `.chat-cmp-card` — and the rail is an
+      **inset box-shadow** keyed off it. No new element, no height change, nothing below the
+      composer re-flows. The focus ring COMPOSES with the rail rather than replacing it.
+- [x] The live meter takes the slot the placeholder already occupies (absolutely positioned over the
+      textarea, `pointer-events: none`), so a take over half-typed text moves nothing.
+- [x] The level NEVER goes through React state: `useVoiceCapture` publishes it through a ref'd
+      callback and the composer fans it out (a **Set** — the meter mounts/unmounts with the take,
+      the audio graph must not care) to a canvas on its own rAF. `levelSlices()` is pure and tested:
+      four real measurements per 4096-sample frame (~47 Hz, not 12), trailing partial slice dropped.
+- [x] Normalisation is FIXED (`FULL_SCALE`), never auto-gain — an auto-gained meter shows a loud bar
+      for room tone, which is the exact lie the meter exists to prevent. A take the silence gate
+      will refuse draws visible stubs. Transcription keeps the last picture DIMMED, never blank.
+- [x] A repaired word is underlined WHERE IT SITS, through the pre-existing `.chat-cmp-hl` mention
+      mirror — no second mirror was built. Marks are recomputed from the draft every render, never
+      stored, so editing the sentence away drops the mark instead of pointing at moved text.
+- [x] **`AlignOp.at` carries the corrected-token index**, recorded by the alignment walk and
+      surviving `changedOps`. `changedOps` discards the `equal` ops, so without it the client has NO
+      positional information at all; a mutation test proves the naive client-side `indexOf` picks
+      the wrong word the moment a sentence repeats one ("taskini ac sonra taskini kapat").
+- [x] A DELETION is never marked — there is nothing on screen to underline, and marking the gap or a
+      neighbour would claim a word the owner CAN see was touched. Deletions are reported in words.
+- [x] The four notice rows that appeared and vanished below the composer collapsed into the rail
+      plus a two-job chip row (what was heard, what was dropped). The rule is unchanged: a changed
+      transcript still never auto-sends.
+- [ ] DEPARTURE, deliberate: per-word hover ("what was heard") is NOT built. `.chat-cmp-hl` is
+      `pointer-events: none` because it is a mirror UNDER the textarea; giving a mark
+      `pointer-events: auto` would swallow the caret click for that word. A real hover needs
+      caret-position-from-point — worth doing, its own piece of work.
+
+### Speaking — and the machine's own sound (2026-09-11)
+
+- [x] `SpeechQueue` publishes a speaking signal (`onSpeaking` → `ChatSession` → `ComposerHost`) that
+      hangs on the **FOCUS HOLD, not on playback**: the reply is still being written while it is
+      read, so the queue empties repeatedly mid-answer and a play-time flag would flicker off in
+      every gap. Pinned by a test that pushes three sentences and asserts ONE rise and no fall.
+      It falls in `releaseFocus()` — the single place barge-in, interrupt, steer, disposal and the
+      grace expiry all already reach — and is edge-triggered, firing on subscribe so a composer
+      mounting mid-answer is not told the room is quiet.
+- [x] A **Hush** control silences the answer and lets the turn finish — NOT Stop, which kills it.
+      The capability existed (the mic press barges in) but nothing on screen said so. Hush and the
+      rate readout live in the toolbar's flex SPACER, so nothing left or right of them moves when
+      they appear — the same defect as the notice rows this direction replaced.
+- [x] `--color-speaking` is a real token in BOTH themes. The obvious purple was unavailable:
+      `--color-accent` IS Deep Violet here, so speaking would have looked identical to listening.
+      The playback rate is shown WHERE IT APPLIES, hidden at 1x, tracking Settings live.
+- [x] **The server owns the speaker** (`src/lib/voice/audioFocus.ts`, `POST /api/agent/voice/focus`):
+      a single holder per turn, a second pane denied BY NAME (`granted:false, holder:"pane-A"`) so
+      the composer can say why it is quiet, and a 120s watchdog that reclaims a turn whose heartbeat
+      stopped. Server-side rather than a client module singleton because two app windows cannot see
+      each other's `pushToTalkScope`.
+- [x] Ownership is per TURN, not per chunk: taken at the first `enqueue` (inside the ~1.3s
+      generation window, so the measured ~120ms osascript spawn never lands on the first word) and
+      released **800ms after the queue empties**, so a late chunk does not re-pause the music.
+- [x] Two levers in order of precision: a known player (Spotify) is PAUSED and resumed; anything we
+      cannot address — a browser tab — only leaves the system output volume, which lowers OUR voice
+      too, so the duck is paired with a compensating Web Audio `duckGain` **clamped at 3x** plus a
+      limiter. `musicDuck = 1` means never duck and the graph is never built. Apple Music is out of
+      scope by the owner's call; the player table grows by one row.
+- [x] Only what WE paused/ducked is restored, and only if still in that state — a value the owner
+      changed mid-answer is left alone, and a machine already muted or at 0 is skipped entirely.
+      `process.on('exit')` does a synchronous best-effort restore; `stop()`, `dispose()` and every
+      steer/interrupt path release both the floor and the music.
+- [x] Permission failure (-1743) **fails open toward SPEAKING**, and the refusal is remembered rather
+      than retried every turn. A focus route that is down or slow costs at most an answer read over
+      music; treating a failed hold as "you may not speak" turns a cosmetic problem into a silent
+      mode, and a silent mode is indistinguishable from a broken one (`OPEN_GRANT`, 4s
+      `HOLD_TIMEOUT_MS`, a `keepalive` release that is never awaited — the most important release is
+      the one sent while the page is being torn down).
+- [x] Non-macOS: the music half is a no-op, but **the speaking floor works everywhere** — two voices
+      over each other is not a macOS-specific problem. `NSAppleEventsUsageDescription` added to
+      `desktop/src-tauri/Info.plist` beside `NSMicrophoneUsageDescription`.
+- [x] `/focus` is gated (`focusGate`, 4 concurrent / 600 min, `session` bounded to 128 chars) because
+      it spawns processes and changes the machine's volume. The real tooth is `MAX_SILENCE_MS`: the
+      cap limits SILENCE, not the floor, because a renewable lease let a patient caller hold music
+      paused forever under every rate limit.
+- [ ] Owner checklist, three items open with their reason: Spotify pause/resume (Spotify.app is not
+      installed on this machine — the duck path is the real path here, and it passed live), the
+      compensation SOUNDING right (approximate by design — macOS's scale is assumed linear in
+      amplitude, confirmed by ear not by measurement), and the two-pane "not read aloud" notice
+      (client draws it only inside the Tauri webview, so it needs the real app).
+
 ### The key
 
 - [x] ONE OpenRouter key serves all three calls (transcription, correction, speech). No OpenAI key
@@ -134,6 +235,10 @@ produces a lie the user cannot detect because they only ever hear the output.
 - [x] A collapsed **BETA** group at the bottom of Settings → Agents: key entry, optional Groq key,
       transcriber engine, push-to-talk binding + hold/toggle, speak on/off, speech rate
       (`0.75`–`1.75`, clamped rather than refused — every value in range still produces audio).
+- [x] Two more rows in the same group (2026-09-11): `musicPause` (pause a known player) and
+      `musicDuck` (lower everything else; **off-by-value — `1` means never duck**, so the setting is
+      one number instead of a number plus a toggle that can disagree with it). Stored in
+      `voice.json`, reported by `/status`.
 
 - [x] AUDIO FOCUS: THE SERVER OWNS THE SPEAKER. `src/lib/voice/audioFocus.ts` holds a single holder, a watchdog that reclaims a turn whose heartbeat stopped, and a ledger of what was paused or ducked so the machine is put back exactly as it was found. A second pane asking for the floor is denied BY NAME (`granted:false, holder:"pane-A"`) rather than queued silently, so the composer can say why it is quiet — two panes in one window no longer answer on top of each other.
 
@@ -148,12 +253,61 @@ produces a lie the user cannot detect because they only ever hear the output.
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
-
-
-
 - **[2026-09-13]** **[2026-09-11] `duckGain` is clamped at 3x and the 0.35 default was chosen against that ceiling, not for roundness** — a speech signal already near full scale multiplied by 4 lives in the limiter, and pumping on the voice is worse than music audible under it. (Superseded 2026-09-12: the default duck became 1; the clamp reasoning stands.) A guard that needs the app's dictionary is not a guard — unit tests could never have caught the AppleScript compile-time failure, because the runner was stubbed.
 - **[2026-09-13]** **[2026-09-12] `stop()` that neither resolves nor rejects is a permanent silent mode.** Pausing the element and clearing its `src` fires NEITHER `ended` NOR `error`, so the play loop awaited a promise that never settled: after the first barge-in the mode went permanently silent with nothing on screen to say so. A silent mode is indistinguishable from a broken one — which is also why the focus layer FAILS OPEN, toward speaking: a focus route that is down, slow or 403 costs at most an answer read over music, while treating a failed hold as "you may not speak" turns a cosmetic problem into a dead feature.
 - **[2026-09-13]** **[2026-09-12] Dictation quality was never the model — it was the audio handed to it.** `getUserMedia({audio: true})` does not hand over the microphone; it hands over the microphone AFTER the browser's voice-call chain, and echo cancellation is the worst of the three here. The same model run by hand on clean audio was markedly better. Fix the capture constraints, not the transcription model.
+- **[2026-09-11] The composer's direction was chosen from two drawn boards, and the REJECTED one is
+  the half worth keeping.** `jarvis-composer-a-reactor` put a radial meter around the mic — and
+  measured, it grew the composer's body slot by **104px** on every mic press, which is the exact
+  re-flow (four notice rows appearing and vanishing under the composer while the owner aims at
+  send) the redesign exists to END, reintroduced in a prettier and more frequent form. `-b-hud`
+  won because every one of its signals is carried by something already in the layout: the state is
+  an `inset` box-shadow on the card (no element, no height), the meter takes the placeholder's own
+  slot, the repair marks reuse the mention mirror, and the speaking controls sit in the toolbar's
+  flex spacer. **Rule that generalises: in a composer, a new signal must be paid for out of space
+  that already exists — anything that grows the card is a regression however good it looks.** Both
+  boards stay in `_dream_context/inbox/jarvis-composer-ui/` (see Notes for why they were not
+  promoted).
+- **[2026-09-11] The repair mark needed a SERVER field, and that is why the diff is on the words at
+  all.** `AlignOp.at` (the corrected-token index) is recorded by the alignment walk and survives
+  `changedOps` — which throws the `equal` ops away, leaving the client with no positional
+  information whatsoever. The naive client-side fix (search the draft for the word) is wrong on the
+  first sentence that repeats one, and a mutation test pins exactly that case
+  (`[[pattern-mutation-test-assertions]]`). A deletion is still never marked: there is nothing on
+  screen to underline, and marking the gap would claim a visible word was touched.
+- **[2026-09-11] The speaking signal hangs on the FOCUS HOLD, not on playback — the queue is empty
+  for most of an answer.** The reply is still being written while it is being read, so the chunk
+  queue drains repeatedly mid-answer and a play-time flag would flicker off in every gap and take
+  the button with it. Holding the signal on the turn-scoped floor gives one rise and no fall across
+  three sentences, and it falls in `releaseFocus()` — the one place barge-in, interrupt, steer,
+  disposal and the grace expiry ALL already converge, so there is no new path to forget.
+- **[2026-09-11] One ledger owns both the speaker and the music, because two ownership books break
+  in two different ways.** The floor (which pane may speak) and the machine's own sound (what was
+  paused or ducked) are the same lifetime — taken at the first chunk, released 800ms after the last
+  — so they are one server-side holder with one watchdog, not a client singleton (two app windows
+  cannot see each other's) and not two routes. Concurrency forced a **mutex, not an epoch**: the
+  problem was never only bookkeeping, it was two osascript conversations about the same Spotify at
+  once, which produced music playing at full volume under an answer with no ledger entry able to
+  stop it. **Fail open toward SPEAKING** throughout — a failed hold costs an answer read over music,
+  while the opposite turns a cosmetic problem into a silent mode, and a silent mode is
+  indistinguishable from a broken one.
+- **[2026-09-11] An AppleScript guard cannot protect its own script.**
+  `if application "Spotify" is running then tell application "Spotify" … player state …` does not
+  compile when Spotify is absent: `player state` is Spotify's own dictionary term, AppleScript
+  resolves it at COMPILE time, and compilation happens before a single line runs — so the safe
+  looking is-running guard never executes and the whole thing dies at -2741 for every user without
+  the app. Verified both ways the same day: the identical script compiled and returned "no" for
+  installed Music, and exploded for absent Spotify. The probe is therefore two stages —
+  `return (application "X" is running)` needs no dictionary, compiles everywhere, answers false for
+  an absent app and does **not LAUNCH it** (measured: `tell application "Music"` started Music even
+  with the Apple event REFUSED, so an agent saying one sentence would have opened a music player).
+  **Unit tests could never have caught this — the runner was stubbed.**
+- **[2026-09-11] The duck is paired with a compensating gain, clamped at 3x, because the naive fix
+  inverts the feature.** Lowering system output lowers J.A.R.V.I.S by the same amount, so ducking
+  alone makes the mode QUIETER than not having it. The compensation is approximate on purpose
+  (macOS's volume scale is assumed linear in amplitude) and the 0.35 default was chosen against the
+  3x ceiling, not for roundness: speech already near full scale multiplied by 4 lives in the
+  limiter, and pumping on the voice is worse than music audible under it.
 - **[2026-09-11] The speaking-speed setting never once took effect, and the reason is one
   line of ordering.** `SpeechQueue.play()` set `el.playbackRate` and THEN `el.src = url`.
   Assigning `src` runs the media element load algorithm, whose last step is "set the
@@ -255,12 +409,30 @@ calls), `whisper.ts` (the local whisper.cpp engine — note its default is ENGLI
 project-term lexicon built from the brain's own task files), `verbatim.ts` (the read-back check),
 `echo.ts` (the silence-echo guard), `speakable.ts` (fence-aware chunking), `align.ts`, `wav.ts`,
 `hotkey.ts` (canonical chord form, `normalizeHotkey` / `effectiveMode`), `limits.ts` (concurrency
-and rate caps). One route: `src/server/routes/agent-voice.ts`.
+and rate caps, incl. `FOCUS_LIMITS`), `align.ts` (the alignment walk — `AlignOp.at` is the corrected
+-token index), `audioFocus.ts` (the single speaker holder + the pause/duck ledger, serialised behind
+a mutex, watchdog, synchronous exit restore). Routes: `src/server/routes/agent-voice.ts`, including
+`POST /api/agent/voice/focus`.
 
 **Client** (`dashboard/src/lib/voice/`): `useVoiceCapture.ts` (gesture-scoped `AudioContext`, the
-single ScriptProcessor, the fail-open silence gate), `wavEncoder.ts` (the 16 kHz WAV),
-`pushToTalkScope.ts` (the single-owner election), `speechQueue.ts` (the continuous playback queue),
-`hotkey.ts` + `hotkeyDefaults.ts` (physical-`code` bindings), `voicePrefs.ts`.
+single ScriptProcessor, the fail-open silence gate, the ref'd `onLevel` publisher and the pure
+`levelSlices()`), `wavEncoder.ts` (the 16 kHz WAV), `pushToTalkScope.ts` (the single-owner election
+*within one window*), `speechQueue.ts` (the continuous playback queue, the turn-scoped focus hold,
+the 800ms grace, `onSpeaking`, `ensureAudible()` and the duck-gain compensation),
+`audioFocus.ts` (client half + the "not read aloud" announcement), `repairMarks.ts` (pure; rebuilds
+the draft byte-for-byte and returns marks by position), `hotkey.ts` + `hotkeyDefaults.ts`
+(physical-`code` bindings), `voicePrefs.ts`.
+
+**Composer** (`dashboard/src/components/sleepy/chat/`): `Composer.tsx` (`MicIcon`, derived
+`voiceState` → `data-voice`, the level fan-out Set, the repair segments on the existing
+`.chat-cmp-hl` mention mirror, Hush + the rate readout in the toolbar's flex spacer),
+`VoiceMeter.tsx` (canvas + its own rAF, subscribe-based, fixed normalisation, right-aligned ring
+history), `composer.css` (`--cmp-rail`, the four state rules, `.chat-cmp-meter`), `chatSession.ts`
+(the queue is keyed by `claudeId`).
+
+**Two known defects this work closed that were NOT in its brief:** the speaking-rate setting had
+never taken effect (the `playbackRate`/`src` ordering above), and two panes in one window each built
+a `SpeechQueue` and spoke over each other — panes never unmount, so that had always been reachable.
 
 **Defaults:** voice `onyx` (deep — the closest this provider gets to the character), push-to-talk
 `Alt+Space` in `hold` mode, speech rate `1` clamped to `0.75`–`1.75`, `sttLanguage: 'auto'` (sends
@@ -282,11 +454,39 @@ from an announcement blog post rather than the models API — and the plan said 
 required Wave 1 to resolve real ids at implementation time. That written caveat is the only reason
 the wrong-transport premise was caught on the owner's first real push-to-talk rather than shipped.
 
+**The exploration boards, and why they stayed dark.** `_dream_context/inbox/jarvis-composer-ui/`
+holds `jarvis-composer-a-reactor.excalidraw.md` (rejected) and `jarvis-composer-b-hud.excalidraw.md`
+(chosen), plus their generators. They were NOT promoted into a `knowledge/` context folder: they are
+pre-build mockups of a question that is now answered in shipped code, so they begin drifting from
+the implementation the moment they are canonised, and a stale mockup in knowledge is worse than no
+board. **The durable half — the rejected direction's measured 104px body growth and the rule it
+produced — is prose in Constraints & Decisions above, where it cannot go stale.** Promote a board
+here only if one is redrawn to describe what the composer actually IS.
+
+**This feature was built by two sessions in one checkout**, which is why `b25a168a` deliberately
+held back five files (`Composer.tsx`, `speechQueue.ts`, `chatSession.ts`, `agent-voice.ts`,
+`voice-chunker.test.ts`) and `c69ed2c1` landed them jointly: there was no commit containing this
+feature's UI that did not also contain the other session's audio-focus work. See
+`[[patterns/multi-session-checkout-safety]]`, whose Rule 5 this window added.
+
 **Open, offered but not built:** end-to-end TTS streaming (~300ms to first audio, free, and the
 agent's own recommended next step), and an ElevenLabs path.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-11 - Reconciled: the composer HUD rail and the audio-focus layer
+- Reconciled at sleep against `b25a168a` (mic glyph, `data-voice` rail, live meter, `AlignOp.at`
+  repair marks, `--color-speaking`, the playbackRate ordering fix) and `c69ed2c1` (the audio-focus
+  layer: single speaker owner per turn, Spotify pause or system duck with Web Audio compensation,
+  800ms grace, watchdog, `/focus`), plus the two tasks that shipped them. +8 user stories, +2
+  acceptance-criteria sections (23 ticked, 4 explicitly open with their reason), +6 constraints,
+  Technical Details replaced. `status: in_review` and `released_version: null` UNCHANGED: three
+  owner-checklist items remain and are open for stated reasons (no Spotify.app on this machine, the
+  compensation is ear-confirmed by design, the two-pane notice needs the real Tauri webview).
+- Deliberately NOT done: no second PRD, and no knowledge file for the HUD-rail direction — the
+  dedup pass returned the PRD itself as its nearest neighbour, and this feature is that content's
+  home. The two exploration boards stayed in `inbox/` (reasoning in Notes).
 
 ### 2026-09-10 - Created
 - Feature PRD created retrospectively at sleep from `3d86451e` (the mode) and `e425dc02` (real

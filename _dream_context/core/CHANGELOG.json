@@ -170,16 +170,84 @@
   },
   {
     "date": "2026-09-11",
+    "type": "fix",
+    "scope": "settings",
+    "description": "Settings > Agents > 'How the next account is picked': the three coefficient fields were drawn 220px wide in a fixed 5.5rem grid track, overflowing into the third column with the note text painted over the number. Both the shared input rule and the component's own width:100% were single-class and therefore equal specificity, so the winner was decided by bundle order — SettingsPage.css loads after ClaudeAccounts.css because SettingsPage.tsx imports the component first and its own stylesheet last, so the shared 220px rule always won. Raised the override to two classes and added min-width:0 so a future min-width on the shared input can't overflow the track the same way.",
+    "breaking": false,
+    "summary": "The account-picker weight fields (5-hour window, weekly window, place in the list) stop overflowing their track and painting under the note",
+    "references": [
+      "commit:f9df8743"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-11",
+    "type": "feat",
+    "scope": "sleep",
+    "description": "Add the brain's first external sensory feed. A connector manifest at connectors/<slug>.md holds the standing 'learn from this source' contract and is tracked and recall-indexable; the pulled event cache at connectors/cache/<slug>.json holds raw text and is gitignored on the same footing as the secrets store, so external content never syncs into a shared brain repo. ClickUp's pull scope is deliberately limited to comments and newly created tasks only — task state (status, assignees, fields) stays owned by the task-sync backend so two writers can't corrupt one mirror. Cadence is due when either every_cycles (completed sleep cycles) or ttl_hours (wall clock) fires; neither set means pull every sleep. Reads are lenient (a malformed sub-block degrades instead of throwing) and writes are strict (every write throws ConnectorError). Credentials resolve in the CLI process only; sub-agents get cache paths, never secrets. registerConnectorsCommand is exported but nothing calls it yet — registration and the sleep-flow distill step land with the wave that can be verified end to end. 20 unit tests green.",
+    "breaking": false,
+    "summary": "First wave of sleep-connectors: a connector manifest contract, a ClickUp comment/new-task pull, and a connectors CLI — deliberately not yet registered, so no existing command's behavior changes",
+    "references": [
+      "commit:b2210600",
+      "file:src/lib/connectors/",
+      "file:src/cli/commands/connectors.ts",
+      "file:tests/unit/connectors-clickup-pull.test.ts",
+      "file:tests/unit/connectors-store.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-11",
+    "type": "feat",
+    "scope": "voice",
+    "description": "Land the HUD-rail half of the J.A.R.V.I.S composer that is free of the concurrent audio-focus work. The emoji mic is replaced by a drawn glyph; a data-voice state (idle/listening/speaking/muted) renders as an inset box-shadow on the existing composer shell rather than a new element, so nothing re-flows. useVoiceCapture publishes level through a ref'd callback and VoiceMeter paints it on its own rAF loop in the placeholder's slot, so the composer never re-renders at audio rate; levelSlices takes four real measurements per 4096-sample frame (~47Hz) instead of one, normalisation is fixed rather than auto-gain so a take the silence gate refuses still shows visible stubs. AlignOp.at carries the corrected-token index so a repair renders ON the word via the existing .chat-cmp-hl mirror instead of listed beside it as text, fixing a bug where a repeated word picked the wrong occurrence. Adds a Hush control and a playback-rate readout, and --color-speaking as a real token in both themes (the obvious purple was taken by --color-accent). Also fixes the speaking-speed setting: playbackRate was written before el.src, and the media element load algorithm's last step silently resets playbackRate to defaultPlaybackRate on every load — the value was stored, PUT and reported by /status correctly the whole time, but never once took effect.",
+    "breaking": false,
+    "summary": "J.A.R.V.I.S composer HUD-rail: a drawn mic glyph, a data-voice state rail as an inset shadow, a live canvas input meter, repair marks drawn on the corrected word, a Hush control + rate readout, and a real --color-speaking token",
+    "references": [
+      "commit:b25a168a",
+      "task:jarvis-composer-bir-durum-rayi-canli-ses-olcer-ve-kelime-ustu-duzeltme-kazanir",
+      "feature:jarvis-voice-mode"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-11",
+    "type": "feat",
+    "scope": "voice",
+    "description": "Add an audio-focus ledger for J.A.R.V.I.S voice mode that solves two problems at once. When the agent speaks: Spotify is paused via a two-stage AppleScript probe if it's playing, otherwise the macOS system output volume is ducked with a compensating Web Audio gain + limiter on the app's own playback, and everything is restored on release, on a 120s watchdog sweep, and via a synchronous process-exit handler (SIGTERM only, SIGKILL is an accepted gap). Separately, a speaker floor ensures only ONE chat pane speaks at a time — chat panes never unmount, so two J.A.R.V.I.S panes could previously read two answers over each other; the losing pane's turn arrives as text with an on-screen unread mark instead of silently vanishing. Hold/release is per-turn (taken on first chunk enqueue, released 800ms after the queue drains) so music doesn't flap mid-answer, and every path funnels through the same stop()/dispose()/barge-in exit so nothing leaks an unreleased hold. New: src/lib/voice/audioFocus.ts, dashboard/src/lib/voice/audioFocus.ts, tests/unit/voice-audio-focus.test.ts, route POST /api/agent/voice/focus. Changed: speechQueue.ts, chatSession.ts, config.ts (+musicPause/musicDuck), limits.ts (+focusGate), VoiceSettings.tsx, Composer.tsx, Info.plist (+NSAppleEventsUsageDescription). A multi-reviewer pass caught 2 Critical + 6 Major + 1 Minor findings before ship, all closed and mutation-tested (see Technical Decisions in 2.memory.md for the two Critical fixes). 9527 tests green, build clean, live-verified against real macOS system volume on a fresh build in a separate port. NOT committed — working tree only — and A24 (owner's manual checklist) is only half-run: this machine has no Spotify.app installed, so only the system-volume-duck path was exercised live; Spotify pause/resume itself is unverified here.",
+    "breaking": false,
+    "summary": "J.A.R.V.I.S audio focus: the machine's own sound ducks while it speaks (Spotify pause or system-volume duck + compensating gain) and only one chat pane speaks at a time — implemented, reviewed, live-verified, NOT yet committed or owner-accepted",
+    "references": [
+      "task:jarvis-konusurken-muzik-kendiliginden-susar-ve-cevap-bitince-geri-gelir",
+      "feature:jarvis-voice-mode",
+      "file:src/lib/voice/audioFocus.ts",
+      "file:dashboard/src/lib/voice/audioFocus.ts",
+      "file:src/server/routes/agent-voice.ts",
+      "file:tests/unit/voice-audio-focus.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-11",
     "type": "feat",
     "scope": "chat",
-    "description": "Add dc-flow / dc-flow-node (with --good, --warn, --bad, --accent tones) to the Chat view's rendered-HTML kit, so a branching or step chain draws as a single non-wrapping lane of hugging name-boxes with drawn arrows rather than a stack of ragged rows. The surface briefing in src/server/chat-surface.ts gains the editorial half of the change: draw only when the SHAPE is the point, a chain that fits in one sentence stays a sentence, a node is a NAME of one to four words, tone marks only what genuinely is good/bad/at-risk, numbered dc-bg|f|s colors are chart fills and never a surface under words, and one emphasis channel per sentence. scripts/verify/chat-html.mjs grows a real layout check that paints a six-node flow and reads back the row count, per-node hugging and the arrow glyph off the rendered boxes, so a fix that silently drops the arrows fails instead of passing the geometry assertions. Uncommitted in the working tree at the time of this cycle.",
+    "description": "Add dc-flow / dc-flow-node (with --good, --warn, --bad, --accent tones) to the Chat view's rendered-HTML kit, so a branching or step chain draws as a single non-wrapping lane of hugging name-boxes with drawn arrows rather than a stack of ragged rows. The surface briefing in src/server/chat-surface.ts gains the editorial half of the change: draw only when the SHAPE is the point, a chain that fits in one sentence stays a sentence, a node is a NAME of one to four words, tone marks only what genuinely is good/bad/at-risk, numbered dc-bg|f|s colors are chart fills and never a surface under words, and one emphasis channel per sentence. scripts/verify/chat-html.mjs grows a real layout check that paints a six-node flow and reads back the row count, per-node hugging and the arrow glyph off the rendered boxes, so a fix that silently drops the arrows fails instead of passing the geometry assertions. Committed as ed8b3833.",
     "breaking": false,
-    "summary": "IN PROGRESS (uncommitted): the dream-html kit gains a flow primitive that never wraps, plus a surface briefing that tells the agent when NOT to draw",
+    "summary": "The dream-html kit gains a flow primitive that never wraps, plus a surface briefing that tells the agent when NOT to draw",
     "references": [
       "file:dashboard/src/components/sleepy/chat/chat-html-kit.css",
       "file:dashboard/src/components/sleepy/chat/chatHtmlKit.ts",
       "file:src/server/chat-surface.ts",
-      "file:scripts/verify/chat-html.mjs"
+      "file:scripts/verify/chat-html.mjs",
+      "commit:ed8b3833"
     ],
     "authors": [
       "mehmet-nuraydin"
@@ -189,9 +257,9 @@
     "date": "2026-09-11",
     "type": "change",
     "scope": "sleep",
-    "description": "Rework the sleep task-filing bar from 'file unless obviously junk' to 'fold by default, file by exception'. Two new gates run before anything is filed: a semantic-neighbor check that finds an existing task the work is a sub-slice of (backed by embeddings, with embeddingCacheCoversType so the bar knows whether the task corpus is actually covered before trusting a miss), and a declined-ideas check. A new local ledger records work the owner dropped before it ever became a task (tasks decline|declined|undecline, state/.task-declined.json), and that ledger syncs with the brain alongside .task-tombstones.json so a teammate's next cycle cannot re-file an idea somebody here deliberately declined. Candidates that only have indirect evidence are no longer filed or dropped — they are deferred as task-candidate: entries in .sleep-flags.json until a later session re-observes them. Touches src/lib/task-filing-bar.ts, src/lib/task-declined.ts, src/lib/sleep-flags.ts, src/lib/embeddings/*, src/cli/commands/tasks.ts, agents/sleep-tasks.md and the skill docs in lockstep. Uncommitted in the working tree at the time of this cycle — recorded as in-progress, not as shipped.",
+    "description": "Rework the sleep task-filing bar from 'file unless obviously junk' to 'fold by default, file by exception'. Two new gates run before anything is filed: a semantic-neighbor check that finds an existing task the work is a sub-slice of (backed by embeddings, with embeddingCacheCoversType so the bar knows whether the task corpus is actually covered before trusting a miss), and a declined-ideas check. A new local ledger records work the owner dropped before it ever became a task (tasks decline|declined|undecline, state/.task-declined.json), and that ledger syncs with the brain alongside .task-tombstones.json so a teammate's next cycle cannot re-file an idea somebody here deliberately declined. Candidates that only have indirect evidence are no longer filed or dropped — they are deferred as task-candidate: entries in .sleep-flags.json until a later session re-observes them. Touches src/lib/task-filing-bar.ts, src/lib/task-declined.ts, src/lib/sleep-flags.ts, src/lib/embeddings/*, src/cli/commands/tasks.ts, agents/sleep-tasks.md and the skill docs in lockstep. Committed as 7fc86f98.",
     "breaking": false,
-    "summary": "IN PROGRESS (uncommitted): sleep folds work into existing tasks by default and files a new task only as a high-confidence exception — semantic-neighbor + declined gates, tasks decline/declined/undecline, deferred task-candidate flags",
+    "summary": "Sleep folds work into existing tasks by default and files a new task only as a high-confidence exception — semantic-neighbor + declined gates, tasks decline/declined/undecline, deferred task-candidate flags",
     "references": [
       "task:sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception",
       "file:src/lib/task-filing-bar.ts",
@@ -200,7 +268,8 @@
       "file:src/lib/embeddings/store.ts",
       "file:src/cli/commands/tasks.ts",
       "file:agents/sleep-tasks.md",
-      "file:src/lib/git-sync/brain-repo.ts"
+      "file:src/lib/git-sync/brain-repo.ts",
+      "commit:7fc86f98"
     ],
     "authors": [
       "mehmet-nuraydin"
