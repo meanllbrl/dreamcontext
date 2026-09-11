@@ -161,8 +161,14 @@
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
 }
-.dc-acct-weight-input {
+/* Two classes on purpose. `.settings-text-input` is a 220px field and its stylesheet is
+   bundled AFTER this one, so a single-class `width: 100%` here LOSES the cascade: the field
+   kept its 220px, overflowed the 5.5rem track (a fixed track does not grow for it) and the
+   note in the next column painted straight over the number. `min-width: 0` keeps any future
+   min-width on the shared input from doing the same thing again. */
+.dc-acct-weight .dc-acct-weight-input {
   width: 100%;
+  min-width: 0;
   text-align: right;
 }
 .dc-acct-weight-note {
