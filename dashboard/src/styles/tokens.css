@@ -173,6 +173,12 @@
   --color-warning-subtle: hsl(22 100% 95%);
   --color-error: hsl(0 72% 51%);
   --color-error-subtle: hsl(0 72% 96%);
+  /* "The agent is talking to you." A distinct state and therefore a distinct token: the
+     obvious choice — purple, the way voice assistants are always drawn — is unavailable here
+     because `--color-accent` IS Deep Violet, so speaking would have looked identical to
+     listening, which is its opposite. The brand's Electric Blue is the nearest colour that is
+     already ours and is not the accent. */
+  --color-speaking: var(--color-electric-blue);
 
   /* ─── Highlighter ink (`==text==` → <mark>, see styles/global.css) ───
      A marker's yellow, held at an alpha that leaves the text at full contrast: the ink goes
@@ -316,6 +322,8 @@
   --color-error: #ff5a5f;
   --color-error-subtle: rgba(255, 90, 95, 0.14);
   --color-caution: #ffae3b;
+  /* Electric Blue lifted for dark contrast, the same way `--color-accent` is. */
+  --color-speaking: #4db5ff;
 
   /* The same pen on a dark page. A 0.72 yellow over #1c1f2a is a flashbang that forces the
      text to invert; a third of it reads as ink soaked into the paper and leaves #f5f6fa where

@@ -62,6 +62,14 @@ export interface ComposerHost {
    * press and from Stop; a host without it simply has nothing playing.
    */
   bargeInSpeech?(): void;
+  /**
+   * Subscribe to "is this turn speaking". Returns the unsubscribe.
+   *
+   * OPTIONAL for the same reason as {@link bargeInSpeech}: only a `ChatSession` in
+   * J.A.R.V.I.S mode has a speech queue. A host without it is a host with nothing playing,
+   * and the composer simply never shows the speaking controls.
+   */
+  onSpeaking?(fn: (speaking: boolean) => void): () => void;
 }
 
 /** The slice of `ConversationModel` the composer reads. Mirrors those fields exactly. */

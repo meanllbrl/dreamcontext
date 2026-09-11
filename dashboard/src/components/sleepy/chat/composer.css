@@ -51,11 +51,84 @@
   /* Safe: every menu in here (Files/Skills/model/effort) is PORTALED out — see the file
      header — so clipping the card cannot hide a popover. */
   overflow: hidden;
+  /* THE J.A.R.V.I.S STATE RAIL. An INSET SHADOW rather than a real element, and that is the
+     point of the whole direction: the card's state changes without adding a node, without a
+     height change and without anything below the composer re-flowing. Transparent — and so
+     invisible — in every mode but J.A.R.V.I.S. */
+  --cmp-rail: transparent;
+  box-shadow: inset 3px 0 0 var(--cmp-rail);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
+/* The focus ring is COMPOSED with the rail rather than replacing it: a card that lost its
+   state the moment you clicked into it would drop the signal exactly when you are using it. */
 .chat-cmp-card:focus-within {
   border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
-  box-shadow: 0 0 0 3px var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 14%, transparent));
+  box-shadow: inset 3px 0 0 var(--cmp-rail), 0 0 0 3px var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 14%, transparent));
+}
+
+/* ── J.A.R.V.I.S state, as one attribute ──────────────────────────────────────────────
+   Listening is the accent (the app's "live" colour), thinking and a waiting transcript are
+   the warning colour (something is unresolved), trouble is the error one. `idle` sets no
+   rail at all: the mode is not a badge, and a rail that was always lit would say nothing. */
+.chat-cmp-card[data-voice='recording'] { --cmp-rail: var(--color-accent); }
+.chat-cmp-card[data-voice='thinking'],
+.chat-cmp-card[data-voice='pending'] { --cmp-rail: var(--color-warning, var(--color-accent)); }
+.chat-cmp-card[data-voice='trouble'] { --cmp-rail: var(--color-error); }
+/* Speaking gets its OWN colour rather than reusing the accent: listening and being read to
+   are opposite directions, and a rail that looked the same for both would be decoration.
+   `--color-speaking` exists for exactly this — see its note in tokens.css for why it is not
+   the purple a voice assistant is usually drawn in. */
+.chat-cmp-card[data-voice='speaking'] { --cmp-rail: var(--color-speaking); }
+
+/* ── Speaking controls ─────────────────────────────────────────────────────────────────
+   In the toolbar's flex spacer, so nothing on either side moves when they appear. */
+.chat-cmp-speaking {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-left: 8px;
+}
+.chat-cmp-hush {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--color-speaking) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-speaking) 12%, transparent);
+  color: var(--color-speaking);
+  font-size: 11.5px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chat-cmp-hush:hover {
+  background: color-mix(in srgb, var(--color-speaking) 22%, transparent);
+}
+/* The rate is a READOUT, not a control — it says what is happening, and Settings is where it
+   changes. Tertiary weight keeps it from reading as a button beside one. */
+.chat-cmp-rate {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
+}
+/* A narrow pane loses the word before it loses the button: the icon still says the job. */
+@container chatcmp (max-width: 520px) {
+  .chat-cmp-hush span { display: none; }
+  .chat-cmp-hush { padding: 4px 6px; }
+}
+
+/* The live input meter, in the slot the placeholder already occupies. Absolutely positioned
+   so the textarea keeps its own size and its caret: a take over half-typed text must not
+   move the words already there. `pointer-events: none` because it is a picture of the
+   microphone, not a control — the textarea underneath stays clickable throughout. */
+.chat-cmp-meter {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 /* The pinned shelf has an open row docked to this card's top edge. Squaring the top corners
    (and dropping the seam between them) is what makes the two read as ONE object rather than
@@ -372,6 +445,39 @@
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
+/* A word the CORRECTOR wrote, marked where it sits instead of listed beside the sentence.
+   An UNDERLINE rather than a filled band: the mention highlight already owns the band, the
+   two can land on the same word (a corrected @peer is perfectly possible), and a sentence
+   with three filled words in it reads as a redaction. Drawn with a bottom border on the
+   mirror, which is why the overlay's text stays transparent — the real glyphs are the
+   textarea's, sitting exactly on top. */
+.chat-cmp-hl-repair {
+  color: transparent;
+  background: transparent;
+  border-bottom: 2px solid var(--color-warning, var(--color-accent));
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+/* HOW LOUDLY, never WHETHER — the same rule the retired chip row carried, and the same
+   threshold (see `FAR_SIMILARITY`). A replacement far from what was spoken is worth a second
+   look; a near one still stops for the same keypress. */
+.chat-cmp-hl-repair.is-far {
+  border-bottom-width: 3px;
+  background: color-mix(in srgb, var(--color-warning, var(--color-accent)) 14%, transparent);
+  border-radius: 3px 3px 0 0;
+}
+/* A corrected mention keeps the mention's band AND gains the underline: both facts are true
+   and neither is allowed to hide the other. */
+.chat-cmp-hl-mention.chat-cmp-hl-repair {
+  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+/* What was heard, in the shrunken confirmation row. Mono, because it is a quotation of the
+   recogniser's output rather than prose. */
+.chat-cmp-voice-heard {
+  font-family: var(--font-mono);
+  color: var(--color-text);
+}
+
 .chat-cmp-input:focus { outline: none; }
 .chat-cmp-input:disabled { opacity: 0.6; }
 

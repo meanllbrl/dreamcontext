@@ -130,6 +130,34 @@ somebody else's in-flight work. Re-apply your hunk instead.
 files at risk; grepping for the actual symbol in each showed 8 were intact and only 2 needed
 re-writing.
 
+**`cp file.bak` is a whole-file restore too.** Rule 4 is usually read as being about git, but a
+shell snapshot taken to bisect a change and copied back a few minutes later overwrites whatever
+the peer wrote in between — same door, no stash to recover from. If you must bisect a shared
+file, revert your OWN hunk and re-apply it, or take the snapshot and restore it within one
+uninterrupted step.
+
+### Rule 5: A result read from a shared tree is provisional until you re-run it
+
+Rules 1-4 keep the other session from destroying your WORK. This one keeps it from corrupting
+your CONCLUSIONS, which is the cheaper mistake to make and the easier one to publish.
+
+A test suite run against a tree a peer is mid-edit in measures a state that never existed and
+that nobody will ever see again: half of one feature's refactor with none of its test updates.
+Three red tests investigated, bisected and reported as a finding here were, ninety minutes
+later, green on eight consecutive runs — the peer had simply finished. Nothing was ever broken.
+
+**Before reporting any red test in a shared checkout:**
+
+```bash
+stat -f "%Sm %N" -t "%H:%M:%S" <the files the failure touches>   # is the peer still writing?
+git show HEAD:path/to/file.ts | grep -c <symbol>                 # is this even committed work?
+for i in 1 2 3; do npx vitest run <file> | grep "Tests "; done    # deterministic, or in-flight?
+```
+
+Quiet mtimes plus a repeated identical result is a finding. Anything else is a snapshot of
+somebody mid-sentence — say so, or say nothing yet. The failure is still worth *knowing*: it
+tells you the peer is working in your files. It is just not worth *concluding* from.
+
 ## When NOT to Use This Pattern
 
 This pattern is for **parallel sessions in ONE checkout**. It is NOT for:
@@ -148,10 +176,23 @@ This pattern is for **parallel sessions in ONE checkout**. It is NOT for:
 
 - Bookmark `bm_wPFL67Qe` (salience 3, 2026-08-27) — the symptom: 14 files staged, commit landed on the other session's work
 - Rule 4, 2026-09-05, learned in two collisions in one session: (a) a peer's `git stash push -u -- src dashboard tests scripts` swept this session's tracked AND untracked work off disk; recovered per-file from the stash without popping it, which is what left the stash intact for the peer's own use. (b) The peer then restored with `git checkout stash@{0} -- <dirs>`, writing the 02:57 snapshot over work done at 03:06 — 2 of 10 files were unrecoverable from git and had to be re-written from the session's own context. The peer afterwards dropped that stash, renumbering the list: proof that `stash@{0}` is not a stable address.
+- Rule 5, 2026-09-11: a J.A.R.V.I.S composer session ran the suite while the music-ducking
+  session was mid-edit in `speechQueue.ts` and `voice-audio-focus.test.ts`, found 3 red tests,
+  bisected them (correctly ruling out its own change), and reported them to the owner as the
+  peer's breakage. The peer's own next edit fixed the AC6 test — its new comment explains that
+  counting exactly three microtasks pinned an implementation detail once the play loop began
+  awaiting the speaker floor. Re-measured after the peer went quiet: 35/35 eight times, the
+  voice suite 310/310 five times, the full suite 9527/0. The bisect also used `cp`-based
+  snapshots of a file the peer was editing — safe only because the snapshot happened to
+  post-date the peer's last write.
 - Session that discovered it: [session ID would go here if available]
 - Fixed by: applying pathspec commits + archive-based verification in the sleep flow
 
 ## Changelog
+
+### 2026-09-11 - Rule 5 added
+- Rule 5 (a result read from a shared tree is provisional) and the `cp`-snapshot note on Rule 4,
+  both learned from reporting a peer's in-flight state as a defect.
 
 ### 2026-08-27 - Created
 - Pattern created from the multi-session commit corruption discovered today

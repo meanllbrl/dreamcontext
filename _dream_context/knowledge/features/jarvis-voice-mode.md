@@ -1,17 +1,17 @@
 ---
-id: "feat_WTD0oQC7"
-type: "feature"
-name: "jarvis-voice-mode"
+id: feat_WTD0oQC7
+type: feature
+name: jarvis-voice-mode
 description: >-
-  The chat composer's fourth mode, made real: push-to-talk in, spoken answers out, and a short
-  briefing that makes the agent say two or three plain sentences while putting any structure on
-  screen as a dream-html block instead of reading it aloud. One OpenRouter key, per-machine,
-  never in a vault.
+  The chat composer's fourth mode, made real: push-to-talk in, spoken answers
+  out, and a short briefing that makes the agent say two or three plain
+  sentences while putting any structure on screen as a dream-html block instead
+  of reading it aloud. One OpenRouter key, per-machine, never in a vault.
 pinned: false
-date: "2026-09-10"
-status: "in_review"
-created: "2026-09-10"
-updated: "2026-09-10"
+date: '2026-09-10'
+status: in_review
+created: '2026-09-10'
+updated: '2026-09-11'
 released_version: null
 product: desktop
 tags:
@@ -22,7 +22,10 @@ tags:
   - 'domain:security'
   - 'layer:frontend'
   - 'layer:backend'
-related_tasks: []
+related_tasks:
+  - jarvis-konusurken-muzik-kendiliginden-susar-ve-cevap-bitince-geri-gelir
+  - >-
+    jarvis-composer-bir-durum-rayi-canli-ses-olcer-ve-kelime-ustu-duzeltme-kazanir
 ---
 
 ## Why
@@ -137,6 +140,29 @@ produces a lie the user cannot detect because they only ever hear the output.
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-09-11] The speaking-speed setting never once took effect, and the reason is one
+  line of ordering.** `SpeechQueue.play()` set `el.playbackRate` and THEN `el.src = url`.
+  Assigning `src` runs the media element load algorithm, whose last step is "set the
+  `playbackRate` attribute to the value of the `defaultPlaybackRate` attribute" —
+  unconditionally, on every load. So the rate was erased by the very next statement and every
+  chunk played at 1x, while the value was stored, PUT, reported by `/status` and rendered in
+  the Settings row correctly the whole time. **Rule that generalises: a media property written
+  before `src` is not configuration, it is a guess** — `defaultPlaybackRate` is the one the
+  load survives. The regression test fakes the reset rather than the field, because a fake
+  that merely stored `playbackRate` passes on the broken code and proves nothing
+  (`[[pattern-mutation-test-assertions]]`).
+- **[2026-09-11] The rescue path ignored the Voice setting, and the voices are now matched by
+  MEASURED pitch.** `speakWithRealTts` sent a hardcoded `Charon`, so a chunk the chat model
+  refused to read came back as a different person from the sentence before it. The fallback
+  model does not share the chat model's voice list — it would 400 on `onyx` — so the fix is a
+  translation table built from median F0 of the same Turkish line through every voice
+  (`FALLBACK_VOICES`, `openrouter.ts`), not from the provider's adjectives. A refused voice
+  retries once with `Charon`: the rescue path exists so a sentence is not lost, and must not
+  become a new way to lose one over a preference. Measured the same day: the chat path honours
+  the picked voice correctly (onyx 103 Hz → nova 192 Hz) and the verbatim guard passed 8/8 on
+  short conversational chunks, so the fallback is rare — this was a latent bug, not the one
+  the owner heard.
 
 - **[2026-09-08] The default transcriber is `cloud`, and the earlier "no audio models on
   OpenRouter" conclusion was WRONG.** The audio endpoints have their **own namespace, invisible in

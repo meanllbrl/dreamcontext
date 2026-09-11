@@ -126,6 +126,45 @@ export const AUDIO_MODELS = {
   speechFallback: ['google/gemini-3.1-flash-tts-preview'],
 } as const;
 
+/**
+ * The picked voice, translated for the FALLBACK model — which does not share the chat
+ * model's voice list and would 400 on `onyx`.
+ *
+ * WHY THIS EXISTS AT ALL. The rescue path used to send a hardcoded `Charon` whatever the
+ * owner had chosen, so a chunk the chat model refused to read came back in a different
+ * voice from the sentence before it — the one place in the feature where the Voice setting
+ * was silently ignored.
+ *
+ * MATCHED BY MEASUREMENT, not by the provider's adjectives. Median fundamental frequency of
+ * the same Turkish line through each voice, 2026-09-11:
+ *
+ *   chat model   onyx 103   ash 114   echo 138   fable 155   alloy 157   shimmer 157   nova 192
+ *   fallback     Charon 122   Schedar 152   Puck 163   Orus 176   Leda 186   Iapetus 189   Achernar 202
+ *
+ * Each voice below is its nearest neighbour in that table. Pitch is not timbre and this is
+ * not a clone — it is the difference between "the rescued sentence is in a nearby register"
+ * and "the rescued sentence is a different person". Every id was verified live against the
+ * endpoint; an unknown key falls back to `Charon`, which is also what a failed request
+ * retries with.
+ */
+export const FALLBACK_VOICES: Record<string, string> = {
+  onyx: 'Charon',
+  ash: 'Charon',
+  echo: 'Schedar',
+  fable: 'Schedar',
+  alloy: 'Schedar',
+  shimmer: 'Schedar',
+  nova: 'Iapetus',
+};
+
+/** The fallback model's known-good voice, and the retry when a mapped one is refused. */
+export const FALLBACK_VOICE_DEFAULT = 'Charon';
+
+/** Translate a chat-model voice into one the fallback model accepts. */
+export function fallbackVoice(voice: string | undefined): string {
+  return FALLBACK_VOICES[(voice ?? '').toLowerCase()] ?? FALLBACK_VOICE_DEFAULT;
+}
+
 /** The catalogues we resolve against, in preference order. First live match wins. */
 /** The three catalogues we resolve against, in preference order. First live match wins. */
 export const MODEL_PREFERENCES = {

@@ -39,6 +39,21 @@ export interface AlignOp {
   /** 0..1 similarity between `from` and `to`, for a substitute. How LOUDLY the change is
    *  drawn — never whether it is shown. */
   similarity?: number;
+  /**
+   * Index of `to` among the CORRECTED text's whitespace-separated tokens.
+   *
+   * WHY THE ALIGNMENT HAS TO SAY THIS. The composer draws each repair as a mark on the word
+   * itself, in the sentence, instead of listing `Dremontext → dreamcontext +2 more` beside
+   * it — a list asks the reader to map it back onto the sentence, and that is the work the
+   * confirmation step cannot afford. To mark a word you need to know WHICH word, and only
+   * this walk knows: `changedOps` throws the `equal` ops away, so by the time the client
+   * sees the list every positional clue is gone and a repeated word could not be located at
+   * all. Recording it here costs one integer and no re-derivation.
+   *
+   * For a `delete` there is no corrected token, so this is the index the removed word sat
+   * BEFORE — nothing is on screen to mark, and the composer reports those separately.
+   */
+  at?: number;
 }
 
 /** Split on whitespace. Punctuation is handled by {@link fold}, not by the split, so a token
@@ -145,27 +160,27 @@ export function alignTranscripts(raw: string, corrected: string): AlignOp[] {
   let j = 0;
   while (i < a.length && j < b.length) {
     if (fa[i] === fb[j]) {
-      ops.push({ kind: 'equal', from: a[i], to: b[j] });
+      ops.push({ kind: 'equal', from: a[i], to: b[j], at: j });
       i++; j++;
       continue;
     }
     // Both sides have an unmatched token here AND neither is part of a longer common run
     // that the other could still reach — that is a replacement, not a drop next to an add.
     if (lcs[i + 1][j + 1] >= lcs[i + 1][j] && lcs[i + 1][j + 1] >= lcs[i][j + 1]) {
-      ops.push({ kind: 'substitute', from: a[i], to: b[j], similarity: similarity(a[i], b[j]) });
+      ops.push({ kind: 'substitute', from: a[i], to: b[j], similarity: similarity(a[i], b[j]), at: j });
       i++; j++;
       continue;
     }
     if (lcs[i + 1][j] >= lcs[i][j + 1]) {
-      ops.push({ kind: 'delete', from: a[i], to: '' });
+      ops.push({ kind: 'delete', from: a[i], to: '', at: j });
       i++;
     } else {
-      ops.push({ kind: 'insert', from: '', to: b[j] });
+      ops.push({ kind: 'insert', from: '', to: b[j], at: j });
       j++;
     }
   }
-  while (i < a.length) { ops.push({ kind: 'delete', from: a[i++], to: '' }); }
-  while (j < b.length) { ops.push({ kind: 'insert', from: '', to: b[j++] }); }
+  while (i < a.length) { ops.push({ kind: 'delete', from: a[i++], to: '', at: j }); }
+  while (j < b.length) { ops.push({ kind: 'insert', from: '', to: b[j], at: j }); j++; }
   return ops;
 }
 

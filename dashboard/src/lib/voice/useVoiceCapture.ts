@@ -52,6 +52,30 @@ export function rmsOf(samples: Float32Array): number {
   return Math.sqrt(sum / samples.length);
 }
 
+/** How many samples one published level covers. See {@link levelSlices}. */
+export const LEVEL_SLICE = 1024;
+
+/**
+ * One audio frame, split into the level values the meter draws.
+ *
+ * Pure, and separated from the audio callback so the CONTRACT is testable without a
+ * microphone: a 4096-sample frame must yield FOUR measurements, each a real RMS of its own
+ * quarter. Publishing one value per frame instead — the obvious version — is ~12 Hz at
+ * 48 kHz, which is visibly steppy; and interpolating between frames would draw a meter that
+ * is partly invention, in a component whose entire job is to be believed.
+ *
+ * A trailing partial slice is DROPPED rather than measured short: an RMS over fewer samples
+ * is not comparable to its neighbours, and one wrong-height bar at the end of every frame is
+ * a periodic artefact that looks like signal.
+ */
+export function levelSlices(frame: Float32Array, step = LEVEL_SLICE): number[] {
+  const out: number[] = [];
+  for (let i = 0; i + step <= frame.length; i += step) {
+    out.push(rmsOf(frame.subarray(i, i + step)));
+  }
+  return out;
+}
+
 export type TakeVerdict = 'ok' | 'too-short' | 'silent';
 
 /** How far a take has got. See {@link stopVerdict} for why the phase is tracked separately
@@ -115,10 +139,22 @@ export interface VoiceCaptureOptions {
   vault: string | null;
   /** Called with a non-empty transcript. Never called for a rejected or empty take. */
   onTranscript: (text: string) => void;
+  /**
+   * The live input level (RMS, 0..1), roughly every 21 ms while a take is recording.
+   *
+   * DELIBERATELY NOT REACT STATE. It is read by a canvas that paints on its own rAF loop;
+   * routing it through `setState` would re-render the composer at audio rate. Held in a ref
+   * so a caller that re-creates the callback every render does not rebuild the audio graph.
+   */
+  onLevel?: (level: number) => void;
 }
 
-export function useVoiceCapture({ vault, onTranscript }: VoiceCaptureOptions): VoiceCapture {
+export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOptions): VoiceCapture {
   const [state, setState] = useState<CaptureState>('idle');
+  /** See {@link VoiceCaptureOptions.onLevel}: the audio callback reads the CURRENT listener,
+   *  so a new closure each render never touches the graph. */
+  const onLevelRef = useRef(onLevel);
+  onLevelRef.current = onLevel;
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState('');
 
@@ -342,6 +378,17 @@ export function useVoiceCapture({ vault, onTranscript }: VoiceCaptureOptions): V
           chunksRef.current.push(new Float32Array(frame));
           peakRef.current = Math.max(peakRef.current, rmsOf(frame));
           meteredFramesRef.current += 1;
+          // ── THE LIVE METER, AND WHY IT IS A CALLBACK RATHER THAN STATE ────────────────
+          // The meter is the mode's trust signal: a take that heard nothing must LOOK
+          // different from one that was never recorded. But publishing a level through
+          // React state would re-render the whole composer ~47 times a second, so the level
+          // leaves through a ref'd callback and is drawn to a canvas instead.
+          //
+          // One callback per 1024 samples rather than per frame: 4096 at 48 kHz is ~85 ms,
+          // which is ~12 Hz — visibly steppy. Quartering it gives ~47 Hz, and each value is
+          // still a REAL measurement of that slice, not an interpolation.
+          const onLevel = onLevelRef.current;
+          if (onLevel) for (const level of levelSlices(frame)) onLevel(level);
         };
         source.connect(tap);
         // A ScriptProcessor only runs while it is connected to the destination, so it is —

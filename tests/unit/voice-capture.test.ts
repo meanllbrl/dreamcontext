@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-  rmsOf, judgeTake, stopVerdict, MIN_TAKE_MS, RMS_FLOOR,
+  rmsOf, judgeTake, stopVerdict, levelSlices, MIN_TAKE_MS, RMS_FLOOR,
 } from '../../dashboard/src/lib/voice/useVoiceCapture.js';
 import {
   downsample, toPcm16, encodeWav, mergeChunks, wavFromTake, TARGET_SAMPLE_RATE,
@@ -213,5 +213,36 @@ describe('the RMS meter measures the take, or does not veto it', () => {
     // would still be trusted.
     const start = src.slice(src.indexOf('const start = useCallback'));
     expect(start).toMatch(/meteredFramesRef\.current = 0;/);
+  });
+});
+
+/**
+ * THE LIVE METER'S DATA CONTRACT.
+ *
+ * The meter is the mode's trust signal — a take that heard nothing must look different from
+ * one that was never recorded — so what it draws has to be a real measurement of a real
+ * slice, not one value per frame stretched into four.
+ */
+describe('levelSlices', () => {
+  it('yields FOUR measurements per 4096-sample frame, not one', () => {
+    // 12 Hz (one per frame at 48 kHz) is visibly steppy; this is what makes it ~47 Hz.
+    expect(levelSlices(new Float32Array(4096)).length).toBe(4);
+  });
+
+  it('measures each slice on its OWN samples', () => {
+    // Silence, then a loud quarter: the values must differ, which they cannot if the
+    // function ever averages across the frame or repeats one reading.
+    const frame = new Float32Array(4096);
+    for (let i = 3072; i < 4096; i++) frame[i] = 0.5;
+    const out = levelSlices(frame);
+    expect(out.slice(0, 3)).toEqual([0, 0, 0]);
+    expect(out[3]).toBeCloseTo(0.5, 5);
+  });
+
+  it('DROPS a trailing partial slice rather than measuring it short', () => {
+    // An RMS over fewer samples is not comparable to its neighbours, and one wrong-height
+    // bar per frame is a periodic artefact that reads as signal.
+    expect(levelSlices(new Float32Array(1536)).length).toBe(1);
+    expect(levelSlices(new Float32Array(1023)).length).toBe(0);
   });
 });
