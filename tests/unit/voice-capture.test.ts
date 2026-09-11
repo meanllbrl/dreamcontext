@@ -12,10 +12,13 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   rmsOf, judgeTake, stopVerdict, levelSlices, MIN_TAKE_MS, RMS_FLOOR,
+  speechThreshold, ABSOLUTE_RMS_FLOOR, SPEECH_OVER_NOISE,
 } from '../../dashboard/src/lib/voice/useVoiceCapture.js';
 import {
-  downsample, toPcm16, encodeWav, mergeChunks, wavFromTake, TARGET_SAMPLE_RATE,
+  resample, removeDc, normalizeTake, toPcm16, encodeWav, mergeChunks, wavFromTake,
+  TARGET_SAMPLE_RATE, TARGET_PEAK, MAX_TAKE_GAIN,
 } from '../../dashboard/src/lib/voice/wavEncoder.js';
+import { sliceFor, frameSizeFor, RAW_MIC } from '../../dashboard/src/lib/voice/useVoiceCapture.js';
 
 // ── The WAV the app encodes itself (AC2) ────────────────────────────────────────────────
 //
@@ -49,19 +52,67 @@ describe('the recorded WAV', () => {
     expect(pcm[3]).toBe(-32768);
   });
 
-  it('downsamples by AVERAGING the window, not by dropping samples', () => {
-    // Decimation aliases: high frequencies fold back into the speech band as a metallic ring,
-    // on a signal whose whole job is to be recognised.
-    const input = new Float32Array([1, 0, 1, 0, 1, 0, 1, 0]);
-    const out = downsample(input, 48000, 24000);
-    expect(out.length).toBe(4);
-    for (const v of out) expect(v).toBeCloseTo(0.5, 6);
-  });
-
   it('leaves the samples alone when the device already runs at or below the target', () => {
     const input = new Float32Array([0.1, 0.2, 0.3]);
-    expect(downsample(input, 16000, 16000)).toBe(input);
-    expect(downsample(input, 8000, 16000)).toBe(input);
+    expect(resample(input, 16000, 16000)).toBe(input);
+    expect(resample(input, 8000, 16000)).toBe(input);
+  });
+
+  it('passes a voice-band tone through at its own amplitude', () => {
+    // 1 kHz is in the middle of what a recogniser reads. The filter must not touch it.
+    const tone = toneAt(1000, 48000, 4800);
+    const out = resample(tone, 48000, 16000);
+    expect(out.length).toBe(1600);
+    // Edges are excluded: the kernel reads silence past the ends of a take by design.
+    expect(peakOf(out.subarray(200, 1400))).toBeGreaterThan(0.9);
+    expect(peakOf(out.subarray(200, 1400))).toBeLessThan(1.05);
+  });
+
+  it('SUPPRESSES what would otherwise alias into the speech band', () => {
+    // THE BUG THIS TEST EXISTS FOR. A 12 kHz tone cannot be represented at 16 kHz: it folds
+    // to 4 kHz — the middle of the speech band — unless it is filtered out BEFORE the rate
+    // changes. The box-average this replaced left it at roughly an eighth of its amplitude,
+    // which is a loud whistle sitting on top of every consonant.
+    const tone = toneAt(12000, 48000, 4800);
+    const out = resample(tone, 48000, 16000);
+    expect(peakOf(out.subarray(200, 1400))).toBeLessThan(0.02);   // ~-34 dB or better
+  });
+
+  it('resamples a non-integer ratio — a 44.1 kHz device is ordinary', () => {
+    const tone = toneAt(1000, 44100, 4410);
+    const out = resample(tone, 44100, 16000);
+    expect(out.length).toBe(Math.floor(4410 * (16000 / 44100)));
+    expect(peakOf(out.subarray(200, 1300))).toBeGreaterThan(0.9);
+  });
+
+  it('takes the DC offset off, and leaves a clean take alone', () => {
+    const biased = new Float32Array([0.3, 0.5, 0.3, 0.5]);
+    const fixed = removeDc(biased);
+    expect(fixed).not.toBe(biased);
+    expect(fixed.reduce((a, b) => a + b, 0)).toBeCloseTo(0, 6);
+    const clean = new Float32Array([0.5, -0.5, 0.5, -0.5]);
+    expect(removeDc(clean)).toBe(clean);
+  });
+
+  it('lifts a quiet take to the target peak', () => {
+    // With AGC asked OFF at the device, a quiet room stays quiet all the way here.
+    const quiet = new Float32Array([0.25, -0.25, 0.1]);
+    const out = normalizeTake(quiet);
+    expect(peakOf(out)).toBeCloseTo(TARGET_PEAK, 5);
+  });
+
+  it('does NOT lift silence, and does not push a loud take into the clipper', () => {
+    const silence = new Float32Array(64);
+    expect(normalizeTake(silence)).toBe(silence);
+    const roomTone = new Float32Array(64).fill(0.0002);
+    expect(normalizeTake(roomTone)).toBe(roomTone);
+    const loud = new Float32Array([0.95, -0.95]);
+    expect(normalizeTake(loud)).toBe(loud);
+  });
+
+  it('never amplifies a take by more than the ceiling', () => {
+    const veryQuiet = new Float32Array([0.01, -0.01]);
+    expect(peakOf(normalizeTake(veryQuiet))).toBeCloseTo(0.01 * MAX_TAKE_GAIN, 5);
   });
 
   it('joins the take\'s frames in order', () => {
@@ -72,11 +123,105 @@ describe('the recorded WAV', () => {
   it('encodes a whole take end to end at 16 kHz', () => {
     // 48 kHz in, 16 kHz out: a third of the samples, a quarter of the bytes of the raw
     // float frames — and those bytes get base64'd into a JSON body.
-    const frames = [new Float32Array(4800).fill(0.25), new Float32Array(4800).fill(-0.25)];
+    const frames = [toneAt(440, 48000, 4800), toneAt(440, 48000, 4800)];
     const wav = wavFromTake(frames, 48000);
     const view = new DataView(wav.buffer);
     expect(view.getUint32(24, true)).toBe(16000);
     expect(view.getUint32(40, true)).toBe((9600 / 3) * 2);
+  });
+});
+
+// ── The signal the device is asked for (the dictation fix, 2026-09-12) ──────────────────
+
+describe('what the microphone is asked for', () => {
+  it('asks for the RAW device — no echo canceller, no noise gate, no AGC', () => {
+    // Every one of these is on by default and every one of them is lossy in the band a
+    // recogniser reads. The echo canceller is the worst of the three in THIS mode: the
+    // machine's own voice was playing seconds ago, so it has adapted to it and carves a
+    // matching notch out of the owner.
+    expect(RAW_MIC.echoCancellation).toEqual({ ideal: false });
+    expect(RAW_MIC.noiseSuppression).toEqual({ ideal: false });
+    expect(RAW_MIC.autoGainControl).toEqual({ ideal: false });
+  });
+
+  it('states them as IDEAL, so a device that cannot honour one still opens', () => {
+    for (const v of Object.values(RAW_MIC)) {
+      expect(v).not.toHaveProperty('exact');
+    }
+  });
+
+  it('sizes the meter and the graph frame in TIME, not in samples', () => {
+    // A 4096-sample frame is 85 ms at 48 kHz and 256 ms at 16 kHz — a meter that updates
+    // four times a second, and a gate that can miss a short take. Now that the context asks
+    // for 16 kHz, both have to follow the rate.
+    for (const rate of [16000, 44100, 48000]) {
+      expect(rate / sliceFor(rate)).toBeGreaterThan(35);     // ≥ ~35 Hz meter
+      expect(rate / sliceFor(rate)).toBeLessThan(60);
+      const frameMs = (frameSizeFor(rate) / rate) * 1000;
+      expect(frameMs).toBeGreaterThan(40);
+      expect(frameMs).toBeLessThan(180);
+      expect(Number.isInteger(Math.log2(frameSizeFor(rate)))).toBe(true);
+    }
+  });
+});
+
+/** One second-fraction of a sine at `hz`, for testing the filter. */
+function toneAt(hz: number, rate: number, samples: number): Float32Array {
+  const out = new Float32Array(samples);
+  for (let i = 0; i < samples; i++) out[i] = Math.sin((2 * Math.PI * hz * i) / rate);
+  return out;
+}
+
+function peakOf(samples: Float32Array): number {
+  let peak = 0;
+  for (const s of samples) peak = Math.max(peak, Math.abs(s));
+  return peak;
+}
+
+describe('the speech gate, now that the device is asked for the RAW signal', () => {
+  // FOUND IN REVIEW, 2026-09-12, and it is the regression that would have traded one
+  // complaint for a worse one: AGC was doing the levelling, `RMS_FLOOR` was measured against
+  // its output, and switching AGC off drops a quiet speaker ~20 dB — so a fixed floor would
+  // have started discarding real sentences as silence, with no transcript at all.
+
+  it('never gets STRICTER than the old fixed floor, whatever the room is doing', () => {
+    // The property that makes this change safe by construction: it can only accept more.
+    for (const noise of [0, 1e-6, 0.001, 0.004, 0.02, 0.5, Infinity, Number.NaN]) {
+      expect(speechThreshold(noise)).toBeLessThanOrEqual(RMS_FLOOR);
+    }
+  });
+
+  it('drops with the room, so a quiet take in a quiet room is still speech', () => {
+    // The exact case the review named: the voice arrives ~10x under where AGC used to put
+    // it, and so does the room. The ratio is what survived; the absolute level did not.
+    const quietRoom = 0.0008;
+    const quietVoice = 0.006;                       // well under the old floor of 0.012
+    expect(judgeTake(1200, quietVoice)).toBe('silent');            // the old rule
+    expect(judgeTake(1200, quietVoice, quietRoom)).toBe('ok');     // the new one
+  });
+
+  it('still refuses a take of pure room tone — the peak IS the noise', () => {
+    // The hallucination guard this gate exists for: a transcription model returns confident
+    // invented sentences for silence, and that sentence would be submitted to a TOOL-ENABLED
+    // agent as if the owner had said it.
+    for (const roomTone of [0.0006, 0.002, 0.009]) {
+      expect(judgeTake(5000, roomTone * 1.1, roomTone)).toBe('silent');
+      expect(judgeTake(5000, roomTone * (SPEECH_OVER_NOISE + 0.5), roomTone)).toBe('ok');
+    }
+  });
+
+  it('holds an absolute floor, so two flavours of nothing are not a ratio', () => {
+    // A microphone delivering essentially zero would otherwise satisfy "several times the
+    // noise" with numbers that are both noise.
+    expect(judgeTake(5000, ABSOLUTE_RMS_FLOOR - 0.0001, 1e-9)).toBe('silent');
+    expect(speechThreshold(1e-9)).toBe(ABSOLUTE_RMS_FLOOR);
+  });
+
+  it('falls back to the OLD fixed floor when the room could not be measured', () => {
+    // One frame means the quietest frame is also the loudest; a caller with nothing to
+    // report is held to the stricter rule rather than to none.
+    expect(speechThreshold(Infinity)).toBe(RMS_FLOOR);
+    expect(judgeTake(1200, RMS_FLOOR - 0.001)).toBe('silent');
   });
 });
 
@@ -191,7 +336,12 @@ describe('the RMS meter measures the take, or does not veto it', () => {
     // The failure this replaced was exactly that disagreement: an unresumed analyser reported
     // silence for every take while the recorder captured the sentence perfectly well.
     expect(src).toMatch(/chunksRef\.current\.push\(new Float32Array\(frame\)\);/);
-    expect(src).toMatch(/peakRef\.current = Math\.max\(peakRef\.current, rmsOf\(frame\)\);/);
+    expect(src).toMatch(/const level = rmsOf\(frame\);/);
+    expect(src).toMatch(/peakRef\.current = Math\.max\(peakRef\.current, level\);/);
+    // The quietest frame is measured off the SAME buffer, for the same reason: the gate is
+    // relative to this take's own room now, and a floor taken from anywhere else would be a
+    // number about a different recording.
+    expect(src).toMatch(/floorRef\.current = Math\.min\(floorRef\.current, level\);/);
     expect(src).toMatch(/meteredFramesRef\.current \+= 1;/);
   });
 

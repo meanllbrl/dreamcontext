@@ -1,5 +1,5 @@
 import { ApiClient } from '../../api/client';
-import { SpeechQueue } from '../../lib/voice/speechQueue';
+import { SpeechQueue, type SpokenChunk } from '../../lib/voice/speechQueue';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { raiseAskAttention } from '../../lib/attention';
@@ -416,6 +416,16 @@ export interface ChatSession {
    * there is no queue, and this reports a permanent `false`.
    */
   onSpeaking: (fn: (speaking: boolean) => void) => () => void;
+  /**
+   * Subscribe to WHICH chunk is being spoken right now, for the transcript's marker. Returns
+   * the unsubscribe; fires immediately with the current value, `null` when nothing is.
+   *
+   * The same shape and the same reasoning as {@link onSpeaking}: playback runs on the audio
+   * queue's own clock, not on a server frame, so there is no reducer action to hang it on.
+   * The chunk carries the transcript item its words came from, which is what lets the right
+   * message mark itself and every other one ignore the event.
+   */
+  onSpokenChunk: (fn: (chunk: SpokenChunk | null) => void) => () => void;
   /** Live model switch (`set_model` control request — verified on CLI 2.1.218). Applies to
    *  the NEXT turn; the CLI re-emits `system:init` with the new model, which updates
    *  `session.model`/`conv.model`, and the `control-ack` confirms or surfaces an error. */
@@ -611,7 +621,8 @@ export function createChatSession(
     if (!speech) return;
     const already = spokenChars.get(itemId) ?? 0;
     if (full.length <= already) return;
-    speech.push(full.slice(already));
+    // Tagged with the ITEM, so the transcript can mark the sentence that is being spoken.
+    speech.push(full.slice(already), itemId);
     spokenChars.set(itemId, full.length);
   }
 
@@ -693,6 +704,7 @@ export function createChatSession(
     interrupt,
     bargeInSpeech,
     onSpeaking,
+    onSpokenChunk,
     setModel,
     setEffort,
     setPermissionMode,
@@ -1434,6 +1446,13 @@ export function createChatSession(
   function onSpeaking(fn: (speaking: boolean) => void): () => void {
     if (!speech) { fn(false); return () => {}; }
     return speech.onSpeaking(fn);
+  }
+
+  /** See the field's doc. Outside J.A.R.V.I.S mode nothing is ever spoken, so the answer is a
+   *  settled `null` — the subscriber still gets its one call. */
+  function onSpokenChunk(fn: (chunk: SpokenChunk | null) => void): () => void {
+    if (!speech) { fn(null); return () => {}; }
+    return speech.onChunk(fn);
   }
 
   /** Whether {@link steer} would land right now — read by the composer to label ⏎ honestly

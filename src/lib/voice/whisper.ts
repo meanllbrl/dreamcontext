@@ -28,7 +28,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, cpus } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -136,6 +136,10 @@ const READY_TIMEOUT_MS = 60_000;
 /** One take's budget. Past this the cloud is faster than waiting. */
 const INFERENCE_TIMEOUT_MS = 15_000;
 
+/** Decoder search width. See the call site for why the server's own default is not used. */
+export const BEAM_SIZE = 5;
+export const BEST_OF = 5;
+
 /**
  * STICKY LANGUAGE DETECTION, and why it is worth the machinery.
  *
@@ -185,7 +189,11 @@ async function waitForReady(port: number, deadline: number): Promise<boolean> {
 function ensureServer(install: WhisperInstall): Running {
   if (running && running.child.exitCode === null && !running.child.killed) return running;
 
-  const child = spawn(install.bin, ['-m', install.model, '--port', String(PORT)], {
+  // `-t` is whisper-server's thread count and its default is FOUR, whatever the machine has.
+  // Beam search multiplies the decode work, so the threads are what keep the added search
+  // inside the latency budget. One reserved core: this runs while the owner is using the app.
+  const threads = Math.max(2, Math.min(8, (cpus()?.length ?? 4) - 1));
+  const child = spawn(install.bin, ['-m', install.model, '--port', String(PORT), '-t', String(threads)], {
     stdio: 'ignore',
     detached: false,
   });
@@ -254,6 +262,17 @@ export async function transcribeLocal(
     // chose, and naming it is what lets the next take skip the detection pass entirely.
     form.append('response_format', language === 'auto' ? 'verbose_json' : 'json');
     form.append('temperature', '0');
+    // ── BEAM SEARCH, because greedy is whisper-server's default and it is not what the owner
+    // runs by hand ────────────────────────────────────────────────────────────────────────
+    // `whisper-server --help` reports `--beam-size [-1]`, i.e. greedy decoding with
+    // `--best-of 2`. That is the cheap setting, and on short Turkish takes carrying English
+    // project jargon it is the one that mis-hears a proper noun and then commits to it —
+    // precisely the gap the owner measured between this app and their own whisper.cpp
+    // invocation, with the SAME model. Five is whisper's own reference default; on
+    // `large-v3-turbo` over a Metal backend it costs a fraction of a second on a take of a
+    // few seconds, which is well inside a push-to-talk budget that already allows 15.
+    form.append('beam_size', String(BEAM_SIZE));
+    form.append('best_of', String(BEST_OF));
     // The project vocabulary as whisper's INITIAL PROMPT — the trick the cloud path cannot
     // use, and here it costs nothing (0.95s against 0.86s) while pulling "Dremontext" towards
     // "Dreamcontext" at the source.

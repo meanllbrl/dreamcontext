@@ -46,12 +46,19 @@ import { readVoiceConfig, DEFAULT_MUSIC_DUCK, type VoiceConfig } from './config.
  * The players we can control PRECISELY — query the state, pause only what is playing, resume
  * only what we paused.
  *
- * Apple Music is deliberately ABSENT. It is one entry away, and that is the point of the
- * table's shape, but adding a player is not free: the first `tell application` fires a macOS
- * Automation consent dialog naming that app, and prompting the owner about an app they do not
- * use is a cost with no benefit. The owner named Spotify; Spotify is what is here.
+ * ── WHY APPLE MUSIC JOINED, 2026-09-12 ──────────────────────────────────────────────────
+ * It used to be deliberately absent, on the argument that each entry costs a macOS Automation
+ * consent dialog naming an app the owner may not use. That trade changed when the system
+ * volume duck was turned off by default (`config.ts`): pausing is now the ONLY thing that
+ * actually quiets the machine without quieting us, so a player we cannot pause is a player
+ * that plays straight through the answer. `Music` ships on every Mac and is the other one
+ * people actually leave running.
+ *
+ * The two-step probe below is what keeps the cost honest: an app that is not running answers
+ * a dictionary-free `is running` with `false` and nothing further is ever sent to it — so no
+ * consent dialog is posed for an app that was never playing anything.
  */
-export const PLAYERS: readonly string[] = ['Spotify'];
+export const PLAYERS: readonly string[] = ['Spotify', 'Music'];
 
 /**
  * Step 1: is `app` running? Dictionary-free, and that is the whole point.
@@ -286,9 +293,38 @@ const ledger: Ledger = {
   silenceSpent: false,
 };
 
-/** A refused Automation consent, remembered. Fail open and STOP ASKING: retrying a denial
- *  every turn spends 120 ms and re-poses a dialog the owner already dismissed. */
-let denied = false;
+/**
+ * Refused Automation consents, remembered PER APP.
+ *
+ * Fail open and STOP ASKING: retrying a denial every turn spends 120 ms and re-poses a dialog
+ * the owner already dismissed.
+ *
+ * ── WHY PER APP AND NOT ONE FLAG, 2026-09-12 ────────────────────────────────────────────
+ * It WAS one process-wide boolean, which was indistinguishable from correct while
+ * {@link PLAYERS} held exactly one name. Adding `Music` made it a real defect, found in
+ * review: an owner whose Spotify consent has been granted for months gets a brand-new
+ * "Music wants to control this computer" dialog on upgrade, does not recognise it — they do
+ * not use Apple Music — and dismisses it. One flag meant that refusal disabled the Spotify
+ * pause they DID grant, and the volume duck with it, for the rest of the process, with
+ * nothing on screen naming the app that caused it.
+ *
+ * A denial is a fact about ONE app. It is remembered as one.
+ */
+const deniedApps = new Set<string>();
+
+/**
+ * The VOLUME half, refused. Separate from the per-app set because it is not about an app at
+ * all: `get volume settings` is Standard Additions, not an Apple event to anybody, and
+ * measured on this machine it prompts for nothing. If it is ever refused, that is a different
+ * fact from "this player may not be controlled" and must not turn one off with the other.
+ */
+let volumeDenied = false;
+
+/** Whether ANYTHING has been refused — what Settings shows, so it can explain a mode that
+ *  speaks fine but never quiets the room. */
+function anyDenied(): boolean {
+  return volumeDenied || deniedApps.size > 0;
+}
 
 let sweeper: NodeJS.Timeout | null = null;
 
@@ -302,7 +338,8 @@ export function resetAudioFocus(): void {
   ledger.gain = 1;
   ledger.since = 0;
   ledger.silenceSpent = false;
-  denied = false;
+  deniedApps.clear();
+  volumeDenied = false;
   chain = Promise.resolve();
   if (sweeper) { clearInterval(sweeper); sweeper = null; }
 }
@@ -342,7 +379,7 @@ export interface FocusGrant {
 }
 
 const NO_GRANT = (holder: string | null): FocusGrant => (
-  { granted: false, holder, ducked: false, gain: 1, paused: [], denied }
+  { granted: false, holder, ducked: false, gain: 1, paused: [], denied: anyDenied() }
 );
 
 /**
@@ -375,17 +412,25 @@ export function parseVolume(out: string): { level: number; muted: boolean } | nu
   return { level, muted: m[2].toLowerCase() === 'true' };
 }
 
-/** Pause every known player that is playing. Returns what we actually paused. */
+/**
+ * Pause every known player that is playing. Returns what we actually paused.
+ *
+ * A denial SKIPS that app and moves on — it does not abandon the loop. Breaking was
+ * defensible when the table held one name and is wrong now: the app the owner refused is
+ * usually the one they do not use, and the one they DID grant is sitting behind it in the
+ * list, still playing over the answer.
+ */
 async function pausePlayers(): Promise<string[]> {
   const out: string[] = [];
   for (const app of PLAYERS) {
+    if (deniedApps.has(app)) continue;
     // Step 1. An app that is closed or absent costs exactly this and nothing more.
     const up = await osa(runningScript(app));
-    if (up.denied) { denied = true; break; }
+    if (up.denied) { deniedApps.add(app); continue; }
     if (!up.ok || up.out !== 'true') continue;
     // Step 2, reached only for an app that is demonstrably installed and open.
     const res = await osa(pauseScript(app));
-    if (res.denied) { denied = true; break; }
+    if (res.denied) { deniedApps.add(app); continue; }
     if (res.ok && res.out === 'paused') out.push(app);
   }
   return out;
@@ -399,8 +444,9 @@ async function pausePlayers(): Promise<string[]> {
  * would quiet a machine that is already quiet and force a pointless gain on our own playback.
  */
 async function duckSystem(factor: number): Promise<{ ducked: boolean; gain: number }> {
+  if (volumeDenied) return { ducked: false, gain: 1 };
   const read = await osa(VOLUME_SCRIPT);
-  if (read.denied) { denied = true; return { ducked: false, gain: 1 }; }
+  if (read.denied) { volumeDenied = true; return { ducked: false, gain: 1 }; }
   const vol = read.ok ? parseVolume(read.out) : null;
   if (!vol) return { ducked: false, gain: 1 };
   // Already silent: 35% of nothing is nothing, and "restoring" it afterwards would make a
@@ -409,7 +455,7 @@ async function duckSystem(factor: number): Promise<{ ducked: boolean; gain: numb
   const target = Math.max(0, Math.round(vol.level * factor));
   if (target >= vol.level) return { ducked: false, gain: 1 };
   const set = await osa(setVolumeScript(target));
-  if (!set.ok) { if (set.denied) denied = true; return { ducked: false, gain: 1 }; }
+  if (!set.ok) { if (set.denied) volumeDenied = true; return { ducked: false, gain: 1 }; }
   ledger.duckedFrom = vol.level;
   ledger.duckedTo = target;
   // Stored, not re-derivable: `target` is rounded, so the ratio is not the factor.
@@ -419,7 +465,10 @@ async function duckSystem(factor: number): Promise<{ ducked: boolean; gain: numb
 
 /** Everything the machine-audio half of a hold does. */
 async function silenceMachine(cfg: VoiceConfig): Promise<{ ducked: boolean; gain: number; paused: string[] }> {
-  if (!canControlAudio() || denied) return { ducked: false, gain: 1, paused: [] };
+  // NOT gated on "has anything ever been denied". That gate is what turned one app's refusal
+  // into a dead feature; each half now refuses for itself — `pausePlayers` skips the apps it
+  // was refused, `duckSystem` returns early if the volume itself was refused.
+  if (!canControlAudio()) return { ducked: false, gain: 1, paused: [] };
   const paused = cfg.musicPause === false ? [] : await pausePlayers();
   if (paused.length > 0) return { ducked: false, gain: 1, paused };
   const factor = typeof cfg.musicDuck === 'number' ? cfg.musicDuck : DEFAULT_MUSIC_DUCK;
@@ -445,10 +494,10 @@ async function restoreMachine(): Promise<void> {
     // Probed again rather than assumed: the app we paused can have been quit during the
     // answer, and `resumeScript` would then be a syntax error instead of a no-op.
     const up = await osa(runningScript(app));
-    if (up.denied) { denied = true; continue; }
+    if (up.denied) { deniedApps.add(app); continue; }
     if (!up.ok || up.out !== 'true') continue;
     const res = await osa(resumeScript(app));
-    if (res.denied) denied = true;
+    if (res.denied) deniedApps.add(app);
   }
   if (from === null || to === null) return;
   const read = await osa(VOLUME_SCRIPT);
@@ -537,7 +586,7 @@ async function holdInner(session: string, home?: string): Promise<FocusGrant> {
     ducked: ledger.duckedFrom !== null,
     gain: ledger.gain,
     paused: [...ledger.paused],
-    denied,
+    denied: anyDenied(),
   });
   if (ledger.session === session) {
     ledger.expires = now + HOLD_TTL_MS;
@@ -559,7 +608,7 @@ async function holdInner(session: string, home?: string): Promise<FocusGrant> {
   const cfg = readVoiceConfig(home);
   const { ducked, gain, paused } = await silenceMachine(cfg);
   ledger.paused = paused;
-  return { granted: true, holder: session, ducked, gain, paused, denied };
+  return { granted: true, holder: session, ducked, gain, paused, denied: anyDenied() };
 }
 
 /**

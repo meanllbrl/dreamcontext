@@ -13,6 +13,7 @@ import { ChatBlockSegment, ChatViewNotices } from './ChatViews';
 import { IconButton } from './atoms';
 import { HoverActions, ConfirmPrompt, ThinkingPill } from './molecules';
 import { ToolCard } from './ToolCard';
+import { useSpokenHighlight } from './useSpokenHighlight';
 import type {
   ChatItem, ChatUserItem, ChatTextItem, ChatThinkingItem, ChatSession,
 } from '../chatSession';
@@ -172,11 +173,16 @@ function UserMessage({
  * what once let a whole answer revert to raw markdown, `<a href="…mp4">` and all, on
  * somebody else's re-render.
  */
-function ProseSegment({ text, onOpenFile, caret }: {
+function ProseSegment({ text, onOpenFile, caret, session, itemId }: {
   text: string;
   onOpenFile?: (path: string) => void;
   /** The blinking cursor. Only the run that is currently being typed gets one. */
   caret?: boolean;
+  /** J.A.R.V.I.S mode's spoken-sentence marker needs both: the session to subscribe to, and
+   *  the item to compare the spoken chunk against. Absent everywhere else — a read-only
+   *  drill-in has no session, and no session ever speaks. */
+  session?: ChatSession;
+  itemId?: string;
 }) {
   const api = useApi();
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -184,6 +190,7 @@ function ProseSegment({ text, onOpenFile, caret }: {
   useCopyableCodeBlocks(bodyRef);
   useInlineMedia(bodyRef, { onOpen: onOpenFile, onReveal: (path) => revealPath(api, path), onGrant: (path) => grantFile(api, path) });
   useClickablePaths(bodyRef, (path) => onOpenFile?.(path));
+  useSpokenHighlight(bodyRef, itemId ?? '', itemId ? session : undefined);
 
   return (
     <div className="chat-msg-assistant-body" ref={bodyRef}>
@@ -297,7 +304,16 @@ function AssistantMessage({
       {segments.length === 0 && !item.done && <ProseSegment text="…" onOpenFile={onOpenFile} caret />}
       {segments.map((segment, i) => (
         segment.kind === 'prose'
-          ? <ProseSegment key={i} text={segment.text} onOpenFile={onOpenFile} caret={i === caretAt} />
+          ? (
+            <ProseSegment
+              key={i}
+              text={segment.text}
+              onOpenFile={onOpenFile}
+              caret={i === caretAt}
+              session={session}
+              itemId={item.id}
+            />
+          )
           // A `view` this host cannot resolve renders nothing HERE and a notice below — see
           // `hostNotices`. Everything else (html and the pending slot for either fence) is
           // drawn wherever it was written.

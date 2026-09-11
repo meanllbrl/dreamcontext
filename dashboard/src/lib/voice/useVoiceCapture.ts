@@ -22,6 +22,28 @@
  * WebKit only starts an AudioContext for a real user gesture. Created after
  * `await getUserMedia` it stays `suspended`, and a suspended graph delivers silence.
  *
+ * ── THE DEVICE IS ASKED FOR THE RAW SIGNAL, AND THAT IS THE DICTATION FIX ───────────────
+ * `getUserMedia({ audio: true })` does not hand over the microphone — it hands over the
+ * microphone after the browser's VOICE-CALL processing chain: echo cancellation, noise
+ * suppression and automatic gain control are all on by default, all tuned for narrowband
+ * telephony, and all lossy in exactly the band a speech recogniser reads. Noise suppression
+ * eats the breathy consonants Turkish leans on; AGC pumps the level between words; and echo
+ * cancellation is the worst of the three here, because J.A.R.V.I.S mode is a mode where the
+ * machine's own voice was playing seconds ago — the canceller adapts to it and carves a
+ * matching notch out of the owner. The whisper.cpp the owner runs by hand gets none of that
+ * done to it, which is most of why it sounded better with the same model.
+ *
+ * So every processing flag is asked OFF, and the constraints are `ideal` rather than exact:
+ * a device that cannot honour one of them must still open. A browser that refuses the
+ * constraint object outright falls back to `{ audio: true }` — a processed take beats no
+ * take.
+ *
+ * ── AND CAPTURED AT 16 kHz WHERE THE PLATFORM ALLOWS IT ─────────────────────────────────
+ * An AudioContext built with `{ sampleRate: 16000 }` makes the platform's own resampler do
+ * the rate conversion, and it is a better one than anything worth shipping in this file.
+ * Where that is refused, the take is captured at the device's rate and `wavEncoder.ts`
+ * resamples it with a windowed-sinc filter.
+ *
  * ── THE SILENCE GATE IS THE ONLY DEFENCE AGAINST A HALLUCINATED SENTENCE ────────────────
  * The transcription model returns text with no confidence signal, so a take of pure silence
  * can come back as a confident, entirely invented sentence — and that sentence would be
@@ -37,12 +59,71 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { wavFromTake, TARGET_SAMPLE_RATE } from './wavEncoder';
 
+/**
+ * The constraint object that asks for the microphone RATHER THAN the voice-call chain.
+ *
+ * `ideal` on every flag, not `exact`: the point is a better signal, and a device that cannot
+ * switch one of these off must still open. See the module note for what each one does to a
+ * transcript when it is left on.
+ */
+export const RAW_MIC: MediaTrackConstraints = {
+  echoCancellation: { ideal: false },
+  noiseSuppression: { ideal: false },
+  autoGainControl: { ideal: false },
+  channelCount: { ideal: 1 },
+};
+
 /** A take shorter than this was a tap, not a hold. */
 export const MIN_TAKE_MS = 300;
 
-/** Peak RMS a take must reach to count as speech. Room tone sits far below this; normal
- *  speech at arm's length is an order of magnitude above it. */
+/**
+ * The STRICTEST the speech gate ever gets: the level calibrated when the browser's automatic
+ * gain control was doing the levelling for us.
+ *
+ * It is now a CEILING on the threshold rather than the threshold itself — see
+ * {@link speechThreshold}.
+ */
 export const RMS_FLOOR = 0.012;
+
+/**
+ * The absolute floor, below which a take is not speech on any device.
+ *
+ * This is the one number that is not relative to anything, and it is deliberately far down:
+ * its only job is to catch a microphone that is delivering nothing at all, where "peak is
+ * several times the noise" would otherwise be satisfied by two adjacent flavours of zero.
+ */
+export const ABSOLUTE_RMS_FLOOR = 0.0015;
+
+/** How far a take's loudest moment must rise above its own quietest one to be speech. */
+export const SPEECH_OVER_NOISE = 3.5;
+
+/**
+ * The peak RMS this take had to reach, given how quiet its own quietest moment was.
+ *
+ * ── WHY THE GATE BECAME RELATIVE, 2026-09-12 ────────────────────────────────────────────
+ * FOUND IN REVIEW, and it is the regression that would have traded one complaint for a worse
+ * one. {@link RMS_FLOOR} was measured against a capture path that asked the browser for
+ * automatic gain control; the raw-device capture this mode now uses (see {@link RAW_MIC})
+ * deliberately switches AGC off, and a quiet speaker at arm's length can then land 20 dB —
+ * about 10x in amplitude — under where the same voice used to arrive. A fixed absolute floor
+ * calibrated on the boosted signal would have started discarding real sentences as silence,
+ * with no transcript at all: "the dictation is bad" replaced by "the dictation did not
+ * happen".
+ *
+ * The insight that makes the fix simple is that AGC boosted the ROOM as well as the voice. So
+ * the ratio between them barely moved; only the absolute level did. The gate therefore asks
+ * about the ratio, and keeps the old absolute number as a CEILING it may never exceed:
+ *
+ *   threshold = max(ABSOLUTE_RMS_FLOOR, min(RMS_FLOOR, noise × SPEECH_OVER_NOISE))
+ *
+ * By construction this can only ever ACCEPT MORE than the old rule did, never less — so it
+ * cannot introduce a new false "that take was silent". And it still refuses a take of pure
+ * room tone, where the peak IS the noise and therefore cannot be several times it.
+ */
+export function speechThreshold(noiseRms: number): number {
+  if (!Number.isFinite(noiseRms) || noiseRms <= 0) return RMS_FLOOR;
+  return Math.max(ABSOLUTE_RMS_FLOOR, Math.min(RMS_FLOOR, noiseRms * SPEECH_OVER_NOISE));
+}
 
 /** Root-mean-square of one frame of samples, in 0..1. */
 export function rmsOf(samples: Float32Array): number {
@@ -52,8 +133,29 @@ export function rmsOf(samples: Float32Array): number {
   return Math.sqrt(sum / samples.length);
 }
 
-/** How many samples one published level covers. See {@link levelSlices}. */
+/** How many samples one published level covers at 48 kHz. See {@link levelSlices}. */
 export const LEVEL_SLICE = 1024;
+
+/**
+ * The meter's slice, and the graph's frame, for a context running at `rate`.
+ *
+ * Both used to be constants sized for 48 kHz, and both are wrong the moment the context is
+ * opened at 16 kHz (see the module note): a 4096-sample frame is 85 ms at 48 kHz and 256 ms
+ * at 16 kHz, which is a meter that updates four times a second and a silence gate that can
+ * miss a short take entirely. Sizing them in TIME rather than in samples keeps the meter at
+ * ~47 Hz and the frame at ~85 ms whatever rate the platform gave us.
+ */
+export function sliceFor(rate: number): number {
+  return Math.max(128, Math.round(rate / 47));
+}
+
+/** The ScriptProcessor's buffer size for `rate` — a power of two, ~85 ms, within the range
+ *  the spec allows (256…16384). */
+export function frameSizeFor(rate: number): number {
+  const wanted = rate * 0.085;
+  const pow = Math.pow(2, Math.round(Math.log2(wanted)));
+  return Math.min(16384, Math.max(256, pow));
+}
 
 /**
  * One audio frame, split into the level values the meter draws.
@@ -104,10 +206,14 @@ export function stopVerdict(phase: TakePhase): 'cancel' | 'stop-recorder' | 'ign
 /**
  * Should this take be uploaded at all? Pure, so the rule can be tested without a microphone.
  * Order matters for the message the owner sees: a tap is a different mistake from a silence.
+ *
+ * `noiseRms` is the take's own quietest frame. Absent (or unmeasurable) it defaults to
+ * `Infinity`, which collapses {@link speechThreshold} back to the old fixed floor — so a
+ * caller that cannot measure the room is held to the stricter rule rather than to none.
  */
-export function judgeTake(durationMs: number, peakRms: number): TakeVerdict {
+export function judgeTake(durationMs: number, peakRms: number, noiseRms = Infinity): TakeVerdict {
   if (durationMs < MIN_TAKE_MS) return 'too-short';
-  if (peakRms < RMS_FLOOR) return 'silent';
+  if (peakRms < speechThreshold(noiseRms)) return 'silent';
   return 'ok';
 }
 
@@ -166,6 +272,9 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
   const tapRef = useRef<ScriptProcessorNode | null>(null);
   const startedAtRef = useRef(0);
   const peakRef = useRef(0);
+  /** The QUIETEST frame of the take — the room, near enough. What makes the speech gate
+   *  relative to this microphone's own level rather than to one measured on another. */
+  const floorRef = useRef(Infinity);
   /** How many frames were captured. Zero means the graph never ran for this take — see the
    *  fail-open in `finishTake`. */
   const meteredFramesRef = useRef(0);
@@ -275,12 +384,15 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
     // room — and a number nobody took must not veto a sentence. There is also nothing to
     // upload in that case, so it degrades to `silent` below on emptiness alone.
     const peak = meteredFramesRef.current > 0 ? peakRef.current : 1;
+    // Two frames at least: with one, the quietest frame IS the loudest and every take would
+    // be judged against its own peak. Unmeasured falls back to the old fixed floor.
+    const noise = meteredFramesRef.current > 1 ? floorRef.current : Infinity;
     capturingRef.current = false;
     const wav = frames.length ? wavFromTake(frames, deviceRate) : null;
     chunksRef.current = [];
     teardown();
 
-    const verdict = wav ? judgeTake(durationMs, peak) : 'silent';
+    const verdict = wav ? judgeTake(durationMs, peak, noise) : 'silent';
     if (verdict !== 'ok' || !wav) {
       // NOTHING is uploaded. Not one invented sentence reaches the agent (AC5).
       inFlightRef.current = false;
@@ -305,6 +417,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
     setError('');
     setElapsed(0);
     peakRef.current = 0;
+    floorRef.current = Infinity;
     meteredFramesRef.current = 0;
     chunksRef.current = [];
 
@@ -315,8 +428,17 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
     // `suspended`, its analyser hands back a buffer of ZEROES, and the silence gate then
     // refuses every take however loudly it was spoken. That was the whole of "nothing was
     // heard in that take" — the microphone was fine; the meter was asleep.
+    // 16 kHz ASKED FOR FIRST: the platform's own resampler is better than ours, and where it
+    // obliges, `wavEncoder.resample` becomes a no-op for the whole take. A rate a device
+    // cannot serve THROWS here rather than degrading, so the plain constructor is the second
+    // attempt and not a nicety.
     try {
-      const ctx = new AudioContext();
+      let ctx: AudioContext;
+      try {
+        ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+      } catch {
+        ctx = new AudioContext();
+      }
       audioCtxRef.current = ctx;
       if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
     } catch {
@@ -329,14 +451,30 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
 
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch {
-        if (cancelled()) return;
-        inFlightRef.current = false;
-        phaseRef.current = 'idle';
-        setState('error');
-        setError('The microphone is not available. Check the permission in System Settings.');
-        return;
+        stream = await navigator.mediaDevices.getUserMedia({ audio: RAW_MIC });
+      } catch (err) {
+        // A constraint this device or engine will not take must not cost the take. Retried
+        // ONCE, unprocessed-ness given up: a processed transcript beats no transcript.
+        if ((err as { name?: string })?.name === 'OverconstrainedError'
+          || (err as { name?: string })?.name === 'TypeError') {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          } catch {
+            if (cancelled()) return;
+            inFlightRef.current = false;
+            phaseRef.current = 'idle';
+            setState('error');
+            setError('The microphone is not available. Check the permission in System Settings.');
+            return;
+          }
+        } else {
+          if (cancelled()) return;
+          inFlightRef.current = false;
+          phaseRef.current = 'idle';
+          setState('error');
+          setError('The microphone is not available. Check the permission in System Settings.');
+          return;
+        }
       }
       if (cancelled()) {
         // Released while the OS permission dialog was up. The tracks are stopped HERE rather
@@ -367,16 +505,21 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
 
       try {
         const source = ctx.createMediaStreamSource(stream);
-        // 4096 frames ≈ 85 ms at 48 kHz: small enough that a short take still gets several
-        // frames, large enough not to spend the take in callback overhead.
-        const tap = ctx.createScriptProcessor(4096, 1, 1);
+        // ~85 ms of audio whatever rate the context ended up at: small enough that a short
+        // take still gets several frames, large enough not to spend the take in callback
+        // overhead. Sized from the rate rather than hardcoded, because the context above now
+        // asks for 16 kHz and a fixed 4096 would be 256 ms there.
+        const slice = sliceFor(ctx.sampleRate);
+        const tap = ctx.createScriptProcessor(frameSizeFor(ctx.sampleRate), 1, 1);
         tapRef.current = tap;
         tap.onaudioprocess = (e) => {
           if (!capturingRef.current) return;
           const frame = e.inputBuffer.getChannelData(0);
           // COPIED: the buffer belongs to the graph and is reused for the next callback.
           chunksRef.current.push(new Float32Array(frame));
-          peakRef.current = Math.max(peakRef.current, rmsOf(frame));
+          const level = rmsOf(frame);
+          peakRef.current = Math.max(peakRef.current, level);
+          floorRef.current = Math.min(floorRef.current, level);
           meteredFramesRef.current += 1;
           // ── THE LIVE METER, AND WHY IT IS A CALLBACK RATHER THAN STATE ────────────────
           // The meter is the mode's trust signal: a take that heard nothing must LOOK
@@ -388,7 +531,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
           // which is ~12 Hz — visibly steppy. Quartering it gives ~47 Hz, and each value is
           // still a REAL measurement of that slice, not an interpolation.
           const onLevel = onLevelRef.current;
-          if (onLevel) for (const level of levelSlices(frame)) onLevel(level);
+          if (onLevel) for (const level of levelSlices(frame, slice)) onLevel(level);
         };
         source.connect(tap);
         // A ScriptProcessor only runs while it is connected to the destination, so it is —

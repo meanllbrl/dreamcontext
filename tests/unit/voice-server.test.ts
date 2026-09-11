@@ -26,6 +26,9 @@ import {
   VoiceGate, sttGate, ttsGate, MAX_STT_BYTES, MAX_TTS_CHARS,
 } from '../../src/lib/voice/limits.js';
 import {
+  normalizeSpeech, SPEECH_TARGET_RMS, SPEECH_PEAK_CEILING, MAX_SPEECH_GAIN,
+} from '../../src/lib/voice/wav.js';
+import {
   handleVoiceStt, handleVoiceTts, handleVoiceStatus, handleVoiceConfigPut, isWav,
   transcriptFrom, JARVIS_INSTRUCTIONS, JARVIS_FEWSHOT, TRANSCRIBE_ASK,
 } from '../../src/server/routes/agent-voice.js';
@@ -109,6 +112,121 @@ afterEach(() => {
   }
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+// ── the level the answer is spoken AT ────────────────────────────────────────────────────
+//
+// The owner, 2026-09-12: the mode ducked the machine's master volume and took its own voice
+// down with it, so the answer could not be heard. The duck is off by default now, and this is
+// the other half: the only point in the whole path where the answer can actually be made
+// LOUDER is here, while the audio is still digital and still has its headroom. After this it
+// is a WAV played through a master volume the app does not own.
+
+/** `count` samples of a sine at `amp`, as the pcm16 the TTS path returns. */
+function pcm16Tone(amp: number, count = 4800): Buffer {
+  const buf = Buffer.alloc(count * 2);
+  for (let i = 0; i < count; i++) {
+    buf.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 200 * i) / 24000) * amp * 32767), i * 2);
+  }
+  return buf;
+}
+
+/**
+ * A chunk with a real CREST FACTOR: a quiet body and one transient `peak` tall.
+ *
+ * The body sits at a tenth of the peak, which is exactly the activity gate's own threshold —
+ * so every sample counts towards the measured level and the chunk still reads as quiet. That
+ * is the shape where the peak ceiling is the binding constraint rather than a formality.
+ */
+function crestChunk(body: number, peak: number, count = 4800): Buffer {
+  const buf = Buffer.alloc(count * 2);
+  for (let i = 0; i < count; i++) {
+    const v = i === Math.floor(count / 2) ? peak : (i % 2 === 0 ? body : -body);
+    buf.writeInt16LE(Math.round(v * 32767), i * 2);
+  }
+  return buf;
+}
+
+function levelsOf(pcm: Buffer): { peak: number; rms: number } {
+  const count = pcm.length / 2;
+  let peak = 0;
+  let sum = 0;
+  for (let i = 0; i < count; i++) {
+    const v = pcm.readInt16LE(i * 2) / 32768;
+    peak = Math.max(peak, Math.abs(v));
+    sum += v * v;
+  }
+  return { peak, rms: Math.sqrt(sum / count) };
+}
+
+describe('normalizeSpeech', () => {
+  it('lifts a quiet chunk towards the target level', () => {
+    const before = levelsOf(pcm16Tone(0.05));
+    const after = levelsOf(normalizeSpeech(pcm16Tone(0.05)));
+    expect(before.rms).toBeLessThan(SPEECH_TARGET_RMS / 2);
+    expect(after.rms).toBeGreaterThan(before.rms * 3);
+  });
+
+  it('never pushes a PEAKY chunk past the ceiling, however quiet its average is', () => {
+    // The signal has to have a real crest factor for this to prove anything. A sine peaks at
+    // only 1.41x its own RMS, so the target level alone never asks for more than the ceiling
+    // allows and a test built on one passes whether the ceiling exists or not — which is
+    // exactly what a mutation run showed the first version of this test doing.
+    //
+    // Speech is peaky. This fixture is: a quiet body with one transient ten times its
+    // amplitude, where the level the target asks for (~3x) would land the transient at 1.19 —
+    // over full scale, i.e. clipped.
+    const peaky = crestChunk(0.04, 0.4);
+    const after = levelsOf(normalizeSpeech(peaky));
+    expect(after.peak).toBeLessThanOrEqual(SPEECH_PEAK_CEILING + 1e-3);
+    // …and it was lifted as far as the ceiling allowed, not left alone.
+    expect(after.peak).toBeGreaterThan(SPEECH_PEAK_CEILING - 0.02);
+  });
+
+  it('never lifts a chunk by more than the gain ceiling', () => {
+    // Flat across the whole chunk, so past this the model's own breath and room tone come up
+    // with the words.
+    const amp = 0.01;
+    expect(levelsOf(normalizeSpeech(pcm16Tone(amp))).peak)
+      .toBeLessThanOrEqual(amp * MAX_SPEECH_GAIN + 1e-3);
+  });
+
+  it('returns SILENCE untouched — the same buffer, not a copy of zeroes', () => {
+    const silence = Buffer.alloc(2048);
+    expect(normalizeSpeech(silence)).toBe(silence);
+    expect(normalizeSpeech(Buffer.alloc(0))).toHaveLength(0);
+  });
+
+  it('leaves NEAR-silence alone too, rather than amplifying the room by four', () => {
+    // Digital zero is caught by the "nothing active" branch whichever way the floor is
+    // written; this is the case the floor itself exists for. A chunk that is only the model's
+    // own room tone would otherwise be lifted the full 4x and played as a hiss between two
+    // sentences.
+    const roomTone = Buffer.alloc(2048);
+    for (let i = 0; i < 1024; i++) roomTone.writeInt16LE(i % 2 === 0 ? 32 : -32, i * 2);
+    expect(normalizeSpeech(roomTone)).toBe(roomTone);
+  });
+
+  it('returns an already-loud chunk untouched, and does no work doing it', () => {
+    // Turning a loud chunk DOWN would be solving a problem nobody has, and the identity
+    // check is what keeps a normal answer from being rewritten sample by sample.
+    const loud = pcm16Tone(0.88);
+    expect(normalizeSpeech(loud)).toBe(loud);
+  });
+
+  it('measures the ACTIVE part, so a long tail of silence does not inflate the gain', () => {
+    // Every chunk is one sentence with the model's own silence at each end. A plain RMS over
+    // the whole buffer reads a short sentence with a long tail as "quiet" and shouts it —
+    // which is audible as one sentence in a paragraph arriving louder than its neighbours.
+    // The amplitude here is deliberately one the gain actually engages on: at a level that is
+    // already above target, both readings collapse to "leave it alone" and the test proves
+    // nothing either way.
+    const speech = pcm16Tone(0.08, 2400);
+    const padded = Buffer.concat([speech, Buffer.alloc(2400 * 2)]);
+    const gainOf = (pcm: Buffer) => levelsOf(normalizeSpeech(pcm)).peak / levelsOf(pcm).peak;
+    expect(gainOf(speech)).toBeGreaterThan(1.5);          // the gain really is engaged
+    expect(gainOf(padded)).toBeCloseTo(gainOf(speech), 2);
+  });
 });
 
 // ── the key store ────────────────────────────────────────────────────────────────────────
@@ -612,8 +730,14 @@ describe('POST /api/agent/voice/tts', () => {
     await handleVoiceTts(makeReq(JSON.stringify({ text: 'Evet, duyuyorum. Net geliyor.' })), r.res, {}, home);
     expect(r.status()).toBe(200);
     expect(calls).toBe(2);
-    // The RETRY's audio is what goes back, not the answer's.
-    expect(r.raw()!.subarray(44)).toEqual(Buffer.from([1, 2, 3, 4]));
+    // The RETRY's audio is what goes back, not the answer's — checked by SHAPE rather than by
+    // literal bytes, because everything leaving this route is levelled by `normalizeSpeech`
+    // now (the answer's frame is a constant; the retry's is a ramp, and one flat gain cannot
+    // turn one into the other).
+    const pcm = r.raw()!.subarray(44);
+    const samples = [pcm.readInt16LE(0), pcm.readInt16LE(2)];
+    expect(samples[0]).toBeGreaterThan(0);
+    expect(samples[1] / samples[0]).toBeCloseTo(1027 / 513, 2);
   });
 
   it('hands a line the chat model will not read to a REAL tts, instead of dropping it', async () => {

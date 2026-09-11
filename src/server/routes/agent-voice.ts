@@ -44,7 +44,7 @@ import {
   sttGate, ttsGate, focusGate, MAX_STT_BYTES, MAX_TTS_CHARS,
 } from '../../lib/voice/limits.js';
 import { speakable } from '../../lib/voice/speakable.js';
-import { wavFromPcm16, pcmSeconds, PCM16_SAMPLE_RATE } from '../../lib/voice/wav.js';
+import { wavFromPcm16, normalizeSpeech, pcmSeconds, PCM16_SAMPLE_RATE } from '../../lib/voice/wav.js';
 import {
   transcribeLocal, findWhisper, stopWhisperServer, warmWhisper,
 } from '../../lib/voice/whisper.js';
@@ -634,7 +634,7 @@ export async function handleVoiceTts(
         res.writeHead(204).end();
         return;
       }
-      const wav = wavFromPcm16(rescued, PCM16_SAMPLE_RATE);
+      const wav = wavFromPcm16(normalizeSpeech(rescued), PCM16_SAMPLE_RATE);
       console.info(`[voice:tts] ${pcmSeconds(rescued).toFixed(1)}s spoken by the fallback`);
       res.writeHead(200, {
         'Content-Type': 'audio/wav',
@@ -653,7 +653,10 @@ export async function handleVoiceTts(
       return;
     }
 
-    const audio = wavFromPcm16(pcm, PCM16_SAMPLE_RATE);
+    // NORMALISED BEFORE IT IS WRAPPED. This is the only point in the path where the answer
+    // can actually be made louder: after this it is a WAV played through a master volume the
+    // app does not own. See `normalizeSpeech` for why the client's gain node cannot do it.
+    const audio = wavFromPcm16(normalizeSpeech(pcm), PCM16_SAMPLE_RATE);
     console.info(`[voice:tts] ${pcmSeconds(pcm).toFixed(1)}s spoken`);
     res.writeHead(200, {
       'Content-Type': 'audio/wav',

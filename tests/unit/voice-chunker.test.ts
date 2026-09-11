@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   createSpeechChunker, boundaryOf, CLAUSE_CHUNK_CHARS, FIRST_CLAUSE_CHUNK_CHARS,
-  HARD_CHUNK_CHARS, MIN_SPEAKABLE_CHARS, SpeechQueue, FOCUS_GRACE_MS,
+  HARD_CHUNK_CHARS, MIN_SPEAKABLE_CHARS, SpeechQueue, FOCUS_GRACE_MS, SCHEDULE_LEAD,
   type SpeakFetcher,
 } from '../../dashboard/src/lib/voice/speechQueue.js';
 import { onSpeechMuted, type FocusClient } from '../../dashboard/src/lib/voice/audioFocus.js';
@@ -181,14 +181,31 @@ class FakeAudio {
     this.handlers[type] = (this.handlers[type] || []).filter((h) => h !== fn);
   }
   removeAttribute(_n: string) { this.src = ''; }
-  pause() {}
+  /** The completion this element owes, if it is playing. */
+  #finish: (() => void) | null = null;
+  /**
+   * MODELS THE SPEC'S SILENCE. A paused media element fires NEITHER `ended` NOR `error` — it
+   * simply stops, and anything awaiting one of those events waits for good. A fake whose
+   * `pause()` did nothing would let the pending `ended` fire anyway and would therefore pass
+   * on the deadlocked code, proving the opposite of what it claims.
+   */
+  pause() {
+    if (!this.#finish) return;
+    FakeAudio.pending = FakeAudio.pending.filter((p) => p !== this.#finish);
+    this.#finish = null;
+  }
   play() {
     const src = this.src;
     if (src) {
       FakeAudio.played.push(BLOB_TEXT.get(src) ?? src);
       FakeAudio.rates.push(this.playbackRate);
       // Finish on the next microtask turn, so ordering is genuinely exercised.
-      FakeAudio.pending.push(() => { (this.handlers.ended || []).forEach((h) => h()); });
+      const finish = () => {
+        this.#finish = null;
+        (this.handlers.ended || []).forEach((h) => h());
+      };
+      this.#finish = finish;
+      FakeAudio.pending.push(finish);
     }
     return Promise.resolve();
   }
@@ -250,17 +267,44 @@ function fetcherThat(failFor: string[] = [], seen?: string[]) {
   return async (text: string) => {
     seen?.push(text);
     if (failFor.some((f) => text.includes(f))) return null;
-    return { __text: text } as unknown as Blob;
+    // `arrayBuffer` is what makes the Web Audio path reachable. Where a test stubs no
+    // AudioContext (most of them), the queue falls back to the element and these assertions
+    // read exactly as they did before.
+    return { __text: text, arrayBuffer: async () => new ArrayBuffer(8) } as unknown as Blob;
   };
 }
 
+/** Let the queue run WITHOUT finishing the chunk that is playing — which is the state a
+ *  barge-in actually interrupts. `settle()` fires `ended`, and that is the one thing this
+ *  case must not do. */
+async function midPlay(): Promise<void> {
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+}
+
 describe('the speech queue', () => {
+  it('SPEAKS THE NEXT TURN after a barge-in — a paused element settles nothing by itself', async () => {
+    // THE DEADLOCK, and it is the worst shape a bug can have here: permanent silence with
+    // nothing on screen to explain it. `stop()` pauses the element and removes its `src`,
+    // which fires NEITHER `ended` NOR `error` — so the promise the play loop was awaiting
+    // never settled, `running` stayed true for the life of the session, and every chunk of
+    // every later turn sat in the queue unplayed.
+    const q = makeQueue(fetcherThat());
+    q.push('one here. ');
+    await midPlay();
+    expect(FakeAudio.played).toEqual(['one here.']);
+    q.stop();
+    q.resume();
+    q.push('two here. ');
+    await settle();
+    expect(FakeAudio.played).toEqual(['one here.', 'two here.']);
+  });
+
   it('plays chunks STRICTLY in order, however the fetches resolve', async () => {
     // The second chunk's fetch resolves LAST. Ordered playback means it is still spoken
     // second — a queue that just played whatever arrived would reverse them.
     const q = makeQueue(async (text) => {
       if (text.includes('two')) await new Promise((r) => setTimeout(r, 15));
-      return { __text: text } as unknown as Blob;
+      return { __text: text, arrayBuffer: async () => new ArrayBuffer(8) } as unknown as Blob;
     });
     q.push('one here. two here. three here. ');
     await new Promise((r) => setTimeout(r, 60));
@@ -651,15 +695,32 @@ describe('the speaking signal', () => {
   });
 });
 
-describe('the compensation graph, and what happens when its context dies', () => {
-  /** The smallest AudioContext that exercises the routing path. `state` is writable so a test
-   *  can do what a real browser does to a quiet context: suspend it behind our back. */
+/**
+ * GAPLESS PLAYBACK — the defect the owner heard as "it cuts at the end of every sentence".
+ *
+ * The old player assigned each chunk's blob to ONE `<audio>` element's `src` and waited for
+ * `ended`. Assigning the next `src` runs the media element load algorithm immediately, which
+ * tears down playback and throws away whatever was still in the output buffer — the clipped
+ * tail, once per sentence. These tests hold the replacement in place: every chunk is a
+ * decoded buffer started at an ABSOLUTE time on the audio clock, and that time is the exact
+ * moment the previous chunk ends.
+ */
+describe('gapless playback', () => {
+  /** Every source the queue scheduled, in order, with the time it was told to start. */
+  let started: Array<{ at: number; stopped: boolean }>;
+
+  /** The smallest AudioContext that exercises scheduling. `currentTime` is writable so a test
+   *  can move the clock the way a real one does. */
   class FakeCtx {
     state: string = 'running';
-    /** Whether `resume()` is allowed to work. A context WebKit has interrupted for another
-     *  app's audio session is the realistic case where it is not. */
+    currentTime = 0;
     static resumable = true;
     static made = 0;
+    static decodes = 0;
+    /** Seconds of audio every decoded chunk claims to be. */
+    static duration = 1;
+    /** Set to make the decoder refuse, i.e. a webview that will not take our WAV. */
+    static decodable = true;
     destination = {};
     constructor() { FakeCtx.made += 1; }
     async resume() {
@@ -667,7 +728,23 @@ describe('the compensation graph, and what happens when its context dies', () =>
       this.state = 'running';
     }
     async close() { this.state = 'closed'; }
-    createMediaElementSource() { return { connect: () => {} }; }
+    async decodeAudioData(_bytes: ArrayBuffer) {
+      FakeCtx.decodes += 1;
+      if (!FakeCtx.decodable) throw new Error('cannot decode');
+      return { duration: FakeCtx.duration } as unknown as AudioBuffer;
+    }
+    createBufferSource() {
+      const rec = { at: -1, stopped: false };
+      return {
+        buffer: null,
+        playbackRate: { value: 1 },
+        onended: null,
+        connect: () => {},
+        disconnect: () => {},
+        start: (at: number) => { rec.at = at; started.push(rec); },
+        stop: () => { rec.stopped = true; },
+      };
+    }
     createGain() { return { gain: { value: 1 }, connect: () => {} }; }
     createDynamicsCompressor() {
       const p = () => ({ value: 0 });
@@ -677,81 +754,161 @@ describe('the compensation graph, and what happens when its context dies', () =>
     }
   }
 
-  /** Counts how many audio elements the queue built — the only way to see the fallback swap,
-   *  since a fake element plays happily whether or not it is routed through a dead graph. */
-  let elementsMade = 0;
-
   beforeEach(() => {
+    started = [];
     FakeCtx.made = 0;
+    FakeCtx.decodes = 0;
     FakeCtx.resumable = true;
-    elementsMade = 0;
-    class CountingAudio extends FakeAudio {
-      constructor() { super(); elementsMade += 1; }
-    }
-    vi.stubGlobal('Audio', CountingAudio);
+    FakeCtx.decodable = true;
+    FakeCtx.duration = 1;
     vi.stubGlobal('window', Object.assign(new EventTarget(), { AudioContext: FakeCtx }));
   });
 
-  function duckingFocus(gain: number): FocusClient {
-    return {
-      hold: async () => ({ granted: true, holder: 's1', ducked: gain > 1, gain, paused: [] }),
-      release: () => {},
-    };
-  }
+  const ctxOf = (q: SpeechQueue) => (q as unknown as { ctx: FakeCtx }).ctx;
+  const marksOf = (q: SpeechQueue) => (
+    q as unknown as { marks: Array<{ text: string; itemId?: string; start: number; end: number }> }
+  ).marks;
 
-  it('OPENS A CONTEXT WITHOUT A MIC PRESS, so a typed turn still gets its boost', async () => {
-    // The context used to be opened only by the mic-press handler, while J.A.R.V.I.S reads
-    // EVERY answer aloud — typed ones included. A user who never touched the mic therefore
-    // got the duck with no compensation, which leaves the answer quieter than it would have
-    // been with no feature at all.
-    const q = new SpeechQueue('s1', fetcherThat(), duckingFocus(2));
-    q.push('one here. ');            // no unlock(), i.e. nobody pressed the mic
+  it('starts each chunk at the exact sample the previous one ENDS — no gap, no clipped tail', async () => {
+    const q = makeQueue(fetcherThat());
+    q.push('one here. two here. three here. ');
     await settle();
-    expect(FakeCtx.made).toBe(1);
-    expect(FakeAudio.played).toEqual(['one here.']);
+    expect(started).toHaveLength(3);
+    // The first is placed a lead-time ahead of now, because a source started at exactly
+    // `currentTime` races the next render quantum and loses the start of the word.
+    expect(started[0].at).toBeCloseTo(SCHEDULE_LEAD, 6);
+    // And every one after it is butted against the end of the one before.
+    expect(started[1].at).toBeCloseTo(started[0].at + FakeCtx.duration, 6);
+    expect(started[2].at).toBeCloseTo(started[1].at + FakeCtx.duration, 6);
   });
 
-  it('RESUMES a context that suspended between turns rather than going silent', async () => {
-    const q = new SpeechQueue('s1', fetcherThat(), duckingFocus(2));
+  it('does not schedule into the PAST when a chunk arrives after the queue ran dry', async () => {
+    const q = makeQueue(fetcherThat());
     q.push('one here. ');
     await settle();
-    const elementsAfterFirst = elementsMade;
-    // What a browser does to a context that has been quiet — and this queue is quiet through
-    // every "thinking" gap. Once routed, the element reaches the speakers ONLY through it.
-    (q as unknown as { ctx: FakeCtx }).ctx.state = 'suspended';
+    // The listener heard that sentence and then waited: the model was still writing.
+    ctxOf(q).currentTime = 30;
     q.push('two here. ');
     await settle();
-    expect(FakeAudio.played).toEqual(['one here.', 'two here.']);
-    // Revived, not abandoned: the boost survives.
-    expect((q as unknown as { ctx: FakeCtx }).ctx.state).toBe('running');
-    expect(elementsMade).toBe(elementsAfterFirst);
+    // A start time in the past plays immediately AND clipped. The lead is taken from now.
+    expect(started[1].at).toBeCloseTo(30 + SCHEDULE_LEAD, 6);
   });
 
-  it('FALLS BACK to a fresh un-routed element when the context cannot be revived', async () => {
-    const q = new SpeechQueue('s1', fetcherThat(), duckingFocus(2));
-    q.push('one here. ');
-    await settle();
-    const elementsAfterFirst = elementsMade;
-    (q as unknown as { ctx: FakeCtx }).ctx.state = 'suspended';
-    FakeCtx.resumable = false;
-    q.push('two here. ');
-    await settle();
-    // The element was swapped for one on the plain path. Losing the boost is a cost; losing
-    // the voice with `ended` still firing and the UI looking normal is the failure this
-    // whole fallback exists to prevent.
-    expect(elementsMade).toBe(elementsAfterFirst + 1);
-    expect(FakeAudio.played).toEqual(['one here.', 'two here.']);
-    expect((q as unknown as { routed: boolean }).routed).toBe(false);
-  });
-
-  it('never routes at all when nothing was ducked', async () => {
-    const q = new SpeechQueue('s1', fetcherThat(), duckingFocus(1));
+  it('scales the chunk\'s slot by the PLAYBACK RATE, so a faster answer is still gapless', async () => {
+    adoptVoicePrefs({ speech: true, speechRate: 2 });
+    const q = makeQueue(fetcherThat());
     q.push('one here. two here. ');
     await settle();
-    // `musicDuck: 1` (or a turn that paused Spotify instead) must leave playback on exactly
-    // the path it used before this feature existed.
-    expect((q as unknown as { routed: boolean }).routed).toBe(false);
+    // A one-second buffer at 2x occupies half a second of the schedule.
+    expect(started[1].at).toBeCloseTo(started[0].at + FakeCtx.duration / 2, 6);
+  });
+
+  it('records WHICH chunk occupies which window of audio time', async () => {
+    const q = makeQueue(fetcherThat());
+    q.push('one here. two here. ', 'item-7');
+    await settle();
+    const marks = marksOf(q);
+    expect(marks.map((m) => m.text)).toEqual(['one here.', 'two here.']);
+    expect(marks.every((m) => m.itemId === 'item-7')).toBe(true);
+    // Contiguous: the end of one IS the start of the next, which is the same property the
+    // audio has and the reason the on-screen marker cannot fall between two sentences.
+    expect(marks[1].start).toBeCloseTo(marks[0].end, 6);
+  });
+
+  it('STOPS every scheduled source on barge-in, including ones that have not sounded yet', async () => {
+    const q = makeQueue(fetcherThat());
+    q.push('one here. two here. three here. ');
+    await settle();
+    expect(started.every((s) => !s.stopped)).toBe(true);
+    q.stop();
+    // All three, not just the one that is audible: the rest are already queued on the audio
+    // thread and would otherwise play over the owner's next sentence.
+    expect(started.every((s) => s.stopped)).toBe(true);
+    expect(marksOf(q)).toHaveLength(0);
+  });
+
+  it('speaks a chunk on the element when SCHEDULING itself throws, rather than dropping it', async () => {
+    // Narrower than a decode failure and the same rule: the hole would be exactly one
+    // sentence wide, in the middle of an answer, with nothing on screen to show it.
+    const q = makeQueue(fetcherThat());
+    const ctor = FakeCtx.prototype.createBufferSource;
+    let first = true;
+    FakeCtx.prototype.createBufferSource = function throwing(this: FakeCtx) {
+      if (first) { first = false; throw new Error('no source for you'); }
+      return ctor.call(this);
+    } as typeof ctor;
+    try {
+      q.push('one here. ');
+      await settle();
+      expect(started).toHaveLength(0);
+      expect(FakeAudio.played).toEqual(['one here.']);
+    } finally {
+      FakeCtx.prototype.createBufferSource = ctor;
+    }
+  });
+
+  it('falls back to the element when the webview will not DECODE, rather than going silent', async () => {
+    FakeCtx.decodable = false;
+    const q = makeQueue(fetcherThat());
+    q.push('one here. two here. ');
+    await settle();
+    expect(started).toHaveLength(0);
     expect(FakeAudio.played).toEqual(['one here.', 'two here.']);
+    // And it stops trying: one refusal is a property of the engine, not of the chunk.
+    expect(FakeCtx.decodes).toBe(1);
+  });
+
+  it('WAITS for the scheduled audio before the fallback speaks, so two paths never overlap', async () => {
+    // A turn that decoded one chunk and then failed on the next — "the decoder gave up
+    // part-way" — would otherwise start the element on top of the tail of the buffer still
+    // sounding: two voices out of one queue.
+    // A short chunk, so the wait this test is about is a tenth of a second rather than a
+    // real sentence's worth.
+    FakeCtx.duration = 0.05;
+    const q = makeQueue(fetcherThat());
+    q.push('one here. ');
+    await settle();
+    expect(started).toHaveLength(1);
+    FakeCtx.decodable = false;
+    q.push('two here. ');
+    await settle();
+    // The scheduled chunk is still sounding, so the element has been handed nothing yet.
+    expect(FakeAudio.played).toEqual([]);
+    // Once it has finished, the fallback speaks — late, not never and not over the top.
+    await new Promise((r) => setTimeout(r, 200));
+    await settle();
+    expect(FakeAudio.played).toEqual(['two here.']);
+  });
+
+  it('falls back to the element when the context cannot be revived', async () => {
+    const q = makeQueue(fetcherThat());
+    q.push('one here. ');
+    await settle();
+    ctxOf(q).state = 'suspended';
+    FakeCtx.resumable = false;
+    // The first chunk has been heard — the clock has moved past it. (A fake context's clock
+    // does not run on its own, so a test that skipped this would be measuring the wait from
+    // the paragraph above rather than the fallback it is about.)
+    ctxOf(q).currentTime = 10;
+    q.push('two here. ');
+    await settle();
+    expect(FakeAudio.played).toEqual(['two here.']);
+  });
+
+  it('holds the speaker until the scheduled audio has actually FINISHED', async () => {
+    // The two clocks came apart with scheduling: an empty job list means "everything is
+    // queued", not "everything has been heard". Releasing on the empty list would hand the
+    // music back — and drop the Hush button — seconds before the voice stopped.
+    FakeCtx.duration = 5;
+    const q = makeQueue(fetcherThat());
+    const seen: boolean[] = [];
+    q.onSpeaking((v) => seen.push(v));
+    q.push('one here. ');
+    q.flushTurn();
+    await settle();
+    await new Promise((r) => setTimeout(r, FOCUS_GRACE_MS + 60));
+    // Five seconds of audio are still ahead of the clock, so the hold stands.
+    expect(seen).toEqual([false, true]);
   });
 });
 

@@ -16,7 +16,9 @@ import {
   canControlAudio, restoreOnExitSync, HOLD_TTL_MS, MAX_SILENCE_MS, PLAYERS,
   type OsaResult,
 } from '../../src/lib/voice/audioFocus.js';
-import { voiceConfigPath, DEFAULT_MUSIC_DUCK, clampMusicDuck } from '../../src/lib/voice/config.js';
+import {
+  voiceConfigPath, DEFAULT_MUSIC_DUCK, MIN_MUSIC_DUCK, clampMusicDuck,
+} from '../../src/lib/voice/config.js';
 
 let home: string;
 /** Every script the module asked the machine to run, in order. */
@@ -82,8 +84,9 @@ describe('the speaker floor', () => {
     await hold('pane-a', home);
     await hold('pane-a', home);
     await hold('pane-a', home);
+    // Once per PLAYER, and not once per hold — three heartbeats, one pause each.
     const pauses = scripts.filter((s) => /if player state is playing then/.test(s));
-    expect(pauses).toHaveLength(1);
+    expect(pauses).toHaveLength(PLAYERS.length);
   });
 
   it('hands the floor to the next pane once the holder releases it', async () => {
@@ -147,7 +150,10 @@ describe('pausing a player', () => {
     reply(/is running/, { out: 'true' });
     reply(/player state is playing/, { out: 'paused' });
     const grant = await hold('pane-a', home);
-    expect(grant.paused).toEqual(['Spotify']);
+    // EVERY known player, not just the first: the table grew to Spotify + Music when the
+    // system-volume duck was switched off by default, because pausing became the only way to
+    // quiet the room without also quieting the answer.
+    expect(grant.paused).toEqual([...PLAYERS]);
     await release('pane-a');
     expect(scripts.some((s) => /if player state is paused then play/.test(s))).toBe(true);
   });
@@ -191,6 +197,32 @@ describe('pausing a player', () => {
     const grant = await hold('pane-a', home);
     expect(grant.paused).toEqual([]);
     expect(scripts.some((s) => /player state is playing/.test(s))).toBe(false);
+  });
+
+  it('a refusal for ONE app does not disable the app the owner DID grant', async () => {
+    // FOUND IN REVIEW, 2026-09-12. The denial used to be one process-wide boolean, which was
+    // indistinguishable from correct while the table held one name. Adding `Music` made it a
+    // real defect: an owner whose Spotify consent has been granted for months gets a new
+    // "Music wants to control this computer" dialog on upgrade, does not recognise it — they
+    // do not use Apple Music — and dismisses it. One flag then disabled the Spotify pause
+    // they DID grant, for the rest of the process, with nothing on screen naming the cause.
+    expect(PLAYERS).toContain('Music');
+    reply(/is running/, { out: 'true' });
+    reply(/"Music"[\s\S]*player state is playing/, { ok: false, denied: true });
+    reply(/player state is playing/, { out: 'paused' });
+
+    const grant = await hold('pane-a', home);
+    // Spotify was still paused, and the refusal is REPORTED so Settings can explain it.
+    expect(grant.paused).toEqual(['Spotify']);
+    expect(grant.denied).toBe(true);
+    await release('pane-a');
+
+    // …and the next turn still pauses Spotify, rather than the whole feature having gone
+    // quietly dead. The refused app is simply never asked again.
+    scripts.length = 0;
+    const second = await hold('pane-a', home);
+    expect(second.paused).toEqual(['Spotify']);
+    expect(scripts.some((x) => /"Music"/.test(x))).toBe(false);
   });
 
   it('remembers a REFUSED consent and stops asking', async () => {
@@ -317,7 +349,10 @@ describe('the arithmetic', () => {
 
   it('clamps a hand-edited duck depth instead of refusing it', () => {
     expect(clampMusicDuck(0.5)).toBe(0.5);
-    expect(clampMusicDuck(0)).toBe(0.1);
+    // The floor is HALF, not a tenth: below that no compensation gets our own voice back, so
+    // a hand-edited 0.1 is a setting that could only make the answer harder to hear.
+    expect(clampMusicDuck(0.1)).toBe(MIN_MUSIC_DUCK);
+    expect(clampMusicDuck(0)).toBe(MIN_MUSIC_DUCK);
     expect(clampMusicDuck(9)).toBe(1);
     expect(clampMusicDuck(Number.NaN)).toBe(DEFAULT_MUSIC_DUCK);
   });
@@ -367,8 +402,10 @@ describe('platform and shutdown', () => {
     reply(/player state is playing/, { out: 'paused' });
     await hold('pane-a', home);
     restoreOnExitSync();
-    expect(syncScripts).toHaveLength(1);
-    expect(syncScripts[0]).toMatch(/if player state is paused then play/);
+    expect(syncScripts).toHaveLength(PLAYERS.length);
+    for (const script of syncScripts) {
+      expect(script).toMatch(/if player state is paused then play/);
+    }
   });
 });
 
@@ -396,7 +433,12 @@ describe('overlapping calls — the races the ledger is serialised against', () 
       // reality too: telling an app to start playing is the heaviest of these calls.
       const slow = /player state is paused then play/.test(script);
       await new Promise((r) => setTimeout(r, slow ? delayMs * 6 : delayMs));
-      if (/is running/.test(script)) return { ok: true, out: 'true', denied: false };
+      // ONE player, deliberately: these tests are about ORDERING between two panes, and a
+      // second app in the table would double every script and make the index arithmetic
+      // below measure the wrong pause. Which app is covered elsewhere.
+      if (/is running/.test(script)) {
+        return { ok: true, out: /"Spotify"/.test(script) ? 'true' : 'false', denied: false };
+      }
       if (/get volume settings/.test(script)) {
         return { ok: true, out: `${state.volume},false`, denied: false };
       }
@@ -484,13 +526,16 @@ describe('the gain is remembered, not re-derived', () => {
     // The bad case: volume 2 at a 0.1 duck rounds the target to 0, and a ratio of 0 reads as
     // "no duck at all" — so the heartbeat used to answer 1 against a first chunk told 3. A
     // ~9.5 dB drop between the first sentence and the rest.
-    writeConfig({ musicDuck: 0.1 });
+    // Rewritten for the 0.5 floor, same defect: `duckedTo` is ROUNDED, so the ratio of the
+    // two stored integers is not the factor. Volume 3 at a half duck rounds the target to 2,
+    // and a re-derived `duckGain(2/3)` answers 1.5 against a first chunk that was told 2.
+    writeConfig({ musicDuck: 0.5 });
     reply(/is running/, { out: 'false' });
-    reply(/get volume settings/, { out: '2,false' });
+    reply(/get volume settings/, { out: '3,false' });
     const first = await hold('pane-a', home);
     const beat = await hold('pane-a', home);
-    expect(first.gain).toBe(3);
-    expect(beat.gain).toBe(3);
+    expect(first.gain).toBe(2);
+    expect(beat.gain).toBe(2);
   });
 });
 

@@ -126,14 +126,32 @@ export const DEFAULT_SPEECH_RATE = 1;
 export const MIN_SPEECH_RATE = 0.75;
 export const MAX_SPEECH_RATE = 1.75;
 
-/** Default duck depth: audible-but-under, and chosen against the 3x compensating-gain
- *  ceiling in `audioFocus.ts` rather than for roundness — a deeper duck is one we could not
- *  fully give back to our own voice without living in a limiter. */
-export const DEFAULT_MUSIC_DUCK = 0.35;
+/**
+ * Default duck depth: DO NOT DUCK.
+ *
+ * ── WHY THE DEFAULT FLIPPED, 2026-09-12 ─────────────────────────────────────────────────
+ * The owner's report is the whole argument: "it lowers the volume when it is about to speak,
+ * but it lowers ITS OWN voice too, so I cannot hear it." That is not a bug in the
+ * compensation — it is what the lever IS. macOS's output volume is the device's master, our
+ * voice leaves through the same device, and a digital boost can only give back the headroom
+ * the signal still has. A duck to 35% asks for about +9 dB of compensation on a speech signal
+ * that peaks near full scale; the gain runs straight into the limiter, and what comes out the
+ * other side is an answer several dB QUIETER than it would have been if this feature had
+ * never existed. The feature made the thing you wanted to hear harder to hear.
+ *
+ * So the default is `1` — never touch the master. What still happens by default is the half
+ * that is actually precise: a known player is PAUSED (`musicPause`), which lowers the other
+ * audio to zero and ours not at all. Ducking stays available for someone who explicitly wants
+ * a browser tab pulled down and accepts the cost, and the Settings row says what the cost is.
+ */
+export const DEFAULT_MUSIC_DUCK = 1;
 
 /** Music ducking is OFF-by-value rather than off-by-flag: `1` is "do not duck", which means
  *  the setting is one number instead of a number plus a toggle that can disagree with it. */
-export const MIN_MUSIC_DUCK = 0.1;
+/** The floor is 0.5, not 0.1, and for the same reason the default is 1: below about half,
+ *  no compensation this app can apply gets our own voice back, so a deeper setting is one
+ *  that can only make the answer harder to hear. A stored value below it is CLAMPED up. */
+export const MIN_MUSIC_DUCK = 0.5;
 export const MAX_MUSIC_DUCK = 1;
 
 /** Clamp a duck depth. Out of range is CLAMPED, like the speech rate and unlike the hotkey:

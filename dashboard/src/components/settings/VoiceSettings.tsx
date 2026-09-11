@@ -44,11 +44,18 @@ interface VoiceStatus {
 
 /** Duck depths, as the owner thinks of them rather than as the code stores them. `1` is the
  *  off switch: one number instead of a number plus a toggle that can contradict it. */
+/**
+ * The duck depths offered.
+ *
+ * "Leave it alone" is the DEFAULT now, and the list stops at half rather than going down to a
+ * fifth. Both changes are the same finding: the system volume is the master our own voice
+ * leaves through, so a deep duck is a quieter ANSWER, not a quieter room. Below half there is
+ * no compensation that gets it back, so the option is not offered.
+ */
 const DUCKS = [
-  { value: 1, label: 'Leave it alone' },
+  { value: 1, label: 'Leave it alone (default)' },
+  { value: 0.7, label: 'A little' },
   { value: 0.5, label: 'Half' },
-  { value: 0.35, label: 'Quiet (default)' },
-  { value: 0.2, label: 'Very quiet' },
 ] as const;
 
 /** The voices the speech endpoint offers. The JARVIS character does NOT come from this list —
@@ -408,8 +415,8 @@ export function VoiceSettings() {
 
       <SettingRow
         title="Pause music while speaking"
-        hint="Pauses Spotify for the length of an answer, then puts it back."
-        more={'Asked precisely rather than blindly: the player is queried first and paused only if it is actually playing, so a Spotify that is closed is never launched and a track that is already stopped is never "resumed" afterwards. Only a player this app paused is resumed, and only if it is still paused — if you press play yourself during an answer, that is your answer and nothing overrides it. The first answer fires a one-time macOS permission prompt for controlling Spotify; refuse it and this simply does nothing, with the answer still read normally. Apple Music is deliberately not included: adding a player means prompting you about an app you do not use.'}
+        hint="Pauses Spotify and Apple Music for the length of an answer, then puts them back."
+        more={'Asked precisely rather than blindly: the player is queried first and paused only if it is actually playing, so a player that is closed is never launched and a track that is already stopped is never "resumed" afterwards. Only a player this app paused is resumed, and only if it is still paused — if you press play yourself during an answer, that is your answer and nothing overrides it. The first answer fires a one-time macOS permission prompt per player; refuse it and this simply does nothing, with the answer still read normally. This is the only way to quiet the room WITHOUT also quieting the spoken answer, which is why it is the half that is on by default.'}
         labelled
         control={
           <Toggle
@@ -423,8 +430,8 @@ export function VoiceSettings() {
 
       <SettingRow
         title="Everything else"
-        hint="What to do about audio that cannot be paused precisely — a browser tab, typically."
-        more={'macOS gives an app one lever over audio it does not own: the system output volume. That lever is indiscriminate — it lowers this app’s voice by exactly as much — so the duck is paired with a compensating boost on the spoken answer, with a limiter behind it. That compensation treats the volume scale as linear in loudness, which is an approximation and the reason the depth is a choice rather than a constant: a deeper duck is one that cannot be fully given back. Used ONLY when no known player was playing, so an answer that paused Spotify never also touches your volume. The volume is restored only if it is still the value this app set.'}
+        hint="Lowers your Mac’s volume for audio that cannot be paused — and lowers the answer with it."
+        more={'macOS gives an app one lever over audio it does not own: the system output volume. That lever is the master this app’s own voice also leaves through, so ducking makes the answer quieter by the same amount, and the compensating boost applied to playback can only give back the headroom the signal still had. That is why the default is now "leave it alone": measured on the owner’s machine, a duck to a third made the spoken answer harder to hear than no duck at all. Turn it on only if a browser tab is the thing you need pulled down and you accept a quieter answer. Used ONLY when no known player was playing, so an answer that paused Spotify never also touches your volume, and the volume is restored only if it is still the value this app set.'}
         control={
           <select
             className="settings-text-input"

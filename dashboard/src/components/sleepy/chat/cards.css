@@ -244,6 +244,20 @@ video.chat-msg-user-media-el { cursor: default; }
   box-shadow: var(--shadow-sm);
   color: var(--color-text);
 }
+/* ── The sentence J.A.R.V.I.S is SAYING ────────────────────────────────────────────────
+   Painted with the CSS Custom Highlight API (`useSpokenHighlight.ts`), so nothing is
+   inserted into a DOM React owns and re-renders on every streamed token.
+
+   A TINT, not a filled swatch: the answer is already on a card, the marker has to read as
+   "here, now" rather than as a second surface, and it moves every couple of seconds — a
+   heavy block sliding down a paragraph is harder to read past than no marker at all. Only
+   `color`, `background-color`, `text-decoration` and `text-shadow` are honoured inside
+   `::highlight()`; anything else here would be silently dropped. */
+::highlight(dc-spoken) {
+  background-color: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  color: var(--color-text);
+}
+
 /* MarkdownPreview's container is a document surface of its own (border + padding +
    background) — inside a chat card that reads as a box in a box. The card IS the
    surface here, so the inner one is flattened. */
