@@ -1,5 +1,6 @@
 import {
   useEffect, useMemo, useRef, useState, useReducer, useCallback, useLayoutEffect,
+  type CSSProperties,
 } from 'react';
 import { createPortal } from 'react-dom';
 import './AgentTerminal.css';
@@ -2710,6 +2711,45 @@ export function AgentSurface() {
     };
   }, [started, caps, agentSettings.chatView, panes, focusedSessionId, activePaneId, focusTerm, deliverDrops]);
 
+  // Click (or Tab) into a pane → THAT pane becomes the action-focused one.
+  //
+  // Native and on the host for the SAME reason the drop listeners above are (owner report
+  // 09-12, with a recording): `PaneFragment` carries an `onMouseDownCapture`, but that is a
+  // REACT handler, and a chat pane's body is portaled out of the overlay body — so a mousedown
+  // inside one propagates up the PORTAL's React tree and never passes through the
+  // `PaneFragment` that owns the slot it is visibly sitting in. A terminal pane was unaffected
+  // (xterm's DOM is React-foreign, so React resolves the path from the slot's own fiber),
+  // which is exactly why focus followed clicks in a terminal split and sat frozen on one pane
+  // in an all-chat one. Real DOM sees both: the portaled node genuinely IS a descendant of
+  // `.agent-pane-slot[data-pane]`.
+  //
+  // Capture phase, so a child that stops propagation (xterm, an open menu) cannot swallow it.
+  // `focusin` rides along for the keyboard path — Tab into another pane's composer moves the
+  // focus ring, so it must move the widening too. Safe to listen for: every `.focus()` inside
+  // a pane is user-initiated (a caret placed after a menu pick, a dropped file's path, a
+  // dream-action button), so nothing streams focus onto a background pane behind the user.
+  //
+  // `PaneFragment`'s React handler STAYS — it is what covers a terminal pane's own chrome
+  // (head, composer strip), which lives outside the slot and so outside this listener's reach.
+  useEffect(() => {
+    if (!expanded) return;
+    const el = hostRef.current;
+    if (!el) return;
+    // Read live from the DOM rather than from `panes`: the attribute is the pane id, so this
+    // needs no state in its closure and the listener never goes stale as panes come and go.
+    const activate = (e: Event) => {
+      const at = e.target as Element | null;
+      const pid = (at?.closest?.('.agent-pane-slot[data-pane]') as HTMLElement | null)?.dataset.pane;
+      if (pid) setActivePaneId(pid);   // React bails out when it is already the active one
+    };
+    el.addEventListener('mousedown', activate, true);
+    el.addEventListener('focusin', activate);
+    return () => {
+      el.removeEventListener('mousedown', activate, true);
+      el.removeEventListener('focusin', activate);
+    };
+  }, [expanded]);
+
   // ── Per-session view-models (recomputed every render; bumpStatus re-renders on a
   //    live status change so the tabs + dock chips always track the real PTY state). ──
   const metaById = new Map(sessionList.map((m) => [m.id, m] as const));
@@ -3001,6 +3041,12 @@ export function AgentSurface() {
         /* The minimized-sessions dock floats over our bottom-right corner — flag it so the
            corner pane's composer can clear its anchor chip (model/effort stay visible). */
         data-dock-floating={caps?.desktop && expanded && minimizedRows.length > 0 ? 'true' : undefined}
+        /* The live pane count, for the focus-widening math in CSS — the focused pane's
+           extra width is capped at what is left once every OTHER pane keeps `--pane-min`,
+           and that cap cannot be computed without N. Read by BOTH the pane row and the tab
+           strip above it, which is why it lives on their common ancestor: one number, so
+           the two can never disagree and drift a divider off its pane edge. */
+        style={{ '--pane-count': panes.length } as CSSProperties}
       >
         {/* Overlay chrome — ONE row: collapse, the session TABS themselves (one group per
             pane; the header IS the tab strip, so there's no separate title row and no

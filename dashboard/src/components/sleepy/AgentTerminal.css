@@ -21,6 +21,14 @@
   contain: layout paint;
   /* Slide with the sidebar when it collapses/expands (left edge tracks the content area). */
   transition: left var(--transition-normal);
+
+  /* ── Focus widening (see `.agent-panes.split > .agent-pane.active` below) ──
+     `--pane-count` is set inline from React (the live pane count); the two lengths are
+     the whole policy: how much extra width the pane you are reading takes, and how
+     narrow the others are allowed to get before it stops taking any. */
+  --pane-focus-bonus: 340px;   /* extra width for the focused pane, in ABSOLUTE px */
+  --pane-min: 250px;           /* no other pane may be squeezed below this */
+  --pane-count: 1;             /* overridden inline; the fallback keeps the math finite */
 }
 /* Expanded = fill ONLY the page content area: below the title bar (--header-height)
    and right of the sidebar (--app-content-left, collapse-aware). right/bottom stay 0
@@ -1077,6 +1085,41 @@
   overflow: hidden;
 }
 .agent-panes > .agent-pane + .agent-pane { border-left: 1px solid var(--color-border); }
+
+/* ── The focused pane takes a bigger slice ─────────────────────────────────────
+   With 4–5 panes open, equal tiling starves the one you are actually reading. The
+   focused pane therefore claims a FIXED extra slice (`--pane-focus-bonus`) rather
+   than a bigger proportional share, because `flex-basis` is ADDITIVE: the remaining
+   `100% - bonus` is still split evenly, so the bonus is paid for by all the others
+   TOGETHER — each gives up bonus/N, which gets smaller as more panes open. A
+   proportional `flex-grow` would do the opposite and crush them as the row fills.
+
+   The bonus is capped at whatever is left after every pane keeps `--pane-min`, so the
+   others can be trimmed but never collapsed; on a window too narrow to afford any of
+   it the cap goes negative, `max()` floors it at 0, and the row tiles equally exactly
+   as it did before. `min-width: 0` above is deliberately left alone — the floor lives
+   in this cap, so a genuinely narrow window shrinks everything instead of overflowing.
+
+   The IDENTICAL basis must land on the active tab group: each group sits directly
+   above its pane, edge for edge, and widening one side alone would drift every
+   divider off its pane edge. Same formula, same percentage base (both containers span
+   the row), so the two stay locked together. */
+.agent-panes.split > .agent-pane.active,
+.agent-overlay-tabs[data-split] > .agent-pane-tabbar.active {
+  flex-basis: max(0px, min(var(--pane-focus-bonus), 100% - var(--pane-count) * var(--pane-min)));
+}
+/* Animated so focus moving between panes reads as one row rebalancing rather than a
+   jump cut. It is also why the widening is safe for terminals: the surface's
+   ResizeObserver is 150ms-debounced, so the whole slide costs ONE xterm refit at the
+   end, the same deal the sidebar's own width animation already makes. */
+.agent-panes > .agent-pane,
+.agent-overlay-tabs > .agent-pane-tabbar {
+  transition: flex-basis var(--transition-normal, 240ms) ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-panes > .agent-pane,
+  .agent-overlay-tabs > .agent-pane-tabbar { transition: none; }
+}
 /* Shown when EVERY pane was minimized to the corner — keeps the expanded view from
    reading as a blank void. */
 .agent-allmin-hint {
