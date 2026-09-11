@@ -295,6 +295,14 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * rendered as a tab bar over an EMPTY BOX (owner screenshot; the kit and the host tab
    * script now cover the markup, and this says which panel a tab opens). Actual 9670, so
    * the next rule has room without a third bump.
+   *
+   * 2026-09-11: the bound stays at 9800 and the briefing got SHORTER (9764 → 9383) while
+   * inverting its default. The "Draw it, don't narrate it" section — which sent every
+   * structured answer into a block and produced seven owner screenshots of blocks harder
+   * to read than the prose they replaced — became "Prose first. Draw only what prose cannot
+   * hold": three things earn a block (a diagram, an interactive view, a deck), a named list
+   * of what never does, and a dc-graph (nodes + edges the kit lays out and draws) as the one
+   * example. Paid for by retiring the dc-flow vocabulary and the decision-on-screen bullet.
    */
   it('stays small enough to ride in every chat turn', () => {
     expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(9800);

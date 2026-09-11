@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseChatActions, MAX_HTML_BYTES, MAX_HTMLS_PER_MESSAGE } from '../../dashboard/src/components/sleepy/chat/chatActions.js';
 import {
-  buildChatSrcdoc, readHeightMessage, htmlOutline, HEIGHT_BRIDGE, KIT_BEHAVIOUR, HEIGHT_MESSAGE_KEY, HEIGHT_REQUEST_KEY,
+  buildChatSrcdoc, readHeightMessage, htmlOutline, HEIGHT_BRIDGE, KIT_BEHAVIOUR, KIT_GRAPH, HEIGHT_MESSAGE_KEY, HEIGHT_REQUEST_KEY,
   CHAT_HTML_CSP, CHAT_HTML_SANDBOX, CHAT_HTML_ALLOW, CHAT_HTML_KIT_CSS, CHAT_KIT_TOKENS, CHAT_READING_TOKENS,
   SNAPSHOT_MESSAGE_KEY, SNAPSHOT_REQUEST_KEY,
 } from '../../dashboard/src/components/sleepy/chat/chatHtmlKit.js';
@@ -294,6 +294,65 @@ describe('the kit tab script', () => {
     expect(KIT_BEHAVIOUR).toContain("getAttribute('data-panel')");
     expect(KIT_BEHAVIOUR).toContain("classList.toggle('dc-panel--on'");
     expect(KIT_BEHAVIOUR).toContain("classList.toggle('dc-tab--on'");
+  });
+});
+
+describe('the kit diagram engine', () => {
+  /**
+   * The one thing HTML is now FOR in this surface (owner, 2026-09-11): a drawing where the
+   * shape is the message. The author writes nodes and edges; this script ranks, orders,
+   * measures, places and draws. Geometry is proven in real Chromium by
+   * scripts/verify/chat-html.mjs (runGraph) — here the CONTRACT is pinned: it ships, it is
+   * mirrored, it reaches the frame and the export, and it stays inside the sandbox.
+   */
+  it('the TS string and the .js source are byte-identical — regenerate, never hand-edit', () => {
+    const file = readFileSync(join(CHAT_DIR, 'chat-html-graph.js'), 'utf-8');
+    expect(KIT_GRAPH).toBe(file);
+  });
+
+  it('rides in KIT_BEHAVIOUR, so the srcdoc AND the exported file both carry it', () => {
+    expect(KIT_BEHAVIOUR).toContain(KIT_GRAPH);
+    const doc = buildChatSrcdoc({ html: '<div class="dc-graph"></div>', tokens: {} });
+    // A distinctive line of the SCRIPT, not a class name the CSS also mentions.
+    expect(doc).toContain("querySelectorAll('.dc-graph, .dc-flow')");
+  });
+
+  it('draws real arrows: an SVG path per edge with a marker-end, and a label span', () => {
+    expect(KIT_GRAPH).toContain("createElementNS(NS, 'path')");
+    expect(KIT_GRAPH).toContain("setAttribute('marker-end'");
+    expect(KIT_GRAPH).toContain("className = 'dc-edge-label'");
+  });
+
+  it('renders a retired .dc-flow as a chain graph, so old transcripts get the arrows too', () => {
+    expect(KIT_GRAPH).toContain("classList.contains('dc-flow-node')");
+    // No edges written = a chain in written order.
+    expect(KIT_GRAPH).toMatch(/if \(!edges\.length\) for \(var i = 1; i < nodes\.length; i\+\+\) edges\.push/);
+  });
+
+  it('never wraps and never clips: natural → tight → staggered lines, and re-lays on resize', () => {
+    expect(KIT_GRAPH).toContain("'dc-graph--tight'");
+    expect(KIT_GRAPH).toContain('new ResizeObserver');
+    expect(KIT_GRAPH).toContain('document.fonts.ready');
+  });
+
+  it('breaks cycles instead of looping, and draws the back edge dashed', () => {
+    expect(KIT_GRAPH).toContain('e.back = true');
+    expect(KIT_GRAPH).toContain("'dc-edge--back'");
+    expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-graph-svg path\.dc-edge--back \{[^}]*stroke-dasharray/);
+  });
+
+  it('degrades to chips, not to nothing: nodes are visible before the script runs', () => {
+    // The unlaid graph is a wrapping flex row of bordered chips; only .dc-edge is hidden.
+    expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-graph, \.dc-flow \{[^}]*display: flex/);
+    expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-edge, \.dc-flow-arrow \{ display: none; \}/);
+  });
+
+  it('paints tone as a BORDER, never a fill — the filled slabs were rejected', () => {
+    const node = /\.dc-node, \.dc-flow-node \{([^}]*)\}/.exec(CHAT_HTML_KIT_CSS);
+    expect(node).not.toBeNull();
+    expect(node![1]).toMatch(/border: 1\.5px solid var\(--dc-tone, var\(--color-border-hover\)\)/);
+    expect(node![1]).toMatch(/background: var\(--color-bg-elevated\)/);
+    expect(CHAT_HTML_KIT_CSS).not.toMatch(/\.dc-node--(?:good|bad|warn|accent)[^{]*\{[^}]*background/);
   });
 });
 
@@ -606,8 +665,12 @@ const NEW_FIXTURES: [string, string][] = [
     <div class="dc-option"><div class="dc-option-head"><span class="dc-option-title">Cut over</span></div></div></div>`],
   ['a process', `<ol class="dc-steps"><li class="dc-step"><div class="dc-step-body">
     <span class="dc-h3">Sync</span><span class="dc-muted">Pulls the cache</span></div></li></ol>`],
-  ['a pipeline', `<div class="dc-flow"><div class="dc-flow-node">script</div>
+  ['a pipeline (retired markup, still rendered)', `<div class="dc-flow"><div class="dc-flow-node">script</div>
     <div class="dc-flow-arrow">→</div><div class="dc-flow-node">cache</div></div>`],
+  ['a diagram', `<div class="dc-graph"><div class="dc-node" id="a">Request</div>
+    <div class="dc-node dc-node--decision" id="b">In cache?</div><div class="dc-node dc-node--ghost" id="c">Miss</div>
+    <div class="dc-edge" data-from="a" data-to="b"></div>
+    <div class="dc-edge dc-edge--dashed" data-from="b" data-to="c" data-label="no"></div></div>`],
   ['a timeline', `<div class="dc-timeline"><div class="dc-tl"><span class="dc-tl-dot"></span>
     <div class="dc-tl-body"><span class="dc-tl-when">2026-08-25</span><span>html/v1 shipped</span></div></div></div>`],
   ['tabs', `<div class="dc-tabs"><input type="radio" name="g" id="g1" checked><input type="radio" name="g" id="g2">

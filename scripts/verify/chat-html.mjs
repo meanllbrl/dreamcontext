@@ -590,32 +590,34 @@ async function runLostReport(base, report) {
 }
 
 /**
- * A FLOW THAT WRAPS IS STILL ONE FLOW — geometry, in real Chromium, against the shipped kit.
+ * A FLOW IS A DRAWING — nodes placed by their relations, arrows drawn between them.
  *
- * The defect this pass exists for (owner report 2026-08-27, with a screenshot): a `dc-flow`
- * too long for the pane broke into two rows and fell apart in three separate ways at once —
- * the row ended on an arrow pointing at empty space, the node that wrapped stretched to fill
- * its new row instead of hugging its label, and there was no gap between the rows, so the
- * continuation read as debris rather than as the rest of the diagram. The last step of the
- * flow — the consequence, the part the reader actually needs — was the part that got wrecked.
+ * The kit's flow used to be chips in a row that wrapped (owner screenshots 2026-09-11: a
+ * 4-node flow in three rows, a 5-step causal chain broken in two places), then a top-down
+ * stack with a "↓" glyph between rules, which the owner rejected as not a diagram at all
+ * ("okların birbirine iteklemesi … değil, gerçekten bir flow diagram"). Now the author
+ * writes .dc-node + .dc-edge DATA and chat-html-graph.js lays it out and draws SVG arrows.
  *
- * Why the assertions are measurements and not class-name lookups: every one of those three
- * defects was present while the markup was perfectly correct. Only layout can see them.
- *
- * No server and no chat session here on purpose — the subject is the stylesheet the app
- * ships, so this loads that exact file and nothing else. A pane narrow enough to FORCE the
- * wrap is the whole point; at full width the bug is invisible, which is how it shipped.
+ * Geometry is a runtime property — CSS says nothing about where a script puts a node — so
+ * it is measured here, in real Chromium, off the painted boxes and the drawn paths:
+ *   · every node is laid (absolute, inside the pane, no two overlapping) at 380/620/900px;
+ *   · exactly one SVG path per edge, each with an arrowhead, each STARTING on its source's
+ *     edge and ENDING on its target's edge — an arrow that floats is not an arrow;
+ *   · every edge label lands on no node;
+ *   · a chain fits on one row or goes one-per-row — never something in between (no wrap);
+ *   · a back edge is drawn dashed; retired .dc-flow / .dc-flow-arrow markup still renders.
+ * MUTATION CHECK: the same fixture WITHOUT the engine must fail — otherwise the pass is
+ * asserting a CSS opinion, not a drawing.
  */
-async function runFlowWrap(report) {
-  const ok = (label, cond, detail = '') => report.check('flow-wrap', label, cond, detail);
-  console.log('\n═══ a flow that wraps ═══');
+async function runGraph(report) {
+  const ok = (label, cond, detail = '') => report.check('graph', label, cond, detail);
+  console.log('\n═══ a flow is a drawn diagram ═══');
 
-  const kitCss = readFileSync(
-    join(REPO, 'dashboard', 'src', 'components', 'sleepy', 'chat', 'chat-html-kit.css'),
-    'utf-8',
-  );
-  // Only the tokens the kit resolves — the app's real theme layer is not under test here.
+  const CHAT = join(REPO, 'dashboard', 'src', 'components', 'sleepy', 'chat');
+  const kitCss = readFileSync(join(CHAT, 'chat-html-kit.css'), 'utf-8');
+  const graphJs = readFileSync(join(CHAT, 'chat-html-graph.js'), 'utf-8');
   const tokens = `:root{--font-family:system-ui;--font-family-display:system-ui;--font-mono:monospace;
+--chat-text:15px;--chat-line-height:1.75;
 --color-text:#e8e8ee;--color-text-secondary:#b5b5c0;--color-text-tertiary:#8a8a96;
 --color-border:#3a3a44;--color-border-hover:#4a4a55;--color-bg-secondary:#1d1d24;
 --color-bg-tertiary:#26262e;--color-bg-elevated:#2c2c35;--color-accent:#8b7cf6;
@@ -625,126 +627,143 @@ async function runFlowWrap(report) {
 --color-success:#4ade80;--color-error:#f87171;--color-warning:#fbbf24;
 --color-success-subtle:#4ade8022;--color-error-subtle:#f8717122;}
 body{background:#131318;margin:0;padding:20px;}`;
+  const doc = (body, withEngine = true) => `<!doctype html><html lang="tr"><head><style>${tokens}\n${kitCss}</style>`
+    + (withEngine ? `<script>${graphJs}</script>` : '') + `</head><body>${body}</body></html>`;
 
-  // Six nodes in a 640px pane: wide enough to be a real diagram, narrow enough to wrap.
-  // Written the way the brief now tells an agent to write one — NODES ONLY.
-  const markup = `<div class="dc-flow" id="flow">
-    <span class="dc-flow-node">titlebar mousedown</span>
-    <span class="dc-flow-node">4px threshold crossed</span>
-    <span class="dc-flow-node">startDragging()</span>
-    <span class="dc-flow-node dc-bg3">ACL refusal</span>
-    <span class="dc-flow-node dc-bg3">bare catch</span>
-    <span class="dc-flow-node">nothing happens</span>
-  </div>`;
+  // The owner's own decision ladder (sleep candidate task), written the way the briefing
+  // says: a node is a NAME, edges carry the yes/no, one cycle back to the first question.
+  const LADDER = `<div class="dc-graph" id="g">
+<div class="dc-node" id="sig">Takipsiz iş görüldü</div>
+<div class="dc-node dc-node--decision" id="q1">Komşu task var mı?</div>
+<div class="dc-node dc-node--ghost" id="fold">O task'a katlanır</div>
+<div class="dc-node dc-node--decision" id="q2">Son oturum hâlâ istiyor mu?</div>
+<div class="dc-node dc-node--ghost" id="dead">Aday ölür</div>
+<div class="dc-node dc-node--decision" id="q3">Bu projeye mi iniyor?</div>
+<div class="dc-node dc-node--ghost" id="else">Federation / rapor</div>
+<div class="dc-node dc-node--decision" id="q4">Kanıt doğrudan mı?</div>
+<div class="dc-node dc-node--warn" id="flag">sleep-flags'a yazılır</div>
+<div class="dc-node dc-node--good" id="open">Task açılır</div>
+<div class="dc-edge" data-from="sig" data-to="q1"></div>
+<div class="dc-edge" data-from="q1" data-to="fold" data-label="var"></div>
+<div class="dc-edge" data-from="q1" data-to="q2" data-label="yok"></div>
+<div class="dc-edge" data-from="q2" data-to="dead" data-label="vazgeçmiş"></div>
+<div class="dc-edge" data-from="q2" data-to="q3" data-label="evet"></div>
+<div class="dc-edge" data-from="q3" data-to="else" data-label="başka yer"></div>
+<div class="dc-edge" data-from="q3" data-to="q4" data-label="evet"></div>
+<div class="dc-edge" data-from="q4" data-to="flag" data-label="dolaylı"></div>
+<div class="dc-edge" data-from="q4" data-to="open" data-label="evet"></div>
+<div class="dc-edge dc-edge--dashed" data-from="flag" data-to="q1" data-label="sonraki cycle"></div>
+</div>`;
+  const NODES = ['titlebar mousedown', '4px threshold crossed', 'startDragging()',
+    'ACL refusal', 'bare catch', 'nothing happens'];
+  const chain = (n) => `<div class="dc-flow" id="g">`
+    + NODES.slice(0, n).map((t) => `<span class="dc-flow-node">${t}</span>`).join('') + `</div>`;
+  const legacy = `<div class="dc-flow" id="g">`
+    + NODES.map((t) => `<span class="dc-flow-node">${t}</span>`).join('<span class="dc-flow-arrow">→</span>')
+    + `</div>`;
+
+  // Everything below is read off the PAINTED scene: node boxes, path endpoints parsed
+  // from the drawn `d`, label boxes, computed dash arrays.
+  const measure = () => {
+    const g = document.getElementById('g');
+    const gr = g.getBoundingClientRect();
+    const nodes = Array.from(g.querySelectorAll(':scope > .dc-node, :scope > .dc-flow-node'));
+    const rects = nodes.map((n) => n.getBoundingClientRect());
+    const hit = (a, b, tol = 1) => a.left < b.right - tol && b.left < a.right - tol
+      && a.top < b.bottom - tol && b.top < a.bottom - tol;
+    let overlaps = 0;
+    for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) if (hit(rects[i], rects[j])) overlaps++;
+    const labels = Array.from(g.querySelectorAll(':scope > .dc-edge-label')).map((l) => l.getBoundingClientRect());
+    let labelOnNode = 0;
+    for (const l of labels) for (const r of rects) if (hit(l, r)) labelOnNode++;
+    const paths = Array.from(g.querySelectorAll('path.dc-edge-path'));
+    const endpoints = paths.map((p) => {
+      const d = p.getAttribute('d');
+      const m = /^M\s+(-?[\d.]+)\s+(-?[\d.]+)/.exec(d);
+      const parts = d.trim().split(/[\s,]+/);
+      return {
+        sx: parseFloat(m[1]) + gr.left, sy: parseFloat(m[2]) + gr.top,
+        tx: parseFloat(parts[parts.length - 2]) + gr.left, ty: parseFloat(parts[parts.length - 1]) + gr.top,
+        marker: p.getAttribute('marker-end') || '',
+        back: p.classList.contains('dc-edge--back'),
+        dash: getComputedStyle(p).strokeDasharray,
+      };
+    });
+    // An endpoint is ANCHORED when it sits on some node's border (within 2px).
+    const onEdge = (x, y) => rects.some((r) => (
+      (Math.abs(y - r.bottom) <= 2 || Math.abs(y - r.top) <= 2) && x >= r.left - 2 && x <= r.right + 2)
+      || ((Math.abs(x - r.right) <= 2 || Math.abs(x - r.left) <= 2) && y >= r.top - 2 && y <= r.bottom + 2));
+    return {
+      laid: g.classList.contains('dc-graph--laid'),
+      tight: g.classList.contains('dc-graph--tight'),
+      nodes: nodes.length,
+      rows: new Set(rects.map((r) => Math.round(r.top))).size,
+      overlaps,
+      labels: labels.length,
+      labelOnNode,
+      paths: paths.length,
+      unanchored: endpoints.filter((e) => !onEdge(e.sx, e.sy) || !onEdge(e.tx, e.ty)).length,
+      headless: endpoints.filter((e) => !/^url\(/.test(e.marker)).length,
+      dashedBack: endpoints.filter((e) => e.back && e.dash && e.dash !== 'none').length,
+      backs: endpoints.filter((e) => e.back).length,
+      inside: rects.every((r) => r.left >= gr.left - 0.5 && r.right <= gr.right + 0.5),
+      visibleArrowSpans: Array.from(g.querySelectorAll('.dc-flow-arrow'))
+        .filter((el) => getComputedStyle(el).display !== 'none').length,
+    };
+  };
 
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 640, height: 400 }, colorScheme: 'dark' });
+  const page = await browser.newPage({ viewport: { width: 640, height: 900 }, colorScheme: 'dark' });
+  const render = async (w, body, withEngine = true) => {
+    await page.setViewportSize({ width: w, height: 1200 });
+    await page.setContent(doc(body, withEngine));
+    await page.waitForTimeout(120);
+    return page.evaluate(measure);
+  };
   try {
-    await page.setContent(`<!doctype html><style>${tokens}\n${kitCss}</style>${markup}`);
-    await page.waitForTimeout(200);
+    // ── the branching ladder, three pane widths ────────────────────────────────────────
+    for (const w of [900, 620, 380]) {
+      const m = await render(w, LADDER);
+      ok(`ladder @${w}: all 10 nodes laid, none overlapping, all inside the pane`,
+        m.laid && m.nodes === 10 && m.overlaps === 0 && m.inside,
+        `laid=${m.laid} nodes=${m.nodes} overlaps=${m.overlaps} inside=${m.inside}`);
+      ok(`ladder @${w}: one drawn path per edge (10), every one with an arrowhead`,
+        m.paths === 10 && m.headless === 0, `${m.paths} paths, ${m.headless} without a marker`);
+      ok(`ladder @${w}: every arrow starts on its source and ends on its target`,
+        m.unanchored === 0, `${m.unanchored} floating endpoint(s)`);
+      ok(`ladder @${w}: 9 labels, none sitting on a node`,
+        m.labels === 9 && m.labelOnNode === 0, `${m.labels} labels, ${m.labelOnNode} on a node`);
+      ok(`ladder @${w}: the cycle is a dashed back edge`,
+        m.backs === 1 && m.dashedBack === 1, `${m.backs} back edge(s), ${m.dashedBack} dashed`);
+      if (w === 380) ok('ladder @380: labels shrank a step rather than the drawing overflowing', m.tight, 'not tight');
+      if (w === 620) await page.screenshot({ path: join(SHOTS, 'chat-html-graph-ladder.png'), fullPage: true });
+    }
 
-    const m = await page.evaluate(() => {
-      const nodes = Array.from(document.querySelectorAll('#flow > *'));
-      const box = (el) => el.getBoundingClientRect();
-      // Group children into visual ROWS by their top edge.
-      const rows = new Map();
-      for (const el of nodes) {
-        if (getComputedStyle(el).display === 'none') continue;
-        const top = Math.round(box(el).top);
-        if (!rows.has(top)) rows.set(top, []);
-        rows.get(top).push(el);
-      }
-      const tops = [...rows.keys()].sort((a, b) => a - b);
-      const last = tops.map((t) => {
-        const row = rows.get(t).sort((a, b) => box(a).left - box(b).left);
-        const el = row[row.length - 1];
-        return { cls: el.className, text: (el.textContent || '').trim() };
-      });
-      // The wrapped node must hug its label. `max-content` is what "hug" means.
-      const tail = nodes[nodes.length - 1];
-      const rendered = Math.round(box(tail).width);
-      const probe = tail.cloneNode(true);
-      probe.style.width = 'max-content';
-      probe.style.position = 'absolute';
-      tail.parentElement.appendChild(probe);
-      const hug = Math.round(probe.getBoundingClientRect().width);
-      probe.remove();
-      const gap = tops.length > 1
-        ? Math.round(tops[1] - (box(rows.get(tops[0])[0]).top + box(rows.get(tops[0])[0]).height))
-        : -1;
-      return { rowCount: tops.length, gap, last, rendered, hug };
-    });
+    // ── chains: one row when it fits, one node a row when it does not — nothing between ──
+    for (const [n, w] of [[6, 640], [6, 1400], [3, 380], [3, 640], [5, 620], [5, 960]]) {
+      const m = await render(w, chain(n));
+      ok(`chain of ${n} @${w}: ${m.rows === 1 ? 'one row' : 'one node a row'} — never a wrapped row`,
+        m.laid && (m.rows === 1 || m.rows === n) && m.inside, `${m.rows} row(s) for ${n} nodes, inside=${m.inside}`);
+      ok(`chain of ${n} @${w}: ${n - 1} drawn arrows, all anchored`,
+        m.paths === n - 1 && m.unanchored === 0 && m.headless === 0,
+        `${m.paths} paths, ${m.unanchored} floating, ${m.headless} headless`);
+    }
+    const wide = await render(1400, chain(6));
+    ok('a chain that fits runs left to right', wide.rows === 1, `${wide.rows} rows at 1400px`);
+    const narrow = await render(380, chain(6));
+    ok('…and the same chain in a narrow pane runs top down', narrow.rows === 6, `${narrow.rows} rows at 380px`);
 
-    ok('the flow actually wrapped — otherwise this pass proves nothing',
-      m.rowCount >= 2, `rows=${m.rowCount}`);
-    ok('no row ends on an arrow pointing at nothing',
-      m.last.every((l) => !/dc-flow-arrow/.test(l.cls)),
-      m.last.map((l) => `${l.cls}:${l.text}`).join(' | '));
-    ok('the wrapped node hugs its label instead of filling the row',
-      Math.abs(m.rendered - m.hug) <= 2, `rendered=${m.rendered} hug=${m.hug}`);
-    ok('the rows are separated by a real gap', m.gap >= 6, `gap=${m.gap}px`);
+    // ── retired markup ────────────────────────────────────────────────────────────────
+    const L = await render(640, legacy);
+    ok('retired dc-flow-arrow spans are absorbed — the engine draws the arrows instead',
+      L.visibleArrowSpans === 0 && L.paths === 5 && L.nodes === 6,
+      `${L.visibleArrowSpans} spans visible, ${L.paths} paths, ${L.nodes} nodes`);
 
-    // The arrow still has to BE there — a fix that just deleted the arrows would pass
-    // every check above and destroy the diagram.
-    const arrows = await page.evaluate(() => {
-      const nodes = Array.from(document.querySelectorAll('#flow > .dc-flow-node'));
-      return nodes.filter((n) => {
-        const c = getComputedStyle(n, '::before').content;
-        return c && c !== 'none' && c !== 'normal';
-      }).length;
-    });
-    ok('every node after the first draws an arrow into it', arrows === 5, `drawn=${arrows}`);
-
-    await page.screenshot({ path: join(SHOTS, 'chat-html-flow-wrap.png') });
-
-    // ── the LEGACY markup, which is where the reported defect actually appeared ──
-    // The owner's flow was written the old way, with `dc-flow-arrow` spans between the
-    // nodes. Those spans are loose flex items, so a wrap could strand one at the end of a
-    // row pointing into empty space. Every message and story already written that way is
-    // still out there, so the kit has to render them correctly too — not just the shape
-    // the brief now teaches. Without this second fixture the dangling-arrow check passes
-    // vacuously: node-only markup has no arrow span to strand.
-    const legacy = `<div class="dc-flow" id="legacy">
-      <span class="dc-flow-node">titlebar mousedown</span>
-      <span class="dc-flow-arrow">→</span>
-      <span class="dc-flow-node">4px threshold crossed</span>
-      <span class="dc-flow-arrow">→</span>
-      <span class="dc-flow-node">startDragging()</span>
-      <span class="dc-flow-arrow">→</span>
-      <span class="dc-flow-node dc-bg3">ACL refusal</span>
-      <span class="dc-flow-arrow">→</span>
-      <span class="dc-flow-node dc-bg3">bare catch</span>
-      <span class="dc-flow-arrow">→</span>
-      <span class="dc-flow-node">nothing happens</span>
-    </div>`;
-    await page.setContent(`<!doctype html><style>${tokens}\n${kitCss}</style>${legacy}`);
-    await page.waitForTimeout(200);
-
-    const L = await page.evaluate(() => {
-      const kids = Array.from(document.querySelectorAll('#legacy > *'))
-        .filter((el) => getComputedStyle(el).display !== 'none');
-      const box = (el) => el.getBoundingClientRect();
-      const rows = new Map();
-      for (const el of kids) {
-        const top = Math.round(box(el).top);
-        if (!rows.has(top)) rows.set(top, []);
-        rows.get(top).push(el);
-      }
-      const tops = [...rows.keys()].sort((a, b) => a - b);
-      const last = tops.map((t) => {
-        const row = rows.get(t).sort((a, b) => box(a).left - box(b).left);
-        return row[row.length - 1].className;
-      });
-      const tail = kids[kids.length - 1];
-      return { rowCount: tops.length, last, tailWidth: Math.round(box(tail).width) };
-    });
-
-    ok('legacy arrow markup still wraps into more than one row',
-      L.rowCount >= 2, `rows=${L.rowCount}`);
-    ok('…and no row ends on a stranded arrow',
-      L.last.every((c) => !/dc-flow-arrow/.test(c)), L.last.join(' | '));
-    ok('…and its wrapped node does not fill the row either',
-      L.tailWidth < 300, `width=${L.tailWidth}`);
+    // ── MUTATION CHECK: no engine, no drawing ─────────────────────────────────────────
+    const before = await render(620, LADDER, false);
+    ok('WITHOUT the engine the ladder fails this pass — so the pass is proving something',
+      !before.laid && before.paths === 0 && before.rows > 1 && before.rows < 10,
+      `laid=${before.laid} paths=${before.paths} rows=${before.rows}`);
   } finally {
     await browser.close();
   }
@@ -1026,11 +1045,13 @@ async function runNarrowAndTurkish(report) {
         tableClipped: wrap.getBoundingClientRect().width > document.body.clientWidth + 1,
         hugWidth: Math.round(el('#hug').getBoundingClientRect().width),
         paneWidth: document.body.clientWidth,
-        // A toned node must be TINTED, not filled: the same surface family the callout
-        // uses, so normal body text still reads on it.
+        // Tone on a node is a BORDER, not a fill (2026-09-11 — the filled slabs were
+        // rejected). Text sits on the plain surface either way; only the edge says "warn".
         plainBg: getComputedStyle(el('#plain')).backgroundColor,
         tonedBg: getComputedStyle(el('#toned')).backgroundColor,
+        plainBorder: getComputedStyle(el('#plain')).borderTopColor,
         tonedBorder: getComputedStyle(el('#toned')).borderTopColor,
+        warning: getComputedStyle(document.documentElement).getPropertyValue('--color-warning').trim(),
       };
     });
 
@@ -1046,9 +1067,9 @@ async function runNarrowAndTurkish(report) {
     ok('…and does not push the block itself past the pane', !m.tableClipped);
     ok('a dc-doc--hug block hugs its one chip instead of spreading over the pane',
       m.hugWidth < m.paneWidth / 2, `hug=${m.hugWidth}px pane=${m.paneWidth}px`);
-    ok('a toned flow node is a TINT, not the solid chart fill it used to have to borrow',
-      m.tonedBg !== m.plainBg && m.tonedBorder !== 'rgb(251, 191, 36)',
-      `plain=${m.plainBg} toned=${m.tonedBg} border=${m.tonedBorder}`);
+    ok('a toned node carries its tone on the BORDER and keeps the plain surface — no fill',
+      m.tonedBg === m.plainBg && m.tonedBorder !== m.plainBorder && m.tonedBorder === 'rgb(251, 191, 36)',
+      `plainBg=${m.plainBg} tonedBg=${m.tonedBg} plainBorder=${m.plainBorder} tonedBorder=${m.tonedBorder}`);
 
     await page.screenshot({ path: join(SHOTS, 'chat-html-narrow-tr.png'), fullPage: true });
   } finally {
@@ -1339,6 +1360,49 @@ body{background:#131318;margin:0;padding:20px}`;
       ok(`a dc-compare still reads at a ${w}px pane`, m.per >= 40,
         `${m.cols} column(s), ${m.per} characters a line`);
     }
+
+    // ── AND SO DOES EVERY OTHER TWO-UP, which is the half F8 left open ────────────────
+    // F8 raised `.dc-compare` to the measured floor and stopped there. `dc-grid--2` held
+    // two rigid columns down to 340px, so the same unreadable ribbon was one class away:
+    // the owner's 430px pane gave two ~200px cards reading 18-25 characters a line, and a
+    // `dc-kv` inside one of them got a 76px value column breaking every two words (owner
+    // screenshot 2026-09-11, reproduced here). Same widths, same floor, same measure —
+    // plus the kv's own, which is lower on purpose: a kv value is a fragment, not prose.
+    const KV = '<div class="dc-card"><div class="dc-card-title">Baslik</div>'
+      + '<dl class="dc-kv"><dt>Punto</dt><dd>12 15px, bold</dd>'
+      + '<dt>Kontrast</dt><dd id="kv">14,78 koyu ve 17,38 acik olarak olculdu</dd>'
+      + '<dt>Is yokken</dt><dd>12px etiket olarak kaldi</dd></dl></div>';
+    const PROSE = '<div class="dc-card"><div class="dc-card-title">Filtre ekseni</div>'
+      + '<p class="dc-p" id="gp">Yeni ad uc filtreyi tek satira sigdirmiyordu. Eksen adi '
+      + 'asla kirpilmaz, her eksene kendi icerigi kadar taban verdim, ve sigmayinca '
+      + 'kuculmek yerine satir sariyor. Yedi genislikte de kirpma yok, 375 piksellik '
+      + 'panelde iki satira dusuyor ama hicbir yerde okunmaz hale gelmiyor.</p></div>';
+    for (const w of [960, 760, 620, 534, 460, 380]) {
+      await page.setViewportSize({ width: w, height: 900 });
+      await page.setContent(`<!doctype html><html lang="tr"><style>${tokens}\n${kitCss}</style>`
+        + `<body><div class="dc-doc"><div class="dc-grid dc-grid--2" id="g">${KV}${PROSE}</div></div></body></html>`);
+      await page.waitForTimeout(120);
+      const g = await page.evaluate(() => {
+        const per = (id) => {
+          const el = document.getElementById(id);
+          const r = document.createRange();
+          r.selectNodeContents(el);
+          const lines = new Set([...r.getClientRects()].map((x) => Math.round(x.top))).size;
+          return Math.round((el.textContent || '').trim().length / lines);
+        };
+        return {
+          cols: new Set([...document.getElementById('g').children]
+            .map((c) => Math.round(c.getBoundingClientRect().left))).size,
+          prose: per('gp'),
+          kv: per('kv'),
+          kvBox: Math.round(document.getElementById('kv').getBoundingClientRect().width),
+        };
+      });
+      ok(`a dc-grid--2 of cards still reads at a ${w}px pane`, g.prose >= 40,
+        `${g.cols} column(s), ${g.prose} characters a line`);
+      ok(`\u2026and its dc-kv value is not crushed at ${w}px`, g.kv >= 32,
+        `value column ${g.kvBox}px, ${g.kv} characters a line`);
+    }
     await page.setViewportSize({ width: 900, height: 500 });
 
     await page.setContent(`<!doctype html><style>${tokens}\n${kitCss}</style>
@@ -1377,7 +1441,7 @@ try {
   }
   rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
   await runLostReport(base, report);
-  await runFlowWrap(report);
+  await runGraph(report);
   rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
   await runTypography(base, report);
   await runNarrowAndTurkish(report);

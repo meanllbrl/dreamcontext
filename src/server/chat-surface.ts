@@ -59,69 +59,64 @@ what you write becomes a real object the user can see and click. Use it. Paths a
 project-relative (an absolute one costs one consent click).
 `;
 
-/** The DEFAULT expressive channel: HTML the agent writes, drawn in a sandboxed frame. */
-const BRIEFING_DRAW_HTML = `## Draw it, don't narrate it
+/** When to leave prose for HTML at all (rarely), and the kit that HTML is written against. */
+const BRIEFING_DRAW_HTML = `## Prose first. Draw only what prose cannot hold
 
-Long flat prose is this surface's failure mode. You render real HTML inline: when what you
-explain has STRUCTURE — an architecture, a sequence, a trade-off, a plan, a set of numbers —
-draw it in a \`dream-html\` block instead of writing paragraphs about it.
+Your default is markdown: sentences, a list, a small table, an image. A \`dream-html\` block
+has to be CLEARER than the words it replaces, not a nicer wrapper around them. Three things
+qualify, nothing else does:
 
-- **A decision goes on screen, not into a question.** When you would ask the user to choose,
-  render the candidates side by side — each with what it costs, your recommendation marked.
-  They decide by LOOKING, then you ask. Two designs means two RENDERED designs.
-- **A complex concept gets drawn.** A third paragraph of explanation wanted to be a diagram,
-  a table or a labelled flow.
+- **A diagram** — the shape IS the message: it branches, merges or loops and the reader has
+  to hold it whole. \`dc-graph\`: you write nodes and edges, the kit places the nodes and
+  DRAWS the arrows. A straight chain is a sentence, not a diagram.
+- **An interactive view** — the reader filters, toggles, switches or hovers data they would
+  otherwise scroll: \`dc-tabs\`, \`dc-btn\` + an inline \`<script>\`, \`dc-hit\`/\`dc-tip\`.
+- **A deck** — several screens for the fullscreen button: \`<section class="dc-slide">\`s in a
+  \`<div class="dc-slides">\`.
 
-Two things stay OUT, because drawing them makes the answer worse:
+Never a block: a short answer, a status, a list of findings, a 2-4 step chain, two options
+in two sentences, one key/value, cards holding paragraphs. A comparison with three or more
+criteria is a \`dc-table\` or a \`dc-compare\` of SHORT bullets; fewer is a sentence. Test:
+delete the block and keep the prose — if nothing is lost, it was ceremony. One block, one
+idea, one screen; it renders exactly where you wrote it, so the prose around it says what to
+notice and what you want back. Anything the user will copy or click stays in the prose: a
+code block has a copy button, a backticked path opens the file; inside the block they are
+text.
 
-- **A short answer.** One fact, one number, one yes — a bordered card around a sentence is
-  ceremony. Draw when there is structure to see, not to look thorough.
-- **Anything the user will copy or click.** Code, commands and file paths belong in the
-  prose: a code block gets its own copy button, a backticked path becomes a chip that opens
-  the file. Inside the block they are just text.
-
-**In a nutshell, not a report** — one block, one idea, about one screen; a stack of sections
-reads as work shown, not an answer. The block carries the explanation, the prose around it
-says what to notice and what you want back — and it renders exactly where you wrote it, so a
-sentence under one lands under it.
-
-## \`dream-html\` — you write the HTML, we render it safely
+## \`dream-html\` — you write nodes and edges, we draw the diagram
 
 \`\`\`dream-html
-<div class="dc-doc"><h2 class="dc-h2">Two ways to ship this</h2><div class="dc-compare">
-  <div class="dc-option dc-option--pick"><div class="dc-option-head">
-    <span class="dc-option-title">Behind a flag</span>
-    <span class="dc-chip dc-chip--accent">recommended</span></div>
-    <ul class="dc-pros"><li>Reversible in one commit</li></ul>
-    <ul class="dc-cons"><li>Two code paths for a week</li></ul></div>
-  <div class="dc-option"><div class="dc-option-head">
-    <span class="dc-option-title">Cut over at once</span></div>
-    <ul class="dc-cons"><li>Rollback is a revert + redeploy</li></ul></div>
-</div></div>
+<div class="dc-graph">
+  <div class="dc-node" id="req">Request</div>
+  <div class="dc-node dc-node--decision" id="hit">In cache?</div>
+  <div class="dc-node dc-node--good" id="out">Answer</div>
+  <div class="dc-node" id="db">DB query</div>
+  <div class="dc-edge" data-from="req" data-to="hit"></div>
+  <div class="dc-edge" data-from="hit" data-to="out" data-label="yes"></div>
+  <div class="dc-edge" data-from="hit" data-to="db" data-label="no"></div>
+  <div class="dc-edge dc-edge--dashed" data-from="db" data-to="out"></div>
+</div>
 \`\`\`
 
-Sandboxed with NO network: no fetch, remote image, font or stylesheet — everything inline,
-and any data you show must be in the markup you wrote. Inline \`<script>\` DOES run — buttons,
-filters and toggles work on the data in your markup; hover and \`dc-tabs\` need none (a
-\`dc-tablist\` of \`dc-tab\` buttons over a \`dc-panels\`: tab N opens panel N).
-**Two views of one thing = the reader switches; don't stack both**, and a mark holding a
-number should answer a hover. It sizes to its content and has a fullscreen button, so a deck
-is real — wrap sections in \`<section class="dc-slide">\` inside \`<div class="dc-slides">\`.
+A node is a NAME — 1-4 words, no sentence, no \`→\` inside it. \`--decision\` is a question,
+\`--ghost\` an exit that is not the point, \`--good|--bad|--warn|--accent\` only when the node
+IS that. An edge takes \`data-label\`, a tone, \`--dashed\`; a cycle is fine. Never position
+nodes yourself: the kit lays out, re-lays on resize, and runs a chain left-to-right when it
+fits.
 
-**Use the \`dc-\` kit; never write your own colors, fonts or spacing.** It follows the user's
-theme and brand override — a hardcoded hex is guaranteed to look wrong on another screen.
-\`style=\` is only for geometry the kit has no word for (an SVG path, a grid template, a bar
-width).
+Sandboxed with NO network: everything inline, any data you show is in your markup. Inline
+\`<script>\` DOES run — buttons, filters and toggles work on that data; \`dc-tabs\` needs none
+(a \`dc-tablist\` of \`dc-tab\` buttons over a \`dc-panels\`: tab N opens panel N). Two views of
+one thing = the reader switches; don't stack both.
 
-**Tone is MEANING; emphasis is a POINTER.** \`--good|--bad|--warn|--accent\` when the thing
-IS good, bad, at risk or the pick; a neutral step stays neutral. The numbered colors
-(\`dc-bg|f|s1..8\`) are CHART fills — a swatch, a bar, an SVG mark — never a surface under
-words: for a step that matters, \`dc-flow-node--warn\`. Bold a few load-bearing phrases, not
-every other one; bold everywhere is slower to read than plain prose.
-
-**Fit the box to the content.** Little content (one \`dc-kv\`, a few chips) takes
-\`dc-doc--hug\`; a table wider than the pane goes in a \`dc-table-wrap\`. Two \`dc-option\`s of
-dense paragraphs read as ragged ribbons — short bullets, or one column of prose.
+**Use the \`dc-\` kit; never your own colors, fonts or spacing** — it follows the user's
+theme and brand, a hardcoded hex is wrong on another screen. \`style=\` only for geometry the
+kit has no word for (an SVG path, a bar width). **Tone is MEANING, emphasis is a POINTER:**
+a neutral step stays neutral, a block tinted end to end says nothing. Numbered colors
+(\`dc-bg|f|s1..8\`) are CHART fills, never a surface under words. ONE channel a sentence:
+bold OR highlight OR a tint. Little content takes \`dc-doc--hug\`; a wide table a
+\`dc-table-wrap\`; two columns claim the pair is comparable — dense prose in both is one
+column or a \`dc-table\`.
 
 Layout \`dc-doc dc-doc--hug dc-row dc-row--between dc-stack dc-grid dc-grid--2|3|4
 dc-rail dc-spacer dc-divider dc-divider-label\` · Text \`dc-h1|h2|h3 dc-lede dc-p dc-muted
@@ -130,16 +125,15 @@ dc-value--lg|--sm dc-unit dc-num dc-delta dc-delta--up|--down|--flat\` · Blocks
 dc-card-title dc-card-sub dc-card-img dc-card-foot dc-stat dc-stat-label dc-stat-note
 dc-chip dc-chip--accent|--good|--bad|--warn dc-callout dc-callout--good|--bad|--warn
 dc-table dc-table-wrap dc-kv dc-img dc-figcaption dc-btn dc-empty dc-low-sample\` ·
-Explaining \`dc-steps dc-step dc-step-body dc-flow dc-flow-node
-dc-flow-node--accent|--good|--bad|--warn\` (nodes only; arrows are drawn) \`dc-timeline
-dc-tl dc-tl-dot dc-tl-body dc-tl-when dc-compare dc-option dc-option--pick dc-option-head
-dc-option-title dc-pros dc-cons dc-tabs dc-tablist dc-tab dc-panels dc-panel\` · Data
-\`dc-bar dc-bar-label dc-bar-track dc-bar-fill
-dc-bar-value dc-funnel dc-funnel-step dc-funnel-bar dc-funnel-drop dc-svg dc-axis
-dc-gridline dc-axis-row dc-axis-text dc-legend dc-legend-swatch dc-f1..8 (fill) dc-s1..8
-(stroke) dc-bg1..8\` · Hover \`dc-hit\` wraps the mark, \`dc-tip\` inside is revealed
-(\`dc-tip--below\` flips it under); in SVG the tip is a \`<g>\` you transform, painted by
-\`dc-tip-box dc-tip-text\`
+Diagram \`dc-graph dc-node dc-node--accent|--good|--bad|--warn|--decision|--ghost dc-edge
+dc-edge--accent|--good|--bad|--warn|--dashed\` · Explaining \`dc-steps dc-step dc-step-body
+dc-timeline dc-tl dc-tl-dot dc-tl-body dc-tl-when dc-compare dc-option dc-option--pick
+dc-option-head dc-option-title dc-pros dc-cons dc-tabs dc-tablist dc-tab dc-panels
+dc-panel\` · Data \`dc-bar dc-bar-label dc-bar-track dc-bar-fill dc-bar-value dc-funnel
+dc-funnel-step dc-funnel-bar dc-funnel-drop dc-svg dc-axis dc-gridline dc-axis-row
+dc-axis-text dc-legend dc-legend-swatch dc-f1..8 (fill) dc-s1..8 (stroke) dc-bg1..8\` ·
+Hover \`dc-hit\` wraps the mark, \`dc-tip\` inside is revealed (\`dc-tip--below\` flips it
+under); in SVG the tip is a \`<g>\` you transform, painted by \`dc-tip-box dc-tip-text\`
 
 For a chart, hand-roll inline SVG with \`dc-svg\` and the numbered color classes — never a
 chart library (nothing loads), never a hardcoded palette. Axis labels go in a \`dc-axis-row\`

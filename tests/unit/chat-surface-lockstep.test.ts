@@ -204,14 +204,78 @@ describe('CHAT_SURFACE_BRIEFING <-> dc- kit lockstep', () => {
       .toEqual([]);
   });
 
-  it('names the classes this pass added, or they are unreachable', () => {
-    // The kit grew three affordances for the owner's 2026-09-02 look report (a tone for a
-    // flow node that MEANS something, a scroll for a too-wide table, a hug for a small
-    // block). A kit class no briefing names is a class no agent will ever type.
+  it('names the diagram vocabulary, or the one thing HTML is now FOR is unreachable', () => {
+    // The kit's flow became a real diagram engine on 2026-09-11 (owner: "gerçekten bir flow
+    // diagram gibi … elementler arasında ok var"): nodes + edges the kit lays out and draws.
+    // A kit class no briefing names is a class no agent will ever type — and this is the
+    // class the whole prose-first rule points the agent at when a drawing IS warranted.
     const named = new Set(namedClasses());
-    for (const c of ['dc-doc--hug', 'dc-table-wrap', 'dc-flow-node--warn', 'dc-flow-node--good']) {
+    for (const c of ['dc-graph', 'dc-node', 'dc-node--decision', 'dc-node--ghost', 'dc-node--bad',
+      'dc-edge', 'dc-edge--dashed', 'dc-edge--good', 'dc-doc--hug', 'dc-table-wrap']) {
       expect(named, c).toContain(c);
     }
+  });
+
+  it('no longer names the retired flow — a chain is a sentence, and a diagram is dc-graph', () => {
+    // `.dc-flow` stays DEFINED (old transcripts render, as a graph with the chain implied)
+    // but is not offered: offering it is how the "↓ ↓ ↓ stack of chips" kept coming back.
+    expect(namedClasses()).not.toContain('dc-flow');
+    expect(namedClasses()).not.toContain('dc-flow-node');
+    expect(KIT.has('dc-flow'), 'the kit must keep rendering old transcripts').toBe(true);
+  });
+});
+
+/**
+ * THE DEFAULT IS PROSE (owner, 2026-09-11: "sistem her mesajda … html'i kullanıyor …
+ * gerçekten gerektiğinde kullanalım"). The 0.26.0 briefing opened with "Long flat prose is
+ * this surface's failure mode" and sent every structured answer into a block; seven
+ * screenshots later the verdict was that the blocks were harder to read than the prose
+ * they replaced. These pin the inversion so a future edit cannot quietly restore the
+ * draw-by-default sentence.
+ */
+describe('CHAT_SURFACE_BRIEFING — prose first, HTML only where it beats prose', () => {
+  it('opens the HTML section with prose as the default, and never calls prose the failure mode', () => {
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/## Prose first/);
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/Your default is markdown/);
+    expect(CHAT_SURFACE_BRIEFING).not.toMatch(/prose is this surface's failure mode/i);
+    expect(CHAT_SURFACE_BRIEFING).not.toMatch(/Draw it, don't narrate it/);
+  });
+
+  it('names exactly the three things that earn a block: a diagram, an interactive view, a deck', () => {
+    const section = CHAT_SURFACE_BRIEFING.slice(
+      CHAT_SURFACE_BRIEFING.indexOf('## Prose first'),
+      CHAT_SURFACE_BRIEFING.indexOf('## `dream-html`'),
+    );
+    expect(section).toMatch(/\*\*A diagram\*\*/);
+    expect(section).toMatch(/\*\*An interactive view\*\*/);
+    expect(section).toMatch(/\*\*A deck\*\*/);
+    // …and says what is NOT one, by name, so the rule is checkable against an answer.
+    expect(section).toMatch(/Never a block:/);
+    for (const not of ['a short answer', 'a 2-4 step chain', 'cards holding paragraphs']) {
+      expect(section, not).toContain(not);
+    }
+    // The deletion test is the operational half of the rule.
+    expect(section).toMatch(/delete the block and keep the prose/);
+  });
+
+  it('states that a straight chain is a sentence — the shape the chip-row kept being drawn for', () => {
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/A straight chain is a sentence, not a diagram/);
+  });
+
+  it('shows a dc-graph as THE dream-html example, with edges the kit draws', () => {
+    const m = /```dream-html\r?\n([\s\S]*?)\r?\n```/.exec(CHAT_SURFACE_BRIEFING);
+    expect(m, 'the briefing shows no dream-html example').not.toBeNull();
+    const html = m![1];
+    expect(html).toContain('class="dc-graph"');
+    expect(html).toMatch(/class="dc-edge[^"]*" data-from="[a-z]+" data-to="[a-z]+"/);
+    expect(html).toContain('data-label=');
+    // Every id an edge names is a node in the same example — the example must itself lay out.
+    const ids = new Set([...html.matchAll(/class="dc-node[^"]*" id="([a-z]+)"/g)].map((x) => x[1]));
+    for (const [, ref] of html.matchAll(/data-(?:from|to)="([a-z]+)"/g)) expect(ids, ref).toContain(ref);
+  });
+
+  it('tells the author never to position nodes — the kit lays out and re-lays', () => {
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/Never position\s+nodes yourself/);
   });
 });
 

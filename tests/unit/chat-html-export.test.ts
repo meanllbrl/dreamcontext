@@ -47,7 +47,9 @@ describe('the exported document', () => {
     // The one thing that would betray it: a URL it expects to fetch.
     expect(doc).not.toMatch(/<link[^>]+href/i);
     expect(doc).not.toMatch(/@import/);
-    expect(doc).not.toMatch(/https?:\/\//);
+    // The SVG namespace the diagram engine hands to createElementNS is an IDENTIFIER, not a
+    // fetch — no request is ever made for it — so it is the one URL-shaped string allowed.
+    expect(doc.replace(/http:\/\/www\.w3\.org\/2000\/svg/g, '')).not.toMatch(/https?:\/\//);
   });
 
   it('never carries the height bridge — there is no parent to report to', () => {

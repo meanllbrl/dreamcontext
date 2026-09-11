@@ -200,6 +200,20 @@ body {
 .dc-grid--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .dc-grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .dc-grid--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+/* A GRID CARRYING PROSE OBEYS THE SAME MEASURED FLOOR A dc-compare DOES.
+   F8 measured that floor and raised `.dc-compare` to it, and left the identical trap open
+   one class over: `dc-grid--2` held two rigid columns down to 340px, so a 430px pane gave
+   two ~200px cards reading 18-25 characters a line — the exact zone F8 had just declared
+   unreadable, entered through a different door (owner screenshot 2026-09-11, reproduced
+   and measured). Stat tiles and chips are NOT prose and keep the tighter thresholds
+   below, so the discriminator is the content: a cell that holds a paragraph, a list, a
+   card or an option gets the 380px floor. */
+.dc-grid--2:has(.dc-p), .dc-grid--2:has(.dc-list),
+.dc-grid--2:has(> .dc-card), .dc-grid--2:has(> .dc-option),
+.dc-grid--3:has(.dc-p), .dc-grid--3:has(.dc-list),
+.dc-grid--3:has(> .dc-card), .dc-grid--3:has(> .dc-option) {
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+}
 
 /* The horizontally scrolling shelf — what `page`'s rail was for: six things read
    side by side instead of stacked down the screen. */
@@ -236,6 +250,10 @@ body {
   border-radius: var(--radius-lg);
   background: var(--color-bg-secondary);
   min-width: 0;
+  /* A box inside a card sizes against the CARD, not the pane. Without this the `@container`
+     rules below resolve against the body and a dc-kv in a 200px card believes it has 430px
+     to lay out in — which is precisely how the value column got crushed. */
+  container-type: inline-size;
 }
 .dc-card--flat { background: transparent; }
 .dc-card--accent { border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); }
@@ -323,9 +341,21 @@ body {
 .dc-table-wrap::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
 
 /* Key/value pairs — a spec list without a table's ceremony. */
-.dc-kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 0.929rem; }
+/* The label column takes what it needs and the value column takes the rest — which is a
+   floor of ZERO. Measured in the owner's own screenshot: a 76px value column breaking
+   "14,78 koyu . 17,38 acik" every two words at 12 characters a line. The value gets the
+   remainder only while the remainder is still a line; below that the pair stacks, label
+   over value, which is what a definition list does on a phone anyway. Threshold measured
+   at 360px of CONTAINER (the card, see .dc-card): under it the value cannot hold the ~32
+   characters a fragment needs — a lower bar than the 40 F8 set for running prose, and
+   deliberately so, because a kv value is a fragment and not a paragraph. */
+.dc-kv { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 4px 14px; font-size: 0.929rem; }
 .dc-kv dt { color: var(--color-text-tertiary); }
 .dc-kv dd { margin: 0; color: var(--color-text); }
+@container (max-width: 360px) {
+  .dc-kv { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .dc-kv dd + dt { margin-top: 8px; }
+}
 
 /* ═══ Bar row — the BarList idiom. Set the fill's width inline. ═══ */
 
@@ -342,7 +372,7 @@ body {
 .dc-funnel-bar { height: 30px; border-radius: var(--radius-sm); background: var(--chart-1); display: flex; align-items: center; padding: 0 10px; color: var(--color-accent-text, #fff); font-weight: 600; font-size: 0.893rem; min-width: 44px; }
 .dc-funnel-drop { font-size: 0.857rem; color: var(--color-text-tertiary); }
 
-/* ═══ Steps / flow — how to explain a PROCESS instead of narrating it ═══ */
+/* ═══ Steps — a numbered procedure ═══ */
 
 .dc-steps { display: flex; flex-direction: column; gap: 10px; counter-reset: dc-step; }
 .dc-step { display: flex; gap: 12px; align-items: flex-start; }
@@ -361,59 +391,105 @@ body {
 }
 .dc-step-body { min-width: 0; }
 
-/* Left-to-right pipeline: boxes the kit joins with arrows. Write NODES ONLY — every node
-   after the first draws its own leading arrow, so when the row wraps the arrow travels
-   WITH the node it points at and a continuation row opens with "→ next step". The flat
-   `.dc-flow-arrow` spans this used to take are absorbed (hidden, superseded by the drawn
-   arrow): as free flex items they could wrap AWAY from their node, leaving a trailing →
-   pointing at nothing over a full-bleed orphan with no row gap (owner report 08-27). */
-.dc-flow { display: flex; align-items: stretch; gap: 10px 0; flex-wrap: wrap; }
-.dc-flow-node {
-  /* Hugs its label — a node that stretches to fill the row it wrapped onto reads as a
-     different kind of thing than the boxes before it. */
-  flex: 0 1 auto;
+/* ═══ Graph — a DIAGRAM, not a row of chips ═══
+
+   The kit's flow used to be a list wearing arrows: chips in a row that wrapped, then a
+   top-down stack with a "↓" glyph between rules. Neither is a diagram. A diagram shows
+   SHAPE — it branches here, two paths merge there, this loops back — and shape only appears
+   when a node is PLACED by its relations and the arrow is DRAWN between it and the next
+   (owner, 2026-09-11: "gerçekten bir flow diagram gibi … elementler arasında ok var").
+
+   So the author writes DATA and the kit draws it:
+
+     <div class="dc-graph">
+       <div class="dc-node" id="a">Sinyal</div>
+       <div class="dc-node dc-node--decision" id="b">Komşu var mı?</div>
+       <div class="dc-node dc-node--ghost" id="c">Katlanır</div>
+       <div class="dc-edge" data-from="a" data-to="b"></div>
+       <div class="dc-edge" data-from="b" data-to="c" data-label="var"></div>
+     </div>
+
+   chat-html-graph.js (in the srcdoc head as KIT_GRAPH) ranks the nodes by their edges,
+   breaks cycles (drawn dashed), routes long edges BETWEEN nodes, orders each rank to cut
+   crossings, measures every node at its natural size, places them and draws each edge as
+   one smooth SVG path with an arrowhead and its label at the midpoint. A chain that fits
+   the pane runs left to right; anything else runs top down. It re-lays on width change, so
+   one block is right in a 380px pane and in the fullscreen deck — nothing wraps, ever.
+
+   Before the script runs, or when an edge names no node, the nodes are plain inline chips
+   in written order: a legible degradation, never a blank.
+
+   INK. A node is a NAME in a thin box; tone is a border colour, not a fill — the filled
+   slabs of the previous cut were rejected ("bu kadar fazla renk kullanımı da iyi değil").
+   The arrows carry the meaning, so they are the darkest ink after the text.
+
+   `.dc-flow` / `.dc-flow-node` are the retired names for the same thing: an old
+   transcript renders as a graph with the chain implied by written order, arrows included.
+   `.dc-flow-arrow` (older still) stays absorbed. */
+.dc-graph, .dc-flow {
   position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px 14px;
   min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border);
+}
+.dc-graph--laid { display: block; }
+.dc-node, .dc-flow-node {
+  position: relative;
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: 220px;
+  padding: 6px 12px;
+  border: 1.5px solid var(--dc-tone, var(--color-border-hover));
   border-radius: var(--radius-md);
-  background: var(--color-bg-secondary);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
   font-size: 0.893rem;
-}
-.dc-flow-node ~ .dc-flow-node { margin-left: 30px; }
-.dc-flow-node ~ .dc-flow-node::before {
-  content: "\2192";
-  position: absolute;
-  right: 100%;
-  top: 50%;
-  width: 30px;
-  transform: translateY(-50%);
+  line-height: 1.35;
   text-align: center;
-  color: var(--color-text-tertiary);
-  font-size: 1.071rem;
-  line-height: 1;
+  overflow-wrap: break-word;
 }
-.dc-flow-arrow { display: none; }
-/* A step that MEANS something — the failure, the branch that pays off — tinted the same way
-   a callout is: a 10% surface under normal text, never a solid fill with prose on top. The
-   modifier exists so "this node matters" has a legitimate class; without one the reach is
-   for `dc-bg3`, which is a chart fill, and dark-red body text on saturated orange is what
-   that produced (owner screenshot 2026-09-02). Tone is MEANING here, not decoration. */
-.dc-flow-node--accent {
-  border-color: color-mix(in srgb, var(--color-accent) 38%, var(--color-border));
-  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-secondary));
+.dc-graph--laid > .dc-node, .dc-graph--laid > .dc-flow-node { position: absolute; margin: 0; }
+/* A rank that cannot fit the pane even one node per line shrinks its labels a step before
+   the engine splits the rank into lines. */
+.dc-graph--tight > .dc-node, .dc-graph--tight > .dc-flow-node {
+  max-width: 150px;
+  padding: 5px 9px;
+  font-size: 0.857rem;
 }
-.dc-flow-node--good {
-  border-color: color-mix(in srgb, var(--color-success) 38%, var(--color-border));
-  background: color-mix(in srgb, var(--color-success) 10%, var(--color-bg-secondary));
-}
-.dc-flow-node--bad {
-  border-color: color-mix(in srgb, var(--color-error) 38%, var(--color-border));
-  background: color-mix(in srgb, var(--color-error) 10%, var(--color-bg-secondary));
-}
-.dc-flow-node--warn {
-  border-color: color-mix(in srgb, var(--color-warning) 38%, var(--color-border));
-  background: color-mix(in srgb, var(--color-warning) 10%, var(--color-bg-secondary));
+.dc-node--accent, .dc-flow-node--accent { --dc-tone: var(--color-accent); }
+.dc-node--good, .dc-flow-node--good { --dc-tone: var(--color-success); }
+.dc-node--bad, .dc-flow-node--bad { --dc-tone: var(--color-error); }
+.dc-node--warn, .dc-flow-node--warn { --dc-tone: var(--color-warning); }
+/* A question — the node two labelled edges leave from. */
+.dc-node--decision { border-radius: 999px; padding-left: 16px; padding-right: 16px; }
+/* An exit that is not the point — the branch that ends in "nothing happens". */
+.dc-node--ghost { border-style: dashed; background: transparent; color: var(--color-text-secondary); }
+.dc-edge, .dc-flow-arrow { display: none; }
+.dc-graph-svg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.dc-graph-svg path { fill: none; stroke: var(--color-text-tertiary); stroke-width: 1.5; }
+.dc-graph-svg marker path { fill: var(--color-text-tertiary); stroke: none; }
+.dc-graph-svg path.dc-edge--accent { stroke: var(--color-accent); }
+.dc-graph-svg path.dc-edge--good { stroke: var(--color-success); }
+.dc-graph-svg path.dc-edge--bad { stroke: var(--color-error); }
+.dc-graph-svg path.dc-edge--warn { stroke: var(--color-warning); }
+.dc-graph-svg marker.dc-arrow--accent path { fill: var(--color-accent); }
+.dc-graph-svg marker.dc-arrow--good path { fill: var(--color-success); }
+.dc-graph-svg marker.dc-arrow--bad path { fill: var(--color-error); }
+.dc-graph-svg marker.dc-arrow--warn path { fill: var(--color-warning); }
+.dc-graph-svg path.dc-edge--dashed, .dc-graph-svg path.dc-edge--back { stroke-dasharray: 5 4; }
+.dc-edge-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: 0.786rem;
+  line-height: 1.6;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 /* ═══ Timeline ═══ */
@@ -453,6 +529,7 @@ body {
   border-radius: var(--radius-lg);
   background: var(--color-bg-secondary);
   min-width: 0;
+  container-type: inline-size;
 }
 /* The one being recommended — a tinted surface and a heavier border, never a fill. */
 .dc-option--pick {
