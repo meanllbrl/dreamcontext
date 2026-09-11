@@ -78,5 +78,21 @@ export class VoiceGate {
   }
 }
 
+/**
+ * The focus route spends no money — and takes a gate anyway, because "costs nothing" was the
+ * wrong axis. It SPAWNS PROCESSES (`osascript`, up to four per hold) and it MUTATES THE
+ * OWNER'S MACHINE: pausing their music player, moving their system volume. The threat model
+ * this file's header describes — an already-authenticated peer on the LAN, unstopped by the
+ * process-level guards — reaches this route exactly as easily as it reaches the paid ones,
+ * and a `release`/`hold` loop is a process-spawn and audio-state churn with no ceiling.
+ *
+ * Wide on purpose: the client heart-beats one hold per spoken chunk, and a long answer across
+ * two panes is legitimately hundreds of calls a minute. This is a ceiling on abuse, not a
+ * budget — the ceiling on how long the machine may stay silenced is `MAX_SILENCE_MS` in
+ * `audioFocus.ts`, because a patient caller stays under any rate limit by definition.
+ */
+export const FOCUS_LIMITS: GateLimits = { concurrency: 4, perWindow: 600, windowMs: 60_000 };
+
 export const sttGate = new VoiceGate(STT_LIMITS);
 export const ttsGate = new VoiceGate(TTS_LIMITS);
+export const focusGate = new VoiceGate(FOCUS_LIMITS);

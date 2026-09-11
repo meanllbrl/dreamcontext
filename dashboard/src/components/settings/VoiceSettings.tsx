@@ -34,8 +34,22 @@ interface VoiceStatus {
   pushToTalkMode: 'hold' | 'toggle';
   speech: boolean;
   speechRate: number;
+  musicPause: boolean;
+  musicDuck: number;
+  /** Whether the SERVER's platform can control the machine's audio at all. The dashboard
+   *  cannot infer this — the AppleScript runs server-side — so it is reported. */
+  musicControl: boolean;
   desktop: boolean;
 }
+
+/** Duck depths, as the owner thinks of them rather than as the code stores them. `1` is the
+ *  off switch: one number instead of a number plus a toggle that can contradict it. */
+const DUCKS = [
+  { value: 1, label: 'Leave it alone' },
+  { value: 0.5, label: 'Half' },
+  { value: 0.35, label: 'Quiet (default)' },
+  { value: 0.2, label: 'Very quiet' },
+] as const;
 
 /** The voices the speech endpoint offers. The JARVIS character does NOT come from this list —
  *  there is no British male voice — it comes from the `instructions` parameter the route
@@ -388,6 +402,41 @@ export function VoiceSettings() {
               <option value={String(status.speechRate)}>{`${status.speechRate}x`}</option>
             )}
             {RATES.map((r) => <option key={r.value} value={String(r.value)}>{r.label}</option>)}
+          </select>
+        }
+      />
+
+      <SettingRow
+        title="Pause music while speaking"
+        hint="Pauses Spotify for the length of an answer, then puts it back."
+        more={'Asked precisely rather than blindly: the player is queried first and paused only if it is actually playing, so a Spotify that is closed is never launched and a track that is already stopped is never "resumed" afterwards. Only a player this app paused is resumed, and only if it is still paused — if you press play yourself during an answer, that is your answer and nothing overrides it. The first answer fires a one-time macOS permission prompt for controlling Spotify; refuse it and this simply does nothing, with the answer still read normally. Apple Music is deliberately not included: adding a player means prompting you about an app you do not use.'}
+        labelled
+        control={
+          <Toggle
+            label="Pause music while speaking"
+            checked={status.musicPause}
+            disabled={saving || !status.musicControl}
+            onChange={(next) => { void save({ musicPause: next }); }}
+          />
+        }
+      />
+
+      <SettingRow
+        title="Everything else"
+        hint="What to do about audio that cannot be paused precisely — a browser tab, typically."
+        more={'macOS gives an app one lever over audio it does not own: the system output volume. That lever is indiscriminate — it lowers this app’s voice by exactly as much — so the duck is paired with a compensating boost on the spoken answer, with a limiter behind it. That compensation treats the volume scale as linear in loudness, which is an approximation and the reason the depth is a choice rather than a constant: a deeper duck is one that cannot be fully given back. Used ONLY when no known player was playing, so an answer that paused Spotify never also touches your volume. The volume is restored only if it is still the value this app set.'}
+        control={
+          <select
+            className="settings-text-input"
+            aria-label="Duck other audio"
+            value={String(status.musicDuck)}
+            disabled={saving || !status.musicControl}
+            onChange={(e) => { void save({ musicDuck: Number(e.target.value) }); }}
+          >
+            {!DUCKS.some((d) => d.value === status.musicDuck) && (
+              <option value={String(status.musicDuck)}>{`${Math.round(status.musicDuck * 100)}%`}</option>
+            )}
+            {DUCKS.map((d) => <option key={d.value} value={String(d.value)}>{d.label}</option>)}
           </select>
         }
       />

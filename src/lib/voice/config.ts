@@ -90,6 +90,21 @@ export interface VoiceConfig {
   /** Playback rate for spoken answers, applied to the audio element rather than sent
    *  upstream — a rate the client owns cannot be a request that fails. */
   speechRate?: number;
+  /**
+   * Whether a known music player is PAUSED while an answer is spoken, and resumed after.
+   *
+   * Default on: the owner asked for it, and the mode's whole proposition is not reaching for
+   * the keyboard. The cost of the default is a one-time macOS Automation consent dialog on
+   * the first answer, which `NSAppleEventsUsageDescription` exists to explain.
+   */
+  musicPause?: boolean;
+  /**
+   * How far the machine's OUTPUT VOLUME is lowered when nothing we can address precisely is
+   * playing — a browser tab, typically. `1` means never. See `audioFocus.ts` for why this
+   * number is paired with a compensating gain on our own playback: the system volume is the
+   * only lever macOS gives a non-sandboxed app, and it lowers OUR voice by the same amount.
+   */
+  musicDuck?: number;
 }
 
 /** The default voice. A deep one — the closest this provider gets to the character. */
@@ -110,6 +125,23 @@ export const DEFAULT_PUSH_TO_TALK_MODE: PushToTalkMode = 'hold';
 export const DEFAULT_SPEECH_RATE = 1;
 export const MIN_SPEECH_RATE = 0.75;
 export const MAX_SPEECH_RATE = 1.75;
+
+/** Default duck depth: audible-but-under, and chosen against the 3x compensating-gain
+ *  ceiling in `audioFocus.ts` rather than for roundness — a deeper duck is one we could not
+ *  fully give back to our own voice without living in a limiter. */
+export const DEFAULT_MUSIC_DUCK = 0.35;
+
+/** Music ducking is OFF-by-value rather than off-by-flag: `1` is "do not duck", which means
+ *  the setting is one number instead of a number plus a toggle that can disagree with it. */
+export const MIN_MUSIC_DUCK = 0.1;
+export const MAX_MUSIC_DUCK = 1;
+
+/** Clamp a duck depth. Out of range is CLAMPED, like the speech rate and unlike the hotkey:
+ *  every value in range still produces working audio. */
+export function clampMusicDuck(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_MUSIC_DUCK;
+  return Math.min(MAX_MUSIC_DUCK, Math.max(MIN_MUSIC_DUCK, Math.round(value * 100) / 100));
+}
 
 /** Clamp a rate into the offered range. Out-of-range input is CLAMPED rather than refused —
  *  unlike the hotkey, every value here still produces working audio. */
@@ -154,6 +186,8 @@ export function readVoiceConfig(home: string = homedir()): VoiceConfig {
     }
     if (typeof raw.speech === 'boolean') out.speech = raw.speech;
     if (typeof raw.speechRate === 'number') out.speechRate = clampSpeechRate(raw.speechRate);
+    if (typeof raw.musicPause === 'boolean') out.musicPause = raw.musicPause;
+    if (typeof raw.musicDuck === 'number') out.musicDuck = clampMusicDuck(raw.musicDuck);
     return out;
   } catch {
     return {};
@@ -230,6 +264,14 @@ export interface VoiceStatus {
   pushToTalkMode: PushToTalkMode;
   speech: boolean;
   speechRate: number;
+  /** Whether a known player is paused while an answer is spoken. */
+  musicPause: boolean;
+  /** Duck depth for sources we cannot address precisely; `1` means never. */
+  musicDuck: number;
+  /** Whether this machine can control its own audio at all — false off macOS, where the
+   *  speaker floor still works but nothing can be paused. Reported so Settings can say why
+   *  the rows are inert instead of showing switches that do nothing. */
+  musicControl: boolean;
 }
 
 export function voiceStatus(home: string = homedir()): VoiceStatus {
@@ -260,5 +302,12 @@ export function voiceStatus(home: string = homedir()): VoiceStatus {
     // has to be switched on twice reads as broken the first time.
     speech: cfg.speech !== false,
     speechRate: cfg.speechRate ?? DEFAULT_SPEECH_RATE,
+    // Also default ON, for the same reason and with one extra: an answer spoken over music
+    // is an answer the owner has to ask for twice.
+    musicPause: cfg.musicPause !== false,
+    musicDuck: cfg.musicDuck ?? DEFAULT_MUSIC_DUCK,
+    // Reported rather than inferred client-side: the dashboard cannot know what platform the
+    // SERVER is on, and that is the side that owns the AppleScript.
+    musicControl: process.platform === 'darwin',
   };
 }

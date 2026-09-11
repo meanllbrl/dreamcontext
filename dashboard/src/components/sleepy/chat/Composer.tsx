@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import { pickFiles, pickFolders, isDesktop } from '../../../lib/desktop';
 import { useVoiceCapture } from '../../../lib/voice/useVoiceCapture';
+import { VoiceMeter } from './VoiceMeter';
+import {
+  repairMarks, applyRepairSegments, heardWords, droppedWords,
+} from '../../../lib/voice/repairMarks';
 import {
   parseHotkey, matchesHotkey, releasesHotkey, hotkeyLabel, isLatchKey, effectiveMode,
 } from '../../../lib/voice/hotkey';
 import { voicePrefs, refreshVoicePrefs, onVoicePrefs } from '../../../lib/voice/voicePrefs';
+import { onSpeechMuted } from '../../../lib/voice/audioFocus';
+
+/** The exact text of the unspoken-answer notice, named so it can be RETRACTED without
+ *  clobbering an unrelated message sharing the same row. */
+const SPEECH_MUTED_NOTICE = 'Another Jarvis window was speaking — this answer was not read aloud.';
 import { registerPushToTalk, ownsPushToTalk } from '../../../lib/voice/pushToTalkScope';
 import { DEFAULT_PUSH_TO_TALK } from '../../../lib/voice/hotkeyDefaults';
 
@@ -16,6 +25,9 @@ interface VoiceOp {
   from: string;
   to: string;
   similarity?: number;
+  /** Token index of `to` in the corrected text, so the repair can be drawn ON the word.
+   *  See `src/lib/voice/align.ts`'s `at` and `lib/voice/repairMarks.ts`. */
+  at?: number;
 }
 import { useVault } from '../../../context/VaultContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
@@ -136,6 +148,36 @@ function PlusIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden>
       <path d="M6 1.5v9M1.5 6h9" />
+    </svg>
+  );
+}
+
+/**
+ * A microphone, drawn.
+ *
+ * It replaced a 🎙 emoji, and the reason is not taste: an emoji is a different picture on
+ * every platform, sits on its own baseline inside a round button, and CANNOT take the state
+ * colour — which is the whole point here, because the button is now the one control that
+ * says whether the mode is listening, thinking or idle. `currentColor` is what makes that
+ * work, so the colour lives in CSS with every other state in this file.
+ */
+/** A speaker with the waves struck through — "stop reading this aloud". Drawn rather than a
+ *  🔇, for the reason in {@link MicIcon}: an emoji cannot take the state colour. */
+function HushIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M7.2 2.2 4.2 4.8H2v4.4h2.2l3 2.6z" />
+      <path d="m9.6 5.4 3.2 3.2M12.8 5.4 9.6 8.6" />
+    </svg>
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="5" y="1.4" width="4" height="6.6" rx="2" />
+      <path d="M2.9 6.6a4.1 4.1 0 0 0 8.2 0" />
+      <path d="M7 10.7v1.9M4.9 12.6h4.2" />
     </svg>
   );
 }
@@ -511,15 +553,6 @@ export function Composer({
   // renders on top, so nothing about typing, selection or the caret changes. Rendered only
   // while a mention exists — the common draft pays nothing.
   const hlRef = useRef<HTMLDivElement | null>(null);
-  const hlSegments = mentionSegments(draft, peers);
-  const hlActive = hlSegments.some((s) => s.mention);
-  useEffect(() => {
-    // A mirror that just appeared (first mention completed) starts at scrollTop 0 even when
-    // the field is scrolled — align it before it is ever seen.
-    const ta = taRef.current;
-    if (hlActive && ta && hlRef.current) hlRef.current.scrollTop = ta.scrollTop;
-  }, [hlActive, draft]);
-
   const acceptMention = (vault: string) => {
     const ta = taRef.current;
     const caret = ta?.selectionStart ?? draft.length;
@@ -745,14 +778,50 @@ export function Composer({
    *  card publishes to this same cache the moment it saves. */
   const [pushToTalk, setPushToTalk] = useState(voicePrefs().pushToTalk);
   const [pushToTalkMode, setPushToTalkMode] = useState(voicePrefs().pushToTalkMode);
+  /** The playback rate, tracked for the SAME reason the chord is: it is shown on screen while
+   *  the agent speaks, and a rate changed in Settings must reach a chat window already open. */
+  const [speechRate, setSpeechRate] = useState(voicePrefs().speechRate);
+  /**
+   * Is the agent speaking right now.
+   *
+   * React state here, unlike the input level: this changes once or twice a TURN, not at audio
+   * rate, and it has to change what is rendered.
+   */
+  const [speaking, setSpeaking] = useState(false);
+  useEffect(() => {
+    if (!voiceEnabled) { setSpeaking(false); return; }
+    return session.onSpeaking?.(setSpeaking);
+  }, [voiceEnabled, session]);
+
+  /**
+   * ANOTHER PANE HAD THE SPEAKER, so this answer was not read out.
+   *
+   * Said in the composer's voice row — the same place a refused take is reported, and for the
+   * same reason given there: an answer that was never spoken looks exactly like a mode that
+   * stopped working, and only this row can tell the owner which it was. Filtered by session
+   * because the event is window-wide and there can be several J.A.R.V.I.S panes; without the
+   * filter the pane that DID speak would also claim it had been muted.
+   */
+  useEffect(() => {
+    if (!voiceEnabled) return;
+    return onSpeechMuted(({ session: id, muted }) => {
+      if (id !== session.claudeId) return;
+      if (muted) { setVoiceNotice(SPEECH_MUTED_NOTICE); return; }
+      // Taken down only if it is still OUR notice. The row is shared with the transcription
+      // and correction messages, and clearing it blindly would wipe whichever of those the
+      // owner is reading right now.
+      setVoiceNotice((cur) => (cur === SPEECH_MUTED_NOTICE ? '' : cur));
+    });
+  }, [voiceEnabled, session.claudeId]);
   useEffect(() => {
     if (!voiceEnabled) return;
     // Load the local transcription model NOW rather than on the first press: it is a 1.5 GB
     // read, and paying it while the owner is still deciding what to say costs them nothing.
     void fetch('/api/agent/voice/warm', { method: 'POST' }).catch(() => {});
-    const adopt = (p: { pushToTalk: string; pushToTalkMode: 'hold' | 'toggle' }) => {
+    const adopt = (p: { pushToTalk: string; pushToTalkMode: 'hold' | 'toggle'; speechRate: number }) => {
       setPushToTalk(p.pushToTalk);
       setPushToTalkMode(p.pushToTalkMode);
+      setSpeechRate(p.speechRate);
     };
     void refreshVoicePrefs().then(adopt);
     return onVoicePrefs(adopt);
@@ -819,7 +888,71 @@ export function Composer({
     });
   }, [session, runCorrection]);
 
-  const voice = useVoiceCapture({ vault, onTranscript });
+  /**
+   * The live input level, fanned out to whoever is drawing it.
+   *
+   * A Set rather than a single callback because the subscriber MOUNTS AND UNMOUNTS with the
+   * take — the meter is only in the tree while recording — and the audio graph must not care.
+   * Nothing here is React state: see `VoiceMeter`'s header for why the level never goes
+   * through a render.
+   */
+  const levelSubsRef = useRef(new Set<(level: number) => void>());
+  const onLevel = useCallback((level: number) => {
+    for (const fn of levelSubsRef.current) fn(level);
+  }, []);
+  const subscribeLevel = useCallback((fn: (level: number) => void) => {
+    levelSubsRef.current.add(fn);
+    return () => { levelSubsRef.current.delete(fn); };
+  }, []);
+
+  const voice = useVoiceCapture({ vault, onTranscript, onLevel });
+
+  /**
+   * WHICH STATE THE CARD IS IN, as one word — the value the left rail is coloured by and the
+   * only thing that has to change for the whole card to change state.
+   *
+   * `pending` is deliberately ranked above `idle` but below anything live: a changed
+   * transcript waiting for a keypress is a state the owner has to act on, and it survives
+   * until they do.
+   */
+  const voiceState: 'idle' | 'recording' | 'thinking' | 'speaking' | 'pending' | 'trouble' =
+    !voiceEnabled ? 'idle'
+      : voice.state === 'recording' ? 'recording'
+        : (voice.state === 'transcribing' || voiceCorrecting) ? 'thinking'
+          // Above `pending` because the two cannot honestly coexist — a transcript waiting to
+          // be sent has not been answered yet — and below the two capture states because if
+          // the owner has started talking over the answer, THEIR take is the live thing.
+          : speaking ? 'speaking'
+            : pending ? 'pending'
+              : (voice.state === 'error' || voice.state === 'unconfigured') ? 'trouble'
+                : 'idle';
+
+  /**
+   * THE MIRROR. One overlay, two reasons to mark a word: the owner typed an @mention, or the
+   * corrector rewrote it. Layered rather than merged — see `applyRepairSegments`.
+   *
+   * The marks are recomputed from the DRAFT every render rather than stored, so an edit that
+   * moves the sentence cannot leave a mark pointing at the wrong word: `repairMarks` returns
+   * nothing once the corrected text is no longer in the box.
+   */
+  const hlMarks = pending ? repairMarks(draft, pending.text, pending.ops) : [];
+  const hlSegments = applyRepairSegments(mentionSegments(draft, peers), hlMarks);
+  const hlActive = hlSegments.some((s) => s.mention || s.repair);
+
+  useEffect(() => {
+    // A mirror that just appeared — a completed mention, or a transcript that just landed
+    // with repairs in it — starts at scrollTop 0 even when the field is scrolled. Align it
+    // before it is ever seen. It lives HERE, below `hlActive`, because that value now also
+    // depends on `pending`, which is declared further down the component.
+    const ta = taRef.current;
+    if (hlActive && ta && hlRef.current) hlRef.current.scrollTop = ta.scrollTop;
+  }, [hlActive, draft]);
+
+  /** The meter takes the text slot while a take is anywhere in the pipeline. `frozen` keeps
+   *  the last picture through transcription rather than blanking it — the take is still going
+   *  somewhere, and an empty strip would say it had stopped. */
+  const meterPhase: 'live' | 'frozen' | null =
+    voiceState === 'recording' ? 'live' : voiceState === 'thinking' ? 'frozen' : null;
   /** The capture state, readable from a window listener without re-binding it every take —
    *  a listener rebuilt mid-take would be re-registered while the key is still down. */
   const voiceStateRef = useRef(voice.state);
@@ -1195,7 +1328,10 @@ export function Composer({
         </div>
       )}
 
-      <div className={`chat-cmp-card${shelved ? ' is-shelved' : ''}`}>
+      {/* `data-voice` is the WHOLE state machine as far as the card is concerned: the left
+          rail is an inset shadow keyed off it, so changing state costs no element, no
+          layout and no re-flow of anything below the composer. */}
+      <div className={`chat-cmp-card${shelved ? ' is-shelved' : ''}`} data-voice={voiceEnabled ? voiceState : undefined}>
       <div
         className="chat-cmp-handle"
         role="separator"
@@ -1257,13 +1393,27 @@ export function Composer({
           <div className="chat-cmp-field">
           {hlActive && (
             <div className="chat-cmp-hl" ref={hlRef} aria-hidden>
-              {hlSegments.map((s, i) => (
+              {hlSegments.map((s, i) => {
+                const cls = [
+                  s.mention ? 'chat-cmp-hl-mention' : '',
+                  s.repair ? `chat-cmp-hl-repair${s.far ? ' is-far' : ''}` : '',
+                ].filter(Boolean).join(' ');
                 // eslint-disable-next-line react/no-array-index-key -- positional split of one string
-                s.mention
-                  ? <mark className="chat-cmp-hl-mention" key={i}>{s.text}</mark>
-                  : <span key={i}>{s.text}</span>
-              ))}
+                return cls ? <mark className={cls} key={i}>{s.text}</mark> : <span key={i}>{s.text}</span>;
+              })}
             </div>
+          )}
+          {/* IN THE SAME SLOT as the placeholder, overlaid rather than inserted: an element
+              in the flow would grow the card on every mic press, which is the re-flow this
+              whole direction exists to end. The textarea keeps its size, its value and its
+              focus underneath — a take over existing text does not disturb it. */}
+          {meterPhase && (
+            <VoiceMeter
+              className="chat-cmp-meter"
+              subscribe={subscribeLevel}
+              phase={meterPhase}
+              color={meterPhase === 'live' ? 'var(--color-accent)' : 'var(--color-warning, var(--color-accent))'}
+            />
           )}
           <textarea
             ref={taRef}
@@ -1272,7 +1422,9 @@ export function Composer({
             // popover is gone and the `/` menu (already here, already listing every command
             // this session reported) is the whole affordance. Only the IDLE arm — the other
             // two are saying something more urgent than where to find a feature.
-            placeholder={!connected ? 'Connecting…' : busy ? 'Claude is working — ⏎ queues your next message…' : idlePlaceholder ?? 'Message Claude…   ·   "/" for skills'}
+            // Blank while the meter has the slot: two things in one place, one of them a
+            // sentence about how to start something that has already started.
+            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : busy ? 'Claude is working — ⏎ queues your next message…' : idlePlaceholder ?? 'Message Claude…   ·   "/" for skills'}
             value={draft}
             disabled={disabled}
             onChange={(e) => {
@@ -1413,6 +1565,41 @@ export function Composer({
 
         <div className="chat-cmp-spacer" />
 
+        {/* SPEAKING CONTROLS, and the placement is the whole trick: they live in the toolbar's
+            flex SPACER, which is empty at every width. Nothing on the left moves, nothing on
+            the right moves — the spacer simply gets narrower. Putting them beside the mic
+            would have pushed the model trigger along, and a toolbar that reshuffles itself
+            when the agent starts talking is the same defect as the notice rows this direction
+            was chosen to end.
+
+            "Hush" is NOT Stop. Stop (further right, while busy) kills the turn; this silences
+            the speech and lets the work finish, which is the thing the owner actually wants
+            when an answer is right but long. The capability already existed — the mic press
+            barges in — but nothing on screen ever said so, so the only way to find it was to
+            press a microphone in the middle of an answer. */}
+        {voiceEnabled && speaking && (
+          <span className="chat-cmp-speaking" role="status">
+            <button
+              type="button"
+              className="chat-cmp-hush"
+              onClick={() => session.bargeInSpeech?.()}
+              title="Stop reading this answer aloud — the turn keeps running"
+              aria-label="Stop reading aloud"
+            >
+              <HushIcon />
+              <span>Hush</span>
+            </button>
+            {/* The rate, WHERE IT APPLIES. It is a Settings row the rest of the time, and it
+                spent weeks doing nothing at all without anything on screen to contradict it.
+                Hidden at 1x: "1x" is not information. */}
+            {speechRate !== 1 && (
+              <span className="chat-cmp-rate" title="Playback speed, from Settings → Voice">
+                {`${speechRate}×`}
+              </span>
+            )}
+          </span>
+        )}
+
         {/* The gauge, the two modifiers and Send travel together and never shrink: losing the
             Send button to a squeeze would be the single worst outcome of a narrow pane. */}
         <div className="chat-cmp-right">
@@ -1532,27 +1719,36 @@ export function Composer({
             aria-label="Hold to speak"
             aria-pressed={voice.state === 'recording'}
           >
-            <span aria-hidden>{voice.state === 'transcribing' || voiceCorrecting ? '…' : '🎙'}</span>
+            {voice.state === 'transcribing' || voiceCorrecting ? <span aria-hidden>…</span> : <MicIcon />}
           </button>
         )}
         {/* AC3d's visible half. A machine-altered sentence is never sent on the owner's
             behalf without them seeing WHAT changed — so the row names the substitutions
             rather than just saying "please confirm", which would train itself away. */}
+        {/* WHAT IS LEFT OF THE CONFIRMATION ROW, and why it shrank rather than vanished.
+            The row used to carry the mapping — `Changed Dremontext → dreamcontext +2 more` —
+            and that mapping now lives on the words themselves, where it costs the reader
+            nothing. What a mark CANNOT say is what was heard before, and it cannot say
+            anything at all about a word that was REMOVED: there is nothing on screen to
+            underline, and inventing a mark for a deletion would tell the owner that a word
+            they can see was touched. So the row keeps exactly those two jobs and drops the
+            rest. The RULE is unchanged: a changed transcript still never sends itself. */}
         {voiceEnabled && pending && pending.ops.length > 0 && (
           <span className="chat-cmp-voice-note is-confirm" role="status">
-            {'Changed '}
-            {pending.ops.slice(0, 3).map((op, i) => (
-              <span
-                key={`${op.kind}-${i}`}
-                // How LOUDLY, never WHETHER: a replacement far from what was spoken is drawn
-                // harder than a near one. The distance decides nothing else (see align.ts).
-                className={`chat-cmp-voice-op${(op.similarity ?? 1) < 0.6 ? ' is-far' : ''}`}
-              >
-                {op.kind === 'insert' ? `+${op.to}` : op.kind === 'delete' ? `−${op.from}` : `${op.from} → ${op.to}`}
-              </span>
-            ))}
-            {pending.ops.length > 3 ? ` +${pending.ops.length - 3} more` : ''}
-            {' — press send if that is right.'}
+            {heardWords(pending.ops).length > 0 && (
+              <>
+                {'heard '}
+                <span className="chat-cmp-voice-heard">{heardWords(pending.ops).join(', ')}</span>
+              </>
+            )}
+            {droppedWords(pending.ops).length > 0 && (
+              <>
+                {heardWords(pending.ops).length > 0 ? ' · ' : ''}
+                {'dropped '}
+                <span className="chat-cmp-voice-heard">{droppedWords(pending.ops).join(', ')}</span>
+              </>
+            )}
+            {' — send if that reads right.'}
           </span>
         )}
         {/* THE RESTING INSTRUCTION. Without it the mode is a microphone button and a secret:

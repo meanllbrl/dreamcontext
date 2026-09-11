@@ -29,6 +29,8 @@
     sandboxed iframe. That gap is closed one layer up, by SANDBOX_ALLOW in
     dashboard/src/lib/sandboxHtml.ts — every iframe drawing authored HTML carries allow="".
   -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>dreamcontext pauses your music player while J.A.R.V.I.S mode reads an answer aloud, and starts it again when the answer ends.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>dreamcontext records your voice while you hold the microphone button in J.A.R.V.I.S mode, so you can speak to your agent instead of typing.</string>
 </dict>

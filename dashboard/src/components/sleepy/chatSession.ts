@@ -406,6 +406,16 @@ export interface ChatSession {
    *  button, synchronously inside the press handler (see the implementation for why both
    *  jobs have to happen there). A no-op outside J.A.R.V.I.S mode. */
   bargeInSpeech: () => void;
+  /**
+   * Subscribe to "is this turn speaking", for the composer's speaking controls. Returns the
+   * unsubscribe; fires immediately with the current value.
+   *
+   * A SUBSCRIPTION rather than a field on the conversation model: speech starts and stops on
+   * the audio queue's own clock, not on a server frame, so routing it through the model would
+   * mean inventing a reducer action for something no frame produces. Outside J.A.R.V.I.S mode
+   * there is no queue, and this reports a permanent `false`.
+   */
+  onSpeaking: (fn: (speaking: boolean) => void) => () => void;
   /** Live model switch (`set_model` control request — verified on CLI 2.1.218). Applies to
    *  the NEXT turn; the CLI re-emits `system:init` with the new model, which updates
    *  `session.model`/`conv.model`, and the `control-ack` confirms or surfaces an error. */
@@ -575,7 +585,10 @@ export function createChatSession(
   // session object (`AgentSurface.changeChatMode`), so there is no mid-session switch to
   // defend against — the queue simply dies with the session that owned it. The guard is kept
   // anyway because it is one comparison and it states the invariant where it is relied on.
-  const speech = mode === 'jarvis' ? new SpeechQueue() : null;
+  // `claudeId` identifies this pane to the server's audio-focus ledger: one conversation is
+  // one pane is one speaker claimant. Two J.A.R.V.I.S panes are two ids, and exactly one of
+  // them is granted the speaker for any given turn (`lib/voice/audioFocus.ts`).
+  const speech = mode === 'jarvis' ? new SpeechQueue(claudeId) : null;
 
   /**
    * How many characters of each TEXT ITEM have already been handed to the speech queue,
@@ -679,6 +692,7 @@ export function createChatSession(
     answerQuestion,
     interrupt,
     bargeInSpeech,
+    onSpeaking,
     setModel,
     setEffort,
     setPermissionMode,
@@ -1412,6 +1426,14 @@ export function createChatSession(
   function bargeInSpeech(): void {
     speech?.unlock();
     silenceSpeech();
+  }
+
+  /** See the field's doc. With no queue (any mode but J.A.R.V.I.S) the answer is a settled
+   *  `false` — the subscriber still gets its one call, so it never waits for an event that
+   *  cannot arrive. */
+  function onSpeaking(fn: (speaking: boolean) => void): () => void {
+    if (!speech) { fn(false); return () => {}; }
+    return speech.onSpeaking(fn);
   }
 
   /** Whether {@link steer} would land right now — read by the composer to label ⏎ honestly

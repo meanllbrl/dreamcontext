@@ -24,6 +24,10 @@
  */
 
 import { voicePrefs } from './voicePrefs';
+import {
+  createFocusClient, announceSpeechMuted, OPEN_GRANT,
+  type FocusClient, type FocusGrant,
+} from './audioFocus';
 
 // ── The chunker ────────────────────────────────────────────────────────────────────────
 
@@ -285,6 +289,18 @@ export function createSpeakFetcher(): SpeakFetcher {
 /** How many chunks may be generating at once. See {@link SpeechQueue.prefetch}. */
 export const LOOK_AHEAD = 3;
 
+/**
+ * How long after the queue drains before the speaker (and the machine's music) is handed back.
+ *
+ * NOT zero, and the reason is the streaming shape of a turn. Chunks arrive as the reply is
+ * still being written, so the queue empties repeatedly MID-ANSWER — between the last sentence
+ * that has closed and the next one the model has not finished. Releasing on every one of those
+ * gaps would pause and resume the music at every sentence, which is worse than never pausing
+ * it: a track that stutters on and off for a paragraph is more distracting than one playing
+ * steadily underneath.
+ */
+export const FOCUS_GRACE_MS = 800;
+
 interface Job {
   text: string;
   audio?: Promise<Blob | null>;
@@ -312,7 +328,77 @@ export class SpeechQueue {
   private audio: HTMLAudioElement | null = null;
   private readonly chunker = createSpeechChunker();
 
-  constructor(private readonly fetcher: SpeakFetcher = createSpeakFetcher()) {}
+  /**
+   * The hold in flight or held for THIS turn, or null between turns.
+   *
+   * One promise per turn, started at the first `enqueue` rather than at the first `play`, is
+   * what makes the pause free: the first chunk spends ~1.3 s being generated, and the ~120 ms
+   * `osascript` round trip disappears inside it. Asking at play time would put it in front of
+   * the first word instead.
+   */
+  private focusHold: Promise<FocusGrant> | null = null;
+  /** Cleared on release; set while a drained queue is waiting out {@link FOCUS_GRACE_MS}. */
+  private releaseTimer: ReturnType<typeof setTimeout> | null = null;
+  /** True once this turn has been refused the speaker — checked before every chunk so the
+   *  refusal is decided once and not re-asked per sentence. */
+  private muted = false;
+  /** The WebAudio compensation chain, built ONLY if a duck actually happens. */
+  private ctx: AudioContext | null = null;
+  private gainNode: GainNode | null = null;
+  private routed = false;
+  /** Set once a context could not be revived. Nothing is ever routed again after that: the
+   *  boost is worth having, and it is not worth risking a second silent element for. */
+  private contextDead = false;
+  /** Whether THIS queue has told the composer an answer went unread, so it can take it back
+   *  when it speaks again. */
+  private noticeUp = false;
+
+  /**
+   * @param sessionId  Identifies this pane to the server's focus ledger. Two J.A.R.V.I.S panes
+   *   are two queues and two ids, and the ledger grants the speaker to exactly one of them.
+   */
+  /**
+   * Who wants to know whether this turn is speaking.
+   *
+   * WHY THE QUEUE HAS TO SAY THIS. Speaking was the one state of the mode with no
+   * representation on screen: barge-in existed — the mic press silences the queue — but
+   * nothing said there was anything to barge INTO, so the only way to discover the gesture
+   * was to press a microphone in the middle of an answer and find out.
+   *
+   * ── IT FOLLOWS THE FOCUS HOLD, NOT PLAYBACK, AND THAT IS THE WHOLE DESIGN ─────────────
+   * The obvious signal — true while an audio element is playing — is WRONG here, and wrong
+   * in a way that shows. A reply is still being WRITTEN while it is being read, so the queue
+   * empties repeatedly MID-ANSWER: between the sentence that just closed and the next one
+   * the model has not finished. A play-time flag would flicker off in every one of those
+   * gaps and take a Stop button with it. The focus hold already answers exactly the question
+   * being asked — "is this turn holding the speaker?" — including the gaps, and it already
+   * carries {@link FOCUS_GRACE_MS} of hysteresis that was reasoned out for the music duck.
+   * Two windows meaning the same thing would be two things to keep in sync, and one would
+   * drift.
+   */
+  private readonly speakingSubs = new Set<(speaking: boolean) => void>();
+  private speaking = false;
+
+  constructor(
+    private readonly sessionId: string,
+    private readonly fetcher: SpeakFetcher = createSpeakFetcher(),
+    private readonly focus: FocusClient = createFocusClient(),
+  ) {}
+
+  /** Subscribe to "is this turn speaking". Fires IMMEDIATELY with the current value, so a
+   *  composer that mounts mid-answer is not left believing the room is quiet. */
+  onSpeaking(fn: (speaking: boolean) => void): () => void {
+    this.speakingSubs.add(fn);
+    fn(this.speaking);
+    return () => { this.speakingSubs.delete(fn); };
+  }
+
+  /** Edge-triggered: subscribers hear transitions, never a repeat of what they already know. */
+  private setSpeaking(next: boolean): void {
+    if (this.speaking === next) return;
+    this.speaking = next;
+    for (const fn of this.speakingSubs) fn(next);
+  }
 
   /**
    * Satisfy WebKit's user-activation rule.
@@ -323,12 +409,32 @@ export class SpeechQueue {
    * and every later chunk plays on the same element. Without it the first chunk of the first
    * answer is silently blocked and the mode looks broken exactly once per launch.
    */
-  unlock(): void {
+  /**
+   * The playback element, built on demand.
+   *
+   * Centralised because the routing fix needs it EARLIER than playback does: the gain has to
+   * be wired to the element, and `setGain` used to run before anything had created one. On a
+   * turn where nobody pressed the mic, `this.audio` was still null at that moment and the
+   * whole compensation was skipped for the first chunk — silently, since the element then
+   * appeared a line later inside `play`.
+   */
+  private element(): HTMLAudioElement {
     if (!this.audio) {
       this.audio = new Audio();
       this.audio.preload = 'auto';
     }
-    const el = this.audio;
+    return this.audio;
+  }
+
+  unlock(): void {
+    this.element();
+    // The compensation graph's context is OPENED HERE for the same reason the element's
+    // activation is banked here — see `useVoiceCapture.ts`, where a context created after an
+    // `await` came back `suspended` and its analyser returned zeroes. It is opened but NOT
+    // connected: routing the element through WebAudio is only done if a duck actually
+    // happens, so a turn that ducks nothing never touches the path that plays the audio.
+    this.openContext();
+    const el = this.element();
     el.muted = true;
     void el.play().then(() => { el.pause(); el.muted = false; }).catch(() => { el.muted = false; });
   }
@@ -363,6 +469,10 @@ export class SpeechQueue {
   stop(): void {
     this.stopped = true;
     this.generation += 1;
+    // IMMEDIATELY, not after the grace window. This is the barge-in path: the owner pressed
+    // the mic (or Stop, or steered) and is about to speak, so the music has to be back now —
+    // a release that waited 800 ms would put the music under the start of their sentence.
+    this.releaseFocus();
     for (const job of this.jobs) job.controller.abort();
     this.jobs = [];
     this.chunker.reset();
@@ -382,9 +492,35 @@ export class SpeechQueue {
   dispose(): void {
     this.stop();
     this.audio = null;
+    // The context, if one was opened. Closing it is what stops a disposed pane from holding a
+    // hardware audio stream open for the life of the app.
+    void this.ctx?.close().catch(() => { /* already closing */ });
+    this.ctx = null;
+    this.gainNode = null;
+    this.routed = false;
+    this.contextDead = true;
+    // `stop()` already dropped the signal through `releaseFocus`; this drops the listeners,
+    // so a disposed pane cannot keep a composer subscribed to a queue that will never speak.
+    this.speakingSubs.clear();
   }
 
   private enqueue(text: string): void {
+    // A chunk arriving during the grace window means the turn is not over after all: keep the
+    // speaker (and keep the music paused) rather than releasing and immediately re-taking it.
+    if (this.releaseTimer) { clearTimeout(this.releaseTimer); this.releaseTimer = null; }
+    // Started HERE, before the fetch below, so the ~120 ms pause lands inside the chunk's
+    // ~1.3 s generation instead of in front of the first word.
+    // `this.muted` is part of the condition, not just `focusHold`: a REFUSED turn leaves a
+    // settled `granted: false` promise sitting here until the 800 ms grace clears it, so a new
+    // turn that began inside that window would read the old pane's refusal as its own — and
+    // stay silent without ever asking the server, which by then may well have said yes.
+    if (!this.focusHold || this.muted) {
+      this.muted = false;
+      this.focusHold = this.takeFocus();
+    }
+    // Rises with the HOLD, not with playback — see `speakingSubs`. A chunk has been accepted,
+    // so this turn is going to be heard.
+    this.setSpeaking(true);
     this.jobs.push({ text, controller: new AbortController() });
     // Start the look-ahead HERE, not only inside the play loop. A chunk enqueued while an
     // earlier one is already playing arrives after the loop has passed its own prefetch
@@ -404,6 +540,168 @@ export class SpeechQueue {
    * that fixed cost, and one chunk of cover is not enough to hide it. Three requests in
    * flight cost nothing extra: the audio is paid for either way, and it is the SAME audio.
    */
+  /** Ask for the speaker, and never let that ask cost the answer. */
+  private takeFocus(): Promise<FocusGrant> {
+    return this.focus.hold(this.sessionId).catch(() => OPEN_GRANT);
+  }
+
+  /**
+   * Hand the speaker back after {@link FOCUS_GRACE_MS} of an empty queue.
+   *
+   * Scheduled rather than immediate because a drained queue mid-answer is the NORMAL state —
+   * see the constant's own note. `enqueue` cancels this, so a turn that is still writing keeps
+   * what it holds.
+   */
+  private scheduleRelease(): void {
+    if (!this.focusHold || this.releaseTimer) return;
+    this.releaseTimer = setTimeout(() => {
+      this.releaseTimer = null;
+      this.releaseFocus();
+    }, FOCUS_GRACE_MS);
+  }
+
+  /** Hand it back NOW — barge-in, disposal, or the grace window expiring. */
+  private releaseFocus(): void {
+    if (this.releaseTimer) { clearTimeout(this.releaseTimer); this.releaseTimer = null; }
+    if (!this.focusHold) return;
+    // ONE place for the fall, and it is why the signal hangs on the hold: every path that
+    // ends a turn's audio — barge-in, interrupt, steer, disposal, and the grace window simply
+    // expiring — already arrives here. A second flag would have needed all five wired again.
+    this.setSpeaking(false);
+    this.focusHold = null;
+    this.muted = false;
+    this.setGain(1);
+    this.focus.release(this.sessionId);
+  }
+
+  /**
+   * Open the playback AudioContext. Called from {@link unlock}, i.e. inside a real gesture.
+   *
+   * OPENED, NOT CONNECTED — and the distinction is the whole safety argument. An idle context
+   * costs nothing and changes nothing about how the element plays; {@link setGain} is what
+   * actually re-routes the element through WebAudio, and it only does so when a duck really
+   * happened. So a machine whose duck depth is `1` (or whose answer paused Spotify instead)
+   * plays its audio down exactly the path it did before this feature existed.
+   *
+   * It is opened here rather than at first use because a context created outside a gesture
+   * comes back `suspended` on WebKit — the same trap `useVoiceCapture.ts` documents, where a
+   * context built after an `await` returned an analyser full of zeroes.
+   */
+  private openContext(): void {
+    if (this.ctx || this.contextDead) return;
+    try {
+      const Ctor = window.AudioContext
+        ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctor) return;
+      this.ctx = new Ctor();
+    } catch {
+      this.ctx = null;
+    }
+  }
+
+  /**
+   * Make sure a context exists and is RUNNING, before anything is routed through it.
+   *
+   * Called from the play loop, not only from {@link unlock}, for a reason review caught: the
+   * context used to be opened ONLY by the mic-press handler, and J.A.R.V.I.S reads every
+   * answer aloud whether the question was spoken or TYPED. A user who never touches the mic
+   * therefore had no context at all, the compensation was skipped on every duck, and the
+   * system volume came down on the agent's own voice with nothing giving it back — leaving
+   * the answer QUIETER than it would have been without the feature at all. Creating it here
+   * is safe because a webview that is playing audio has long since had a user gesture, and
+   * `resume()` covers the case where it nevertheless came back suspended.
+   */
+  private async ensureContext(): Promise<boolean> {
+    if (this.contextDead) return false;
+    this.openContext();
+    const ctx = this.ctx;
+    if (!ctx) return false;
+    if (ctx.state === 'running') return true;
+    if (ctx.state === 'closed') { this.contextDead = true; return false; }
+    // `suspended` is the power-saving one; `interrupted` is WebKit's, and it is the realistic
+    // case on a laptop — a phone call, or another app taking the audio session. Both are
+    // answered the same way, and both are why this check cannot live only at wiring time.
+    try { await ctx.resume(); } catch { /* fall through to the verdict below */ }
+    // Widened deliberately: the compiler narrowed `state` from the two checks above and has
+    // no way to know `resume()` can change it, so a direct comparison reads as unreachable.
+    const after: string = ctx.state;
+    return after === 'running';
+  }
+
+  /**
+   * KEEP THE ELEMENT AUDIBLE, whatever has happened to the context since it was wired.
+   *
+   * `createMediaElementSource` is irreversible: once the element is routed, its audio reaches
+   * the speakers ONLY through the graph. A context that suspends LATER — which browsers do to
+   * save power on a context that has gone quiet, and this queue is quiet through every
+   * "thinking" gap between chunks — therefore turns every later chunk into silence that still
+   * fires `ended` and still looks entirely normal on screen. The original guard checked the
+   * context only at WIRING time, which is the one moment it was certain to be fine.
+   *
+   * So: revive it if we can, and if we cannot, ABANDON the routed element and play on a fresh
+   * one. The abandoned element keeps the dead graph; the new one is on the plain path, exactly
+   * where this audio was before any of this existed. Losing the boost is a cost. Losing the
+   * voice, silently, is the thing this whole module exists to not do.
+   */
+  private async ensureAudible(): Promise<void> {
+    if (!this.routed) return;
+    if (await this.ensureContext()) return;
+    this.audio = null;
+    this.element();
+    this.gainNode = null;
+    this.routed = false;
+    this.contextDead = true;
+    console.warn('[voice] audio context could not be resumed — falling back to plain playback');
+  }
+
+  /**
+   * Give our own voice back what the system-volume duck took from it.
+   *
+   * ── WHY THIS EXISTS AT ALL ──────────────────────────────────────────────────────────────
+   * macOS gives a non-sandboxed app exactly one lever over audio it does not own: the SYSTEM
+   * output volume. That lever is indiscriminate — it lowers this element too — so ducking
+   * without compensating makes the answer exactly as quiet as the music it was meant to rise
+   * above. The compensation is what turns a pointless gesture into the feature.
+   *
+   * ── AND WHY IT FAILS OPEN, LOUDLY ───────────────────────────────────────────────────────
+   * `createMediaElementSource` RE-ROUTES the element: from then on its audio reaches the
+   * speakers only through this graph, so a context that is suspended means SILENCE, not
+   * merely an un-boosted voice. That is a far worse failure than the one being fixed. So the
+   * element is routed only while the context is genuinely `running`, and anything unexpected
+   * leaves the audio on the plain path at gain 1.
+   */
+  private async setGain(gain: number): Promise<void> {
+    if (gain <= 1 && !this.routed) return;
+    const el = this.element();
+    if (!this.routed) {
+      if (!(await this.ensureContext())) return;     // fail open: plain path, no boost
+      const ctx = this.ctx!;
+      try {
+        const src = ctx.createMediaElementSource(el);
+        const node = ctx.createGain();
+        // A LIMITER, not decoration. A speech chunk already near full scale multiplied by 2-3
+        // clips, and clipping on a voice is more objectionable than music under it. The
+        // threshold sits just below 0 dBFS so it only engages on the peaks the gain creates.
+        const limiter = ctx.createDynamicsCompressor();
+        limiter.threshold.value = -2;
+        limiter.knee.value = 0;
+        limiter.ratio.value = 20;
+        limiter.attack.value = 0.003;
+        limiter.release.value = 0.1;
+        src.connect(node);
+        node.connect(limiter);
+        limiter.connect(ctx.destination);
+        this.gainNode = node;
+        this.routed = true;
+      } catch {
+        this.gainNode = null;
+        this.routed = false;
+        return;
+      }
+    }
+    if (this.gainNode) this.gainNode.gain.value = Math.max(1, gain);
+  }
+
   private prefetch(): void {
     for (let i = 0; i < LOOK_AHEAD && i < this.jobs.length; i++) {
       const job = this.jobs[i];
@@ -431,6 +729,42 @@ export class SpeechQueue {
         // A DROPPED CHUNK IS SKIPPED, NOT RETRIED AND NOT FATAL (AC10). One 429 costs a
         // sentence; stalling the queue on it would cost the rest of the answer.
         if (!blob) continue;
+        // ── The speaker floor, consulted per chunk and decided once ───────────────────────
+        // Per chunk because this is also the heartbeat that keeps the server's watchdog off a
+        // live turn; decided once because a refusal is a property of the turn, not of the
+        // sentence — re-asking per chunk would announce it repeatedly and could let half an
+        // answer through if another pane finished mid-way.
+        const grant = this.focusHold ? await this.focusHold : OPEN_GRANT;
+        if (this.stopped || gen !== this.generation) return;
+        if (!grant.granted) {
+          if (!this.muted) {
+            this.muted = true;
+            // Say it. An answer that is simply not read, in the mode whose whole proposition
+            // is that answers are read, is a silence the owner cannot account for.
+            this.noticeUp = true;
+            announceSpeechMuted(this.sessionId);
+          }
+          // Drop the rest of the turn's audio rather than queueing it: by the time the other
+          // pane finishes, this answer has been on screen for a paragraph and reading it then
+          // is not a late delivery, it is a second conversation over the first.
+          for (const job of this.jobs) job.controller.abort();
+          this.jobs = [];
+          return;
+        }
+        // BEFORE the gain and before the element is read: this may swap the element out.
+        await this.ensureAudible();
+        if (this.stopped || gen !== this.generation) return;
+        await this.setGain(grant.gain);
+        if (this.stopped || gen !== this.generation) return;
+        // Speaking again, so take the notice down. Left up, it sat on screen claiming an
+        // answer had not been read aloud WHILE the next one was being read aloud.
+        if (this.noticeUp) {
+          this.noticeUp = false;
+          announceSpeechMuted(this.sessionId, false);
+        }
+        // The heartbeat: replace the settled promise so the NEXT chunk refreshes the lease
+        // rather than re-reading a 120-second-old answer.
+        this.focusHold = this.takeFocus();
         await this.play(blob);
         if (gen !== this.generation) return;
       }
@@ -445,13 +779,15 @@ export class SpeechQueue {
       // makes "barge in, then immediately say something else" work — without it the new
       // answer is silent, which is a worse failure than the stale audio it replaced.
       if (!this.stopped && this.jobs.length > 0) void this.run();
+      // Drained and nothing restarted the loop: start the grace clock. `enqueue` cancels it
+      // if the reply is merely mid-sentence rather than finished.
+      else if (!this.stopped) this.scheduleRelease();
     }
   }
 
   private play(blob: Blob): Promise<void> {
     return new Promise((resolve) => {
-      if (!this.audio) this.audio = new Audio();
-      const el = this.audio;
+      const el = this.element();
       const url = URL.createObjectURL(blob);
       const done = () => {
         el.removeEventListener('ended', done);
@@ -464,8 +800,21 @@ export class SpeechQueue {
       // Set per chunk, from the live preference — a rate changed between two sentences takes
       // effect on the next one. Client-side rather than a `speed` sent upstream: a rate we
       // own cannot be a request that fails, and it costs nothing.
-      el.playbackRate = voicePrefs().speechRate;
+      //
+      // WHY `defaultPlaybackRate` AND NOT JUST `playbackRate`, and why the order below is
+      // the whole fix: assigning `src` runs the media element load algorithm, whose last
+      // step is "set the playbackRate attribute to the value of the defaultPlaybackRate
+      // attribute" — unconditionally, on every load. So a rate written to `playbackRate`
+      // and THEN followed by `el.src = url` (which is what this did) was reset to 1 by the
+      // very next line, and every chunk played at normal speed however the Settings row
+      // read. The setting was stored, sent and reported correctly the whole time; it was
+      // erased one line before it could take effect. `defaultPlaybackRate` is the one the
+      // load algorithm preserves, and the direct write after the src covers the element
+      // that is already loaded.
+      const rate = voicePrefs().speechRate;
+      el.defaultPlaybackRate = rate;
       el.src = url;
+      el.playbackRate = rate;
       void el.play().catch(() => done());
     });
   }

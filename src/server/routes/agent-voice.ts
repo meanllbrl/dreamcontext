@@ -33,15 +33,15 @@ import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import {
   voiceApiKey, groqApiKey, voiceStatus, writeVoiceConfig, readVoiceConfig,
-  DEFAULT_VOICE, AUTO_LANGUAGE, clampSpeechRate,
+  DEFAULT_VOICE, AUTO_LANGUAGE, clampSpeechRate, clampMusicDuck,
 } from '../../lib/voice/config.js';
 import { normalizeHotkey } from '../../lib/voice/hotkey.js';
 import {
   OPENROUTER_BASE, OPENROUTER_HEADERS, logUpstream, resolveModel, clearModelCache, AUDIO_MODELS,
-  GROQ_BASE, GROQ_TRANSCRIPTION_MODEL,
+  GROQ_BASE, GROQ_TRANSCRIPTION_MODEL, fallbackVoice, FALLBACK_VOICE_DEFAULT,
 } from '../../lib/voice/openrouter.js';
 import {
-  sttGate, ttsGate, MAX_STT_BYTES, MAX_TTS_CHARS,
+  sttGate, ttsGate, focusGate, MAX_STT_BYTES, MAX_TTS_CHARS,
 } from '../../lib/voice/limits.js';
 import { speakable } from '../../lib/voice/speakable.js';
 import { wavFromPcm16, pcmSeconds, PCM16_SAMPLE_RATE } from '../../lib/voice/wav.js';
@@ -52,6 +52,7 @@ import { correctTranscript, describeOps } from '../../lib/voice/correct.js';
 import { readVerbatim, verbatimRatio } from '../../lib/voice/verbatim.js';
 import { usableTranscript, NO_SPEECH } from '../../lib/voice/echo.js';
 import { buildVoiceLexicon } from '../../lib/voice/lexicon.js';
+import { hold, release, hookExitRestore } from '../../lib/voice/audioFocus.js';
 
 /**
  * The system prompt that turns a CHAT model into a text-to-speech engine, and the reason it
@@ -537,23 +538,30 @@ export async function handleVoiceTts(
      * every chunk. It detects the language itself and takes no language parameter.
      */
     const speakWithRealTts = async (): Promise<Buffer | null> => {
+      // The owner's pick, translated — this model has its own voice list and would refuse
+      // `onyx` outright. A REFUSED voice is retried once with the known-good one rather than
+      // dropping the chunk: the rescue path exists to stop a sentence going missing, and it
+      // must not become a new way for one to go missing over a preference.
+      const voices = [fallbackVoice(cfg.voice || DEFAULT_VOICE), FALLBACK_VOICE_DEFAULT];
       for (const candidate of AUDIO_MODELS.speechFallback) {
-        try {
-          const r = await fetch(`${OPENROUTER_BASE}/audio/speech`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...OPENROUTER_HEADERS },
-            signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
-            // `pcm` is the ONLY format this model accepts, and it is the same 24 kHz mono
-            // pcm16 the chat path returns — so the WAV wrapper below serves both.
-            body: JSON.stringify({ model: candidate, input: spoken, voice: 'Charon', response_format: 'pcm' }),
-          });
-          if (!r.ok) {
-            logUpstream('tts-fallback', r.status, await r.text().catch(() => ''), key);
-            continue;
+        for (const voice of [...new Set(voices)]) {
+          try {
+            const r = await fetch(`${OPENROUTER_BASE}/audio/speech`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...OPENROUTER_HEADERS },
+              signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
+              // `pcm` is the ONLY format this model accepts, and it is the same 24 kHz mono
+              // pcm16 the chat path returns — so the WAV wrapper below serves both.
+              body: JSON.stringify({ model: candidate, input: spoken, voice, response_format: 'pcm' }),
+            });
+            if (!r.ok) {
+              logUpstream('tts-fallback', r.status, await r.text().catch(() => ''), key);
+              continue;
+            }
+            return Buffer.from(await r.arrayBuffer());
+          } catch (err) {
+            console.error('[voice:tts] fallback failed', err);
           }
-          return Buffer.from(await r.arrayBuffer());
-        } catch (err) {
-          console.error('[voice:tts] fallback failed', err);
         }
       }
       return null;
@@ -688,6 +696,76 @@ export async function handleVoiceWarm(
   sendJson(res, 200, { warming: warmed ? warmed.model : null });
 }
 
+// ─── POST /api/agent/voice/focus ──────────────────────────────────────────────────────
+
+/**
+ * Take or release the SPEAKER — and, with it, whatever the machine was playing.
+ *
+ * One route for two things on purpose; `lib/voice/audioFocus.ts` opens with why a floor
+ * released without restoring the music (and the reverse) is the failure a second route would
+ * invite.
+ *
+ * SHAPE: `{ session, hold: boolean }`. `hold: true` is IDEMPOTENT and also a heartbeat — the
+ * client calls it as each chunk starts playing, which both extends the lease and keeps the
+ * music paused exactly ONCE for the whole turn rather than stuttering at every sentence.
+ *
+ * IT SPENDS NO MONEY AND IT IS GATED ANYWAY. "Costs nothing" was the wrong axis, and review
+ * caught it: this route spawns `osascript` processes and mutates the owner's machine — their
+ * music player, their system volume. The LAN peer the paid routes were gated against reaches
+ * this one just as easily, and a `hold`/`release` loop is unbounded churn. It never puts a
+ * caller-supplied string into a script (the player table is a module constant, and there is no
+ * shell), and it is desktop-gated like the audio routes.
+ *
+ * A FAILURE HERE MUST NEVER COST THE ANSWER. Every error path answers 200 with
+ * `granted: true` and no ducking: the worst case for a broken focus call is an answer read
+ * over music, and the worst case for a 500 the client treats as "do not speak" is a mode that
+ * has gone silent for a reason nobody can see.
+ */
+export async function handleVoiceFocus(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (!isDesktop()) {
+    sendError(res, 403, 'desktop_only', 'Voice is only available in the desktop app.');
+    return;
+  }
+  const body = await parseJsonBody(req);
+  const raw = typeof body?.session === 'string' ? body.session.trim() : '';
+  // Bounded because it is a caller-supplied key held in module state. It never reaches a
+  // script (see the header), so this is a hygiene bound, not an injection defence: a session
+  // id is a UUID, and anything longer is not one.
+  const session = raw.slice(0, 128);
+  if (!session) {
+    sendError(res, 400, 'bad_session', 'A session id is required to hold the speaker.');
+    return;
+  }
+  const verdict = focusGate.acquire();
+  if (verdict !== 'ok') {
+    // TRANSIENT, and the client treats it as such: a refused focus call costs at most an
+    // answer read over music, never a silent turn.
+    sendError(res, 429, 'focus_busy', 'Too many speaker requests at once.');
+    return;
+  }
+  hookExitRestore();
+  try {
+    if (body?.hold === false) {
+      await release(session);
+      sendJson(res, 200, { granted: false, holder: null, ducked: false, gain: 1, paused: [] });
+      return;
+    }
+    sendJson(res, 200, await hold(session));
+  } catch (err) {
+    // Logged, never forwarded (rule 1 at the top of this file) — and FAIL OPEN, per the note
+    // above: speak, over music if it comes to that.
+    console.warn('[voice:focus] failed', err);
+    sendJson(res, 200, {
+      granted: true, holder: session, ducked: false, gain: 1, paused: [], denied: false,
+    });
+  } finally {
+    focusGate.release();
+  }
+}
+
 // ─── GET /api/agent/voice/status · PUT /api/agent/voice/config ────────────────
 
 export async function handleVoiceStatus(
@@ -742,6 +820,8 @@ export async function handleVoiceConfigPut(
     patch.pushToTalkMode = body.pushToTalkMode;
   }
   if ('speechRate' in body) patch.speechRate = clampSpeechRate(Number(body.speechRate));
+  if ('musicPause' in body) patch.musicPause = Boolean(body.musicPause);
+  if ('musicDuck' in body) patch.musicDuck = clampMusicDuck(Number(body.musicDuck));
   if ('pushToTalk' in body) {
     if (body.pushToTalk === null || body.pushToTalk === '') {
       patch.pushToTalk = null;              // back to the default chord
