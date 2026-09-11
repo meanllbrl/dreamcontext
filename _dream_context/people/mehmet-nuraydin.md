@@ -6,6 +6,7 @@ updated: "2026-09-10"
 
 ## Preferences
 
+- **Orchestrations must be fast** (2026-09-11): goal-skill runs feel too long. Minimal ceremony, reviewers in parallel, implementer waves at full width, no extra rounds without a new finding.
 - Decide on clear choices and explain why; never ask permission on an obvious path. **"devam" means keep going autonomously**, no check-ins (2026-09-08, 4th obs).
 - **Don't commit unless asked** — parallel sessions sweep in-flight work. When asked: commit everything and push, as separate coherent commits per logical unit.
 - **Verify in the real app, not just in tests** (2026-09-08, 4th obs): full local desktop rollout, confirm in the installed `.app`, then report done.

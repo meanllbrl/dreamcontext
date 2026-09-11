@@ -7,7 +7,8 @@
       "domain:knowledge",
       "domain:recall",
       "domain:infrastructure",
-      "domain:quality"
+      "domain:quality",
+      "domain:engineering"
     ],
     "layer": [
       "layer:frontend",

@@ -1,5 +1,43 @@
 [
   {
+    "date": "2026-09-11",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add dc-flow / dc-flow-node (with --good, --warn, --bad, --accent tones) to the Chat view's rendered-HTML kit, so a branching or step chain draws as a single non-wrapping lane of hugging name-boxes with drawn arrows rather than a stack of ragged rows. The surface briefing in src/server/chat-surface.ts gains the editorial half of the change: draw only when the SHAPE is the point, a chain that fits in one sentence stays a sentence, a node is a NAME of one to four words, tone marks only what genuinely is good/bad/at-risk, numbered dc-bg|f|s colors are chart fills and never a surface under words, and one emphasis channel per sentence. scripts/verify/chat-html.mjs grows a real layout check that paints a six-node flow and reads back the row count, per-node hugging and the arrow glyph off the rendered boxes, so a fix that silently drops the arrows fails instead of passing the geometry assertions. Uncommitted in the working tree at the time of this cycle.",
+    "breaking": false,
+    "summary": "IN PROGRESS (uncommitted): the dream-html kit gains a flow primitive that never wraps, plus a surface briefing that tells the agent when NOT to draw",
+    "references": [
+      "file:dashboard/src/components/sleepy/chat/chat-html-kit.css",
+      "file:dashboard/src/components/sleepy/chat/chatHtmlKit.ts",
+      "file:src/server/chat-surface.ts",
+      "file:scripts/verify/chat-html.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-11",
+    "type": "change",
+    "scope": "sleep",
+    "description": "Rework the sleep task-filing bar from 'file unless obviously junk' to 'fold by default, file by exception'. Two new gates run before anything is filed: a semantic-neighbor check that finds an existing task the work is a sub-slice of (backed by embeddings, with embeddingCacheCoversType so the bar knows whether the task corpus is actually covered before trusting a miss), and a declined-ideas check. A new local ledger records work the owner dropped before it ever became a task (tasks decline|declined|undecline, state/.task-declined.json), and that ledger syncs with the brain alongside .task-tombstones.json so a teammate's next cycle cannot re-file an idea somebody here deliberately declined. Candidates that only have indirect evidence are no longer filed or dropped — they are deferred as task-candidate: entries in .sleep-flags.json until a later session re-observes them. Touches src/lib/task-filing-bar.ts, src/lib/task-declined.ts, src/lib/sleep-flags.ts, src/lib/embeddings/*, src/cli/commands/tasks.ts, agents/sleep-tasks.md and the skill docs in lockstep. Uncommitted in the working tree at the time of this cycle — recorded as in-progress, not as shipped.",
+    "breaking": false,
+    "summary": "IN PROGRESS (uncommitted): sleep folds work into existing tasks by default and files a new task only as a high-confidence exception — semantic-neighbor + declined gates, tasks decline/declined/undecline, deferred task-candidate flags",
+    "references": [
+      "task:sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception",
+      "file:src/lib/task-filing-bar.ts",
+      "file:src/lib/task-declined.ts",
+      "file:src/lib/sleep-flags.ts",
+      "file:src/lib/embeddings/store.ts",
+      "file:src/cli/commands/tasks.ts",
+      "file:agents/sleep-tasks.md",
+      "file:src/lib/git-sync/brain-repo.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-10",
     "type": "feat",
     "scope": "patterns",

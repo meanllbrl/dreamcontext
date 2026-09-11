@@ -2,12 +2,13 @@
 id: feat_9qLM-gY_
 status: active
 created: '2026-02-25'
-updated: '2026-09-07'
+updated: '2026-09-11'
 released_version: 0.1.0
 tags:
   - architecture
   - backend
   - decisions
+  - 'topic:sleep'
 related_tasks:
   - enforce-mutual-exclusion-on-sleep-consolidation-lock
   - improve-sleep-quality
@@ -15,9 +16,14 @@ related_tasks:
   - sleep-settings-become-tunable-debt-thresholds-and-per-specialist-models
   - sleep-stops-filing-junk-tasks-a-bar-for-what-deserves-a-task-and-the-right-model-per-specialist
   - sleep-runs-itself-in-the-background-when-debt-is-high-instead-of-nagging
+  - sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception
 type: feature
 name: sleep-consolidation
-description: ''
+description: >-
+  REM-sleep-style consolidation: debt is scored per session, tunable thresholds
+  ladder the nags, and a fan-out of specialists folds the cycle's work back into
+  the brain. Background auto sleep runs it unattended; a filing bar (cap, why-length,
+  tombstone, declined and semantic-neighbour gates) keeps the cycle from filing junk tasks.
 pinned: false
 date: '2026-02-25'
 ---
@@ -55,6 +61,11 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - [x] **[v0.27.0]** As a user, I see a running background cycle in the dashboard and can cancel it; a finished one leaves a changelog entry and a notification carrying the summary.
 - [x] **[v0.27.0]** As a user who keeps working while a background cycle runs, my task edits and the cycle's writes both survive — per-file locks on the CLI write path plus a hands-off task set the cycle defers.
 - [x] **[v0.27.0]** As a user, auto sleep pauses itself with one visible line when the configuration I approved it against changes (consent fingerprint), rather than running under settings I never saw.
+
+- [ ] **[unreleased]** As a board owner, sleep folds work into the task that already covers it: a filing whose nearest task-corpus neighbour is a near-verbatim twin is refused naming that slug and the fold-in command, and a merely-close neighbour is refused until the specialist names it back.
+- [ ] **[unreleased]** As a user who dropped a piece of work that never became a task, I record it once with `tasks decline` and no later cycle re-files it — unconditionally by exact slug, and as a read-the-reason ask when it merely resembles one.
+- [ ] **[unreleased]** As a board owner, a candidate that was only *discussed* is neither filed nor lost: it rides `.sleep-flags.json` as a `task-candidate:` flag and is filed only when a later cycle independently re-observes it.
+- [ ] **[unreleased]** As a board owner, work belonging to a connected vault or to a person not on the roster never becomes a task here, and a candidate a later session cancelled dies with it — the cycle reports both instead of filing them.
 
 ## Acceptance Criteria
 
@@ -108,8 +119,22 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - **Verified by a REAL cycle on this brain, not by reasoning** (D7 checklist, 2026-09-05): model proof read from the background run's own subagent transcripts (`sleep-tasks` = claude-opus-5 override, `sleep-product` = claude-opus-5, `sleep-state` = claude-sonnet-5); an override survived a real `update --core-only`; a Stop hook actually spawned a detached cycle (~13 min, debt 61 → 14) whose nag output was the single "Auto sleep is ON" line; a foreground changelog write made DURING the cycle survived it.
 - [ ] KNOWN VERIFICATION GAP (carried, not closed): `sleep-tasks`' "Candidates NOT filed (cap)" report line is prompt-driven — only the mechanical cap is unit-tested; the wording is checked by hand in a manual cycle.
 
+**[unreleased] Fold by default, file by exception — two more gates on the filing bar plus three prose rules (task `sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception`):**
+- **Gate order is cost-ordered**: cap → ≥40-char why → tombstone → **declined-exact (pure file read)** → **semantic neighbour** → **declined-semantic**. A capped / thin / tombstoned / exactly-declined candidate never pays the ~1 s embedder load. `--by human` still short-circuits before any I/O, so the dashboard form never loads a model.
+- **Neighbour gate** (`dedupCandidate(…, {types:['task'], excludeCapture:true})`): merge band (≥0.97 + 0.02 margin) refuses naming the slug and the `tasks insert` fold-in command, with no escape but `--by human`; review band (≥0.91) refuses unless `--neighbor-checked <slug>` names exactly that slug. Archived tasks (`state/archive/`) are valid neighbours; session digests are excluded before the verdict is computed, because the `task` corpus folds them in.
+- **Three preconditions or it fails open**: `isEmbedModelDownloaded()` ∧ `embeddingCacheUsable()` ∧ **`embeddingCacheCoversType(root,'task')`** (new, `TYPE_COVERAGE_MIN = 0.8`). Any false → PASS with `neighbor: {state:'unavailable', why:'disabled'|'no-index'|'model-unavailable'}` and a printed notice — silence is never mistaken for a clean check. `DREAMCONTEXT_FILING_BAR_SEMANTIC=0` is the kill switch.
+- **Declined store**: `state/.task-declined.json` — BRAIN CONTENT, synced (never on the brain-sync deny-list), newest-first, cap 500, corrupt → `[]`. `tasks decline "<topic>" --reason` (reason ≥20 chars), `tasks declined`, `tasks undecline <key>`; key = `slugify(topic)`. Exact-slug match refuses unconditionally with the date and reason; a semantic match at `DECLINED_MATCH_THRESHOLD = 0.82` refuses unless `--declined-checked <key>` names it.
+- **Every task filed under the bar writes its neighbour verdict to the dedup log**, so `sleep done`'s "Semantic dedup since epoch" digest covers task creates. The log WRITER moved out of `embed.ts` into `dedup-log.ts` — one writer per format.
+- **Prose rules the bar cannot check** (`agents/sleep-tasks.md`): sessions read oldest→newest with **latest-session-wins** (a candidate a later session cancelled/narrowed dies, and no status bump may come from a transcript older than the newest session on that task); **lands-in-THIS-project** (a connected vault's or a non-roster person's work is reported under "Out of scope", never filed); **direct-evidence rubric** (user ask / file changes no live task covers / a task-less bookmark file now — "it was discussed" defers).
+- **Deferred candidates are flags, not tasks**: indirect candidates are emitted as `task-candidate:<key>::"<label + evidence>"` into `.sleep-flags.json`; `escalations()` excludes the `task-candidate:` family (a never-filed idea has no task to bump and gets no "escalate?" ask) and `sleep done` prints `Deferred task candidates: n` instead. A candidate is filed only when a later cycle independently re-observes it; one not re-observed is dropped by `reconcileFlags`.
+- Validation: `tests/unit/{task-filing-bar,task-declined,sleep-flags,task-filing-markers}.test.ts` + `tests/integration/task-filing-bar-end-to-end.test.ts` (32/32, 6 model-gated cases proven non-vacuous under `DREAMCONTEXT_FILING_BAR_SEMANTIC=0`); full suite 497 files / 9419 tests green. **W4 manual checklist on a real cycle is IN FLIGHT — this increment is uncommitted and unreleased.**
+
 ## Constraints & Decisions
 
+- **[2026-09-11]** **A gate whose bands overlap becomes a proof-of-looking gate, not a refusal.** Measured on 14 real tasks of this brain (e5-small q8, short-vs-short, `passage:` both sides), same-idea declined similarity bottoms at 0.8256 while distinct pairs top out at 0.8984 — the bands OVERLAP, so no cosine separates "the idea the user dropped" from "an adjacent task". A hard refusal would silently block legitimate tasks with no exit the specialist could reach. Both semantic gates therefore refuse *unless the caller names the match back* (`--neighbor-checked <slug>`, `--declined-checked <key>`); naming is the proof it read the neighbour/reason, and a false alarm costs one flag, never a lost task. Only the exact-slug declined match is unconditional. Generalised as `knowledge/patterns/proof-of-looking-gate.md`.
+- **[2026-09-11]** **Availability had to be checked per-CORPUS, not just per-model.** `embeddingCacheUsable()` only proves the cache matches the current model/version — every hybrid recall path refreshes type-scoped and additively, so a legitimately knowledge+feature-only cache is "usable" with ZERO task vectors. The gate would then cold-build the task index inline: 3,501 chunk slots × 89.2 ms ≈ **310 s inside one `tasks create`**, past a sleep sub-agent's Bash timeout. `embeddingCacheCoversType()` makes that path unreachable; the warm path is an additive re-embed of only what the cycle rewrote (≈12 s on the first create, ~1–2 s after). No timeout wrapper: `dedupCandidate` is not cancellable, so a `Promise.race` would return early while a WASM inference kept the process alive.
+- **[2026-09-11]** **Sleep MAY still file tasks — the fix is precision, not a ban, and nothing is interactive.** Owner decision: no proposal inbox, no approval UI, no human step anywhere. Confidence comes from deterministic gates plus repetition across cycles (`task-candidate:` flags). The per-cycle cap stays as is. Scoring, the curator chore's cap exemption, and `sleep-state` / `sleep-product` / `sleep-learn` behaviour were explicitly out of scope.
+- **[2026-09-11]** **`state/.task-declined.json` is brain content, synced like tombstones.** A teammate's cycle must not re-file what you declined here. Declined is ONLY for ideas that never became a task — `tasks status <slug> cancelled` and `tasks delete` already tombstone. FOLLOW-UP carried, not filed: on a task corpus this homogeneous, review-band hits may approach universal and degrade `--neighbor-checked` into a reflex; measure with `embed dedup --types task --json --no-log` after a few real cycles and tune via `DREAMCONTEXT_DEDUP_REVIEW` — no code change required.
 - **[2026-09-06]** **Background auto sleep ships DEFAULT OFF, machine-local, Stop-hook-only.** An autonomous job that burns tokens without the user watching must be switched on deliberately, so the on/off flag, the trigger choice (`must-sleep` default, `sleepy` the second option) and the consent fingerprint live in `state/.brain-local.json` (gitignored, never synced) while thresholds, models and the cap live in the SYNCED `.config.json`. No timer and no server tick in v1 — `knowledge/macos-launchd-scheduler-constraints.md` (no watchdog, a sleeping machine misses fires, minimal PATH) pushed that to v2. RECORDED RISK, unfixed: on a TEAM brain, lowering `mustSleep` in the synced config can make several machines each start a cycle at their next Stop hook before the epoch lock syncs — a synced threshold change alone does not move the fingerprint. A cross-machine lock is v2.
 - **[2026-09-06]** **The idle guard was REMOVED, and two-writer safety became its precondition.** The 2026-08-09 constraint "never run while an active session exists, non-negotiable" was overturned by the owner on 2026-09-04: the background cycle runs WHILE the user keeps working. What replaced it is not a weaker guard but a stronger one — per-file locks on the CLI task-write path plus a hands-off set the cycle defers. The lock's error policies are deliberately OPPOSITE: `withTaskFileLock` fails LOUD (silently writing unlocked would defeat the point), `withSleepStateLock` fails OPEN for hooks (a hook must never suspend a user's turn) but prints a visible one-line notice when it writes unlocked with a live background cycle present.
 - **[2026-09-06]** **Consent is a fingerprint, not a boolean** (mirroring the automations approval hash). It covers what a USER or a TEAMMATE controls — the specialists model/effort map, the cap, the trigger, and a per-agent customization digest for the six installed agents — and deliberately EXCLUDES anything dreamcontext itself ships (prompt text, agent bodies, version), because the user already delegated that trust to `dreamcontext update` and hashing it would pause the brain silently after every routine refresh. A customization digest is `'none'` while the installed agent matches its stored `baselineSha`, so a package refresh does not pause; a stray or teammate edit does. Nag silence has exactly ONE exception: a paused brain that says nothing is worse than a nag, so `consent-stale` still injects a single SessionStart line.
@@ -283,6 +308,17 @@ The legacy `scoreFromChangeCount` / `scoreFromToolCount` / `scoreFromSubstance` 
 - Agent defaults: `sleep-tasks` / `sleep-product` → `model: claude-opus-5`, `effort: medium`; `sleep-state` / `sleep-migration` / `sleep-federation` / `sleep-learn` → `model: claude-sonnet-5`, `effort: low`
 - NOT shipped in v1 (recorded): server-tick/timer trigger, Telegram notification, Windows support for background sleep, scoring changes, cross-machine lock for team brains
 
+**[unreleased] Fold by default, file by exception** — the filing bar's two semantic gates and the declined store:
+- `src/lib/task-filing-bar.ts` — `assertTaskFilingBar()` is now **async** (both callers already sit in async handlers: `cli/commands/tasks.ts` `create` and `server/routes/tasks.ts` `handleTasksCreate`). `FilingBarInput` gains `name` / `description` / `neighborChecked` / `declinedChecked`; `FilingBarVerdict` gains `neighbor` and `notices[]`. `semanticGatesReady()` is the one availability decision (model downloaded ∧ cache usable ∧ `embeddingCacheCoversType(root,'task')` ∧ not `DREAMCONTEXT_FILING_BAR_SEMANTIC=0`). Gate order: cap → why-length → tombstone → declined-exact → neighbour → declined-semantic.
+- `src/lib/task-declined.ts` **(new)** — mirrors `task-tombstones.ts` (raw `fs`, corrupt → `[]`, never throws, newest-first, cap on write). `DECLINED_REL_PATH='state/.task-declined.json'`, `MAX_DECLINED=500`, `MIN_DECLINE_REASON_CHARS=20`, `DECLINED_SEMANTIC_LIMIT=100`, `DECLINED_MATCH_THRESHOLD=0.82` (`DREAMCONTEXT_DECLINED_MATCH` override, read at call time). `matchDeclinedSemantically()` makes ONE `embedPassages` call over the candidate plus the newest 100 declined entries — no cache, no index, no corpus, ~200–400 ms worst case.
+- `src/lib/embeddings/dedup.ts` — `DedupOptions.excludeCapture` drops session digests from the neighbour set BEFORE the verdict/top/margin are computed (the `task` corpus folds digests in at `recall.ts:875`, so a candidate would otherwise near-match its own digest and be unfoldable).
+- `src/lib/embeddings/store.ts` — `embeddingCacheCoversType(root, type, minCoverage?)` + `TYPE_COVERAGE_MIN=0.8`, memoised by cache mtime. Deliberately optimistic (additive refreshes never prune, so stale docKeys over-report) — it can only fail to block a warm vault, never block a cold one wrongly. Returns `false` for any type but `'task'`.
+- `src/lib/embeddings/dedup-log.ts` — now owns the log WRITER (extracted from `embed.ts`, which imports it back); the filing bar appends `{source:'filing-bar', verdict, topDocKey}` per create.
+- `src/lib/sleep-flags.ts` + `src/cli/commands/sleep.ts` — `escalations()` excludes the `task-candidate:` key family; `sleep done` prints `Deferred task candidates: n` instead of an escalation ask. `reconcileFlags` semantics unchanged.
+- `src/cli/commands/tasks.ts` — `tasks decline|declined|undecline`; `create --neighbor-checked <slug> --declined-checked <key>`. `src/server/routes/tasks.ts` forwards both (actor default stays `human`, so the dashboard form never reaches a gate — and it drops `verdict.notices`, a known one-line gap for an in-app `by:'sleep'` caller).
+- `dashboard/src/generated/cli-manifest.json` regenerated (`npm run gen:cli-manifest`) — `tests/unit/cli-manifest.test.ts` asserts `tasks create`'s value flags.
+- Prose surfaces: `agents/sleep-tasks.md` (latest-session-wins, board map, lands-in-THIS-project, direct-evidence rubric, refusal-message table, new report lines), `skill/SKILL.md` rule 5 + the bookmark checkpoint row, `skill/references/tasks-and-features.md` § Create, `skill/references/sleep.md` step 3 (chronological brief, `sort_by(.stopped_at)`) and step 10 (`task-candidate:` flag family).
+
 **Consolidation flow** (main-agent orchestration, primary path):
 
 1. Main agent calls `dreamcontext sleep start` to pin the epoch.
@@ -307,6 +343,10 @@ The legacy `scoreFromChangeCount` / `scoreFromToolCount` / `scoreFromSubstance` 
 - The **main agent** calls `dreamcontext sleep done "<summary>"` after all specialist reports return — not any specialist sub-agent. Specialists return reports; the main agent stitches and finalizes.
 
 ## Changelog
+
+### 2026-09-11 - [unreleased] Fold by default, file by exception
+- Reconciled from task `sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception` (PLAN v2, 12 tasks / 4 waves, 4 review rounds). The filing bar gained a semantic neighbour gate and a declined-idea gate; `tasks decline|declined|undecline` and `--neighbor-checked` / `--declined-checked` shipped; `task-candidate:` flags defer indirect candidates; `agents/sleep-tasks.md` gained latest-session-wins, lands-in-THIS-project and the direct-evidence rubric.
+- **UNCOMMITTED and UNRELEASED at the time of writing** — the automated half passed (497 files / 9419 tests, e2e 32/32 with 6 model-gated cases proven non-vacuous), the W4 manual checklist was running on this very cycle. Four user stories and the AC block are unticked on purpose.
 <!-- LIFO: newest entry at top -->
 
 ### 2026-09-07 - v0.27.0 — the brain consolidates itself, on thresholds you set

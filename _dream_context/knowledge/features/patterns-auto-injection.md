@@ -7,7 +7,7 @@ pinned: false
 date: "2026-09-10"
 status: "in_review"
 created: "2026-09-10"
-updated: "2026-09-10"
+updated: "2026-09-11"
 released_version: null
 tags:
   - "domain:knowledge"
@@ -112,6 +112,7 @@ The first design pointed the agent at matched pattern files. The owner's require
 
 ## Notes
 
+- **Known, accepted false-NEGATIVE (recorded 2026-09-10, from production).** During this very feature's build the author's own code violated the repo's `pid-lockfile-concurrent-json` pattern — a pattern whose own text says it was observed three times — and `multi-review` caught it, not the injection gate. The gate did not fire because the words "lock" / "concurrent" never appeared in the prompts that produced the code. This is the honest boundary of a prompt-keyed gate: **it can only fire on what the prompt is ABOUT, never on what the code turns out to touch.** It is not a tuning bug (lowering evidence would have cost golden hits — see the evidence-scaling decision above); it is the shape of the mechanism. Review remains the backstop for patterns nobody named.
 - **Known, accepted false-firing:** "build alıp deploy edelim" pulls in two build patterns; "componentin state yapısı" pulls the session-state pattern. Both are topic-adjacent, not absurd; every attempt to suppress them cost real hits, so the trade is written into the code.
 - **Not fixed, deliberately:** shim-deletion protection is still a marker substring search. Two reviewers disagreed (security "weak", edge-cases "fine"); downgraded to Minor because it can only hit a file that quotes the marker verbatim, and on a symlink `rmSync` removes only the link.
 - **Partially solved:** slash-name collision. A colliding existing pattern's `/` name can change once; it can never point at another file's content. The test locks exactly that boundary.

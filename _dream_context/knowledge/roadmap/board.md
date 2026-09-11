@@ -7,12 +7,12 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-09-10'
+date: '2026-09-11'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-09-10 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-09-11 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### 🟡 **improve-recall-mechanism** — Improve Recall Mechanism · 7/12 done (58%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
@@ -29,7 +29,7 @@ date: '2026-09-10'
   - the-desktop-chat-surface-truncates-the-snapshot-to-a-2kb-preview-at-around-10k-chars (todo) · BACKLOG
   - the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview (completed) · 0.22.0 · 2026-07-28 → …
 
-### 🟡 **improve-sleep-quality** — Improve sleep quality · 20/26 done (77%) · target 2026-08-02 · forecast 2026-09-06 🔴 SLIPPING
+### 🔵 **improve-sleep-quality** — Improve sleep quality · 20/28 done (71%) · target 2026-08-02 · forecast 2026-09-06 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
   - a-merged-away-chore-gets-re-filed-as-an-empty-task-every-sleep-cycle (completed) · 0.26.0 · 2026-09-05 → 2026-09-05
   - automations-hitl-a-run-can-stop-and-ask-and-the-verdict-comes-back-from-wherever-you-are (completed) · 0.24.0 · 2026-08-03 → …
@@ -51,12 +51,14 @@ date: '2026-09-10'
   - rescale-sleep-debt-scoring-weighted-sum-token-signal (completed) · 0.23.0
   - score-the-content-sleep-writes-signal-to-noise-staleness-inference-vs-observation (todo) · BACKLOG
   - sleep-connectors-pull-outside-sources-on-a-cadence-and-turn-them-into-knowledge-and-theses (completed) · BACKLOG · 2026-08-17 → 2026-08-24
+  - sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception (in_progress) · 2026-09-10 → …
   - sleep-runs-itself-in-the-background-when-debt-is-high-instead-of-nagging (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
   - sleep-settings-become-tunable-debt-thresholds-and-per-specialist-models (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
   - sleep-stops-filing-junk-tasks-a-bar-for-what-deserves-a-task-and-the-right-model-per-specialist (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
   - sleep-umbrella-tunable-settings-a-bar-against-junk-tasks-and-background-auto-sleep-with-two-writer-safety (completed) · 0.27.0 · 2026-09-05 → 2026-09-05
   - soul-becomes-constitution-only-and-always-loads-verbatim-while-conditionals-move-to-keyword-prioritized-patterns-across-the-whole-system (completed) · 0.23.0 · 2026-07-28 → …
   - task-statuses-become-project-declarable-data-with-a-semantic-kind-so-planned-cancelled-or-any-custom-status-syncs-to-github-and-clickup-without-a-code-change (completed) · 0.27.0 · 2026-09-06 → 2026-09-06
+  - the-sleep-page-breaks-a-cycle-s-token-cost-down-per-specialist (todo)
 
 ### ⚪ **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 20/21 done (95%) · target 2026-07-12 · forecast 2026-09-06 🔴 SLIPPING
   Unblocks: make-it-a-business
@@ -82,7 +84,7 @@ date: '2026-09-10'
   - task-statuses-become-project-declarable-data-with-a-semantic-kind-so-planned-cancelled-or-any-custom-status-syncs-to-github-and-clickup-without-a-code-change (completed) · 0.27.0 · 2026-09-06 → 2026-09-06
   - task-sync-pull-loses-data-silently-objectives-wiped-watermark-skips-failed-tasks (completed) · 0.25.0 · 2026-08-17 → 2026-08-24
 
-### 🟡 **simplified-ux** — Simplified UX · 74/82 done (90%) · target 2026-07-31 · forecast 2026-09-06 🔴 SLIPPING
+### 🔵 **simplified-ux** — Simplified UX · 74/83 done (89%) · target 2026-07-31 · forecast 2026-09-10 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
   - a-declared-status-whose-key-collides-with-a-custom-field-is-accepted-by-the-settings-editor-then-silently-never-appears (todo) · 0.27.0
   - a-discuss-do-not-act-mode-whose-plan-lands-in-a-task-never-a-scratch-file (todo) · 0.26.0
@@ -106,6 +108,7 @@ date: '2026-09-10'
   - chat-answers-become-interactive-inline-charts-fullscreen-boards-widget-pageviews-and-a-pinned-checklist-window (completed) · 0.21.0 · 2026-07-26 → …
   - chat-becomes-the-standard-agent-screen-the-embedded-terminal-becomes-terminal-legacy (completed) · 0.21.0
   - chat-density-shrink-chrome-and-demote-the-context-meter-so-more-conversation-fits (completed) · 0.25.0 · 2026-08-23 → 2026-08-24
+  - chat-depiction-becomes-a-built-board-dream-html-stops-being-the-default-for-structure (in_progress) · 0.27.0 · 2026-09-04 → 2026-09-04
   - chat-names-the-branch-and-worktree-it-acts-on-backend-done-placement-waits-on-chat-density (completed) · 0.25.0 · 2026-08-23 → 2026-08-23
   - chat-opens-a-pdf-in-the-app-and-every-file-panel-offers-open-on-computer-reveal-in-finder (completed) · 0.24.0
   - chat-prose-reads-at-a-body-column-rhythm-not-a-ui-label-s (completed) · 0.23.1
@@ -146,7 +149,7 @@ date: '2026-09-10'
   - meeting-room-hidden-launcher-chat-where-all-agents-convene (completed) · 0.26.1 · 2026-08-26 → 2026-08-27
   - multi-account-connect-several-claude-accounts-pick-one-per-session-auto-switch-before-a-limit-lands (completed) · 0.27.0 · 2026-09-04 → 2026-09-06
   - one-window-holds-every-open-project-as-a-live-chip-strip (completed) · v0.24.0 · 2026-08-09 → 2026-08-17
-  - openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali (completed) · 0.27.0 · 2026-09-04 → 2026-09-06
+  - openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali (completed) · 0.27.0 · 2026-09-04 → 2026-09-10
   - pack-badge-false-positive-declined-optional-packs-show-as-new-forever (completed) · 0.17.2
   - peer-mail-cross-vault-agent-messaging (completed) · 0.26.1 · 2026-08-26 → 2026-08-27
   - pre-publish-checklist-v0-23-0 (completed) · 0.23.1 · 2026-08-01 → …
@@ -167,9 +170,9 @@ date: '2026-09-10'
   - two-new-agent-actions-pinned-session-facts-that-stay-put-and-progress-read-from-the-task-file (completed) · 0.25.0 · 2026-08-23 → 2026-08-24
   - update-exits-0-when-no-platform-is-installed-so-scripts-read-the-no-op-as-success (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
 
-### 🔵 **make-it-a-business** — Make it a Business · $ 856/2000 MRR (43%) · target 2026-09-05 · forecast 2026-10-04 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready
+### 🔵 **make-it-a-business** — Make it a Business · $ 856/2000 MRR (43%) · target 2026-09-05 · forecast 2026-10-08 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready
   Unblocks: hello-world-pr
   - hosted-dreamcontext-com-a-github-oauth-collaboration-layer-over-the-brain (todo) · BACKLOG
   - share-one-knowledge-file-or-board-over-a-tunnel-via-a-read-only-mutation-free-surface (todo) · BACKLOG
 
-### ⚪ **hello-world-pr** — Hello World PR · no tasks yet · target 2026-10-02 · forecast 2026-11-01 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-it-a-business
+### ⚪ **hello-world-pr** — Hello World PR · no tasks yet · target 2026-10-02 · forecast 2026-11-05 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-it-a-business
