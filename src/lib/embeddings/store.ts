@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { docKey, type CorpusDoc } from '../recall.js';
+import fg from 'fast-glob';
+import { docKey, type CorpusDoc, type CorpusType } from '../recall.js';
 import { chunkDoc, type Chunk } from './chunker.js';
 import { EMBED_MODEL, embedPassages } from './embedder.js';
 
@@ -171,6 +172,125 @@ export function embeddingCacheUsable(contextRoot: string): boolean {
     if (oldest !== undefined) usableMemo.delete(oldest);
   }
   return usable;
+}
+
+// ─── Per-TYPE coverage (the "is this corpus warm?" gate) ────────────────────
+
+/**
+ * Fraction of a type's corpus that must already be vectorised before a caller
+ * may treat an inline additive refresh as an INCREMENT rather than a cold build.
+ */
+export const TYPE_COVERAGE_MIN = 0.8;
+
+/**
+ * Cached per-type covered-doc count, keyed by vault+type and invalidated by the
+ * cache file's mtime — parsing a multi-MB cache is the expensive half. The
+ * ON-DISK file count is deliberately re-read on EVERY call and never memoised,
+ * so a task file written since the last refresh can never be masked by a stale
+ * memo into reporting a warm corpus.
+ */
+const coverageMemo = new Map<string, { mtimeMs: number; cached: number }>();
+const COVERAGE_MEMO_MAX = 32;
+
+/**
+ * Docs that make up the `task` corpus ON DISK. The SAME glob the corpus loader
+ * uses for that type (recall.ts `loadMarkdownDocs(join(root, 'state'), 'task')`):
+ * recursive, so `state/archive/` counts, and fast-glob's default `dot: false`
+ * keeps `state/.session-digests/` out — matching the capture docs excluded on the
+ * cache side, so both halves of the ratio describe the same population.
+ */
+function countTaskDocsOnDisk(contextRoot: string): number {
+  const dir = join(contextRoot, 'state');
+  if (!existsSync(dir)) return 0;
+  try {
+    return fg.sync('**/*.md', { cwd: dir, onlyFiles: true }).length;
+  } catch {
+    return 0;
+  }
+}
+
+/** Docs of `type` in the cache whose every chunk still has a vector, EXCLUDING
+ *  capture docs (`<type>/digest#…`) — they are not part of the on-disk count. */
+function countCoveredDocsInCache(cache: CacheFile, type: CorpusType): number {
+  const prefix = `${type}/`;
+  const capturePrefix = `${type}/digest#`;
+  let covered = 0;
+  for (const [key, entry] of Object.entries(cache.docs)) {
+    if (!key.startsWith(prefix) || key.startsWith(capturePrefix)) continue;
+    // A doc with no chunk hashes contributes no vectors — it is not "covered".
+    if (entry.hashes.length === 0) continue;
+    if (entry.hashes.every((h) => cache.vectors[h] !== undefined)) covered++;
+  }
+  return covered;
+}
+
+/**
+ * True when the cache ALREADY covers (nearly) the whole `type` corpus, so a
+ * caller may run an inline additive refresh without paying a cold build.
+ *
+ * WHY THIS IS NOT {@link embeddingCacheUsable}. That one answers "does this cache
+ * match the current model/version" — it is satisfied by a cache holding ONLY
+ * knowledge+feature vectors, which every hybrid-recall path can produce on its
+ * own (recall refreshes a TYPE-SCOPED corpus in `additive` mode, and additive
+ * never prunes). A caller that gated on `usable` alone and then dedup'd against
+ * the `task` corpus would embed that whole corpus INLINE: measured on this brain,
+ * 3,501 task chunk slots at ~89 ms/chunk ≈ 310 s inside a single `tasks create`,
+ * past the Bash timeout of the sleep sub-agent that invoked it. This gate is what
+ * makes that path unreachable: false → the caller skips the semantic work and says
+ * so, instead of hanging.
+ *
+ * Two honesty notes about the ratio:
+ *  - `docKey` is `type/slug`, so a slug present in BOTH `state/` and
+ *    `state/archive/` collapses to ONE cache key while counting as TWO files on
+ *    disk. That is a small under-report, harmless at a 0.8 bar.
+ *  - additive refreshes never prune, so cache entries for DELETED tasks linger
+ *    and make this OPTIMISTIC. It can therefore over-report coverage on a vault
+ *    that deleted many tasks — never under-report one that is genuinely warm.
+ *
+ * Only the `task` layout is implemented; every other type answers `false` rather
+ * than guessing a directory, so a future caller gets a conservative "not warm",
+ * never a wrong "warm".
+ */
+export function embeddingCacheCoversType(
+  contextRoot: string,
+  type: CorpusType,
+  minCoverage: number = TYPE_COVERAGE_MIN,
+): boolean {
+  if (type !== 'task') return false;
+
+  const expected = countTaskDocsOnDisk(contextRoot);
+  if (expected === 0) return false; // nothing on disk to compare against → nothing to trust
+
+  const memoKey = `${contextRoot}|${type}`;
+  const path = cachePath(contextRoot);
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(path).mtimeMs;
+  } catch {
+    coverageMemo.delete(memoKey);
+    return false; // no cache file at all
+  }
+
+  const memo = coverageMemo.get(memoKey);
+  let covered: number;
+  if (memo && memo.mtimeMs === mtimeMs) {
+    covered = memo.cached;
+  } else {
+    // loadCache returns an EMPTY cache on a model/version mismatch, so a stale
+    // cache scores 0 here exactly as it scores unusable above.
+    covered = countCoveredDocsInCache(loadCache(contextRoot), type);
+    coverageMemo.set(memoKey, { mtimeMs, cached: covered });
+    if (coverageMemo.size > COVERAGE_MEMO_MAX) {
+      const oldest = coverageMemo.keys().next().value;
+      if (oldest !== undefined) coverageMemo.delete(oldest);
+    }
+  }
+
+  // ZERO covered docs is never "warm", whatever ratio the caller asked for — a
+  // minCoverage of 0 must not turn the cold-build guard off.
+  if (covered === 0) return false;
+  const bar = Math.max(0, Math.min(1, minCoverage));
+  return covered >= Math.ceil(expected * bar);
 }
 
 export interface RefreshOptions {

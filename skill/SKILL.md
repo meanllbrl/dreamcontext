@@ -256,6 +256,7 @@ When in doubt about a command or flag, open [cli-reference.md](references/cli-re
    - **Never duplicate knowledge.** If two docs overlap, merge into one and point the other at it. Fragmented near-duplicate knowledge and duplicate tasks are the top failure modes — `sleep-product` dedupes, but don't create the mess.
 
 5. **Work over ~5 minutes needs a task — but don't fork tasks.** If a piece of work will take more than ~5 minutes, it needs a task. FIRST check the auto-loaded snapshot (and `dreamcontext memory recall "<keywords>" --types task`) for one that already covers it: if found, **extend it** — broaden its scope, add an acceptance criterion or a sub-step — rather than creating a near-duplicate. Create a new task only for a genuinely separate concern. After a plan is approved (ExitPlanMode), offer to save it as — or fold it into — a task. The sleep agent flags untracked work and merges duplicates.
+   **When the user drops, cancels or says no to a piece of work that has NO task yet, record it:** `dreamcontext tasks decline "<topic>" --reason "<why not>"` — otherwise the next sleep cycle only sees that it was *discussed* and may file it as a task. Work that DID become a task is cancelled or deleted instead (that already leaves a tombstone). Details → [tasks-and-features.md](references/tasks-and-features.md).
 
 6. **Mark checkboxes as you go.** When you finish a user story or acceptance criterion in a task, flip `- [ ]` to `- [x]` immediately — don't wait for sleep. Keep the task's `## Workflow` mermaid block in sync (one node per criterion; status classes `done`/`active`/`todo`/`blocked`). Verify with `dreamcontext tasks doctor <name>`. See [tasks-and-features.md](references/tasks-and-features.md).
 
@@ -296,6 +297,7 @@ dreamcontext bookmark add "<message>" -s <1|2|3> --task <task-slug>
 | User expresses a preference | `-s 2` | Lasting preference |
 | You hit a dead end / change approach | `-s 1` | What failed and why |
 | Critical constraint / breaking change | `-s 3` | Triggers a consolidation advisory next session |
+| User drops a planned piece of work (no task exists) | — | Not a bookmark: `dreamcontext tasks decline "<topic>" --reason "<why not>"`, so sleep cannot re-file it |
 
 **Rules:**
 - Every bookmark during task work MUST include `--task <slug>` — this is how sessions link to tasks, so the sleep agent knows which task docs to update. **Don't know the slug? Find it (`dreamcontext tasks list`) before bookmarking, not during sleep** — the CLI warns on stderr when you skip it, and an unaddressed bookmark only becomes findable again by reading the session transcript, which `sleep done` eventually GCs. Saved one without it: `dreamcontext bookmark relink <id> --task <slug>` (ids come from `bookmark list`).

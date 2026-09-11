@@ -26,6 +26,12 @@ import { refreshEmbeddings, type DenseIndex } from './store.js';
  * This module OWNS dedup only. It advises (verdict + named target + log); the
  * actual fold-in is done by the agent via `knowledge merge` / an Edit — sleep
  * specialists' writes are never silently rewritten here.
+ *
+ * NOT EVERY CORPUS IS CURATED DOCS ONLY. The `task` corpus folds SESSION DIGESTS
+ * in (`recall.ts` buildCorpus → `loadDigestDocs`, slug `digest#<sessionId>`,
+ * `capture: true`), and a task candidate written FROM a session near-matches its
+ * own digest — a "duplicate" that nothing can be folded into. A caller checking
+ * that corpus must pass {@link DedupOptions.excludeCapture}.
  */
 
 export type DedupVerdict = 'merge' | 'review' | 'create';
@@ -159,6 +165,17 @@ export interface DedupOptions {
    * doc (an update) so the doc never matches itself and forces a spurious MERGE.
    */
   excludeDocKey?: string;
+  /**
+   * Drop CAPTURE docs — session digests, auto-bookmarks — from the neighbor set
+   * BEFORE the verdict is computed, so `top`, `margin` and `verdict` are all
+   * derived from foldable docs only. Set it whenever the corpus can contain
+   * them: the `task` corpus indexes session digests (see the module note), and
+   * a candidate distilled from a session scores near-1.0 against its OWN digest,
+   * which would refuse the create naming a doc nobody can fold work into.
+   * `corpusDocs` still reports the WHOLE corpus size — this filters neighbors,
+   * it does not shrink the corpus that was searched.
+   */
+  excludeCapture?: boolean;
   /**
    * Injectable passage embedder (defaults to the real model). Tests pass a
    * deterministic fake; production leaves it unset. MUST be the same embedder
@@ -306,6 +323,10 @@ export async function dedupCandidate(
     if (opts.excludeDocKey && key === opts.excludeDocKey) continue;
     const doc = byKey.get(key);
     if (!doc) continue; // index entry for a doc filtered out of this corpus
+    // Capture docs are dropped HERE, not after the sort: `top`, `margin` and the
+    // verdict are all computed from `neighbors` below, so filtering later would
+    // still let a session digest decide the verdict and then vanish from the list.
+    if (opts.excludeCapture && doc.capture === true) continue;
     neighbors.push({
       docKey: key,
       type: doc.type,

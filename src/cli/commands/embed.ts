@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { existsSync, statSync, readFileSync, readSync, appendFileSync, mkdirSync } from 'node:fs';
+import { existsSync, statSync, readFileSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
@@ -11,9 +11,9 @@ import {
   dedupCandidate,
   DEDUP_MIN_THRESHOLD,
   DEDUP_MERGE_THRESHOLD,
-  type DedupResult,
   type DedupCandidate,
 } from '../../lib/embeddings/dedup.js';
+import { appendDedupLogEntry } from '../../lib/embeddings/dedup-log.js';
 
 // Semantic-dedup candidates are things a user/agent might re-create by accident.
 // `thesis` joins the list (a duplicate hypothesis is exactly the mistake
@@ -44,32 +44,6 @@ function readStdin(): string {
     // EOF on a non-pipe stdin surfaces as EAGAIN/EOF — return what we have.
   }
   return Buffer.concat(chunks).toString('utf-8');
-}
-
-/** Append one dedup decision to the (gitignored) `.embeddings/dedup-log.jsonl`. */
-function logDedupDecision(root: string, candidate: DedupCandidate, result: DedupResult): void {
-  try {
-    const dir = join(root, '.embeddings');
-    mkdirSync(dir, { recursive: true });
-    const ignorePath = join(dir, '.gitignore');
-    if (!existsSync(ignorePath)) {
-      // Match store.saveCache: the whole dir is credential-class / local-only.
-      appendFileSync(ignorePath, '*\n');
-    }
-    const entry = {
-      ts: new Date().toISOString(),
-      title: candidate.title,
-      verdict: result.verdict,
-      topDocKey: result.top?.docKey ?? null,
-      topSim: result.top ? Number(result.top.sim.toFixed(4)) : null,
-      mergeThreshold: result.mergeThreshold,
-      reviewThreshold: result.reviewThreshold,
-      neighbors: result.neighbors.map((n) => ({ docKey: n.docKey, sim: Number(n.sim.toFixed(4)) })),
-    };
-    appendFileSync(join(dir, 'dedup-log.jsonl'), JSON.stringify(entry) + '\n');
-  } catch {
-    // Logging is best-effort — never fail a dedup check because the log is unwritable.
-  }
 }
 
 /**
@@ -272,7 +246,18 @@ export function registerEmbedCommand(program: Command): void {
         return;
       }
 
-      if (opts.log !== false) logDedupDecision(root, candidate, result);
+      if (opts.log !== false) {
+        appendDedupLogEntry(root, {
+          title: candidate.title,
+          verdict: result.verdict,
+          source: 'embed-cli',
+          topDocKey: result.top?.docKey ?? null,
+          topSim: result.top ? Number(result.top.sim.toFixed(4)) : null,
+          mergeThreshold: result.mergeThreshold,
+          reviewThreshold: result.reviewThreshold,
+          neighbors: result.neighbors.map((n) => ({ docKey: n.docKey, sim: Number(n.sim.toFixed(4)) })),
+        });
+      }
 
       if (opts.json) {
         // DedupResult holds only plain scalars/strings — no vectors ever reach here.

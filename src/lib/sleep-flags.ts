@@ -96,9 +96,53 @@ export function reconcileFlags(
   });
 }
 
-/** Flags that have crossed the escalation threshold this cycle. */
+// ─── Deferred task candidates (`task-candidate:<key>`) ───────────────────────
+//
+// A cycle that saw only INDIRECT evidence for a piece of work ("it was
+// discussed") must not file a task for it — that is the wrong-task failure this
+// family exists to close — but it must not lose it either. So the candidate
+// rides the recidivism store as a flag whose key carries this prefix, and
+// `sleep-tasks` files it only once a LATER cycle independently re-observes it:
+// confidence by repetition, with no interactive step.
+//
+// The streak contract is `reconcileFlags`', unchanged — a candidate that is not
+// re-emitted next cycle is simply dropped. What differs is ESCALATION: a
+// candidate has NO TASK, so there is no priority to bump and nobody to hand an
+// "escalate?" ask to. `sleep done` prints one summary line instead (see
+// `renderTaskCandidateLine`).
+
+/** Flag-key prefix for an indirect task candidate deferred to a later cycle. */
+export const TASK_CANDIDATE_PREFIX = 'task-candidate:';
+
+/** Cycles a candidate must have been seen for to count as RECURRING in the
+ *  summary line: one prior cycle plus this one — the point at which the
+ *  `sleep-tasks` grooming rule allows it to be filed. */
+const CANDIDATE_RECURRENCE_CYCLES = 2;
+
+/** Is this flag a deferred task candidate rather than a recurring problem?
+ *  Tolerates a malformed on-disk entry (`readSleepFlags` casts, it does not
+ *  validate element shape) rather than throwing on the `sleep done` path. */
+export function isTaskCandidateFlag(flag: Pick<SleepFlag, 'key'>): boolean {
+  return typeof flag.key === 'string' && flag.key.startsWith(TASK_CANDIDATE_PREFIX);
+}
+
+/** The deferred task candidates among this cycle's reconciled flags. */
+export function taskCandidates(flags: SleepFlag[]): SleepFlag[] {
+  return flags.filter(isTaskCandidateFlag);
+}
+
+/**
+ * Flags that have crossed the escalation threshold this cycle.
+ *
+ * Task candidates are EXCLUDED. Escalation means bumping the linked task's
+ * priority and printing an ask; a candidate that was deliberately never filed
+ * has no task to bump, so escalating it would ask the user about a task that
+ * does not exist.
+ */
 export function escalations(flags: SleepFlag[]): SleepFlag[] {
-  return flags.filter((f) => f.consecutive_cycles >= RECIDIVISM_ESCALATION_CYCLES);
+  return flags.filter(
+    (f) => !isTaskCandidateFlag(f) && f.consecutive_cycles >= RECIDIVISM_ESCALATION_CYCLES,
+  );
 }
 
 /** One human-readable escalation ask per flag, for the sleep report. */
@@ -107,6 +151,20 @@ export function renderEscalationAsks(flags: SleepFlag[]): string[] {
     const slugPart = f.task_slug ? ` (task: ${f.task_slug})` : '';
     return `⚠ "${f.label}" has recurred ${f.consecutive_cycles} consecutive cycles${slugPart} — escalate?`;
   });
+}
+
+/**
+ * One summary line for the deferred task candidates, or null when there are
+ * none — the quiet counterpart to {@link renderEscalationAsks}. Names how many
+ * are already recurring, because those are the ones a later cycle may file.
+ */
+export function renderTaskCandidateLine(flags: SleepFlag[]): string | null {
+  const candidates = taskCandidates(flags);
+  if (candidates.length === 0) return null;
+  const recurring = candidates.filter(
+    (f) => f.consecutive_cycles >= CANDIDATE_RECURRENCE_CYCLES,
+  ).length;
+  return `Deferred task candidates: ${candidates.length} (${recurring} seen ≥${CANDIDATE_RECURRENCE_CYCLES} cycles — sleep-tasks files them when re-observed).`;
 }
 
 const PRIORITY_ORDER = ['low', 'medium', 'high', 'critical'] as const;

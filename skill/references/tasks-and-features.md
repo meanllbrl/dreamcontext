@@ -25,6 +25,23 @@ Defaults: `priority=medium`, `status=todo`. A task created without `--version` a
 - **Name = a short plain sentence** describing what the task does ("Fix the login redirect loop"). Never a type-prefixed slug (`feat-x-y`) — the file slug is derived from the name automatically.
 - **`--why` is mandatory.** Creation fails without a non-empty reason; `created_at` covers the "when". A task must be readable months later on its Why alone.
 - **Lean scaffold.** New tasks contain only `## Why` and `## Changelog`. Every other section (`user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`) is created on first `tasks insert` — in canonical position, before Changelog. Never insert placeholders to "complete" the shape; a section with nothing to say shouldn't exist.
+- **`--neighbor-checked <slug>` / `--declined-checked <key>` — proof of having looked (sleep only).** During a sleep cycle the filing bar refuses a task whose nearest existing task is semantically close, or that looks like an idea somebody declined. Both refusals name the exact flag that lifts them, and each takes the **slug/key it named** — passing a different one is refused again. They are not bypasses: they say "I read that neighbor / that declined reason, and this is genuinely separate". A near-verbatim duplicate (the merge band) has no flag at all; fold it in instead. A person filing their own task during a background cycle uses `--by human`, which is never checked. When the CLI prints `neighbor check skipped (…)` the semantic floor is OFF for that run — do the keyword dedup yourself (`memory recall "<topic>" --types task`) and check `tasks declined` by hand.
+
+### Declining an idea (work that never became a task)
+
+When the user drops, cancels or says no to a piece of work that has **no task yet**, record it — otherwise the next sleep cycle sees only that it was discussed, and files it.
+
+```bash
+dreamcontext tasks decline "<topic sentence>" --reason "<why it was dropped>"   # --reason is MANDATORY, >= 20 chars
+dreamcontext tasks declined [--json]                                            # what this brain has declined
+dreamcontext tasks undecline <key>                                              # the decision changed — lift it
+```
+
+- **Key = the slugified topic** (`"Drop the offline mode"` → `drop-the-offline-mode`), which is what `undecline` takes and what the filing bar's refusal names. `tasks declined` prints the keys.
+- **Scope: ideas only.** Work that DID become a task ends through the task lifecycle instead — a cancelled-kind status where the project declares one (else `in_review "confirm close"`), or `tasks delete --into <slug>` — and those already leave a tombstone sleep respects. `decline` therefore refuses a topic whose live task exists and points you at the status verb. A slug that is only *tombstoned* may still be declined: the task is gone, the idea can still come back.
+- **`--reason` is the payload, not ceremony.** It is what a later cycle (or a teammate) reads to decide whether the decision still holds, so "no" is not a reason; the CLI enforces a 20-character floor.
+- **Stored as brain content** in `_dream_context/state/.task-declined.json` (newest-first, cap 500) and it **syncs** like `.task-tombstones.json` — a teammate's sleep cycle must not re-file what you declined here.
+- **How sleep uses it.** A sleep-filed task whose slug matches a declined key is refused outright with the date and reason. One that merely *looks* like a declined idea (semantic match) is refused with `--declined-checked <key>` named in the message — the specialist reads the reason and either drops the candidate or re-runs naming that key. Reversing a decision is an awake act: `tasks undecline <key>`, then file.
 
 ### Enrich (insert into any section during active work)
 ```bash

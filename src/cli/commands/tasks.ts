@@ -10,6 +10,14 @@ import { slugify, today } from '../../lib/id.js';
 import { success, error, header, warn, info } from '../../lib/format.js';
 import { readTombstones } from '../../lib/task-tombstones.js';
 import { assertTaskFilingBar, recordCycleTaskFiled, type FilingActor } from '../../lib/task-filing-bar.js';
+import { appendDedupLogEntry } from '../../lib/embeddings/dedup-log.js';
+import {
+  appendDeclined,
+  findDeclined,
+  readDeclined,
+  removeDeclined,
+  MIN_DECLINE_REASON_CHARS,
+} from '../../lib/task-declined.js';
 import { matchMember } from '../../lib/task-backend/member-match.js';
 import { writeBrainLocal } from '../../lib/setup-config.js';
 import { isMultiPersonVault, listPeople, PeopleStoreError } from '../../lib/people-store.js';
@@ -592,7 +600,9 @@ export function registerTasksCommand(program: Command): void {
     .option('--field <key=value...>', 'Set a declared custom field (repeatable): --field team=platform --field story_points=8')
     .option('--allow-missing-required', 'Create even when required custom fields are unset (intentional draft)')
     .option('--by <actor>', 'Who is filing: human | sleep. During a sleep cycle a task filed as anything but `human` must clear the filing bar')
-    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; feature?: string; field?: string[]; allowMissingRequired?: boolean; by?: string }) => {
+    .option('--neighbor-checked <slug>', 'The nearest existing task you looked at and judged a separate concern (lifts a review-band filing-bar refusal)')
+    .option('--declined-checked <key>', 'The declined idea you read and judged different from this task (lifts a semantic declined-match refusal)')
+    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; feature?: string; field?: string[]; allowMissingRequired?: boolean; by?: string; neighborChecked?: string; declinedChecked?: string }) => {
       const backend = getTaskBackend();
       const slug = slugify(name);
 
@@ -610,9 +620,29 @@ export function registerTasksCommand(program: Command): void {
       // storage layer.
       const actor: FilingActor = opts.by === 'human' ? 'human' : opts.by === 'sleep' ? 'sleep' : 'unknown';
       const contextRoot = ensureContextRoot();
-      const verdict = assertTaskFilingBar({ contextRoot, actor, why: opts.why, slug });
+      const verdict = await assertTaskFilingBar({
+        contextRoot,
+        actor,
+        why: opts.why,
+        slug,
+        name,
+        // `opts.description`, NOT the `description` computed further down (which
+        // falls back to `name`): a description that merely repeats the title
+        // would double the candidate's identity text and skew every cosine the
+        // neighbor gate measures.
+        description: opts.description,
+        neighborChecked: opts.neighborChecked,
+        declinedChecked: opts.declinedChecked,
+      });
+      // The bar's notices say what it could NOT check ("neighbor check skipped").
+      // They print on a REFUSAL too: a specialist reading a cap refusal still has
+      // to learn that the semantic floor was off for this run.
+      const printBarNotices = (): void => {
+        for (const notice of verdict.notices ?? []) console.log(chalk.dim(`  ${notice}`));
+      };
       if (!verdict.allowed) {
         error(verdict.reason ?? 'Refused by the sleep task-filing bar.');
+        printBarNotices();
         process.exitCode = 1;
         return;
       }
@@ -784,7 +814,28 @@ export function registerTasksCommand(program: Command): void {
       }
       // Count it against this cycle's cap (no-op outside a cycle).
       if (verdict.underBar) recordCycleTaskFiled(contextRoot, slug);
+      // A task create IS a dedup decision, so it belongs in the same log
+      // `sleep done` renders as the cycle's "Semantic dedup since epoch" digest.
+      // Nothing is logged when the check came back `unavailable`: there is no
+      // verdict to record, and inventing `create` would make the digest lie.
+      if (verdict.underBar && verdict.neighbor?.state === 'checked') {
+        const neighbor = verdict.neighbor;
+        appendDedupLogEntry(contextRoot, {
+          title: name,
+          verdict: neighbor.verdict,
+          type: 'task',
+          slug,
+          source: 'filing-bar',
+          topDocKey: neighbor.top?.docKey ?? null,
+          topSim: neighbor.top ? Number(neighbor.top.sim.toFixed(4)) : null,
+          mergeThreshold: neighbor.mergeThreshold,
+          reviewThreshold: neighbor.reviewThreshold,
+          neighbors: neighbor.neighbors,
+          ...(opts.neighborChecked ? { neighborChecked: opts.neighborChecked } : {}),
+        });
+      }
       success(`Task created: ${slug}.md`);
+      printBarNotices();
       if (feature) {
         console.log(chalk.dim(`  feature: ${feature.slug} (related_tasks updated)`));
       }
@@ -936,6 +987,110 @@ export function registerTasksCommand(program: Command): void {
         console.log(`  ${chalk.dim(t.deletedAt.slice(0, 10))} ${t.slug}${where}`);
         if (t.reason) console.log(`      ${chalk.dim(t.reason)}`);
       }
+    });
+
+  // ── Declined ideas — the AWAKE half of the sleep filing bar ────────────────
+  //
+  // An idea the user drops before it ever becomes a task leaves no trace today.
+  // There is no task file, so there is nothing to tombstone, and the next sleep
+  // cycle sees only that the topic was discussed — which is how work the user
+  // said no to comes back as a task. These three verbs are that missing trace.
+  //
+  // Boundary: this ledger is ONLY for ideas that never became a task. Cancelling
+  // or deleting a real task already writes a tombstone, and two ledgers
+  // answering the same question is how they drift apart.
+  tasks
+    .command('decline')
+    .argument('<topic>', 'The idea being dropped, as one plain sentence')
+    .description('Record an idea the user dropped, so no sleep cycle re-files it (for ideas that never became a task)')
+    .requiredOption('--reason <text>', 'Why it was dropped — what a later cycle needs in order not to re-propose it')
+    .action(async (topic: string, opts: { reason: string }) => {
+      const root = ensureContextRoot();
+      const key = slugify(topic);
+      if (!key) {
+        error('The topic needs at least one letter or digit — it becomes the key `tasks undecline` takes.');
+        process.exitCode = 1;
+        return;
+      }
+
+      const reason = opts.reason.trim();
+      if (reason.length < MIN_DECLINE_REASON_CHARS) {
+        error(
+          `--reason must be at least ${MIN_DECLINE_REASON_CHARS} characters (got ${reason.length}). `
+          + 'A decline nobody can explain reads as an accident next cycle, and the bar quotes this text back '
+          + 'to the specialist as the whole justification for not filing.',
+        );
+        process.exitCode = 1;
+        return;
+      }
+
+      // A LIVE task with this slug means the idea DID become work: close it
+      // instead (a cancel/delete tombstones it). A tombstoned slug is fair game —
+      // that task is gone and the idea can still recur.
+      const backend = getTaskBackend();
+      if ((await backend.get(key)) !== null) {
+        error(
+          `"${key}" is a live task, not a never-filed idea. `
+          + `Close it instead: dreamcontext tasks status ${key} cancelled "<why>".`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+
+      const existing = findDeclined(root, key);
+      appendDeclined(root, {
+        key,
+        topic,
+        declinedAt: new Date().toISOString(),
+        reason,
+        // Best-effort provenance: an unset env records nobody rather than a placeholder.
+        ...(process.env.CLAUDE_CODE_SESSION_ID ? { session: process.env.CLAUDE_CODE_SESSION_ID } : {}),
+      });
+      success(existing ? `Decline updated: ${key}` : `Declined: ${key}`);
+      info(`No sleep cycle will re-file this. If the decision changes: dreamcontext tasks undecline ${key}`);
+    });
+
+  tasks
+    .command('declined')
+    .description('List ideas declined awake (why sleep will not file them)')
+    .option('--json', 'Machine-readable output')
+    .action((opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const declined = readDeclined(root);
+      if (opts.json) {
+        console.log(JSON.stringify(declined, null, 2));
+        return;
+      }
+      if (declined.length === 0) {
+        info('No declined ideas recorded. Record one: dreamcontext tasks decline "<topic>" --reason "<why not>"');
+        return;
+      }
+      console.log(header(`Declined ideas (${declined.length})`));
+      for (const d of declined) {
+        console.log(`  ${chalk.dim(d.declinedAt.slice(0, 10))} ${d.key}`);
+        console.log(`      ${chalk.dim(d.reason)}`);
+      }
+    });
+
+  tasks
+    .command('undecline')
+    .argument('<key>', 'The declined key (see `dreamcontext tasks declined`)')
+    .description('Lift a decline so the idea may be filed again')
+    .action((key: string) => {
+      const root = ensureContextRoot();
+      // Accept the key OR the original topic sentence: slugify is idempotent on a
+      // key, so trying the RAW string first keeps a hand-edited ledger reachable.
+      // Report whichever one actually matched — never a slug we merely guessed.
+      const fallbackKey = slugify(key);
+      const removedKey = removeDeclined(root, key) ? key
+        : removeDeclined(root, fallbackKey) ? fallbackKey
+        : null;
+      if (removedKey === null) {
+        error(`No declined idea with key "${key}". List them: dreamcontext tasks declined`);
+        process.exitCode = 1;
+        return;
+      }
+      success(`Undeclined: ${removedKey} — it may be filed again.`);
     });
 
   // Rename a task — the slug-safe way (#77). Renaming changes the name-derived

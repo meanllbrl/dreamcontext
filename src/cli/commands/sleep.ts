@@ -45,6 +45,7 @@ import {
   reconcileFlags,
   escalations,
   renderEscalationAsks,
+  renderTaskCandidateLine,
   bumpPriority,
   parseFlagOption,
   planCuratorTask,
@@ -704,6 +705,14 @@ export function registerSleepCommand(program: Command): void {
         const prevFlags = readSleepFlags(root);
         const nextFlags = reconcileFlags(prevFlags, observed, new Date().toISOString());
         writeSleepFlags(root, nextFlags);
+
+        // Deferred task candidates get a summary line, not an ask: `escalations`
+        // excludes the `task-candidate:` family because such a candidate was
+        // deliberately never filed, so there is no task to bump and nothing to
+        // hand the user a decision about. Reporting the count is what keeps a
+        // deferred idea visible until a later cycle re-observes and files it.
+        const deferredCandidates = renderTaskCandidateLine(nextFlags);
+        if (deferredCandidates) info(deferredCandidates);
 
         const escalated = escalations(nextFlags);
         if (escalated.length > 0) {

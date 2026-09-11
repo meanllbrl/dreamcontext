@@ -425,8 +425,23 @@ export async function handleTasksCreate(
   // the gate. The actor defaults to `human`: the dashboard's "Add Task" form is
   // a person, and a person filing during a background cycle is legitimate. An
   // in-app agent action that files during a cycle passes `by: 'sleep'`.
+  // The bar's SEMANTIC gates (neighbor + declined) therefore only ever run for
+  // `by: 'sleep'`: the `human` default short-circuits inside the bar before any
+  // read or embed, so the dashboard's own form never pays a model load. Both of
+  // those gates are LIFTABLE by naming what you looked at, so this surface has to
+  // forward both proofs — refusing an agent with "re-run with --declined-checked"
+  // over an API that cannot carry it would make gate 6 a dead end here.
   const actor: FilingActor = body.by === 'sleep' ? 'sleep' : 'human';
-  const verdict = assertTaskFilingBar({ contextRoot, actor, why, slug: slugify(name.trim()) });
+  const verdict = await assertTaskFilingBar({
+    contextRoot,
+    actor,
+    why,
+    slug: slugify(name.trim()),
+    name: name.trim(),
+    description,
+    neighborChecked: typeof body.neighborChecked === 'string' ? body.neighborChecked : undefined,
+    declinedChecked: typeof body.declinedChecked === 'string' ? body.declinedChecked : undefined,
+  });
   if (!verdict.allowed) {
     sendError(res, 400, 'filing_bar', verdict.reason ?? 'Refused by the sleep task-filing bar.');
     return;

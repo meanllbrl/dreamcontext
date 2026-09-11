@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { chunkDoc } from '../../src/lib/embeddings/chunker.js';
-import { refreshEmbeddings, embeddingCacheExists, embeddingCacheUsable, embeddingCacheChunkCount } from '../../src/lib/embeddings/store.js';
+import {
+  refreshEmbeddings, embeddingCacheExists, embeddingCacheUsable, embeddingCacheChunkCount,
+  embeddingCacheCoversType, TYPE_COVERAGE_MIN,
+} from '../../src/lib/embeddings/store.js';
 import { rrfFuse, relativeFuse, denseRank, hybridSearch, ADAPTIVE_RAW_CUTOFF } from '../../src/lib/embeddings/hybrid.js';
 import { buildFields, type CorpusDoc } from '../../src/lib/recall.js';
 
@@ -370,5 +373,171 @@ describe('hybridSearch invariants', () => {
     // …the exclusion is applied by hybridSearch/denseSearch via DENSE_EXCLUDED_TYPES.
     const { DENSE_EXCLUDED_TYPES } = await import('../../src/lib/embeddings/hybrid.js');
     expect(DENSE_EXCLUDED_TYPES).toContain('changelog');
+  });
+});
+
+describe('embeddingCacheCoversType (task-corpus warmth gate)', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dc-cover-'));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const TASK_BODY = 'task body detail '.repeat(60);
+
+  /** Write `state/<sub>/<slug>.md` and return the matching `task` corpus doc. */
+  function taskDoc(slug: string, sub = ''): CorpusDoc {
+    const dir = sub ? join(root, 'state', sub) : join(root, 'state');
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${slug}.md`);
+    writeFileSync(path, TASK_BODY);
+    return makeDoc({
+      slug, path, body: TASK_BODY, type: 'task',
+      relPath: sub ? `state/${sub}/${slug}.md` : `state/${slug}.md`,
+    });
+  }
+
+  function knowledgeDoc(slug: string): CorpusDoc {
+    const path = join(root, `${slug}.md`);
+    writeFileSync(path, TASK_BODY);
+    return makeDoc({ slug, path, body: TASK_BODY });
+  }
+
+  const cacheFile = () => join(root, '.embeddings', 'cache.json');
+
+  /** Bump the cache mtime so the mtime-keyed memo re-evaluates. */
+  function touchCache(): void {
+    const now = Date.now() / 1000 + 5;
+    utimesSync(cacheFile(), now, now);
+  }
+
+  it('exposes the tuned coverage bar', () => {
+    expect(TYPE_COVERAGE_MIN).toBe(0.8);
+  });
+
+  it('no cache at all → false (task files on disk, nothing vectorised)', async () => {
+    taskDoc('a'); taskDoc('b'); taskDoc('c');
+    expect(embeddingCacheExists(root)).toBe(false);
+    expect(embeddingCacheCoversType(root, 'task')).toBe(false);
+  });
+
+  it('empty vault → false: nothing on disk to compare against is not "warm"', async () => {
+    await refreshEmbeddings(root, [knowledgeDoc('k')], fakeEmbed);
+    expect(embeddingCacheUsable(root)).toBe(true);
+    expect(embeddingCacheCoversType(root, 'task')).toBe(false);
+  });
+
+  it('THE REGRESSION: a knowledge-only cache is USABLE but covers zero tasks', async () => {
+    // Exactly what a hybrid recall leaves behind (type-scoped + additive), and
+    // exactly the state in which an inline task dedup would cold-build the index.
+    const tasks = Array.from({ length: 10 }, (_, i) => taskDoc(`t${i}`));
+    expect(tasks).toHaveLength(10);
+    await refreshEmbeddings(root, [knowledgeDoc('k1'), knowledgeDoc('k2')], fakeEmbed);
+    expect(embeddingCacheUsable(root)).toBe(true);        // model/version fine…
+    expect(embeddingCacheCoversType(root, 'task')).toBe(false); // …but stone cold for tasks
+  });
+
+  it('a full task-corpus refresh → true', async () => {
+    const tasks = Array.from({ length: 10 }, (_, i) => taskDoc(`t${i}`));
+    await refreshEmbeddings(root, tasks, fakeEmbed);
+    expect(embeddingCacheCoversType(root, 'task')).toBe(true);
+  });
+
+  it('archived tasks count on both sides (state/archive/ is in the same corpus)', async () => {
+    const docs = [taskDoc('live-1'), taskDoc('live-2'), taskDoc('old-1', 'archive')];
+    await refreshEmbeddings(root, docs, fakeEmbed);
+    expect(embeddingCacheCoversType(root, 'task')).toBe(true);
+  });
+
+  it('8 of 10 cached clears the 0.8 bar', async () => {
+    const tasks = Array.from({ length: 10 }, (_, i) => taskDoc(`t${i}`));
+    await refreshEmbeddings(root, tasks.slice(0, 8), fakeEmbed);
+    expect(embeddingCacheCoversType(root, 'task')).toBe(true);
+  });
+
+  it('7 of 10 cached does not', async () => {
+    const tasks = Array.from({ length: 10 }, (_, i) => taskDoc(`t${i}`));
+    await refreshEmbeddings(root, tasks.slice(0, 7), fakeEmbed);
+    expect(embeddingCacheCoversType(root, 'task')).toBe(false);
+  });
+
+  it('session digests do NOT count toward coverage', async () => {
+    // 3 real task files on disk; the digest is NOT one of them (dot-dir, and the
+    // corpus loader never globs it either), so letting it count would fake warmth.
+    const real = [taskDoc('t0'), taskDoc('t1'), taskDoc('t2')];
+    mkdirSync(join(root, 'state', '.session-digests'), { recursive: true });
+    const digestPath = join(root, 'state', '.session-digests', 's1.md');
+    writeFileSync(digestPath, TASK_BODY);
+    const digest = makeDoc({
+      slug: 'digest#s1', path: digestPath, body: TASK_BODY, type: 'task',
+      relPath: 'state/.session-digests/s1.md',
+    });
+
+    await refreshEmbeddings(root, [real[0], real[1], digest], fakeEmbed);
+    // 2 real + 1 digest cached against 3 files on disk: counting the digest would
+    // read 3/3 = warm. It must read 2/3 = cold.
+    expect(embeddingCacheCoversType(root, 'task')).toBe(false);
+
+    await refreshEmbeddings(root, [...real, digest], fakeEmbed);
+    expect(embeddingCacheCoversType(root, 'task')).toBe(true);
+  });
+
+  it('a doc whose vector was evicted no longer counts', async () => {
+    const tasks = [taskDoc('t0'), taskDoc('t1'), taskDoc('t2')];
+    await refreshEmbeddings(root, tasks, fakeEmbed);
+    expect(embeddingCacheCoversType(root, 'task')).toBe(true);
+
+    const cache = JSON.parse(readFileSync(cacheFile(), 'utf-8'));
+    const victim = cache.docs['task/t0'].hashes[0];
+    delete cache.vectors[victim];
+    writeFileSync(cacheFile(), JSON.stringify(cache));
+    touchCache();
+
+    expect(embeddingCacheCoversType(root, 'task')).toBe(false); // 2 of 3 < ceil(2.4)
+  });
+
+  it('the memo re-reads when the cache file changes', async () => {
+    const tasks = Array.from({ length: 10 }, (_, i) => taskDoc(`t${i}`));
+    await refreshEmbeddings(root, tasks, fakeEmbed);
+    expect(embeddingCacheCoversType(root, 'task')).toBe(true);   // memo now holds 10
+
+    const cache = JSON.parse(readFileSync(cacheFile(), 'utf-8'));
+    cache.docs = { 'knowledge/k': cache.docs['task/t0'] };
+    writeFileSync(cacheFile(), JSON.stringify(cache));
+    touchCache();
+
+    expect(embeddingCacheCoversType(root, 'task')).toBe(false);
+  });
+
+  it('a stale-model cache covers nothing (loadCache discards it wholesale)', async () => {
+    const tasks = [taskDoc('t0'), taskDoc('t1'), taskDoc('t2')];
+    await refreshEmbeddings(root, tasks, fakeEmbed);
+
+    const cache = JSON.parse(readFileSync(cacheFile(), 'utf-8'));
+    cache.model = 'OLD/stale-model';
+    writeFileSync(cacheFile(), JSON.stringify(cache));
+    touchCache();
+
+    expect(embeddingCacheUsable(root)).toBe(false);
+    expect(embeddingCacheCoversType(root, 'task')).toBe(false);
+  });
+
+  it('every non-task type answers false rather than guessing a layout', async () => {
+    const tasks = [taskDoc('t0'), taskDoc('t1'), taskDoc('t2')];
+    await refreshEmbeddings(root, [...tasks, knowledgeDoc('k1')], fakeEmbed);
+    expect(embeddingCacheCoversType(root, 'task')).toBe(true);
+    for (const type of ['knowledge', 'feature', 'memory', 'changelog'] as const) {
+      expect(embeddingCacheCoversType(root, type)).toBe(false);
+    }
+  });
+
+  it('minCoverage 0 cannot switch the cold-build guard off', async () => {
+    Array.from({ length: 4 }, (_, i) => taskDoc(`t${i}`));
+    await refreshEmbeddings(root, [knowledgeDoc('k1')], fakeEmbed);
+    // Zero covered task docs is never warm, whatever ratio the caller asks for.
+    expect(embeddingCacheCoversType(root, 'task', 0)).toBe(false);
   });
 });

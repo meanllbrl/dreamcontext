@@ -48,8 +48,33 @@ function writeKnowledge(slug: string, name: string, tag: string): void {
   );
 }
 
+/** Write a TASK doc (`state/<slug>.md`) — the corpus the filing bar checks. */
+function writeTask(slug: string, name: string, tag: string): void {
+  mkdirSync(join(root, 'state'), { recursive: true });
+  writeFileSync(
+    join(root, 'state', `${slug}.md`),
+    `---\nname: ${name}\ndescription: ${name} description\n---\n\n${tag} ${slug} body content here\n`,
+  );
+}
+
+/**
+ * Write a real SESSION DIGEST through the layout `loadDigestDocs` reads, so the
+ * capture doc enters the `task` corpus the way it does in production (slug
+ * `digest#<sessionId>`, `capture: true`) rather than being simulated.
+ */
+function writeDigest(sessionId: string, tag: string): void {
+  mkdirSync(join(root, 'state', '.session-digests'), { recursive: true });
+  writeFileSync(
+    join(root, 'state', '.session-digests', `${sessionId}.md`),
+    `---\nsession_id: ${sessionId}\ncreated_at: '2026-09-11T00:00:00.000Z'\n---\n\n${tag} what happened this session\n`,
+  );
+}
+
 const call = (candidate: { title: string; description?: string; body: string }, opts = {}) =>
   dedupCandidate(root, candidate, { embed: fakeEmbed, ...opts });
+
+const callTasks = (candidate: { title: string; description?: string; body: string }, opts = {}) =>
+  dedupCandidate(root, candidate, { embed: fakeEmbed, types: ['task'], ...opts });
 
 describe('dedupCandidate — verdicts', () => {
   it('MERGE: candidate near-identical to one doc, far from the rest', async () => {
@@ -236,5 +261,63 @@ describe('dedupCandidate — hardening regressions', () => {
     const dup = await call({ title: 'Alpha', body: '@v(1,0,0) identical' });
     expect(dup!.margin).toBeNull();
     expect(dup!.verdict).toBe('merge');
+  });
+});
+
+
+// ── excludeCapture: the `task` corpus carries session digests ────────────────
+// A task candidate is distilled FROM a session, so it scores ~1.0 against that
+// session's own digest — which is not a doc anything can be folded into. The
+// filter therefore has to run BEFORE the verdict, not on the reported list.
+describe('dedupCandidate — excludeCapture (session digests in the task corpus)', () => {
+  it('by DEFAULT a session digest wins the neighbor race and drives the verdict', async () => {
+    writeTask('alpha', 'Alpha', atCosine(0.8));
+    writeDigest('sess-1', '@v(1,0,0)');
+    const res = await callTasks({ title: 'Distilled from the session', body: '@v(1,0,0) same words' });
+    expect(res!.verdict).toBe('merge');
+    expect(res!.top!.docKey).toBe('task/digest#sess-1');
+  });
+
+  it('excludeCapture drops it BEFORE the verdict: create, and no digest in the list', async () => {
+    writeTask('alpha', 'Alpha', atCosine(0.8));
+    writeDigest('sess-1', '@v(1,0,0)');
+    const res = await callTasks(
+      { title: 'Distilled from the session', body: '@v(1,0,0) same words' },
+      { excludeCapture: true },
+    );
+    expect(res!.verdict).toBe('create');              // 0.80 < review threshold
+    expect(res!.top!.docKey).toBe('task/alpha');
+    expect(res!.neighbors.some((n) => n.docKey.startsWith('task/digest#'))).toBe(false);
+    // The corpus SEARCHED is still the whole corpus — the flag filters neighbors,
+    // it does not pretend the digest was never indexed.
+    expect(res!.corpusDocs).toBe(2);
+  });
+
+  it('the MARGIN is computed over foldable docs only (the filter is not cosmetic)', async () => {
+    writeDigest('sess-1', '@v(1,0,0)');
+    writeTask('alpha', 'Alpha', atCosine(0.995));
+    writeTask('beta', 'Beta', atCosine(0.9));
+    const cand = { title: 'Near alpha', body: '@v(1,0,0) near alpha' };
+
+    // With the digest in: top1 (digest 1.0) − top2 (alpha 0.995) = 0.005 < margin
+    // → the margin gate holds the merge, and the "duplicate" named is a digest.
+    const withCapture = await callTasks(cand);
+    expect(withCapture!.margin!).toBeLessThan(withCapture!.mergeMargin);
+    expect(withCapture!.verdict).toBe('review');
+
+    // With it out: alpha is top at 0.995 with a real 0.095 margin over beta.
+    const without = await callTasks(cand, { excludeCapture: true });
+    expect(without!.top!.docKey).toBe('task/alpha');
+    expect(without!.margin!).toBeGreaterThan(without!.mergeMargin);
+    expect(without!.verdict).toBe('merge');
+  });
+
+  it('is inert on a capture-free corpus — identical result with the flag on', async () => {
+    writeKnowledge('alpha', 'Alpha', '@v(1,0,0)');
+    writeKnowledge('beta', 'Beta', '@v(0,1,0)');
+    const cand = { title: 'Alpha-ish', body: `${atCosine(0.94)} near alpha` };
+    const off = await call(cand);
+    const on = await call(cand, { excludeCapture: true });
+    expect(on).toEqual(off);
   });
 });

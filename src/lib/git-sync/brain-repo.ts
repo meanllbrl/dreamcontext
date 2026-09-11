@@ -220,9 +220,11 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     // Per-file task write locks + the background-sleep lock and its job sidecar.
     // All three are LIVE PID STATE: a synced lock reads as held by a foreign PID
     // on every clone, exactly the `people/.people.lock` precedent above. NOTE
-    // `state/.task-tombstones.json` is deliberately ABSENT — it is brain content
-    // and MUST sync, or a teammate's next cycle re-files a task somebody here
-    // deliberately consolidated away.
+    // `state/.task-tombstones.json` AND `state/.task-declined.json` are
+    // deliberately ABSENT — both are brain content and MUST sync: without the
+    // first, a teammate's next cycle re-files a task somebody here deliberately
+    // consolidated away; without the second, it re-files an idea somebody here
+    // deliberately declined before it ever became a task.
     'state/.locks/',
     'state/.auto-sleep.lock',
     'state/.auto-sleep.json',
@@ -287,7 +289,8 @@ export const FULL_REPO_LOCAL_GITIGNORE_ENTRIES = [
   // The roster itself and the constitutions are DELIBERATELY absent: they sync.
   '_dream_context/people/.people.lock',
   // Task write locks + the background-sleep lock and job sidecar — live PID
-  // state. `state/.task-tombstones.json` is deliberately absent: it syncs.
+  // state. `state/.task-tombstones.json` and `state/.task-declined.json` are
+  // deliberately absent: both are brain content and sync.
   '_dream_context/state/.locks/',
   '_dream_context/state/.auto-sleep.lock',
   '_dream_context/state/.auto-sleep.json',

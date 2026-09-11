@@ -2260,8 +2260,25 @@
         "--objectives",
         "--feature",
         "--field",
-        "--by"
+        "--by",
+        "--neighbor-checked",
+        "--declined-checked"
       ]
+    },
+    {
+      "path": "tasks decline",
+      "desc": "Record an idea the user dropped, so no sleep cycle re-files it (for ideas that never became a task)",
+      "args": [
+        "<topic>"
+      ],
+      "valueFlags": [
+        "--reason"
+      ]
+    },
+    {
+      "path": "tasks declined",
+      "desc": "List ideas declined awake (why sleep will not file them)",
+      "args": []
     },
     {
       "path": "tasks dedup",
@@ -2444,6 +2461,13 @@
       "path": "tasks tombstones",
       "desc": "List retired task slugs and what absorbed them (why sleep will not re-file them)",
       "args": []
+    },
+    {
+      "path": "tasks undecline",
+      "desc": "Lift a decline so the idea may be filed again",
+      "args": [
+        "<key>"
+      ]
     },
     {
       "path": "tasks version",

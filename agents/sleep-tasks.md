@@ -66,6 +66,24 @@ dreamcontext transcript distill <session_id>   # filtered transcript
 
 Also read `_dream_context/state/.sleep.json` directly for `sessions[].last_assistant_message` and any `bookmarks[]`. Sort bookmarks by salience (★★★ → ★★ → ★).
 
+**Read the sessions OLDEST → NEWEST — the latest session wins.** The brief lists
+them in `stopped_at` order for exactly this reason. A cycle often spans a
+conversation that changed its mind — "let's build X" in one session, "actually,
+drop X" in the next — and reading sessions independently makes the cycle file the
+first one's idea after the second one killed it. So keep a running **current
+truth per topic** as you read, and apply both halves of the rule:
+
+- A later session that **cancels, narrows or supersedes** a topic KILLS every
+  earlier candidate on it. Do not file it; report it under
+  **"Killed by a later session"**, naming the session that ended it. When the
+  user dropped work that never had a task, an awake agent should also have
+  recorded it — so run `dreamcontext tasks declined` once per cycle and
+  recognise those ideas before you re-derive them from an older transcript.
+- **Never bump a status from a transcript older than the newest session that
+  touched that task.** An earlier session's "done" cannot close a task a later
+  session reopened. `stopped_at` decides which came first — not the order you
+  happened to read them in.
+
 ### 2. Map sessions → tasks
 
 For each session:
@@ -73,7 +91,20 @@ For each session:
 - **Has `task_slugs`** → those are the task(s) to update. Go to step 3.
 - **No `task_slugs`** → check `last_assistant_message`, the user hint in the brief, and bookmark messages for what the work was about.
 
-**Before creating anything, dedup against existing tasks.** Duplicate tasks — and tasks that are really just a smaller slice of one that already exists — are the #1 consolidation failure mode. A "much smaller piece" of an existing task is **never** its own task. Recall by topic and scan the active list first:
+**Build the BOARD MAP once, before you read a single session.** One call, at the
+start of your pass:
+
+```bash
+dreamcontext tasks list --all --json    # every task's name + description + status
+```
+
+That map — not a keyword recall — is what the fold-in test is made against. A
+recall only surfaces what you thought to search for, which is precisely how a
+sub-slice of an existing task gets filed as a new one: nobody searched the phrase
+the existing task happens to use. Hold the map for the whole pass and re-read it
+rather than re-running the query per candidate.
+
+**Before creating anything, dedup against existing tasks.** Duplicate tasks — and tasks that are really just a smaller slice of one that already exists — are the #1 consolidation failure mode. A "much smaller piece" of an existing task is **never** its own task. Scan the board map first, then recall by topic for anything the map's one-liners leave ambiguous:
 
 ```bash
 dreamcontext memory recall "<topic / feature / area>" --types task
@@ -104,6 +135,30 @@ dreamcontext tasks insert <slug> notes "<follow-up / smaller piece>"
 
 **Sub-tasks (`parent_task`) are for genuinely large decomposition only** — an epic that legitimately splits into separable deliverables. Do not spawn a child task for a slice that fits as a user story or acceptance criterion in the parent. When in doubt, fold in.
 
+### Lands in THIS project?
+
+Work gets **discussed** here that does not **belong** here. A connected vault's
+feature, a teammate's repo, a person who is not on this roster — the conversation
+happened in this session, so the evidence looks local, and the cycle files a task
+this project will never do. That task then costs every future session snapshot
+tokens and makes the board something to be cleaned.
+
+A task is filed here only if the work **changes this repo, changes this brain, or
+was asked for here**. Check the two rosters before filing anything whose owner or
+codebase you are inferring rather than observing:
+
+```bash
+dreamcontext link ls        # connected projects (also the snapshot's "Connected projects"; state/.connections.json)
+dreamcontext people list    # the roster — a person:<slug> that is not here resolves to nobody
+```
+
+- Work that belongs to a **connected vault** → **no task here.** At most, hand it
+  over: `dreamcontext peer send <vault> "<the observation>"`. Never a local task,
+  and never a local task "so we don't forget" — that is the duplicate.
+- Work owned by a **person not on the roster** → **no task here.**
+- Either case goes in the report under **"Out of scope (other project/person)"**
+  with one line of what it was, so nothing is silently dropped.
+
 ### The filing bar — clear ALL of it, or do not file
 
 Filing a task nobody asked for and nobody will do is the exact opposite of what
@@ -122,15 +177,61 @@ A new task must clear **every** line below:
    paragraph does; the format is not the point, the evidence is.)*
 2. **There is a next step an owner could start.** A task whose first action is
    "work out what this means" is a question — put it in a bookmark.
-3. **It has no prior home.** Check BOTH, every time:
+3. **It has no prior home.** Check all THREE, every time:
    ```bash
    dreamcontext memory recall "<the topic>" --types task   # includes state/archive/
    dreamcontext tasks tombstones                            # deliberately retired slugs
+   dreamcontext tasks declined                              # ideas a human dropped that never became tasks
    ```
    A slug on the tombstone list was consolidated away ON PURPOSE. Log on the
-   task that absorbed it. **Never re-file it** — the CLI refuses anyway.
+   task that absorbed it. **Never re-file it** — the CLI refuses anyway. A topic
+   on the DECLINED list is one a human said no to while awake; it never became a
+   task, so there is nothing to log on — do not re-file it, and if you believe
+   the decision changed, say so in your report rather than filing (only an awake
+   `dreamcontext tasks undecline <key>` lifts it).
 4. **It is not a one-line observation** (→ `dreamcontext memory remember` or a
    bookmark) **and not already-shipped work** (→ a changelog entry).
+
+**What the CLI refuses on its own — read the message, it names the rule.** Lines
+1–4 are your judgement. Two of them are also checked mechanically, so a create
+can come back refused even when you believe it cleared the bar:
+
+| The refusal starts with… | What it means | What to do |
+|---|---|---|
+| `` `<slug>` already covers this (cosine …, ≥ …) `` | A near-verbatim twin of this candidate is already on the board (live **or** `state/archive/`) | Do not re-file. Fold in with the `tasks insert` command the message prints. There is no override. |
+| ``Nearest task is `<slug>` (cosine … ≥ … review)`` | The nearest task is close enough to be worth your eyes, not close enough to decide for you | **Open that task.** A slice of it → fold in. Genuinely separate → re-run with `--neighbor-checked <slug>`, naming exactly that slug. Naming it is the proof you looked; guessing the flag past a real duplicate is the failure this gate exists to stop. |
+| `Declined on <date>: "<topic>" — <reason>. Not re-filed.` | This candidate's slug IS a declined idea | Do not file. Report it; lifting is an awake decision. |
+| `Looks like a declined idea (cosine … ≥ …)` | It *resembles* a declined idea — the message prints that idea's topic, date and reason | Read the reason. Same idea → do not file. Genuinely different → re-run with `--declined-checked <key>`. |
+
+**If the CLI prints `neighbor check skipped`, the semantic floor is OFF this run**
+(no embedding index, no model, or it was disabled) and the message says so — it
+also tells you declined ideas were matched by **exact slug only**. Nothing was
+verified for you: your board map, your recall and `dreamcontext tasks declined`
+are the *only* dedup on that run. Do it by hand and say so in your report.
+
+**Direct evidence — file now; indirect — defer.**
+
+Even with every gate clear, WHEN to file is a separate question. File in THIS
+cycle only when the evidence is **direct**:
+
+- **(i)** the user **asked for it** in this project; or
+- **(ii)** **real changes** exist in files no live task covers; or
+- **(iii)** a **task-less bookmark** names it.
+
+*"It was discussed"* is INDIRECT. A conversation is not a commitment, and a task
+filed from one is the wrong-task failure the owner reported. Do **not** run
+`tasks create` for it — and do not drop it either. Defer it as a flag the next
+cycle can confirm, in the Recidivism-flags block, with **no task slug**:
+
+```
+- task-candidate:<slugified-topic>::"<one line: what it is AND the evidence you saw>"
+```
+
+The key must be **stable across cycles** — slugify the topic the same way every
+time, or the repetition that is supposed to build confidence never registers.
+`sleep done` persists it, never escalates it (there is no task to escalate), and
+prints one `Deferred task candidates: n` line. A candidate you do not re-emit
+next cycle is simply dropped, which is the correct outcome for a passing remark.
 
 **The cap.** Read this brain's limit at the start of your pass:
 
@@ -295,9 +396,22 @@ For everything NOT yet escalated, report new/continuing recurrence as a flag spe
 ```
 ### Recidivism flags (for `sleep done --flag`)
 - recurring-task:fix-releases-add-auto-discovery-scoping-bug::"still todo after N cycles"::fix-releases-add-auto-discovery-scoping-bug
+- task-candidate:snapshot-budget-ladder::"discussed twice; no file changes yet — deferred, not filed"
 ```
 
 `sleep done --flag <key>::<label>[::<task-slug>]` is repeatable — one `--flag` per flag (never comma-separated). At 3 consecutive cycles on the same `key`, `sleep done` itself surfaces the escalation ask and bumps the linked task's priority — you only report the observation honestly each cycle, you don't compute the streak.
+
+**Deferred task candidates ride the SAME store — and they are how an indirect
+candidate becomes a real task.** A `task-candidate:<key>` flag carries no task
+slug and never escalates (there is no task to bump, and nobody to hand an ask
+to); `sleep done` prints a `Deferred task candidates: n` line for them instead.
+Each cycle, read `_dream_context/state/.sleep-flags.json` and reconcile them:
+
+| The candidate is… | Action |
+|---|---|
+| Carrying `consecutive_cycles >= 1` **and** independently re-observed by THIS cycle (fresh evidence since the epoch — not the same conversation re-read) | It has now recurred: **file it.** The filing bar still applies in full; pass `--neighbor-checked <slug>` when the review band names a neighbor you opened and judged separate. Report it as **"Filed from a recurring candidate"** with the cycle count. |
+| Still only discussed, with nothing new this cycle | Re-emit the SAME key with an updated label. Confidence by repetition means the streak has to be real. |
+| Not observed at all this cycle | Do not re-emit it. `reconcileFlags` drops it — that is the design, not a loss. |
 
 **Key Result current — you MAY update it, EXCEPT on insight-fed objectives.** When this cycle surfaced a new real observed value for an objective's Key Result metric (e.g. MRR moved to $1,250, active users hit 400) — from the transcript, a file, or a connected system — refresh it: `dreamcontext roadmap objective metric <slug> --current <n>`. This is the ONE write you may make to a `core/objectives/*.md` file, and only through this CLI verb (never hand-edit the frontmatter). Use a value you actually observed — do not invent or estimate a number. The roadmap board regen at the end of sleep will reflect the new progress.
 
@@ -314,7 +428,11 @@ Never silently delete a task, and never `completed` a task that was never actual
 - Filed: <k>/<cap> — read from `dreamcontext sleep config`
 - Created: <slug> (status: in_progress, attached to vX.Y.Z) — genuinely separate concern
 - Candidates NOT filed (cap): <one line each: what it was, and the evidence, so nobody has to re-derive it> | OR: none — every candidate cleared the bar and fitted the cap
-- Did not clear the filing bar: <one line each: what it was and which line it failed> | OR: none
+- Did not clear the filing bar: <one line each: what it was and which line it failed — including every CLI refusal: the neighbor it named (merge/review), or the declined idea and its date> | OR: none
+- Killed by a later session: <topic> — <the session that cancelled/narrowed it> | OR: none
+- Out of scope (other project/person): <one line each: what it was and whose it is (connected vault / non-roster person)> | OR: none
+- Deferred candidates (task-candidate flags): <key — the one-line label and why the evidence was indirect> | OR: none
+- Filed from a recurring candidate: <slug> (seen N cycles) | OR: none
 - Body reconciled: <slug> (dropped phase 1 from User Stories; replaced Technical Details auth section)
 - Person attribution: <slug> tagged person:ada (multi-person project, ada drove this cycle's work) | OR: single-person project — no person tags injected
 - Version readiness: vX.Y.Z — 4/5 tasks ready for review
@@ -327,13 +445,13 @@ Never silently delete a task, and never `completed` a task that was never actual
 - Deferred (hands-off): <slug> — <the one line you would have logged> | OR: none (foreground cycle, or nothing in play)
 - Skipped: <session_id> had no actionable task signal
 
-Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/task signal you saw but did NOT fold into a task changelog/body, with the reason>
+Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/task signal you saw but did NOT fold into a task changelog/body, with the reason — and every neighbor/declined refusal the CLI returned, since a refusal you don't report is a candidate nobody can pick up>
 ```
 
 ## Rules
 
 1. **Dedup before creating.** Recall first; fold a smaller slice into the task that already covers it — broaden its title + insert sub-items — instead of forking a duplicate or a needless sub-task. A new task is only for a genuinely separate concern.
-1a. **Clear the filing bar, and never pad to get past it.** Every new task names a user, a friction and a cost from this session's evidence; has a next step; has no prior home (recall AND `tasks tombstones`); and is not a one-liner or already-shipped work. The cap is real and `tasks create` enforces it — so report what you did NOT file rather than dropping it. A refusal from the CLI names the rule you missed; fix the task or don't file it, but do not inflate the `--why` to get over the character floor.
+1a. **Clear the filing bar, and never pad to get past it.** Every new task names a user, a friction and a cost from this session's evidence; has a next step; has no prior home (recall AND `tasks tombstones` AND `tasks declined`); and is not a one-liner or already-shipped work. The cap is real and `tasks create` enforces it — so report what you did NOT file rather than dropping it. A refusal from the CLI names the rule you missed; fix the task or don't file it, but do not inflate the `--why` to get over the character floor. **`--neighbor-checked <slug>` and `--declined-checked <key>` are proof that you opened the thing the CLI named, never a way to get past it** — a duplicate filed behind either flag is worse than the refusal, because now it looks reviewed.
 2. **Body = current truth, Changelog = history.** Don't let the body lag behind decisions.
 3. **Status reflects reality, not a reflex.** `completed` for done + low-risk + already-validated work; `in_review` only when a human genuinely must verify something (or to hand over a close decision on superseded/abandoned/obsoleted work). Never `completed` a task that was never actually done; never silently delete.
 4. **Always attach to a planning version.** No orphan work.
@@ -343,3 +461,6 @@ Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/task 
 8. **Normalize tags via taxonomy vocab.** When writing or updating task frontmatter tags, check `dreamcontext taxonomy vocab` and use canonical forms (faceted or bare standard tags); non-canonical tags degrade recall.
 9. **Objectives: propose for empty, never overwrite non-empty.** An existing `objectives:` value is a PO decision that sticks. You fill blanks with judgment; you never revise the PO's linking. Objective files themselves (`core/objectives/`) are PO-authored — never hand-edit their prose, title, dates, or structure — with the single exception that you may refresh a Key Result's `current` via `dreamcontext roadmap objective metric <slug> --current` when you observed a new real value (see grooming (d)) — and NEVER on an objective fed by a bound Lab insight (check `dreamcontext lab list --json` for `binding.objective`; measured values belong to `lab sync`, which sleep never runs).
 10. **Recidivism — act on escalated flags, don't just re-flag.** Read `state/.sleep-flags.json` before grooming; a problem already at `consecutive_cycles >= 3` needs a real decision (in_review / close / fix), not another passive flag line. Report new/continuing recurrence via the flag-spec block (grooming (e)) so the orchestrator can pass `sleep done --flag`.
+11. **Latest session wins.** Read sessions oldest → newest and hold a current truth per topic. A later session that cancelled, narrowed or superseded a topic kills every earlier candidate on it, and no status bump may come from a transcript older than the newest session that touched that task.
+12. **Lands in THIS project.** A task is filed here only if the work changes this repo, changes this brain, or was asked for here. A connected vault's work (`dreamcontext link ls`) or a non-roster person's work (`dreamcontext people list`) gets NO task here — report it under "Out of scope (other project/person)".
+13. **Direct evidence files; discussion defers.** File this cycle only on a user ask, real changes no live task covers, or a task-less bookmark. "It was discussed" becomes a `task-candidate:<key>` flag and is filed only when a later cycle independently re-observes it.
