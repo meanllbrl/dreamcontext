@@ -77,9 +77,12 @@ let pumping = false;
 async function runTurn() {
   // A TOKEN FOOTPRINT, so the context reading exists at all. The composer draws its usage
   // trigger only when there is something to measure, and this release's headline — the
-  // window as BANDS plus the ECO pill — lives behind that trigger. 450k of a 1M window puts
-  // the reading one third into the middle band: the first is spent, the second is filling,
-  // the third is untouched, which is the whole point of drawing three.
+  // window as BANDS plus the ECO pill — lives behind that trigger. The bands split at 300k
+  // and 650k (CONTEXT_BAND_EDGES, which are also ECO's two nudge thresholds), so 450k of a
+  // 1M window lands 43% into the middle band: the first is spent, the second is filling,
+  // the third is untouched, which is the whole point of drawing three. It is also PAST the
+  // firm threshold and short of the severe one, so the pill photographs saying what it
+  // asks and what it insists on rather than a single number.
   const usage = { input_tokens: 12000, cache_read_input_tokens: 432000, cache_creation_input_tokens: 4000, output_tokens: 2000 };
   // role and model are NOT decoration: the usage parser drops any frame whose message is
   // not an assistant turn, so a footprint without them is silently ignored and the context
@@ -336,9 +339,20 @@ try {
   captured.push('hero');
   console.log('  ✓ hero');
 
-  /** Clip to one popover, with a little air around it. */
+  /**
+   * Clip to one popover, with a little air around it.
+   *
+   * The clamps read the LIVE viewport rather than the literals this script opens with.
+   * They were hardcoded to 1500x1000 and the diagram step now resizes the window to
+   * 1600x1400 and back, so a popover sitting past x=1500 had its right edge silently
+   * sliced off — the ECO pill photographed as "insists a" with the rest outside the
+   * frame. A clip that is wrong is not a broken shot, it is a shot that still looks
+   * plausible, which is why this reads the number instead of repeating it.
+   */
   const shotOf = async (name, selector) => {
     const box = await vis(selector).first().boundingBox();
+    const vp = page.viewportSize() ?? { width: 1600, height: 1000 };
+    if (box) console.log(`    ${name}: box ${Math.round(box.width)}x${Math.round(box.height)} at ${Math.round(box.x)},${Math.round(box.y)} in ${vp.width}x${vp.height}`);
     await page.screenshot({
       path: join(ROOT, ID, `${name}.png`),
       ...(box
@@ -346,8 +360,8 @@ try {
             clip: {
               x: Math.max(0, box.x - 18),
               y: Math.max(0, box.y - 18),
-              width: Math.min(1500 - Math.max(0, box.x - 18), box.width + 36),
-              height: Math.min(1000 - Math.max(0, box.y - 18), box.height + 36),
+              width: Math.min(vp.width - Math.max(0, box.x - 18), box.width + 36),
+              height: Math.min(vp.height - Math.max(0, box.y - 18), box.height + 36),
             },
           }
         : {}),

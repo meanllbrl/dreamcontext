@@ -2,11 +2,11 @@
   "hero": {
     "eyebrow": "v0.28.0  ·  13 September 2026",
     "headline": "It knows when to start over",
-    "sub": "A long conversation used to get quietly more expensive until it broke. ECO mode gives the window a plan: at the token count you set, the agent writes its own state into the task and carries on in a fresh session — and the window itself stops being a percentage you have to interpret.",
+    "sub": "A long conversation used to get quietly more expensive until it broke. ECO mode gives the window a plan: past 300k the agent is asked to write its own state into the task and carry on in a fresh session, past 650k it is told to — and the window itself stops being a percentage you have to interpret.",
     "shot": {
       "src": "shots/v0-28-0/eco-context.png",
-      "alt": "The context popover: 'Context window 45%', a bar drawn as three bands — the first filled, the second a third amber, the third untouched — then '450k / 1.0M' and '550k free', and a lit ECO pill reading 'hands off at 200k'.",
-      "caption": "The pill IS the control. Lit, it names the count it hands off at.",
+      "alt": "The context popover: 'Context window 45%', a bar drawn as three bands — the first filled, the second part amber, the third untouched — then '450k / 1.0M' and '550k free', and a lit ECO pill reading 'asks at 300k · insists at 650k'.",
+      "caption": "The pill IS the control. Lit, it names both counts: where it starts asking, and where it stops asking nicely.",
       "frame": "plain"
     }
   },
@@ -17,19 +17,19 @@
       "items": [
         {
           "title": "45% told you nothing",
-          "text": "One bar and one number cannot say which KIND of full you are. The window is now three bands — up to 350k, up to 650k, and the rest — so the count of lit bands is legible at a glance in a way a percentage never was."
+          "text": "One bar and one number cannot say which KIND of full you are. The window is now three bands — up to 300k, up to 650k, and the rest — so the count of lit bands is legible at a glance in a way a percentage never was."
         },
         {
           "title": "A small window draws one",
           "text": "The edges are clamped to the real limit, so a 200k-window model collapses to a single band instead of drawing two dead rings it can never reach."
         },
         {
-          "title": "ECO is a handover, not a trim",
-          "text": "At the mark, the agent writes what it is doing into the task — done, next, decisions, what it learned — and a fresh session picks the task up from there. Nothing is summarised away behind your back."
+          "title": "It asks, then it insists",
+          "text": "Past the first mark the agent is asked to hand off, and told the only two reasons to refuse. Past the second it is told to — and if it keeps going anyway it has to say so, out loud, instead of quietly costing you more."
         },
         {
-          "title": "It is per chat, and it is a pill",
-          "text": "One click under the bar it changes. Off is off: the conversation runs to the end of the window the way it always did."
+          "title": "A handover, not a trim",
+          "text": "At the mark the agent writes what it is doing into the task — done, next, decisions, what it learned — and a fresh session picks the task up from there. Nothing is summarised away behind your back, and off is off."
         }
       ]
     },
@@ -72,7 +72,7 @@
     {
       "kind": "shot",
       "title": "The shape is drawn, not read out",
-      "body": "Behind the agent's HTML there is now a real layout engine. The answer names the boxes and which ones connect; the kit places them and draws the arrows, including the ones that branch and rejoin. Nothing here is positioned by hand, and a chain that fits on one line stays a sentence. The drawing is also SIZED to the room it lands in \u2014 it grows to use a wide pane and the fullscreen deck instead of staying at the size it was laid out at, so the same diagram is readable in a narrow card and across a monitor.",
+      "body": "Behind the agent's HTML there is now a real layout engine. The answer names the boxes and which ones connect; the kit places them and draws the arrows, including the ones that branch and rejoin. Nothing here is positioned by hand, and a chain that fits on one line stays a sentence. The drawing is also SIZED to the room it lands in — it grows to use a wide pane and the fullscreen deck instead of staying at the size it was laid out at, so the same diagram is readable in a narrow card and across a monitor.",
       "shot": {
         "src": "shots/v0-28-0/chat-diagram.png",
         "alt": "An agent-drawn diagram of a card payment: Payment submitted leads to an Authorised? decision, which branches to a green Order placed on yes and to a Retryable code? decision on no, which branches to a red Declined for good and to Second attempt — and Second attempt loops back into Authorised?.",

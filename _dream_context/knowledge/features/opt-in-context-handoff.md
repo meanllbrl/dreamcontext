@@ -3,11 +3,13 @@ id: "feat_t7P6EZZS"
 type: "feature"
 name: "opt-in-context-handoff"
 description: >-
-  Past ~200k tokens the agent is handed a note with its own numbers and told it
+  Past ~300k tokens the agent is handed a note with its own numbers and told it
   may write its state into the task and continue in a fresh session — its own
-  call, never forced. `tasks handoff` records the request, desktop Chat rotates
-  itself with /clear, and the next session opens on a HANDOFF banner naming the
-  task. Off by default, per pane, remembered per vault per machine.
+  call, never forced. The note ESCALATES: firm from 300k, and from 650k it must
+  hand off or tell the user why it didn't. `tasks handoff` records the request,
+  desktop Chat rotates itself with /clear, and the next session opens on a
+  HANDOFF banner naming the task. Off by default, per pane, remembered per vault
+  per machine.
 pinned: false
 date: "2026-09-13"
 status: "in_review"
@@ -50,7 +52,7 @@ Full measurement, model parameters and raw data: `knowledge/context-ceiling-econ
 
 ## Acceptance Criteria
 
-- [x] `.config.json` `contextHandoff {enabled,nudgeAt,remindEvery}` defaults `{false, 200000, 100000}`; invalid values fall back; `dreamcontext config context-handoff on|off [--nudge-at N] [--remind-every N]` round-trips and `config show` prints it. Ladders below 20k/10k are refused at the CLI write boundary.
+- [x] `.config.json` `contextHandoff {enabled,nudgeAt,hardAt,remindEvery}` defaults `{false, 300000, 650000, 100000}` — the two thresholds ARE `CONTEXT_BAND_EDGES`; invalid values fall back and `hardAt` is clamped `>= nudgeAt`; `dreamcontext config context-handoff on|off [--nudge-at N] [--hard-at N] [--remind-every N]` round-trips and `config show` prints both. Ladders below 20k/10k are refused at the CLI write boundary.
 - [x] With the feature on and main-chain context ≥ `nudgeAt`, the next Edit/Write (PostToolUse) or user prompt (UserPromptSubmit) injects the nudge via `additionalContext` exactly once, then again every `remindEvery` tokens. Disabled ⇒ zero output, zero extra work.
 - [x] The nudge never fires inside a sub-agent — `agent_id`/`agent_type` on the payload (pinned against a real captured payload), `/subagents/` in the transcript path, or an `isSidechain` tail record all skip it.
 - [x] `dreamcontext tasks handoff <slug> [note]` logs the note to the task changelog, sets the task `in_progress`, writes `state/.handoff-requests/<key>.json`, writes a partial session digest, and appends a `CompactionRecord {trigger:'handoff', context_tokens}`. It writes **no** global active-task pointer.
@@ -68,6 +70,10 @@ Full measurement, model parameters and raw data: `knowledge/context-ceiling-econ
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-09-14]** **The first threshold is 300k, and it is the same number the gauge paints.** `CONTEXT_BAND_EDGES` moved to `src/lib/setup-config.ts` and IS the shipped ladder, mirrored in the dashboard under a drift test that asserts both halves (mirror ≡ owner, and the pair ≡ the nudge's thresholds) — because for one release the ring said "calm" to 350k while the nudge pushed from 200k. 300k over 350k was measured three ways, not chosen: the cost optimum is 200–250k (300k sits 5% above it, 350k 10%); a nudge is not a cap, so the effective cap is `threshold + lag` and at +50k lag 300k costs +10% while 350k costs +18%; and across 434 real sessions the noise rate is flat (29% vs 27%), so moving up silences 32 sessions of which 21 were the useful ones. The original "a normal session runs the whole first band" still holds — median peak 153k, p75 319k, so 71% of sessions never leave the calm band.
+- **[2026-09-14]** **Two registers, because one register measured zero.** Six real sessions were nudged between 204k and 458k and requested ZERO handoffs; the mechanism fired correctly every time. The single note ended on "keep going and ignore this", which made declining the cheap default. FIRM now names the only two ways out and disqualifies "I am in the middle of something" BY NAME — that is what the `log` carries, and it was true of every session that ignored the old note. SEVERE (past `hardAt`) is imperative and grows the only tooth that does not break *agent-decided, never forced*: continue if you must, but **tell the user and say why**. The repeat cadence was deliberately NOT shortened — a message that doubles in frequency reads as broken rather than urgent.
+- **[2026-09-14]** **The tab file is a SWITCH, not a ladder.** Nothing in the UI ever set a per-pane threshold, yet every `tab-<pane>.json` had one written at birth, which pinned ten live panes to a 200k ladder nobody chose the moment the vault's edges moved. `resolveHandoffFor` now takes only `enabled` from the pane and the thresholds from `.config.json` — re-pointing every existing pane with no migration — and the server re-resolves before echoing the toggle so a tuned vault cannot show one number and nudge on another.
+
 - **[2026-09-13]** **The gauge became three concentric rings, not one zoned arc.** A single arc split into three bands (0–200k / 200k–500k / 500k–1M) was built first and photographed at true size: at 18px it read as a bullseye and 402k could not be told from 640k. Three rings, each filling its own 0–100% with its own tone (Apple Health's activity rings), need thickness and air — which is why the button grew to 28px, the smallest box measured in which the third ring is still a ring. Each track is tinted in its OWN ring's colour so an empty ring still says which band it stands for.
 - **[2026-09-13]** **The handoff switch became an ECO lamp.** The popover was rejected three times for the same reason in different words ("çok text heavy", "ara altyazılardan uzaklaş", "ölü muhabbetleri var"), so the captions were removed rather than shortened a fourth time: a leaf, the word ECO, and what it does, all on the badge; the full sentence lives in the `title`. A car does not print a paragraph under its ECO lamp. Every popover selector is scoped under `.chat-cmp-usagemenu` after model/mode menus were confirmed unaffected in the real app.
 - **[2026-09-13]** **`shouldRotateForHandoff(record) = !!record && !actedAt && !consumedAt`.** The original condition checked `actedAt` only, but the two stamps say different things: `actedAt` = *we* rotated (a latch against a `/clear` loop), `consumedAt` = the handoff was already delivered some other way (a manual `/clear`, or the resume banner on app restart). With only the first check, a record delivered by the banner queued a **second** rotation that `/clear`ed the session the user was actively working in. Observed exactly once in the real app across a server restart — a class of defect a scratch vault structurally cannot produce, because there the server is reborn every run.
@@ -82,7 +88,7 @@ Full measurement, model parameters and raw data: `knowledge/context-ceiling-econ
 - `contextTokensFromUsage(u)` = `input + cache_creation + cache_read + output` — extracted from `agent-terminal.ts` and imported back there, so CLI and server share one formula.
 - `lastMainChainContext(transcriptPath, tail=512KiB)` reads only the file tail, walks backwards, skips `isSidechain === true`, first usage record wins, `null` on missing/parse error.
 - `isMainChainHookInput(input)` — the sub-agent guard (path, `agent_id`/`agent_type`, sidechain tail).
-- `shouldNudge(state, ctx, cfg)` = `ctx >= nudgeAt && (state == null || ctx >= state.lastNudgedAt + remindEvery)`; per-session state in `state/.context-watch/<session_id>.json`.
+- `shouldNudge(state, ctx, cfg)` = `ctx >= nudgeAt && (state == null || crossedIntoSevere || ctx >= state.lastNudgedAt + remindEvery)`; the escalation clause outranks the cadence so the crossing into `hardAt` is announced at the crossing. Per-session state in `state/.context-watch/<session_id>.json`, now carrying `lastTone`.
 - `renderNudge(ctx, cfg, activeSlug)` — the note: tokens vs threshold, "every further turn re-reads all of it", the two commands, the explicit *you decide* clause, and the next reminder level.
 - `pruneContextWatch(root)` — 7-day sweep over `.context-watch/` and `.handoff-requests/`, plus tab files older than 30 days.
 

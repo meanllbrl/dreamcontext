@@ -131,7 +131,7 @@
     "date": "2026-09-13",
     "version": "0.28.0",
     "title": "It knows when to start over",
-    "summary": "ECO mode gives a long conversation a plan: at the token count you set, the agent writes its own state into the task and carries on in a fresh session — and the context window stops being one percentage, drawn instead as three bands you can read at a glance. J.A.R.V.I.S voice mode arrives labelled ALPHA: hold a key, speak, hear the answer, on one OpenRouter key that never leaves this machine. Plus a real layout engine behind the agent's diagrams, and account bars that say how much of each window is LEFT rather than what time it resets.",
+    "summary": "ECO mode gives a long conversation a plan: past 300k the agent is asked to write its own state into the task and carry on in a fresh session, past 650k it is told to and has to explain itself if it doesn't — and the context window stops being one percentage, drawn instead as three bands you can read at a glance. J.A.R.V.I.S voice mode arrives labelled ALPHA: hold a key, speak, hear the answer, on one OpenRouter key that never leaves this machine. Plus a real layout engine behind the agent's diagrams, and account bars that say how much of each window is LEFT rather than what time it resets.",
     "tags": [
       "agent",
       "chat",
