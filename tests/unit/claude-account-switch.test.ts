@@ -25,6 +25,8 @@ import type { UsageLimitsResponse } from '../../src/lib/claude-usage.js';
 
 const HOUR = 3_600_000;
 const NOW = Date.parse('2026-09-04T12:00:00Z');
+const SESSION_WINDOW = 5 * HOUR;
+const WEEKLY_WINDOW = 7 * 24 * HOUR;
 
 function limits(
   session: number | null,
@@ -34,12 +36,12 @@ function limits(
   const out: UsageLimitsResponse = { limits: [], fetchedAtMs: NOW };
   if (session !== null) {
     out.limits.push({
-      key: 'session', percent: session, resetsAt: over.sessionResetsAt ?? NOW + HOUR,
+      key: 'session', percent: session, resetsAt: over.sessionResetsAt ?? NOW + SESSION_WINDOW,
       ...(over.lockedReason ? { lockedReason: over.lockedReason } : {}),
     });
   }
   if (weekly !== null) {
-    out.limits.push({ key: 'weekly', percent: weekly, resetsAt: over.weeklyResetsAt ?? NOW + 48 * HOUR });
+    out.limits.push({ key: 'weekly', percent: weekly, resetsAt: over.weeklyResetsAt ?? NOW + WEEKLY_WINDOW });
   }
   return out;
 }
@@ -47,7 +49,16 @@ function limits(
 const reading = (id: string, session: number | null, weekly: number | null, over = {}): AccountReading =>
   ({ id, limits: limits(session, weekly, over) });
 
-const T = { threshold: SWITCH_THRESHOLD_PERCENT };
+/**
+ * The default fixture gives every window its WHOLE life ahead of it, so the time discount
+ * multiplies by 1 and a test about the weights is not silently also a test about the clock.
+ * The discount has its own block; it states its reset times explicitly.
+ *
+ * `now` is pinned for the same reason it is pinned in the rejection blocks: a reset time is
+ * only meaningful against a clock, and left to `Date.now()` every fixture window here would
+ * read as having rolled over two years ago.
+ */
+const T = { threshold: SWITCH_THRESHOLD_PERCENT, now: NOW };
 
 describe('the emptiest eligible account wins', () => {
   it('picks the lowest SCORE, which is both windows together and not the session alone', () => {
@@ -148,15 +159,13 @@ describe('an account we cannot vouch for is NEVER counted as empty', () => {
     expect(res.rejected).toContainEqual({ id: 'a', why: 'needs to sign in again' });
   });
 
-  it('a reading missing one window LOSES to any measured account, however busy', () => {
+  it('a reading missing one window LOSES to any measured account with room, however busy', () => {
     // 'a' looks better on the one number it has (10% vs 50%) and still must not win: half a
-    // reading is not a reading. It is a LAST-RESORT candidate now (see the `unmeasured`
-    // block below), which changes what happens when nothing else qualifies — never what
-    // happens when something does.
+    // reading is not a reading, because the window nobody read is an unknown and not a zero.
     const res = chooseAccount([reading('a', 10, null), reading('b', 50, 50)], T);
     expect(res.accountId).toBe('b');
     expect(res.unmeasured).toBeUndefined();
-    expect(res.rejected).toContainEqual({ id: 'a', why: 'its usage could not be read' });
+    expect(res.partial).toBeUndefined();
   });
 
   it('an all-unmeasurable set yields no account rather than a guess', () => {
@@ -195,28 +204,28 @@ describe('the two thresholds', () => {
 
   it('shouldProbe fires at the probe threshold but shouldSwitchAway does not', () => {
     const at80 = limits(PROBE_THRESHOLD_PERCENT, 10);
-    expect(shouldProbe(at80)).toBe(true);
-    expect(shouldSwitchAway(at80)).toBe(false);
+    expect(shouldProbe(at80, PROBE_THRESHOLD_PERCENT, NOW)).toBe(true);
+    expect(shouldSwitchAway(at80, SWITCH_THRESHOLD_PERCENT, NOW)).toBe(false);
   });
 
   it('shouldSwitchAway fires at the switch threshold', () => {
-    expect(shouldSwitchAway(limits(SWITCH_THRESHOLD_PERCENT, 10))).toBe(true);
-    expect(shouldSwitchAway(limits(SWITCH_THRESHOLD_PERCENT - 1, 10))).toBe(false);
+    expect(shouldSwitchAway(limits(SWITCH_THRESHOLD_PERCENT, 10), SWITCH_THRESHOLD_PERCENT, NOW)).toBe(true);
+    expect(shouldSwitchAway(limits(SWITCH_THRESHOLD_PERCENT - 1, 10), SWITCH_THRESHOLD_PERCENT, NOW)).toBe(false);
   });
 
   it('a lockedReason fires both immediately, whatever the percent beside it says', () => {
     const locked = limits(3, 3, { lockedReason: 'weekly_limit_reached' });
-    expect(shouldProbe(locked)).toBe(true);
-    expect(shouldSwitchAway(locked)).toBe(true);
+    expect(shouldProbe(locked, PROBE_THRESHOLD_PERCENT, NOW)).toBe(true);
+    expect(shouldSwitchAway(locked, SWITCH_THRESHOLD_PERCENT, NOW)).toBe(true);
   });
 
   it('the WEEKLY window can trigger a switch on its own', () => {
-    expect(shouldSwitchAway(limits(5, 96))).toBe(true);
+    expect(shouldSwitchAway(limits(5, 96), SWITCH_THRESHOLD_PERCENT, NOW)).toBe(true);
   });
 
   it('an empty reading triggers nothing — absence is not exhaustion', () => {
-    expect(shouldProbe({ limits: [], fetchedAtMs: null })).toBe(false);
-    expect(shouldSwitchAway({ limits: [], fetchedAtMs: null })).toBe(false);
+    expect(shouldProbe({ limits: [], fetchedAtMs: null }, PROBE_THRESHOLD_PERCENT, NOW)).toBe(false);
+    expect(shouldSwitchAway({ limits: [], fetchedAtMs: null }, SWITCH_THRESHOLD_PERCENT, NOW)).toBe(false);
   });
 });
 
@@ -560,6 +569,190 @@ describe('the `sequential` strategy — drain the list in order, move only on a 
 
   it('never reports a `score` — nothing was weighed', () => {
     const res = chooseAccount([reading('first', 10, 10)], S);
+    expect(res.score).toBeUndefined();
+  });
+});
+
+/**
+ * ── The 2026-09-13 report, as rules ────────────────────────────────────────────────────
+ * A percentage cannot rank two accounts on its own, because a window is worth only what is
+ * still ahead of it. Four connected accounts on the owner's machine: a 97% five-hour window
+ * that reopened in three hours and a 91% week that stayed shut for two days scored as the
+ * same kind of full, and a five-hour window that had ALREADY reset an hour earlier was still
+ * being scored at the 52% it held before the reset.
+ */
+describe('time is part of the price', () => {
+  /** The order term cancels out anyway when no order is given; zeroing it keeps the
+   *  arithmetic in these tests readable as the discount and nothing else. */
+  const NO_ORDER = { session: 1, weekly: 2, order: 0 };
+  const MIN = 60_000;
+
+  it('a window whose reset has PASSED is not scored at the percent it held before it', () => {
+    // 52% described a window that no longer exists; the one in front of us started empty.
+    // 0 + 2·10 = 20 against 30 + 2·10 = 50.
+    const res = chooseAccount([
+      reading('rolled', 52, 10, { sessionResetsAt: NOW - HOUR }),
+      reading('fresh', 30, 10),
+    ], { ...T, weights: NO_ORDER });
+    expect(res.accountId).toBe('rolled');
+    expect(res.score).toBe(20);
+  });
+
+  it('and the inference is never REPORTED as a reading', () => {
+    // How much has been spent since the reset is genuinely unknown, so the banner gets
+    // nothing rather than a confident "session 0%".
+    const res = chooseAccount([reading('rolled', 52, 10, { sessionResetsAt: NOW - HOUR })], T);
+    expect(res.accountId).toBe('rolled');
+    expect(res.sessionPercent).toBeUndefined();
+    expect(res.weeklyPercent).toBe(10);
+  });
+
+  it('a five-hour window 15 minutes from its reset is spent before an identical fresh one', () => {
+    // Same two percentages on both accounts. Only the clock differs, and it decides:
+    // 20·(15min/5h) + 2·10 = 21 against 20 + 2·10 = 40. This is the 2026-09-10 report —
+    // 80% of a window 15 minutes from reset evaporated while the primary account was spent.
+    const res = chooseAccount([
+      reading('burning', 20, 10, { sessionResetsAt: NOW + 15 * MIN }),
+      reading('fresh', 20, 10),
+    ], { ...T, weights: NO_ORDER });
+    expect(res.accountId).toBe('burning');
+    expect(res.score).toBe(21);
+  });
+
+  it('a week that reopens within the hour is not scarce; one with six days to run is', () => {
+    // 60% of a week is a lot of week — unless it comes back in an hour, when it is worth
+    // 2·60·(1h/7d) = 0.71 against a barely-touched week at 2·10 = 20.
+    const res = chooseAccount([
+      reading('reopening', 0, 60, { weeklyResetsAt: NOW + HOUR }),
+      reading('untouched', 0, 10),
+    ], { ...T, weights: NO_ORDER });
+    expect(res.accountId).toBe('reopening');
+    expect(res.score).toBeCloseTo(0.714, 3);
+  });
+
+  it('a window with NO parseable reset is charged full price, never discounted on a guess', () => {
+    const res = chooseAccount(
+      [reading('a', 40, 0, { sessionResetsAt: 0, weeklyResetsAt: 0 })],
+      { ...T, weights: NO_ORDER },
+    );
+    expect(res.score).toBe(40);
+  });
+
+  it('THE GATE DOES NOT MOVE: the discount cannot make an exhausted account usable', () => {
+    // 91% of a week discounts to almost nothing five minutes before its reset, and is still
+    // refused — the threshold is a fact about the API's wall, not about our arithmetic.
+    const res = chooseAccount([
+      reading('over', 5, 91, { weeklyResetsAt: NOW + 5 * MIN }),
+      reading('under', 40, 50),
+    ], { ...T, weights: NO_ORDER });
+    expect(res.accountId).toBe('under');
+    expect(res.rejected).toContainEqual({ id: 'over', why: 'weekly usage is at 91%' });
+  });
+
+  it('an account with almost nothing LEFT does not win on a near-zero discounted score', () => {
+    // The discount is right that spending here is cheap and silent on there being nothing
+    // left to spend: one point of headroom would move the session there and straight back.
+    const res = chooseAccount([
+      reading('thin', 0, 89, { weeklyResetsAt: NOW + 10 * MIN }),
+      reading('roomy', 30, 40),
+    ], { ...T, weights: NO_ORDER });
+    expect(res.accountId).toBe('roomy');
+  });
+
+  it('…but a thin account still serves when there is nowhere roomier to go', () => {
+    const res = chooseAccount(
+      [reading('thin', 0, 89, { weeklyResetsAt: NOW + 10 * MIN })],
+      { ...T, weights: NO_ORDER },
+    );
+    expect(res.accountId).toBe('thin');
+  });
+
+  it('a reset that has already passed is never offered as the time work resumes', () => {
+    const res = chooseAccount(
+      [reading('a', 95, 20, { sessionResetsAt: NOW + 2 * HOUR, weeklyResetsAt: NOW - HOUR })],
+      T,
+    );
+    expect(res.accountId).toBeNull();
+    expect(res.earliestResetAt).toBe(NOW + 2 * HOUR);
+  });
+
+  it('the same cached 95% forces a switch before its reset and stops forcing one after', () => {
+    // The session comes home without any "come home" code: the reading that exiled the
+    // account expires by itself, on the clock the account's own window keeps.
+    const cached = limits(95, 10, { sessionResetsAt: NOW + 10 * MIN });
+    expect(shouldSwitchAway(cached, SWITCH_THRESHOLD_PERCENT, NOW)).toBe(true);
+    expect(shouldSwitchAway(cached, SWITCH_THRESHOLD_PERCENT, NOW + 20 * MIN)).toBe(false);
+    expect(shouldProbe(cached, PROBE_THRESHOLD_PERCENT, NOW + 20 * MIN)).toBe(false);
+  });
+
+  it('the owner\'s four accounts, 2026-09-13 02:18', () => {
+    const res = chooseAccount([
+      // 52% of a window that reopened an hour ago; a week that stays shut for two days.
+      reading('gmail', 52, 91, { sessionResetsAt: NOW - 68 * MIN, weeklyResetsAt: NOW + 53 * HOUR }),
+      // The freest week on the machine, behind a five-hour window that reopens in three.
+      reading('ouromedia', 97, 19, { sessionResetsAt: NOW + 202 * MIN, weeklyResetsAt: NOW + 149 * HOUR }),
+      // Session unreadable, week measured — invisible to the chooser before this change.
+      reading('nativeminds', null, 76, { weeklyResetsAt: NOW + 45 * HOUR }),
+      reading('ottoapps', 1, 27, { sessionResetsAt: NOW + 281 * MIN, weeklyResetsAt: NOW + 73 * HOUR }),
+    ], { ...T, weights: NO_ORDER });
+
+    expect(res.accountId).toBe('ottoapps');
+    // Neither rejection is about the price. A 97% five-hour window will refuse the turn in
+    // the next three hours however cheap those points are, and a 91% week for two days.
+    expect(res.rejected).toContainEqual({ id: 'ouromedia', why: 'session usage is at 97%' });
+    expect(res.rejected).toContainEqual({ id: 'gmail', why: 'weekly usage is at 91%' });
+    // nativeminds is a CANDIDATE that lost, not an account nobody could see: it is not in
+    // `rejected` at all, and it wins the moment the fully measured one is out of room.
+    expect(res.rejected.map((r) => r.id)).not.toContain('nativeminds');
+  });
+
+  it('and nativeminds serves once the only fully measured account is at the wall', () => {
+    const res = chooseAccount([
+      reading('nativeminds', null, 76, { weeklyResetsAt: NOW + 45 * HOUR }),
+      reading('ottoapps', 88, 27, { sessionResetsAt: NOW + 281 * MIN, weeklyResetsAt: NOW + 73 * HOUR }),
+    ], { ...T, weights: NO_ORDER });
+    expect(res.accountId).toBe('nativeminds');
+    expect(res.partial).toBe(true);
+    expect(res.weeklyPercent).toBe(76);
+    expect(res.sessionPercent).toBeUndefined();
+  });
+});
+
+describe('one readable window is a candidate, not an invisible account', () => {
+  const NO_ORDER = { session: 1, weekly: 2, order: 0 };
+
+  it('a partial reading is weighed, and the result SAYS it is partial', () => {
+    const res = chooseAccount([reading('partial', 10, null)], { ...T, weights: NO_ORDER });
+    expect(res.accountId).toBe('partial');
+    expect(res.partial).toBe(true);
+    expect(res.unmeasured).toBeUndefined();
+    expect(res.sessionPercent).toBe(10);
+    expect(res.weeklyPercent).toBeUndefined();
+  });
+
+  it('it is still NOT a last-resort pick — a reading with no windows at all is', () => {
+    const res = chooseAccount(
+      [reading('none', null, null), reading('partial', 60, null)],
+      { ...T, weights: NO_ORDER },
+    );
+    expect(res.accountId).toBe('partial');
+    expect(res.unmeasured).toBeUndefined();
+    expect(res.rejected).toContainEqual({ id: 'none', why: 'its usage could not be read' });
+  });
+});
+
+describe('the clock is a `score` rule only — `sequential` still reads no number at all', () => {
+  const S = { ...T, strategy: 'sequential' as const, orderedIds: ['first', 'second'] };
+
+  it('a five-hour window burning out below the top account does not move the session', () => {
+    // Under `score` this is the strongest possible case for switching: 'second' is emptier AND
+    // its window is minutes from being forgiven. `sequential` promises to consult no
+    // percentage, and a discount applied to a percentage nobody reads is still not read.
+    const res = chooseAccount([
+      reading('first', 80, 40),
+      reading('second', 5, 5, { sessionResetsAt: NOW + 10 * 60_000 }),
+    ], S);
+    expect(res.accountId).toBe('first');
     expect(res.score).toBeUndefined();
   });
 });

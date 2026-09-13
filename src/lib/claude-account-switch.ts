@@ -1,4 +1,4 @@
-import type { UsageLimitsResponse } from './claude-usage.js';
+import type { UsageLimitsResponse, UsageLimitWire } from './claude-usage.js';
 
 /**
  * Which account should serve the next turn — the PURE half of auto-switch.
@@ -39,9 +39,13 @@ export type SwitchStrategy = 'score' | 'sequential';
 /**
  * The coefficients of the `score` strategy. Every eligible account gets ONE number
  *
- *   score = session·sessionUsage% + weekly·weeklyUsage% + order·positionInTheList
+ *   score = session·sessionUsage%·sessionLife + weekly·weeklyUsage%·weeklyLife
+ *         + order·positionInTheList
  *
- * and the LOWEST score serves the turn.
+ * and the LOWEST score serves the turn. `…Life` is the fraction of that window still ahead of
+ * its reset — see `WindowReading` and the discount note in `chooseAccount`. The weights are
+ * unchanged in meaning: they still say what a percent of each window is worth, they are just
+ * no longer applied to a percent whose window is about to be forgiven.
  *
  * ── Why one number instead of a sort key ──────────────────────────────────────────────
  * The original rule sorted on the session window alone and used the weekly window only as a
@@ -165,6 +169,13 @@ export interface ChooseResult {
    */
   unmeasured?: boolean;
   /**
+   * True when the winner had exactly ONE readable window. Distinct from `unmeasured`, which
+   * means none: here a real number was weighed, and the other window is simply an unknown
+   * rather than a zero. Such an account is never preferred to a fully measured one that has
+   * room — see the sort in `chooseAccount`.
+   */
+  partial?: boolean;
+  /**
    * When `accountId` is null: the EARLIEST reset across every exhausted account. This is what
    * turns "it just failed" into "work resumes at <time>".
    */
@@ -173,21 +184,78 @@ export interface ChooseResult {
   rejected: Array<{ id: string; why: string }>;
 }
 
-/** The window percentages of a reading, with `null` for a window that is not readable. */
-function windows(limits: UsageLimitsResponse): {
-  session: number | null;
-  weekly: number | null;
+/**
+ * How long each window lasts, end to end.
+ *
+ * The CLI states a reset TIME and never a duration, so the length is the product's own
+ * contract — a five-hour session window and a seven-day week. It is used for exactly one
+ * thing: turning "resets at 05:40" into "two thirds of this window is still ahead of us",
+ * which is the only way a percentage can be compared across two windows of different size.
+ */
+export const SESSION_WINDOW_MS = 5 * 60 * 60_000;
+export const WEEKLY_WINDOW_MS = 7 * 24 * 60 * 60_000;
+
+/**
+ * One window of a reading, after the ROLLOVER correction and with its remaining life measured.
+ *
+ * ── `raw` vs `measured`: an inference is never reported as a reading ──────────────────
+ * A reading whose `resetsAt` has already passed describes a window that NO LONGER EXISTS.
+ * That is not staleness in the "old file" sense — the file can be seconds old — it is
+ * arithmetic: the counter restarted at the reset, so the old percent cannot still be true.
+ * Observed 2026-09-13: a panel drew "52% · resets 01:10" at 02:18, i.e. a number for a window
+ * that had reopened an hour earlier, and the chooser scored that same 52.
+ *
+ * So a rolled-over window scores as `raw: 0` — the new window did start empty — while
+ * `measured` goes null, because how much has been spent SINCE the reset is genuinely unknown
+ * and a banner that announces "moved to X (session 0%)" would be stating an inference as a
+ * measurement. The gate and the score get the useful half; the surface gets only the honest
+ * half.
+ *
+ * (The composer's account menu drops such a window from the display entirely — same fact,
+ * different job. It must not SHOW a number it cannot vouch for; the chooser must not STRAND
+ * an account whose window it knows has reopened.)
+ */
+interface WindowReading {
+  /** What the eligibility gate and the score use. 0 for a window that has already reset. */
+  raw: number;
+  /** What may be REPORTED — null when the number describes a window that no longer exists. */
+  measured: number | null;
+  /** 1 = the whole window is still ahead; 0 = it resets now. 1 when no reset was parsed. */
+  life: number;
+  /** The reset, when it is still in the future. 0 otherwise — a past reset is not a wait. */
+  resetsAt: number;
+}
+
+function readWindow(limit: UsageLimitWire | undefined, lengthMs: number, now: number): WindowReading | null {
+  if (!limit || !Number.isFinite(limit.percent)) return null;
+  const resetsAt = Number.isFinite(limit.resetsAt) ? limit.resetsAt : 0;
+  // Already reset: the window ahead of us is a FRESH one, so its life is whole and its
+  // spend is zero-plus-whatever-happened-since, which nobody here can know.
+  if (resetsAt > 0 && resetsAt <= now) return { raw: 0, measured: null, life: 1, resetsAt: 0 };
+  // No parseable reset is NOT a reason to discount: claiming a window is nearly over because
+  // we could not read when it ends would spend it on a guess. An unknown reset means full price.
+  const life = resetsAt > 0 ? Math.min(1, Math.max(0, (resetsAt - now) / lengthMs)) : 1;
+  return { raw: limit.percent, measured: limit.percent, life, resetsAt };
+}
+
+/** The windows of a reading, with `null` for a window that is not readable at all. */
+function windows(limits: UsageLimitsResponse, now: number): {
+  session: WindowReading | null;
+  weekly: WindowReading | null;
   locked: boolean;
   resets: number[];
 } {
-  const session = limits.limits.find((l) => l.key === 'session');
-  const weekly = limits.limits.find((l) => l.key === 'weekly');
-  const resets = limits.limits.map((l) => l.resetsAt).filter((r) => Number.isFinite(r));
+  const sessionLimit = limits.limits.find((l) => l.key === 'session');
+  const weeklyLimit = limits.limits.find((l) => l.key === 'weekly');
+  const session = readWindow(sessionLimit, SESSION_WINDOW_MS, now);
+  const weekly = readWindow(weeklyLimit, WEEKLY_WINDOW_MS, now);
   return {
-    session: session ? session.percent : null,
-    weekly: weekly ? weekly.percent : null,
-    locked: Boolean(session?.lockedReason || weekly?.lockedReason),
-    resets,
+    session,
+    weekly,
+    locked: Boolean(sessionLimit?.lockedReason || weeklyLimit?.lockedReason),
+    // FUTURE resets only. `earliestResetAt` answers "when does work resume", and a reset that
+    // has already happened answers it with a time in the past.
+    resets: [session?.resetsAt ?? 0, weekly?.resetsAt ?? 0].filter((r) => r > now),
   };
 }
 
@@ -198,17 +266,33 @@ function windows(limits: UsageLimitsResponse): {
  * percentages and drains the list in order. Everything below describes `score`, the default.
  *
  * ── `score` ───────────────────────────────────────────────────────────────────────────
- * An account is ELIGIBLE when its session AND weekly windows are both below `threshold` and
- * its `lockedReason` is empty. Among the eligible, the lowest
+ * An account is ELIGIBLE when every window it publishes is below `threshold` (on the RAW
+ * percent) and its `lockedReason` is empty. Among the eligible, the lowest
  *
- *   session·sessionUsage% + weekly·weeklyUsage% + order·positionInTheList
+ *   session·sessionUsage%·sessionLife + weekly·weeklyUsage%·weeklyLife + order·positionInTheList
  *
- * serves the turn (see `SwitchWeights` for what the coefficients mean and why).
+ * serves the turn (see `SwitchWeights` for what the coefficients mean and why), after two
+ * capacity sorts that come first — see the sort comment at the end of this function.
  *
  * Both windows are weighed together on purpose: an account with a fresh 5-hour window but an
  * exhausted week is not a place to send work. Gating the weekly window at the threshold and
  * then sorting on the session window alone was the 2026-09-10 bug — it let a 75%-spent week
  * win on a 1% five-hour window against an account with 6% of its week gone.
+ *
+ * ── TIME IS PART OF THE PRICE (2026-09-13) ────────────────────────────────────────────
+ * A percentage alone cannot rank two accounts, because a window is worth only what is still
+ * ahead of it. Owner, looking at four connected accounts: a 97% five-hour window that reopens
+ * in three hours and a 91% week that stays shut for two days scored as the same kind of full,
+ * while a five-hour window that had ALREADY reset an hour earlier was still being scored at
+ * the 52% it held before the reset. The 2026-09-10 report was the same fact from the other
+ * side: a second account's five-hour window was 15 minutes from resetting with 80% of it
+ * unspent, and that capacity simply evaporated because nothing in the score knew the window
+ * was about to burn.
+ *
+ * So each window's usage enters the score multiplied by the fraction of it still to run. A
+ * percent about to be forgiven costs nearly nothing; a percent of a week with six days left
+ * costs full price. The ELIGIBILITY GATE DOES NOT MOVE: it reads the raw percent, so the
+ * discount can make an account cheaper but never make an exhausted one usable.
  *
  * A reading that is `unknown` or `stale` is NOT A CANDIDATE — never silently treated as 0%.
  * A `needs-relogin` account is not a candidate either, and says so.
@@ -314,13 +398,19 @@ function chooseSequential(readings: AccountReading[], opts: ChooseOptions): Choo
       eligible.push({ id: reading.id, session: null, weekly: null });
       continue;
     }
-    const w = windows(reading.limits);
+    const w = windows(reading.limits, now);
     resets.push(...w.resets);
     if (w.locked) {
       rejected.push({ id: reading.id, why: 'a usage window is already locked' });
       continue;
     }
-    eligible.push({ id: reading.id, session: w.session, weekly: w.weekly });
+    // Only MEASURED numbers reach the banner. This mode consults no percentage anyway, so a
+    // window that has rolled over simply has nothing to say about the account it labels.
+    eligible.push({
+      id: reading.id,
+      session: w.session?.measured ?? null,
+      weekly: w.weekly?.measured ?? null,
+    });
   }
 
   if (eligible.length === 0) {
@@ -368,7 +458,17 @@ export function chooseAccount(readings: AccountReading[], opts: ChooseOptions): 
     return i < 0 ? readings.length : i;
   };
   const rejected: Array<{ id: string; why: string }> = [];
-  const candidates: Array<{ id: string; session: number; weekly: number; score: number }> = [];
+  const candidates: Array<{
+    id: string;
+    /** Only what was MEASURED — a rolled-over window reports nothing. */
+    session: number | null;
+    weekly: number | null;
+    score: number;
+    /** 1 when too little headroom is left for a switch to be worth making. */
+    thin: number;
+    /** 1 when only ONE of the two windows could be read. */
+    partial: number;
+  }> = [];
   /** Signed in, no numbers. Only ever consulted when `candidates` comes up empty. */
   const lastResort: string[] = [];
   const resets: number[] = [];
@@ -399,37 +499,56 @@ export function chooseAccount(readings: AccountReading[], opts: ChooseOptions): 
       rejected.push({ id: reading.id, why: 'its usage could not be read' });
       continue;
     }
-    const w = windows(reading.limits);
+    const w = windows(reading.limits, now);
     resets.push(...w.resets);
     if (w.locked) {
       rejected.push({ id: reading.id, why: 'a usage window is already locked' });
       continue;
     }
-    if (w.session === null || w.weekly === null) {
-      // A signed-in account whose windows do not parse is the SAME situation as one that
-      // publishes none — see LAST RESORT. It reaches here rather than through the probe
-      // because the cache existed and refreshed; it just carried nothing usable.
+    if (w.session === null && w.weekly === null) {
+      // NEITHER window parsed: the same situation as an account that publishes none — see
+      // LAST RESORT. It reaches here rather than through the probe because the cache existed
+      // and refreshed; it just carried nothing usable. ONE readable window is a different
+      // case and is handled as a `partial` candidate below.
       lastResort.push(reading.id);
       continue;
     }
-    if (w.session >= opts.threshold) {
-      rejected.push({ id: reading.id, why: `session usage is at ${Math.round(w.session)}%` });
+    // THE GATE IS ON THE RAW PERCENT, never on the discounted one. The discount below says
+    // "spending here is cheap"; it must never be able to say "this account can serve", which
+    // is a fact about the API's wall and not about our arithmetic.
+    if (w.session !== null && w.session.raw >= opts.threshold) {
+      rejected.push({ id: reading.id, why: `session usage is at ${Math.round(w.session.raw)}%` });
       continue;
     }
-    if (w.weekly >= opts.threshold) {
-      rejected.push({ id: reading.id, why: `weekly usage is at ${Math.round(w.weekly)}%` });
+    if (w.weekly !== null && w.weekly.raw >= opts.threshold) {
+      rejected.push({ id: reading.id, why: `weekly usage is at ${Math.round(w.weekly.raw)}%` });
       continue;
     }
+    // A window is only worth what is still AHEAD of it. A five-hour window 40 minutes from
+    // its reset is use-it-or-lose-it: whatever is unspent at the reset is gone, so a percent
+    // already spent there costs the user almost nothing, while the same percent of a week
+    // that has six days to run has to last six days. `life` is that ratio, and multiplying
+    // the usage by it is what lets one number compare two windows of different size.
+    // An unreadable window contributes 0 rather than a guess — see `partial`.
+    const spent = (win: WindowReading | null) => (win ? win.raw * win.life : 0);
+    // How close the account is to OUR wall on its worst window, undiscounted. This is not a
+    // price, it is a capacity: how much work it can still take before we would be moving off
+    // it again.
+    const worst = Math.max(w.session?.raw ?? 0, w.weekly?.raw ?? 0);
     candidates.push({
       id: reading.id,
-      session: w.session,
-      weekly: w.weekly,
+      session: w.session?.measured ?? null,
+      weekly: w.weekly?.measured ?? null,
+      thin: opts.threshold - worst < THIN_HEADROOM_PERCENT ? 1 : 0,
+      partial: (w.session === null) !== (w.weekly === null) ? 1 : 0,
       // Rounded HERE, once, so every later comparison is between two settled numbers — see
       // `roundScore`. Two candidates that are mathematically tied but differ by ~1e-16 in
       // binary float would otherwise defeat every tie-break below and move a session for a
       // difference that does not exist.
       score: roundScore(
-        weights.session * w.session + weights.weekly * w.weekly + weights.order * orderTerm(reading.id),
+        weights.session * spent(w.session)
+        + weights.weekly * spent(w.weekly)
+        + weights.order * orderTerm(reading.id),
       ),
     });
   }
@@ -455,11 +574,29 @@ export function chooseAccount(readings: AccountReading[], opts: ChooseOptions): 
   // why a switch went where it went, and "we could not read it" is part of that answer.
   for (const id of lastResort) rejected.push({ id, why: 'its usage could not be read' });
 
-  // Lowest SCORE wins — both windows and the user's own order, weighed together (see
-  // `SwitchWeights`). On a tie, the account already serving wins, then the preferred one,
-  // then whichever the user put higher in Settings — so a tie never moves a session for
+  // CAPACITY FIRST, THEN PRICE, THEN THE SCORE.
+  //
+  // `thin` and `partial` are not tie-breaks; they come BEFORE the score, and each answers a
+  // question the score cannot.
+  //
+  // `thin` is the discount's one real hazard. A week at 89% that resets in ten minutes
+  // discounts to almost nothing and would outrank every healthy account on the machine — and
+  // it has ONE point of headroom, so the session would move there and move straight back.
+  // The discount is right that spending there is cheap; it is silent on there being nothing
+  // left to spend. An account inside `THIN_HEADROOM_PERCENT` of the wall therefore sorts
+  // behind every account that is not, and only ever wins when nothing roomier exists.
+  //
+  // `partial` — one window read, one not — sorts behind a fully measured account of the same
+  // class, because an unread window is an unknown and not a zero. It sorts AHEAD of a thin
+  // one: an account with 5 points left is a worse bet than one with a healthy week and a
+  // session we could not read.
+  //
+  // Then the lowest SCORE wins, and on a tie the account already serving, then the preferred
+  // one, then whichever the user put higher in Settings — so a tie never moves a session for
   // nothing, never coin-flips, and never overrules the order the user chose.
   candidates.sort((a, b) => {
+    if (a.thin !== b.thin) return a.thin - b.thin;
+    if (a.partial !== b.partial) return a.partial - b.partial;
     if (a.score !== b.score) return a.score - b.score;
     const rank = (id: string) => (id === opts.currentId ? 0 : id === opts.preferredId ? 1 : 2);
     const byRank = rank(a.id) - rank(b.id);
@@ -471,8 +608,11 @@ export function chooseAccount(readings: AccountReading[], opts: ChooseOptions): 
   const winner = candidates[0]!;
   return {
     accountId: winner.id,
-    sessionPercent: winner.session,
-    weeklyPercent: winner.weekly,
+    // Omitted rather than zeroed when the window rolled over or could not be read: the
+    // banner states what was measured, and nothing else.
+    ...(winner.session === null ? {} : { sessionPercent: winner.session }),
+    ...(winner.weekly === null ? {} : { weeklyPercent: winner.weekly }),
+    ...(winner.partial ? { partial: true } : {}),
     score: winner.score,
     rejected,
   };
@@ -482,6 +622,13 @@ export function chooseAccount(readings: AccountReading[], opts: ChooseOptions): 
 export const PROBE_THRESHOLD_PERCENT = 80;
 /** Session usage at or above this, or any `lockedReason`: switch. */
 export const SWITCH_THRESHOLD_PERCENT = 90;
+/**
+ * Headroom below which an account is a bad PLACE TO MOVE TO, however cheap its discounted
+ * score looks. Derived rather than invented: it is exactly the band in which we would already
+ * be probing an account to move OFF it (`PROBE_THRESHOLD_PERCENT` → `SWITCH_THRESHOLD_PERCENT`),
+ * and an account we would be leaving is not one to arrive at.
+ */
+export const THIN_HEADROOM_PERCENT = SWITCH_THRESHOLD_PERCENT - PROBE_THRESHOLD_PERCENT;
 
 /**
  * Does the ACTIVE account's reading warrant a switch right now?
@@ -489,15 +636,32 @@ export const SWITCH_THRESHOLD_PERCENT = 90;
  * A `lockedReason` triggers immediately regardless of percent — a locked window is not going
  * to serve the turn whatever the number beside it says.
  */
-export function shouldSwitchAway(limits: UsageLimitsResponse, threshold: number = SWITCH_THRESHOLD_PERCENT): boolean {
-  const w = windows(limits);
+export function shouldSwitchAway(
+  limits: UsageLimitsResponse,
+  threshold: number = SWITCH_THRESHOLD_PERCENT,
+  now: number = Date.now(),
+): boolean {
+  const w = windows(limits, now);
   if (w.locked) return true;
-  return (w.session !== null && w.session >= threshold) || (w.weekly !== null && w.weekly >= threshold);
+  return (w.session !== null && w.session.raw >= threshold)
+    || (w.weekly !== null && w.weekly.raw >= threshold);
 }
 
-/** Is it worth spending a (free) probe on the active account? */
-export function shouldProbe(limits: UsageLimitsResponse, threshold: number = PROBE_THRESHOLD_PERCENT): boolean {
-  const w = windows(limits);
+/**
+ * Is it worth spending a (free) probe on the active account?
+ *
+ * Both of these read the ROLLOVER-CORRECTED percent, which is how a session comes home on its
+ * own: the account it was moved off has a 95% five-hour window until that window resets, and
+ * from the reset onward the very same cached reading says 0 — so nothing forces a switch away
+ * from an account whose own window has already reopened.
+ */
+export function shouldProbe(
+  limits: UsageLimitsResponse,
+  threshold: number = PROBE_THRESHOLD_PERCENT,
+  now: number = Date.now(),
+): boolean {
+  const w = windows(limits, now);
   if (w.locked) return true;
-  return (w.session !== null && w.session >= threshold) || (w.weekly !== null && w.weekly >= threshold);
+  return (w.session !== null && w.session.raw >= threshold)
+    || (w.weekly !== null && w.weekly.raw >= threshold);
 }

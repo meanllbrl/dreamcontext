@@ -123,13 +123,42 @@ and moving before the limit lands did not exist at all.
 - [x] TWO strategies, chosen by the user in Settings → Agents (`switchStrategy` in the register,
       default `score`). They are two different answers to what a second account is FOR, and the
       owner's answer differs by week, so it is a setting rather than a constant.
-- [x] `score`: an account is eligible when its session AND weekly windows are both under
-      threshold and its `lockedReason` is empty; among the eligible, the lowest
-      `session·session% + weekly·weekly% + order·placeInList` serves. Coefficients default to
-      1 / 2 / 5 and are user-settable; `0` switches a term off. **This replaced "lowest session
-      usage wins" on 2026-09-10** — that rule gated the weekly window at the threshold and then
-      ignored it, so an account with 75% of its WEEK spent beat one with 6% because its 5-hour
-      window happened to be fresh. The scarcest quota was spent for the most abundant reason.
+- [x] `score`: an account is eligible when every window it publishes is under threshold and its
+      `lockedReason` is empty; among the eligible, the lowest
+      `session·session%·sessionLife + weekly·weekly%·weeklyLife + order·placeInList` serves.
+      Coefficients default to 1 / 2 / 5 and are user-settable; `0` switches a term off. **This
+      replaced "lowest session usage wins" on 2026-09-10** — that rule gated the weekly window at
+      the threshold and then ignored it, so an account with 75% of its WEEK spent beat one with 6%
+      because its 5-hour window happened to be fresh. The scarcest quota was spent for the most
+      abundant reason.
+- [x] **TIME IS PART OF THE PRICE (2026-09-13).** `…Life` is the fraction of that window still
+      ahead of its reset (`SESSION_WINDOW_MS` 5h, `WEEKLY_WINDOW_MS` 7d): a percent about to be
+      forgiven costs nearly nothing, a percent of a week with six days to run costs full price.
+      The ELIGIBILITY GATE DOES NOT MOVE — it reads the RAW percent, so the discount can make an
+      account cheaper and never make an exhausted one usable. A window whose reset could not be
+      parsed is charged FULL price rather than discounted on a guess. `sequential` is untouched:
+      a discount applied to a percentage that mode never reads is still not read, and a test
+      pins it.
+- [x] **A window whose `resetsAt` has PASSED is not scored at the percent it held before it.**
+      Not staleness in the "old file" sense — arithmetic: the counter restarted at the reset.
+      It scores as `raw: 0` (the new window did start empty) but REPORTS nothing, because how
+      much has been spent since the reset is unknown and a banner saying "session 0%" would
+      state an inference as a measurement. The same correction is inside `shouldProbe` /
+      `shouldSwitchAway` (both now take `now`), which is how a session comes home with no
+      "come home" code at all: the 95% reading that exiled an account expires on that account's
+      own window clock. `earliestResetAt` likewise collects FUTURE resets only.
+- [x] **An account inside `THIN_HEADROOM_PERCENT` of the wall sorts behind every account that
+      is not** — the discount's one real hazard. An 89% week ten minutes from its reset
+      discounts to ~0.2 and would outrank the whole machine while holding ONE point of
+      headroom, so the session would move there and straight back. The constant is DERIVED, not
+      invented: `SWITCH_THRESHOLD_PERCENT - PROBE_THRESHOLD_PERCENT`, i.e. an account we would
+      already be probing to move OFF is not one to arrive at. It still serves when nothing
+      roomier exists.
+- [x] **One readable window is a CANDIDATE, not an invisible account.** A partial reading used
+      to fall to last resort and vanish from the ranking entirely — observed 2026-09-13 on an
+      account whose week was measured at 76% and whose session was not. It is now weighed,
+      carries `partial: true`, loses to a fully measured account that has room, and beats a
+      thin one. A reading with NO windows is still the `unmeasured` last resort.
 - [x] `sequential`: percentages are not consulted at all. The top account in the user's list
       serves every turn until the API ACTUALLY refuses one, then the next does. The pre-emptive
       probe/threshold path is skipped entirely in this mode, so it costs nothing per message;
@@ -198,6 +227,18 @@ and moving before the limit lands did not exist at all.
       HATCHED empty rail labelled "not measured" is drawn — not a 0%-full bar (which reads as
       "unused") and not a sentence (which ends the comparison). >70% amber, >90% red, a locked
       window says "limit reached".
+- [x] **Each bar states how much of its window is LEFT, not what time it resets** ("97% · 3h 22m
+      left", "19% · 6d left"; the exact time stays in the tooltip). Owner, 2026-09-13, reading
+      four accounts side by side: "resets 05:40" and "resets Tue 07:00" are both just times, and
+      one is three hours away while the other is two days — which is the whole difference between
+      what those two percentages cost. A window whose reset has passed draws the hatched rail and
+      says "reset 1h ago" rather than a percentage for a window that no longer exists.
+- [x] **A failed re-read never contradicts the numbers it leaves on screen.** The per-account
+      probe note is written about the RE-READ and names where the surviving numbers came from
+      ("…just now. The numbers above are the last reading that did come back."). Observed
+      2026-09-13: a row drawing 52% and 91% carried "Claude answered without any usage
+      percentages for it" directly underneath — both halves true of different moments, together
+      a contradiction.
 - [x] Priority changes by drag-and-drop, with a handle and a rank number, PLUS keyboard up/down
       buttons — a control that only works with a mouse is not a control. New route:
       `POST /api/agent/accounts/reorder`.
@@ -222,6 +263,23 @@ and moving before the limit lands did not exist at all.
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-09-13] A percentage alone cannot rank two accounts — time is half the price.** Owner,
+  four connected accounts on screen: a 97% five-hour window that reopened in three hours and a 91%
+  week that stayed shut for two days scored as the same kind of full, while a five-hour window that
+  had ALREADY reset an hour earlier was still being scored at the 52% it held before. The
+  2026-09-10 report was the same fact from the other side — a backup account's window was 15
+  minutes from resetting with 80% unspent, and that capacity evaporated. Usage now enters the score
+  multiplied by the fraction of its window still to run.
+- **[2026-09-13] The discount is a PRICE, never a permission.** The eligibility gate keeps reading
+  the raw percent, and an account with almost nothing left sorts behind every account that has room
+  however cheap its discounted score. Ordering is where scarcity belongs; the wall is not
+  negotiable by arithmetic. Both are pinned by tests, because the tempting simplification —
+  "discount everything and let the score decide" — moves a session into an account with one point
+  of headroom.
+- **[2026-09-13] An inference is scored but never REPORTED.** A rolled-over window scores as 0 and
+  publishes no percentage. Keeping those two apart is what lets the chooser use a fact the surface
+  must not claim to have measured.
 
 - **[2026-09-05] REVERSAL — auto-switch steers on the API's actual refusal, not on a forecast
   percent.** The ≥80/≥90 percentage trigger never opened on a real machine: the account that refused

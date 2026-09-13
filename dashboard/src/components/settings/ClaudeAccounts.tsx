@@ -107,25 +107,73 @@ function resetLabel(resetsAt: number): string {
 }
 
 /**
+ * "3h 22m" / "12m" / "6d" — how much of this window is still ahead.
+ *
+ * The CLOCK was here first and it is the wrong unit for the question being asked. Owner,
+ * 2026-09-13, reading four accounts side by side: "resets 05:40" and "resets Tue 07:00" are
+ * both just times, and one of them is three hours away while the other is two days. What a
+ * percentage costs depends entirely on that difference — it is the same thing the chooser now
+ * scores (`claude-account-switch.ts`, the time discount), said in the panel that made the
+ * comparison possible. The exact time stays available in the tooltip.
+ *
+ * Coarse on purpose: the reading it labels is a cached percentage, so minute precision past
+ * the first hour would imply an accuracy the number does not have.
+ */
+function fmtLeft(ms: number): string {
+  const mins = Math.max(0, Math.round(ms / 60_000));
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) {
+    const m = mins % 60;
+    return m === 0 ? `${hours}h` : `${hours}h ${m}m`;
+  }
+  const days = Math.floor(hours / 24);
+  const h = hours % 24;
+  return h === 0 ? `${days}d` : `${days}d ${h}h`;
+}
+
+/**
  * One usage window. `percent === null` means "no reading" and draws an empty hatched track —
  * present, comparable, and honestly blank.
+ *
+ * ── A window whose reset has PASSED draws no percentage ───────────────────────────────
+ * Not staleness in the "old file" sense — the file can be seconds old. It is arithmetic: the
+ * counter restarted at the reset, so the number cannot still describe the window in front of
+ * us. Observed 2026-09-13 on this very panel: "52% · resets 01:10" drawn at 02:18, i.e. a
+ * percentage for a window that had reopened an hour earlier, sitting beside a warning that the
+ * reading was two hours old — two different complaints about the same fact, and only the reset
+ * time can reveal it. The bar says WHEN it rolled over instead, because "not measured" alone
+ * would send the reader looking for a broken probe.
  */
-function Bar({ label, percent, resetsAt, locked }: {
+function Bar({ label, percent, resetsAt, locked, now }: {
   label: string;
   percent: number | null;
   resetsAt: number;
   locked?: string;
+  now: number;
 }) {
-  const unknown = percent === null;
+  const rolledOver = !locked && percent !== null && resetsAt > 0 && resetsAt <= now;
+  const unknown = percent === null || rolledOver;
   const pct = unknown ? 0 : Math.min(100, Math.max(0, percent));
   const tone = locked ? 'is-locked' : pct >= 90 ? 'is-hot' : pct >= 70 ? 'is-warm' : '';
+  const value = locked
+    ? 'limit reached'
+    : rolledOver
+      ? `reset ${fmtLeft(now - resetsAt)} ago`
+      : percent === null
+        ? 'not measured'
+        // The LIFE of the window, not the clock: what a percentage costs depends on how much
+        // of its window is still ahead of it.
+        : `${Math.round(pct)}%${resetsAt > now ? ` · ${fmtLeft(resetsAt - now)} left` : ''}`;
   return (
     <div className="dc-acct-bar">
       <div className="dc-acct-bar-head">
         <span className="dc-acct-bar-label">{label}</span>
-        <span className={`dc-acct-bar-value${unknown ? ' is-unknown' : ''}`}>
-          {locked ? 'limit reached' : unknown ? 'not measured' : `${Math.round(pct)}%`}
-          {!unknown && resetsAt ? ` · ${resetLabel(resetsAt)}` : ''}
+        <span
+          className={`dc-acct-bar-value${unknown ? ' is-unknown' : ''}`}
+          title={resetsAt ? resetLabel(resetsAt) : undefined}
+        >
+          {value}
         </span>
       </div>
       <div className={`dc-acct-bar-track${unknown ? ' is-unknown' : ''}`}>
@@ -277,16 +325,26 @@ export function ClaudeAccounts() {
     void refreshUsage();
   }, [serverAccounts, refreshing, refreshUsage]);
 
-  /** What a probe outcome means for the person reading the row. */
-  const probeExplanation = (why: string): string => {
+  /**
+   * What a probe outcome means for the person reading the row.
+   *
+   * `hasReading` is not decoration. A failed re-read leaves the PREVIOUS numbers on screen,
+   * and the note used to be written as though the row were blank: observed 2026-09-13, a row
+   * drawing 52% and 91% carried the sentence "Claude answered without any usage percentages
+   * for it" directly underneath. Both halves were true of different moments, and together
+   * they read as a contradiction. Every sentence below is now about the RE-READ, and says
+   * where the numbers above it came from when there are any.
+   */
+  const probeExplanation = (why: string, hasReading: boolean): string => {
+    const tail = hasReading ? ' The numbers above are the last reading that did come back.' : '';
     if (why === 'healthy-unmeasured') {
       // The claim stays at what was actually observed: signed in, asked, no percentage in the
       // answer. Not "Claude never publishes this for you" — one silent answer is not a rule.
-      return 'This account is signed in, but Claude answered without any usage percentages for it.';
+      return `This account is signed in, but Claude answered without any usage percentages just now.${tail}`;
     }
     if (why === 'needs-relogin') return 'Signed out — sign in again to read its usage.';
     if (why === 'stale') return 'That account folder is signed in as a different account, so the reading was discarded.';
-    return 'Its usage could not be read this time.';
+    return `Its usage could not be re-read just now.${tail}`;
   };
 
   const commitOrder = useCallback(async (ids: string[]) => {
@@ -317,6 +375,10 @@ export function ClaudeAccounts() {
   };
 
   if (isLoading) return <p className="settings-field-hint">Loading accounts…</p>;
+
+  // ONE clock for the whole paint, so two rows can never disagree about how much of their
+  // windows is left — the comparison between rows is what this panel is for.
+  const now = Date.now();
 
   return (
     <div className="dc-accts">
@@ -383,12 +445,14 @@ export function ClaudeAccounts() {
                         percent={stale || !session ? null : session.percent}
                         resetsAt={session?.resetsAt ?? 0}
                         locked={session?.lockedReason}
+                        now={now}
                       />
                       <Bar
                         label="Weekly"
                         percent={stale || !weekly ? null : weekly.percent}
                         resetsAt={weekly?.resetsAt ?? 0}
                         locked={weekly?.lockedReason}
+                        now={now}
                       />
                     </div>
 
@@ -404,7 +468,9 @@ export function ClaudeAccounts() {
                             {refreshing ? 'Reading usage…' : age.text}
                           </p>
                           {!refreshing && why && (
-                            <p className="dc-acct-probe-note">{probeExplanation(why)}</p>
+                            <p className="dc-acct-probe-note">
+                              {probeExplanation(why, Boolean(a.fetchedAtMs) && Boolean(session || weekly))}
+                            </p>
                           )}
                         </>
                       );
