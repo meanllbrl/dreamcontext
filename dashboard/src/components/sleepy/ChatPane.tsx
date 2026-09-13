@@ -1769,6 +1769,8 @@ export function ChatPane({
           onEffortChange={onEffortChange}
           activeAccountId={session.accountId}
           onAccountChange={onAccountChange}
+          contextHandoff={conv.contextHandoff}
+          onContextHandoffChange={session.setContextHandoff}
           busy={session.busy}
           connected={session.status === 'open'}
           quote={replyQuote}

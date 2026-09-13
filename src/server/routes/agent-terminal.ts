@@ -9,6 +9,8 @@ import { existsSync, mkdirSync, readdirSync, statSync, chmodSync, readFileSync, 
 import { homedir, tmpdir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
+import { liveTranscriptPath } from '../../lib/transcript-locate.js';
+import { contextTokensFromUsage } from '../../lib/context-watch.js';
 import { gitAvailable } from '../../lib/git-sync/git.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession, readAgentSessionEntry } from '../../lib/agent-session-map.js';
@@ -769,18 +771,6 @@ function findTranscriptPath(id: string): string | null {
   return findFirstTranscriptPath([id]);
 }
 
-/**
- * Resolve a tab's roster id to the transcript of its LIVE conversation: prefer the
- * tab-session map's current id (the tab `/clear`d or in-TUI-resumed to a different
- * conversation), fall back to the pinned id's transcript. The single home of the
- * roster-id → live-transcript invariant — title, session-model and session-stats all
- * read through here so a rotation can never leave one of them tracking a stale file.
- */
-function liveTranscriptPath(contextRoot: string | null, id: string): string | null {
-  const liveId = contextRoot ? resolveAgentSession(contextRoot, id) : '';
-  return findFirstTranscriptPath([liveId, id]);
-}
-
 // ─── Auto-title (Haiku names a tab from the session's first user message) ──────
 //
 // Every agent tab is pinned to a known conversation UUID, and Claude Code writes
@@ -1251,7 +1241,9 @@ export function computeSessionStats(jsonlPath: string): SessionStats {
     // sum, and not a subagent's (sidechain) footprint, which lives in its own window.
     if (obj.isSidechain !== true) {
       lastModel = model || lastModel;
-      contextTokens = inp + cw + cr + out;
+      // ONE formula, imported — see context-watch.ts. The nudge fires on this exact
+      // sum, so the ring the user reads and the number the hook judges cannot drift.
+      contextTokens = contextTokensFromUsage(u);
     }
   }
   if (contextTokens === null) return EMPTY_STATS;

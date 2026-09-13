@@ -461,6 +461,35 @@ describe('sleep 360° — triggers & compaction (WS2)', () => {
     // oldest survivor is i=1 (i=0 evicted)
     expect(state.compaction_log[19].trigger).toBe('compact-1');
   });
+
+  it('carries an OPTIONAL context_tokens — a handoff sets it, a legacy record omits it', () => {
+    // Backward compat is the point: every record written before the context-handoff
+    // feature lacks this field, so a reader that required it would fail on every sleep
+    // state already on disk. `trigger:'handoff'` is the new writer.
+    let state = baseState();
+    const legacy: CompactionRecord = {
+      timestamp: '2026-06-10T00:00:00.000Z',
+      trigger: 'auto',
+      debt_at_compaction: 3,
+      sessions_count: 1,
+      bookmarks_count: 0,
+    };
+    state = appendCompactionRecord(state, legacy);
+    state = appendCompactionRecord(state, {
+      timestamp: '2026-09-13T00:00:00.000Z',
+      trigger: 'handoff',
+      debt_at_compaction: 4,
+      sessions_count: 2,
+      bookmarks_count: 1,
+      context_tokens: 205_000,
+    });
+
+    expect(state.compaction_log[0].trigger).toBe('handoff');
+    expect(state.compaction_log[0].context_tokens).toBe(205_000);
+    // The legacy record round-trips untouched, with no field invented for it.
+    expect(state.compaction_log[1].context_tokens).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(state.compaction_log[1]))).toEqual(legacy);
+  });
 });
 
 describe('sleep 360° — capture → consolidation loop (WS4)', () => {

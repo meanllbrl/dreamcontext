@@ -101,8 +101,23 @@ export interface BackgroundTaskEntry {
   description?: string;
 }
 
+/** A pane's resolved context-handoff ladder, as the server sees it on disk. `nudgeAt`
+ *  rides along because the composer draws a MARKER at it — the UI exposes on/off only,
+ *  but it has to know WHERE the threshold sits to place the tick and word the meta line. */
+export interface ContextHandoffState {
+  enabled: boolean;
+  nudgeAt: number;
+  remindEvery: number;
+}
+
 export type ChatEvent =
   | { kind: 'init'; sessionId: string; model?: string; permissionMode?: string; capabilities?: string[]; version?: string; slashCommands?: string[] }
+  /** The pane's context-handoff toggle as the SERVER has it on disk. Sent TWICE: once at
+   *  connect (alongside the cached slash-commands — this server's established way of
+   *  augmenting the CLI's own `init`, which cannot carry a dreamcontext field), so a
+   *  RESUMED pane shows server truth rather than a remembered click; and again after every
+   *  `setContextHandoff`, so the switch is confirmation rather than optimism. */
+  | { kind: 'context-handoff'; state: ContextHandoffState }
   /** The CLI's authoritative roster of tasks STILL RUNNING in the background, pushed on
    *  every change (empirically verified on CLI 2.1.220: fires when a `run_in_background`
    *  Bash starts, and again with `tasks: []` when the last one ends).
@@ -306,6 +321,13 @@ export type ClientControl =
    *  (no `set_reasoning_effort` control exists on 2.1.218; the slash command works headlessly
    *  and yields a synthetic assistant "Set effort level to <level>" echo). */
   | { type: 'setEffort'; effort: string }
+  /** Per-PANE context-handoff toggle. The server writes this pane's tab file (which the
+   *  hooks read) AND the vault's machine-local default (which seeds the NEXT new pane),
+   *  then echoes a `context-handoff` event back so the switch reflects SERVER truth
+   *  rather than the click. Deliberately not an `AgentSettings` field: `agent-ui.json`
+   *  is one machine-wide file, so a default stored there would leak the toggle into
+   *  every vault on the machine and override a team that opted out in `.config.json`. */
+  | { type: 'setContextHandoff'; enabled: boolean }
   /** Live permission-mode switch — the server translates this into a `set_permission_mode`
    *  control_request (`mode: 'auto' | 'bypassPermissions'`). Present on CLI 2.1.220's
    *  headless engine; the ack (matched by this CLIENT-generated `requestId`) is what tells
@@ -893,6 +915,20 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
   // (src/lib/session-start-branch.ts). Only the outcomes that are NEWS are sent, so anything
   // that arrives here is worth putting in front of the user: `switched` mutated their checkout,
   // `blocked-dirty` left them somewhere they were told new sessions would not start.
+  // The pane's context-handoff toggle as the SERVER wrote it. Read strictly: a
+  // malformed frame must leave the switch showing what it showed before, never flip it.
+  if (subtype === 'context_handoff') {
+    const st = obj.state && typeof obj.state === 'object' ? obj.state as Record<string, unknown> : null;
+    if (!st || typeof st.enabled !== 'boolean') return ignored('_meta:context_handoff');
+    return {
+      kind: 'context-handoff',
+      state: {
+        enabled: st.enabled,
+        nudgeAt: typeof st.nudgeAt === 'number' && st.nudgeAt > 0 ? st.nudgeAt : 200_000,
+        remindEvery: typeof st.remindEvery === 'number' && st.remindEvery > 0 ? st.remindEvery : 100_000,
+      },
+    };
+  }
   if (subtype === 'branch_start') {
     const message = str(obj.message);
     if (!message) return ignored('_meta:branch_start');

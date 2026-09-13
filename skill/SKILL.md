@@ -373,6 +373,35 @@ Status: `todo → in_progress → in_review → completed` by default. A project
 
 ---
 
+## Context handoff (opt-in — you are NUDGED, never forced)
+
+When a vault or pane has this on, a long session gets an injected `[context handoff]` note
+once it passes ~200k context tokens, then again every ~100k. **It is a nudge and the
+decision is yours.** Measured over 120 real sessions: `cache_read` is 97.4% of billed input
+and every further turn re-reads the whole window, so the same remaining work costs ~2–3×
+more from here than in a fresh session — but if the task is nearly done, or the state is too
+live to move, keep going. Ignoring it is a legitimate answer and costs nothing.
+
+If you do hand off, it is two commands, in this order:
+
+```bash
+dreamcontext tasks log <slug> "done / next / decisions / learnings / working style / open files"
+dreamcontext tasks handoff <slug>          # pin it; a fresh session picks the task up
+```
+
+The `log` is the handoff document — a fresh session is told to read the task's **latest
+changelog entry** before anything else, so write it for someone who was not here. `handoff`
+then sets the task `in_progress`, records the request, and writes a partial session digest.
+**In Chat a fresh session opens automatically after this turn — finish your sentence and
+stop.** In a terminal nothing rotates for you: the human runs `/clear`.
+
+At the other end you will see a `>> HANDOFF:` banner above the snapshot naming the task —
+read that task file first. Switch the feature on per vault with
+`dreamcontext config context-handoff on [--nudge-at N] [--remind-every N]`, or per pane from
+the composer's usage popover ("Hand off at 200k"). Default is OFF.
+
+---
+
 ## Memory & Knowledge — essentials
 
 - **Quick updates (no sleep):** edit `core/0.soul.md`/`core/2.memory.md`/`people/<slug>.md` directly; `dreamcontext core changelog add` for code changes; `dreamcontext tasks log` for progress.

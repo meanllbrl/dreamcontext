@@ -680,8 +680,11 @@ export interface UsageLimit {
   /** 0-100. */
   percent: number;
   resetsAt: number | null;
-  /** Context only — the raw reading behind the percent, for the row's `used / limit` line. */
-  detail?: { used: number; limit: number };
+  /** Context only — the raw reading behind the percent, for the row's `used / limit` line.
+   *  `handoffAt` is present ONLY when this pane has context handoff ON: it is the token
+   *  threshold the bar draws its marker tick at, and the number the meta line words itself
+   *  around. Absent ⇒ the row renders exactly as it did before the feature. */
+  detail?: { used: number; limit: number; handoffAt?: number };
   /** Weekly only, when a per-model cap is the binding one. */
   scope?: string;
 }
@@ -728,15 +731,23 @@ export function usageLimits(
   ctx: ContextUsage | null,
   res: UsageLimitsResponse | null,
   now: number,
+  handoff?: { enabled: boolean; nudgeAt: number } | null,
 ): { limits: UsageLimit[]; staleAsOf: number | null } {
   const limits: UsageLimit[] = [];
   if (ctx) {
+    // The marker is carried only when it can actually be DRAWN: a threshold at or past
+    // the window limit would put the tick on (or off) the right edge, where it reads as
+    // a rendering bug rather than as a threshold. A 1M-token window with a 200k handoff
+    // is the common case and lands at 20%.
+    const handoffAt = handoff?.enabled && handoff.nudgeAt > 0 && handoff.nudgeAt < ctx.limit
+      ? handoff.nudgeAt
+      : undefined;
     limits.push({
       key: 'context',
       title: 'Context window',
       percent: Math.min(100, Math.max(0, ctx.pct)),
       resetsAt: null,
-      detail: { used: ctx.used, limit: ctx.limit },
+      detail: { used: ctx.used, limit: ctx.limit, ...(handoffAt !== undefined ? { handoffAt } : {}) },
     });
   }
 

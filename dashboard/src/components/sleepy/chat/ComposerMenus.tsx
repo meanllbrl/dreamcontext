@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import {
   effortAt, effortIndex, effortLabel, fmtCost, fmtTokens, modelNoteFor, splitModels,
   type ModelConfig, type ModelOption, type UsageLimit,
@@ -299,6 +299,7 @@ export interface AccountOption {
 
 export function UsageMenu({
   limits, staleAsOf, costUsd, accounts = [], activeAccountId = '', onAccountChange,
+  contextHandoff, onContextHandoffChange,
 }: {
   /** Already filtered by `usageLimits`: a cap with no readable source, a stale cache or a
    *  rolled-over window is simply ABSENT from this array. This component draws one bar per
@@ -321,85 +322,187 @@ export function UsageMenu({
    *  boundary; the row says so, because a picker that silently does nothing is not acceptable
    *  and one that silently restarts is worse. */
   onAccountChange?: (accountId: string) => void;
+  /** This pane's context-handoff toggle as the SERVER has it. Absent ⇒ the switch row is
+   *  not drawn at all (an unpinned pane has no tab file to hold a toggle), and the context
+   *  bar renders exactly as it did before the feature. */
+  contextHandoff?: { enabled: boolean; nudgeAt: number; remindEvery: number };
+  onContextHandoffChange?: (enabled: boolean) => void;
 }) {
   const now = Date.now();
+  // The context reading and the account windows answer DIFFERENT questions — "is this
+  // conversation full?" versus "is this account spent?" — so they stop being one
+  // undifferentiated stack of identical bars. Splitting here is what lets the context
+  // block keep its full weight (title, bar, arithmetic, the switch that changes it) while
+  // the timed windows collapse to two compact lines each under one shared label.
+  const context = limits.find((l) => l.key === 'context');
+  const windows = limits.filter((l) => l.key !== 'context');
+
   return (
     <div className="chat-cmp-usagemenu" role="menu" aria-label="Session usage">
-      {limits.map((l, i) => (
-        <div key={l.key}>
-          {i > 0 && <div className="chat-cmp-menu-divider" />}
-          <div className="chat-cmp-usagerow">
-            <span className="chat-cmp-usagerow-title">{l.title}</span>
-            <span className="chat-cmp-usagerow-value">{Math.round(l.percent)}%</span>
-          </div>
-          <div className="chat-cmp-usagebar">
-            <span className="chat-cmp-usagebar-fill" style={{ width: `${Math.min(100, l.percent)}%` }} />
-          </div>
-          {l.detail ? (
-            <div className="chat-cmp-usagemeta">
-              <span>{fmtTokens(l.detail.used)} / {fmtTokens(l.detail.limit)} used</span>
-              <span>{fmtTokens(Math.max(0, l.detail.limit - l.detail.used))} free</span>
+      {context && (() => {
+        // The handoff threshold, as a fraction of the window. Present only when the pane
+        // has handoff ON (usageLimits() drops it otherwise).
+        const handoffAt = context.detail?.handoffAt;
+        const markPct = handoffAt && context.detail ? (handoffAt / context.detail.limit) * 100 : null;
+        const pastKnee = !!(handoffAt && context.detail && context.detail.used >= handoffAt);
+        return (
+          <div className="chat-cmp-usageblock">
+            <div className="chat-cmp-usagerow">
+              <span className="chat-cmp-usagerow-title">{context.title}</span>
+              <span className="chat-cmp-usagerow-value">{Math.round(context.percent)}%</span>
             </div>
-          ) : l.resetsAt != null && (
-            <div className="chat-cmp-usagemeta">
-              <span>resets in {fmtResetIn(l.resetsAt, now)}</span>
+            <div
+              className="chat-cmp-usagebar"
+              data-handoff={markPct !== null ? '' : undefined}
+              // Geometry only — the CSS owns every colour; this just tells the
+              // lighter-track gradient WHERE the threshold falls.
+              style={markPct !== null ? ({ '--handoff-mark': `${Math.min(100, markPct)}%` } as CSSProperties) : undefined}
+            >
+              <span
+                className="chat-cmp-usagebar-fill"
+                data-past-knee={pastKnee ? '' : undefined}
+                style={{ width: `${Math.min(100, context.percent)}%` }}
+              />
+              {/* The threshold tick. Drawn ON the track rather than as a separate row so
+                  the eye reads "this point on this bar" — the whole reason the marker
+                  exists is to make the number in the meta line below spatial. */}
+              {markPct !== null && (
+                <span className="chat-cmp-usagebar-mark" style={{ left: `${Math.min(100, markPct)}%` }} />
+              )}
             </div>
-          )}
+            {context.detail && (
+              // Two facts, one line, and it STAYS one line: the words "used" and "the agent
+              // may" were what wrapped this into a four-line tangle at 244px, and a
+              // measurement that reflows is a measurement you re-read every time.
+              <div className="chat-cmp-usagemeta">
+                <span>{fmtTokens(context.detail.used)} / {fmtTokens(context.detail.limit)}</span>
+                {handoffAt
+                  ? (
+                    <span data-past-knee={pastKnee ? '' : undefined}>
+                      {pastKnee ? `past ${fmtTokens(handoffAt)} · may hand off` : `hand off ${fmtTokens(handoffAt)}`}
+                    </span>
+                  )
+                  : <span>{fmtTokens(Math.max(0, context.detail.limit - context.detail.used))} free</span>}
+              </div>
+            )}
+            {/* The switch sits UNDER the bar it changes — the setting is about this number,
+                and putting it anywhere else would make the reader hunt for what the
+                marker means. */}
+            {contextHandoff && (
+              <div className="chat-cmp-handoffrow">
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={contextHandoff.enabled}
+                  className="chat-cmp-handoffswitch"
+                  disabled={!onContextHandoffChange}
+                  onClick={() => onContextHandoffChange?.(!contextHandoff.enabled)}
+                >
+                  <span className="chat-cmp-handoffswitch-label">
+                    Hand off at {fmtTokens(contextHandoff.nudgeAt)}
+                  </span>
+                  <span className="chat-cmp-handoffswitch-track" data-on={contextHandoff.enabled ? '' : undefined}>
+                    <span className="chat-cmp-handoffswitch-knob" />
+                  </span>
+                </button>
+                <p className="chat-cmp-handoffnote">
+                  At {fmtTokens(contextHandoff.nudgeAt)} the agent is asked to write its state
+                  into the task and continue in a fresh session — it picks the moment.
+                </p>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {windows.length > 0 && (
+        <div className="chat-cmp-usageblock">
+          <span className="chat-cmp-grouplabel">Rate limits</span>
+          {windows.map((l) => (
+            // Two lines, not four: the window's name and when it rolls over are the SAME
+            // fact ("this cap, this long"), so they share a line and the bar carries the
+            // rest. Dividers between them are gone — they are peers in one group, and a
+            // rule between peers reads as a boundary that isn't there.
+            <div key={l.key} className="chat-cmp-windowrow">
+              <div className="chat-cmp-usagerow">
+                <span className="chat-cmp-windowrow-title">
+                  {l.title}
+                  {l.resetsAt != null && (
+                    <span className="chat-cmp-windowrow-reset"> · resets {fmtResetIn(l.resetsAt, now)}</span>
+                  )}
+                </span>
+                <span className="chat-cmp-usagerow-value is-sm">{Math.round(l.percent)}%</span>
+              </div>
+              <div className="chat-cmp-usagebar">
+                <span className="chat-cmp-usagebar-fill" style={{ width: `${Math.min(100, l.percent)}%` }} />
+              </div>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
 
       {accounts.length > 1 && (
-        <>
-          <div className="chat-cmp-menu-divider" />
-          <p className="chat-cmp-usagenote">
-            Account · picking another restarts this conversation on it, after the current turn.
-          </p>
-          {accounts.map((a) => {
-            const active = a.id === activeAccountId;
-            const label = a.email || a.id;
-            return (
-              <button
-                key={a.id}
-                type="button"
-                role="menuitemradio"
-                aria-checked={active}
-                className={`chat-cmp-modelrow${active ? ' is-active' : ''}`}
-                disabled={!onAccountChange || a.state === 'needs-relogin'}
-                title={a.state === 'needs-relogin'
-                  ? `${label} needs to sign in again`
-                  : a.organizationName || label}
-                onClick={() => { if (!active) onAccountChange?.(a.id); }}
-              >
-                <span className="chat-cmp-modelrow-head">
-                  <span className="chat-cmp-modelrow-name">{label}</span>
-                  {a.preferred && <span className="chat-cmp-badge is-muted">preferred</span>}
-                  <span className="chat-cmp-modelrow-meta">
+        <div className="chat-cmp-usageblock">
+          <span className="chat-cmp-grouplabel">Account</span>
+          <p className="chat-cmp-usagenote">Switching restarts this chat after this turn.</p>
+          <div className="chat-cmp-acctlist">
+            {accounts.map((a) => {
+              const active = a.id === activeAccountId;
+              const label = a.email || a.id;
+              return (
+                // Borderless rows in one list, not four bordered cards: a boxed row per
+                // account made the picker the heaviest object in a panel that is mostly
+                // measurements. Only the ACTIVE one gets a surface, because only it is
+                // making a claim.
+                <button
+                  key={a.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={active}
+                  className={`chat-cmp-acctrow${active ? ' is-active' : ''}`}
+                  disabled={!onAccountChange || a.state === 'needs-relogin'}
+                  title={a.state === 'needs-relogin'
+                    ? `${label} needs to sign in again`
+                    : a.organizationName || label}
+                  onClick={() => { if (!active) onAccountChange?.(a.id); }}
+                >
+                  {/* `min-width: 0` + ellipsis on the NAME is what keeps everything to its
+                      right on-panel — the old row let a long email push the "preferred"
+                      badge off the edge, where it rendered as a clipped word. */}
+                  <span className="chat-cmp-acctrow-name">{label}</span>
+                  {a.preferred && <span className="chat-cmp-acctrow-flag">preferred</span>}
+                  <span
+                    className="chat-cmp-acctrow-meta"
+                    data-warn={a.state === 'needs-relogin' ? '' : undefined}
+                  >
                     {a.state === 'needs-relogin'
                       ? 'sign in again'
                       : a.sessionPercent === null ? '—' : `${Math.round(a.sessionPercent)}%`}
                   </span>
-                </span>
-              </button>
-            );
-          })}
-        </>
-      )}
-
-      {staleAsOf != null && (
-        <p className="chat-cmp-usagenote">Account usage as of {fmtClock(staleAsOf)}.</p>
-      )}
-
-      {costUsd != null && (
-        <>
-          <div className="chat-cmp-menu-divider" />
-          <div className="chat-cmp-usagerow">
-            <span className="chat-cmp-usagerow-title">Estimated cost</span>
-            <span className="chat-cmp-usagerow-value">{fmtCost(costUsd)}</span>
+                </button>
+              );
+            })}
           </div>
-          <p className="chat-cmp-usagenote">
-            At public API rates. A Max/Pro plan is flat-rate, so this is a what-if.
-          </p>
-        </>
+        </div>
+      )}
+
+      {(costUsd != null || staleAsOf != null) && (
+        <div className="chat-cmp-usagefoot">
+          {costUsd != null && (
+            <>
+              <div className="chat-cmp-usagerow">
+                <span className="chat-cmp-windowrow-title">Estimated cost</span>
+                <span className="chat-cmp-usagerow-value is-sm">{fmtCost(costUsd)}</span>
+              </div>
+              <p className="chat-cmp-usagenote">
+                At public API rates. A Max/Pro plan is flat-rate, so this is a what-if.
+              </p>
+            </>
+          )}
+          {staleAsOf != null && (
+            <p className="chat-cmp-usagenote">Account usage as of {fmtClock(staleAsOf)}.</p>
+          )}
+        </div>
       )}
     </div>
   );

@@ -83,6 +83,16 @@ export interface CompactionRecord {
   debt_at_compaction: number;
   sessions_count: number;
   bookmarks_count: number;
+  /**
+   * Main-chain context tokens when the record was written, or absent when the
+   * transcript could not be read. OPTIONAL for backward compatibility: every
+   * record written before the context-handoff feature lacks it, and a reader that
+   * required it would fail on every existing sleep state on disk.
+   *
+   * `trigger: 'handoff'` records always carry it (that is the whole point of the
+   * handoff); `auto`/`manual` compactions carry it best-effort.
+   */
+  context_tokens?: number;
 }
 
 export type FieldValue =

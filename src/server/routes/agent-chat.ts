@@ -14,6 +14,8 @@ import { serveMedia } from '../media.js';
 import { isDesktop } from '../desktop.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
+import { readHandoffRecord, stampHandoffRecord, writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, shouldRotateForHandoff } from '../../lib/context-watch.js';
+import { readSetupConfig, readBrainLocal, writeBrainLocal } from '../../lib/setup-config.js';
 import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
@@ -640,6 +642,25 @@ export function startChatSession(
     ? { DREAMCONTEXT_TAB_SESSION: pinId, DREAMCONTEXT_SERVER_PID: String(process.pid) }
     : {};
 
+  // ── Seed this pane's context-handoff toggle BEFORE the child starts ─────────
+  //
+  // Ordering is load-bearing: the child's very first PostToolUse hook resolves the
+  // toggle from this file, so seeding it after the spawn would leave a race in which
+  // the first edits of a session silently run under the wrong setting.
+  //
+  // Precedence — brain-local (what this person last chose, for THIS vault on THIS
+  // machine) > `.config.json` (the team default) > off. An EXISTING tab file is left
+  // alone: a pane that has been toggled owns its own answer across resumes.
+  try {
+    if (pinId && idArg.length && !readTabHandoff(contextRoot, pinId)) {
+      const seed = resolveTabSeed(
+        readBrainLocal(projectRoot).contextHandoffDefault,
+        readSetupConfig(projectRoot)?.contextHandoff,
+      );
+      writeTabHandoff(contextRoot, pinId, seed);
+    }
+  } catch { /* an unseeded pane falls back to the vault default — never a failed spawn */ }
+
   const shell = process.env.SHELL || '/bin/zsh';
   const child = spawn(shell, ['-ilc', script], {
     cwd: projectRoot,
@@ -754,6 +775,16 @@ export function startChatSession(
   // later in this stream carries the same field and simply supersedes this.
   const cachedSlash = readSlashCache(contextRoot);
   if (cachedSlash) sendMeta({ subtype: 'slash_commands', commands: cachedSlash });
+
+  // The pane's context-handoff toggle, sent the same way and for the same reason: the
+  // CLI's own `init` cannot carry a dreamcontext field, so this frame IS the augmented
+  // init. A resumed pane must show what is on disk, not what was clicked last time.
+  try {
+    if (pinId) {
+      const state = resolveHandoffFor(contextRoot, projectRoot, pinId);
+      sendMeta({ subtype: 'context_handoff', state: { enabled: state.enabled, nudgeAt: state.nudgeAt, remindEvery: state.remindEvery } });
+    }
+  } catch { /* the switch falls back to its default rendering */ }
 
   // What the fresh-start branch guard did, in one sentence — sent only for the outcomes that
   // are actually news (`describeFreshStart` returns null for "already on it", for a worktree
@@ -903,6 +934,49 @@ export function startChatSession(
       // read is the right price for closing that direction against a future CLI change.
       if (obj.type === 'result' && obj.parent_tool_use_id === undefined) {
         turnsInFlight = Math.max(0, turnsInFlight - 1);
+
+        // ── Context handoff: rotate this pane into a fresh session ────────────
+        //
+        // The agent ran `dreamcontext tasks handoff <slug>`, which wrote a record
+        // keyed by THIS pane. A turn boundary is the only safe place to act on it:
+        // `/clear` mid-turn would discard work the agent is still producing.
+        //
+        // `actedAt` is the idempotency latch and this is the ONLY writer of it (the
+        // SessionStart hook owns `consumedAt`, and neither touches the other's
+        // field). Without it, every subsequent result frame in the pane would see
+        // the same record and clear again — an infinite rotation loop.
+        //
+        // The STEP 0 spike verified the mechanism on CLI 2.1.261: `/clear` sent as a
+        // stream-json USER frame rotates the conversation in-process and fires
+        // SessionStart with `source=clear` and a new transcript. So no respawn is
+        // needed, and the pane's websocket, pinned id and tab env all survive.
+        try {
+          const handoffPane = pinId;
+          const pending = handoffPane ? readHandoffRecord(contextRoot, handoffPane) : null;
+          if (shouldRotateForHandoff(pending) && pending) {
+            stampHandoffRecord(contextRoot, handoffPane, { actedAt: new Date().toISOString() });
+
+            // Both are USER frames, so both open turns — counted for the same reason
+            // the opening prompt and `/effort` are (see turnsInFlight's header).
+            turnsInFlight += 1;
+            writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '/clear' }] } });
+
+            const continuePrompt = `Handoff: continue task ${pending.title} (${pending.task}). `
+              + `Read _dream_context/state/${pending.task}.md first, then carry on from its latest changelog entry.`;
+            turnsInFlight += 1;
+            writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: continuePrompt }] } });
+
+            // Reuses the existing system-notice frame rather than inventing a second
+            // one — it is already a dismissible, toned, single-slot banner saying
+            // "something about this conversation changed", which is exactly this.
+            const size = pending.contextTokens ? ` — handed off at ${Math.round(pending.contextTokens / 1000)}k` : '';
+            sendMeta({ subtype: 'branch_start', kind: 'moved', message: `Fresh session${size}. Continuing ${pending.title}.` });
+          }
+        } catch (handoffErr) {
+          // A failed rotation must leave the pane exactly as it was — still usable,
+          // just not rotated. The agent can always hand off again.
+          sendMeta({ subtype: 'branch_start', kind: 'failed', message: `Context handoff could not open a fresh session: ${(handoffErr as Error).message}` });
+        }
       }
 
       // The API REFUSED this turn. Read before anything else acts on the frame, because this
@@ -1249,7 +1323,7 @@ export function startChatSession(
     let msg: {
       type?: string; text?: string; requestId?: string; behavior?: string; updatedInput?: unknown;
       message?: string; model?: string; effort?: string; targetUuid?: string; mode?: string;
-      taskId?: string;
+      taskId?: string; enabled?: boolean;
     };
     try { msg = JSON.parse(str); } catch { return; } // malformed control frame — ignore
 
@@ -1321,6 +1395,29 @@ export function startChatSession(
         turnsInFlight += 1;
         writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `/effort ${effort}` }] } });
       }
+      return;
+    }
+
+    // Per-PANE context-handoff toggle. TWO writes, and the split is the whole design:
+    //   • the PANE's tab file is what the hooks read, so this pane changes immediately
+    //     and a sibling pane in the same vault is untouched;
+    //   • brain-local records the vault's default on THIS machine, so the NEXT new pane
+    //     opens the way the person last left it.
+    // Never an app-global setting: `agent-ui.json` is one machine-wide file, so a default
+    // there would switch the nudge on in every vault on the machine and silently override
+    // a team that opted out in `.config.json`.
+    //
+    // The echo carries what was actually WRITTEN, never what was clicked — if the tab file
+    // could not be written, the switch must snap back rather than lie.
+    if (msg.type === 'setContextHandoff' && typeof msg.enabled === 'boolean') {
+      if (!pinId) return; // an unpinned pane has no tab file to own a toggle
+      try {
+        const written = writeTabHandoff(contextRoot, pinId, { enabled: msg.enabled });
+        if (written) {
+          writeBrainLocal(projectRoot, { contextHandoffDefault: msg.enabled });
+          sendMeta({ subtype: 'context_handoff', state: { enabled: written.enabled, nudgeAt: written.nudgeAt, remindEvery: written.remindEvery } });
+        }
+      } catch { /* a failed toggle simply does not echo — the client keeps server truth */ }
       return;
     }
 

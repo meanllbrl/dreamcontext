@@ -382,6 +382,17 @@
       ]
     },
     {
+      "path": "config context-handoff",
+      "desc": "Opt in to the context-handoff nudge: on | off (default: off)",
+      "args": [
+        "<state>"
+      ],
+      "valueFlags": [
+        "--nudge-at",
+        "--remind-every"
+      ]
+    },
+    {
       "path": "config github-login",
       "desc": "[Advanced] Map a person from the roster to their GitHub login (brain-repo commit-author attribution — C3)",
       "args": [
@@ -2326,6 +2337,14 @@
         "<name>",
         "<key>",
         "[value]"
+      ]
+    },
+    {
+      "path": "tasks handoff",
+      "desc": "Hand this session off: log the note, pin the task, and let a fresh session continue it",
+      "args": [
+        "<name>",
+        "[note...]"
       ]
     },
     {

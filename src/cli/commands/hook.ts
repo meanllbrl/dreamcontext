@@ -54,6 +54,14 @@ import { runAssetDriftRefresh } from './asset-drift.js';
 import { loadCatalog } from './install-skill.js';
 import { detectSessionStartTrigger, detectPromptTrigger, renderOffer } from '../../lib/initializer-detect.js';
 import { readSetupConfig, readBrainLocal } from '../../lib/setup-config.js';
+import {
+  maybeNudge,
+  pruneContextWatch,
+  selectHandoffForSessionStart,
+  renderHandoffBanner,
+  stampHandoffRecord,
+  lastMainChainContext,
+} from '../../lib/context-watch.js';
 import { withSleepStateLock, autoSleepSidecarRunning } from '../../lib/sleep-state-lock.js';
 import { shouldStartAutoSleep, currentAutoSleepFingerprint } from '../../lib/auto-sleep.js';
 import { resolveBrainSyncEnabled } from '../../lib/git-sync/brain-repo.js';
@@ -1825,6 +1833,36 @@ export function registerHookCommand(program: Command): void {
         if (process.env.DREAMCONTEXT_DEBUG) console.error('[brain-sync] error:', (brainErr as Error).message ?? brainErr);
       }
 
+      // ── Context-handoff banner ────────────────────────────────────────────
+      // BEFORE the snapshot, deliberately: this session exists BECAUSE a previous
+      // one handed off, and the first thing it must read is which task it is
+      // continuing — not the general project brief. `selectHandoffForSessionStart`
+      // owns the selection rules, including the guard that a tab-less session only
+      // qualifies on `source=clear`, so a headless automation can neither receive
+      // nor consume a human's pending handoff.
+      //
+      // `consumedAt` is stamped ONLY here, and only after the banner has actually
+      // been printed — that is what makes it print exactly once.
+      try {
+        const handoffTab = process.env.DREAMCONTEXT_TAB_SESSION ?? null;
+        const source = typeof input?.source === 'string' ? input.source : null;
+        const picked = selectHandoffForSessionStart(root, source, handoffTab);
+        if (picked) {
+          console.log(renderHandoffBanner(picked.record));
+          console.log('');
+          stampHandoffRecord(root, picked.key, { consumedAt: new Date().toISOString() });
+        }
+      } catch (handoffErr) {
+        if (process.env.DREAMCONTEXT_DEBUG) console.error('[context-handoff] banner error:', (handoffErr as Error).message ?? handoffErr);
+      }
+
+      // Housekeeping for both context-handoff state dirs. SessionStart ONLY —
+      // once per session is the right cadence for a directory sweep, and putting
+      // it on the Edit/Write path would scan a directory before every tool call.
+      try {
+        pruneContextWatch(root);
+      } catch { /* housekeeping is never allowed to cost a session */ }
+
       console.log(snapshot);
     });
 
@@ -1993,6 +2031,19 @@ export function registerHookCommand(program: Command): void {
         return;
       }
       if (reminder) console.log(reminder);
+
+      // ── The opt-in context-handoff nudge ──────────────────────────────────
+      // AFTER the debt line, deliberately: sleep debt is about the BRAIN's health
+      // and is the older contract; this is about the SESSION's cost. Printed to
+      // stdout like every other line in this handler — UserPromptSubmit stdout is
+      // injected as context. A user prompt is the second of the feature's two
+      // nudge points (the other is the next Edit/Write); granularity is coarse by
+      // design, because a hook process costs ~1s and a finer trigger would tax
+      // every tool call in the session.
+      try {
+        const nudge = maybeNudge(root, input as Record<string, unknown>);
+        if (nudge) console.log(nudge);
+      } catch { /* advisory — must never break the prompt path */ }
 
       // Initializer opportunity (migrate-from-folder / mass-new-source): the user
       // is pointing at an existing brain/notes folder to MIGRATE, or a sizable new
@@ -2392,28 +2443,49 @@ export function registerHookCommand(program: Command): void {
         ? input.tool_input as Record<string, unknown>
         : {};
       const filePath = typeof toolInput.file_path === 'string' ? toolInput.file_path : '';
-      if (!filePath || !isJsTsFile(filePath)) process.exit(0);
 
       const messages: string[] = [];
 
-      // Single walk-up pass for both formatter and tsconfig
-      const config = findProjectConfig(filePath);
+      // ── Format + type-check: JS/TS files only ──────────────────────────────
+      // Gated on the file TYPE, where it used to `process.exit(0)`. The early exit
+      // moved into this `if` so the context-handoff nudge below still runs after an
+      // Edit to a .md or .py — the agent's context grows the same either way, and
+      // this hook is the only PostToolUse dreamcontext owns. (Deliberately NOT a new
+      // all-tools HOOK_SPECS entry: `npx dreamcontext` measures ~1.0s per hook call,
+      // so registering one would add a second to EVERY tool call in the session.)
+      if (filePath && isJsTsFile(filePath)) {
+        // Single walk-up pass for both formatter and tsconfig
+        const config = findProjectConfig(filePath);
 
-      // Phase 1: Auto-format
-      if (config.formatter) {
-        const result = runFormatter(config.formatter, filePath);
-        if (result.success) {
-          messages.push(`Formatted ${basename(filePath)} with ${config.formatter.type}.`);
+        // Phase 1: Auto-format
+        if (config.formatter) {
+          const result = runFormatter(config.formatter, filePath);
+          if (result.success) {
+            messages.push(`Formatted ${basename(filePath)} with ${config.formatter.type}.`);
+          }
+        }
+
+        // Phase 2: TypeScript check (use pre-found tsconfig)
+        if (config.tsconfig) {
+          const tsErrors = runTscCheckWithConfig(filePath, config.tsconfig);
+          if (tsErrors) {
+            messages.push(tsErrors);
+          }
         }
       }
 
-      // Phase 2: TypeScript check (use pre-found tsconfig)
-      if (config.tsconfig) {
-        const tsErrors = runTscCheckWithConfig(filePath, config.tsconfig);
-        if (tsErrors) {
-          messages.push(tsErrors);
+      // ── Phase 3: the opt-in context-handoff nudge ─────────────────────────
+      // Rides the SAME additionalContext this hook already emits — no second hook
+      // process, no second registration. Wrapped so a fault here can change neither
+      // the formatter's behaviour nor this hook's exit code: an editing session must
+      // never break because a billing hint failed.
+      try {
+        const watchRoot = resolveContextRoot();
+        if (watchRoot) {
+          const nudge = maybeNudge(watchRoot, input as Record<string, unknown>);
+          if (nudge) messages.push(nudge);
         }
-      }
+      } catch { /* the nudge is advisory — never let it touch the edit path */ }
 
       if (messages.length > 0) {
         console.log(JSON.stringify({
@@ -2442,12 +2514,23 @@ export function registerHookCommand(program: Command): void {
       const trigger = (input && typeof input.trigger === 'string') ? input.trigger : 'unknown';
 
       // Prepend the compaction record (LIFO, capped at 20) via the pure helper.
+      // How big the window had grown when compaction fired. Recorded so the
+      // compaction log can finally answer "at what size?" — the number the whole
+      // context-ceiling research is about, and the one `tasks handoff` writes for
+      // its own trigger. Read from the transcript TAIL, never the whole file.
+      let compactContextTokens: number | null = null;
+      try {
+        const tp = (input && typeof input.transcript_path === 'string') ? input.transcript_path : '';
+        if (tp) compactContextTokens = lastMainChainContext(tp);
+      } catch { /* an unreadable transcript just means we don't know the size */ }
+
       const nextState = appendCompactionRecord(state, {
         timestamp: new Date().toISOString(),
         trigger,
         debt_at_compaction: state.debt,
         sessions_count: state.sessions.length,
         bookmarks_count: state.bookmarks.length,
+        ...(compactContextTokens !== null ? { context_tokens: compactContextTokens } : {}),
       });
 
       writeSleepState(root, nextState);

@@ -20,6 +20,18 @@ import {
 } from '../../lib/task-declined.js';
 import { matchMember } from '../../lib/task-backend/member-match.js';
 import { writeBrainLocal } from '../../lib/setup-config.js';
+import {
+  handoffKey,
+  writeHandoffRecord,
+  lastMainChainContext,
+  type HandoffRecord,
+} from '../../lib/context-watch.js';
+import { liveTranscriptPath, findTranscriptBySessionId } from '../../lib/transcript-locate.js';
+import { distillTranscript } from './transcript.js';
+import { buildDigest, writeDigest } from '../../lib/session-digest.js';
+import { appendCompactionRecord } from '../../lib/sleep-consolidation.js';
+import { readSleepState, writeSleepState } from './sleep.js';
+import { withSleepStateLock } from '../../lib/sleep-state-lock.js';
 import { isMultiPersonVault, listPeople, PeopleStoreError } from '../../lib/people-store.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
@@ -1568,6 +1580,108 @@ export function registerTasksCommand(program: Command): void {
       await backend.addChangelog(slug, logContent, { fallbackAppend: true });
       await backend.updateFields(slug, { updated_at: today() });
       success(`Log entry added to ${slug}`);
+    });
+
+  // Context handoff — move this session's state into the task and stop.
+  //
+  // The agent runs this AFTER writing its state with `tasks log`. Everything here
+  // is about making the NEXT session able to pick the work up cold: the task is the
+  // handoff document, the record is the signal, the digest is the recall safety net.
+  //
+  // It deliberately does NOT write `state/.active-task`. An edge-case review removed
+  // that pointer: it raced across tabs (two panes handing off would fight over one
+  // global file) and broke auto-sleep's hands-off union.
+  tasks
+    .command('handoff')
+    .argument('<name>')
+    .argument('[note...]', 'Optional note to log before handing off')
+    .description('Hand this session off: log the note, pin the task, and let a fresh session continue it')
+    .action(async (name: string, noteParts: string[]) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+      const root = ensureContextRoot();
+
+      // 1. The note, through the SAME changelog path `tasks log` uses — the banner
+      //    tells the next session to read "the latest changelog entry", so the
+      //    handoff note has to land there and nowhere else.
+      const note = noteParts.join(' ').trim();
+      if (note) {
+        await backend.addChangelog(slug, `### ${today()} - Session Update\n- ${note}`, { fallbackAppend: true });
+      }
+
+      // 2. The task must be IN PROGRESS for the fresh session to find it: the nudge's
+      //    active-task lookup and the snapshot both key off status. Only write when it
+      //    is not already there, so we never churn `updated_at` for nothing.
+      const current = await backend.get(slug);
+      const title = String(current?.name ?? slug).replace(/\s+/g, ' ').trim() || slug;
+      if (current?.status !== 'in_progress') {
+        await backend.updateFields(slug, { status: 'in_progress', updated_at: today() });
+      } else if (note) {
+        await backend.updateFields(slug, { updated_at: today() });
+      }
+
+      // 3. Find this session's live transcript — for the context size and the digest.
+      //    Pane first (it survives a rotation via the session map), conversation id
+      //    second. Null is fine everywhere downstream: a session whose transcript has
+      //    not flushed yet still hands off, just without a measured size.
+      const tab = process.env.DREAMCONTEXT_TAB_SESSION ?? '';
+      const sessionId = process.env.CLAUDE_CODE_SESSION_ID ?? '';
+      const transcript = (tab ? liveTranscriptPath(root, tab) : null)
+        ?? (sessionId ? findTranscriptBySessionId([sessionId]) : null);
+      const contextTokens = transcript ? lastMainChainContext(transcript) : null;
+
+      // 4. The record the fresh session (and the Chat server) reads. Keyed by pane
+      //    when there is one, so a second pane's handoff can never be mistaken for
+      //    this one's. A second call OVERWRITES: the newer state is the true one.
+      const record: HandoffRecord = {
+        task: slug,
+        title,
+        at: new Date().toISOString(),
+        contextTokens,
+        fromSession: sessionId,
+        tab: tab || null,
+      };
+      const key = handoffKey();
+      writeHandoffRecord(root, key, record);
+
+      // 5. A PARTIAL digest, exactly as pre-compact writes one. Same reason: the
+      //    session is about to end with its decisions un-captured, and the Stop-hook
+      //    path is hours away. Marked partial so the SessionStart catch-up re-digests
+      //    the full transcript over it. Best-effort — never block the handoff.
+      try {
+        if (transcript && sessionId) {
+          writeDigest(root, sessionId, buildDigest(distillTranscript(transcript)), { partial: true });
+        }
+      } catch { /* the digest is a safety net, not the handoff itself */ }
+
+      // 6. The compaction log finally records handoffs alongside compactions, with
+      //    the size that triggered them — the number the whole context-ceiling
+      //    research is about. Locked like every other writer of sleep state.
+      try {
+        withSleepStateLock(root, () => {
+          const state = readSleepState(root);
+          writeSleepState(root, appendCompactionRecord(state, {
+            timestamp: new Date().toISOString(),
+            trigger: 'handoff',
+            debt_at_compaction: state.debt,
+            sessions_count: state.sessions.length,
+            bookmarks_count: state.bookmarks.length,
+            ...(contextTokens !== null ? { context_tokens: contextTokens } : {}),
+          }));
+        });
+      } catch { /* the log is a record, never a gate on the handoff */ }
+
+      success(`Handoff recorded for ${slug}${contextTokens !== null ? ` at ~${Math.round(contextTokens / 1000)}k tokens` : ''}.`);
+      // The two surfaces differ in ONE way that matters to the agent: whether
+      // something else is about to rotate the session for it. In Chat the server
+      // does it at the next result frame, so the right move is to stop talking; in a
+      // terminal nobody will, so the human has to run `/clear`.
+      if (tab) {
+        info('A fresh session opens automatically after this turn — finish your sentence and stop.');
+      } else {
+        info('Run /clear in this session to continue with the task pinned.');
+      }
     });
 
   // Sync with the remote backend (no-op for local)

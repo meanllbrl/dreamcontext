@@ -17,6 +17,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { resolveAgentSession } from './agent-session-map.js';
 
 export interface TranscriptLocation {
   mainPath: string | null;
@@ -188,6 +189,24 @@ export function findTranscriptBySessionId(ids: string[], home: string = homedir(
     /* an unreadable projects dir is a "not found", never a throw */
   }
   return null;
+}
+
+/**
+ * Resolve a tab/pane's roster id to the transcript of its LIVE conversation: prefer
+ * the tab-session map's current id (the tab `/clear`d or in-TUI-resumed to a different
+ * conversation), fall back to the pinned id's transcript.
+ *
+ * The single home of the roster-id → live-transcript invariant — title, session-model,
+ * session-stats and `tasks handoff`'s partial digest all read through here, so a
+ * rotation can never leave one of them tracking a stale file. Lived in
+ * `agent-terminal.ts` until the context-handoff work needed it from the CLI too; the
+ * CLI cannot import a server route, so it moved here rather than being re-spelled.
+ *
+ * `contextRoot` may be null, which means "no map — pinned transcript only".
+ */
+export function liveTranscriptPath(contextRoot: string | null, id: string, home?: string): string | null {
+  const liveId = contextRoot ? resolveAgentSession(contextRoot, id) : '';
+  return findTranscriptBySessionId([liveId, id], home ?? homedir());
 }
 
 /** Cap on subagent transcripts harvested per session. */

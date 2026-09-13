@@ -4,6 +4,46 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+### Opt-in context handoff — the agent is told at ~200k that it may continue in a fresh session (2026-09-13)
+
+Measured on 120 real sessions of this vault (10,917 API calls): `cache_read` is 97.4% of
+billed input tokens, and replaying the same work under a 200k reset bills **2.2–2.6× fewer
+input tokens** than letting the window grow to 1M. The threshold dominates (150–250k is a
+flat optimum); compact-vs-restart at an equal threshold is only a ~20% effect. Nothing told
+the agent it was past the knee, so a long build session silently paid 2–3× for the same
+task. Research artifacts: `_dream_context/inbox/context-ceiling-research/`.
+
+- **Agent-decided, never forced.** Past `nudgeAt` the agent is handed a note with its own
+  numbers, the two commands, and an explicit clause saying it may ignore them. No hard
+  ceiling, no server-forced compaction, no change to Claude Code's own auto-compact.
+- **Default OFF.** `dreamcontext config context-handoff on|off [--nudge-at N]
+  [--remind-every N]` sets the vault default (defaults 200k / 100k); `config show` prints it.
+  Invalid values fall back to the defaults; the CLI refuses a ladder below 20k / 10k.
+- **`dreamcontext tasks handoff <slug> [note]`** logs the note to the task changelog, sets
+  the task `in_progress`, records the request, writes a partial session digest, and appends
+  a `CompactionRecord {trigger:'handoff', context_tokens}`. It does **not** write a global
+  active-task pointer (removed in review: it raced across tabs).
+- **Desktop Chat rotates itself.** At the next turn boundary after a handoff, the server
+  sends `/clear` plus a continue prompt as user frames — verified on CLI 2.1.261 to rotate
+  the conversation in-process and fire SessionStart with `source=clear`. The next session
+  opens with a `>> HANDOFF:` banner above the snapshot naming the task. Terminal/PTY is
+  instruction + banner only.
+- **Per pane, remembered per vault per machine.** The composer's usage popover gains a
+  "Hand off at 200k" switch; the context bar draws a marker tick at the threshold, a lighter
+  track beyond it and a warning-tone fill past it, and the composer ring gets a matching
+  notch. The last toggle seeds every new pane via `BrainLocalState.contextHandoffDefault`
+  (gitignored, vault-scoped) — never app-global, which would have leaked the setting into
+  every vault on the machine.
+- **Never fires inside a sub-agent** (`agent_id`/`agent_type` on the hook payload, pinned
+  against a real captured payload, plus `/subagents/` and sidechain-tail fallbacks), and
+  never on a headless automation run (a tab-less session can claim a pending handoff only on
+  `source=clear`).
+- No new hook registration: `npx dreamcontext` costs ~1.0s per hook call, so the nudge rides
+  the existing PostToolUse / UserPromptSubmit / SessionStart / PreCompact hooks.
+- `contextTokensFromUsage` is now the single context formula (`computeSessionStats` imports
+  it) and `liveTranscriptPath` moved to `src/lib/transcript-locate.ts` so the CLI can share
+  it. `CompactionRecord.context_tokens` is optional — existing sleep states read unchanged.
+
 ### Memory Recall: CHANGELOG corpus + tiered display + hook default-on (2026-05-23)
 
 - `dreamcontext memory` CLI namespace: `recall` / `remember` / `update` / `delete` / `list` / `status`.

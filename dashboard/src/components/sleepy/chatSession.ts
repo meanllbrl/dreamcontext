@@ -173,6 +173,11 @@ export interface ConversationModel {
    *  in it — and because a `git checkout` the user did not ask for is not something to let
    *  scroll away. Dismissable: `dismissBranchNotice` clears it. */
   branchNotice?: { tone: 'info' | 'warn'; message: string };
+  /** This pane's context-handoff toggle, as the SERVER has it on disk. Arrives on connect
+   *  (the augmented init) and again after every toggle, so the switch is always showing
+   *  server truth rather than an optimistic click — unlike `effort`, this one IS queryable,
+   *  because it lives in a file the server owns. Absent until the first frame lands. */
+  contextHandoff?: { enabled: boolean; nudgeAt: number; remindEvery: number };
   /** Composer draft text — `sendText` appends to it (skill-chip / file-path inserts); the
    *  composer itself owns clearing it on submit by calling `send()` then setting it back to
    *  '' is the CALLER's job (see `send`'s own draft-clear below) — ChatPane reads this to
@@ -433,6 +438,7 @@ export interface ChatSession {
   /** Live effort switch (a `/effort <level>` user frame — no effort control request exists
    *  on 2.1.218). The CLI answers with a synthetic "Set effort level to <level>" bubble. */
   setEffort: (level: string) => void;
+  setContextHandoff: (enabled: boolean) => void;
   /** Flip THIS running conversation between Auto (`auto`) and Bypass
    *  (`bypassPermissions`) without restarting it — a `set_permission_mode` control request
    *  (present on CLI 2.1.220's headless engine; the CLI validates the mode string and acks).
@@ -707,6 +713,7 @@ export function createChatSession(
     onSpokenChunk,
     setModel,
     setEffort,
+    setContextHandoff,
     setPermissionMode,
     stopTask,
     rewind,
@@ -1306,6 +1313,12 @@ export function createChatSession(
         conv = { ...conv, exited: { code: ev.code } };
         return;
       }
+      case 'context-handoff': {
+        // Server truth, not a click. Never touches `busy`: like `branch-start`, this frame
+        // says nothing about whether a turn is running.
+        conv = { ...conv, contextHandoff: ev.state };
+        return;
+      }
       case 'branch-start': {
         // Never touches `busy`: this frame is sent at connect time, alongside the slash-command
         // replay, and says nothing about whether a turn is running.
@@ -1641,6 +1654,14 @@ export function createChatSession(
     // reflect the choice optimistically; the CLI's synthetic "Set effort level to <level>"
     // bubble is the visible confirmation.
     session.effort = level;
+  }
+
+  /** Ask the server to flip this pane's context-handoff toggle. Deliberately does NOT
+   *  update `conv` — the server echoes a `context-handoff` frame with what it actually
+   *  wrote, and that echo is the only thing allowed to move the switch. A toggle whose
+   *  file write failed must snap back, not sit there claiming a setting nobody has. */
+  function setContextHandoff(enabled: boolean): void {
+    sendControl({ type: 'setContextHandoff', enabled });
   }
 
   // ── Rewind (conversation-only, transcript-uuid anchored) ──────────────────────────

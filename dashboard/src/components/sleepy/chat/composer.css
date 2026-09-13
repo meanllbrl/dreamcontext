@@ -732,6 +732,17 @@
 }
 .chat-cmp-usagering-track { stroke: var(--color-border-hover); }
 .chat-cmp-usagering-fill { stroke: var(--color-accent); }
+/* Past the handoff threshold the ring takes the same warning tone the bar's fill does.
+   Independent of `[data-tight]`, which is about the window running out — a session can be
+   past the knee with plenty of room left, and that is the normal case. */
+.chat-cmp-usagering-fill[data-past-knee] {
+  stroke: var(--color-warning);
+}
+/* The threshold notch — a tertiary-toned tick on the ring, matching the bar's marker. */
+.chat-cmp-usagering-notch {
+  stroke: var(--color-text-tertiary);
+  fill: none;
+}
 .chat-cmp-usagebtn[data-tight='true'] .chat-cmp-usagering-fill { stroke: var(--color-warning); }
 
 .chat-cmp-compact-btn {
@@ -789,10 +800,30 @@
   max-height: calc(100vh - 130px);
   overflow: hidden;
 }
+/* 284px, not 244px: every wrap in this panel — the token arithmetic, the handoff label,
+   the account note, the clipped "preferred" badge — was a line of text one word too long
+   for its box. The panel is still narrower than the composer it hangs off (max-width above
+   clamps it in a split pane), and the blocks below carry their own internal spacing, so the
+   flex gap drops to the space BETWEEN groups rather than between every line. */
 .chat-cmp-usagemenu {
-  width: 244px;
-  gap: 9px;
+  width: 284px;
+  gap: 12px;
   padding: 13px 14px;
+}
+/* One group of related readings: a label, its rows, and nothing between them but space.
+   Groups are separated by the menu's own gap — a rule per row (what this used to draw)
+   said "unrelated" three times in a panel where everything is the same subject. */
+.chat-cmp-usageblock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.chat-cmp-usagefoot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
 }
 /* The MODE menu hangs off the LEFT trigger, so it grows from the left edge. */
 .chat-cmp-modemenu { left: 12px; right: auto; }
@@ -1053,13 +1084,53 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--color-text);
+  white-space: nowrap;
+}
+/* The context reading is the headline; a 5-hour window is a supporting number. Same row
+   shape, one step down in weight — that IS the hierarchy this panel was missing. */
+.chat-cmp-usagerow-value.is-sm {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+}
+.chat-cmp-windowrow {
+  display: flex;
+  flex-direction: column;
+}
+/* It WRAPS rather than truncating: in a narrow split pane the panel is clamped to ~207px
+   of content, and an ellipsis there would eat "resets 3h 34m" — the one fact on this line
+   the percent beside it cannot tell you. Two lines when it must, one line when it fits. */
+.chat-cmp-windowrow-title {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--color-text-secondary);
+  text-wrap: pretty;
+}
+/* "when it rolls over" is part of naming the window, not a separate finding — so it rides
+   the title line in a quieter voice instead of claiming a caption row of its own. */
+.chat-cmp-windowrow-reset {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+  /* Wraps as ONE unit or not at all — "resets" stranded on the line above "3h 34m" is a
+     duration broken in half, which is worse than the second line it was avoiding. */
+  white-space: nowrap;
 }
 .chat-cmp-usagebar {
   height: 4px;
-  margin-top: 6px;
+  margin-top: 5px;
   border-radius: var(--radius-full);
   background: var(--color-bg-tertiary);
   overflow: hidden;
+}
+/* Context handoff ON: the track needs a marker sitting ON it, so the bar becomes a
+   positioning context and stops clipping. `overflow: visible` is safe because the only
+   thing that can now escape is the 1px tick, which is deliberately full-height. */
+.chat-cmp-usagebar[data-handoff] {
+  position: relative;
+  overflow: visible;
 }
 .chat-cmp-usagebar-fill {
   display: block;
@@ -1068,23 +1139,195 @@
   background: var(--color-accent);
   transition: width var(--transition-normal, 240ms) ease;
 }
+/* Past the knee the fill changes MEANING, not just shade: this session is now in the
+   range the whole feature exists to flag, and warning is the token for "worth acting on,
+   not broken". */
+.chat-cmp-usagebar-fill[data-past-knee] {
+  background: var(--color-warning);
+}
+/* The threshold tick. Centred on its point (translateX(-50%)) so the mark sits AT the
+   number rather than just after it, and drawn taller than the track so it reads as a
+   gradation on a scale instead of a gap in the bar. */
+.chat-cmp-usagebar-mark {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--color-text-tertiary);
+  border-radius: var(--radius-full);
+  pointer-events: none;
+}
+/* Everything BEYOND the threshold is territory the agent has been asked not to stay in —
+   a lighter track says "past here is different" without claiming anything is wrong. */
+.chat-cmp-usagebar[data-handoff]::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 0 0;
+  border-radius: inherit;
+  background: linear-gradient(to right, transparent 0, transparent var(--handoff-mark, 100%), var(--color-bg-secondary) var(--handoff-mark, 100%));
+  opacity: 0.6;
+  pointer-events: none;
+}
+/* ── The per-pane switch, under the context bar ─────────────────────────────── */
+.chat-cmp-handoffrow {
+  margin-top: 4px;
+}
+.chat-cmp-handoffswitch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.chat-cmp-handoffswitch:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.chat-cmp-handoffswitch-label {
+  text-align: left;
+}
+.chat-cmp-handoffswitch-track {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  transition: background var(--transition-fast, 120ms) ease;
+}
+.chat-cmp-handoffswitch-track[data-on] {
+  background: var(--color-accent);
+}
+.chat-cmp-handoffswitch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-primary);
+  transition: transform var(--transition-fast, 120ms) ease;
+}
+.chat-cmp-handoffswitch-track[data-on] .chat-cmp-handoffswitch-knob {
+  transform: translateX(12px);
+}
+.chat-cmp-handoffnote {
+  margin: 1px 0 0;
+  font-size: 11px;
+  line-height: 1.42;
+  color: var(--color-text-tertiary);
+  text-wrap: pretty;
+}
+/* The meta line's right half changes tone with the fill, for the same reason. */
+.chat-cmp-usagemeta [data-past-knee] {
+  color: var(--color-warning);
+}
+/* `white-space: nowrap` is the point of this rule, not a detail of it: both halves are
+   measurements, and a measurement that breaks across two lines mid-fraction ("106k /"
+   above "1.0M used") stops being readable at a glance, which is the only way anyone
+   reads it. */
 .chat-cmp-usagemeta {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   margin-top: 5px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--color-text-tertiary);
+  white-space: nowrap;
 }
+.chat-cmp-usagemeta > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* When the panel is clamped narrow, the arithmetic is what survives and the threshold
+   label is what gives way — the bar already draws the threshold as a tick. */
+.chat-cmp-usagemeta > span:first-child { flex: none; }
 .chat-cmp-usagenote {
   margin: 0;
-  font-size: 11.5px;
-  line-height: 1.45;
+  font-size: 11px;
+  line-height: 1.42;
   color: var(--color-text-tertiary);
   text-wrap: pretty;
 }
+
+/* ── The account picker ───────────────────────────────────────────────────────────────
+   Four bordered cards made the picker the heaviest object in a panel that is otherwise
+   measurements, and it is not the reason the panel opens. It becomes a LIST: borderless
+   rows, one line each, and only the active account draws a surface. */
+
+.chat-cmp-acctlist {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 1px;
+}
+.chat-cmp-acctrow {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 8px;
+  /* Pulled back out by its own padding so the NAMES line up with the group label and the
+     note above them — a list that starts 8px to the right of everything else reads as a
+     nested thing, which it isn't. The hover/active surface still runs wider than the text. */
+  margin-inline: -8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.chat-cmp-acctrow:hover:not(:disabled) { background: var(--color-bg-tertiary); }
+.chat-cmp-acctrow:disabled { opacity: 0.5; cursor: default; }
+.chat-cmp-acctrow.is-active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
+}
+/* The truncation that keeps the row honest: the name yields, so the flag and the percent
+   to its right always land on the panel instead of running off it. */
+.chat-cmp-acctrow-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--color-text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* NOT `--color-accent-text` (white — it belongs on a SOLID accent fill): over the 16%
+   tint above, white is the one label you could not read. */
+.chat-cmp-acctrow.is-active .chat-cmp-acctrow-name {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+/* A word, not an uppercase mono pill. The pill was a second accent object competing with
+   the active row's own tint for the same glance, and it was the thing that got clipped. */
+.chat-cmp-acctrow-flag {
+  flex: none;
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+.chat-cmp-acctrow-meta {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+.chat-cmp-acctrow-meta[data-warn] { color: var(--color-warning); }
 
 /* ── Popover menu contents (the portaled shell itself is AgentTerminal.css's
      .agent-composer-menu / .agent-composer-pop — see this file's header) ───────────── */

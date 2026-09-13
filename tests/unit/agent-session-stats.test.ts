@@ -15,6 +15,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { priceForModel, computeSessionStats, contextLimitFor } from '../../src/server/routes/agent-terminal.js';
+import { contextTokensFromUsage } from '../../src/lib/context-watch.js';
 
 const line = (
   usage: Record<string, number>,
@@ -167,5 +168,26 @@ describe('computeSessionStats — degenerate inputs', () => {
     expect(computeSessionStats('/nonexistent/nope.jsonl').costUsd).toBeNull();
     const empty = writeTranscript(['{"type":"summary"}', 'not json']);
     expect(computeSessionStats(empty).contextTokens).toBeNull();
+  });
+});
+
+// ─── The shared context formula (AC7) ────────────────────────────────────────
+
+describe('computeSessionStats uses the SHARED context formula', () => {
+  it('agrees with contextTokensFromUsage on the same usage block', () => {
+    // AC7: `contextTokensFromUsage` is the single definition, imported back into
+    // `computeSessionStats`. If this ever diverges, the ring the user reads and the
+    // number the handoff nudge fires on are describing different sessions.
+    const usage = {
+      input_tokens: 12,
+      cache_creation_input_tokens: 3_400,
+      cache_read_input_tokens: 198_000,
+      output_tokens: 588,
+    };
+    const dir = mkdtempSync(join(tmpdir(), 'dc-stats-shared-'));
+    const path = join(dir, 's.jsonl');
+    writeFileSync(path, line(usage, { id: 'm1', model: 'claude-opus-5' }) + '\n', 'utf-8');
+    expect(computeSessionStats(path).contextTokens).toBe(contextTokensFromUsage(usage));
+    expect(computeSessionStats(path).contextTokens).toBe(202_000);
   });
 });

@@ -189,6 +189,7 @@ export function Composer({
   mode = DEFAULT_CHAT_MODE, onModeChange, onSetModelDefault, shelved = false,
   mentions, modelScope = 'session', idlePlaceholder,
   activeAccountId = '', onAccountChange,
+  contextHandoff, onContextHandoffChange,
 }: {
   session: ComposerHost;
   model: string;
@@ -215,6 +216,11 @@ export function Composer({
    * delivery path and not by this control). A surface that DOES draw the trigger must pass it —
    * the fallback below exists to keep the type honest, not as a value worth rendering.
    */
+  /** This pane's context-handoff toggle, as the SERVER has it on disk (ChatPane forwards
+   *  `conv.contextHandoff`). Absent ⇒ the ring draws no notch and the popover no switch,
+   *  which is exactly what an unpinned pane or a pre-feature server should render. */
+  contextHandoff?: { enabled: boolean; nudgeAt: number; remindEvery: number };
+  onContextHandoffChange?: (enabled: boolean) => void;
   permissionMode?: 'auto' | 'bypass';
   /**
    * The PROJECT's remembered permission default — what `onPermissionModeChange` actually
@@ -710,7 +716,7 @@ export function Composer({
     })),
     [accountsRes],
   );
-  const { limits: usageBars, staleAsOf } = usageLimits(ctx, usageRes, Date.now());
+  const { limits: usageBars, staleAsOf } = usageLimits(ctx, usageRes, Date.now(), contextHandoff);
 
   const runCompact = () => {
     if (!connected) return;
@@ -1222,8 +1228,18 @@ export function Composer({
   const RING_R = 6.5;
   const RING_C = 2 * Math.PI * RING_R;
   const isTight = !!ctx && ctx.pct >= CONTEXT_TIGHT_PCT;
+  // The handoff threshold on the ring. Same guard as the bar's marker: only when handoff is
+  // ON and the threshold actually falls INSIDE the window, so the notch can never land on
+  // the seam at 12 o'clock where it would read as a rendering artefact.
+  const handoffOn = !!(contextHandoff?.enabled && ctx && contextHandoff.nudgeAt > 0 && contextHandoff.nudgeAt < ctx.limit);
+  const handoffFrac = handoffOn && ctx ? contextHandoff!.nudgeAt / ctx.limit : null;
+  // Past the knee is a DIFFERENT condition from `isTight`, and deliberately so: `isTight`
+  // is about the window running out (and still owns the `/compact` button, untouched);
+  // this is about the point the agent was asked to consider handing off at.
+  const pastKnee = !!(handoffOn && ctx && ctx.used >= contextHandoff!.nudgeAt);
   const ctxReading = ctx
     ? `Context window ${ctx.pct}% — ${fmtTokens(ctx.used)} of ${fmtTokens(ctx.limit)} used, ${fmtTokens(Math.max(0, ctx.limit - ctx.used))} free`
+      + (handoffOn ? ` · hand off at ${fmtTokens(contextHandoff!.nudgeAt)}` : '')
     : 'Session usage';
   // Nothing found on ANY of the three readings means there is nothing behind the button, so
   // it isn't drawn. An empty popover is worse than an absent one.
@@ -1324,6 +1340,8 @@ export function Composer({
             accounts={accounts}
             activeAccountId={activeAccountId}
             onAccountChange={onAccountChange && ((id) => { onAccountChange(id); menu.close(); })}
+            contextHandoff={contextHandoff}
+            onContextHandoffChange={onContextHandoffChange}
           />
         </div>
       )}
@@ -1633,9 +1651,22 @@ export function Composer({
               {ctx && (
                 <circle
                   className="chat-cmp-usagering-fill"
+                  data-past-knee={pastKnee ? '' : undefined}
                   cx="8" cy="8" r={RING_R} strokeWidth="2" strokeLinecap="round"
                   transform="rotate(-90 8 8)"
                   strokeDasharray={`${(RING_C * Math.min(100, ctx.pct) / 100).toFixed(2)} ${RING_C.toFixed(2)}`}
+                />
+              )}
+              {/* The notch: a 1px-long dash placed at the threshold's angle by leaving the
+                  rest of the circumference in the gap. Same trick as the fill arc, so the
+                  two are guaranteed to agree about where a fraction of the ring is. */}
+              {handoffFrac !== null && (
+                <circle
+                  className="chat-cmp-usagering-notch"
+                  cx="8" cy="8" r={RING_R} strokeWidth="2"
+                  transform="rotate(-90 8 8)"
+                  strokeDasharray={`1 ${RING_C.toFixed(2)}`}
+                  strokeDashoffset={`${(-RING_C * handoffFrac).toFixed(2)}`}
                 />
               )}
             </svg>

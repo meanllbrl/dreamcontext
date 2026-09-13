@@ -2,7 +2,13 @@ import { Command } from 'commander';
 import { dirname } from 'node:path';
 import chalk from 'chalk';
 import { resolveContextRoot } from '../../lib/context-path.js';
-import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
+import {
+  readSetupConfig,
+  updateSetupConfig,
+  resolveContextHandoff,
+  CONTEXT_HANDOFF_MIN_NUDGE_AT,
+  CONTEXT_HANDOFF_MIN_REMIND_EVERY,
+} from '../../lib/setup-config.js';
 import { PeopleStoreError, listPeople } from '../../lib/people-store.js';
 import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
 import { header, success, error, info } from '../../lib/format.js';
@@ -124,6 +130,14 @@ function printConfig(projectRoot: string): void {
       }
     }
   }
+  // Context handoff prints ALWAYS (unlike task backend): it is a billing-relevant
+  // switch that is off by default, and "off" is the answer people come here for.
+  const handoff = resolveContextHandoff(cfg.contextHandoff);
+  console.log(
+    `  Context handoff: ${handoff.enabled
+      ? chalk.green('on') + chalk.dim(` (nudge at ${Math.round(handoff.nudgeAt / 1000)}k, remind every ${Math.round(handoff.remindEvery / 1000)}k)`)
+      : chalk.yellow('off') + chalk.dim(' (`dreamcontext config context-handoff on`)')}`,
+  );
   console.log(`  Setup version:  ${chalk.dim(cfg.setupVersion)}`);
 }
 
@@ -171,6 +185,65 @@ export function registerConfigCommand(program: Command): void {
           ? chalk.dim(`.claude/settings.json updated (autoMemoryEnabled: ${!disableNativeMemory}).`)
           : chalk.dim('.claude/settings.json already up to date.'),
       );
+    });
+
+  config
+    .command('context-handoff <state>')
+    .description('Opt in to the context-handoff nudge: on | off (default: off)')
+    .option('--nudge-at <tokens>', `Context tokens at which the first nudge fires (min ${CONTEXT_HANDOFF_MIN_NUDGE_AT})`)
+    .option('--remind-every <tokens>', `Token distance between repeat nudges (min ${CONTEXT_HANDOFF_MIN_REMIND_EVERY})`)
+    .action((state: string, opts: { nudgeAt?: string; remindEvery?: string }) => {
+      const projectRoot = requireProjectRoot();
+      if (!projectRoot) return;
+
+      const s = state.toLowerCase();
+      const ON = ['on', 'enable', 'true'];
+      const OFF = ['off', 'disable', 'false'];
+      if (!ON.includes(s) && !OFF.includes(s)) {
+        error(`Unknown state '${state}'.`, 'Use: dreamcontext config context-handoff <on|off>');
+        process.exitCode = 1;
+        return;
+      }
+
+      // Typo guard at the WRITE boundary — `--nudge-at 200` is a slip, not a
+      // preference, and a ladder that low would nudge on turn one forever. The
+      // resolver deliberately does NOT clamp (see setup-config.ts); this is the
+      // only place a human types the number, so this is the only place to refuse it.
+      const parse = (raw: string | undefined, min: number, flag: string): number | null | undefined => {
+        if (raw === undefined) return undefined;
+        const n = Number(raw);
+        if (!Number.isFinite(n) || !Number.isInteger(n) || n < min) {
+          error(`${flag} must be an integer of at least ${min}.`, `Got '${raw}'.`);
+          process.exitCode = 1;
+          return null;
+        }
+        return n;
+      };
+      const nudgeAt = parse(opts.nudgeAt, CONTEXT_HANDOFF_MIN_NUDGE_AT, '--nudge-at');
+      if (nudgeAt === null) return;
+      const remindEvery = parse(opts.remindEvery, CONTEXT_HANDOFF_MIN_REMIND_EVERY, '--remind-every');
+      if (remindEvery === null) return;
+
+      // Merge, never replace: `context-handoff off` must not silently discard a
+      // tuned ladder, so the next `on` comes back with the same thresholds.
+      const existing = readSetupConfig(projectRoot)?.contextHandoff ?? {};
+      const enabled = ON.includes(s);
+      const next = {
+        ...existing,
+        enabled,
+        ...(nudgeAt !== undefined ? { nudgeAt } : {}),
+        ...(remindEvery !== undefined ? { remindEvery } : {}),
+      };
+      updateSetupConfig(projectRoot, { contextHandoff: next });
+
+      const r = resolveContextHandoff(next);
+      if (enabled) {
+        success(`Context handoff on — the agent is nudged at ${Math.round(r.nudgeAt / 1000)}k, then every ${Math.round(r.remindEvery / 1000)}k.`);
+        info(chalk.dim('It is a nudge, not a rule: the agent decides whether moving its state is worth it.'));
+      } else {
+        success('Context handoff off — no nudge, and the hooks do no extra work.');
+      }
+      info(chalk.dim('This is the VAULT default (it rides to teammates) and the only switch for terminal sessions. Desktop Chat panes toggle it per pane.'));
     });
 
   config

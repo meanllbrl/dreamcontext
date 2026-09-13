@@ -86,6 +86,81 @@ export interface SetupConfig {
    * Absent ⇒ every shipped default applies — see {@link SleepConfig}.
    */
   sleep?: SleepConfig;
+  /**
+   * Opt-in context handoff — the agent is NUDGED (never forced) past a context
+   * threshold to write its state into the task and continue in a fresh session.
+   * Measured on 120 real sessions: cache_read is 97.4% of billed input and the
+   * same work under a 200k reset bills 2.2–2.6× fewer input tokens than growing
+   * to 1M. Absent ⇒ OFF, and the hooks do zero extra work.
+   *
+   * This is the VAULT default (it rides to teammates) and the only switch for
+   * terminal/CLI sessions. A desktop Chat pane overrides it per pane via its tab
+   * file, seeded from the machine-local `BrainLocalState.contextHandoffDefault`.
+   */
+  contextHandoff?: ContextHandoffConfig;
+}
+
+/**
+ * Context-handoff switch + ladder (see `SetupConfig.contextHandoff`). Every field
+ * is optional on disk and defaulted by {@link resolveContextHandoff} — a partial
+ * or hand-edited block must degrade to a sane ladder, never to a broken one.
+ */
+export interface ContextHandoffConfig {
+  /** Opt-in. Absent ⇒ false. */
+  enabled?: boolean;
+  /** Main-chain context tokens at which the first nudge fires. Default 200_000. */
+  nudgeAt?: number;
+  /** Token distance between repeat nudges. Default 100_000. */
+  remindEvery?: number;
+}
+
+/** Resolved handoff ladder — every field present. */
+export interface ResolvedContextHandoff {
+  enabled: boolean;
+  nudgeAt: number;
+  remindEvery: number;
+}
+
+export const CONTEXT_HANDOFF_DEFAULTS: ResolvedContextHandoff = {
+  enabled: false,
+  nudgeAt: 200_000,
+  remindEvery: 100_000,
+};
+
+/**
+ * Sanity floors for a HAND-TYPED threshold. Enforced at the CLI write boundary
+ * (`dreamcontext config context-handoff --nudge-at/--remind-every`), NOT inside
+ * `resolveContextHandoff`.
+ *
+ * WHY THE SPLIT (deviation from the plan's parenthetical — read this before
+ * "fixing" it). The plan put these floors inside the resolver AND asked the
+ * runtime verification to drive a scratch vault at `nudgeAt 3000 /
+ * remindEvery 2000`. Those two cannot both hold: a resolver floor of 20_000
+ * rewrites 3000 to the 200_000 default, and the runtime run could never fire a
+ * nudge at all. The floors are a typo guard for a human typing `--nudge-at 200`,
+ * which is exactly a write-boundary concern; the resolver's job is to survive a
+ * partial or corrupt block. Splitting them satisfies BOTH acceptance criteria —
+ * `config context-handoff` still refuses an absurd ladder, and a test fixture
+ * that writes `.config.json` / a tab file directly can still use a tiny one.
+ */
+export const CONTEXT_HANDOFF_MIN_NUDGE_AT = 20_000;
+export const CONTEXT_HANDOFF_MIN_REMIND_EVERY = 10_000;
+
+/**
+ * Pure defaulter: a partial/invalid `contextHandoff` block resolves to the shipped
+ * ladder. Non-number, NaN, non-finite and non-positive values all fall back — the
+ * hook that reads this runs on every Edit/Write, so it must never be handed a
+ * threshold that makes `ctx >= nudgeAt` true on turn one. Positive numbers are
+ * honoured as written (see the floors above for why they are not clamped here).
+ */
+export function resolveContextHandoff(cfg: ContextHandoffConfig | null | undefined): ResolvedContextHandoff {
+  const num = (v: unknown, fallback: number): number =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
+  return {
+    enabled: cfg?.enabled === true,
+    nudgeAt: num(cfg?.nudgeAt, CONTEXT_HANDOFF_DEFAULTS.nudgeAt),
+    remindEvery: num(cfg?.remindEvery, CONTEXT_HANDOFF_DEFAULTS.remindEvery),
+  };
 }
 
 /** Proactive learning layer switch (see `SetupConfig.learning`). */
@@ -239,6 +314,14 @@ export interface BrainLocalState {
    * when it stops matching `currentAutoSleepFingerprint`, auto-sleep pauses
    * with `consent-stale` rather than running under settings nobody approved.
    */
+  /**
+   * Last context-handoff toggle on THIS machine, for THIS vault — seeds every NEW
+   * chat pane's tab file at spawn. Deliberately machine-local and vault-scoped: an
+   * app-global default (agent-ui.json is ONE machine-wide file) would switch the
+   * nudge on in every vault on the machine, overriding a team that opted out in
+   * `.config.json`. Absent ⇒ fall through to `.config.json` contextHandoff, then off.
+   */
+  contextHandoffDefault?: boolean;
   autoSleep?: {
     enabled: boolean;
     /** Debt level at which a Stop hook may dispatch a background cycle. */
@@ -429,6 +512,23 @@ function configPath(projectRoot: string): string {
   return join(projectRoot, CONFIG_REL_PATH);
 }
 
+/**
+ * Keep only the fields we understand, each independently validated — this object is
+ * rebuilt field by field on every read, so anything not named here is DROPPED (and
+ * would be dropped again on the next `updateSetupConfig` write, silently losing a
+ * user's setting). Returns undefined for an absent/empty block so the config file
+ * stays clean for a project that never touched the feature.
+ */
+function sanitizeContextHandoff(raw: unknown): ContextHandoffConfig | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Partial<ContextHandoffConfig>;
+  const out: ContextHandoffConfig = {};
+  if (typeof o.enabled === 'boolean') out.enabled = o.enabled;
+  if (typeof o.nudgeAt === 'number' && Number.isFinite(o.nudgeAt)) out.nudgeAt = o.nudgeAt;
+  if (typeof o.remindEvery === 'number' && Number.isFinite(o.remindEvery)) out.remindEvery = o.remindEvery;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export function readSetupConfig(projectRoot: string): SetupConfig | null {
   const path = configPath(projectRoot);
   if (!existsSync(path)) return null;
@@ -468,6 +568,7 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
         typeof parsed.projectId === 'string' && parsed.projectId.trim() ? parsed.projectId.trim() : undefined,
       learning: sanitizeLearning(parsed.learning),
       sleep: sanitizeSleep(parsed.sleep),
+      contextHandoff: sanitizeContextHandoff(parsed.contextHandoff),
     };
   } catch {
     return null;
@@ -513,6 +614,7 @@ export function updateSetupConfig(
     projectId: patch.projectId ?? existing.projectId,
     learning: patch.learning ?? existing.learning,
     sleep: patch.sleep ?? existing.sleep,
+    contextHandoff: patch.contextHandoff ?? existing.contextHandoff,
   };
   writeSetupConfig(projectRoot, next);
   return next;
@@ -586,6 +688,7 @@ export function readBrainLocal(projectRoot: string): BrainLocalState {
     if (typeof parsed.needsTaskSync === 'boolean') out.needsTaskSync = parsed.needsTaskSync;
     if (typeof parsed.demotedTokenSha256 === 'string') out.demotedTokenSha256 = parsed.demotedTokenSha256;
     if (typeof parsed.activePersonSlug === 'string') out.activePersonSlug = parsed.activePersonSlug;
+    if (typeof parsed.contextHandoffDefault === 'boolean') out.contextHandoffDefault = parsed.contextHandoffDefault;
     // Background auto-sleep. Validated field by field, like everything above:
     // this switch hands an unattended agent the brain, so a half-written or
     // hand-edited block must read as OFF rather than as a vague yes.

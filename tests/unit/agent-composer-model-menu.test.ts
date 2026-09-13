@@ -277,3 +277,45 @@ describe('usageLimits — show what\'s found, hide what isn\'t', () => {
     expect(usageLimits(null, null, NOW)).toEqual({ limits: [], staleAsOf: null });
   });
 });
+
+// ─── Context-handoff marker math (item 9) ─────────────────────────────────────
+
+describe('usageLimits — the context-handoff marker', () => {
+  const ctx = { used: 240_000, limit: 1_000_000, pct: 24 };
+
+  it('carries no marker when the feature is off or absent — the row is unchanged', () => {
+    expect(usageLimits(ctx, null, Date.now()).limits[0].detail?.handoffAt).toBeUndefined();
+    expect(usageLimits(ctx, null, Date.now(), null).limits[0].detail?.handoffAt).toBeUndefined();
+    expect(usageLimits(ctx, null, Date.now(), { enabled: false, nudgeAt: 200_000 })
+      .limits[0].detail?.handoffAt).toBeUndefined();
+  });
+
+  it('carries the threshold when handoff is on', () => {
+    const detail = usageLimits(ctx, null, Date.now(), { enabled: true, nudgeAt: 200_000 }).limits[0].detail;
+    expect(detail?.handoffAt).toBe(200_000);
+    // The component divides by the limit: 200k of a 1M window is the 20% mark.
+    expect((detail!.handoffAt! / detail!.limit) * 100).toBe(20);
+  });
+
+  it('DROPS a threshold at or past the window limit — the tick would land on the edge', () => {
+    // A 200k-window model with a 200k handoff: the mark belongs nowhere, and drawing it
+    // at 100% would read as a rendering bug rather than as a threshold.
+    const small = { used: 100_000, limit: 200_000, pct: 50 };
+    expect(usageLimits(small, null, Date.now(), { enabled: true, nudgeAt: 200_000 })
+      .limits[0].detail?.handoffAt).toBeUndefined();
+    expect(usageLimits(small, null, Date.now(), { enabled: true, nudgeAt: 300_000 })
+      .limits[0].detail?.handoffAt).toBeUndefined();
+  });
+
+  it('drops a non-positive threshold rather than dividing by it', () => {
+    expect(usageLimits(ctx, null, Date.now(), { enabled: true, nudgeAt: 0 })
+      .limits[0].detail?.handoffAt).toBeUndefined();
+  });
+
+  it('adds NO bar of its own — the marker rides the context row that already existed', () => {
+    const off = usageLimits(ctx, null, Date.now());
+    const on = usageLimits(ctx, null, Date.now(), { enabled: true, nudgeAt: 200_000 });
+    expect(on.limits.length).toBe(off.limits.length);
+    expect(on.limits[0].key).toBe('context');
+  });
+});
