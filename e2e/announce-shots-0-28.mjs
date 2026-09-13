@@ -43,6 +43,12 @@ const page = await b.newPage({ viewport: { width: 1600, height: 1000 }, deviceSc
 // See the header: the desktop half of two surfaces cannot be photographed without it.
 await page.addInitScript(() => {
   Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true });
+  // See the note on nudgeScroller below: the app scrolls an inner pane, not the document.
+  window.nudgeScroller = (node, px) => {
+    let el = node.parentElement;
+    while (el && el.scrollHeight <= el.clientHeight + 2) el = el.parentElement;
+    (el ?? document.scrollingElement).scrollTop -= px;
+  };
 });
 // The account panel's live refresh spawns a real `claude` per account; against the
 // demo home that cannot succeed and every row would read "Signed out". Cancelling it
@@ -116,13 +122,18 @@ async function openSettings(section) {
   await page.waitForTimeout(2000);
 }
 
+/** NOTE — the page-side `nudgeScroller` is installed by `addInitScript` above. It exists
+ *  because `window.scrollBy` is a NO-OP in this app: the scroller is an inner pane
+ *  (`.shell-main`), not the document, so every nudge written against the window silently did
+ *  nothing and the crops kept opening under the app's own header. */
+
 /** Put `selector` at the TOP of the viewport, then clip to it. The settings page grows
  *  rather than scrolls internally, so a card near the bottom is simply off-screen until
  *  something scrolls the window — and a boundingBox below the fold clips to nothing. */
 async function cropTop(name, selector, opts = {}) {
   try {
     const el = vis(selector).first();
-    await el.evaluate((n) => { n.scrollIntoView({ block: 'start' }); window.scrollBy(0, -140); });
+    await el.evaluate((n, px) => { n.scrollIntoView({ block: 'start' }); nudgeScroller(n, px); }, opts.nudge ?? 140);
     await page.waitForTimeout(opts.settle ?? 800);
     const box = await el.boundingBox();
     if (!box) throw new Error('no box');
@@ -157,7 +168,7 @@ async function cropSpan(name, fromSel, toSel, opts = {}) {
     // page back down so the padding lands on empty page instead of on chrome — and clamp
     // the clip below {@link CHROME_PX} as well, because a nudge alone is a guess about a
     // header height that the clip can still overshoot.
-    await from.evaluate((n) => { n.scrollIntoView({ block: 'start' }); window.scrollBy(0, -140); });
+    await from.evaluate((n) => { n.scrollIntoView({ block: 'start' }); nudgeScroller(n, 140); });
     await page.waitForTimeout(opts.settle ?? 800);
     const a = await from.boundingBox();
     const b2 = await vis(toSel).first().boundingBox();
@@ -212,7 +223,9 @@ try {
     .waitFor({ state: 'detached', timeout: 30000 })
     .catch(() => {});
   await page.waitForTimeout(1500);
-  await cropTop('accounts', '.dc-acct-list', { maxHeight: 620 });
+  // The list is nearly a viewport tall, so the default nudge leaves its first row above
+  // the clamp and the crop opens mid-account. Push it further down and give it the height.
+  await cropTop('accounts', '.dc-acct-list', { maxHeight: 820, nudge: 260 });
   await cropSpan('switch-policy', 'text=How the next account is picked', '.dc-acct-weight-formula');
 } catch (err) {
   console.log('  ! skipped accounts -', err.message.split('\n')[0]);

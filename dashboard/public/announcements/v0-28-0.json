@@ -70,6 +70,18 @@
     {
       "kind": "split",
       "side": "left",
+      "title": "A percent is not a percent",
+      "body": "Every bar now says how much of its window is LEFT, not what time it resets — because 88% with fifty minutes to run and 73% with two days to run are nothing alike, and a clock makes you do that arithmetic yourself. The same fact reached the chooser: usage enters the score multiplied by the share of its window still ahead, so a window about to be forgiven stops being treated as spent. A window that has already reset says so instead of showing the number it held before.",
+      "shot": {
+        "src": "shots/v0-28-0/accounts.png",
+        "alt": "Three connected Claude accounts, each with a 5-hour bar and a weekly bar: 34% with 3h 9m left and 61% with 3d 23h left; 7% with 4h 37m left and 22% with 5d 23h left; and, in amber, 88% with 48m left and 73% with 1d 23h left.",
+        "caption": "88% with fifty minutes left is a different account from 73% with two days.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "split",
+      "side": "right",
       "title": "Your accounts, your policy",
       "body": "Auto-switch used to have one opinion compiled into it. Now you choose what a second account is FOR: spread the load so every account stays healthy, or drain the list in order so one window is spent to the last turn before the next is touched. The score mode's coefficients are yours too — what a percent of each window costs, and what one step down your list is worth.",
       "shot": {
