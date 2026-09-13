@@ -23,10 +23,24 @@ export interface ChatModeRow {
   name: string;
   /** One line under the name: what picking this actually changes about how the agent works. */
   insight: string;
-  /** Chip beside the name. Nothing carries one today — J.A.R.V.I.S wore "Soon" until the
-   *  voice work landed. Kept because announcing an unbuilt mode is a shape this menu has
-   *  needed once and will need again. */
+  /** Chip beside the name for a mode that is ANNOUNCED BUT NOT OFFERED — J.A.R.V.I.S wore
+   *  "Soon" here until the voice work landed. It travels with `disabled` and the mirror test
+   *  enforces the pair: `disabled` without a badge is a dead row the user pokes at, and a
+   *  badge without `disabled` is a selectable mode with no behaviour behind it. */
   badge?: string;
+  /**
+   * Chip beside the name for a mode that IS offered and is not finished — ALPHA, BETA.
+   *
+   * Deliberately NOT `badge`. That field means "announced, not offered" and is paired with
+   *  `disabled` by a test which catches a real mistake; saying how mature a WORKING mode is
+   *  is the opposite claim, so overloading the field would have bought one word by deleting
+   *  the guard. A maturity chip never disables anything.
+   *
+   * Owner call, 2026-09-13, looking at this menu: the J.A.R.V.I.S card carried nothing,
+   * which reads as finished, while the Voice settings card two screens away said BETA. Both
+   * now say ALPHA — one step below beta, and the same word on both surfaces.
+   */
+  maturity?: string;
   /** Rendered, but unpickable — the row exists so the capability is announced, not offered.
    *  Read by `AgentSurface.knownChatMode()`, which is what makes it a real gate rather than
    *  a styling flag: a disabled mode is one the spawn will not honour. */
@@ -44,7 +58,7 @@ export const CHAT_MODE_ROWS: readonly ChatModeRow[] = [
   { id: 'basic', name: 'Basic', insight: 'Plain Claude. No mode enabled.' },
   { id: 'plan', name: 'Plan', insight: 'Asks, drafts, gets reviewed, ends with a task.' },
   { id: 'develop', name: 'Develop', insight: 'Builds in waves, reviewed and validated.' },
-  { id: 'jarvis', name: 'J.A.R.V.I.S', insight: 'Talk with the agent. It talks back.' },
+  { id: 'jarvis', name: 'J.A.R.V.I.S', insight: 'Talk with the agent. It talks back.', maturity: 'ALPHA' },
 ];
 
 /** What a chat is in when nothing asked for anything else. There is deliberately no

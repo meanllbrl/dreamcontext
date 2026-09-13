@@ -67,6 +67,19 @@ describe('chat modes — client menu <-> server allowlist mirror', () => {
     expect(disabled).toEqual([]);
   });
 
+  it('a MATURITY chip is not a badge — it says how finished a mode is, and disables nothing', () => {
+    // The two chips land in the same slot and mean opposite things: `badge` announces a mode
+    // that is NOT offered, `maturity` labels one that IS. Overloading `badge` for "ALPHA"
+    // would have bought one word by deleting the pair rule below, which catches a real
+    // mistake — so the maturity chip is its own field and never implies `disabled`.
+    const jarvis = CHAT_MODE_ROWS.find((r) => r.id === 'jarvis');
+    expect(jarvis?.maturity).toBe('ALPHA');
+    expect(jarvis?.disabled).toBeFalsy();
+    for (const row of CHAT_MODE_ROWS) {
+      if (row.maturity) expect(row.disabled, `mode "${row.id}"`).toBeFalsy();
+    }
+  });
+
   it('the badge/disabled PAIR is still enforced for whatever gets announced next', () => {
     // The mechanism outlives J.A.R.V.I.S's use of it: a future unbuilt mode must carry both
     // or neither, so nothing ships half-announced the way this one nearly shipped

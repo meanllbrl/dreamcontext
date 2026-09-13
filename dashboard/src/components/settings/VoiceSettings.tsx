@@ -179,7 +179,11 @@ export function VoiceSettings() {
     <SettingGroup
       title="Voice — J.A.R.V.I.S mode"
       collapsible
-      badge={<span className="settings-beta-badge">BETA</span>}
+      // ALPHA, not BETA (owner, 2026-09-13). The mode works end to end — push-to-talk,
+      // transcription, spoken answers — and is still earlier than beta, and the two surfaces
+      // that announce it must not disagree about how finished it is: the composer's mode card
+      // carries the same word.
+      badge={<span className="settings-beta-badge">ALPHA</span>}
       note={
         isDesktop()
           ? 'Hold the microphone in the chat composer, speak, and hear the answer. Everything runs through OpenRouter on one key, stored on this machine.'

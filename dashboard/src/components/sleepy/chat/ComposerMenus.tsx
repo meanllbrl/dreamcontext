@@ -89,7 +89,9 @@ export function ModeMenu({
             </span>
             <span className="chat-cmp-modelrow-head">
               <span className="chat-cmp-modelrow-name">{row.name}</span>
-              {row.badge && <span className="chat-cmp-badge is-muted">{row.badge}</span>}
+              {(row.badge ?? row.maturity) && (
+                <span className="chat-cmp-badge is-muted">{row.badge ?? row.maturity}</span>
+              )}
             </span>
             <span className="chat-cmp-modelrow-insight">{row.insight}</span>
           </button>
