@@ -219,7 +219,7 @@ export function Composer({
   /** This pane's context-handoff toggle, as the SERVER has it on disk (ChatPane forwards
    *  `conv.contextHandoff`). Absent ⇒ the ring draws no notch and the popover no switch,
    *  which is exactly what an unpinned pane or a pre-feature server should render. */
-  contextHandoff?: { enabled: boolean; nudgeAt: number; remindEvery: number };
+  contextHandoff?: { enabled: boolean; nudgeAt: number; hardAt: number; remindEvery: number };
   onContextHandoffChange?: (enabled: boolean) => void;
   permissionMode?: 'auto' | 'bypass';
   /**
@@ -592,6 +592,17 @@ export function Composer({
   /** What the user last dragged/keyed the composer to — a FLOOR, not the applied height. */
   const [draggedH, setDraggedH] = useState<number | null>(null);
   const [bodyHeight, setBodyHeight] = useState<number | null>(null);
+  /** Whether THIS height change skips the CSS ease (see composer.css): true while the drag
+   *  handle or a pane resize owns the number, false for auto-grow. Set in the same commit as
+   *  the height it describes, so the attribute is never applied a frame late — a late mark
+   *  would let one eased frame through and read as the drag lagging the pointer. */
+  const [instantH, setInstantH] = useState(false);
+  /** Set for the duration of a resize-observer-driven measurement — the pane changing size
+   *  is not the composer growing, and easing it would trail the window's own edge. */
+  const instantRef = useRef(false);
+  /** The first applied height replaces the CSS fallback rather than growing from anything —
+   *  there is nothing to ease FROM, so it lands instantly. */
+  const firstApplyRef = useRef(true);
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);
   // Read by `resize` (a stable callback) and written by the drag, which must not re-run the
   // measurement once per pointermove through a dependency array.
@@ -619,7 +630,14 @@ export function Composer({
       paneHeight: paneHeight(),
       draggedHeight: draggedRef.current,
     }));
+    setInstantH(instantRef.current || dragRef.current != null || firstApplyRef.current);
+    firstApplyRef.current = false;
   }, []);
+
+  // Clear the mark the frame AFTER it was used. This render changes only the attribute — the
+  // height is unchanged, so re-enabling the transition here can't animate anything; the next
+  // instant change re-marks itself in its own commit.
+  useEffect(() => { if (instantH) setInstantH(false); }, [instantH, bodyHeight]);
 
   // Every input that can change how many lines the draft occupies, or how much of the box
   // the chips have taken: typing/paste (`draft`), an external `sendText` or a rewind prefill
@@ -639,7 +657,9 @@ export function Composer({
       const { width: w, height: h } = entry.contentRect;
       if (w === last.w && h === last.h) return;
       last = { w, h };
+      instantRef.current = true;
       resize();
+      instantRef.current = false;
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -1245,7 +1265,7 @@ export function Composer({
   const handoffOn = !!(contextHandoff?.enabled && ctx && contextHandoff.nudgeAt > 0 && contextHandoff.nudgeAt < ctx.limit);
   const ctxReading = ctx
     ? `Context window ${ctx.pct}% — ${fmtTokens(ctx.used)} of ${fmtTokens(ctx.limit)} used, ${fmtTokens(Math.max(0, ctx.limit - ctx.used))} free`
-      + (handoffOn ? ` · hand off at ${fmtTokens(contextHandoff!.nudgeAt)}` : '')
+      + (handoffOn ? ` · ECO asks at ${fmtTokens(contextHandoff!.nudgeAt)}, insists at ${fmtTokens(contextHandoff!.hardAt)}` : '')
     : 'Session usage';
   // Nothing found on ANY of the three readings means there is nothing behind the button, so
   // it isn't drawn. An empty popover is worse than an absent one.
@@ -1374,7 +1394,7 @@ export function Composer({
       {/* No `--chat-cmp-h` until the first measurement lands (a layout effect, so before
           paint) — composer.css's own two-line fallback holds the box until then, rather
           than a JS constant that would drift from the tokens the moment one moved. */}
-      <div className="chat-cmp-body" ref={bodyRef} style={bodyHeight == null ? undefined : { ['--chat-cmp-h' as string]: `${bodyHeight}px` }}>
+      <div className="chat-cmp-body" ref={bodyRef} data-instant={instantH ? '1' : undefined} style={bodyHeight == null ? undefined : { ['--chat-cmp-h' as string]: `${bodyHeight}px` }}>
         {quote && (
           <div className="chat-cmp-quote">
             <span className="chat-cmp-quote-bar" aria-hidden />
@@ -1657,7 +1677,11 @@ export function Composer({
                 const r = ringR(i);
                 const c = 2 * Math.PI * r;
                 // The notch rides whichever ring's band actually CONTAINS the threshold, so
-                // the mark and the arc it qualifies can never drift apart.
+                // the mark and the arc it qualifies can never drift apart. On the SHIPPED
+                // ladder it therefore draws nothing at all, and that is the correct answer:
+                // the default threshold IS the first band edge, so the seam between ring 1
+                // and ring 2 already marks it and a second tick on top would be noise. The
+                // branch stays live for a vault that has tuned `--nudge-at` off an edge.
                 const notchFrac = band && handoffOn && contextHandoff!.nudgeAt > band.from
                   && contextHandoff!.nudgeAt < band.to
                   ? (contextHandoff!.nudgeAt - band.from) / (band.to - band.from)

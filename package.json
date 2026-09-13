@@ -70,7 +70,8 @@
     "verify:chat-segments": "node scripts/verify/chat-segments.mjs",
     "announce:shots:meeting": "node e2e/announce-shots-meeting-room.mjs",
     "announce:shots:gap": "node e2e/announce-shots-gap.mjs",
-    "announce:shots:chat-html": "node e2e/announce-shots-chat-html.mjs"
+    "announce:shots:chat-html": "node e2e/announce-shots-chat-html.mjs",
+    "verify:pane-widen": "node scripts/verify/pane-focus-widen.mjs"
   },
   "keywords": [
     "ai",

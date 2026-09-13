@@ -181,6 +181,22 @@
   gap: 6px;
   padding: 0 12px 8px;
   overflow: hidden;
+  /* Auto-grow EASES; it does not cut. A line appearing or leaving is a small, frequent
+     change, so the move has to read as the box breathing rather than as a jump — anything
+     slower than `--transition-fast` starts to lag the caret you are typing at. The pane's
+     scroller is under a ResizeObserver, so the transcript stays pinned to the bottom for
+     every intermediate frame instead of only for the final one. */
+  transition: height var(--transition-fast);
+}
+
+/* The two height changes that must NOT ease: a drag has to sit under the pointer frame for
+   frame, and a pane/window resize has to track the box it is inside. Both mark the frame
+   they apply in (Composer.tsx), and the mark lands in the SAME commit as the height, so
+   there is no transition to interrupt. */
+.chat-cmp-body[data-instant='1'] { transition: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-cmp-body { transition: none; }
 }
 
 /* ── Quoted-reply chip (state 11) ────────────────────────────────────────────────── */
@@ -1425,7 +1441,7 @@
   height: 100%;
   border-radius: inherit;
   background: var(--chat-band-calm);
-  transition: width var(--transition-normal, 240ms) ease;
+  transition: width var(--transition-normal, 240ms ease);
 }
 .chat-cmp-bandseg-fill[data-band='caution'] { background: var(--chat-band-caution); }
 .chat-cmp-bandseg-fill[data-band='danger'] { background: var(--chat-band-danger); }
@@ -1459,7 +1475,7 @@
   height: 100%;
   border-radius: inherit;
   background: var(--color-accent);
-  transition: width var(--transition-normal, 240ms) ease;
+  transition: width var(--transition-normal, 240ms ease);
 }
 /* Past the knee the fill changes MEANING, not just shade: this session is now in the
    range the whole feature exists to flag, and warning is the token for "worth acting on,
@@ -1527,7 +1543,7 @@
   height: 16px;
   border-radius: var(--radius-full);
   background: var(--color-bg-tertiary);
-  transition: background var(--transition-fast, 120ms) ease;
+  transition: background var(--transition-fast, 120ms ease);
 }
 .chat-cmp-handoffswitch-track[data-on] {
   background: var(--color-accent);
@@ -1540,7 +1556,7 @@
   height: 12px;
   border-radius: var(--radius-full);
   background: var(--color-bg-primary);
-  transition: transform var(--transition-fast, 120ms) ease;
+  transition: transform var(--transition-fast, 120ms ease);
 }
 .chat-cmp-handoffswitch-track[data-on] .chat-cmp-handoffswitch-knob {
   transform: translateX(12px);

@@ -495,7 +495,12 @@
 }
 
 .agent-pane {
-  flex: 1 1 auto;
+  /* `1 1 0`, NOT `1 1 auto`: the focus widening below animates `flex-basis`, and a
+     transition from the `auto` keyword to a length is NOT interpolable — the row snapped to
+     its new split in a single frame no matter what the transition said. A `0` basis is also
+     what the bonus math already assumes (the remainder is split evenly) and what the tab
+     groups above the panes already use, so the two stay locked edge for edge. */
+  flex: 1 1 0;
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -1111,10 +1116,18 @@
 /* Animated so focus moving between panes reads as one row rebalancing rather than a
    jump cut. It is also why the widening is safe for terminals: the surface's
    ResizeObserver is 150ms-debounced, so the whole slide costs ONE xterm refit at the
-   end, the same deal the sidebar's own width animation already makes. */
+   end, the same deal the sidebar's own width animation already makes.
+
+   FAST, not normal (owner call 09-14): at 240ms a click waits on the layout before the
+   pane reads as switched. `--transition-fast` still crosses ~20 frames, so the row is
+   visibly rebalancing rather than cutting — it just stops being something you wait out. */
 .agent-panes > .agent-pane,
 .agent-overlay-tabs > .agent-pane-tabbar {
-  transition: flex-basis var(--transition-normal, 240ms) ease;
+  /* The token ALREADY carries its easing (`--transition-normal: 240ms ease`), so the
+     duration must not be followed by another one: `flex-basis 240ms ease ease` is invalid
+     and the browser drops the whole declaration — which is exactly why this "animation"
+     was landing in a single frame. Fallback included for the same reason. */
+  transition: flex-basis var(--transition-fast, 120ms ease);
 }
 @media (prefers-reduced-motion: reduce) {
   .agent-panes > .agent-pane,
@@ -1797,7 +1810,7 @@
   height: 100%;
   border-radius: inherit;
   background: var(--color-accent);
-  transition: width var(--transition-normal, 240ms) ease;
+  transition: width var(--transition-normal, 240ms ease);
 }
 /* Context nearly full → warn (threshold shared with the chat composer: CONTEXT_TIGHT_PCT). */
 .agent-composer-stat[data-hot="true"] { color: var(--color-warning); }
