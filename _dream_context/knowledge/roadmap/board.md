@@ -7,12 +7,12 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-09-11'
+date: '2026-09-12'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-09-11 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-09-12 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### 🟡 **improve-recall-mechanism** — Improve Recall Mechanism · 7/12 done (58%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
@@ -29,7 +29,7 @@ date: '2026-09-11'
   - the-desktop-chat-surface-truncates-the-snapshot-to-a-2kb-preview-at-around-10k-chars (todo) · BACKLOG
   - the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview (completed) · 0.22.0 · 2026-07-28 → …
 
-### 🔵 **improve-sleep-quality** — Improve sleep quality · 20/28 done (71%) · target 2026-08-02 · forecast 2026-09-06 🔴 SLIPPING
+### 🟡 **improve-sleep-quality** — Improve sleep quality · 20/28 done (71%) · target 2026-08-02 · forecast 2026-09-06 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
   - a-merged-away-chore-gets-re-filed-as-an-empty-task-every-sleep-cycle (completed) · 0.26.0 · 2026-09-05 → 2026-09-05
   - automations-hitl-a-run-can-stop-and-ask-and-the-verdict-comes-back-from-wherever-you-are (completed) · 0.24.0 · 2026-08-03 → …
@@ -51,7 +51,7 @@ date: '2026-09-11'
   - rescale-sleep-debt-scoring-weighted-sum-token-signal (completed) · 0.23.0
   - score-the-content-sleep-writes-signal-to-noise-staleness-inference-vs-observation (todo) · BACKLOG
   - sleep-connectors-pull-outside-sources-on-a-cadence-and-turn-them-into-knowledge-and-theses (completed) · BACKLOG · 2026-08-17 → 2026-08-24
-  - sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception (in_progress) · 2026-09-10 → …
+  - sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception (in_review) · 2026-09-10 → …
   - sleep-runs-itself-in-the-background-when-debt-is-high-instead-of-nagging (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
   - sleep-settings-become-tunable-debt-thresholds-and-per-specialist-models (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
   - sleep-stops-filing-junk-tasks-a-bar-for-what-deserves-a-task-and-the-right-model-per-specialist (completed) · 0.27.0 · 2026-09-04 → 2026-09-05

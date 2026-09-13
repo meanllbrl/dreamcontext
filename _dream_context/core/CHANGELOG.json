@@ -1,5 +1,22 @@
 [
   {
+    "date": "2026-09-12",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Owner report 2026-09-13 with a screenshot of a 10-node decision ladder: \"bu görünüm interaktif değil yaklaştırılamıyor merkezde değil dediğim gibi tıklanamıyor iç içe yazılar var\". Both defects reproduced in real Chromium before touching anything: the drawing sat at x=0 with 778px of dead space beside it in a 1050px pane, and the label \"+100k sonra\" covered two nodes.\n\nROOT CAUSE of the overlap (measured, not guessed): a routed edge reserved width on waypoint floor(len/2) of its path, but drew the label at pts[floor(len/2)] AFTER reversing the point list for back edges. For an even-length path those are different waypoints, so the reservation opened a gap the label never used. The existing verify ladder's back edge has an odd-length path, which is why the harness never caught it.\n\nWHAT CHANGED (chat-html-graph.js + chat-html-kit.css, mirrored into chatHtmlKit.ts):\n· The laid drawing moved onto a .dc-graph-stage inside the block, and the block became a viewport: the stage is CENTRED at every pane width, drags to pan (clamped so it can never be thrown out of its own block), zooms on ctrl/cmd-wheel — which is how a trackpad pinch arrives — or a corner control that rests invisible so PNG/print exports stay clean, and answers + / - / 0 / arrows / Esc from the keyboard. A PLAIN wheel is deliberately untouched: the block lives in a transcript.\n· Hovering a node lights it, its edges and their far ends; clicking HOLDS that trace and dims everything else. Every node is tabbable and answers Enter/Space. The pointer is captured only after a 4px move, so a pan never eats a node's click.\n· Labels are PLACED, not pinned: both middle waypoints are reserved, then candidate boxes slide along the finished path (getPointAtLength) and step off it, scored against every node box and every label already placed.\n· Caught while verifying: .dc-graph--tight used a CHILD selector, so the shrink stopped reaching nodes the moment they moved onto the stage — the engine measured them small, CSS painted them full size, and every arrow at 380px floated off its node. Descendant now, pinned by a unit test.\n\nPROOF: scripts/verify/chat-html.mjs runGraph now carries the owner's own diagram as a fixture (the even-length back edge) and drives the view with a real pointer — 57/57 checks, including centring at four widths, zero labels on nodes, hover/click/Esc traces, drag-pan, ctrl-wheel zoom, and that a plain wheel moves nothing. 151/151 in tests/unit/chat-html.test.ts.",
+    "breaking": false,
+    "summary": "UNCOMMITTED: a dream-html diagram is now a VIEW — centred, pan/zoom, click a node to trace it, and labels that no longer land on nodes",
+    "references": [
+      "file:dashboard/src/components/sleepy/chat/chat-html-graph.js",
+      "file:dashboard/src/components/sleepy/chat/chat-html-kit.css",
+      "file:scripts/verify/chat-html.mjs",
+      "task:chat-depiction-becomes-a-built-board-dream-html-stops-being-the-default-for-structure"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-11",
     "type": "feat",
     "scope": "chat",
