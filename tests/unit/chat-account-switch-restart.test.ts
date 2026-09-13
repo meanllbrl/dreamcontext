@@ -36,6 +36,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { accountSwitchKey } from '../../dashboard/src/components/sleepy/chatSession';
 
 const ROOT = new URL('../../', import.meta.url).pathname;
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
@@ -112,5 +113,67 @@ describe('chat session', () => {
     // The property the enqueue exists to work WITH — if this ever softened, a resubmit could
     // be "sent" into a void again and the queue would stop being the safety net.
     expect(session).toMatch(/ws\.readyState !== WebSocket\.OPEN\) return false/);
+  });
+});
+
+/**
+ * A CLOSED NOTICE STAYS CLOSED.
+ *
+ * Owner, 2026-09-14, with a screenshot of the same card for the third time: "kapata basıyorum
+ * … aynı mesaj aynı kartta aynı şekilde gözükmeye devam ediyor … kapattığım zaman gitsin ve
+ * aynı mesaj olduğu sürece hesap değişmediği sürece bir daha gelmesin."
+ *
+ * A switch is announced once and ARRIVES more than once by design: the restart copies the
+ * notice onto the session it creates (`armAccountSwitch`, above), and the server announces a
+ * standing refusal again on later turns. Clearing the field could therefore only hide the card
+ * until the next copy landed — and clearing it did something worse besides, because the
+ * restart gate reads that same field: a dismissal during the wait for the turn boundary
+ * cancelled the switch and stranded the held message with it.
+ *
+ * So the dismissal is an IDENTITY that is remembered, and the notice is MARKED rather than
+ * deleted.
+ */
+describe('a dismissed account-switch notice', () => {
+  const session = code(read(SESSION));
+  const pane = code(read('dashboard/src/components/sleepy/ChatPane.tsx'));
+  const surface = code(read(SURFACE));
+
+  it('is identified by outcome and the two accounts, NOT by the sentence it rendered', () => {
+    const a = { switched: true, reason: 'limit_hit', accountId: 'to', fromAccountId: 'from' };
+    // Same move, different numbers in the sentence: the destination's window ticks between
+    // turns, and a card that came back because 79% became 80% is the same nuisance.
+    expect(accountSwitchKey({ ...a })).toBe(accountSwitchKey({ ...a }));
+    // A different destination, a different origin, or a different outcome is genuinely new.
+    expect(accountSwitchKey({ ...a, accountId: 'other' })).not.toBe(accountSwitchKey(a));
+    expect(accountSwitchKey({ ...a, fromAccountId: 'other' })).not.toBe(accountSwitchKey(a));
+    expect(accountSwitchKey({ ...a, reason: 'limit_known' })).not.toBe(accountSwitchKey(a));
+    expect(accountSwitchKey({ ...a, switched: false })).not.toBe(accountSwitchKey(a));
+  });
+
+  it('is MARKED, never deleted — the restart gate reads the same field', () => {
+    const start = session.indexOf('function dismissAccountSwitch');
+    expect(start).toBeGreaterThan(-1);
+    const body = session.slice(start, session.indexOf('function ', start + 30));
+    expect(body).toMatch(/dismissed: true/);
+    expect(body).toMatch(/accountSwitchDismissed: accountSwitchKey\(/);
+    expect(body.includes('accountSwitch: undefined'),
+      'deleting the notice cancels a switch that is still waiting for the turn boundary').toBe(false);
+  });
+
+  it('does not re-open when the server announces the same move again', () => {
+    const arm = session.slice(session.indexOf("case 'account-switch'"));
+    expect(arm).toMatch(/accountSwitchDismissed === accountSwitchKey\(/);
+  });
+
+  it('travels with the notice onto the session the restart creates', () => {
+    // The card is on screen for the whole wait for the turn boundary, so it can be closed
+    // BEFORE the replacement exists. Without the carry the copy lands re-opened.
+    expect(surface).toMatch(/next\.noteAccountSwitch\(move, cs\.getModel\(\)\.accountSwitchDismissed\)/);
+    const note = session.slice(session.indexOf('function noteAccountSwitch'));
+    expect(note.slice(0, 700)).toMatch(/accountSwitchKey\(rest\)/);
+  });
+
+  it('is not drawn by the pane', () => {
+    expect(pane).toMatch(/conv\.accountSwitch && !conv\.accountSwitch\.dismissed/);
   });
 });

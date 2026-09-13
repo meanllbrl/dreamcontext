@@ -677,7 +677,11 @@ export function AgentSurface() {
       // The notice is carried onto the NEW session before anything else. The frame landed on
       // the OLD one, which this restart just disposed — without this the switch would be
       // invisible, which is the one thing this feature promises never to be.
-      next.noteAccountSwitch(move);
+      // …and the reader's dismissal travels with it. The restart waits for the turn boundary,
+      // which leaves the card on screen long enough to be closed BEFORE the new session
+      // exists; without this the copy lands re-opened and the × the reader pressed is undone
+      // by the very restart it was pressed during.
+      next.noteAccountSwitch(move, cs.getModel().accountSwitchDismissed);
       // The held turn is resubmitted on the NEW process, so the user's message is never lost.
       //
       // ENQUEUED, NOT SENT. `next` was constructed microseconds ago and its WebSocket is still

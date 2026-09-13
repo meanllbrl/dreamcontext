@@ -144,6 +144,24 @@ export interface ChatResultInfo {
  *  returns and what ChatPane renders from. Immutable: every reducer step produces a NEW
  *  object (new top-level fields, new `items`/`pending` array references where changed) so a
  *  consumer holding a stale reference never sees it mutate out from under it. */
+/**
+ * WHICH notice this is — the identity a dismissal is remembered by.
+ *
+ * "The same message" is not the same rendered sentence: the destination's percentages tick
+ * between turns, and a card that came back because 79% became 80% would be the same nuisance
+ * the reader just closed. What makes two notices the same is what the reader was told: this
+ * outcome, moving from this account to that one. Change either account, or the reason, and it
+ * is genuinely new and shows again.
+ */
+export function accountSwitchKey(move: {
+  switched: boolean;
+  reason: string;
+  accountId: string;
+  fromAccountId?: string;
+}): string {
+  return [move.switched ? 'moved' : 'stayed', move.reason, move.fromAccountId || '', move.accountId].join('|');
+}
+
 export interface ConversationModel {
   items: ChatItem[];
   /** Items replayed from the on-disk transcript when this session RESUMED an existing
@@ -271,7 +289,23 @@ export interface ConversationModel {
     /** The SERVER's answer to "is a turn really running?" — see the frame's own note. The
      *  restart gate reads this instead of `session.busy`, which is set optimistically. */
     turnInFlight?: boolean;
+    /** CLOSED BY THE READER. The notice is kept in the model — the restart gate reads this
+     *  same field and a dismissal must never cancel a switch or strand the held turn — but
+     *  the banner is not drawn. */
+    dismissed?: boolean;
   };
+  /**
+   * The notice the reader has already closed, as an identity rather than a flag.
+   *
+   * Owner, 2026-09-14: "kapata basıyorum … aynı mesaj aynı kartta aynı şekilde gözükmeye
+   * devam ediyor … kapattığım zaman gitsin ve aynı mesaj olduğu sürece hesap değişmediği
+   * sürece bir daha gelmesin". A switch is announced once but ARRIVES more than once — the
+   * restart carries the notice onto the session it creates, and the server re-announces a
+   * standing refusal on later turns — so clearing the field could only ever hide it until the
+   * next copy landed. What is remembered is WHICH notice was closed, so the same one stays
+   * closed and a genuinely different one (another account, another reason) still shows.
+   */
+  accountSwitchDismissed?: string;
 }
 
 // ─── Public session API (contract C4) ──────────────────────────────────────────────
@@ -349,7 +383,11 @@ export interface ChatSession {
    * account moved — and "the billed account never changes silently" is a constraint of this
    * feature. Same reasoning as `carryDraftInto` in AgentSurface.
    */
-  noteAccountSwitch: (move: NonNullable<ConversationModel['accountSwitch']>) => void;
+  noteAccountSwitch: (
+    move: NonNullable<ConversationModel['accountSwitch']>,
+    /** The dismissal carried from the session this one replaces. */
+    dismissed?: string,
+  ) => void;
   /** Focus the composer's input element, if `setFocusTarget` has registered one (a no-op
    *  before the pane mounts, or after it unmounts — same as focusing a not-yet-open
    *  terminal). See {@link ChatSession.setFocusTarget} for why this is a ref-registration
@@ -812,16 +850,34 @@ export function createChatSession(
   }
 
   function dismissAccountSwitch(): void {
-    if (!conv.accountSwitch) return;
-    conv = { ...conv, accountSwitch: undefined };
+    if (!conv.accountSwitch || conv.accountSwitch.dismissed) return;
+    // MARKED, NOT DELETED. `AgentSurface.armAccountSwitch` reads this same field to perform
+    // the restart, and the restart can still be waiting for a turn boundary when the reader
+    // closes the card — deleting it there cancelled the switch and took the held message with
+    // it. The banner reads `dismissed`; the restart does not.
+    conv = {
+      ...conv,
+      accountSwitch: { ...conv.accountSwitch, dismissed: true },
+      accountSwitchDismissed: accountSwitchKey(conv.accountSwitch),
+    };
     renderFlush.flush();
   }
 
-  function noteAccountSwitch(move: NonNullable<ConversationModel['accountSwitch']>): void {
+  function noteAccountSwitch(
+    move: NonNullable<ConversationModel['accountSwitch']>,
+    /** The dismissal carried from the session this one replaces, so a notice the reader
+     *  closed before the restart landed does not come back on the other side of it. */
+    dismissed?: string,
+  ): void {
     // `pendingText` is dropped on the way in: on THIS session the turn has already been
     // resubmitted, so keeping it would invite a second send.
     const { pendingText: _drop, ...rest } = move;
-    conv = { ...conv, accountSwitch: rest };
+    const closed = dismissed ?? conv.accountSwitchDismissed;
+    conv = {
+      ...conv,
+      accountSwitch: closed === accountSwitchKey(rest) ? { ...rest, dismissed: true } : rest,
+      ...(closed === undefined ? {} : { accountSwitchDismissed: closed }),
+    };
     renderFlush.flush();
   }
 
@@ -1020,12 +1076,23 @@ export function createChatSession(
         // leaves it. The server HELD the turn before sending this, so nothing is in flight
         // on the old account; `AgentSurface.armAccountSwitch` performs the restart at the
         // turn boundary and resubmits `pendingText`.
+        // A notice the reader has already closed does not re-open. The server announces a
+        // standing refusal again on later turns and the restart carries the notice onto the
+        // session it creates, so the SAME card arrives more than once by design.
+        const arrived = {
+          switched: ev.switched,
+          reason: ev.reason,
+          accountId: ev.accountId,
+          ...(ev.fromAccountId ? { fromAccountId: ev.fromAccountId } : {}),
+        };
+        const reclosed = conv.accountSwitchDismissed === accountSwitchKey(arrived);
         conv = {
           ...conv,
           accountSwitch: {
             switched: ev.switched,
             reason: ev.reason,
             accountId: ev.accountId,
+            ...(reclosed ? { dismissed: true } : {}),
             ...(ev.fromAccountId ? { fromAccountId: ev.fromAccountId } : {}),
             ...(ev.email ? { email: ev.email } : {}),
             ...(ev.organizationName ? { organizationName: ev.organizationName } : {}),

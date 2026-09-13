@@ -1672,7 +1672,7 @@ export function ChatPane({
             {/* The account move, shown where the conversation is — this is the guarantee that
                 the billed account never changes silently. Sits beside the branch notice for
                 the same reason: both answer "something about this conversation changed". */}
-            {conv.accountSwitch && (
+            {conv.accountSwitch && !conv.accountSwitch.dismissed && (
               <AccountSwitchBanner
                 move={conv.accountSwitch}
                 onDismiss={session.dismissAccountSwitch}
