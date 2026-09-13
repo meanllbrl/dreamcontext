@@ -4,6 +4,64 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+### ECO speaks in two registers — firm from 300k, severe from 650k (2026-09-14)
+
+The handoff nudge shipped with one register and it ended on *"keep going and ignore this.
+It is a nudge, not an instruction."* Measured against six real sessions of this vault that
+were nudged between 204k and 458k: **zero handoffs were requested.** The mechanism was
+never the problem — hook, threshold, ladder, rotation and banner all fired correctly and
+were re-verified against a 25MB transcript — it simply was never reached, because
+declining was written as the cheap default.
+
+- **Two registers, on the two edges the context rings are already drawn on.** FIRM from
+  `nudgeAt`: hand off *unless* the task is nearly done or the state genuinely cannot be
+  written down, with "I am in the middle of something" disqualified by name — it is what
+  the `log` is for, and it was true of every session that ignored the old note. SEVERE from
+  the new `hardAt`: imperative, and the decline clause grows the only tooth that does not
+  break *agent-decided, never forced* — **if you keep going anyway you must tell the user
+  and say why.** A silent default becomes a visible choice.
+- **The nudge and the gauge can no longer disagree.** `CONTEXT_BAND_EDGES` moves to
+  `src/lib/setup-config.ts` and IS the shipped ladder (300k / 650k); the dashboard mirrors
+  it under a drift test. Previously the ring said "calm" to 350k while the nudge pushed
+  from 200k. The default threshold now falls exactly on a band seam, so the ring's marker
+  tick correctly draws nothing — the seam is the mark.
+- **The first edge is 300k, not 350k — measured, not chosen.** Three readings, all from
+  real transcripts (434 sessions across this vault and Tilki; the billing replay uses the
+  120-session stream in `_dream_context/inbox/context-ceiling-research/`):
+  1. **The optimum is below both.** Re-running the research simulator over a 4.85M-token
+     task: the cost-minimising reset cap is 200–250k. A 300k cap sits 5% above it, 350k
+     sits 10% above.
+  2. **The lag decides it.** A nudge is not a cap — the agent finishes what it is doing,
+     and the firm register explicitly permits "the task is nearly done". So the effective
+     cap is `threshold + lag`. At a realistic +50k lag, 300k costs +10% over optimum and
+     350k costs +18%; *300k with lag is 350k without it*.
+  3. **Moving up does not buy quiet.** Counting sessions where a handoff would actually
+     have paid for its ~30k re-orientation: 300k fires on 127 sessions (90 worth it, 29%
+     noise), 350k on 95 (69 worth it, 27% noise). The noise rate is flat — going to 350k
+     silences 32 sessions of which **21 were the useful ones**.
+  The original reason for a 350k edge ("a normal working session runs the whole first
+  band") survives intact: real sessions peak at a median of 153k and a p75 of 319k, so a
+  300k edge still leaves 71% of sessions entirely inside the calm band. `hardAt` stays at
+  650k — only 3% of sessions ever reach it, and those still carry a median 126k above it.
+- **Crossing into the severe band always earns its own note**, even mid-cadence: a session
+  nudged at 640k would otherwise not hear the new advice until 740k, missing the one moment
+  the message is actually new. `NudgeState.lastTone` distinguishes an escalation from a
+  repeat; state written by the previous build reads as `firm`, so an in-flight session still
+  hears it. The repeat cadence is deliberately NOT shortened — a message that doubles in
+  frequency reads as broken rather than urgent.
+- **A pane owns the switch; the vault owns the thresholds.** Nothing in the UI ever set a
+  per-pane threshold, yet every `tab-<pane>.json` had one baked in at write time — ten live
+  panes were pinned to a 200k ladder nobody chose. `resolveHandoffFor` now takes only
+  `enabled` from the tab file, which re-points every existing pane with no migration, and
+  the server re-resolves before echoing the toggle so a tuned vault can't show one number
+  and nudge on another.
+- `dreamcontext config context-handoff on [--hard-at N]`; `config show` prints both
+  thresholds. `hardAt` is clamped `>= nudgeAt`, so an inverted hand-edit cannot make every
+  nudge severe, and raising `nudgeAt` past 650k carries the severe edge up with it.
+- **The ECO lamp stops promising.** It read "hands off at 200k" — a statement of fact about
+  something the agent may decline. It now reads `asks at 300k · insists at 650k` (measured
+  at 220.6px in 260px of room, one line, in the real bundled Inter/JetBrains Mono).
+
 ### Opt-in context handoff — the agent is told at ~200k that it may continue in a fresh session (2026-09-13)
 
 Measured on 120 real sessions of this vault (10,917 API calls): `cache_read` is 97.4% of

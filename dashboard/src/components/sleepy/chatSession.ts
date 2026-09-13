@@ -195,7 +195,7 @@ export interface ConversationModel {
    *  (the augmented init) and again after every toggle, so the switch is always showing
    *  server truth rather than an optimistic click — unlike `effort`, this one IS queryable,
    *  because it lives in a file the server owns. Absent until the first frame lands. */
-  contextHandoff?: { enabled: boolean; nudgeAt: number; remindEvery: number };
+  contextHandoff?: { enabled: boolean; nudgeAt: number; hardAt: number; remindEvery: number };
   /** Composer draft text — `sendText` appends to it (skill-chip / file-path inserts); the
    *  composer itself owns clearing it on submit by calling `send()` then setting it back to
    *  '' is the CALLER's job (see `send`'s own draft-clear below) — ChatPane reads this to

@@ -389,6 +389,7 @@
       ],
       "valueFlags": [
         "--nudge-at",
+        "--hard-at",
         "--remind-every"
       ]
     },

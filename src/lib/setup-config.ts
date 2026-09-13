@@ -93,6 +93,9 @@ export interface SetupConfig {
    * same work under a 200k reset bills 2.2–2.6× fewer input tokens than growing
    * to 1M. Absent ⇒ OFF, and the hooks do zero extra work.
    *
+   * TWO rungs, not one: FIRM from `nudgeAt`, SEVERE from `hardAt` — the same two
+   * edges the composer paints its bands on ({@link CONTEXT_BAND_EDGES}).
+   *
    * This is the VAULT default (it rides to teammates) and the only switch for
    * terminal/CLI sessions. A desktop Chat pane overrides it per pane via its tab
    * file, seeded from the machine-local `BrainLocalState.contextHandoffDefault`.
@@ -108,8 +111,10 @@ export interface SetupConfig {
 export interface ContextHandoffConfig {
   /** Opt-in. Absent ⇒ false. */
   enabled?: boolean;
-  /** Main-chain context tokens at which the first nudge fires. Default 200_000. */
+  /** Main-chain context tokens at which the FIRM nudge starts. Default 300_000. */
   nudgeAt?: number;
+  /** Main-chain context tokens at which the nudge turns SEVERE. Default 650_000. */
+  hardAt?: number;
   /** Token distance between repeat nudges. Default 100_000. */
   remindEvery?: number;
 }
@@ -118,12 +123,29 @@ export interface ContextHandoffConfig {
 export interface ResolvedContextHandoff {
   enabled: boolean;
   nudgeAt: number;
+  hardAt: number;
   remindEvery: number;
 }
 
+/**
+ * The two context-window edges, and THE OWNER of both numbers.
+ *
+ * They are one thing wearing two hats, which is why they live in one place: the
+ * composer paints a ring per band, and the nudge changes REGISTER at the same two
+ * points. When those drifted apart the gauge said "calm" at 300k while the nudge was
+ * already pushing at 200k — the surface and the behaviour told the user different
+ * stories about the same session.
+ *
+ * `dashboard/src/lib/agentComposer.ts` cannot import from `src/` (separate bundle),
+ * so it MIRRORS this array; `tests/unit/context-bands.test.ts` fails the build the
+ * moment the two disagree. See knowledge/patterns/mirror-with-drift-test.md.
+ */
+export const CONTEXT_BAND_EDGES: readonly [number, number] = [300_000, 650_000];
+
 export const CONTEXT_HANDOFF_DEFAULTS: ResolvedContextHandoff = {
   enabled: false,
-  nudgeAt: 200_000,
+  nudgeAt: CONTEXT_BAND_EDGES[0],
+  hardAt: CONTEXT_BAND_EDGES[1],
   remindEvery: 100_000,
 };
 
@@ -156,9 +178,16 @@ export const CONTEXT_HANDOFF_MIN_REMIND_EVERY = 10_000;
 export function resolveContextHandoff(cfg: ContextHandoffConfig | null | undefined): ResolvedContextHandoff {
   const num = (v: unknown, fallback: number): number =>
     typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
+  const nudgeAt = num(cfg?.nudgeAt, CONTEXT_HANDOFF_DEFAULTS.nudgeAt);
   return {
     enabled: cfg?.enabled === true,
-    nudgeAt: num(cfg?.nudgeAt, CONTEXT_HANDOFF_DEFAULTS.nudgeAt),
+    nudgeAt,
+    // The ONE clamp in this resolver, and it is an ordering invariant rather than a
+    // taste: a `hardAt` below `nudgeAt` would make the severe band start before the
+    // firm one and every nudge would open at full volume. Someone who raises
+    // `nudgeAt` past 650k is asking to be told late, so when they are told it is
+    // already serious — `hardAt` follows `nudgeAt` up rather than inverting.
+    hardAt: Math.max(num(cfg?.hardAt, CONTEXT_HANDOFF_DEFAULTS.hardAt), nudgeAt),
     remindEvery: num(cfg?.remindEvery, CONTEXT_HANDOFF_DEFAULTS.remindEvery),
   };
 }
@@ -525,6 +554,7 @@ function sanitizeContextHandoff(raw: unknown): ContextHandoffConfig | undefined 
   const out: ContextHandoffConfig = {};
   if (typeof o.enabled === 'boolean') out.enabled = o.enabled;
   if (typeof o.nudgeAt === 'number' && Number.isFinite(o.nudgeAt)) out.nudgeAt = o.nudgeAt;
+  if (typeof o.hardAt === 'number' && Number.isFinite(o.hardAt)) out.hardAt = o.hardAt;
   if (typeof o.remindEvery === 'number' && Number.isFinite(o.remindEvery)) out.remindEvery = o.remindEvery;
   return Object.keys(out).length > 0 ? out : undefined;
 }

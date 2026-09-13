@@ -329,7 +329,7 @@ export function UsageMenu({
   /** This pane's context-handoff toggle as the SERVER has it. Absent ⇒ the switch row is
    *  not drawn at all (an unpinned pane has no tab file to hold a toggle), and the context
    *  bar renders exactly as it did before the feature. */
-  contextHandoff?: { enabled: boolean; nudgeAt: number; remindEvery: number };
+  contextHandoff?: { enabled: boolean; nudgeAt: number; hardAt: number; remindEvery: number };
   onContextHandoffChange?: (enabled: boolean) => void;
 }) {
   const [acctOpen, setAcctOpen] = useState(false);
@@ -358,7 +358,7 @@ export function UsageMenu({
                 language: the gauge says how many bands are lit, this says where inside them
                 you are — and neither can invent a tone the other doesn't have, because both
                 read `contextBands()`. Each segment is as wide as its share of the window, so
-                the seams ARE the 350k and 650k marks and no separate tick is needed for them. */}
+                the seams ARE the 300k and 650k marks and no separate tick is needed for them. */}
             <div className="chat-cmp-bandbar">
               {(context.detail ? contextBands(context.detail.used, context.detail.limit) : []).map((band) => {
                 const share = (band.to - band.from) / (context.detail!.limit || 1);
@@ -404,7 +404,7 @@ export function UsageMenu({
                 aria-checked={contextHandoff.enabled}
                 className="chat-cmp-eco"
                 data-on={contextHandoff.enabled ? '' : undefined}
-                title={`ECO mode — at ${fmtTokens(contextHandoff.nudgeAt)} the agent writes its state into the task and continues in a fresh session.`}
+                title={`ECO mode — past ${fmtTokens(contextHandoff.nudgeAt)} the agent is told to write its state into the task and continue in a fresh session unless it has a reason not to. Past ${fmtTokens(contextHandoff.hardAt)} it is told to hand off, and to tell you if it decides otherwise. It decides; ECO is what asks.`}
                 disabled={!onContextHandoffChange}
                 onClick={() => onContextHandoffChange?.(!contextHandoff.enabled)}
               >
@@ -414,7 +414,13 @@ export function UsageMenu({
                 </svg>
                 <span className="chat-cmp-eco-name">ECO</span>
                 <span className="chat-cmp-eco-meaning">
-                  {contextHandoff.enabled ? `hands off at ${fmtTokens(contextHandoff.nudgeAt)}` : 'off'}
+                  {/* Two verbs, two numbers — the lamp has to carry the ESCALATION, not
+                      just a threshold. The old wording ("hands off at 200k") stated as
+                      fact something the agent may decline, so the owner read a promise
+                      and watched it never happen. */}
+                  {contextHandoff.enabled
+                    ? `asks at ${fmtTokens(contextHandoff.nudgeAt)} · insists at ${fmtTokens(contextHandoff.hardAt)}`
+                    : 'off'}
                 </span>
               </button>
             )}

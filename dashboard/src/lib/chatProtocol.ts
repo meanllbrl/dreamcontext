@@ -101,12 +101,16 @@ export interface BackgroundTaskEntry {
   description?: string;
 }
 
-/** A pane's resolved context-handoff ladder, as the server sees it on disk. `nudgeAt`
- *  rides along because the composer draws a MARKER at it — the UI exposes on/off only,
- *  but it has to know WHERE the threshold sits to place the tick and word the meta line. */
+/** A pane's resolved context-handoff ladder, as the server sees it on disk. The two
+ *  thresholds ride along because the composer WORDS the ECO lamp from them — the UI
+ *  exposes on/off only, but it has to say where the nudge turns firm and where it
+ *  turns severe. `nudgeAt`/`hardAt` are the composer's band edges (CONTEXT_BAND_EDGES,
+ *  owned by src/lib/setup-config.ts); the literals below are only the last-resort
+ *  fallback for a frame from an older server that does not send them. */
 export interface ContextHandoffState {
   enabled: boolean;
   nudgeAt: number;
+  hardAt: number;
   remindEvery: number;
 }
 
@@ -924,7 +928,8 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       kind: 'context-handoff',
       state: {
         enabled: st.enabled,
-        nudgeAt: typeof st.nudgeAt === 'number' && st.nudgeAt > 0 ? st.nudgeAt : 200_000,
+        nudgeAt: typeof st.nudgeAt === 'number' && st.nudgeAt > 0 ? st.nudgeAt : 300_000,
+        hardAt: typeof st.hardAt === 'number' && st.hardAt > 0 ? st.hardAt : 650_000,
         remindEvery: typeof st.remindEvery === 'number' && st.remindEvery > 0 ? st.remindEvery : 100_000,
       },
     };

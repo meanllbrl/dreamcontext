@@ -313,8 +313,8 @@ export function splitModels(
  *
  * A single 0-100% arc answers "how full?" and nothing else — and on a 1M window the answer
  * is almost always a small number, which is exactly when a percentage stops being a signal.
- * What actually changes behaviour is which ABSOLUTE region the session is in: under 350k is
- * a normal working session, 350k-650k is where handoff starts being worth considering, and
+ * What actually changes behaviour is which ABSOLUTE region the session is in: under 300k is
+ * a normal working session, 300k-650k is where handoff starts being worth considering, and
  * past 650k every further turn re-reads a very large transcript.
  *
  * So the reading becomes three bands, each with its own fill and its own tone. The count of
@@ -324,7 +324,14 @@ export function splitModels(
  * A 200k-window model collapses to ONE band — the edges are clamped to the real limit and
  * empty bands are never emitted, so a small window never draws two dead rings.
  */
-export const CONTEXT_BAND_EDGES = [350_000, 650_000];
+/**
+ * MIRROR — the owner is `CONTEXT_BAND_EDGES` in `src/lib/setup-config.ts`, where the
+ * same two numbers are also the handoff nudge's firm and severe thresholds. The
+ * dashboard cannot import from `src/` (separate bundle), so it copies them and
+ * `tests/unit/context-bands.test.ts` fails the build if the two ever disagree.
+ * See knowledge/patterns/mirror-with-drift-test.md.
+ */
+export const CONTEXT_BAND_EDGES = [300_000, 650_000];
 
 export type ContextBandKey = 'calm' | 'caution' | 'danger';
 

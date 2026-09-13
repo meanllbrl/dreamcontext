@@ -233,11 +233,27 @@ export function isMainChainHookInput(input: HookInputLike, records?: TranscriptR
 // ─── The nudge ladder (per CONVERSATION) ──────────────────────────────────────
 
 /** Per-session nudge state. Keyed by `session_id`, so a `/clear` restarts the ladder. */
+/**
+ * How loudly the nudge speaks. The register is a function of WHICH BAND the reading
+ * sits in, never of how many times we have asked — a session that ignores three firm
+ * nudges inside the middle band still gets a firm one, and a session that jumps
+ * straight past `hardAt` on its first nudge gets the severe one immediately.
+ */
+export type NudgeTone = 'firm' | 'severe';
+
 export interface NudgeState {
   /** Context tokens at the moment of the last nudge — the rung the ladder is on. */
   lastNudgedAt: number;
   /** How many nudges this conversation has seen. Diagnostics only. */
   nudges: number;
+  /**
+   * The register the last nudge spoke in. Load-bearing, not diagnostics: crossing
+   * into the severe band must be ANNOUNCED at the crossing rather than waiting out
+   * the remaining `remindEvery`, so this is what tells an escalation apart from a
+   * repeat. Absent on state written before two-tone shipped ⇒ read as 'firm', which
+   * is the safe reading: the worst it can do is speak the severe nudge once more.
+   */
+  lastTone?: NudgeTone;
 }
 
 function nudgeStatePath(contextRoot: string, sessionId: string): string | null {
@@ -254,17 +270,22 @@ export function readNudgeState(contextRoot: string, sessionId: string): NudgeSta
   return {
     lastNudgedAt: parsed.lastNudgedAt,
     nudges: typeof parsed.nudges === 'number' && Number.isFinite(parsed.nudges) ? parsed.nudges : 1,
+    lastTone: parsed.lastTone === 'severe' ? 'severe' : 'firm',
   };
 }
 
-/** Record that we just nudged this conversation at `contextTokens`. Best-effort. */
-export function writeNudgeState(contextRoot: string, sessionId: string, contextTokens: number): void {
+/** Record that we just nudged this conversation at `contextTokens`, in `tone`. Best-effort. */
+export function writeNudgeState(contextRoot: string, sessionId: string, contextTokens: number, tone: NudgeTone = 'firm'): void {
   const dir = ensureWatchDir(contextRoot);
   const path = nudgeStatePath(contextRoot, sessionId);
   if (!dir || !path) return;
   const prev = readNudgeState(contextRoot, sessionId);
   try {
-    writeJsonAtomic(path, { lastNudgedAt: contextTokens, nudges: (prev?.nudges ?? 0) + 1 } satisfies NudgeState);
+    writeJsonAtomic(path, {
+      lastNudgedAt: contextTokens,
+      nudges: (prev?.nudges ?? 0) + 1,
+      lastTone: tone,
+    } satisfies NudgeState);
   } catch { /* the ladder is an optimization, never a gate */ }
 }
 
@@ -278,10 +299,21 @@ export function shouldNudge(state: NudgeState | null, contextTokens: number, cfg
   if (!cfg.enabled) return false;
   if (contextTokens < cfg.nudgeAt) return false;
   if (state === null) return true;
+  // ESCALATION OUTRANKS THE CADENCE. Without this clause a session nudged at 640k
+  // would not hear the severe register until 740k — it would cross the edge that
+  // changes the advice and be told nothing at the crossing, which is the one moment
+  // the message is actually new. A de-escalation is impossible (context only grows),
+  // so this can fire at most once per conversation.
+  if (nudgeTone(contextTokens, cfg) === 'severe' && (state.lastTone ?? 'firm') !== 'severe') return true;
   return contextTokens >= state.lastNudgedAt + cfg.remindEvery;
 }
 
-/** Round to the "200k" the user sees everywhere else in this feature. */
+/** Which register a reading earns. `hardAt` is clamped `>= nudgeAt` by the resolver. */
+export function nudgeTone(contextTokens: number, cfg: ResolvedContextHandoff): NudgeTone {
+  return contextTokens >= cfg.hardAt ? 'severe' : 'firm';
+}
+
+/** Round to the "300k" the user sees everywhere else in this feature. */
 function k(tokens: number): string {
   return `${Math.round(tokens / 1000)}k`;
 }
@@ -290,31 +322,70 @@ function k(tokens: number): string {
  * The nudge itself — injected as `additionalContext`, so it is addressed to the AGENT,
  * not the user.
  *
- * Every clause here is load-bearing and was argued for in review, so read before
- * trimming: the NUMBERS (so the agent can judge rather than obey), the re-read cost
- * (the actual mechanism — cache_read is 97.4% of the bill, and it is paid again every
- * turn), the TWO COMMANDS spelled out (an agent that has to guess the syntax will skip
- * it), and the EXPLICIT permission to ignore it. That last clause is the feature: the
- * owner asked for agent-decided, never forced, and a nudge without a stated way to
- * decline reads as an order.
+ * TWO REGISTERS, and the split is the whole point of this function. The first version
+ * had one, and it ended on "keep going and ignore this. It is a nudge, not an
+ * instruction." Measured against six real sessions of this vault that were nudged
+ * between 204k and 458k: ZERO handoffs were requested. The mechanism worked end to
+ * end — hook, threshold, ladder, rotation — and was never reached, because declining
+ * was written as the cheap default and the cost of continuing is abstract at the
+ * moment of reading while the cost of stopping is concrete.
+ *
+ * So the register now tracks the band:
+ *   FIRM   (`nudgeAt`..`hardAt`) — the recommendation is stated AS a recommendation,
+ *          and declining is still free but must be FOR one of two named reasons.
+ *          "I am mid-task" is explicitly disqualified, because that is the state the
+ *          log exists to carry and it is true of every session that ever ignored this.
+ *   SEVERE (`hardAt`+)          — imperative, and the decline clause grows the only
+ *          tooth that does not break "agent-decided, never forced": if you continue,
+ *          you must SAY SO TO THE USER and say why. It converts a silent default into
+ *          a visible choice, which is the thing the user actually lost.
+ *
+ * Unchanged in both, because all three were argued for in the original review: the
+ * NUMBERS (so the agent can judge rather than obey), the re-read cost (cache_read is
+ * 97.4% of the bill and it is paid again every turn), and the TWO COMMANDS spelled
+ * out (an agent that has to guess the syntax will skip it).
+ *
+ * NOT escalated: the cadence. `remindEvery` is the same in both bands on purpose — a
+ * message that repeats twice as often reads as broken rather than as urgent, and the
+ * severe band already gets an extra nudge at the crossing (see `shouldNudge`).
  */
-export function renderNudge(contextTokens: number, cfg: ResolvedContextHandoff, activeSlug: string | null): string {
+export function renderNudge(
+  contextTokens: number,
+  cfg: ResolvedContextHandoff,
+  activeSlug: string | null,
+  tone: NudgeTone = nudgeTone(contextTokens, cfg),
+): string {
   const slug = activeSlug || '<task-slug>';
   const next = Math.max(contextTokens, cfg.nudgeAt) + cfg.remindEvery;
-  const lines = [
-    `[context handoff] This session is carrying ~${k(contextTokens)} context tokens, past the ${k(cfg.nudgeAt)} handoff threshold. Every further turn re-reads all of it, so the same remaining work costs roughly 2–3× more from here than it would in a fresh session.`,
-    '',
-    'If you want to hand off, write your state into the task and then request the handoff:',
+  const steps = [
     `  1. dreamcontext tasks log ${slug} "<what is done / what is next / decisions made / what you learned / how you are working / which files are open>"`,
     `  2. dreamcontext tasks handoff ${slug}`,
     activeSlug
       ? ''
       : '  (no task is in progress — `dreamcontext tasks create` one first, or skip the handoff)',
-    'A fresh session then picks the task up from that changelog entry, with the handoff pinned.',
-    '',
-    'YOU DECIDE. If the task is nearly done, or the state is too live to move, or moving it would cost more than it saves — keep going and ignore this. It is a nudge, not an instruction.',
-    `(Next reminder at ~${k(next)}.)`,
   ];
+
+  const lines = tone === 'severe'
+    ? [
+      `[context handoff — HAND OFF NOW] This session is carrying ~${k(contextTokens)} context tokens: past ${k(cfg.hardAt)}, the last band of the window. Every turn re-reads all of it, so you are paying roughly 2–3× for work a fresh session would do at full speed.`,
+      '',
+      'Finish the turn you are in, then hand off before starting anything new:',
+      ...steps,
+      'A fresh session picks the task up from that changelog entry, with the handoff pinned.',
+      '',
+      'This is still your call, but it is no longer a quiet one: if you are continuing in this session anyway, TELL THE USER in your next message and say why. Do not continue silently.',
+      `(Next reminder at ~${k(next)}.)`,
+    ]
+    : [
+      `[context handoff] This session is carrying ~${k(contextTokens)} context tokens, past the ${k(cfg.nudgeAt)} handoff threshold. Every further turn re-reads all of it, so the same remaining work costs roughly 2–3× more from here than it would in a fresh session.`,
+      '',
+      'Hand off unless you have a reason not to — write your state into the task, then request it:',
+      ...steps,
+      'A fresh session picks the task up from that changelog entry, with the handoff pinned.',
+      '',
+      `There are two good reasons to keep going: the task is nearly done, or the state genuinely cannot be written down. "I am in the middle of something" is not one of them — that is what step 1 is for. Past ${k(cfg.hardAt)} this gets blunter.`,
+      `(Next reminder at ~${k(next)}.)`,
+    ];
   return lines.filter((l) => l !== '').join('\n');
 }
 
@@ -366,10 +437,23 @@ export function activeTaskForNudge(contextRoot: string): { slug: string; title: 
 
 // ─── The per-PANE toggle (tab file) ───────────────────────────────────────────
 
-/** On-disk shape of `state/.context-watch/tab-<pane>.json`. */
+/**
+ * On-disk shape of `state/.context-watch/tab-<pane>.json`.
+ *
+ * THE TAB FILE IS A SWITCH, NOT A LADDER. The ladder fields are still written — they
+ * make the file readable on its own and any older build keeps parsing it — but
+ * `resolveHandoffFor` takes ONLY `enabled` from here and reads the thresholds from
+ * `.config.json`. There is no surface anywhere that lets a human set a PER-PANE
+ * threshold: the popover has one control and it is the on/off lamp, so every ladder
+ * ever written into one of these files is just whatever the default was on the day
+ * the pane was born. Treating that as a per-pane CHOICE is what froze ten live panes
+ * at a 200k threshold nobody picked when the bands moved to 300k/650k. Reading the
+ * ladder centrally re-points them all with no migration.
+ */
 export interface TabHandoffState {
   enabled: boolean;
   nudgeAt: number;
+  hardAt: number;
   remindEvery: number;
   updatedAt: string;
 }
@@ -386,10 +470,11 @@ export function readTabHandoff(contextRoot: string, tab: string): TabHandoffStat
   if (!path || !existsSync(path)) return null;
   const parsed = readJson<Partial<TabHandoffState>>(path);
   if (!parsed || typeof parsed.enabled !== 'boolean') return null;
-  const r = resolveContextHandoff({ enabled: parsed.enabled, nudgeAt: parsed.nudgeAt, remindEvery: parsed.remindEvery });
+  const r = resolveContextHandoff({ enabled: parsed.enabled, nudgeAt: parsed.nudgeAt, hardAt: parsed.hardAt, remindEvery: parsed.remindEvery });
   return {
     enabled: r.enabled,
     nudgeAt: r.nudgeAt,
+    hardAt: r.hardAt,
     remindEvery: r.remindEvery,
     updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : '',
   };
@@ -399,15 +484,16 @@ export function readTabHandoff(contextRoot: string, tab: string): TabHandoffStat
 export function writeTabHandoff(
   contextRoot: string,
   tab: string,
-  cfg: { enabled: boolean; nudgeAt?: number; remindEvery?: number },
+  cfg: { enabled: boolean; nudgeAt?: number; hardAt?: number; remindEvery?: number },
 ): TabHandoffState | null {
   const dir = ensureWatchDir(contextRoot);
   const path = tabFilePath(contextRoot, tab);
   if (!dir || !path) return null;
-  const r = resolveContextHandoff({ enabled: cfg.enabled, nudgeAt: cfg.nudgeAt, remindEvery: cfg.remindEvery });
+  const r = resolveContextHandoff({ enabled: cfg.enabled, nudgeAt: cfg.nudgeAt, hardAt: cfg.hardAt, remindEvery: cfg.remindEvery });
   const entry: TabHandoffState = {
     enabled: r.enabled,
     nudgeAt: r.nudgeAt,
+    hardAt: r.hardAt,
     remindEvery: r.remindEvery,
     updatedAt: new Date().toISOString(),
   };
@@ -420,18 +506,25 @@ export function writeTabHandoff(
 }
 
 /**
- * THE resolution order, in one place: per-pane tab file > `.config.json` > off.
+ * THE resolution order, in one place — and it is TWO orders, not one, because the
+ * switch and the ladder answer to different owners:
  *
- * A pane that has been toggled owns its own answer — including toggled OFF in a vault
- * whose `.config.json` says on. A terminal/CLI session has no pane, so it gets the
- * vault default, which is the only switch that surface has.
+ *   enabled  : per-pane tab file > `.config.json` > off
+ *   ladder   : `.config.json` > shipped defaults        (the tab file is not consulted)
+ *
+ * A pane that has been toggled owns its own ANSWER — including toggled OFF in a vault
+ * whose `.config.json` says on; that is a real per-pane choice someone clicked. The
+ * thresholds are not: nothing lets a human set them per pane, so a pane must not be
+ * able to pin a stale ladder against the vault (see {@link TabHandoffState}). A
+ * terminal/CLI session has no pane and gets the vault answer for both.
  */
 export function resolveHandoffFor(contextRoot: string, projectRoot: string, tab: string | null | undefined): ResolvedContextHandoff {
+  const vault = resolveContextHandoff(readSetupConfig(projectRoot)?.contextHandoff);
   if (tab) {
     const tabState = readTabHandoff(contextRoot, tab);
-    if (tabState) return { enabled: tabState.enabled, nudgeAt: tabState.nudgeAt, remindEvery: tabState.remindEvery };
+    if (tabState) return { ...vault, enabled: tabState.enabled };
   }
-  return resolveContextHandoff(readSetupConfig(projectRoot)?.contextHandoff);
+  return vault;
 }
 
 /**
@@ -445,7 +538,7 @@ export function resolveHandoffFor(contextRoot: string, projectRoot: string, tab:
  */
 export function resolveTabSeed(
   brainLocalDefault: boolean | undefined,
-  configHandoff: { enabled?: boolean; nudgeAt?: number; remindEvery?: number } | null | undefined,
+  configHandoff: { enabled?: boolean; nudgeAt?: number; hardAt?: number; remindEvery?: number } | null | undefined,
 ): ResolvedContextHandoff {
   const base = resolveContextHandoff(configHandoff);
   return { ...base, enabled: brainLocalDefault ?? base.enabled };
@@ -491,9 +584,10 @@ export function maybeNudge(
     const state = readNudgeState(contextRoot, sessionId);
     if (!shouldNudge(state, ctx, cfg)) return null;
 
-    writeNudgeState(contextRoot, sessionId, ctx);
+    const tone = nudgeTone(ctx, cfg);
+    writeNudgeState(contextRoot, sessionId, ctx, tone);
     const active = activeTaskForNudge(contextRoot);
-    return renderNudge(ctx, cfg, active?.slug ?? null);
+    return renderNudge(ctx, cfg, active?.slug ?? null, tone);
   } catch {
     return null;
   }

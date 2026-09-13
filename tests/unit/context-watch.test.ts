@@ -28,6 +28,7 @@ import {
   isMainChainHookInput,
   shouldNudge,
   renderNudge,
+  nudgeTone,
   readNudgeState,
   writeNudgeState,
   readTabHandoff,
@@ -55,6 +56,7 @@ import {
   readSetupConfig,
   resolveContextHandoff,
   CONTEXT_HANDOFF_DEFAULTS,
+  CONTEXT_BAND_EDGES,
   readBrainLocal,
   writeBrainLocal,
 } from '../../src/lib/setup-config.js';
@@ -64,7 +66,7 @@ const SES2 = '99999999-8888-7777-6666-555555555555';
 const TAB = '11111111-2222-3333-4444-555555555555';
 const TAB2 = '22222222-3333-4444-5555-666666666666';
 
-const LADDER = { enabled: true, nudgeAt: 200_000, remindEvery: 100_000 };
+const LADDER = { enabled: true, nudgeAt: 200_000, hardAt: 600_000, remindEvery: 100_000 };
 
 let projectRoot: string;
 let contextRoot: string;
@@ -211,7 +213,7 @@ describe('shouldNudge', () => {
   });
 
   it('does NOT re-fire until remindEvery more tokens have accumulated', () => {
-    const state = { lastNudgedAt: 210_000, nudges: 1 };
+    const state = { lastNudgedAt: 210_000, nudges: 1, lastTone: 'firm' as const };
     expect(shouldNudge(state, 260_000, LADDER)).toBe(false);
     expect(shouldNudge(state, 309_999, LADDER)).toBe(false);
     expect(shouldNudge(state, 310_000, LADDER)).toBe(true);
@@ -220,9 +222,48 @@ describe('shouldNudge', () => {
   it('measures the next rung from WHERE WE NUDGED, not from the threshold', () => {
     // A session already at 400k when the feature is switched on must not be nudged
     // on every turn afterwards just because it is far past 200k.
-    const state = { lastNudgedAt: 400_000, nudges: 1 };
+    const state = { lastNudgedAt: 400_000, nudges: 1, lastTone: 'firm' as const };
     expect(shouldNudge(state, 450_000, LADDER)).toBe(false);
     expect(shouldNudge(state, 500_000, LADDER)).toBe(true);
+  });
+
+  // ── escalation outranks the cadence ────────────────────────────────────────
+  it('fires at the crossing into the severe band even mid-cadence', () => {
+    // Nudged firmly at 590k; 610k is only 20k later, far short of remindEvery — but it
+    // is the FIRST reading past hardAt, and the crossing is the one moment the message
+    // is actually new. Without this the severe register would not be heard until 690k.
+    const state = { lastNudgedAt: 590_000, nudges: 1, lastTone: 'firm' as const };
+    expect(shouldNudge(state, 610_000, LADDER)).toBe(true);
+  });
+
+  it('does not re-fire on every turn once the severe band has been announced', () => {
+    const state = { lastNudgedAt: 610_000, nudges: 2, lastTone: 'severe' as const };
+    expect(shouldNudge(state, 620_000, LADDER)).toBe(false);
+    expect(shouldNudge(state, 710_000, LADDER)).toBe(true);
+  });
+
+  it('treats pre-two-tone state as firm, so an in-flight session still hears the escalation', () => {
+    // State written by the one-tone build has no lastTone. Reading it as 'firm' costs at
+    // most one extra severe nudge; reading it as 'severe' would swallow the escalation.
+    const legacy = { lastNudgedAt: 590_000, nudges: 1 };
+    expect(shouldNudge(legacy, 610_000, LADDER)).toBe(true);
+  });
+});
+
+describe('nudgeTone', () => {
+  it('is firm from nudgeAt and severe from hardAt, on the edges themselves', () => {
+    expect(nudgeTone(199_999, LADDER)).toBe('firm');
+    expect(nudgeTone(200_000, LADDER)).toBe('firm');
+    expect(nudgeTone(599_999, LADDER)).toBe('firm');
+    expect(nudgeTone(600_000, LADDER)).toBe('severe');
+  });
+
+  it('opens severe when a vault has raised nudgeAt past hardAt', () => {
+    // The resolver clamps hardAt up to nudgeAt: someone who asks to be told late is
+    // told seriously when they are told at all.
+    const late = resolveContextHandoff({ enabled: true, nudgeAt: 800_000 });
+    expect(late.hardAt).toBe(800_000);
+    expect(nudgeTone(800_000, late)).toBe('severe');
   });
 });
 
@@ -230,9 +271,9 @@ describe('nudge state round-trip', () => {
   it('records the rung and counts the nudges', () => {
     expect(readNudgeState(contextRoot, SES)).toBeNull();
     writeNudgeState(contextRoot, SES, 205_000);
-    expect(readNudgeState(contextRoot, SES)).toEqual({ lastNudgedAt: 205_000, nudges: 1 });
-    writeNudgeState(contextRoot, SES, 320_000);
-    expect(readNudgeState(contextRoot, SES)).toEqual({ lastNudgedAt: 320_000, nudges: 2 });
+    expect(readNudgeState(contextRoot, SES)).toEqual({ lastNudgedAt: 205_000, nudges: 1, lastTone: 'firm' });
+    writeNudgeState(contextRoot, SES, 320_000, 'severe');
+    expect(readNudgeState(contextRoot, SES)).toEqual({ lastNudgedAt: 320_000, nudges: 2, lastTone: 'severe' });
   });
 
   it('is keyed per conversation, and reads corrupt state as "never nudged"', () => {
@@ -264,14 +305,45 @@ describe('renderNudge', () => {
     expect(renderNudge(240_000, LADDER, 'my-task')).toContain('re-reads all of it');
   });
 
-  it('ALWAYS carries the explicit permission to ignore it — the feature is a nudge', () => {
-    // If this assertion ever fails the feature has become an instruction, which is the
-    // one thing the owner ruled out. It is tested on both the with- and without-task paths.
+  it('ALWAYS leaves the decision with the agent — in BOTH registers', () => {
+    // If this ever fails the feature has become an instruction, which is the one thing
+    // the owner ruled out. Tested on both registers and both the with- and without-task
+    // paths. The severe register is allowed to be blunt; it is not allowed to FORCE.
     for (const slug of ['my-task', null]) {
-      const text = renderNudge(240_000, LADDER, slug);
-      expect(text).toContain('YOU DECIDE');
-      expect(text).toMatch(/nudge, not an instruction/);
+      expect(renderNudge(240_000, LADDER, slug)).toMatch(/unless you have a reason not to/);
+      expect(renderNudge(700_000, LADDER, slug)).toMatch(/still your call/);
     }
+  });
+
+  it('is FIRM in the middle band: recommends, names the only two ways out, points at the next band', () => {
+    const text = renderNudge(240_000, LADDER, 'my-task');
+    expect(text).toContain('Hand off unless you have a reason not to');
+    // The excuse that made every real session ignore this is disqualified by name.
+    expect(text).toContain('"I am in the middle of something" is not one of them');
+    expect(text).toContain('600k'); // says where it gets blunter
+    expect(text).not.toContain('HAND OFF NOW');
+  });
+
+  it('is SEVERE past hardAt: imperative, and declining must be said OUT LOUD', () => {
+    const text = renderNudge(700_000, LADDER, 'my-task');
+    expect(text).toContain('HAND OFF NOW');
+    expect(text).toContain('600k');            // names the edge it is past
+    expect(text).toContain('before starting anything new');
+    // THE tooth. A silent decline is what the one-tone version produced six times out of
+    // six; past this band the agent must surface the choice to the user instead.
+    expect(text).toMatch(/TELL THE USER/);
+    expect(text).toMatch(/Do not continue silently/);
+  });
+
+  it('picks its register from the reading, with no help from the caller', () => {
+    expect(renderNudge(599_999, LADDER, 'my-task')).not.toContain('HAND OFF NOW');
+    expect(renderNudge(600_000, LADDER, 'my-task')).toContain('HAND OFF NOW');
+  });
+
+  it('spells both commands out in the severe register too — a blunt nudge that is hard to obey is noise', () => {
+    const text = renderNudge(700_000, LADDER, 'my-task');
+    expect(text).toContain('dreamcontext tasks log my-task');
+    expect(text).toContain('dreamcontext tasks handoff my-task');
   });
 
   it('tells the agent to create a task first when none is in progress', () => {
@@ -307,30 +379,43 @@ describe('activeTaskForNudge', () => {
 // ─── config defaulting ────────────────────────────────────────────────────────
 
 describe('resolveContextHandoff', () => {
-  it('defaults to OFF at 200k / 100k when absent', () => {
+  it('defaults to OFF at the band edges — 300k firm, 650k severe, 100k cadence', () => {
     expect(resolveContextHandoff(undefined)).toEqual(CONTEXT_HANDOFF_DEFAULTS);
-    expect(resolveContextHandoff(null)).toEqual({ enabled: false, nudgeAt: 200_000, remindEvery: 100_000 });
+    expect(resolveContextHandoff(null)).toEqual({ enabled: false, nudgeAt: 300_000, hardAt: 650_000, remindEvery: 100_000 });
+  });
+
+  it('takes its shipped thresholds FROM the band edges, so the gauge and the nudge cannot disagree', () => {
+    expect([CONTEXT_HANDOFF_DEFAULTS.nudgeAt, CONTEXT_HANDOFF_DEFAULTS.hardAt]).toEqual([...CONTEXT_BAND_EDGES]);
   });
 
   it('fills only the missing half of a partial block', () => {
-    expect(resolveContextHandoff({ enabled: true })).toEqual({ enabled: true, nudgeAt: 200_000, remindEvery: 100_000 });
+    expect(resolveContextHandoff({ enabled: true })).toEqual({ enabled: true, nudgeAt: 300_000, hardAt: 650_000, remindEvery: 100_000 });
     expect(resolveContextHandoff({ enabled: true, nudgeAt: 300_000 }).remindEvery).toBe(100_000);
+    expect(resolveContextHandoff({ enabled: true, nudgeAt: 300_000 }).hardAt).toBe(650_000);
   });
 
   it('falls back to the defaults for junk, NaN, Infinity and non-positive values', () => {
-    const junk = { enabled: 'yes', nudgeAt: 'big', remindEvery: NaN } as never;
+    const junk = { enabled: 'yes', nudgeAt: 'big', hardAt: null, remindEvery: NaN } as never;
     expect(resolveContextHandoff(junk)).toEqual(CONTEXT_HANDOFF_DEFAULTS);
-    expect(resolveContextHandoff({ nudgeAt: Infinity }).nudgeAt).toBe(200_000);
-    expect(resolveContextHandoff({ nudgeAt: 0 }).nudgeAt).toBe(200_000);
-    expect(resolveContextHandoff({ nudgeAt: -5 }).nudgeAt).toBe(200_000);
+    expect(resolveContextHandoff({ nudgeAt: Infinity }).nudgeAt).toBe(300_000);
+    expect(resolveContextHandoff({ nudgeAt: 0 }).nudgeAt).toBe(300_000);
+    expect(resolveContextHandoff({ nudgeAt: -5 }).nudgeAt).toBe(300_000);
+    expect(resolveContextHandoff({ hardAt: -5 }).hardAt).toBe(650_000);
+  });
+
+  it('never lets hardAt sit below nudgeAt — the severe band cannot start before the firm one', () => {
+    // A hand-edited block that inverts them would otherwise make EVERY nudge severe.
+    expect(resolveContextHandoff({ enabled: true, nudgeAt: 400_000, hardAt: 100_000 }).hardAt).toBe(400_000);
+    // Raising nudgeAt past the shipped hardAt carries hardAt up with it.
+    expect(resolveContextHandoff({ enabled: true, nudgeAt: 800_000 }).hardAt).toBe(800_000);
   });
 
   it('honours a SMALL positive ladder — the floors are a CLI typo guard, not a resolver rule', () => {
     // Load-bearing for the runtime verification, which drives a scratch vault at
     // 3000 / 2000. A resolver floor here would rewrite those to the defaults and no
     // nudge could ever fire. See the doc comment on CONTEXT_HANDOFF_MIN_NUDGE_AT.
-    expect(resolveContextHandoff({ enabled: true, nudgeAt: 3000, remindEvery: 2000 }))
-      .toEqual({ enabled: true, nudgeAt: 3000, remindEvery: 2000 });
+    expect(resolveContextHandoff({ enabled: true, nudgeAt: 3000, hardAt: 8000, remindEvery: 2000 }))
+      .toEqual({ enabled: true, nudgeAt: 3000, hardAt: 8000, remindEvery: 2000 });
   });
 
   it('enabled is STRICTLY true — a truthy string does not switch the feature on', () => {
@@ -368,6 +453,38 @@ describe('the tab file and the resolution ladder', () => {
     expect(resolveHandoffFor(contextRoot, projectRoot, TAB2).enabled).toBe(true);
   });
 
+  it('takes the LADDER from the vault even when the pane file holds a stale one', () => {
+    // The regression this exists for: ten live panes on disk were written with the old
+    // 200k default baked in, so moving the vault to 300k/650k would have left every one
+    // of them nudging on a threshold nobody ever chose. Nothing in the UI sets a
+    // per-pane threshold, so the pane owns the SWITCH and the vault owns the numbers.
+    writeFileSync(join(contextRoot, 'state', '.config.json'), JSON.stringify({
+      platforms: [], packs: [], multiProduct: false, setupVersion: '1',
+      contextHandoff: { enabled: true, nudgeAt: 300_000, hardAt: 650_000 },
+    }), 'utf-8');
+    // Written the way the shipped build wrote them, then hand-stamped back to the OLD
+    // default so this is the real on-disk shape those ten panes have.
+    writeTabHandoff(contextRoot, TAB, { enabled: true });
+    writeFileSync(join(contextWatchDir(contextRoot), `tab-${TAB}.json`), JSON.stringify({
+      enabled: true, nudgeAt: 200_000, remindEvery: 100_000, updatedAt: '2026-09-13T00:00:00.000Z',
+    }), 'utf-8');
+
+    const r = resolveHandoffFor(contextRoot, projectRoot, TAB);
+    expect(r.enabled).toBe(true);      // the pane's own answer, honoured
+    expect(r.nudgeAt).toBe(300_000);   // the vault's numbers, not the pane's stale copy
+    expect(r.hardAt).toBe(650_000);
+  });
+
+  it('still lets a pane switch itself OFF against a vault that is on', () => {
+    writeFileSync(join(contextRoot, 'state', '.config.json'), JSON.stringify({
+      platforms: [], packs: [], multiProduct: false, setupVersion: '1',
+      contextHandoff: { enabled: true },
+    }), 'utf-8');
+    writeTabHandoff(contextRoot, TAB, { enabled: false });
+    expect(resolveHandoffFor(contextRoot, projectRoot, TAB).enabled).toBe(false);
+    expect(resolveHandoffFor(contextRoot, projectRoot, TAB2).enabled).toBe(true);
+  });
+
   it('keeps the pane toggle across a /clear while the nudge ladder RESTARTS', () => {
     // The toggle is keyed by PANE, the ladder by CONVERSATION — that split is what
     // lets a fresh session climb from zero without losing the user's setting.
@@ -391,7 +508,7 @@ describe('resolveTabSeed', () => {
 
   it('takes the LADDER from config even when brain-local decides the switch', () => {
     expect(resolveTabSeed(true, { enabled: false, nudgeAt: 250_000 }))
-      .toEqual({ enabled: true, nudgeAt: 250_000, remindEvery: 100_000 });
+      .toEqual({ enabled: true, nudgeAt: 250_000, hardAt: 650_000, remindEvery: 100_000 });
   });
 });
 
@@ -628,7 +745,7 @@ describe('maybeNudge', () => {
     configure(TINY);
     const p = transcript([usage({ cache_read_input_tokens: 3500 })]);
     const first = maybeNudge(contextRoot, { transcript_path: p, session_id: SES }, {} as never);
-    expect(first).toContain('YOU DECIDE');
+    expect(first).toContain('Hand off unless you have a reason not to');
     // Same context, same session: the ladder holds.
     expect(maybeNudge(contextRoot, { transcript_path: p, session_id: SES }, {} as never)).toBeNull();
     // Past the next rung (3500 + 2000): it fires again.

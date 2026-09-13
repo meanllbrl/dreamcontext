@@ -135,7 +135,7 @@ function printConfig(projectRoot: string): void {
   const handoff = resolveContextHandoff(cfg.contextHandoff);
   console.log(
     `  Context handoff: ${handoff.enabled
-      ? chalk.green('on') + chalk.dim(` (nudge at ${Math.round(handoff.nudgeAt / 1000)}k, remind every ${Math.round(handoff.remindEvery / 1000)}k)`)
+      ? chalk.green('on') + chalk.dim(` (firm at ${Math.round(handoff.nudgeAt / 1000)}k, severe at ${Math.round(handoff.hardAt / 1000)}k, remind every ${Math.round(handoff.remindEvery / 1000)}k)`)
       : chalk.yellow('off') + chalk.dim(' (`dreamcontext config context-handoff on`)')}`,
   );
   console.log(`  Setup version:  ${chalk.dim(cfg.setupVersion)}`);
@@ -190,9 +190,10 @@ export function registerConfigCommand(program: Command): void {
   config
     .command('context-handoff <state>')
     .description('Opt in to the context-handoff nudge: on | off (default: off)')
-    .option('--nudge-at <tokens>', `Context tokens at which the first nudge fires (min ${CONTEXT_HANDOFF_MIN_NUDGE_AT})`)
+    .option('--nudge-at <tokens>', `Context tokens at which the FIRM nudge starts (min ${CONTEXT_HANDOFF_MIN_NUDGE_AT})`)
+    .option('--hard-at <tokens>', `Context tokens at which the nudge turns SEVERE (min ${CONTEXT_HANDOFF_MIN_NUDGE_AT})`)
     .option('--remind-every <tokens>', `Token distance between repeat nudges (min ${CONTEXT_HANDOFF_MIN_REMIND_EVERY})`)
-    .action((state: string, opts: { nudgeAt?: string; remindEvery?: string }) => {
+    .action((state: string, opts: { nudgeAt?: string; hardAt?: string; remindEvery?: string }) => {
       const projectRoot = requireProjectRoot();
       if (!projectRoot) return;
 
@@ -221,6 +222,8 @@ export function registerConfigCommand(program: Command): void {
       };
       const nudgeAt = parse(opts.nudgeAt, CONTEXT_HANDOFF_MIN_NUDGE_AT, '--nudge-at');
       if (nudgeAt === null) return;
+      const hardAt = parse(opts.hardAt, CONTEXT_HANDOFF_MIN_NUDGE_AT, '--hard-at');
+      if (hardAt === null) return;
       const remindEvery = parse(opts.remindEvery, CONTEXT_HANDOFF_MIN_REMIND_EVERY, '--remind-every');
       if (remindEvery === null) return;
 
@@ -232,14 +235,15 @@ export function registerConfigCommand(program: Command): void {
         ...existing,
         enabled,
         ...(nudgeAt !== undefined ? { nudgeAt } : {}),
+        ...(hardAt !== undefined ? { hardAt } : {}),
         ...(remindEvery !== undefined ? { remindEvery } : {}),
       };
       updateSetupConfig(projectRoot, { contextHandoff: next });
 
       const r = resolveContextHandoff(next);
       if (enabled) {
-        success(`Context handoff on — the agent is nudged at ${Math.round(r.nudgeAt / 1000)}k, then every ${Math.round(r.remindEvery / 1000)}k.`);
-        info(chalk.dim('It is a nudge, not a rule: the agent decides whether moving its state is worth it.'));
+        success(`Context handoff on — firm from ${Math.round(r.nudgeAt / 1000)}k, severe from ${Math.round(r.hardAt / 1000)}k, repeating every ${Math.round(r.remindEvery / 1000)}k.`);
+        info(chalk.dim('Still a nudge, not a rule: the agent decides. Past the severe threshold it must tell you if it decides to keep going.'));
       } else {
         success('Context handoff off — no nudge, and the hooks do no extra work.');
       }

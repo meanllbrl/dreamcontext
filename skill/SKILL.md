@@ -373,14 +373,21 @@ Status: `todo → in_progress → in_review → completed` by default. A project
 
 ---
 
-## Context handoff (opt-in — you are NUDGED, never forced)
+## Context handoff — ECO mode (opt-in, and it escalates)
 
-When a vault or pane has this on, a long session gets an injected `[context handoff]` note
-once it passes ~200k context tokens, then again every ~100k. **It is a nudge and the
-decision is yours.** Measured over 120 real sessions: `cache_read` is 97.4% of billed input
-and every further turn re-reads the whole window, so the same remaining work costs ~2–3×
-more from here than in a fresh session — but if the task is nearly done, or the state is too
-live to move, keep going. Ignoring it is a legitimate answer and costs nothing.
+When a vault or pane has this on, a long session gets an injected `[context handoff]` note,
+then again every ~100k. **The decision is always yours — but the note gets louder, in two
+steps that are the same edges the composer's context rings are drawn on:**
+
+| reading | register | what it asks of you |
+|---|---|---|
+| **300k–650k** | firm | Hand off *unless* the task is nearly done or the state genuinely cannot be written down. "I'm mid-task" is **not** a reason — that is what the `log` is for. |
+| **650k+** | severe | Finish the turn you are in, then hand off before starting anything new. If you decide to keep going anyway, **say so to the user and say why** — do not continue silently. |
+
+Measured over 120 real sessions: `cache_read` is 97.4% of billed input and every further
+turn re-reads the whole window, so the same remaining work costs ~2–3× more from here than
+in a fresh session. Crossing into the severe band always earns its own note, even if the
+last one was recent.
 
 If you do hand off, it is two commands, in this order:
 
@@ -397,8 +404,9 @@ stop.** In a terminal nothing rotates for you: the human runs `/clear`.
 
 At the other end you will see a `>> HANDOFF:` banner above the snapshot naming the task —
 read that task file first. Switch the feature on per vault with
-`dreamcontext config context-handoff on [--nudge-at N] [--remind-every N]`, or per pane from
-the composer's usage popover ("Hand off at 200k"). Default is OFF.
+`dreamcontext config context-handoff on [--nudge-at N] [--hard-at N] [--remind-every N]`, or
+per pane from the composer's ECO lamp in the usage popover. The pane owns the **switch**; the
+vault owns the **thresholds**. Default is OFF.
 
 ---
 

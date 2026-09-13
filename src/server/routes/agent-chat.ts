@@ -782,7 +782,7 @@ export function startChatSession(
   try {
     if (pinId) {
       const state = resolveHandoffFor(contextRoot, projectRoot, pinId);
-      sendMeta({ subtype: 'context_handoff', state: { enabled: state.enabled, nudgeAt: state.nudgeAt, remindEvery: state.remindEvery } });
+      sendMeta({ subtype: 'context_handoff', state: { enabled: state.enabled, nudgeAt: state.nudgeAt, hardAt: state.hardAt, remindEvery: state.remindEvery } });
     }
   } catch { /* the switch falls back to its default rendering */ }
 
@@ -1408,14 +1408,20 @@ export function startChatSession(
     // a team that opted out in `.config.json`.
     //
     // The echo carries what was actually WRITTEN, never what was clicked — if the tab file
-    // could not be written, the switch must snap back rather than lie.
+    // could not be written, the switch must snap back rather than lie. It is also
+    // RE-RESOLVED rather than echoed straight back from the tab file: the switch lives in
+    // the tab file but the ladder lives in `.config.json`, and `writeTabHandoff` only ever
+    // sees the switch. Echoing its return value would have shown a vault that tuned
+    // `--nudge-at` the SHIPPED thresholds while the hook nudged on the tuned ones — the
+    // lamp and the behaviour disagreeing is the exact bug this pass exists to remove.
     if (msg.type === 'setContextHandoff' && typeof msg.enabled === 'boolean') {
       if (!pinId) return; // an unpinned pane has no tab file to own a toggle
       try {
         const written = writeTabHandoff(contextRoot, pinId, { enabled: msg.enabled });
         if (written) {
           writeBrainLocal(projectRoot, { contextHandoffDefault: msg.enabled });
-          sendMeta({ subtype: 'context_handoff', state: { enabled: written.enabled, nudgeAt: written.nudgeAt, remindEvery: written.remindEvery } });
+          const echo = resolveHandoffFor(contextRoot, projectRoot, pinId);
+          sendMeta({ subtype: 'context_handoff', state: { enabled: echo.enabled, nudgeAt: echo.nudgeAt, hardAt: echo.hardAt, remindEvery: echo.remindEvery } });
         }
       } catch { /* a failed toggle simply does not echo — the client keeps server truth */ }
       return;
