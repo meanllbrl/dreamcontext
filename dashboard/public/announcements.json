@@ -130,8 +130,8 @@
     "id": "v0-28-0",
     "date": "2026-09-13",
     "version": "0.28.0",
-    "title": "Talk to it, and watch it draw",
-    "summary": "J.A.R.V.I.S mode turns the chat composer into a microphone: hold a key, say what you want, hear the answer — with one OpenRouter key that never leaves this machine. The same version puts a real layout engine behind the agent's HTML, so the shape of an answer is drawn rather than read out loud, and lets you choose the policy auto-switch uses to pick between your Claude accounts.",
+    "title": "It knows when to start over",
+    "summary": "ECO mode gives a long conversation a plan: at the token count you set, the agent writes its own state into the task and carries on in a fresh session — and the context window stops being one percentage, drawn instead as three bands you can read at a glance. J.A.R.V.I.S voice mode arrives labelled ALPHA: hold a key, speak, hear the answer, on one OpenRouter key that never leaves this machine. Plus a real layout engine behind the agent's diagrams, and account bars that say how much of each window is LEFT rather than what time it resets.",
     "tags": [
       "agent",
       "chat",

@@ -75,9 +75,19 @@ const inbox = [];
 let pumping = false;
 
 async function runTurn() {
-  out({ type: 'assistant', message: { content: [{ type: 'text', text: ANSWER }] } });
+  // A TOKEN FOOTPRINT, so the context reading exists at all. The composer draws its usage
+  // trigger only when there is something to measure, and this release's headline — the
+  // window as BANDS plus the ECO pill — lives behind that trigger. 338k of a 1M window puts
+  // the reading one third into the middle band: the first is spent, the second is filling,
+  // the third is untouched, which is the whole point of drawing three.
+  const usage = { input_tokens: 12000, cache_read_input_tokens: 320000, cache_creation_input_tokens: 4000, output_tokens: 2000 };
+  // role and model are NOT decoration: the usage parser drops any frame whose message is
+  // not an assistant turn, so a footprint without them is silently ignored and the context
+  // reading never exists. (No backticks in here — this block lives inside a template
+  // literal, and one would end the string.)
+  out({ type: 'assistant', message: { role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text: ANSWER }], usage } });
   await new Promise((r) => setTimeout(r, 120));
-  out({ type: 'result', subtype: 'success', is_error: false, result: ANSWER });
+  out({ type: 'result', subtype: 'success', is_error: false, result: ANSWER, usage });
 }
 
 let buf = '';
@@ -309,6 +319,55 @@ try {
   await page.screenshot({ path: join(ROOT, ID, 'hero.png') });
   captured.push('hero');
   console.log('  ✓ hero');
+
+  /** Clip to one popover, with a little air around it. */
+  const shotOf = async (name, selector) => {
+    const box = await vis(selector).first().boundingBox();
+    await page.screenshot({
+      path: join(ROOT, ID, `${name}.png`),
+      ...(box
+        ? {
+            clip: {
+              x: Math.max(0, box.x - 18),
+              y: Math.max(0, box.y - 18),
+              width: Math.min(1500 - Math.max(0, box.x - 18), box.width + 36),
+              height: Math.min(1000 - Math.max(0, box.y - 18), box.height + 36),
+            },
+          }
+        : {}),
+    });
+    captured.push(name);
+    console.log('  ✓', name);
+  };
+
+  // ─── ECO mode and the context bands ───────────────────────────────────────
+  // The release's headline lives in one popover: the window drawn as bands rather than a
+  // percentage, and the ECO pill that decides what happens when the window runs out.
+  try {
+    await vis('.chat-cmp-usagebtn').first().click();
+    await page.waitForTimeout(1200);
+    // Turn ECO ON before shooting. Off, the pill says "off" and the feature is a word; on,
+    // it names the token count it hands off at, which is the whole claim.
+    const eco = vis('.chat-cmp-eco').first();
+    if (await eco.count()) {
+      await eco.click().catch(() => {});
+      await page.waitForTimeout(1200);
+    }
+    await shotOf('eco-context', '.chat-cmp-usagemenu');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+  } catch (err) {
+    console.log('  ! skipped eco-context -', String(err.message).split('\n')[0]);
+  }
+
+  // ─── The mode menu, with the ALPHA chip on J.A.R.V.I.S ────────────────────
+  try {
+    await vis('.chat-cmp-modeltrigger').first().click();
+    await page.waitForTimeout(1000);
+    await shotOf('mode-menu', '.chat-cmp-menu, [role="menu"]');
+  } catch (err) {
+    console.log('  ! skipped mode-menu -', String(err.message).split('\n')[0]);
+  }
 } catch (err) {
   console.log('  ! aborted -', String(err.message).split('\n')[0]);
 } finally {

@@ -1,65 +1,78 @@
 {
   "hero": {
-    "eyebrow": "v0.28.0  ·  12 September 2026",
-    "headline": "Talk to it. Watch it draw.",
-    "sub": "Hold a key and say what you want. The answer comes back out loud — and the part of it that is a shape arrives on screen as a drawn diagram instead of being read to you.",
+    "eyebrow": "v0.28.0  ·  13 September 2026",
+    "headline": "It knows when to start over",
+    "sub": "A long conversation used to get quietly more expensive until it broke. ECO mode gives the window a plan: at the token count you set, the agent writes its own state into the task and carries on in a fresh session — and the window itself stops being a percentage you have to interpret.",
     "shot": {
-      "src": "shots/v0-28-0/hero.png",
-      "alt": "The Chat view in J.A.R.V.I.S mode: a spoken question at the top, an agent-drawn flow diagram of a checkout payment below it, and a composer carrying a microphone and the line 'Hold Alt+Space or the mic to speak'.",
-      "caption": "One window, both halves of this release."
+      "src": "shots/v0-28-0/eco-context.png",
+      "alt": "The context popover: 'Context window 34%', a bar drawn as three bands — the first filled, the second partly amber, the third untouched — then '338k / 1.0M' and '662k free', and a lit ECO pill reading 'hands off at 200k'.",
+      "caption": "The pill IS the control. Lit, it names the count it hands off at.",
+      "frame": "plain"
     }
   },
   "blocks": [
     {
+      "kind": "points",
+      "title": "Why a window needed bands",
+      "items": [
+        {
+          "title": "34% told you nothing",
+          "text": "One bar and one number cannot say which KIND of full you are. The window is now three bands — up to 200k, up to 500k, and the rest — so the count of lit bands is legible at a glance in a way a percentage never was."
+        },
+        {
+          "title": "A small window draws one",
+          "text": "The edges are clamped to the real limit, so a 200k-window model collapses to a single band instead of drawing two dead rings it can never reach."
+        },
+        {
+          "title": "ECO is a handover, not a trim",
+          "text": "At the mark, the agent writes what it is doing into the task — done, next, decisions, what it learned — and a fresh session picks the task up from there. Nothing is summarised away behind your back."
+        },
+        {
+          "title": "It is per chat, and it is a pill",
+          "text": "One click under the bar it changes. Off is off: the conversation runs to the end of the window the way it always did."
+        }
+      ]
+    },
+    {
       "kind": "split",
       "side": "left",
-      "title": "Hold a key and speak",
-      "body": "The composer's fourth mode stopped saying 'Soon'. Hold the microphone — or Alt+Space from anywhere in the app — say the thing, let go, and it is sent. The answer is spoken back in two or three plain sentences rather than read to you as a wall of headings.",
+      "title": "J.A.R.V.I.S — and it says ALPHA",
+      "body": "Talk to the agent and it talks back: hold the microphone, or Alt+Space from anywhere in the app, and the answer comes back in two or three plain sentences. It works end to end, and it is earlier than beta — so the card says so rather than sitting there unlabelled and reading as finished.",
       "shot": {
-        "src": "shots/v0-28-0/voice-composer.png",
-        "alt": "The chat composer in J.A.R.V.I.S mode: a mode chip reading J.A.R.V.I.S, a microphone button, and the instruction 'Hold Alt+Space or the mic to speak'.",
-        "caption": "The mode tells you how to use it without being asked.",
+        "src": "shots/v0-28-0/mode-menu.png",
+        "alt": "The composer's mode menu: four cards — Basic, Plan, Develop, and J.A.R.V.I.S, which is selected and carries an ALPHA chip beside its name.",
+        "caption": "One word, on every surface that announces the mode.",
         "frame": "plain"
       }
     },
     {
       "kind": "split",
       "side": "right",
+      "title": "Hold a key and speak",
+      "body": "The mode tells you how to use it without being asked. Let go and the take is sent; the structure that would have been read aloud arrives on screen instead.",
+      "shot": {
+        "src": "shots/v0-28-0/voice-composer.png",
+        "alt": "The chat composer in J.A.R.V.I.S mode: a mode chip reading J.A.R.V.I.S, a microphone button, and the instruction 'Hold Alt+Space or the mic to speak'.",
+        "caption": "Push-to-talk, in the composer you were already looking at.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "split",
+      "side": "left",
       "title": "One key, and the parts worth tuning",
-      "body": "Everything runs through OpenRouter on a single key, stored on this machine at 0600 and never in a project — so a team sync cannot carry it anywhere. The card can say a key is set and can never show it to you, because no route returns it.",
+      "body": "Everything runs through OpenRouter on a single key, stored on this machine at 0600 and never in a project, so a team sync cannot carry it anywhere. The card can say a key is set and can never show it to you, because no route returns it. A whisper model installed here transcribes locally; with none, the take goes to the API — and the setting says which.",
       "shot": {
         "src": "shots/v0-28-0/voice-settings.png",
-        "alt": "The Voice card in Settings → Agents: an OpenRouter key field reading 'No key', an optional Groq key, a push-to-talk key set to Alt+Space, 'Hold to speak', a voice picker, a transcriber set to 'Automatic — local if installed', automatic speech-language detection, a 'Speak answers' switch and a speaking-speed picker.",
+        "alt": "The Voice card in Settings → Agents, badged ALPHA: an OpenRouter key field reading 'No key', an optional Groq key, a push-to-talk key set to Alt+Space, 'Hold to speak', a voice picker, a transcriber set to 'Automatic — local if installed', automatic speech-language detection, a 'Speak answers' switch and a speaking-speed picker.",
         "caption": "Folded at the bottom of Agents until you want it.",
         "frame": "plain"
       }
     },
     {
-      "kind": "points",
-      "title": "The choices behind it",
-      "items": [
-        {
-          "title": "Hold, or press once",
-          "text": "Hold the chord while you talk, or press it once to start and again to send. Whichever suits the sentence you are about to say."
-        },
-        {
-          "title": "Local first, API if not",
-          "text": "A whisper model installed on this machine transcribes the take; with none installed the take goes to the API instead. The setting says which happened."
-        },
-        {
-          "title": "It picks up the language",
-          "text": "The language is detected from your first take and kept for the rest of the session, so a mixed-language day does not need a setting change."
-        },
-        {
-          "title": "Speaking is a switch",
-          "text": "Turn answers off and you keep push-to-talk and the on-screen structure — it simply stops talking back."
-        }
-      ]
-    },
-    {
       "kind": "shot",
       "title": "The shape is drawn, not read out",
-      "body": "Behind dream-html there is now a real layout engine. The answer names the boxes and which ones connect; the kit places them and draws the arrows, including the ones that branch and rejoin. Nothing here is positioned by hand, and a chain that fits on one line stays a sentence.",
+      "body": "Behind the agent's HTML there is now a real layout engine. The answer names the boxes and which ones connect; the kit places them and draws the arrows, including the ones that branch and rejoin. Nothing here is positioned by hand, and a chain that fits on one line stays a sentence.",
       "shot": {
         "src": "shots/v0-28-0/chat-diagram.png",
         "alt": "An agent-drawn diagram of a card payment: Payment submitted leads to an Authorised? decision, which branches to a green Order placed on yes and to a Retryable code? decision on no, which branches to a red Declined for good and to Second attempt — and Second attempt loops back into Authorised?.",
@@ -69,9 +82,9 @@
     },
     {
       "kind": "split",
-      "side": "left",
+      "side": "right",
       "title": "A percent is not a percent",
-      "body": "Every bar now says how much of its window is LEFT, not what time it resets — because 88% with fifty minutes to run and 73% with two days to run are nothing alike, and a clock makes you do that arithmetic yourself. The same fact reached the chooser: usage enters the score multiplied by the share of its window still ahead, so a window about to be forgiven stops being treated as spent. A window that has already reset says so instead of showing the number it held before.",
+      "body": "Every account bar now says how much of its window is LEFT, not what time it resets — because 88% with fifty minutes to run and 73% with two days to run are nothing alike, and a clock makes you do that arithmetic yourself. The same fact reached the chooser: usage enters the score multiplied by the share of its window still ahead, so a window about to be forgiven stops being treated as spent.",
       "shot": {
         "src": "shots/v0-28-0/accounts.png",
         "alt": "Three connected Claude accounts, each with a 5-hour bar and a weekly bar: 34% with 3h 9m left and 61% with 3d 23h left; 7% with 4h 37m left and 22% with 5d 23h left; and, in amber, 88% with 48m left and 73% with 1d 23h left.",
@@ -81,9 +94,9 @@
     },
     {
       "kind": "split",
-      "side": "right",
+      "side": "left",
       "title": "Your accounts, your policy",
-      "body": "Auto-switch used to have one opinion compiled into it. Now you choose what a second account is FOR: spread the load so every account stays healthy, or drain the list in order so one window is spent to the last turn before the next is touched. The score mode's coefficients are yours too — what a percent of each window costs, and what one step down your list is worth.",
+      "body": "Auto-switch used to have one opinion compiled into it. Now you choose what a second account is FOR: spread the load so every account stays healthy, or drain the list in order so one window is spent to the last turn before the next is touched.",
       "shot": {
         "src": "shots/v0-28-0/switch-policy.png",
         "alt": "The auto-switch policy in Settings → Agents: 'Spread the load (weighted score)' selected over 'Drain in order', and three weight fields — 5-hour window 1, weekly window 2, place in the list 5 — above the formula 'score = 1·5-hour% + 2·weekly% + 5·place in list — the lowest score serves the next turn.'",
@@ -93,11 +106,11 @@
     },
     {
       "kind": "note",
-      "text": "Voice is beta and desktop-only — the web dashboard has no microphone path, so a button there would be a control that cannot work. Without a key the mode still runs as text; it just cannot listen or speak."
+      "text": "J.A.R.V.I.S is ALPHA and desktop-only — the web dashboard has no microphone path, so a button there would be a control that cannot work. Without a key the mode still runs as text; it just cannot listen or speak."
     }
   ],
   "closer": {
-    "title": "Go and say something",
-    "body": "Settings → Agents → Voice for the key and the chord, then pick J.A.R.V.I.S from the composer's mode menu."
+    "title": "Where to start",
+    "body": "Open the context reading in the composer and light the ECO pill. Voice lives in Settings → Agents → Voice, then pick J.A.R.V.I.S from the mode menu."
   }
 }
