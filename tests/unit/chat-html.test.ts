@@ -347,6 +347,73 @@ describe('the kit diagram engine', () => {
     expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-edge, \.dc-flow-arrow \{ display: none; \}/);
   });
 
+  /**
+   * A DIAGRAM IS A VIEW, NOT A PICTURE (owner, 2026-09-13, with a screenshot: "bu görünüm
+   * interaktif değil yaklaştırılamıyor merkezde değil … tıklanamıyor iç içe yazılar var").
+   * The behaviour itself is geometry and pointer work, proven in real Chromium by
+   * `runGraph` in scripts/verify/chat-html.mjs; what is pinned here is that the capability
+   * SHIPS — the stage exists, the control exists, the gestures are wired, and the CSS the
+   * engine's classes depend on is actually written.
+   */
+  it('the drawing sits on a stage the view centres, pans and scales', () => {
+    expect(KIT_GRAPH).toContain("stage.className = 'dc-graph-stage'");
+    expect(KIT_GRAPH).toContain("'translate(' + v.tx + 'px, ' + v.ty + 'px) scale(' + v.s + ')'");
+    // Centring is the fit, and the fit is what every layout and every reset lands in.
+    expect(KIT_GRAPH).toContain('v.tx = Math.round((g.clientWidth - b.w) / 2 - b.x);');
+    expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-graph-stage \{[^}]*transform-origin: 0 0/);
+    expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-graph--laid \{[^}]*overflow: hidden/);
+  });
+
+  it('zooms on ctrl/cmd-wheel and the corner control — and leaves a PLAIN wheel alone', () => {
+    // The block lives in a transcript: a diagram that ate the page's scroll would be worse
+    // than one that could not be zoomed at all.
+    expect(KIT_GRAPH).toContain('if (!ev.ctrlKey && !ev.metaKey) return;');
+    expect(KIT_GRAPH).toContain("box.className = 'dc-graph-zoom'");
+    expect(KIT_GRAPH).toMatch(/\['out', '−', 'Zoom out'\]/);
+    // Resting invisible is load-bearing: the PNG/print export draws the live markup with no
+    // pointer, so chrome that rested visible would be baked into every exported diagram.
+    expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-graph-zoom \{[^}]*opacity: 0/);
+    expect(CHAT_HTML_KIT_CSS).toContain('.dc-graph--laid:hover .dc-graph-zoom');
+  });
+
+  it('a click holds a trace through the node, and a keyboard can hold the same one', () => {
+    expect(KIT_GRAPH).toContain("'dc-node--on'");
+    expect(KIT_GRAPH).toContain("'dc-node--near'");
+    expect(KIT_GRAPH).toContain("'dc-edge--on'");
+    expect(KIT_GRAPH).toContain("n.setAttribute('tabindex', '0')");
+    expect(KIT_GRAPH).toMatch(/k === 'Enter' \|\| k === ' '/);
+    expect(KIT_GRAPH).toContain("if (k === 'Escape') { focus(g, null); return; }");
+    // Dimming is the ONLY thing the held state adds — hover and click light the same ink.
+    expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-graph--focused \.dc-node:not\(\.dc-node--on\):not\(\.dc-node--near\)/);
+  });
+
+  it('a pan is not a click: the pointer is captured only once it has really moved', () => {
+    // Capturing on pointerdown retargets the pointerup to the graph and costs every node
+    // its click — the bug that would have made "clickable" a lie again.
+    expect(KIT_GRAPH).toMatch(/if \(Math\.abs\(dx\) \+ Math\.abs\(dy\) < 4\) return;/);
+    expect(KIT_GRAPH).toContain('g.setPointerCapture(drag.id)');
+    expect(KIT_GRAPH).toContain('if (moved) return;');
+  });
+
+  it('the TIGHT shrink reaches the nodes on the stage, or the drawing outgrows its boxes', () => {
+    // A `>` here (the original) stopped matching the moment the nodes moved onto the stage:
+    // the engine measured them small, CSS painted them full size, and every arrow at 380px
+    // floated off its node. Descendant, and the verify pass measures it.
+    expect(CHAT_HTML_KIT_CSS).toContain('.dc-graph--tight .dc-node, .dc-graph--tight .dc-flow-node {');
+    expect(CHAT_HTML_KIT_CSS).not.toContain('.dc-graph--tight > .dc-node');
+    expect(CHAT_HTML_KIT_CSS).not.toContain('.dc-graph--laid > .dc-node');
+  });
+
+  it('places a label on clear ground instead of pinning it to the midpoint', () => {
+    // "+100k sonra" landed on two nodes because the reserved waypoint and the drawn midpoint
+    // disagreed on an even-length back edge. Both middles are reserved now, and the label is
+    // then SCORED against every node box and every label already placed.
+    expect(KIT_GRAPH).toContain('var m = Math.floor(path.length / 2);');
+    expect(KIT_GRAPH).toContain('[m, path.length % 2 ? -1 : m - 1]');
+    expect(KIT_GRAPH).toContain('e.el.getPointAtLength(total * t)');
+    expect(KIT_GRAPH).toContain('var score = hits * 1000 + ti * 12 + (oi ? 30 : 0);');
+  });
+
   it('paints tone as a BORDER, never a fill — the filled slabs were rejected', () => {
     const node = /\.dc-node, \.dc-flow-node \{([^}]*)\}/.exec(CHAT_HTML_KIT_CSS);
     expect(node).not.toBeNull();

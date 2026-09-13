@@ -102,7 +102,9 @@ A node is a NAME — 1-4 words, no sentence, no \`→\` inside it. \`--decision\
 \`--ghost\` an exit that is not the point, \`--good|--bad|--warn|--accent\` only when the node
 IS that. An edge takes \`data-label\`, a tone, \`--dashed\`; a cycle is fine. Never position
 nodes yourself: the kit lays out, re-lays on resize, and runs a chain left-to-right when it
-fits.
+fits. The reader gets it as a VIEW, not a picture — centred, drag to pan, pinch or
+ctrl/cmd-wheel to zoom, click a node to light its path and dim the rest — so a ladder with
+ten nodes is fine. Never explain those controls in prose; they are the surface's, not yours.
 
 Sandboxed with NO network: everything inline, any data you show is in your markup. Inline
 \`<script>\` DOES run — buttons, filters and toggles work on that data; \`dc-tabs\` needs none

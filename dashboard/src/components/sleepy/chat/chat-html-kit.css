@@ -419,6 +419,13 @@ body {
    Before the script runs, or when an edge names no node, the nodes are plain inline chips
    in written order: a legible degradation, never a blank.
 
+   AND IT IS A VIEW, NOT A PICTURE (owner, 2026-09-13: "bu goruntu interaktif degil
+   yaklastirilamiyor merkezde degil ... tiklanamiyor ic ice yazilar var"). The laid drawing
+   is CENTRED on a stage the reader can drag, zoom (ctrl/cmd-wheel, the corner control, or
+   + / - / 0 from the keyboard) and trace: hovering a node lights its edges, clicking one
+   holds that trace and dims the rest, Esc or the background clears it. Every node is
+   tabbable and answers Enter/Space, so the trace is reachable without a pointer.
+
    INK. A node is a NAME in a thin box; tone is a border colour, not a fill — the filled
    slabs of the previous cut were rejected ("bu kadar fazla renk kullanımı da iyi değil").
    The arrows carry the meaning, so they are the darkest ink after the text.
@@ -434,7 +441,22 @@ body {
   gap: 10px 14px;
   min-width: 0;
 }
-.dc-graph--laid { display: block; }
+/* Once it is laid the graph is a VIEWPORT and the drawing sits on a stage inside it:
+   centred, draggable, zoomable with ctrl/cmd-wheel (a trackpad pinch arrives as exactly
+   that) or the corner control, and a click on a node holds a trace through it. A PLAIN
+   wheel is deliberately untouched — the block lives in a transcript, and a diagram that
+   eats the page's scroll is worse than one you cannot zoom. */
+.dc-graph--laid {
+  display: block;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.dc-graph--drag { cursor: grabbing; }
+.dc-graph--laid:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.dc-graph-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .dc-node, .dc-flow-node {
   position: relative;
   display: inline-block;
@@ -450,10 +472,21 @@ body {
   text-align: center;
   overflow-wrap: break-word;
 }
-.dc-graph--laid > .dc-node, .dc-graph--laid > .dc-flow-node { position: absolute; margin: 0; }
+.dc-graph--laid .dc-node, .dc-graph--laid .dc-flow-node {
+  position: absolute;
+  margin: 0;
+  cursor: pointer;
+  transition: opacity .14s ease, border-color .14s ease, box-shadow .14s ease;
+}
+.dc-graph--laid .dc-node:focus-visible, .dc-graph--laid .dc-flow-node:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
 /* A rank that cannot fit the pane even one node per line shrinks its labels a step before
-   the engine splits the rank into lines. */
-.dc-graph--tight > .dc-node, .dc-graph--tight > .dc-flow-node {
+   the engine splits the rank into lines. DESCENDANT, not child: the laid nodes live on the
+   stage, and a `>` here silently restored every node to full size AFTER the engine had
+   measured it small — the drawing and the boxes then disagreed at 380px. */
+.dc-graph--tight .dc-node, .dc-graph--tight .dc-flow-node {
   max-width: 150px;
   padding: 5px 9px;
   font-size: 0.857rem;
@@ -491,6 +524,57 @@ body {
   white-space: nowrap;
   pointer-events: none;
 }
+.dc-graph-svg path.dc-edge-path, .dc-edge-label { transition: opacity .14s ease; }
+
+/* THE TRACE. Hovering a node lights it, its edges and their far ends; clicking HOLDS that
+   and dims everything else, so one path through a dense ladder can be read on its own.
+   Dimming is the only thing the held state adds — the lit ink is identical either way, so
+   a hover never looks like a different feature from a click. */
+.dc-node--on, .dc-flow-node--on {
+  border-color: var(--dc-tone, var(--color-accent));
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+.dc-graph-svg path.dc-edge-path.dc-edge--on { stroke-width: 2.4; }
+.dc-edge-label--on { color: var(--color-text); }
+.dc-graph--focused .dc-node:not(.dc-node--on):not(.dc-node--near),
+.dc-graph--focused .dc-flow-node:not(.dc-node--on):not(.dc-node--near) { opacity: .26; }
+.dc-graph--focused .dc-graph-svg path.dc-edge-path:not(.dc-edge--on) { opacity: .18; }
+.dc-graph--focused .dc-edge-label:not(.dc-edge-label--on) { opacity: .22; }
+
+/* The zoom control rests INVISIBLE and appears on hover, focus or once the view is zoomed.
+   Not coyness: the PNG/print export draws the block's live markup with no script and no
+   pointer, so chrome that rested visible would be baked into every exported diagram. */
+.dc-graph-zoom {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 2;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+.dc-graph--laid:hover .dc-graph-zoom,
+.dc-graph--laid:focus-within .dc-graph-zoom,
+.dc-graph--zoomed .dc-graph-zoom { opacity: 1; }
+.dc-graph-zoom-btn {
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 0.786rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.dc-graph-zoom-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
 
 /* ═══ Timeline ═══ */
 

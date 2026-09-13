@@ -654,6 +654,34 @@ body{background:#131318;margin:0;padding:20px;}`;
 <div class="dc-edge" data-from="q4" data-to="open" data-label="evet"></div>
 <div class="dc-edge dc-edge--dashed" data-from="flag" data-to="q1" data-label="sonraki cycle"></div>
 </div>`;
+  // The diagram from the owner's 2026-09-13 screenshot, kept verbatim because of its SHAPE:
+  // the dashed cycle from "Devam eder" back up to "200k asildi mi?" routes through an even
+  // number of points, and an even-length path is exactly where the old code reserved one
+  // waypoint for the label and then drew it on another — "+100k sonra" landed on two nodes.
+  const NUDGE = `<div class="dc-graph" id="g">
+<div class="dc-node" id="w">Edit / Write</div>
+<div class="dc-node dc-node--decision" id="q1">A\u00e7\u0131k m\u0131?</div>
+<div class="dc-node dc-node--decision" id="q2">Alt-ajan m\u0131?</div>
+<div class="dc-node dc-node--decision" id="q3">200k a\u015f\u0131ld\u0131 m\u0131?</div>
+<div class="dc-node dc-node--accent" id="nudge">D\u00fcrt\u00fc metni</div>
+<div class="dc-node dc-node--ghost" id="quiet">Sessiz</div>
+<div class="dc-node" id="dec">Ajan karar verir</div>
+<div class="dc-node" id="hand">tasks log + handoff</div>
+<div class="dc-node dc-node--good" id="clear">/clear \u2192 taze oturum</div>
+<div class="dc-node dc-node--ghost" id="cont">Devam eder</div>
+<div class="dc-edge" data-from="w" data-to="q1"></div>
+<div class="dc-edge" data-from="q1" data-to="q2" data-label="a\u00e7\u0131k"></div>
+<div class="dc-edge dc-edge--dashed" data-from="q1" data-to="quiet" data-label="kapal\u0131"></div>
+<div class="dc-edge dc-edge--dashed" data-from="q2" data-to="quiet" data-label="evet"></div>
+<div class="dc-edge" data-from="q2" data-to="q3" data-label="hay\u0131r"></div>
+<div class="dc-edge dc-edge--accent" data-from="q3" data-to="nudge" data-label="evet"></div>
+<div class="dc-edge dc-edge--dashed" data-from="q3" data-to="quiet" data-label="hay\u0131r"></div>
+<div class="dc-edge" data-from="nudge" data-to="dec"></div>
+<div class="dc-edge dc-edge--good" data-from="dec" data-to="hand" data-label="devret"></div>
+<div class="dc-edge" data-from="dec" data-to="cont" data-label="de\u011fmez"></div>
+<div class="dc-edge dc-edge--good" data-from="hand" data-to="clear"></div>
+<div class="dc-edge dc-edge--dashed" data-from="cont" data-to="q3" data-label="+100k sonra"></div>
+</div>`;
   const NODES = ['titlebar mousedown', '4px threshold crossed', 'startDragging()',
     'ACL refusal', 'bare catch', 'nothing happens'];
   const chain = (n) => `<div class="dc-flow" id="g">`
@@ -667,23 +695,34 @@ body{background:#131318;margin:0;padding:20px;}`;
   const measure = () => {
     const g = document.getElementById('g');
     const gr = g.getBoundingClientRect();
-    const nodes = Array.from(g.querySelectorAll(':scope > .dc-node, :scope > .dc-flow-node'));
+    // The drawing now sits on a STAGE the view centres, pans and scales, so every path
+    // coordinate is read against the stage's origin rather than the block's corner.
+    const stage = g.querySelector('.dc-graph-stage');
+    const sr = stage ? stage.getBoundingClientRect() : gr;
+    const nodes = Array.from(g.querySelectorAll('.dc-node, .dc-flow-node'));
     const rects = nodes.map((n) => n.getBoundingClientRect());
     const hit = (a, b, tol = 1) => a.left < b.right - tol && b.left < a.right - tol
       && a.top < b.bottom - tol && b.top < a.bottom - tol;
     let overlaps = 0;
     for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) if (hit(rects[i], rects[j])) overlaps++;
-    const labels = Array.from(g.querySelectorAll(':scope > .dc-edge-label')).map((l) => l.getBoundingClientRect());
+    const labels = Array.from(g.querySelectorAll('.dc-edge-label')).map((l) => l.getBoundingClientRect());
     let labelOnNode = 0;
     for (const l of labels) for (const r of rects) if (hit(l, r)) labelOnNode++;
+    let labelOnLabel = 0;
+    for (let i = 0; i < labels.length; i++) for (let j = i + 1; j < labels.length; j++) if (hit(labels[i], labels[j])) labelOnLabel++;
+    const drawn = rects.concat(labels);
+    const ink = {
+      left: Math.min(...drawn.map((r) => r.left)), right: Math.max(...drawn.map((r) => r.right)),
+    };
+    const chrome = g.querySelector('.dc-graph-zoom');
     const paths = Array.from(g.querySelectorAll('path.dc-edge-path'));
     const endpoints = paths.map((p) => {
       const d = p.getAttribute('d');
       const m = /^M\s+(-?[\d.]+)\s+(-?[\d.]+)/.exec(d);
       const parts = d.trim().split(/[\s,]+/);
       return {
-        sx: parseFloat(m[1]) + gr.left, sy: parseFloat(m[2]) + gr.top,
-        tx: parseFloat(parts[parts.length - 2]) + gr.left, ty: parseFloat(parts[parts.length - 1]) + gr.top,
+        sx: parseFloat(m[1]) + sr.left, sy: parseFloat(m[2]) + sr.top,
+        tx: parseFloat(parts[parts.length - 2]) + sr.left, ty: parseFloat(parts[parts.length - 1]) + sr.top,
         marker: p.getAttribute('marker-end') || '',
         back: p.classList.contains('dc-edge--back'),
         dash: getComputedStyle(p).strokeDasharray,
@@ -701,6 +740,18 @@ body{background:#131318;margin:0;padding:20px;}`;
       overlaps,
       labels: labels.length,
       labelOnNode,
+      labelOnLabel,
+      // How far off centre the whole drawing sits: the left margin minus the right one.
+      offCentre: Math.round(Math.abs((ink.left - gr.left) - (gr.right - ink.right))),
+      zoomBtns: g.querySelectorAll('.dc-graph-zoom-btn').length,
+      chromeAtRest: chrome ? getComputedStyle(chrome).opacity : '1',
+      tabbable: nodes.every((n) => n.getAttribute('tabindex') === '0'),
+      transform: stage ? getComputedStyle(stage).transform : '',
+      focused: g.classList.contains('dc-graph--focused'),
+      lit: g.querySelectorAll('.dc-node--on').length,
+      near: g.querySelectorAll('.dc-node--near').length,
+      litEdges: g.querySelectorAll('path.dc-edge--on').length,
+      dimmed: nodes.filter((n) => parseFloat(getComputedStyle(n).opacity) < 0.5).length,
       paths: paths.length,
       unanchored: endpoints.filter((e) => !onEdge(e.sx, e.sy) || !onEdge(e.tx, e.ty)).length,
       headless: endpoints.filter((e) => !/^url\(/.test(e.marker)).length,
@@ -735,6 +786,8 @@ body{background:#131318;margin:0;padding:20px;}`;
         m.labels === 9 && m.labelOnNode === 0, `${m.labels} labels, ${m.labelOnNode} on a node`);
       ok(`ladder @${w}: the cycle is a dashed back edge`,
         m.backs === 1 && m.dashedBack === 1, `${m.backs} back edge(s), ${m.dashedBack} dashed`);
+      ok(`ladder @${w}: the drawing is CENTRED in the pane, not hugging its left edge`,
+        m.offCentre <= 2, `${m.offCentre}px off centre`);
       if (w === 380) ok('ladder @380: labels shrank a step rather than the drawing overflowing', m.tight, 'not tight');
       if (w === 620) await page.screenshot({ path: join(SHOTS, 'chat-html-graph-ladder.png'), fullPage: true });
     }
@@ -758,6 +811,97 @@ body{background:#131318;margin:0;padding:20px;}`;
     ok('retired dc-flow-arrow spans are absorbed — the engine draws the arrows instead',
       L.visibleArrowSpans === 0 && L.paths === 5 && L.nodes === 6,
       `${L.visibleArrowSpans} spans visible, ${L.paths} paths, ${L.nodes} nodes`);
+
+    // ── the owner's own 2026-09-13 ladder: the even-length back edge ──────────────────
+    for (const w of [1050, 900, 620, 380]) {
+      const m = await render(w, NUDGE);
+      ok(`nudge ladder @${w}: 9 labels, none on a node, none on another label`,
+        m.labels === 9 && m.labelOnNode === 0 && m.labelOnLabel === 0,
+        `${m.labels} labels, ${m.labelOnNode} on a node, ${m.labelOnLabel} on a label`);
+      ok(`nudge ladder @${w}: 10 nodes laid, none overlapping, drawing CENTRED`,
+        m.nodes === 10 && m.overlaps === 0 && m.offCentre <= 2,
+        `nodes=${m.nodes} overlaps=${m.overlaps} offCentre=${m.offCentre}`);
+      ok(`nudge ladder @${w}: 12 anchored arrows, every one with a head`,
+        m.paths === 12 && m.unanchored === 0 && m.headless === 0,
+        `${m.paths} paths, ${m.unanchored} floating, ${m.headless} headless`);
+    }
+
+    // ── the view: it zooms, it pans, it traces — driven with a real pointer ───────────
+    {
+      await page.setViewportSize({ width: 900, height: 1200 });
+      await page.setContent(doc(NUDGE));
+      await page.waitForTimeout(160);
+      await page.mouse.move(0, 0);
+      const rest = await page.evaluate(measure);
+      ok('the view offers a zoom control, and it rests INVISIBLE so exports stay clean',
+        rest.zoomBtns === 3 && rest.chromeAtRest === '0',
+        `${rest.zoomBtns} buttons, resting opacity ${rest.chromeAtRest}`);
+      ok('every node is tabbable — the trace is reachable without a pointer',
+        rest.tabbable, 'a node has no tabindex');
+
+      await page.hover('#nudge');
+      await page.waitForTimeout(120);
+      const hovered = await page.evaluate(measure);
+      ok('hovering a node lights it, its edges and their far ends — and dims NOTHING',
+        hovered.lit === 1 && hovered.near === 2 && hovered.litEdges === 2 && hovered.dimmed === 0 && !hovered.focused,
+        `lit=${hovered.lit} near=${hovered.near} edges=${hovered.litEdges} dimmed=${hovered.dimmed}`);
+
+      await page.click('#nudge');
+      await page.waitForTimeout(200);
+      const held = await page.evaluate(measure);
+      ok('clicking a node HOLDS the trace: its path stays lit and the rest of the ladder dims',
+        held.focused && held.lit === 1 && held.near === 2 && held.dimmed >= 5,
+        `focused=${held.focused} lit=${held.lit} near=${held.near} dimmed=${held.dimmed}`);
+
+      await page.mouse.click(12, 300);
+      await page.waitForTimeout(200);
+      const cleared = await page.evaluate(measure);
+      ok('a click on the background clears the trace', !cleared.focused && cleared.dimmed === 0,
+        `focused=${cleared.focused} dimmed=${cleared.dimmed}`);
+
+      const home = (await page.evaluate(measure)).transform;
+      await page.hover('.dc-graph-zoom');
+      await page.click('.dc-graph-zoom-btn[data-act="in"]');
+      await page.waitForTimeout(120);
+      const zoomed = await page.evaluate(measure);
+      const scaleOf = (t) => parseFloat((t || '').replace('matrix(', '').split(',')[0]) || 1;
+      ok('the corner control zooms the drawing IN', scaleOf(zoomed.transform) > 1.2,
+        `scale ${scaleOf(zoomed.transform)}`);
+
+      await page.mouse.move(450, 300);
+      await page.mouse.down();
+      await page.mouse.move(330, 220, { steps: 8 });
+      await page.mouse.up();
+      await page.waitForTimeout(120);
+      const panned = await page.evaluate(measure);
+      ok('dragging pans the drawing inside the block',
+        panned.transform !== zoomed.transform && scaleOf(panned.transform) === scaleOf(zoomed.transform),
+        `${zoomed.transform} -> ${panned.transform}`);
+
+      await page.click('.dc-graph-zoom-btn[data-act="fit"]');
+      await page.waitForTimeout(120);
+      const refit = await page.evaluate(measure);
+      ok('Fit returns it to unzoomed and centred', refit.transform === home && refit.offCentre <= 2,
+        `${refit.transform} vs ${home}, ${refit.offCentre}px off centre`);
+
+      await page.mouse.move(450, 300);
+      await page.keyboard.down('Control');
+      await page.mouse.wheel(0, -240);
+      await page.keyboard.up('Control');
+      await page.waitForTimeout(120);
+      const pinched = await page.evaluate(measure);
+      ok('ctrl/cmd-wheel — a trackpad pinch — zooms at the pointer',
+        scaleOf(pinched.transform) > 1.2, `scale ${scaleOf(pinched.transform)}`);
+
+      await page.click('.dc-graph-zoom-btn[data-act="fit"]');
+      await page.waitForTimeout(80);
+      await page.mouse.move(450, 300);
+      await page.mouse.wheel(0, 240);
+      await page.waitForTimeout(120);
+      const scrolled = await page.evaluate(measure);
+      ok('a PLAIN wheel is left to the transcript — the block never eats the page scroll',
+        scrolled.transform === home, `${scrolled.transform} vs ${home}`);
+    }
 
     // ── MUTATION CHECK: no engine, no drawing ─────────────────────────────────────────
     const before = await render(620, LADDER, false);
