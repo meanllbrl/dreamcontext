@@ -77,10 +77,10 @@ let pumping = false;
 async function runTurn() {
   // A TOKEN FOOTPRINT, so the context reading exists at all. The composer draws its usage
   // trigger only when there is something to measure, and this release's headline — the
-  // window as BANDS plus the ECO pill — lives behind that trigger. 338k of a 1M window puts
+  // window as BANDS plus the ECO pill — lives behind that trigger. 450k of a 1M window puts
   // the reading one third into the middle band: the first is spent, the second is filling,
   // the third is untouched, which is the whole point of drawing three.
-  const usage = { input_tokens: 12000, cache_read_input_tokens: 320000, cache_creation_input_tokens: 4000, output_tokens: 2000 };
+  const usage = { input_tokens: 12000, cache_read_input_tokens: 432000, cache_creation_input_tokens: 4000, output_tokens: 2000 };
   // role and model are NOT decoration: the usage parser drops any frame whose message is
   // not an assistant turn, so a footprint without them is silently ignored and the context
   // reading never exists. (No backticks in here — this block lives inside a template

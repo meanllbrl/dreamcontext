@@ -313,9 +313,9 @@ export function splitModels(
  *
  * A single 0-100% arc answers "how full?" and nothing else — and on a 1M window the answer
  * is almost always a small number, which is exactly when a percentage stops being a signal.
- * What actually changes behaviour is which ABSOLUTE region the session is in: under 200k is
- * a normal working session, 200k-500k is where handoff starts being worth considering, and
- * past 500k every further turn re-reads a very large transcript.
+ * What actually changes behaviour is which ABSOLUTE region the session is in: under 350k is
+ * a normal working session, 350k-650k is where handoff starts being worth considering, and
+ * past 650k every further turn re-reads a very large transcript.
  *
  * So the reading becomes three bands, each with its own fill and its own tone. The count of
  * lit bands is legible at a glance in a way that "40%" is not, and the tone says which kind
@@ -324,7 +324,7 @@ export function splitModels(
  * A 200k-window model collapses to ONE band — the edges are clamped to the real limit and
  * empty bands are never emitted, so a small window never draws two dead rings.
  */
-export const CONTEXT_BAND_EDGES = [200_000, 500_000];
+export const CONTEXT_BAND_EDGES = [350_000, 650_000];
 
 export type ContextBandKey = 'calm' | 'caution' | 'danger';
 

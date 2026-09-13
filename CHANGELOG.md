@@ -28,6 +28,13 @@ task. Research artifacts: `_dream_context/inbox/context-ceiling-research/`.
   the conversation in-process and fire SessionStart with `source=clear`. The next session
   opens with a `>> HANDOFF:` banner above the snapshot naming the task. Terminal/PTY is
   instruction + banner only.
+- **The window is read as bands, not a percentage.** Both the composer ring and the usage
+  popover split the window at **350k** and **650k** — a normal session, the region where a
+  handoff is worth considering, and the region where every turn re-reads a very large
+  transcript. The ring draws one arc per band (Apple Health style), the popover lays the
+  same bands flat, and the edges are clamped to the real limit so a 200k-window model
+  collapses to a single band instead of drawing dead rings. The handoff switch is an ECO
+  pill that names the count it hands off at.
 - **Per pane, remembered per vault per machine.** The composer's usage popover gains a
   "Hand off at 200k" switch; the context bar draws a marker tick at the threshold, a lighter
   track beyond it and a warning-tone fill past it, and the composer ring gets a matching
