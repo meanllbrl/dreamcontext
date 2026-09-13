@@ -276,6 +276,20 @@ try {
   await page.waitForTimeout(2000);
   await page.addStyleTag({ content: '.agent-dock, .agent-fab { display: none !important; }' });
 
+  // A DIAGRAM NOW GROWS INTO ITS PANE, so the block is taller than the window this session
+  // was opened at and a 1000px clip would photograph the middle of it. The window is given
+  // the height for this one frame and the block is scrolled fully into view; both are put
+  // back before the hero, which is a shot of the window itself.
+  await page.setViewportSize({ width: 1600, height: 1400 });
+  await page.waitForTimeout(1200);
+  await vis('iframe.chat-htmlview-frame').first()
+    .evaluate((n) => n.scrollIntoView({ block: 'center' }))
+    .catch(() => {});
+  await page.waitForTimeout(900);
+  // The zoom control rests invisible and appears on hover — park the pointer off the block
+  // so the exported frame carries the diagram and not its chrome.
+  await page.mouse.move(12, 12);
+  await page.waitForTimeout(400);
   const box = await vis('iframe.chat-htmlview-frame').first().boundingBox();
   const path = join(ROOT, ID, 'chat-diagram.png');
   mkdirSync(dirname(path), { recursive: true });
@@ -286,12 +300,14 @@ try {
         x: Math.max(0, box.x - 16),
         y: Math.max(0, box.y - 16),
         width: Math.min(1500, box.width + 32),
-        height: Math.min(1000, box.height + 32),
+        height: Math.min(1400 - Math.max(0, box.y - 16), box.height + 32),
       },
     });
   } else {
     await page.screenshot({ path });
   }
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.waitForTimeout(900);
   captured.push('chat-diagram');
   console.log('  ✓ chat-diagram');
 

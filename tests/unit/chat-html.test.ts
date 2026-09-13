@@ -359,8 +359,10 @@ describe('the kit diagram engine', () => {
   it('the drawing sits on a stage the view centres, pans and scales', () => {
     expect(KIT_GRAPH).toContain("stage.className = 'dc-graph-stage'");
     expect(KIT_GRAPH).toContain("'translate(' + v.tx + 'px, ' + v.ty + 'px) scale(' + v.s + ')'");
-    // Centring is the fit, and the fit is what every layout and every reset lands in.
-    expect(KIT_GRAPH).toContain('v.tx = Math.round((g.clientWidth - b.w) / 2 - b.x);');
+    // Centring is the fit, and the fit is what every layout and every reset lands in — at
+    // the RESTING SCALE, because a drawing now grows into the room the pane gives it.
+    expect(KIT_GRAPH).toContain('v.s = fitScale(g, b);');
+    expect(KIT_GRAPH).toContain("v.tx = Math.round((g.clientWidth - b.w * v.s) / 2 - b.x * v.s);");
     expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-graph-stage \{[^}]*transform-origin: 0 0/);
     expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-graph--laid \{[^}]*overflow: hidden/);
   });

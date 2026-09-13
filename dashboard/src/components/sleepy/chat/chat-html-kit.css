@@ -462,13 +462,16 @@ body {
   display: inline-block;
   box-sizing: border-box;
   max-width: 220px;
-  padding: 6px 12px;
+  padding: 8px 14px;
   border: 1.5px solid var(--dc-tone, var(--color-border-hover));
   border-radius: var(--radius-md);
   background: var(--color-bg-elevated);
   color: var(--color-text);
   font-size: 0.893rem;
-  line-height: 1.35;
+  /* A node is a NAME, and a two-line name at 1.35 sets its lines almost touching — the
+     engine measures whatever this produces, so the air is bought here and the drawing
+     grows to hold it. */
+  line-height: 1.45;
   text-align: center;
   overflow-wrap: break-word;
 }
@@ -515,7 +518,7 @@ body {
 .dc-edge-label {
   position: absolute;
   transform: translate(-50%, -50%);
-  padding: 0 6px;
+  padding: 1px 7px;
   border-radius: 4px;
   background: var(--color-bg-secondary);
   color: var(--color-text-secondary);

@@ -72,7 +72,7 @@
     {
       "kind": "shot",
       "title": "The shape is drawn, not read out",
-      "body": "Behind the agent's HTML there is now a real layout engine. The answer names the boxes and which ones connect; the kit places them and draws the arrows, including the ones that branch and rejoin. Nothing here is positioned by hand, and a chain that fits on one line stays a sentence.",
+      "body": "Behind the agent's HTML there is now a real layout engine. The answer names the boxes and which ones connect; the kit places them and draws the arrows, including the ones that branch and rejoin. Nothing here is positioned by hand, and a chain that fits on one line stays a sentence. The drawing is also SIZED to the room it lands in \u2014 it grows to use a wide pane and the fullscreen deck instead of staying at the size it was laid out at, so the same diagram is readable in a narrow card and across a monitor.",
       "shot": {
         "src": "shots/v0-28-0/chat-diagram.png",
         "alt": "An agent-drawn diagram of a card payment: Payment submitted leads to an Authorised? decision, which branches to a green Order placed on yes and to a Retryable code? decision on no, which branches to a red Declined for good and to Second attempt — and Second attempt loops back into Authorised?.",

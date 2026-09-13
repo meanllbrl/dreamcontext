@@ -28,6 +28,14 @@ task. Research artifacts: `_dream_context/inbox/context-ceiling-research/`.
   the conversation in-process and fire SessionStart with `source=clear`. The next session
   opens with a `>> HANDOFF:` banner above the snapshot naming the task. Terminal/PTY is
   instruction + banner only.
+- **A `dream-html` diagram is sized to the pane it lands in.** The layout engine drew every
+  diagram at the natural size of its type, so the same ten-node ladder measured 303px wide in
+  a phone-width card and in a 1600px deck — 81% of the deck empty and the text at its
+  smallest in both. The laid geometry is now the SHAPE and a resting scale decides how big it
+  is drawn: it grows until the pane's width or a height budget stops it (the window itself in
+  the fullscreen deck), and shrinks when the shape is wider than the pane. Height only ever
+  limits the growth, so a narrow pane is left exactly as it was. Nodes and edge labels also
+  got their own air.
 - **The window is read as bands, not a percentage.** Both the composer ring and the usage
   popover split the window at **350k** and **650k** — a normal session, the region where a
   handoff is worth considering, and the region where every turn re-reads a very large

@@ -36,6 +36,14 @@
  *   · CENTRED. The laid drawing sits on a STAGE inside the block, and the stage is centred
  *     in the pane. A 270px-wide ladder in a 1050px pane used to hug the left edge with 778px
  *     of dead space beside it, which reads as a rendering accident rather than a diagram.
+ *   · SIZED TO THE PANE (owner, 2026-09-13: "büyük ekrana büyütürsün büyümez … çok dip
+ *     dibeler, harfler çok yakın"). Centring alone left the drawing at its natural size, and
+ *     that size is a property of the TYPE, not of the room: the same ladder measured 303px
+ *     wide in a 380px card and in a 1600px deck, with 1297px of the deck empty and the text
+ *     at its smallest in both. The laid geometry is the SHAPE now, and `fitScale` decides how
+ *     big that shape is drawn — grown until the pane's width or the height budget stops it,
+ *     shrunk when the shape is wider than the pane. Height only ever LIMITS the growth, so a
+ *     narrow pane is left exactly as it was.
  *   · ZOOMABLE. Ctrl/⌘-wheel (which is also how a trackpad pinch arrives) zooms at the
  *     pointer; the corner control zooms in steps and fits back; `+` / `-` / `0` do the same
  *     from the keyboard. A PLAIN wheel is left alone on purpose — the block lives in a
@@ -70,6 +78,7 @@
   var ROW = 34;   // between ranks, top-down
   var ROWL = 46;  // …when an edge label has to sit in that gap
   var COL = 44;   // between ranks, left-to-right
+  var COLL = 78;  // …when an edge label has to sit in that gap
   var WAY = 12;   // a waypoint's own width, so a routed edge keeps clear of its neighbours
   var LAID = 'dc-graph--laid';
   var TIGHT = 'dc-graph--tight';
@@ -78,6 +87,12 @@
   var DRAGGING = 'dc-graph--drag';
   var MINZ = 0.5;   // out far enough to see a tall ladder whole
   var MAXZ = 4;     // in far enough to read a shrunk label
+  var MINFIT = 0.6; // a drawing wider than its pane shrinks to fit rather than being cut
+  var MAXFIT = 1.9; // …and a small one grows, but never into a poster
+  var HMIN = 480;   // the shortest a block is allowed to be while growing the drawing
+  var HMAX = 900;   // …and the tallest, so one diagram cannot own the whole transcript
+  var PAD = 16;     // air between the grown drawing and the block's own edges
+  var WIN = 1.15;   // how much better left-to-right must measure before it is chosen
   var STEP = 1.3;   // one press of + / −
   var KEEP = 64;    // px of drawing that must stay inside the block, however hard you drag
   var NUDGE = 40;   // px an arrow key pans
@@ -223,7 +238,7 @@
     });
     if (overflow) return null;
     var along = 0;
-    var gapAlong = horizontal ? COL : (labelled ? ROWL : ROW);
+    var gapAlong = horizontal ? (labelled ? COLL : COL) : (labelled ? ROWL : ROW);
     lines.forEach(function (rankLines, k) {
       if (k) along += gapAlong;
       rankLines.forEach(function (ln, li) {
@@ -387,7 +402,56 @@
     var v = view(g);
     if (!g.dcStage) return;
     g.dcStage.style.transform = 'translate(' + v.tx + 'px, ' + v.ty + 'px) scale(' + v.s + ')';
-    if (Math.abs(v.s - 1) > 0.001) g.classList.add(ZOOMED); else g.classList.remove(ZOOMED);
+    // ZOOMED means "the reader moved it", not "it is not 1" — the resting scale is whatever
+    // fit() chose, and a diagram that rests at 1.5 must still rest with its chrome hidden.
+    if (Math.abs(v.s - fitScale(g, g.dcBox)) > 0.001) g.classList.add(ZOOMED);
+    else g.classList.remove(ZOOMED);
+  }
+
+  /**
+   * HOW TALL THE DIAGRAM MAY GROW.
+   *
+   * In the fullscreen deck the answer is the window: the reader gave the diagram the screen
+   * and expects it to take it. Inline in a transcript there is no window to ask — the host
+   * sizes the frame FROM this block's height, so reading `innerHeight` there would be the
+   * measurement chasing the thing it sets. So a card's budget is derived from the one
+   * dimension the pane does own, its WIDTH, and bounded at both ends: never so short that a
+   * ladder cannot grow at all, never so tall that one diagram owns the whole transcript.
+   */
+  function budget(g) {
+    var vh = window.innerHeight || 0;
+    if (document.documentElement.getAttribute('data-dc-mode') === 'full' && vh) {
+      return Math.max(HMIN, vh - 56);
+    }
+    return Math.max(HMIN, Math.min(HMAX, g.clientWidth || 0));
+  }
+
+  /**
+   * THE RESTING SCALE — the fix for a diagram that stayed 303px wide in a 1600px pane.
+   *
+   * A drawing is laid at the natural size of its type, and that size has nothing to do with
+   * the room it was given: the same ten-node ladder was drawn identically in a phone-width
+   * card and in the fullscreen deck, which is what "büyütürsün büyümez" was describing —
+   * 81% of the pane empty and the text at its smallest either way. The laid geometry is now
+   * the SHAPE and the scale is how big that shape is drawn:
+   *
+   *   · wider than the pane → shrink until the whole shape is in view (floor MINFIT: below
+   *     that the labels stop being readable and panning is the better answer);
+   *   · smaller than the pane → grow, bounded by the height budget above and by MAXFIT.
+   *
+   * Height only ever LIMITS the growth; it can never shrink a drawing that already fits,
+   * which is what keeps a narrow pane exactly as it was.
+   */
+  function fitScale(g, b) {
+    if (!b || !b.w || !b.h) return 1;
+    var W = g.clientWidth;
+    if (!W) return 1;
+    // PAD is air around a drawing that GREW; it never eats into one that only just fits, or
+    // the narrowest pane would pay for the widest pane's margin.
+    var fitW = W / b.w;
+    if (fitW > 1) fitW = Math.max(1, (W - PAD * 2) / b.w);
+    var s = Math.min(fitW, Math.max(1, budget(g) / b.h));
+    return Math.max(MINFIT, Math.min(MAXFIT, s));
   }
 
   /** However hard it is dragged, KEEP px of the drawing stay inside the block. */
@@ -404,13 +468,13 @@
     if (top > H - keepY) v.ty -= top - (H - keepY);
   }
 
-  /** Home: unzoomed, and CENTRED in the pane — the state every layout and every reset lands in. */
+  /** Home: at the resting scale, and CENTRED — where every layout and every reset lands. */
   function fit(g) {
     var v = view(g), b = g.dcBox;
     if (!b) return;
-    v.s = 1;
-    v.tx = Math.round((g.clientWidth - b.w) / 2 - b.x);
-    v.ty = -b.y;
+    v.s = fitScale(g, b);
+    v.tx = Math.round((g.clientWidth - b.w * v.s) / 2 - b.x * v.s);
+    v.ty = Math.round(-b.y * v.s);
     apply(g);
   }
 
@@ -691,7 +755,10 @@
     g.dcBox = { x: box.x, y: box.y, w: box.r - box.x, h: box.b - box.y };
     g.dcMap = { nodes: data.nodes, edges: data.edges };
     g.dcFocus = null;
-    g.style.height = g.dcBox.h + 'px';
+    // The block is as tall as the drawing AT ITS RESTING SCALE — a diagram that grows to
+    // use the pane has to be given the height it grew into, or it would be drawn larger and
+    // then clipped by a block still sized for the small version.
+    g.style.height = Math.round(g.dcBox.h * fitScale(g, g.dcBox)) + 'px';
     g.appendChild(chrome(g));
     if (!g.hasAttribute('tabindex')) g.setAttribute('tabindex', '0');
     bind(g);

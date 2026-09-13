@@ -808,6 +808,12 @@ body{background:#131318;margin:0;padding:20px;}`;
     // coordinate is read against the stage's origin rather than the block's corner.
     const stage = g.querySelector('.dc-graph-stage');
     const sr = stage ? stage.getBoundingClientRect() : gr;
+    // The stage RESTS at whatever scale fit() chose — a small drawing grows to use the pane —
+    // so a path coordinate read out of the `d` attribute is in UNSCALED stage units and has
+    // to be multiplied before it can be compared with a node's on-screen box.
+    const sc = stage
+      ? (parseFloat((getComputedStyle(stage).transform || '').replace('matrix(', '').split(',')[0]) || 1)
+      : 1;
     const nodes = Array.from(g.querySelectorAll('.dc-node, .dc-flow-node'));
     const rects = nodes.map((n) => n.getBoundingClientRect());
     const hit = (a, b, tol = 1) => a.left < b.right - tol && b.left < a.right - tol
@@ -830,17 +836,20 @@ body{background:#131318;margin:0;padding:20px;}`;
       const m = /^M\s+(-?[\d.]+)\s+(-?[\d.]+)/.exec(d);
       const parts = d.trim().split(/[\s,]+/);
       return {
-        sx: parseFloat(m[1]) + sr.left, sy: parseFloat(m[2]) + sr.top,
-        tx: parseFloat(parts[parts.length - 2]) + sr.left, ty: parseFloat(parts[parts.length - 1]) + sr.top,
+        sx: parseFloat(m[1]) * sc + sr.left, sy: parseFloat(m[2]) * sc + sr.top,
+        tx: parseFloat(parts[parts.length - 2]) * sc + sr.left,
+        ty: parseFloat(parts[parts.length - 1]) * sc + sr.top,
         marker: p.getAttribute('marker-end') || '',
         back: p.classList.contains('dc-edge--back'),
         dash: getComputedStyle(p).strokeDasharray,
       };
     });
     // An endpoint is ANCHORED when it sits on some node's border (within 2px).
+    // The tolerance travels with the scale for the same reason the coordinates do.
+    const tol = 2 * sc;
     const onEdge = (x, y) => rects.some((r) => (
-      (Math.abs(y - r.bottom) <= 2 || Math.abs(y - r.top) <= 2) && x >= r.left - 2 && x <= r.right + 2)
-      || ((Math.abs(x - r.right) <= 2 || Math.abs(x - r.left) <= 2) && y >= r.top - 2 && y <= r.bottom + 2));
+      (Math.abs(y - r.bottom) <= tol || Math.abs(y - r.top) <= tol) && x >= r.left - tol && x <= r.right + tol)
+      || ((Math.abs(x - r.right) <= tol || Math.abs(x - r.left) <= tol) && y >= r.top - tol && y <= r.bottom + tol));
     return {
       laid: g.classList.contains('dc-graph--laid'),
       tight: g.classList.contains('dc-graph--tight'),
@@ -867,6 +876,11 @@ body{background:#131318;margin:0;padding:20px;}`;
       dashedBack: endpoints.filter((e) => e.back && e.dash && e.dash !== 'none').length,
       backs: endpoints.filter((e) => e.back).length,
       inside: rects.every((r) => r.left >= gr.left - 0.5 && r.right <= gr.right + 0.5),
+      scale: Math.round(sc * 100) / 100,
+      // How big the type actually lands, on screen, after the resting scale.
+      nodePx: Math.round(rects[0].height),
+      blockH: Math.round(gr.height),
+      inkH: Math.round(Math.max(...drawn.map((r) => r.bottom)) - Math.min(...drawn.map((r) => r.top))),
       visibleArrowSpans: Array.from(g.querySelectorAll('.dc-flow-arrow'))
         .filter((el) => getComputedStyle(el).display !== 'none').length,
     };
@@ -881,9 +895,11 @@ body{background:#131318;margin:0;padding:20px;}`;
     return page.evaluate(measure);
   };
   try {
-    // ── the branching ladder, three pane widths ────────────────────────────────────────
-    for (const w of [900, 620, 380]) {
+    // ── the branching ladder, four pane widths ────────────────────────────────────────
+    const ladder = {};
+    for (const w of [1200, 900, 620, 380]) {
       const m = await render(w, LADDER);
+      ladder[w] = m;
       ok(`ladder @${w}: all 10 nodes laid, none overlapping, all inside the pane`,
         m.laid && m.nodes === 10 && m.overlaps === 0 && m.inside,
         `laid=${m.laid} nodes=${m.nodes} overlaps=${m.overlaps} inside=${m.inside}`);
@@ -900,6 +916,24 @@ body{background:#131318;margin:0;padding:20px;}`;
       if (w === 380) ok('ladder @380: labels shrank a step rather than the drawing overflowing', m.tight, 'not tight');
       if (w === 620) await page.screenshot({ path: join(SHOTS, 'chat-html-graph-ladder.png'), fullPage: true });
     }
+
+    // ── THE DRAWING USES THE ROOM IT IS GIVEN ─────────────────────────────────────────
+    // Owner, 2026-09-13, on a ten-node ladder: "büyük ekrana büyütürsün büyümez … çok dip
+    // dibeler, harfler çok yakın". Measured before it was touched: the same drawing was
+    // 303px wide at EVERY pane width, resting at scale 1 — 1297px of a 1600px pane empty and
+    // the type at its smallest either way. The drawing is now the SHAPE and the resting
+    // scale is how big that shape is drawn.
+    ok('a drawing GROWS into a wide pane instead of staying at its natural size',
+      ladder[1200].scale >= 1.4 && ladder[900].scale >= 1.4,
+      `scale ${ladder[900].scale} @900, ${ladder[1200].scale} @1200`);
+    ok('…so the same ladder reads measurably larger at 1200px than at 620px',
+      ladder[1200].nodePx > ladder[620].nodePx * 1.25,
+      `node ${ladder[620].nodePx}px @620 → ${ladder[1200].nodePx}px @1200`);
+    ok('…and the block is given the height the drawing grew into — nothing is clipped',
+      Math.abs(ladder[1200].blockH - ladder[1200].inkH) <= 4 && ladder[1200].inside,
+      `block ${ladder[1200].blockH}px vs ink ${ladder[1200].inkH}px, inside=${ladder[1200].inside}`);
+    ok('a narrow pane is left exactly as it was — height never SHRINKS a drawing that fits',
+      ladder[380].scale === 1, `scale ${ladder[380].scale} @380`);
 
     // ── chains: one row when it fits, one node a row when it does not — nothing between ──
     for (const [n, w] of [[6, 640], [6, 1400], [3, 380], [3, 640], [5, 620], [5, 960]]) {
