@@ -23,10 +23,10 @@
  * how a retired `.dc-flow` renders); break cycles (DFS back edges, drawn dashed); rank by
  * longest path; route long edges through invisible waypoints so they pass BETWEEN nodes;
  * order each rank by barycenter to cut crossings; measure every node at its natural size;
- * lay ranks top-down (or a chain left-to-right when it measurably fits the pane); draw
- * every edge as one smooth SVG path with an arrowhead; then PLACE each label on clear
- * ground. It re-lays on width change, so one block is right at 380px and in the fullscreen
- * deck.
+ * lay ranks top-down (or a chain left-to-right when it measurably fits the pane); STRAIGHTEN
+ * each rank so a node hangs under the parents it belongs to; ROUTE every edge as straight
+ * legs that turn only in the gap between two ranks; then PLACE each label on clear ground.
+ * It re-lays on width change, so one block is right at 380px and in the fullscreen deck.
  *
  * AND IT IS A VIEW, NOT A PICTURE (owner, 2026-09-13, with a screenshot of a 10-node ladder:
  * "bu görünüm interaktif değil yaklaştırılamıyor merkezde değil … tıklanamıyor iç içe
@@ -152,7 +152,7 @@
     var ranks = [];
     for (var i = 0; i <= maxR; i++) ranks.push([]);
     var items = nodes.map(function (n, k) {
-      var it = { node: k, w: sizes[k].w, h: sizes[k].h, up: [], down: [] };
+      var it = { node: k, w: sizes[k].w, h: sizes[k].h, up: [], down: [], rank: r[k] };
       ranks[r[k]].push(it);
       return it;
     });
@@ -161,7 +161,7 @@
       var a = e.back ? e.to : e.from, b = e.back ? e.from : e.to;
       var path = [items[a]];
       for (var k = r[a] + 1; k < r[b]; k++) {
-        var d = { node: null, w: WAY, h: 0, up: [], down: [] };
+        var d = { node: null, w: WAY, h: 0, up: [], down: [], rank: k };
         ranks[k].push(d);
         path.push(d);
       }
@@ -241,6 +241,10 @@
     var gapAlong = horizontal ? (labelled ? COLL : COL) : (labelled ? ROWL : ROW);
     lines.forEach(function (rankLines, k) {
       if (k) along += gapAlong;
+      // Where this rank STARTS and ENDS on the along axis. The orthogonal router turns its
+      // corners in the gap BETWEEN two ranks, and that gap is exactly a1 of one and a0 of
+      // the next — geometry the drawing would otherwise have to guess at.
+      ranks[k].a0 = along;
       rankLines.forEach(function (ln, li) {
         if (li) along += gap;
         // One line sits centred. A rank that had to split STAGGERS its lines — first left,
@@ -255,20 +259,219 @@
         });
         along += ln.thick;
       });
+      ranks[k].a1 = along;
     });
     return { w: horizontal ? along : crossMax, h: horizontal ? crossMax : along };
   }
 
-  function seg(p, q, horizontal) {
-    if (horizontal) {
-      var dx = (q.x - p.x) / 2;
-      return ' C ' + (p.x + dx) + ' ' + p.y + ', ' + (q.x - dx) + ' ' + q.y + ', ' + q.x + ' ' + q.y;
+  // ── AN EDGE IS A ROUTE, NOT A SWOOP ───────────────────────────────────────────────────
+  //
+  // Owner, 2026-09-14, on a drawing that had just been made bigger: "ne değişti … hala iyi
+  // değil". Size was not the complaint under the complaint. Every edge was ONE bezier drawn
+  // corner to corner, so three edges converging on the same node arrived as three parallel
+  // noodles sweeping across the middle of the picture, crossing labels that belonged to paths
+  // they had nothing to do with — and a chain of single nodes drifted sideways because each
+  // rank centred itself independently.
+  //
+  // A flow chart routes. An edge leaves its node's edge, runs straight along the rank axis,
+  // turns ONCE in the GAP between two ranks, and runs straight into its target. The turn can
+  // only happen in that gap, which is empty by construction, so a horizontal run can never
+  // cross a box. Runs that would overlap in the same gap are pulled onto their own track;
+  // several edges leaving or entering one node fan out across its border instead of stacking
+  // on its centre point; and `straighten` pulls each node onto the average of its neighbours,
+  // so a chain comes out as one straight line instead of a staircase.
+
+  /**
+   * STRAIGHTEN — a chain should come out as one straight line.
+   *
+   * `place` packs each rank and centres it, which is why a ladder drifted sideways: a rank
+   * carrying a node PLUS a routed edge's waypoint is wider than a rank carrying the node
+   * alone, so the node itself never landed under the one above it. This pulls every item
+   * toward the average of the neighbours it is actually connected to, sweeping down and then
+   * up, keeping the order the barycentre pass decided and never letting two items come
+   * closer than `gap`. A rank that ends up wider than the pane is given back to the packed
+   * coordinates rather than overflowing.
+   */
+  function straighten(ranks, hz, gap, limit) {
+    var keep = [];
+    ranks.forEach(function (rk) { rk.forEach(function (it) { keep.push([it, it.x, it.y]); }); });
+    var set = function (it, c) { if (hz) it.y = c; else it.x = c; };
+    // Down, up, down, up, DOWN: the last word belongs to the downward sweep, which aligns a
+    // node with the parents it hangs from. End on the upward one instead and every node drifts
+    // toward the average of its CHILDREN, which is exactly the staircase this is here to kill.
+    var passes = [1, -1, 1, -1, 1];
+    for (var p = 0; p < passes.length; p++) {
+      var dir = passes[p];
+      var k = dir > 0 ? 1 : ranks.length - 2;
+      for (; k >= 0 && k < ranks.length; k += dir) {
+        var rk = ranks[k];
+        var want = rk.map(function (it) {
+          var nb = dir > 0 ? it.up : it.down;
+          if (!nb.length) return CMID(it, hz);
+          // The MEDIAN, not the mean: one node with three children should sit under the middle
+          // one, not be dragged off by the outermost. A single parent means straight under it.
+          var cs = nb.map(function (o) { return CMID(o, hz); }).sort(function (a, b) { return a - b; });
+          var m = cs.length / 2;
+          return cs.length % 2 ? cs[(cs.length - 1) / 2] : (cs[m - 1] + cs[m]) / 2;
+        });
+        // BY PRIORITY, not left to right. A rank holds real nodes AND the invisible waypoints
+        // a long edge is routed through, and when the two want the same column somebody has to
+        // give way. Settle the NODES first, each under the parents it hangs from; the waypoint
+        // columns then take what is left and the long edge bends around the box instead of
+        // the box being shoved out from under its own parent — which is what bent a straight
+        // chain into a staircase.
+        var by = rk.map(function (_, i) { return i; });
+        by.sort(function (a, b) {
+          return (rk[b].node === null ? 1 : 2) - (rk[a].node === null ? 1 : 2);
+        });
+        var fixed = [];
+        by.forEach(function (i) {
+          var lo = -Infinity, hi = Infinity, j, need;
+          need = 0;
+          for (j = i - 1; j >= 0; j--) {
+            if (fixed[j]) { lo = C0(rk[j], hz) + CS(rk[j], hz) + gap + need; break; }
+            need += CS(rk[j], hz) + gap;
+          }
+          need = 0;
+          for (j = i + 1; j < rk.length; j++) {
+            if (fixed[j]) { hi = C0(rk[j], hz) - gap - need - CS(rk[i], hz); break; }
+            need += CS(rk[j], hz) + gap;
+          }
+          var c = want[i] - CS(rk[i], hz) / 2;
+          if (hi < lo) hi = lo;
+          set(rk[i], Math.max(lo, Math.min(hi, c)));
+          fixed[i] = 1;
+        });
+      }
     }
-    var dy = (q.y - p.y) / 2;
-    return ' C ' + p.x + ' ' + (p.y + dy) + ', ' + q.x + ' ' + (q.y - dy) + ', ' + q.x + ' ' + q.y;
+    var min = Infinity, max = -Infinity;
+    ranks.forEach(function (rk) {
+      rk.forEach(function (it) {
+        if (C0(it, hz) < min) min = C0(it, hz);
+        if (C0(it, hz) + CS(it, hz) > max) max = C0(it, hz) + CS(it, hz);
+      });
+    });
+    if (max - min > limit) {
+      keep.forEach(function (row) { row[0].x = row[1]; row[0].y = row[2]; });
+      return null;
+    }
+    ranks.forEach(function (rk) { rk.forEach(function (it) { set(it, C0(it, hz) - min); }); });
+    return max - min;
   }
 
-  function draw(stage, edges, horizontal, size, gid) {
+  /** along = the axis ranks advance on (y top-down); cross = the axis that runs through one. */
+  function A0(it, hz) { return hz ? it.x : it.y; }
+  function A1(it, hz) { return hz ? it.x + it.w : it.y + it.h; }
+  function C0(it, hz) { return hz ? it.y : it.x; }
+  function CS(it, hz) { return hz ? it.h : it.w; }
+  function CMID(it, hz) { return C0(it, hz) + CS(it, hz) / 2; }
+  function pt(a, c, hz) { return hz ? { x: a, y: c } : { x: c, y: a }; }
+
+  /** Where an edge meets a node's border: n edges share the border instead of one point. */
+  function slots(edges, hz) {
+    edges.forEach(function (e) {
+      var s = e.path[0], t = e.path[e.path.length - 1];
+      (s.eout = s.eout || []).push(e);
+      (t.ein = t.ein || []).push(e);
+    });
+    var near = function (e, side) {
+      var it = side ? e.path[1] : e.path[e.path.length - 2];
+      return CMID(it, hz);
+    };
+    var share = function (list, it, side) {
+      // Sorted by where the edge is HEADING, so the leftmost target leaves from the leftmost
+      // slot and two edges out of one node can never cross each other on the way out.
+      list.sort(function (a, b) { return near(a, side) - near(b, side); });
+      var n = list.length;
+      list.forEach(function (e, i) {
+        var c = C0(it, hz) + CS(it, hz) * (n === 1 ? 0.5 : (i + 1) / (n + 1));
+        if (side) e.slotStart = c; else e.slotEnd = c;
+      });
+    };
+    edges.forEach(function (e) {
+      var s = e.path[0], t = e.path[e.path.length - 1];
+      if (s.eout && !s.slotted) { share(s.eout, s, 1); s.slotted = 1; }
+      if (t.ein && !t.entered) { share(t.ein, t, 0); t.entered = 1; }
+    });
+  }
+
+  /** The along coordinate each edge TURNS at, per gap. Overlapping runs get their own track. */
+  function lanes(edges, ranks, hz, labelled) {
+    var gaps = {};
+    edges.forEach(function (e) {
+      e.lanes = [];
+      for (var i = 0; i < e.path.length - 1; i++) {
+        var k = e.path[i].rank;
+        (gaps[k] = gaps[k] || []).push({ e: e, i: i });
+      }
+    });
+    Object.keys(gaps).forEach(function (key) {
+      var k = +key;
+      var top = ranks[k].a1;
+      var bottom = ranks[k + 1] ? ranks[k + 1].a0 : top + (labelled ? ROWL : ROW);
+      var base = (top + bottom) / 2;
+      var runs = gaps[key];
+      runs.forEach(function (r) {
+        var e = r.e, i = r.i;
+        var a = i === 0 ? e.slotStart : CMID(e.path[i], hz);
+        var b = i === e.path.length - 2 ? e.slotEnd : CMID(e.path[i + 1], hz);
+        r.lo = Math.min(a, b); r.hi = Math.max(a, b);
+      });
+      runs.sort(function (x, y) { return x.lo - y.lo; });
+      var tracks = [];
+      runs.forEach(function (r) {
+        var t = 0;
+        while (t < tracks.length && tracks[t] > r.lo + 1) t++;
+        tracks[t] = r.hi;
+        r.track = t;
+      });
+      var n = tracks.length;
+      var step = Math.min(14, (bottom - top) / (n + 1));
+      runs.forEach(function (r) { r.e.lanes[r.i] = base + (r.track - (n - 1) / 2) * step; });
+    });
+  }
+
+  /** The route itself: out of the border, down the rank, one turn per gap, into the target. */
+  function polyline(e, hz) {
+    var path = e.path;
+    var last = path[path.length - 1];
+    var out = [pt(A1(path[0], hz), e.slotStart, hz)];
+    for (var i = 0; i < path.length - 1; i++) {
+      var lane = e.lanes[i];
+      var cHere = i === 0 ? e.slotStart : CMID(path[i], hz);
+      var cNext = i === path.length - 2 ? e.slotEnd : CMID(path[i + 1], hz);
+      out.push(pt(lane, cHere, hz));
+      out.push(pt(lane, cNext, hz));
+    }
+    out.push(pt(A0(last, hz), e.slotEnd, hz));
+    return out;
+  }
+
+  /** The polyline as a path, rounded at every corner. Zero-length legs are dropped first. */
+  function ortho(pts, r) {
+    var p = [];
+    pts.forEach(function (q) {
+      var l = p[p.length - 1];
+      if (!l || Math.abs(l.x - q.x) > 0.5 || Math.abs(l.y - q.y) > 0.5) p.push(q);
+    });
+    if (p.length < 2) p = [pts[0], pts[pts.length - 1]];
+    var d = 'M ' + p[0].x + ' ' + p[0].y;
+    for (var i = 1; i < p.length - 1; i++) {
+      var a = p[i - 1], b = p[i], c = p[i + 1];
+      var rr = Math.min(r,
+        (Math.abs(b.x - a.x) + Math.abs(b.y - a.y)) / 2,
+        (Math.abs(c.x - b.x) + Math.abs(c.y - b.y)) / 2);
+      var ax = b.x + (a.x === b.x ? 0 : (a.x > b.x ? rr : -rr));
+      var ay = b.y + (a.y === b.y ? 0 : (a.y > b.y ? rr : -rr));
+      var cx = b.x + (c.x === b.x ? 0 : (c.x > b.x ? rr : -rr));
+      var cy = b.y + (c.y === b.y ? 0 : (c.y > b.y ? rr : -rr));
+      d += ' L ' + ax + ' ' + ay + ' Q ' + b.x + ' ' + b.y + ', ' + cx + ' ' + cy;
+    }
+    d += ' L ' + p[p.length - 1].x + ' ' + p[p.length - 1].y;
+    return d;
+  }
+
+  function draw(stage, edges, ranks, horizontal, size, gid, labelled) {
     var NS = 'http://www.w3.org/2000/svg';
     var svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('class', 'dc-graph-svg');
@@ -291,20 +494,14 @@
       defs.appendChild(m);
     });
     svg.appendChild(defs);
+    slots(edges, horizontal);
+    lanes(edges, ranks, horizontal, labelled);
     edges.forEach(function (e) {
-      var pts = e.path.map(function (it, i) {
-        // Real endpoints leave from an edge of the box; waypoints are their own centre. A back
-        // edge leaves and enters a third of the way across so it never sits on the forward one.
-        var first = i === 0;
-        var shift = e.back ? 0.3 : 0;
-        if (horizontal) {
-          return { x: first ? it.x + it.w : it.x, y: it.y + it.h * (0.5 + shift) };
-        }
-        return { x: it.x + it.w * (0.5 + shift), y: first ? it.y + it.h : it.y };
-      });
+      // A back edge is routed as its forward twin and DRAWN reversed, so its head lands under
+      // the node it returns to rather than on top of the one it left.
+      var pts = polyline(e, horizontal);
       if (e.back) pts.reverse();
-      var d = 'M ' + pts[0].x + ' ' + pts[0].y;
-      for (var i = 1; i < pts.length; i++) d += seg(pts[i - 1], pts[i], horizontal);
+      var d = ortho(pts, 10);
       var tone = '';
       e.cls.forEach(function (c) { var m = /^dc-edge--(accent|good|bad|warn)$/.exec(c); if (m) tone = m[1]; });
       var p = document.createElementNS(NS, 'path');
@@ -318,6 +515,7 @@
       e.mid = pts.length === 2
         ? { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 }
         : pts[Math.floor(pts.length / 2)];
+      e.pts = pts;
     });
     stage.insertBefore(svg, stage.firstChild);
   }
@@ -707,18 +905,28 @@
     var labelled = data.edges.some(function (e) { return !!e.label; });
     var size = horizontal ? place(ranks, true, Infinity, labelled, false, GAP) : null;
     if (horizontal && size.w > W) { horizontal = false; size = null; }
+    var gap = GAP;
     if (!horizontal) {
       // Natural size first; a rank too wide for the pane shrinks every label a step; a rank
       // still too wide splits into staggered lines. Never a horizontal scroll, never a clip.
       size = place(ranks, false, W, labelled, false, GAP);
       if (!size) {
         g.classList.add(TIGHT);
+        gap = 16;
         sizes = measure(data.nodes);
         ranks = build(data.nodes, data.edges, r, sizes);
         order(ranks);
-        size = place(ranks, false, W, labelled, false, 16) || place(ranks, false, W, labelled, true, 16);
+        size = place(ranks, false, W, labelled, false, gap) || place(ranks, false, W, labelled, true, gap);
       }
     }
+    // Packing decided the ORDER; this decides where inside the rank each item actually sits,
+    // which is what turns a drifting staircase back into a straight line. Its licence to
+    // WIDEN the drawing is small on purpose: the pane's width is what the resting scale
+    // spends on making the type bigger, so a layout that eats it to align one column has
+    // made the diagram smaller, not clearer.
+    var room = Math.min(horizontal ? Infinity : W, (horizontal ? size.h : size.w) * 1.25 + 24);
+    var straight = straighten(ranks, horizontal, gap, room);
+    if (straight !== null) { if (horizontal) size.h = straight; else size.w = straight; }
     var gid = 'dcg' + (++seq);
     g.classList.add(LAID);
     // The drawing lives on a STAGE: one element to centre, pan and scale, so no node ever
@@ -741,17 +949,26 @@
     });
     g.dcStage = stage;
     g.appendChild(stage);
-    draw(stage, data.edges, horizontal, { w: size.w, h: size.h }, gid);
+    draw(stage, data.edges, ranks, horizontal, { w: size.w, h: size.h }, gid, labelled);
     var labelBoxes = labels(stage, data.edges, boxes);
-    // What the block is tall enough for and what the view centres: the nodes AND whatever
-    // a label had to step outside them to stay legible.
-    var box = { x: 0, y: 0, r: size.w, b: size.h };
-    labelBoxes.forEach(function (l) {
-      if (l.x < box.x) box.x = l.x;
-      if (l.y < box.y) box.y = l.y;
-      if (l.x + l.w > box.r) box.r = l.x + l.w;
-      if (l.y + l.h > box.b) box.b = l.y + l.h;
+    // What the block is tall enough for and what the view centres: the INK — the node boxes,
+    // the drawn routes and whatever a label had to step outside them to stay legible. NOT the
+    // laid size: that includes the invisible waypoint columns a long edge is routed through,
+    // and a column of nothing on one side pushed the whole drawing off centre.
+    var box = null;
+    var span = function (x, y, w, h) {
+      if (!box) { box = { x: x, y: y, r: x + w, b: y + h }; return; }
+      if (x < box.x) box.x = x;
+      if (y < box.y) box.y = y;
+      if (x + w > box.r) box.r = x + w;
+      if (y + h > box.b) box.b = y + h;
+    };
+    boxes.forEach(function (b) { if (b) span(b.x, b.y, b.w, b.h); });
+    data.edges.forEach(function (e) {
+      (e.pts || []).forEach(function (p) { span(p.x, p.y, 0, 0); });
     });
+    labelBoxes.forEach(function (l) { span(l.x, l.y, l.w, l.h); });
+    if (!box) box = { x: 0, y: 0, r: size.w, b: size.h };
     g.dcBox = { x: box.x, y: box.y, w: box.r - box.x, h: box.b - box.y };
     g.dcMap = { nodes: data.nodes, edges: data.edges };
     g.dcFocus = null;

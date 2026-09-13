@@ -831,6 +831,22 @@ body{background:#131318;margin:0;padding:20px;}`;
     };
     const chrome = g.querySelector('.dc-graph-zoom');
     const paths = Array.from(g.querySelectorAll('path.dc-edge-path'));
+    // An edge is a ROUTE: straight legs, one turn per gap, rounded corners (M/L/Q only). A
+    // bezier `C`, or a leg that is neither horizontal nor vertical, is the old swoop back.
+    let swoops = 0, skew = 0;
+    for (const p of paths) {
+      const d = p.getAttribute('d') || '';
+      if (/C/.test(d)) swoops++;
+      let px = null, py = null;
+      for (const t of d.trim().split(/(?=[MLQ])/)) {
+        const n = t.slice(1).trim().replace(/,/g, ' ').split(/\s+/).filter(Boolean).map(Number);
+        if (t[0] === 'M') { px = n[0]; py = n[1]; }
+        else if (t[0] === 'L') {
+          if (px !== null && Math.abs(n[0] - px) > 0.6 && Math.abs(n[1] - py) > 0.6) skew++;
+          px = n[0]; py = n[1];
+        } else if (t[0] === 'Q') { px = n[2]; py = n[3]; }
+      }
+    }
     const endpoints = paths.map((p) => {
       const d = p.getAttribute('d');
       const m = /^M\s+(-?[\d.]+)\s+(-?[\d.]+)/.exec(d);
@@ -877,6 +893,10 @@ body{background:#131318;margin:0;padding:20px;}`;
       backs: endpoints.filter((e) => e.back).length,
       inside: rects.every((r) => r.left >= gr.left - 0.5 && r.right <= gr.right + 0.5),
       scale: Math.round(sc * 100) / 100,
+      swoops,
+      skew,
+      // Where each node's centre landed, by id — a chain that hangs straight shares one.
+      cx: Object.fromEntries(nodes.map((n, i) => [n.id, Math.round(rects[i].left + rects[i].width / 2)])),
       // How big the type actually lands, on screen, after the resting scale.
       nodePx: Math.round(rects[0].height),
       blockH: Math.round(gr.height),
@@ -932,8 +952,8 @@ body{background:#131318;margin:0;padding:20px;}`;
     ok('…and the block is given the height the drawing grew into — nothing is clipped',
       Math.abs(ladder[1200].blockH - ladder[1200].inkH) <= 4 && ladder[1200].inside,
       `block ${ladder[1200].blockH}px vs ink ${ladder[1200].inkH}px, inside=${ladder[1200].inside}`);
-    ok('a narrow pane is left exactly as it was — height never SHRINKS a drawing that fits',
-      ladder[380].scale === 1, `scale ${ladder[380].scale} @380`);
+    ok('a narrow pane is never SHRUNK — the height budget only ever limits GROWTH',
+      ladder[380].scale >= 1 && ladder[380].scale <= 1.05, `scale ${ladder[380].scale} @380`);
 
     // ── chains: one row when it fits, one node a row when it does not — nothing between ──
     for (const [n, w] of [[6, 640], [6, 1400], [3, 380], [3, 640], [5, 620], [5, 960]]) {
@@ -956,8 +976,10 @@ body{background:#131318;margin:0;padding:20px;}`;
       `${L.visibleArrowSpans} spans visible, ${L.paths} paths, ${L.nodes} nodes`);
 
     // ── the owner's own 2026-09-13 ladder: the even-length back edge ──────────────────
+    const nudge = {};
     for (const w of [1050, 900, 620, 380]) {
       const m = await render(w, NUDGE);
+      nudge[w] = m;
       ok(`nudge ladder @${w}: 9 labels, none on a node, none on another label`,
         m.labels === 9 && m.labelOnNode === 0 && m.labelOnLabel === 0,
         `${m.labels} labels, ${m.labelOnNode} on a node, ${m.labelOnLabel} on a label`);
@@ -967,6 +989,20 @@ body{background:#131318;margin:0;padding:20px;}`;
       ok(`nudge ladder @${w}: 12 anchored arrows, every one with a head`,
         m.paths === 12 && m.unanchored === 0 && m.headless === 0,
         `${m.paths} paths, ${m.unanchored} floating, ${m.headless} headless`);
+      // AN EDGE IS A ROUTE, NOT A SWOOP (owner, 2026-09-14: "hala iyi değil"). Every edge was
+      // one bezier corner to corner, so edges converging on a node arrived as parallel noodles
+      // across the middle of the picture. A route turns only in the gap between two ranks.
+      ok(`nudge ladder @${w}: every edge is ROUTED — axis-aligned legs, no bezier swoop`,
+        m.swoops === 0 && m.skew === 0, `${m.swoops} curved, ${m.skew} skewed leg(s)`);
+    }
+    // …and the spine of that ladder hangs straight. Packing centred each rank on its own, so
+    // a rank carrying a node PLUS a routed edge's waypoint pushed the node out from under its
+    // parent and the chain came out as a staircase.
+    {
+      const spine = ['w', 'q1', 'q2', 'q3', 'nudge', 'dec'].map((id) => nudge[900].cx[id]);
+      const drift = Math.max(...spine) - Math.min(...spine);
+      ok('the chain hangs STRAIGHT under its parent instead of drifting into a staircase',
+        drift <= 2, `${drift}px of drift across six spine nodes`);
     }
 
     // ── the view: it zooms, it pans, it traces — driven with a real pointer ───────────

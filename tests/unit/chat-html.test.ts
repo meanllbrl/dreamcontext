@@ -278,9 +278,20 @@ describe('the kit tab script', () => {
     // The whole safety story of this surface in one assertion. The tab script only ever
     // rearranges markup the agent already wrote — it has strictly LESS reach than the
     // height bridge, which at least posts a number out.
-    expect(KIT_BEHAVIOUR).not.toContain('postMessage');
-    expect(KIT_BEHAVIOUR).not.toMatch(/fetch\(|XMLHttpRequest|WebSocket|new Image/);
-    expect(KIT_BEHAVIOUR).not.toMatch(/\bparent\b|\btop\b\.|document\.cookie|localStorage/);
+    //
+    // Asserted against the CODE, comments stripped: these scripts explain themselves at
+    // length, and a sentence about the node a box hangs from is not a reference to
+    // `window.parent`. Stripping costs the guard nothing — a real `parent.postMessage`
+    // survives it — and keeps the prose from having to dodge its own vocabulary.
+    const code = KIT_BEHAVIOUR
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|\n)[ \t]*\/\/.*/g, '$1');
+    expect(code).not.toContain('postMessage');
+    expect(code).not.toMatch(/fetch\(|XMLHttpRequest|WebSocket|new Image/);
+    expect(code).not.toMatch(/\bparent\b|\btop\b\.|document\.cookie|localStorage/);
+    // The stripper must not have eaten the script itself.
+    expect(code).toContain("classList.toggle('dc-panel--on'");
+    expect(code).toContain("stage.className = 'dc-graph-stage'");
   });
 
   it('leaves the radio form to the CSS, so scripting-off behaves identically', () => {
