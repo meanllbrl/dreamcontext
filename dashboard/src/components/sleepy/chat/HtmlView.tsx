@@ -9,6 +9,7 @@ import { DownloadNote } from '../../layout/DownloadNote';
 import { deliverDownload, deliveredNote, type ExportNote } from '../../../lib/exportDownload';
 import {
   buildChatSrcdoc, resolveChatKitTokens, readHeightMessage, readSnapshotMessage, htmlOutline,
+  readPressMessage, readChordMessage,
   CHAT_HTML_SANDBOX, CHAT_HTML_ALLOW, HTML_PENDING_HEIGHT, HEIGHT_REQUEST_KEY, SNAPSHOT_REQUEST_KEY,
   type HtmlSnapshot,
 } from './chatHtmlKit';
@@ -176,6 +177,63 @@ function HtmlFrame({ html, overrideCss, mode, title, reading, frameRefOut }: {
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [mode, html]);
+
+  /**
+   * ── The reach bridge's HOST half: a press and a chord become real events ─────────────
+   *
+   * Nothing the app does with a pointer or a keyboard crosses an iframe border on its own.
+   * Measured, not assumed: a click inside the frame fires no `mousedown` and no `focusin`
+   * out here (`document.activeElement` does become the iframe — silently, with no event),
+   * and every keystroke after it is delivered to the frame's document and nowhere else. So
+   * the pane holding a block the reader clicked never became the action-focused one, and
+   * ⌘D/⌘⇧D/⌘T/⌘W/⌘K/⌃C/Esc were all dead for as long as that block held focus.
+   *
+   * The frame reports both facts (`REACH_BRIDGE`); this replays them as REAL DOM events on
+   * the iframe element, which is genuinely where they happened. That is the whole design:
+   * we add no listener, no special case and no new contract anywhere else in the app — the
+   * events travel the same path a click on any other element in the pane travels, so pane
+   * focus, the session chords, the command palette and the fullscreen Esc all see the block
+   * as one more element. A chord is replayed as an EVENT and never as an action, which is
+   * also the bound on what the frame can reach: exactly what a user pressing those keys
+   * here could already reach, and nothing else.
+   *
+   * The press is split down/up rather than collapsed into one signal because the pane-focus
+   * contract is written in those two halves — the press ARMS the switch and the release
+   * commits it one macrotask later (`AgentSurface`'s `armPane`), so a pane that widens never
+   * slides the pressed element out from under the cursor.
+   */
+  useEffect(() => {
+    function onMessage(event: MessageEvent) {
+      // Identity, never origin — the same gate the height leg uses, spelled the same way:
+      // a frame with no same-origin grant reports the literal string "null" as its origin,
+      // which every other sandboxed frame on the page reports too.
+      if (!frameRef.current || event.source !== frameRef.current.contentWindow) return;
+      const frame = frameRef.current;
+      const press = readPressMessage(event.data);
+      if (press) {
+        frame.dispatchEvent(new MouseEvent(press === 'down' ? 'mousedown' : 'mouseup', {
+          bubbles: true, cancelable: true, view: window,
+        }));
+        return;
+      }
+      const chord = readChordMessage(event.data);
+      // `preventDefault` already happened inside the frame — a synthetic event out here
+      // cannot cancel a default belonging to another document, so the frame owns that half.
+      if (chord) {
+        frame.dispatchEvent(new KeyboardEvent(chord.type, {
+          key: chord.key,
+          code: chord.code,
+          metaKey: chord.metaKey,
+          ctrlKey: chord.ctrlKey,
+          shiftKey: chord.shiftKey,
+          altKey: chord.altKey,
+          bubbles: true, cancelable: true, view: window,
+        }));
+      }
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
 
   /** "Tell me again" — answered forcibly, past the bridge's own dedupe. */
   const askForHeight = useCallback(() => {

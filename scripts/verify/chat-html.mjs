@@ -26,6 +26,10 @@
  *   8. A LOST REPORT IS RECOVERABLE. With the frame's first height message deliberately
  *      eaten before any app listener sees it, the block still reaches its real height —
  *      the host asks again rather than living with the 40px floor forever.
+ *   9. THE BLOCK IS NOT A DEAD ZONE. A real click on prose inside the frame makes that pane
+ *      the action-focused one, and ⌘D/⌘⇧D struck with the block focused split the pane —
+ *      while the top document hears NO native chord, which is what makes the pass about the
+ *      bridge rather than about Chromium.
  *
  * Same harness contract as scripts/verify/dream-actions.mjs: the real server, the real
  * `/ws/agent-chat`, a scripted stand-in for `claude` in an isolated fake HOME so no tokens
@@ -586,6 +590,111 @@ async function runLostReport(base, report) {
     Math.abs(h - body) < 12, `frame ${Math.round(h)} vs body ${Math.round(body)}`);
 
   await page.screenshot({ path: join(SHOTS, 'chat-html-lost-report.png'), fullPage: false });
+  await browser.close();
+}
+
+/**
+ * THE BLOCK IS NOT A DEAD ZONE — a press and an app chord cross the frame border.
+ *
+ * THE BUG (owner report 2026-09-13): "clicking a dream-html block doesn't even register as a
+ * click so it takes focus; I press ⌘D, ⌘⇧D, it detects none of them." Nothing in the app was
+ * broken — the frame border was simply opaque to input. A click inside an `allow-scripts`
+ * iframe fires NO `mousedown` and NO `focusin` in the parent (only `document.activeElement`
+ * silently becomes the iframe), and every keystroke after it is delivered to the frame's
+ * document and nowhere else. So the pane holding the block never became the action-focused
+ * one, and ⌘D/⌘⇧D/⌘T/⌘W/⌘K/⌃C were dead for as long as that block held focus.
+ *
+ * WHAT IS PROVEN HERE, in the real app: a real mouse click on PROSE inside the block (not a
+ * control — nothing in the fixture's own markup is doing this for us), then real keystrokes.
+ *
+ * THE CONTROL, and it is the whole reason this proves anything: the top document counts the
+ * chords it hears NATIVELY (`e.isTrusted`), from an init script that runs before any app
+ * listener. It must count ZERO while the split still happens — otherwise the pass would only
+ * be showing that Chromium delivered the key to the parent anyway, which is exactly the thing
+ * that does not happen and the reason the bridge exists. A plain `d` is the second control:
+ * it must reach no app chord at all, because a bridge that forwarded every keystroke would
+ * be taking the block's own text away from its author.
+ */
+async function runReach(base, report) {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
+  page.on('pageerror', (e) => report.note(`[page error] ${String(e).slice(0, 160)}`));
+  const ok = (label, cond, detail) => report.check('reach', label, cond, detail);
+
+  await page.addInitScript(() => {
+    // TOP FRAME ONLY — inside the sandboxed frame this would count the keystrokes the
+    // bridge is reading, which is the opposite of the control.
+    if (window.top !== window) return;
+    window.__dcNativeChords = 0;
+    window.addEventListener('keydown', (e) => {
+      if (e.isTrusted && (e.metaKey || e.ctrlKey)) window.__dcNativeChords += 1;
+    }, true);
+    // The press leg, observed DIRECTLY and with nothing downstream of it: does the app
+    // receive a press whose target is the block at all? Registered from an init script, so
+    // it counts what the app's own pane-focus listener is about to be handed.
+    window.__dcPress = { down: 0, up: 0 };
+    const onPress = (e) => {
+      if (!e.target?.matches?.('iframe.chat-htmlview-frame')) return;
+      window.__dcPress[e.type === 'mousedown' ? 'down' : 'up'] += 1;
+    };
+    window.addEventListener('mousedown', onPress, true);
+    window.addEventListener('mouseup', onPress, true);
+  });
+
+  console.log('\n═══ the block is not a dead zone ═══');
+  ok('a chat session opens', await openChatAndAsk(page, base));
+  ok('the dream-html block mounted an iframe',
+    await untilOn(page, async () => (await visOn(page, 'iframe.chat-htmlview-frame').count()) > 0, 30000));
+  await page.waitForTimeout(1500);
+
+  const panes = () => page.locator('.agent-pane-slot[data-pane]').count();
+  const native = () => page.evaluate(() => window.__dcNativeChords ?? 0);
+  const activeHoldsBlock = () => page.evaluate(() =>
+    !!document.querySelector('.agent-pane.active iframe.chat-htmlview-frame'));
+  const start = await panes();
+  ok('one pane to start with', start === 1, `${start} pane(s)`);
+
+  await page.frameLocator('iframe.chat-htmlview-frame').first().locator('.dc-h2').first().click();
+  await page.waitForTimeout(300);
+  const held = await page.evaluate(() => document.activeElement?.tagName ?? '');
+  ok('the click lands INSIDE the frame — the app itself is holding no focus',
+    held === 'IFRAME', `activeElement <${held.toLowerCase()}>`);
+  const press = await page.evaluate(() => window.__dcPress ?? { down: 0, up: 0 });
+  ok('…and the app is handed that press anyway, as a press on the block',
+    press.down > 0 && press.up > 0, `${press.down} down / ${press.up} up`);
+
+  await page.keyboard.press('d');
+  await page.waitForTimeout(600);
+  ok('a plain keystroke stays the block\'s — it reaches no app chord',
+    (await panes()) === start, `${await panes()} pane(s)`);
+
+  await page.keyboard.press('Meta+d');
+  const split = await untilOn(page, async () => (await panes()) > start, 10000);
+  ok('⌘D from inside the block splits the pane', split, `${await panes()} pane(s)`);
+  ok('…and it got there over the BRIDGE: the top document heard no native chord',
+    (await native()) === 0, `${await native()} native chord(s)`);
+
+  // The new split takes the focus, so the block's pane is now the background one — which is
+  // where the reported defect lived: a click there did nothing at all.
+  await page.waitForTimeout(1200);
+  const backgrounded = (await panes()) > 1 && !(await activeHoldsBlock());
+  await page.frameLocator('iframe.chat-htmlview-frame').first().locator('.dc-h2').first().click();
+  const took = await untilOn(page, activeHoldsBlock, 6000);
+  // `backgrounded` is part of the assertion, not a precondition to skip on: with no second
+  // pane, or with the block's pane already active, "it is active now" is vacuously true and
+  // would pass against code that hears nothing.
+  ok('a click in a BACKGROUND pane\'s block makes that pane the action-focused one',
+    backgrounded && took,
+    backgrounded ? `switched: ${took}` : 'no backgrounded block to click — nothing was proven');
+
+  const two = await panes();
+  await page.keyboard.press('Meta+Shift+d');
+  ok('⌘⇧D from inside the block splits a terminal',
+    await untilOn(page, async () => (await panes()) > two, 10000), `${await panes()} pane(s)`);
+  ok('…still nothing native: every chord in this run crossed the bridge',
+    (await native()) === 0, `${await native()} native chord(s)`);
+
+  await page.screenshot({ path: join(SHOTS, 'chat-html-reach.png'), fullPage: false });
   await browser.close();
 }
 
@@ -1585,6 +1694,8 @@ try {
   }
   rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
   await runLostReport(base, report);
+  rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
+  await runReach(base, report);
   await runGraph(report);
   rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
   await runTypography(base, report);

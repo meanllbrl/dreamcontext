@@ -227,6 +227,116 @@ export const HEIGHT_BRIDGE = `(function () {
 })();`;
 
 /**
+ * ── THE REACH BRIDGE: the block stops being a dead zone ──────────────────────────────
+ *
+ * The keys the frame posts a PRESS and an APP CHORD under. Namespaced like the height leg,
+ * for the same reason: an unrelated `postMessage` must never be readable as either one.
+ */
+export const PRESS_MESSAGE_KEY = '__dreamHtmlPress';
+export const CHORD_MESSAGE_KEY = '__dreamHtmlChord';
+
+/** A press inside the frame, in the two halves the pane-focus contract is written in:
+ *  the press ARMS the switch, the release COMMITS it (AgentSurface's `armPane`). */
+export type HtmlPress = 'down' | 'up';
+
+/** An app chord the reader pressed while the block had focus — the keystroke, not a command. */
+export interface HtmlChord {
+  type: 'keydown' | 'keyup';
+  key: string;
+  code: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+}
+
+/**
+ * Everything the app does with a pointer and a keyboard STOPS AT THE FRAME BORDER, and
+ * nothing in the sandbox, the CSP or the app's own code says so out loud — which is why the
+ * defect reads as the app being broken rather than as a boundary (owner report 2026-09-13:
+ * "clicking a dream-html block doesn't even register as a click, ⌘D and ⌘⇧D do nothing").
+ *
+ * Proven, not assumed: a click inside an `allow-scripts` frame fires NO `mousedown` and NO
+ * `focusin` in the parent — even though `document.activeElement` becomes the iframe — and
+ * every keystroke that follows is delivered to the frame's document and to nowhere else. So
+ * a reader whose last click landed in a block was holding a keyboard the app could not hear:
+ * ⌘D/⌘⇧D (split), ⌘T, ⌘W, ⌘K, ⌃C (stop the turn), Esc — all of them silently dead, and the
+ * pane the block sits in never became the action-focused one.
+ *
+ * This is the leg that carries those two facts back out. It reports THAT a press happened
+ * and WHICH chord was struck; the host replays each as a real DOM event on the iframe
+ * element (`HtmlView`), so every existing listener — pane focus, session chords, the command
+ * palette, the fullscreen Esc — sees the block as one more element of the app.
+ *
+ * THE HONEST BOUND (knowledge/patterns/sandboxed-app-bridge-pattern.md § 4). The height leg
+ * may carry the block's own content, never the app's; this leg carries LESS THAN THAT — no
+ * content at all, only "a press happened here" and "these modifiers plus this key". Its
+ * ceiling is therefore exactly what a user focused on this block could already do with the
+ * keyboard: the host replays a chord as an EVENT and never as an action, so a frame that
+ * lies about a keystroke reaches nothing a real keystroke would not have reached. And the
+ * markup here is written by the agent already driving this machine, which is the same trust
+ * principal the pattern's § 4 names.
+ *
+ * WHAT IT DELIBERATELY DOES NOT FORWARD, because those keys are the READER'S, inside the
+ * block they are aimed at:
+ *   • every plain keystroke — a character typed into an author's `<input>` is not a chord;
+ *   • ⌘A/⌘C/⌘V/⌘X/⌘Z — selecting and copying the block's own text;
+ *   • ⌃C while text is selected IN THE FRAME — the platform copy chord on Windows/Linux.
+ *     That is `chat/interruptKey.ts`'s rule applied where it can actually be evaluated: the
+ *     host's `window.getSelection()` cannot see inside an opaque-origin frame, so a chord
+ *     forwarded blind would eat the reader's copy AND kill their turn. With no selection ⌃C
+ *     IS forwarded, so the chat surface's "⌃C stops it" reflex works inside a block too.
+ *
+ * A bare modifier press/release is forwarded and never prevented: it can be no one's
+ * character, and the Agents surface's double-tap hotkey (⌘⌘/⌃⌃/…) is read from exactly
+ * those. Keyup rides along with keydown for the chords that need a release to complete —
+ * ⌘-held project cycling commits on the modifier coming back up.
+ *
+ * `preventDefault` happens HERE, in the frame, and only for a forwarded modifier chord: a
+ * synthetic event dispatched by the host cannot cancel a default that belongs to the frame's
+ * own document, so ⌘D would open the browser's bookmark dialog on its way to splitting the
+ * pane. Capture phase, so an author's own handler cannot swallow the chord first.
+ */
+export const REACH_BRIDGE = `(function () {
+  // The reader's own text chords, inside the block they are aimed at.
+  var EDIT = { a: 1, c: 1, v: 1, x: 1, z: 1 };
+  function selected() {
+    var s = window.getSelection();
+    return !!s && !s.isCollapsed;
+  }
+  /** True when this keystroke belongs to the BLOCK, so the app never hears it. */
+  function readers(e) {
+    var k = e.key || '';
+    var lower = k.toLowerCase();
+    if (lower === 'meta' || lower === 'control' || lower === 'alt' || lower === 'shift') return false;
+    if (k === 'Escape') return false;
+    if (!e.metaKey && !e.ctrlKey) return true;
+    if (e.metaKey && EDIT[lower]) return true;
+    if (e.ctrlKey && !e.metaKey && EDIT[lower] && selected()) return true;
+    return false;
+  }
+  function chord(e, type) {
+    if (readers(e)) return;
+    // Only a real modifier chord is cancelled — Escape and a bare modifier keep whatever the
+    // frame's document would have done with them (nothing).
+    if ((e.metaKey || e.ctrlKey) && e.key !== 'Escape') e.preventDefault();
+    parent.postMessage({ ${CHORD_MESSAGE_KEY}: {
+      type: type,
+      key: e.key,
+      code: e.code,
+      metaKey: !!e.metaKey,
+      ctrlKey: !!e.ctrlKey,
+      shiftKey: !!e.shiftKey,
+      altKey: !!e.altKey,
+    } }, '*');
+  }
+  document.addEventListener('pointerdown', function () { parent.postMessage({ ${PRESS_MESSAGE_KEY}: 'down' }, '*'); }, true);
+  document.addEventListener('pointerup', function () { parent.postMessage({ ${PRESS_MESSAGE_KEY}: 'up' }, '*'); }, true);
+  document.addEventListener('keydown', function (e) { chord(e, 'keydown'); }, true);
+  document.addEventListener('keyup', function (e) { chord(e, 'keyup'); }, true);
+})();`;
+
+/**
  * The kit's OWN behaviour, so an author does not have to write it: clicking a `.dc-tab`
  * opens the matching `.dc-panel`.
  *
@@ -326,7 +436,10 @@ export function buildChatSrcdoc(input: ChatSrcdocInput): string {
     // BOTH modes now. The bridge's height leg still only matters inline (the fullscreen
     // host owns the height, and its listener returns early), but its SNAPSHOT leg is what
     // the export bar talks to — and that bar lives in the fullscreen header.
+    // BOTH legs in both modes: the reach bridge is what lets a click land and ⌘D/Esc be
+    // heard, and a fullscreen deck needs Esc more than an inline card does.
     headScript: `${HEIGHT_BRIDGE}
+${REACH_BRIDGE}
 ${KIT_BEHAVIOUR}`,
   });
   // The mode rides on <html> so the kit's `html[data-dc-mode="full"]` slide rules can see
@@ -414,4 +527,48 @@ export function readHeightMessage(data: unknown): number | null {
   const raw = (data as Record<string, unknown>)[HEIGHT_MESSAGE_KEY];
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
   return Math.min(MAX_HTML_HEIGHT, Math.max(MIN_HTML_HEIGHT, Math.ceil(raw)));
+}
+
+/** A press off the wire, or null when the payload is not one of the two phases. */
+export function readPressMessage(data: unknown): HtmlPress | null {
+  if (!data || typeof data !== 'object') return null;
+  const raw = (data as Record<string, unknown>)[PRESS_MESSAGE_KEY];
+  return raw === 'down' || raw === 'up' ? raw : null;
+}
+
+/**
+ * A chord off the wire, or null when the payload is not one — validated to the shape the
+ * host is about to REPLAY as a real event, because a malformed one would otherwise become a
+ * malformed `KeyboardEvent` fired at every listener in the app.
+ *
+ * The reader's own text chords are refused a SECOND time here (the frame already withholds
+ * them): the frame decides what it forwards, and the host decides what it will replay, so
+ * neither side alone can turn ⌘C into an app command.
+ */
+const REPLAY_REFUSED = new Set(['a', 'c', 'v', 'x', 'z']);
+const CHORD_KEY_MAX = 32;
+
+export function readChordMessage(data: unknown): HtmlChord | null {
+  if (!data || typeof data !== 'object') return null;
+  const raw = (data as Record<string, unknown>)[CHORD_MESSAGE_KEY];
+  if (!raw || typeof raw !== 'object') return null;
+  const { type, key, code, metaKey, ctrlKey, shiftKey, altKey } = raw as Record<string, unknown>;
+  if (type !== 'keydown' && type !== 'keyup') return null;
+  if (typeof key !== 'string' || !key || key.length > CHORD_KEY_MAX) return null;
+  if (typeof code !== 'string' || code.length > CHORD_KEY_MAX) return null;
+  const chord: HtmlChord = {
+    type,
+    key,
+    code,
+    metaKey: metaKey === true,
+    ctrlKey: ctrlKey === true,
+    shiftKey: shiftKey === true,
+    altKey: altKey === true,
+  };
+  if (chord.metaKey && REPLAY_REFUSED.has(key.toLowerCase())) return null;
+  // A plain keystroke is never an app chord. Escape and a bare modifier are the two that
+  // legitimately arrive without one held — everything else must carry ⌘ or ⌃.
+  const bare = /^(Meta|Control|Alt|Shift)$/.test(key);
+  if (!chord.metaKey && !chord.ctrlKey && key !== 'Escape' && !bare) return null;
+  return chord;
 }

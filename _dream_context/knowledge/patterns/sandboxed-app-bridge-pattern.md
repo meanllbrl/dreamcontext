@@ -1,11 +1,11 @@
 ---
 id: sandboxed-app-bridge-pattern
 name: "Sandboxed App Bridge (host<->iframe postMessage under an opaque-origin sandbox)"
-description: "How to let untrusted-authored markup become a full two-way interactive surface — multi-page, host-served data, live theme — without relaxing the network-less sandbox that makes it safe to draw in the first place. The host<->iframe bridge, the identity gate, the self-navigation hole and its detect-and-cut mitigation, and the honest bound on what the bridge may carry."
+description: "How to let untrusted-authored markup become a full two-way interactive surface — multi-page, host-served data, live theme — without relaxing the network-less sandbox that makes it safe to draw in the first place. The host<->iframe bridge, the identity gate, the self-navigation hole and its detect-and-cut mitigation, the input dead zone (a click and a chord inside the frame reach the app over nothing else), and the honest bound on what the bridge may carry."
 tags: ["domain:security", "layer:frontend", "topic:lab", "topic:dashboard", "kind:pattern"]
 pinned: true
 date: "2026-08-26"
-updated: "2026-08-26"
+updated: "2026-09-13"
 ---
 
 ## Why This Exists
@@ -68,6 +68,20 @@ The rule: **a one-shot child->host report is only as reliable as the host's atta
 And the fourth, structural one: **the surface's own script belongs in the `<head>`, not appended after the body.** Below the body it is at the mercy of the markup it serves — one author writing `<\/script>` inside their own inline script never closes that element, and the parser turns everything after it, bridge included, into script text. A head script has already run before the body's first byte; `DOMContentLoaded` fires even when the parser had to close an unclosed element at EOF. That is why `SandboxSrcdocInput` has `headScript` and no `bodyScript`.
 
 **Testing this needs a deaf WINDOW, not a dropped message.** The first version of the runtime check ate the frame's first height report and passed against code with the retry ripped out — because the body legitimately resizes once as the pane settles (598px → 686px), so a second report recovered it for free. Eating every report for 2.5s reproduces the real defect exactly: frame 40px, body 686px. Mutation-checked both ways in `scripts/verify/chat-html.mjs` § 8.
+
+### 7. The frame is a DEAD ZONE for input until the bridge carries it out (2026-09-13)
+
+A sandboxed frame does not merely fail to *look* like part of the app — it fails to *behave* like an element of it, and nothing announces that. Measured in Chromium: a click inside an `allow-scripts` iframe fires **no `mousedown` and no `focusin` in the parent**, even though `document.activeElement` silently becomes the iframe, and every keystroke after it is delivered to the frame's document and to nowhere else. So for as long as a block held focus, Chat's ⌘D/⌘⇧D/⌘T/⌘W/⌘K/⌃C/Esc were all dead and the pane the block sat in never became the action-focused one. The user-visible report is not "the iframe is isolated" but "the app stopped responding" (owner, 2026-09-13).
+
+The fix is a second, smaller leg on the same bridge, and the shape generalizes:
+
+- **The frame reports the INPUT, the host replays it as a real DOM EVENT on the iframe element.** Not a command channel — `frame.dispatchEvent(new KeyboardEvent(...))`, `new MouseEvent(...)`, `bubbles: true`. Nothing else in the app learns that blocks exist: pane focus, the session chords, the command palette and the fullscreen Esc all see the frame as one more element, over the path they already use. That replay-as-event choice is also **the bound**: the frame's ceiling becomes exactly what a user pressing those keys with the block focused could already reach, so a frame that lies about a keystroke reaches nothing a real keystroke would not have.
+- **Forward chords, never characters.** A plain keystroke belongs to the block (an author's `<input>` is real), and so do ⌘A/⌘C/⌘V/⌘X/⌘Z. Escape and a bare modifier are the two app keys that legitimately arrive with nothing held. Refuse the reader's chords on BOTH sides — the frame withholds them and the host will not replay them — so neither half alone can turn a copy into an app command.
+- **A rule the host cannot evaluate must move INTO the frame.** Chat's ⌃C-stops-the-turn rule defers to a live selection, and `window.getSelection()` cannot see inside an opaque-origin frame. Forwarding blind would eat the reader's copy and kill their turn from one keypress; so the frame checks its own selection and decides. Whenever a policy depends on state only one side can observe, that side owns the decision.
+- **`preventDefault` belongs to the frame.** A synthetic event dispatched by the host cannot cancel a default owned by another document, so ⌘D would open the browser's bookmark dialog on its way to splitting the pane. Listen in capture there, too, so an author's own handler cannot swallow the chord first.
+- **Split the press into down/up** if the host's focus contract is written in those halves (here: the press arms the pane switch, the release commits it, so a widening pane never slides the pressed element out from under the cursor).
+
+**Verifying it needs a NATIVE-DELIVERY CONTROL, or the pass means nothing.** Driving ⌘D with a real keyboard and watching the pane split proves the bridge only if the browser did not deliver that chord to the parent anyway. `scripts/verify/chat-html.mjs` § 9 counts `e.isTrusted` chords in the top document from an init script: it must stay at ZERO while the split still happens. A plain `d` is the second control (it must reach no app chord at all), and every substantive check in that section was mutation-proved to fail with the bridge stripped from the srcdoc.
 
 ## When To Reach For This
 

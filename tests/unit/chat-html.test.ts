@@ -23,6 +23,7 @@ import {
   buildChatSrcdoc, readHeightMessage, htmlOutline, HEIGHT_BRIDGE, KIT_BEHAVIOUR, KIT_GRAPH, HEIGHT_MESSAGE_KEY, HEIGHT_REQUEST_KEY,
   CHAT_HTML_CSP, CHAT_HTML_SANDBOX, CHAT_HTML_ALLOW, CHAT_HTML_KIT_CSS, CHAT_KIT_TOKENS, CHAT_READING_TOKENS,
   SNAPSHOT_MESSAGE_KEY, SNAPSHOT_REQUEST_KEY,
+  REACH_BRIDGE, PRESS_MESSAGE_KEY, CHORD_MESSAGE_KEY, readPressMessage, readChordMessage,
 } from '../../dashboard/src/components/sleepy/chat/chatHtmlKit.js';
 import { SANDBOX_FONT_CSS } from '../../dashboard/src/lib/sandboxFont.js';
 import {
@@ -477,9 +478,10 @@ describe('the height bridge', () => {
 
   it('posts exactly two things, both namespaced, and both about ITSELF', () => {
     // The bridge's honest bound (knowledge/patterns/sandboxed-app-bridge-pattern.md): it
-    // may carry the block's own content, never the app's. Two legs now — the height, and
-    // the body snapshot the export bar reads — and this counts them so a third cannot be
-    // added without someone re-reading that sentence.
+    // may carry the block's own content, never the app's. Two legs — the height, and the
+    // body snapshot the export bar reads — and this counts them so a third cannot be added
+    // to THIS bridge without someone re-reading that sentence. (The reach bridge is a
+    // separate constant with a strictly smaller bound of its own; see its describe block.)
     expect(HEIGHT_MESSAGE_KEY).toBe('__dreamHtmlHeight');
     expect(SNAPSHOT_MESSAGE_KEY).toBe('__dreamHtmlSnapshot');
     expect(HEIGHT_BRIDGE.match(/postMessage/g)?.length).toBe(2);
@@ -1030,5 +1032,107 @@ describe('HTML_PENDING_HEIGHT', () => {
     // to a 40px sliver the moment the card mounts, then snaps open to its real height.
     expect(HTML_PENDING_HEIGHT).toBeGreaterThan(MIN_HTML_HEIGHT);
     expect(HTML_PENDING_HEIGHT).toBeLessThan(MAX_HTML_HEIGHT);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// The reach bridge — the block stops being a dead zone
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+describe('the reach bridge', () => {
+  const key = (over: Partial<Record<string, unknown>> = {}) => ({
+    [CHORD_MESSAGE_KEY]: {
+      type: 'keydown', key: 'd', code: 'KeyD',
+      metaKey: true, ctrlKey: false, shiftKey: false, altKey: false, ...over,
+    },
+  });
+
+  it('rides in the srcdoc in BOTH modes — a deck needs Esc more than a card does', () => {
+    for (const mode of ['card', 'full'] as const) {
+      const doc = buildChatSrcdoc({ html: '<p>x</p>', tokens: {}, mode });
+      expect(doc).toContain(PRESS_MESSAGE_KEY);
+      expect(doc).toContain(CHORD_MESSAGE_KEY);
+    }
+  });
+
+  it('carries no content — only THAT a press happened and WHICH chord was struck', () => {
+    // Its bound is strictly smaller than the height bridge's: that one may carry the block's
+    // own body, this one carries no body at all. What would break it is reading the DOM.
+    expect(REACH_BRIDGE).not.toMatch(/innerHTML|innerText|textContent|document\.body/);
+    expect(REACH_BRIDGE).not.toMatch(/fetch\(|XMLHttpRequest|WebSocket|new Image/);
+    expect(REACH_BRIDGE).not.toMatch(/document\.cookie|localStorage|sessionStorage|indexedDB/);
+    expect(REACH_BRIDGE).not.toMatch(/parent\.(?!postMessage)/);
+    const posted = [...REACH_BRIDGE.matchAll(/postMessage\(\{\s*(__\w+)/g)].map((m) => m[1]);
+    expect(new Set(posted)).toEqual(new Set([PRESS_MESSAGE_KEY, CHORD_MESSAGE_KEY]));
+  });
+
+  it('listens in CAPTURE, so an author\'s own handler cannot swallow the chord', () => {
+    for (const type of ['pointerdown', 'pointerup', 'keydown', 'keyup']) {
+      expect(REACH_BRIDGE).toMatch(new RegExp(`addEventListener\\('${type}'[\\s\\S]{0,120}?, true\\)`));
+    }
+  });
+
+  it('cancels the default IN THE FRAME — the host\'s synthetic event cannot', () => {
+    // ⌘D would otherwise open the browser's bookmark dialog on its way to splitting the pane:
+    // a default belonging to the frame's document is only cancellable inside it.
+    expect(REACH_BRIDGE).toContain('e.preventDefault()');
+    expect(REACH_BRIDGE).toContain("(e.metaKey || e.ctrlKey) && e.key !== 'Escape'");
+  });
+
+  it('reads a press in the two halves the pane-focus contract is written in', () => {
+    expect(readPressMessage({ [PRESS_MESSAGE_KEY]: 'down' })).toBe('down');
+    expect(readPressMessage({ [PRESS_MESSAGE_KEY]: 'up' })).toBe('up');
+    expect(readPressMessage({ [PRESS_MESSAGE_KEY]: 'click' })).toBeNull();
+    expect(readPressMessage({ type: 'webpackOk' })).toBeNull();
+    expect(readPressMessage(null)).toBeNull();
+  });
+
+  it('reads a well-formed chord, modifiers and all', () => {
+    expect(readChordMessage(key({ shiftKey: true }))).toEqual({
+      type: 'keydown', key: 'd', code: 'KeyD',
+      metaKey: true, ctrlKey: false, shiftKey: true, altKey: false,
+    });
+    expect(readChordMessage(key({ type: 'keyup' }))?.type).toBe('keyup');
+  });
+
+  it('lets Escape and a bare modifier through — the two app keys with nothing held', () => {
+    // Esc closes the fullscreen deck; a bare ⌘/⌃ is what the Agents surface\'s double-tap
+    // hotkey is read from, and neither can ever be a character the reader is typing.
+    const plain = { metaKey: false, ctrlKey: false };
+    expect(readChordMessage(key({ key: 'Escape', code: 'Escape', ...plain }))?.key).toBe('Escape');
+    expect(readChordMessage(key({ key: 'Meta', code: 'MetaLeft', ...plain }))?.key).toBe('Meta');
+  });
+
+  it('REFUSES to replay the reader\'s own text chords, even if the frame forwards them', () => {
+    // Refused twice on purpose — the frame withholds them and the host will not replay them
+    // — so neither side alone can turn a copy into an app command.
+    for (const k of ['a', 'c', 'v', 'x', 'z', 'C']) expect(readChordMessage(key({ key: k }))).toBeNull();
+  });
+
+  it('refuses a plain keystroke — a character typed in the block is not an app chord', () => {
+    expect(readChordMessage(key({ key: 'k', metaKey: false }))).toBeNull();
+    expect(readChordMessage(key({ key: 'Enter', metaKey: false }))).toBeNull();
+  });
+
+  it.each([
+    ['a foreign message', { type: 'webpackOk' }],
+    ['a string payload', 'hello'],
+    ['null', null],
+    ['a non-key event type', key({ type: 'click' })],
+    ['a missing key', key({ key: '' })],
+    ['a non-string key', key({ key: 7 })],
+    ['a runaway key', key({ key: 'x'.repeat(64) })],
+  ])('ignores %s', (_label, data) => {
+    expect(readChordMessage(data)).toBeNull();
+  });
+
+  it('the host replays it as an EVENT on the frame, never as an action', () => {
+    // The bound on what the frame can reach: exactly what a user pressing those keys with
+    // the block focused could already reach. A host that called `addSplitSession()` here
+    // would be granting the markup a command channel instead.
+    const source = readFileSync(join(CHAT_DIR, 'HtmlView.tsx'), 'utf-8');
+    expect(source).toContain('frame.dispatchEvent(new KeyboardEvent(chord.type');
+    expect(source).toMatch(/new MouseEvent\(press === 'down' \? 'mousedown' : 'mouseup'/);
+    expect(source).toContain('bubbles: true');
   });
 });

@@ -184,10 +184,11 @@ describe('the snapshot leg of the bridge', () => {
   it('the bridge answers the request, and rides in BOTH modes', () => {
     expect(HEIGHT_BRIDGE).toContain(SNAPSHOT_REQUEST_KEY);
     expect(HEIGHT_BRIDGE).toContain(SNAPSHOT_MESSAGE_KEY);
-    // Both host scripts ride in the head, in both modes: the bridge (the export bar in the
-    // fullscreen header talks to its snapshot leg) and the kit's tab script.
+    // All three host scripts ride in the head, in both modes: the height bridge (the export
+    // bar in the fullscreen header talks to its snapshot leg), the reach bridge (Esc has to
+    // close a fullscreen deck the reader clicked into), and the kit's tab script.
     const kit = readFileSync(join(CHAT_DIR, 'chatHtmlKit.ts'), 'utf-8');
-    expect(kit).toContain('headScript: `${HEIGHT_BRIDGE}\n${KIT_BEHAVIOUR}`,');
+    expect(kit).toContain('headScript: `${HEIGHT_BRIDGE}\n${REACH_BRIDGE}\n${KIT_BEHAVIOUR}`,');
   });
 });
 
