@@ -166,7 +166,7 @@ describe('the composer listens for the CONFIGURED chord', () => {
 
 // ── Where the card lives, and that it reads like its neighbours ──────────────────────────
 
-describe('the Voice card is a folded beta group at the bottom of the AGENT section', () => {
+describe('the Voice card is a folded ALPHA group at the bottom of the AGENT section', () => {
   const page = readFileSync(join(ROOT, 'dashboard/src/pages/SettingsPage.tsx'), 'utf-8');
   const card = readFileSync(join(ROOT, 'dashboard/src/components/settings/VoiceSettings.tsx'), 'utf-8');
 
@@ -187,10 +187,13 @@ describe('the Voice card is a folded beta group at the bottom of the AGENT secti
     expect(page.slice(at + '<VoiceSettings />'.length, close).trim()).toBe('');
   });
 
-  it('renders folded, with a BETA chip', () => {
+  it('renders folded, with an ALPHA chip', () => {
     expect(card).toMatch(/collapsible/);
     expect(card).not.toMatch(/defaultOpen/);      // folded is the point
-    expect(card).toMatch(/settings-beta-badge">BETA/);
+    // ALPHA, not BETA (owner, 2026-09-13). The class name still says `beta` because it is
+    // the chip's STYLE, not its word; the word is what the two announcing surfaces must
+    // agree on, and the composer's mode card carries the same one.
+    expect(card).toMatch(/settings-beta-badge">ALPHA/);
   });
 
   it('uses the same hotkey grammar as the agent hotkey field a few rows above', () => {
