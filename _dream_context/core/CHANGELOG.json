@@ -1,5 +1,157 @@
 [
   {
+    "date": "2026-09-13",
+    "type": "docs",
+    "scope": "announcements",
+    "description": "Author the 0.28.0 What's New page with capture scripts and a demo home that can photograph the account layer without touching the real registry, then extend the story to cover what landed after the version stamp and fix crops that sat under the page header. J.A.R.V.I.S is labelled ALPHA in the copy at the owner's direction - not even beta.",
+    "breaking": false,
+    "summary": "The 0.28.0 What's New story, a demo home that can photograph the account layer, and crops that stop hiding under the header",
+    "references": [
+      "commit:99c55bf7",
+      "commit:18e5fddf"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-13",
+    "type": "chore",
+    "scope": "release",
+    "description": "Stamp 0.28.0 across the five version surfaces, then reconcile the RELEASES.json record after four changes landed post-scope-close (time-aware account scoring, the 200k handoff notice, the diagram view, and the background-pane click fix) so the record describes the shipped cut rather than the planned one. Status stays planning: the cut is not published.",
+    "breaking": false,
+    "summary": "0.28.0 stamped across all five version surfaces, then the release record reconciled with what the cut actually contains",
+    "references": [
+      "commit:976759eb",
+      "commit:93963fd4"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-13",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Replace the linear context gauge with Health rings and turn the handoff toggle into an ECO lamp, backed by named contextBands in agentComposer.ts with their own test file. The gauge now reads as a state rather than a percentage, which is what the handoff nudge needs to be legible at a glance.",
+    "breaking": false,
+    "summary": "The context gauge becomes Health rings and the handoff switch becomes an ECO lamp, over named context bands",
+    "references": [
+      "commit:1bf194ad",
+      "commit:74e91d66",
+      "file:dashboard/src/components/sleepy/agentComposer.ts",
+      "file:tests/unit/context-bands.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-13",
+    "type": "feat",
+    "scope": "context",
+    "description": "Add the opt-in context handoff: context-watch.ts, config context-handoff, tasks handoff, the hook nudges, Chat turning itself over with /clear, and the composer switch plus its bar mark. Measured over 120 real sessions and 10,917 API calls, ~97.4% of billed input tokens are cache reads and a 200k-handoff strategy differs from riding a 1M context by 2.2-2.6x input tokens; one live handoff measured 429,471 to 105,462 tokens (4.07x, -75.4%) using the shipped lastMainChainContext. Default OFF.",
+    "breaking": false,
+    "summary": "At 200k the agent is told it may carry its state into a fresh session, measured at 4.07x fewer input tokens on a live handoff",
+    "references": [
+      "commit:1e12c855",
+      "file:src/lib/context-watch.ts",
+      "knowledge:6.system_flow-neuroscience-2026-h2"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-13",
+    "type": "feat",
+    "scope": "accounts",
+    "description": "Discount the weekly term of the account-switch score by how much of the window is still ahead (weekly x pct x (resetsAt - now)/168h), so a quota that resets Monday stops being priced the same as one that must last until Wednesday. A window whose reset has already passed is no longer scored at the percent it held before it, and the policy panel states how long each window has LEFT instead of what time it resets. The threshold gate is untouched, so a saturated account still gets no work.",
+    "breaking": false,
+    "summary": "A usage window is worth only what is still ahead of it: auto-switch scoring becomes time-aware",
+    "references": [
+      "commit:f5f3ac0b",
+      "file:src/lib/claude-account-switch.ts",
+      "file:dashboard/src/components/settings/AccountSwitchPolicy.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-13",
+    "type": "fix",
+    "scope": "agents",
+    "description": "Fix the ordering bug in the pane focus change: the widening ran before the click was attributed, so the first click into a background pane was consumed by the layout shift instead of landing on the target. Count the click, then widen.",
+    "breaking": false,
+    "summary": "A click in a background pane is counted first, and the pane widens after it",
+    "references": [
+      "commit:9978e478"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-13",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Give the focused agent pane an absolute flex-basis bonus (220px) rather than a larger flex-grow, so the bonus is paid jointly by the others and the per-pane cost SHRINKS as pane count rises; a --pane-min floor drops the bonus to zero when the window is too narrow. The same formula is applied to the tab strip from a single --pane-count on the common ancestor so the two can never drift, measured under 0.75px across 1-6 panes. Clicking a pane now focuses it rather than leaving focus pinned where it was.",
+    "breaking": false,
+    "summary": "The pane you are reading widens by a fixed bonus, and clicking a chat pane actually focuses it",
+    "references": [
+      "commit:72eda289",
+      "file:dashboard/src/components/sleepy/AgentTerminal.css"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-13",
+    "type": "feat",
+    "scope": "sleep",
+    "description": "Add the connector store, a ClickUp pull path and the connectors CLI surface. Shipped unregistered on purpose: the code is present and testable but nothing wires it into the running flow yet, so the cut carries no behaviour change from it.",
+    "breaking": false,
+    "summary": "The connector store, the ClickUp pull and the connectors CLI land, deliberately not yet registered",
+    "references": [
+      "commit:b2210600"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-13",
+    "type": "fix",
+    "scope": "settings",
+    "description": "Fix the auto-switch policy weight inputs in Settings, which grew past their track at narrow widths and painted over the explanatory note beneath them.",
+    "breaking": false,
+    "summary": "The switch-policy weight fields stop overflowing their track and painting under the note",
+    "references": [
+      "commit:f9df8743"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-13",
+    "type": "feat",
+    "scope": "voice",
+    "description": "Harden the J.A.R.V.I.S voice layer shipped earlier in the cycle. The composer gains a live input meter, repair marks and a speaking token so a pane can prove it holds the floor; playback ducks the machine's own output while speaking and stops two panes ever speaking over each other; sentences no longer clip into one another and the one being read is highlighted; and dictation actually hears the user rather than silently failing. The speaking token is what makes single-speaker exclusive across panes rather than per-pane best effort.",
+    "breaking": false,
+    "summary": "J.A.R.V.I.S becomes audible and conversational: gapless playback, the machine ducks its own sound, the sentence being read is marked, and only one pane speaks at a time",
+    "references": [
+      "commit:b25a168a",
+      "commit:c69ed2c1",
+      "commit:f7e6e31e"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-12",
     "type": "fix",
     "scope": "chat",

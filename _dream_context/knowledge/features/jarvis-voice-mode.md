@@ -11,7 +11,7 @@ pinned: false
 date: '2026-09-10'
 status: in_review
 created: '2026-09-10'
-updated: '2026-09-11'
+updated: '2026-09-13'
 released_version: null
 product: desktop
 tags:
@@ -22,10 +22,7 @@ tags:
   - 'domain:security'
   - 'layer:frontend'
   - 'layer:backend'
-related_tasks:
-  - jarvis-konusurken-muzik-kendiliginden-susar-ve-cevap-bitince-geri-gelir
-  - >-
-    jarvis-composer-bir-durum-rayi-canli-ses-olcer-ve-kelime-ustu-duzeltme-kazanir
+related_tasks: []
 ---
 
 ## Why
@@ -138,9 +135,25 @@ produces a lie the user cannot detect because they only ever hear the output.
       transcriber engine, push-to-talk binding + hold/toggle, speak on/off, speech rate
       (`0.75`–`1.75`, clamped rather than refused — every value in range still produces audio).
 
+- [x] AUDIO FOCUS: THE SERVER OWNS THE SPEAKER. `src/lib/voice/audioFocus.ts` holds a single holder, a watchdog that reclaims a turn whose heartbeat stopped, and a ledger of what was paused or ducked so the machine is put back exactly as it was found. A second pane asking for the floor is denied BY NAME (`granted:false, holder:"pane-A"`) rather than queued silently, so the composer can say why it is quiet — two panes in one window no longer answer on top of each other.
+
+- [x] TWO LEVERS, IN ORDER OF PRECISION: a known player (Spotify, Music) is PAUSED and resumed; anything unaddressable (a browser tab) leaves only the system output volume. The app-running probe is TWO-STAGE — `return (application "X" is running)` needs no dictionary and compiles everywhere — because AppleScript resolves an app's own terms (`player state`) at COMPILE time, so a single combined script dies at -2741 when that app is absent and the is-running guard never runs. Measured both ways 2026-09-11. The probe does not LAUNCH the app.
+
+- [x] THE DUCK NO LONGER TAKES ITS OWN VOICE DOWN. macOS output volume is the DEVICE master and our speech leaves through the same device, so ducking to 35% asked ~+9 dB of compensation on a signal already peaking near full scale — straight into the limiter, and the answer came out QUIETER than with the feature off. Default duck is now 1 (never touch the master) with a 0.5 floor below which compensation cannot give it back; `PLAYERS` gained `Music`, since pausing is the only lever that lowers everything EXCEPT us; and each chunk is levelled by `normalizeSpeech` before wrapping — the one point in the path where "louder" is actually achievable, since after it the audio is a WAV played through a volume this app does not own.
+
+- [x] GAPLESS PLAYBACK, SCHEDULED IN WEB AUDIO. `ended` is the DECODER's verdict, not the speaker's, and assigning the next chunk's `src` runs the media-element load algorithm immediately, discarding whatever was still in the output buffer — every sentence was clipped at the end. Each chunk is now decoded and started at the exact sample the previous one ends on, ahead of its own playback, so the seam is a sample boundary rather than a race. The element survives as a fallback, guarded so a mid-turn fallback chunk cannot play on top of audio still scheduled.
+
+- [x] THE SPOKEN SENTENCE IS MARKED IN THE MESSAGE IT CAME FROM, via the CSS Custom Highlight API — no node is inserted into a DOM React re-renders on every token. The chunk is raw markdown and the screen holds rendered text, so both sides are reduced to letters and single spaces before the search, and the match is mapped back to real DOM offsets.
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+
+
+
+- **[2026-09-13]** **[2026-09-11] `duckGain` is clamped at 3x and the 0.35 default was chosen against that ceiling, not for roundness** — a speech signal already near full scale multiplied by 4 lives in the limiter, and pumping on the voice is worse than music audible under it. (Superseded 2026-09-12: the default duck became 1; the clamp reasoning stands.) A guard that needs the app's dictionary is not a guard — unit tests could never have caught the AppleScript compile-time failure, because the runner was stubbed.
+- **[2026-09-13]** **[2026-09-12] `stop()` that neither resolves nor rejects is a permanent silent mode.** Pausing the element and clearing its `src` fires NEITHER `ended` NOR `error`, so the play loop awaited a promise that never settled: after the first barge-in the mode went permanently silent with nothing on screen to say so. A silent mode is indistinguishable from a broken one — which is also why the focus layer FAILS OPEN, toward speaking: a focus route that is down, slow or 403 costs at most an answer read over music, while treating a failed hold as "you may not speak" turns a cosmetic problem into a dead feature.
+- **[2026-09-13]** **[2026-09-12] Dictation quality was never the model — it was the audio handed to it.** `getUserMedia({audio: true})` does not hand over the microphone; it hands over the microphone AFTER the browser's voice-call chain, and echo cancellation is the worst of the three here. The same model run by hand on clean audio was markedly better. Fix the capture constraints, not the transcription model.
 - **[2026-09-11] The speaking-speed setting never once took effect, and the reason is one
   line of ordering.** `SpeechQueue.play()` set `el.playbackRate` and THEN `el.src = url`.
   Assigning `src` runs the media element load algorithm, whose last step is "set the

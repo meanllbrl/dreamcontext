@@ -8,9 +8,9 @@ description: >-
   safety gates must be independent and named for their actual gate.
 type: knowledge
 tags:
-  - kind:pattern
+  - 'kind:pattern'
   - architecture
-  - domain:frontend
+  - frontend
 pinned: false
 created: '2026-08-11'
 ---

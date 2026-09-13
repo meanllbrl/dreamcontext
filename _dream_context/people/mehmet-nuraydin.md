@@ -8,10 +8,11 @@ updated: "2026-09-10"
 
 - **Orchestrations must be fast** (2026-09-11): goal-skill runs feel too long. Minimal ceremony, reviewers in parallel, implementer waves at full width, no extra rounds without a new finding.
 - Decide on clear choices and explain why; never ask permission on an obvious path. **"devam" means keep going autonomously**, no check-ins (2026-09-08, 4th obs).
+- **The agent does the whole release except `npm login` and `npm publish`** (2026-09-13, 2nd obs): version surfaces, checklist, announcement, tag — all agent work; the two npm commands are his hand, and the release record only flips to `released` after the registry confirms.
 - **Don't commit unless asked** — parallel sessions sweep in-flight work. When asked: commit everything and push, as separate coherent commits per logical unit.
 - **Verify in the real app, not just in tests** (2026-09-08, 4th obs): full local desktop rollout, confirm in the installed `.app`, then report done.
 - **Short answers, lead with the conclusion** — "in a nutshell", even for architecture questions.
-- **No em dashes.** No implementation detail in user-facing copy. Rich content in context files; template placeholders are failure.
+- **No em dashes.** No implementation detail in user-facing copy; label an unfinished capability honestly (J.A.R.V.I.S shipped marked ALPHA, "not even beta", 2026-09-13). Rich content in context files; template placeholders are failure.
 - **Brand**: meansoft (company), dreamcontext (product), GitHub org meanllbrl.
 - **UI**: purple-magenta gradient (#641787, #781ca3, #8200a6, #db04b4), Visby CF, 4px grid. Density beats theatricality — info-dense, searchable, fast, final report above the fold, no gamification. No page headlines; the sidebar nav is the label.
 - **Onboarding: one front door** (`setup`) — half-install states are bugs.

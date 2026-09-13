@@ -2,7 +2,7 @@
 id: feat_9qLM-gY_
 status: active
 created: '2026-02-25'
-updated: '2026-09-11'
+updated: '2026-09-13'
 released_version: 0.1.0
 tags:
   - architecture
@@ -12,18 +12,23 @@ tags:
 related_tasks:
   - enforce-mutual-exclusion-on-sleep-consolidation-lock
   - improve-sleep-quality
-  - sleep-umbrella-tunable-settings-a-bar-against-junk-tasks-and-background-auto-sleep-with-two-writer-safety
+  - >-
+    sleep-umbrella-tunable-settings-a-bar-against-junk-tasks-and-background-auto-sleep-with-two-writer-safety
   - sleep-settings-become-tunable-debt-thresholds-and-per-specialist-models
-  - sleep-stops-filing-junk-tasks-a-bar-for-what-deserves-a-task-and-the-right-model-per-specialist
+  - >-
+    sleep-stops-filing-junk-tasks-a-bar-for-what-deserves-a-task-and-the-right-model-per-specialist
   - sleep-runs-itself-in-the-background-when-debt-is-high-instead-of-nagging
-  - sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception
+  - >-
+    sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception
+  - rescale-sleep-debt-scoring-weighted-sum-token-signal
 type: feature
 name: sleep-consolidation
 description: >-
   REM-sleep-style consolidation: debt is scored per session, tunable thresholds
   ladder the nags, and a fan-out of specialists folds the cycle's work back into
-  the brain. Background auto sleep runs it unattended; a filing bar (cap, why-length,
-  tombstone, declined and semantic-neighbour gates) keeps the cycle from filing junk tasks.
+  the brain. Background auto sleep runs it unattended; a filing bar (cap,
+  why-length, tombstone, declined and semantic-neighbour gates) keeps the cycle
+  from filing junk tasks.
 pinned: false
 date: '2026-02-25'
 ---

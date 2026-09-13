@@ -1,15 +1,17 @@
 ---
 id: component-reuse-over-reimplementation
-name: "Component Reuse Over Reimplementation"
-description: "When a new surface needs existing UI behavior (chat, permissions, composer), mount the existing components on the new context rather than hand-rolling copies. The data is the parameter; the components are not."
+name: Component Reuse Over Reimplementation
+description: >-
+  When a new surface needs existing UI behavior (chat, permissions, composer),
+  mount the existing components on the new context rather than hand-rolling
+  copies. The data is the parameter; the components are not.
 tags:
-  - "kind:pattern"
-  - "frontend"
-  - "architecture"
-  - "ui"
-  - "topic:reuse"
+  - 'kind:pattern'
+  - frontend
+  - architecture
+  - 'topic:reuse'
 pinned: false
-date: "2026-08-26"
+date: '2026-08-26'
 ---
 
 ## Why This Exists

@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-09-10'
+updated: '2026-09-13'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -69,7 +69,12 @@ related_tasks:
     sleepy-acts-out-the-chat-mode-the-mascot-shows-plan-and-develop-not-just-status
 type: feature
 name: in-app-agent-terminal
-description: ''
+description: >-
+  Claude Code inside the app: a PTY terminal and a native Chat view sharing one
+  engine. Answers render as markdown, tool and question cards, and — when prose
+  cannot hold the shape — a `dream-html` block. Prose is the default since
+  2026-09-13; a `dc-graph` diagram is laid by a real ranking engine and behaves
+  as a VIEW: centred, pannable, zoomable, and traceable by clicking a node.
 pinned: false
 date: '2026-06-28'
 ---
@@ -266,6 +271,12 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 
 - [x] **Chat composer shelf** (see [[chat-composer-shelf]] for full PRD): shelf docks to composer top edge, holds pinned facts + progress rows outside transcript. Session facts (branch/worktree/localhost:PORT) server-derived from GET /api/agent/session-facts. Progress derived from task file (percent from checkboxes, now/last from changelog + criteria). Tags wrap (no +N fold), progress detail opens as floating popover (not in-place). Loopback URLs clickable (http://localhost / 127.0.0.1 only). VIEW_TYPES in chatViewSpec.ts gains pin + progress types. Verified by scripts/verify/chat-shelf.mjs + chat-shelf-ui.mjs.
 
+- [x] PROSE FIRST, DRAW ONLY WHAT PROSE CANNOT HOLD. The Chat surface briefing inverts its default: markdown is the default answer shape, and exactly three things earn a `dream-html` block — a diagram whose SHAPE is the message, an interactive view, a deck. A named never-a-block list plus an operational test ("delete the block and keep the prose; if nothing is lost it was ceremony") make the rule checkable. Briefing 9,764 -> 9,383 chars, bound unchanged; lockstep tests pin the wording, the three categories and the ABSENCE of the old "draw it, don't narrate it" sentence.
+
+- [x] THE KIT'S FLOW BECAME A REAL DIAGRAM ENGINE. `dc-flow` (chips in a row that wrapped, then a top-down stack) showed no shape and is replaced by `dc-graph`: the author writes `dc-node` + `dc-edge` data and `chat-html-graph.js` (in the srcdoc head as `KIT_GRAPH`, mirrored like the CSS and pinned byte-identical) ranks by longest path, breaks cycles (drawn dashed), routes long edges via waypoints, orders ranks by barycenter, measures and places nodes, and draws every edge as one SVG path with an arrowhead and label. A chain that fits runs left-to-right, anything else top-down; it re-lays on width change so nothing wraps; narrow panes shrink labels a step, then stagger a rank. Tone is a border colour, never a fill. `dc-flow` survives as an alias so old transcripts render as chain graphs, but leaves the briefing.
+
+- [x] A DIAGRAM IS A VIEW, NOT A PICTURE. The laid drawing sits on a `.dc-graph-stage` and the block is its viewport: centred at every pane width, drag to pan (clamped so it cannot be thrown out of its own block), zoom on ctrl/cmd-wheel (also how a trackpad pinch arrives) or a corner control, and +/-/0/arrows/Esc from the keyboard. A PLAIN wheel is deliberately untouched — the block lives in a transcript, and a diagram that ate the page's scroll would be worse than one that could not be zoomed. The control rests INVISIBLE and appears on hover/focus/once-zoomed, because PNG and print exports draw the live markup and resting chrome would be baked into every export. Hovering a node lights it, its edges and their far ends; clicking HOLDS that trace and dims everything else (dimming is the ONLY thing the held state adds, so a hover never looks like a different feature). Every node is tabbable and answers Enter/Space; the pointer is captured only after a 4px move.
+
 ## Acceptance Criteria
 
 - [x] Per-instance board identity: boardInstanceKey() keys each ExcalidrawCanvas by board content identity (boardKey ?? slug), not render slot, so multiple boards in one Chat conversation each keep independent viewport state. registerPinchTarget() called lazily after excalidrawAPI mounts. Fullscreen overlay portaled to document.body (contain:layout paint fix). 13 tests in excalidraw-board-instance.test.ts.
@@ -440,6 +451,10 @@ any future attempt (all of it is history — none of this ships):
 
 ## Constraints & Decisions
 
+
+
+- **[2026-09-13]** **[2026-09-13] The depiction default inverted: prose first, not "draw it, don't narrate it".** Seven owner screenshots (2026-09-11) showed `dream-html` blocks HARDER to read than the prose they replaced — the old briefing sent every structured answer into a block. This does not reopen the board-flip or OpenUI questions (both still closed): `dream-html` remains the only renderer. What changed is WHEN it fires. Note the partial convergence with the board idea ruled out of scope on 2026-09-06 — `dc-graph` gives deterministic geometry (ranks, waypoints, barycenter ordering) INSIDE `dream-html` rather than as a replacement for it.
+- **[2026-09-13]** **[2026-09-13] The edge-label overlap was a reservation/draw waypoint mismatch, measured rather than guessed.** A routed edge reserved width on waypoint `floor(len/2)` of its path, then drew the label at `pts[floor(len/2)]` AFTER reversing the point list for back edges — for an EVEN-length path those are different waypoints, so the reservation opened a gap the label never used and the label landed on top of two nodes. The existing verify ladder's back edge has an ODD-length path, which is exactly why the harness had never seen it. Both halves of the owner's complaint ("merkezde değil", "iç içe yazılar var") were reproduced in real Chromium — the drawing sat at x=0 with 778px of dead space beside it in a 1050px pane — BEFORE anything was touched.
 - **[2026-09-09] node-pty installs to `~/.dreamcontext/native`, NOT into the CLI package root — this SUPERSEDES the 2026-06-29 decision further down.** The `.app` runs the *bundled* CLI (a Finder-launched app cannot see the nvm global bin), and nothing above `Contents/Resources/dist` has a `package.json`, so `cliPackageRoot()` returned null and the install 500'd. Installing into the bundle is not the fix either: the bundle is **code-signed and replaced wholesale on update**, so anything written inside it is destroyed on the next upgrade and breaks the signature meanwhile (and the `package.json`-in-dist option was already rejected in `tsup.config.ts`). A minimal private manifest is written into `~/.dreamcontext/native` so npm cannot walk up and adopt `$HOME` as the package root. Two things the reproduction caught that reasoning had not: the bare ancestor walk **escaped the bundle and picked up a stray `/tmp/package.json`** — `cliPackageRoot()` now requires `name === "dreamcontext"` — and verifying any bundle fix requires pinning `DREAMCONTEXT_CLI` at the bundled dist, because the npm link otherwise makes the app run the working tree and never exercise the bug at all. Commit `1f3f22ed`.
 - **[2026-09-06] THE OPENUI EXPERIMENT IS A CLOSED QUESTION: a closed component vocabulary did not beat authored markup, so `dream-html` is the only renderer.** Do not re-propose OpenUI (or an equivalent closed component library rendered in the app's own React tree) as an answer-rendering mode without new evidence. The experiment was pre-registered with three admissible outcomes — keep / make default / remove — and the third was accepted in advance; the owner returned `remove` after seeing the full showcase, which makes this the experiment's ANSWER, not its failure. What removal cost and how it was verified is in the section above. Two things stay on the record because they generalise: (a) the mode was built behind a per-session `chatRender` ENUM rather than a boolean specifically so a third depiction could arrive later — that reasoning survives the removal and the enum comes back from zero if a third renderer is ever built; (b) the model itself was NOT the limitation — claude-sonnet-5 wrote the unfamiliar grammar with 0 invented components and 0 parse errors, in SHORTER answers than `dream-html`. The verdict is about the look and the value of a closed vocabulary, not about capability.
 - **[2026-09-06] The board-as-default-depiction flip is OUT OF SCOPE, and the standing instruction is "take from OpenUI whatever is worth taking, otherwise leave `dream-html` as it is".** Two competing answers to one question (how do we show a structured answer) were live at once — a built board and OpenUI components; only one can be the default and neither is. The depiction default stays authored HTML, improved rather than replaced.

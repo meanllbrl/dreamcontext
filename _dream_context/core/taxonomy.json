@@ -56,7 +56,10 @@
       "topic:memory",
       "topic:build",
       "topic:voice",
-      "topic:codex"
+      "topic:codex",
+      "topic:context",
+      "topic:git",
+      "topic:announcements"
     ]
   },
   "bareTags": [
@@ -116,6 +119,8 @@
     "topic:testing": "testing",
     "topic:frontend": "frontend",
     "topic:architecture": "architecture",
-    "domain:dashboard": "topic:dashboard"
+    "domain:dashboard": "topic:dashboard",
+    "domain:frontend": "frontend",
+    "ui": "frontend"
   }
 }
