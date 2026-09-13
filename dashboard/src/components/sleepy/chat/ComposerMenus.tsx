@@ -1,5 +1,7 @@
-import { useState, type CSSProperties } from 'react';
+import { useState } from 'react';
 import {
+  CONTEXT_TIGHT_PCT,
+  contextBands,
   effortAt, effortIndex, effortLabel, fmtCost, fmtTokens, modelNoteFor, splitModels,
   type ModelConfig, type ModelOption, type UsageLimit,
 } from '../../../lib/agentComposer';
@@ -331,9 +333,9 @@ export function UsageMenu({
   const now = Date.now();
   // The context reading and the account windows answer DIFFERENT questions — "is this
   // conversation full?" versus "is this account spent?" — so they stop being one
-  // undifferentiated stack of identical bars. Splitting here is what lets the context
-  // block keep its full weight (title, bar, arithmetic, the switch that changes it) while
-  // the timed windows collapse to two compact lines each under one shared label.
+  // undifferentiated stack of identical bars. The split is also what lets the context
+  // block stay PINNED while everything under it scrolls (see the panel's max-height):
+  // the reading you opened the panel for can never be the part that falls off-screen.
   const context = limits.find((l) => l.key === 'context');
   const windows = limits.filter((l) => l.key !== 'context');
 
@@ -343,45 +345,48 @@ export function UsageMenu({
         // The handoff threshold, as a fraction of the window. Present only when the pane
         // has handoff ON (usageLimits() drops it otherwise).
         const handoffAt = context.detail?.handoffAt;
-        const markPct = handoffAt && context.detail ? (handoffAt / context.detail.limit) * 100 : null;
         const pastKnee = !!(handoffAt && context.detail && context.detail.used >= handoffAt);
         return (
-          <div className="chat-cmp-usageblock">
+          <div className="chat-cmp-usageblock is-lead">
             <div className="chat-cmp-usagerow">
               <span className="chat-cmp-usagerow-title">{context.title}</span>
               <span className="chat-cmp-usagerow-value">{Math.round(context.percent)}%</span>
             </div>
-            <div
-              className="chat-cmp-usagebar"
-              data-handoff={markPct !== null ? '' : undefined}
-              // Geometry only — the CSS owns every colour; this just tells the
-              // lighter-track gradient WHERE the threshold falls.
-              style={markPct !== null ? ({ '--handoff-mark': `${Math.min(100, markPct)}%` } as CSSProperties) : undefined}
-            >
-              <span
-                className="chat-cmp-usagebar-fill"
-                data-past-knee={pastKnee ? '' : undefined}
-                style={{ width: `${Math.min(100, context.percent)}%` }}
-              />
-              {/* The threshold tick. Drawn ON the track rather than as a separate row so
-                  the eye reads "this point on this bar" — the whole reason the marker
-                  exists is to make the number in the meta line below spatial. */}
-              {markPct !== null && (
-                <span className="chat-cmp-usagebar-mark" style={{ left: `${Math.min(100, markPct)}%` }} />
-              )}
+            {/* The same three bands the composer's gauge draws, laid flat. One reading, one
+                language: the gauge says how many bands are lit, this says where inside them
+                you are — and neither can invent a tone the other doesn't have, because both
+                read `contextBands()`. Each segment is as wide as its share of the window, so
+                the seams ARE the 200k and 500k marks and no separate tick is needed for them. */}
+            <div className="chat-cmp-bandbar">
+              {(context.detail ? contextBands(context.detail.used, context.detail.limit) : []).map((band) => {
+                const share = (band.to - band.from) / (context.detail!.limit || 1);
+                const tickAt = handoffAt && handoffAt > band.from && handoffAt < band.to
+                  ? ((handoffAt - band.from) / (band.to - band.from)) * 100
+                  : null;
+                return (
+                  <div key={band.key} className="chat-cmp-bandseg" style={{ flexGrow: share }}>
+                    <span
+                      className="chat-cmp-bandseg-fill"
+                      data-band={band.key}
+                      style={{ width: `${band.frac * 100}%` }}
+                    />
+                    {tickAt !== null && (
+                      <span className="chat-cmp-bandseg-mark" style={{ left: `${tickAt}%` }} />
+                    )}
+                  </div>
+                );
+              })}
             </div>
             {context.detail && (
-              // Two facts, one line, and it STAYS one line: the words "used" and "the agent
-              // may" were what wrapped this into a four-line tangle at 244px, and a
-              // measurement that reflows is a measurement you re-read every time.
+              // The threshold NUMBER is deliberately absent here. It was being said three
+              // times inside 40px — meta line, switch label, explanatory note — and a
+              // value repeated three times is not emphasis, it is noise. The bar's tick
+              // says WHERE the threshold is, the switch label below says WHAT it is, and
+              // this line is left to say the one thing neither of them can: the count.
               <div className="chat-cmp-usagemeta">
-                <span>{fmtTokens(context.detail.used)} / {fmtTokens(context.detail.limit)}</span>
-                {handoffAt
-                  ? (
-                    <span data-past-knee={pastKnee ? '' : undefined}>
-                      {pastKnee ? `past ${fmtTokens(handoffAt)} · may hand off` : `hand off ${fmtTokens(handoffAt)}`}
-                    </span>
-                  )
+                <span>{fmtTokens(context.detail.used)} / {fmtTokens(context.detail.limit)} used</span>
+                {pastKnee
+                  ? <span data-past-knee="">may hand off</span>
                   : <span>{fmtTokens(Math.max(0, context.detail.limit - context.detail.used))} free</span>}
               </div>
             )}
@@ -405,105 +410,115 @@ export function UsageMenu({
                     <span className="chat-cmp-handoffswitch-knob" />
                   </span>
                 </button>
-                <p className="chat-cmp-handoffnote">
-                  At {fmtTokens(contextHandoff.nudgeAt)} the agent is asked to write its state
-                  into the task and continue in a fresh session — it picks the moment.
-                </p>
+                <p className="chat-cmp-usagenote">Saves its state to the task, starts fresh.</p>
               </div>
             )}
           </div>
         );
       })()}
 
-      {windows.length > 0 && (
-        <div className="chat-cmp-usageblock">
-          <span className="chat-cmp-grouplabel">Rate limits</span>
-          {windows.map((l) => (
-            // Two lines, not four: the window's name and when it rolls over are the SAME
-            // fact ("this cap, this long"), so they share a line and the bar carries the
-            // rest. Dividers between them are gone — they are peers in one group, and a
-            // rule between peers reads as a boundary that isn't there.
-            <div key={l.key} className="chat-cmp-windowrow">
-              <div className="chat-cmp-usagerow">
-                <span className="chat-cmp-windowrow-title">
-                  {l.title}
-                  {l.resetsAt != null && (
-                    <span className="chat-cmp-windowrow-reset"> · resets {fmtResetIn(l.resetsAt, now)}</span>
-                  )}
-                </span>
-                <span className="chat-cmp-usagerow-value is-sm">{Math.round(l.percent)}%</span>
-              </div>
-              <div className="chat-cmp-usagebar">
-                <span className="chat-cmp-usagebar-fill" style={{ width: `${Math.min(100, l.percent)}%` }} />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Everything below the headline scrolls. Without this the panel simply grew past the
+          window and the overflow was CLIPPED — no scrollbar, no affordance, the footer cut
+          through the middle of a sentence. It grows upward out of the composer, so the part
+          that leaves the screen is the top: the context reading itself. */}
+      <div className="chat-cmp-scroll">
+        {windows.length > 0 && (
+          <div className="chat-cmp-usageblock">
+            <span className="chat-cmp-grouplabel">
+              Rate limits
+              {staleAsOf != null && <span className="chat-cmp-groupnote"> · as of {fmtClock(staleAsOf)}</span>}
+            </span>
+            {windows.map((l) => {
+              // One meaning of "running out" for the whole product: the same threshold the
+              // composer's ring and the /compact offer already use. A 22% window and a 95%
+              // window were drawing the identical bar in the identical colour — the reading
+              // you actually need to act on looked exactly like the one you don't.
+              const tight = l.percent >= CONTEXT_TIGHT_PCT;
+              return (
+                // Two lines, not four: the window's name and when it rolls over are the
+                // SAME fact ("this cap, this long"), so they share a line and the bar
+                // carries the rest.
+                <div key={l.key} className="chat-cmp-windowrow">
+                  <div className="chat-cmp-usagerow">
+                    <span className="chat-cmp-windowrow-title">
+                      <span className="chat-cmp-windowrow-lead">{l.title}</span>
+                      {l.resetsAt != null && (
+                        <>{' '}<span className="chat-cmp-windowrow-reset">· resets {fmtResetIn(l.resetsAt, now)}</span></>
+                      )}
+                    </span>
+                    <span className="chat-cmp-usagerow-value is-sm" data-tight={tight ? '' : undefined}>
+                      {Math.round(l.percent)}%
+                    </span>
+                  </div>
+                  <div className="chat-cmp-usagebar">
+                    <span
+                      className="chat-cmp-usagebar-fill"
+                      data-tight={tight ? '' : undefined}
+                      style={{ width: `${Math.min(100, l.percent)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-      {accounts.length > 1 && (
-        <div className="chat-cmp-usageblock">
-          <span className="chat-cmp-grouplabel">Account</span>
-          <p className="chat-cmp-usagenote">Switching restarts this chat after this turn.</p>
-          <div className="chat-cmp-acctlist">
+        {accounts.length > 1 && (
+          <div className="chat-cmp-usageblock">
+            <span className="chat-cmp-grouplabel">
+              Account
+              {' '}<span className="chat-cmp-groupnote">· switching restarts this chat</span>
+            </span>
             {accounts.map((a) => {
               const active = a.id === activeAccountId;
               const label = a.email || a.id;
+              const broken = a.state === 'needs-relogin';
+              const tight = a.sessionPercent !== null && a.sessionPercent >= CONTEXT_TIGHT_PCT;
+              // Same row object as the model and mode pickers — this is the same question
+              // ("which of these?"), so it is not given a second visual language. What it
+              // gets is a DENSER instance of that one: no description sentence, so no need
+              // for the two-line box the model rows earn.
               return (
-                // Borderless rows in one list, not four bordered cards: a boxed row per
-                // account made the picker the heaviest object in a panel that is mostly
-                // measurements. Only the ACTIVE one gets a surface, because only it is
-                // making a claim.
                 <button
                   key={a.id}
                   type="button"
                   role="menuitemradio"
                   aria-checked={active}
-                  className={`chat-cmp-acctrow${active ? ' is-active' : ''}`}
-                  disabled={!onAccountChange || a.state === 'needs-relogin'}
-                  title={a.state === 'needs-relogin'
-                    ? `${label} needs to sign in again`
-                    : a.organizationName || label}
+                  className={`chat-cmp-modelrow is-compact${active ? ' is-active' : ''}`}
+                  disabled={!onAccountChange || broken}
+                  title={broken
+                    ? `${label} — signed out, sign in again from Settings`
+                    : `${a.organizationName || label}${a.preferred ? ' · preferred account' : ''}`}
                   onClick={() => { if (!active) onAccountChange?.(a.id); }}
                 >
-                  {/* `min-width: 0` + ellipsis on the NAME is what keeps everything to its
-                      right on-panel — the old row let a long email push the "preferred"
-                      badge off the edge, where it rendered as a clipped word. */}
-                  <span className="chat-cmp-acctrow-name">{label}</span>
-                  {a.preferred && <span className="chat-cmp-acctrow-flag">preferred</span>}
-                  <span
-                    className="chat-cmp-acctrow-meta"
-                    data-warn={a.state === 'needs-relogin' ? '' : undefined}
-                  >
-                    {a.state === 'needs-relogin'
-                      ? 'sign in again'
-                      : a.sessionPercent === null ? '—' : `${Math.round(a.sessionPercent)}%`}
+                  <span className="chat-cmp-modelrow-head">
+                    {/* The name shares this line with NOTHING that can grow. A badge beside
+                        a flexible name does not truncate the badge, it truncates the name —
+                        and an account is identified by its address, so the address is the
+                        one string here that must never be cut to fit something else. */}
+                    <span className="chat-cmp-modelrow-name">{label}</span>
+                    <span className="chat-cmp-modelrow-meta" data-warn={broken ? '' : undefined} data-tight={tight ? '' : undefined}>
+                      {broken ? 'sign in again' : a.sessionPercent === null ? '—' : `${Math.round(a.sessionPercent)}%`}
+                    </span>
                   </span>
                 </button>
               );
             })}
           </div>
-        </div>
-      )}
+        )}
 
-      {(costUsd != null || staleAsOf != null) && (
-        <div className="chat-cmp-usagefoot">
-          {costUsd != null && (
-            <>
-              <div className="chat-cmp-usagerow">
-                <span className="chat-cmp-windowrow-title">Estimated cost</span>
-                <span className="chat-cmp-usagerow-value is-sm">{fmtCost(costUsd)}</span>
-              </div>
-              <p className="chat-cmp-usagenote">
-                At public API rates. A Max/Pro plan is flat-rate, so this is a what-if.
-              </p>
-            </>
-          )}
-          {staleAsOf != null && (
-            <p className="chat-cmp-usagenote">Account usage as of {fmtClock(staleAsOf)}.</p>
-          )}
-        </div>
-      )}
+        {costUsd != null && (
+          <div className="chat-cmp-usageblock chat-cmp-usagefoot">
+            <div className="chat-cmp-usagerow" title="A Max/Pro plan is flat-rate, so this is a what-if.">
+              <span className="chat-cmp-windowrow-title">
+                <span className="chat-cmp-windowrow-lead">Estimated cost</span>
+                {' '}<span className="chat-cmp-windowrow-reset">· public API rates</span>
+              </span>
+              <span className="chat-cmp-usagerow-value is-sm">{fmtCost(costUsd)}</span>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -308,6 +308,53 @@ export function splitModels(
   };
 }
 
+/**
+ * The context window read as SEVERITY BANDS rather than as one percentage.
+ *
+ * A single 0-100% arc answers "how full?" and nothing else — and on a 1M window the answer
+ * is almost always a small number, which is exactly when a percentage stops being a signal.
+ * What actually changes behaviour is which ABSOLUTE region the session is in: under 200k is
+ * a normal working session, 200k-500k is where handoff starts being worth considering, and
+ * past 500k every further turn re-reads a very large transcript.
+ *
+ * So the reading becomes three bands, each with its own fill and its own tone. The count of
+ * lit bands is legible at a glance in a way that "40%" is not, and the tone says which kind
+ * of session this is without the reader converting tokens in their head.
+ *
+ * A 200k-window model collapses to ONE band — the edges are clamped to the real limit and
+ * empty bands are never emitted, so a small window never draws two dead rings.
+ */
+export const CONTEXT_BAND_EDGES = [200_000, 500_000];
+
+export type ContextBandKey = 'calm' | 'caution' | 'danger';
+
+export interface ContextBand {
+  key: ContextBandKey;
+  /** Token bounds of this band, already clamped to the window. */
+  from: number;
+  to: number;
+  /** 0..1 — how much of THIS band is spent. */
+  frac: number;
+}
+
+export function contextBands(used: number, limit: number): ContextBand[] {
+  const keys: ContextBandKey[] = ['calm', 'caution', 'danger'];
+  const edges = [0, ...CONTEXT_BAND_EDGES.filter((e) => e < limit), limit];
+  const out: ContextBand[] = [];
+  for (let i = 0; i < edges.length - 1; i++) {
+    const from = edges[i];
+    const to = edges[i + 1];
+    const span = to - from;
+    out.push({
+      key: keys[Math.min(i, keys.length - 1)],
+      from,
+      to,
+      frac: span > 0 ? Math.max(0, Math.min(1, (used - from) / span)) : 0,
+    });
+  }
+  return out;
+}
+
 /** Context-window usage at/above which a readout goes caution-coloured (and, in the chat
  *  composer, offers `/compact`). Shared by BOTH composers so the terminal strip and the
  *  chat card can never disagree about when a session is running out of room. */

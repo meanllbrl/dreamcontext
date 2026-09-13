@@ -731,19 +731,24 @@
   outline-offset: 2px;
 }
 .chat-cmp-usagering-track { stroke: var(--color-border-hover); }
-.chat-cmp-usagering-fill { stroke: var(--color-accent); }
-/* Past the handoff threshold the ring takes the same warning tone the bar's fill does.
-   Independent of `[data-tight]`, which is about the window running out — a session can be
-   past the knee with plenty of room left, and that is the normal case. */
-.chat-cmp-usagering-fill[data-past-knee] {
-  stroke: var(--color-warning);
-}
+/* Tone by BAND, not by a single escalating arc. The colour is a property of the region the
+   session is in, so it is decided once, here, and every surface that draws the same reading
+   (this ring, the panel's bar) reads it from the same three names. */
+.chat-cmp-usagering-fill { stroke: var(--chat-band-calm); }
+.chat-cmp-usagering-fill[data-band='caution'] { stroke: var(--chat-band-caution); }
+.chat-cmp-usagering-fill[data-band='danger'] { stroke: var(--chat-band-danger); }
 /* The threshold notch — a tertiary-toned tick on the ring, matching the bar's marker. */
 .chat-cmp-usagering-notch {
   stroke: var(--color-text-tertiary);
   fill: none;
 }
-.chat-cmp-usagebtn[data-tight='true'] .chat-cmp-usagering-fill { stroke: var(--color-warning); }
+/* The three band tones. Declared on the composer card so the gauge and the popover that
+   hangs off it cannot disagree about what "caution" looks like. */
+.chat-cmp-card, .chat-cmp-usagemenu {
+  --chat-band-calm: var(--color-accent);
+  --chat-band-caution: var(--color-warning);
+  --chat-band-danger: var(--color-error);
+}
 
 .chat-cmp-compact-btn {
   flex: 0 0 auto;
@@ -804,11 +809,19 @@
    the account note, the clipped "preferred" badge — was a line of text one word too long
    for its box. The panel is still narrower than the composer it hangs off (max-width above
    clamps it in a split pane), and the blocks below carry their own internal spacing, so the
-   flex gap drops to the space BETWEEN groups rather than between every line. */
+   flex gap drops to the space BETWEEN groups rather than between every line.
+
+   `max-height` is the OVERFLOW fix and it is not optional. This panel is anchored to the
+   composer and grows UPWARD; with no ceiling it simply ran past the window and the surface
+   underneath clipped it — no scrollbar, no affordance, the last sentence cut through the
+   middle of its own line. The ceiling is the one the model menu already uses, because two
+   panels hanging off the same composer do not get two answers to the same question. */
 .chat-cmp-usagemenu {
   width: 284px;
   gap: 12px;
   padding: 13px 14px;
+  max-height: calc(100vh - 130px);
+  overflow: hidden;
 }
 /* One group of related readings: a label, its rows, and nothing between them but space.
    Groups are separated by the menu's own gap — a rule per row (what this used to draw)
@@ -818,11 +831,41 @@
   flex-direction: column;
   gap: 6px;
 }
+/* The headline never scrolls away. When the panel is squeezed, the part that leaves is the
+   part you did not open it for — and what you opened it for is the context reading. */
+.chat-cmp-usageblock.is-lead { flex: none; }
+/* Shrinks only when it must; at natural height the panel looks exactly as it did before a
+   ceiling existed. `min-height: 0` is what actually lets a flex child scroll rather than
+   push its parent open. */
+.chat-cmp-usagemenu .chat-cmp-scroll {
+  flex: 0 1 auto;
+  gap: 12px;
+  min-height: 0;
+  margin: -2px -4px;
+  padding: 2px 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-hover) transparent;
+  /* A clipped panel and a scrollable one look IDENTICAL when the scrollbar is hidden and
+     the cut lands mid-row — which is the complaint that started this. Two `local` covers
+     ride with the content and mask the two fixed shadows at the extremes, so the shadow is
+     present exactly when there is more in that direction and gone the moment there isn't.
+     No script, no state, and it cannot disagree with the actual scroll position. */
+  background:
+    linear-gradient(var(--color-bg-elevated, var(--color-bg-secondary)) 30%, rgba(0,0,0,0)) top / 100% 16px no-repeat local,
+    linear-gradient(rgba(0,0,0,0), var(--color-bg-elevated, var(--color-bg-secondary)) 70%) bottom / 100% 16px no-repeat local,
+    radial-gradient(farthest-side at 50% 0, rgba(0,0,0,0.55), rgba(0,0,0,0)) top / 100% 11px no-repeat scroll,
+    radial-gradient(farthest-side at 50% 100%, rgba(0,0,0,0.55), rgba(0,0,0,0)) bottom / 100% 11px no-repeat scroll;
+}
+.chat-cmp-usagemenu .chat-cmp-scroll::-webkit-scrollbar { width: 6px; }
+.chat-cmp-usagemenu .chat-cmp-scroll::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-full);
+  background: var(--color-border-hover);
+}
+/* A bold title with 4px under it reads as zero gap; the note needs real air to be read as
+   a note rather than as a second line of the title. */
 .chat-cmp-usagefoot {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-top: 10px;
+  gap: 8px;
+  padding-top: 11px;
   border-top: 1px solid var(--color-border);
 }
 /* The MODE menu hangs off the LEFT trigger, so it grows from the left edge. */
@@ -858,12 +901,24 @@
   overflow: hidden;
 }
 
+/* Sentence case, not 9.5px uppercase mono. A section heading is a word the reader has to
+   READ, and small caps in a mono face at that size is a texture with a word hidden in it.
+   (Only this panel consumes the class — the model menu never adopted it.) */
 .chat-cmp-grouplabel {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-wrap: pretty;
+}
+/* A group's caveat is a QUALIFIER on the group, not a paragraph about it. Riding the
+   heading's own line is what took ten lines of prose out of this panel: the sentence
+   "Switching restarts this chat on the other account, after the current turn" was two
+   lines saying what four words say on a line that already existed. Same shape the window
+   rows use for "· resets 3h 34m", so the panel now has ONE line idiom end to end:
+   name · qualifier ......... value. */
+.chat-cmp-groupnote {
+  font-weight: 400;
+  color: var(--chat-small-ink, var(--color-text-tertiary));
 }
 
 /* One row shape for a model AND for a mode: a name, an optional badge, an optional right-
@@ -885,6 +940,26 @@
 }
 .chat-cmp-modelrow:hover:not(:disabled) { border-color: var(--color-border-hover); }
 .chat-cmp-modelrow:disabled { opacity: 0.45; cursor: default; }
+/* Every interactive row in this kit answered the keyboard with the browser's own blue
+   outline, or with nothing. One brand ring, stated once, for all of them. */
+.chat-cmp-modelrow:focus-visible,
+.chat-cmp-handoffswitch:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+/* A model row earns two lines because it carries a sentence. An account row carries an
+   address and a percent, so it takes the same box at the height that content needs. */
+.chat-cmp-modelrow.is-compact { padding: 6px 9px; }
+/* A signed-out account is NOT an unavailable option to be greyed past — it is the one row
+   on this list with something wrong that the reader can fix, and the shared 0.45 dim made
+   it the faintest thing on the panel. It stays unclickable and fully legible: the name
+   steps back to the small ink, and the sentence that says what to do keeps the warn ink.
+   (The dim also silently multiplied every measured contrast in that row by 0.45, which is
+   the kind of failure a background-chain audit does not see unless it composites opacity.) */
+.chat-cmp-modelrow.is-compact:disabled { opacity: 1; }
+.chat-cmp-modelrow.is-compact:disabled .chat-cmp-modelrow-name { color: var(--chat-small-ink, var(--color-text-tertiary)); }
+.chat-cmp-modelrow.is-compact .chat-cmp-modelrow-name { font-size: 12.5px; }
+
 .chat-cmp-modelrow.is-active {
   border-color: var(--color-accent);
   background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
@@ -896,18 +971,38 @@
   gap: 8px;
 }
 .chat-cmp-modelrow-name {
+  min-width: 0;
+  overflow: hidden;
   font-size: 13px;
   font-weight: 600;
   color: var(--color-text);
-}
-/* NOT `--color-accent-text` (white — it belongs on a SOLID accent fill): over the 16% tint
-   above, white is the one label you could not read. Same fix as the slash row's. */
-.chat-cmp-modelrow.is-active .chat-cmp-modelrow-name { color: var(--color-accent); }
-.chat-cmp-modelrow-meta {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--color-text-tertiary);
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Neither white nor accent. White is unreadable over a 16% tint (the reason it was accent
+   in the first place), but accent-on-that-tint MEASURES 3.60 in light and 4.47 in dark —
+   both under AA, on a class the model, mode and account pickers all share. The selected
+   state is already carried by the accent border and the tint; the name's job is to be
+   read, so it takes full-contrast ink and the weight that says "this one". */
+.chat-cmp-modelrow.is-active .chat-cmp-modelrow-name {
+  color: var(--color-text);
+  font-weight: 700;
+}
+/* Fixed-width and flex: none — this is a control's readout, not a label, so it is the one
+   thing allowed to share the name's line. Anything that could GROW goes to the line below. */
+.chat-cmp-modelrow-meta {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--chat-small-ink, var(--color-text-tertiary));
+  white-space: nowrap;
+}
+/* A spent account and a fresh one were the same grey number. The reading you have to act
+   on cannot look like the one you don't. */
+.chat-cmp-modelrow-meta[data-tight],
+.chat-cmp-modelrow-meta[data-warn] {
+  color: var(--chat-warn-ink, var(--color-warning));
+  font-weight: 600;
 }
 .chat-cmp-modelrow-insight {
   font-size: 12px;
@@ -1062,6 +1157,32 @@
   color: var(--color-text);
 }
 
+/* ── Measured inks for this panel ─────────────────────────────────────────────────────
+   Both of these exist because a measurement said so, not because a name sounded right.
+   Every colour pair below was read off a 1x1 canvas in BOTH themes (a `getComputedStyle`
+   string cannot be trusted — modern engines hand back `lab(...)`, and a naive parse turns
+   a failing pair into a passing number).
+
+   SMALL INK — text under ~12.5px is held to 7:1, not 4.5:1, because a threshold written
+   for body text does not carry down to an 11px mono meta line. The safe token is not the
+   same one in both themes: light `--color-text-tertiary` measures 9.29 while light
+   `--color-text-secondary` is 5.92; dark is the exact inverse (tertiary 6.30, secondary
+   10.24). So the ink is chosen per theme instead of one token being wrong somewhere.
+
+   WARN INK — `--color-warning` is #ff7a00 in light mode: 2.61 on the panel's white, i.e.
+   just over a third of the AA floor, and the failure is invisible to anyone reviewing in
+   dark mode (the same token measures 8.89 there). Darkened for TEXT only; the bar fills
+   keep the token itself, where the 3:1 graphic threshold applies and it passes. */
+.chat-cmp-usagemenu, .chat-cmp-modelmenu {
+  --chat-small-ink: var(--color-text-tertiary);
+  --chat-warn-ink: color-mix(in srgb, var(--color-warning) 52%, #000);
+}
+[data-theme='dark'] .chat-cmp-usagemenu,
+[data-theme='dark'] .chat-cmp-modelmenu {
+  --chat-small-ink: var(--color-text-secondary);
+  --chat-warn-ink: var(--color-warning);
+}
+
 /* ── Usage popover rows ───────────────────────────────────────────────────────────────
    One bar per reading the app actually FOUND — context, and whatever account caps the
    server could read. A cap with no source is absent from the array upstream, so there is no
@@ -1089,9 +1210,10 @@
 /* The context reading is the headline; a 5-hour window is a supporting number. Same row
    shape, one step down in weight — that IS the hierarchy this panel was missing. */
 .chat-cmp-usagerow-value.is-sm {
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--color-text-secondary);
 }
+.chat-cmp-usagerow-value.is-sm[data-tight] { color: var(--chat-warn-ink, var(--color-warning)); }
 .chat-cmp-windowrow {
   display: flex;
   flex-direction: column;
@@ -1101,23 +1223,68 @@
    the percent beside it cannot tell you. Two lines when it must, one line when it fits. */
 .chat-cmp-windowrow-title {
   min-width: 0;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
   line-height: 1.35;
   color: var(--color-text-secondary);
   text-wrap: pretty;
 }
+/* The name wraps as a UNIT or not at all. Without this the title column breaks wherever
+   the space happens to fall — "Estimated / cost · at public API rates" — and a label split
+   mid-phrase reads as a rendering fault, not as a wrap. */
+.chat-cmp-windowrow-lead { white-space: nowrap; }
 /* "when it rolls over" is part of naming the window, not a separate finding — so it rides
    the title line in a quieter voice instead of claiming a caption row of its own. */
 .chat-cmp-windowrow-reset {
   font-family: var(--font-mono);
   font-weight: 400;
-  font-size: 10.5px;
-  color: var(--color-text-tertiary);
+  font-size: 11px;
+  color: var(--chat-small-ink, var(--color-text-tertiary));
+  /* The separating space lives OUTSIDE this span, in the JSX. Inside it, `nowrap` would
+     suppress the only break opportunity the line has and the qualifier would run off the
+     panel instead of dropping to the next line. */
   /* Wraps as ONE unit or not at all — "resets" stranded on the line above "3h 34m" is a
      duration broken in half, which is worse than the second line it was avoiding. */
   white-space: nowrap;
 }
+/* ── The banded context bar ────────────────────────────────────────────────────────────
+   A segmented track, not one fill. The seams fall exactly on 200k and 500k because each
+   segment's flex-grow IS its share of the window, so the boundaries are drawn by the
+   geometry rather than positioned by a second number that could drift from it. */
+.chat-cmp-bandbar {
+  display: flex;
+  gap: 2px;
+  height: 5px;
+  margin-top: 6px;
+}
+.chat-cmp-bandseg {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  overflow: hidden;
+}
+.chat-cmp-bandseg-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--chat-band-calm);
+  transition: width var(--transition-normal, 240ms) ease;
+}
+.chat-cmp-bandseg-fill[data-band='caution'] { background: var(--chat-band-caution); }
+.chat-cmp-bandseg-fill[data-band='danger'] { background: var(--chat-band-danger); }
+/* Only drawn when the handoff threshold falls INSIDE a band — at 200k it is a seam, and a
+   seam needs no tick. */
+.chat-cmp-bandseg-mark {
+  position: absolute;
+  inset-block: 0;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  pointer-events: none;
+}
+
 .chat-cmp-usagebar {
   height: 4px;
   margin-top: 5px;
@@ -1142,7 +1309,8 @@
 /* Past the knee the fill changes MEANING, not just shade: this session is now in the
    range the whole feature exists to flag, and warning is the token for "worth acting on,
    not broken". */
-.chat-cmp-usagebar-fill[data-past-knee] {
+.chat-cmp-usagebar-fill[data-past-knee],
+.chat-cmp-usagebar-fill[data-tight] {
   background: var(--color-warning);
 }
 /* The threshold tick. Centred on its point (translateX(-50%)) so the mark sits AT the
@@ -1171,6 +1339,9 @@
 }
 /* ── The per-pane switch, under the context bar ─────────────────────────────── */
 .chat-cmp-handoffrow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   margin-top: 4px;
 }
 .chat-cmp-handoffswitch {
@@ -1219,16 +1390,9 @@
 .chat-cmp-handoffswitch-track[data-on] .chat-cmp-handoffswitch-knob {
   transform: translateX(12px);
 }
-.chat-cmp-handoffnote {
-  margin: 1px 0 0;
-  font-size: 11px;
-  line-height: 1.42;
-  color: var(--color-text-tertiary);
-  text-wrap: pretty;
-}
 /* The meta line's right half changes tone with the fill, for the same reason. */
 .chat-cmp-usagemeta [data-past-knee] {
-  color: var(--color-warning);
+  color: var(--chat-warn-ink, var(--color-warning));
 }
 /* `white-space: nowrap` is the point of this rule, not a detail of it: both halves are
    measurements, and a measurement that breaks across two lines mid-fraction ("106k /"
@@ -1241,8 +1405,8 @@
   gap: 10px;
   margin-top: 5px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--color-text-tertiary);
+  font-size: 11px;
+  color: var(--chat-small-ink, var(--color-text-tertiary));
   white-space: nowrap;
 }
 .chat-cmp-usagemeta > span {
@@ -1253,81 +1417,19 @@
 /* When the panel is clamped narrow, the arithmetic is what survives and the threshold
    label is what gives way — the bar already draws the threshold as a tick. */
 .chat-cmp-usagemeta > span:first-child { flex: none; }
+/* 12.5px, and the load-bearing half in bold. An 11px grey footnote sits below the level at
+   which a sentence is read at all — it becomes something the eye files as "fine print" and
+   skips, which for "switching restarts this chat" is exactly the wrong outcome. */
 .chat-cmp-usagenote {
   margin: 0;
-  font-size: 11px;
+  font-size: 12.5px;
   line-height: 1.42;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   text-wrap: pretty;
 }
+.chat-cmp-usagenote strong { font-weight: 600; color: var(--color-text); }
 
-/* ── The account picker ───────────────────────────────────────────────────────────────
-   Four bordered cards made the picker the heaviest object in a panel that is otherwise
-   measurements, and it is not the reason the panel opens. It becomes a LIST: borderless
-   rows, one line each, and only the active account draws a surface. */
 
-.chat-cmp-acctlist {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin-top: 1px;
-}
-.chat-cmp-acctrow {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  width: 100%;
-  padding: 5px 8px;
-  /* Pulled back out by its own padding so the NAMES line up with the group label and the
-     note above them — a list that starts 8px to the right of everything else reads as a
-     nested thing, which it isn't. The hover/active surface still runs wider than the text. */
-  margin-inline: -8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  background: transparent;
-  text-align: left;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-.chat-cmp-acctrow:hover:not(:disabled) { background: var(--color-bg-tertiary); }
-.chat-cmp-acctrow:disabled { opacity: 0.5; cursor: default; }
-.chat-cmp-acctrow.is-active {
-  border-color: var(--color-accent);
-  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
-}
-/* The truncation that keeps the row honest: the name yields, so the flag and the percent
-   to its right always land on the panel instead of running off it. */
-.chat-cmp-acctrow-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  font-size: 12.5px;
-  color: var(--color-text);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-/* NOT `--color-accent-text` (white — it belongs on a SOLID accent fill): over the 16%
-   tint above, white is the one label you could not read. */
-.chat-cmp-acctrow.is-active .chat-cmp-acctrow-name {
-  color: var(--color-accent);
-  font-weight: 600;
-}
-/* A word, not an uppercase mono pill. The pill was a second accent object competing with
-   the active row's own tint for the same glance, and it was the thing that got clipped. */
-.chat-cmp-acctrow-flag {
-  flex: none;
-  font-size: 10px;
-  color: var(--color-text-tertiary);
-}
-.chat-cmp-acctrow-meta {
-  flex: none;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--color-text-tertiary);
-  white-space: nowrap;
-}
-.chat-cmp-acctrow-meta[data-warn] { color: var(--color-warning); }
 
 /* ── Popover menu contents (the portaled shell itself is AgentTerminal.css's
      .agent-composer-menu / .agent-composer-pop — see this file's header) ───────────── */
