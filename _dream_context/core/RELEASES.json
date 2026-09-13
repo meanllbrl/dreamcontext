@@ -2,12 +2,20 @@
   {
     "id": "rel_n2DoRyoR",
     "version": "0.28.0",
-    "date": "",
-    "summary": "Voice becomes a real input, and the account layer learns its own policy. J.A.R.V.I.S mode gets a real transcriber (whisper-large-v3-turbo), a measured TTS path and a settings home, all on one OpenRouter key. The multi-account layer, shipped in 0.27.0, is corrected where it mattered most: usage is read from the CLI’s own /usage report rather than a cache it deliberately does not write, and a user-set auto-switch policy is in flight. Plus the in-app terminal can install its native module inside the .app, and an html/v1 Lab card sizes to its content.",
+    "date": "2026-09-13",
+    "summary": "J.A.R.V.I.S voice mode becomes real input and real output: push-to-talk (hold, or press once), a whisper transcriber that runs locally when one is installed and goes to the API when not, spoken answers that duck the machine's own sound, mark the sentence being read and never let two panes speak at once — all on one OpenRouter key stored at 0600 on this machine and never in a vault. dream-html gets a real layout ENGINE behind it, so a branching answer is drawn as a diagram the surface lays out rather than a stack of rows, alongside a prose-first briefing that tells the agent when NOT to draw. Patterns stop being ordinary knowledge competing for a recall slot and become a deterministically-fired layer with triggers derived from each pattern's own filename and H1. The multi-account layer shipped in 0.27.0 gains a POLICY the owner sets — spread the load by weighted score, or drain the list in order — and the usage behind it is read from the CLI's own /usage report rather than a cache it deliberately does not write. Sleep's task-filing bar flips from 'file unless junk' to 'fold by default, file by exception' behind a semantic-neighbour check. Plus the in-app terminal installing node-pty somewhere the .app can actually write, an html/v1 Lab card sizing to its content instead of being cut at 232px, and the switch-policy weight fields no longer overflowing their track. AFTER SCOPE-CLOSE (landed after the five version surfaces were stamped, and therefore shipping as 0.28.0): auto-switch scoring became time-aware — usage is weighed by how much of its window is still ahead, a window whose reset has passed is no longer scored at the percent it held before it, and the panel states how long each window has LEFT instead of what time it resets; the agent is told at 200k context that it may carry its state into a fresh session; a rendered diagram became a VIEW that centres, zooms and traces by clicking a node; and a click in a background chat pane is counted before the pane widens.",
     "breaking": false,
     "status": "planning",
-    "features": [],
-    "tasks": [],
+    "features": [
+      "claude-multi-account"
+    ],
+    "tasks": [
+      "j-a-r-v-i-s-sesi-duyulur-olsun-duck-kendi-sesini-kismasin-cumleler-birbirini-kirpmasin-konusulan-cumle-vurgulansin-dikte-gercekten-local-whisper-kalitesinde-olsun",
+      "auto-switch-iki-mod-agirlikli-puan-ve-sirayla-tuketme",
+      "yanan-pencereyi-harcayan-ve-eve-donen-akilli-secim",
+      "author-the-0-28-0-what-s-new-story-before-the-cut-leaves-this-machine",
+      "pre-publish-checklist-v0-28-0"
+    ],
     "changelog": []
   },
   {
