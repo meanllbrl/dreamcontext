@@ -330,6 +330,7 @@ export function UsageMenu({
   contextHandoff?: { enabled: boolean; nudgeAt: number; remindEvery: number };
   onContextHandoffChange?: (enabled: boolean) => void;
 }) {
+  const [acctOpen, setAcctOpen] = useState(false);
   const now = Date.now();
   // The context reading and the account windows answer DIFFERENT questions — "is this
   // conversation full?" versus "is this account spent?" — so they stop being one
@@ -345,7 +346,6 @@ export function UsageMenu({
         // The handoff threshold, as a fraction of the window. Present only when the pane
         // has handoff ON (usageLimits() drops it otherwise).
         const handoffAt = context.detail?.handoffAt;
-        const pastKnee = !!(handoffAt && context.detail && context.detail.used >= handoffAt);
         return (
           <div className="chat-cmp-usageblock is-lead">
             <div className="chat-cmp-usagerow">
@@ -384,34 +384,37 @@ export function UsageMenu({
               // says WHERE the threshold is, the switch label below says WHAT it is, and
               // this line is left to say the one thing neither of them can: the count.
               <div className="chat-cmp-usagemeta">
-                <span>{fmtTokens(context.detail.used)} / {fmtTokens(context.detail.limit)} used</span>
-                {pastKnee
-                  ? <span data-past-knee="">may hand off</span>
-                  : <span>{fmtTokens(Math.max(0, context.detail.limit - context.detail.used))} free</span>}
+                <span>{fmtTokens(context.detail.used)} / {fmtTokens(context.detail.limit)}</span>
+                <span>{fmtTokens(Math.max(0, context.detail.limit - context.detail.used))} free</span>
               </div>
             )}
             {/* The switch sits UNDER the bar it changes — the setting is about this number,
                 and putting it anywhere else would make the reader hunt for what the
                 marker means. */}
+            {/* A car's ECO badge, not a settings toggle: the pill IS the control, it lights
+                when the mode is on, and it says what it does in one line rather than in a
+                paragraph underneath. The glyph never travels alone — a state with no
+                universal symbol needs its word beside it. */}
             {contextHandoff && (
-              <div className="chat-cmp-handoffrow">
-                <button
-                  type="button"
-                  role="menuitemcheckbox"
-                  aria-checked={contextHandoff.enabled}
-                  className="chat-cmp-handoffswitch"
-                  disabled={!onContextHandoffChange}
-                  onClick={() => onContextHandoffChange?.(!contextHandoff.enabled)}
-                >
-                  <span className="chat-cmp-handoffswitch-label">
-                    Hand off at {fmtTokens(contextHandoff.nudgeAt)}
-                  </span>
-                  <span className="chat-cmp-handoffswitch-track" data-on={contextHandoff.enabled ? '' : undefined}>
-                    <span className="chat-cmp-handoffswitch-knob" />
-                  </span>
-                </button>
-                <p className="chat-cmp-usagenote">Saves its state to the task, starts fresh.</p>
-              </div>
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={contextHandoff.enabled}
+                className="chat-cmp-eco"
+                data-on={contextHandoff.enabled ? '' : undefined}
+                title={`ECO mode — at ${fmtTokens(contextHandoff.nudgeAt)} the agent writes its state into the task and continues in a fresh session.`}
+                disabled={!onContextHandoffChange}
+                onClick={() => onContextHandoffChange?.(!contextHandoff.enabled)}
+              >
+                <svg className="chat-cmp-eco-glyph" viewBox="0 0 24 24" aria-hidden>
+                  <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.5 19 2c1 2 2 4.2 2 8 0 5.5-4.8 10-10 10Z" />
+                  <path d="M2 21c0-3 1.9-5.4 5.1-6C9.5 14.5 12 13 13 12" />
+                </svg>
+                <span className="chat-cmp-eco-name">ECO</span>
+                <span className="chat-cmp-eco-meaning">
+                  {contextHandoff.enabled ? `hands off at ${fmtTokens(contextHandoff.nudgeAt)}` : 'off'}
+                </span>
+              </button>
             )}
           </div>
         );
@@ -463,56 +466,71 @@ export function UsageMenu({
           </div>
         )}
 
-        {accounts.length > 1 && (
-          <div className="chat-cmp-usageblock">
-            <span className="chat-cmp-grouplabel">
-              Account
-              {' '}<span className="chat-cmp-groupnote">· switching restarts this chat</span>
-            </span>
-            {accounts.map((a) => {
-              const active = a.id === activeAccountId;
-              const label = a.email || a.id;
-              const broken = a.state === 'needs-relogin';
-              const tight = a.sessionPercent !== null && a.sessionPercent >= CONTEXT_TIGHT_PCT;
-              // Same row object as the model and mode pickers — this is the same question
-              // ("which of these?"), so it is not given a second visual language. What it
-              // gets is a DENSER instance of that one: no description sentence, so no need
-              // for the two-line box the model rows earn.
-              return (
-                <button
-                  key={a.id}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={active}
-                  className={`chat-cmp-modelrow is-compact${active ? ' is-active' : ''}`}
-                  disabled={!onAccountChange || broken}
-                  title={broken
-                    ? `${label} — signed out, sign in again from Settings`
-                    : `${a.organizationName || label}${a.preferred ? ' · preferred account' : ''}`}
-                  onClick={() => { if (!active) onAccountChange?.(a.id); }}
-                >
-                  <span className="chat-cmp-modelrow-head">
-                    {/* The name shares this line with NOTHING that can grow. A badge beside
-                        a flexible name does not truncate the badge, it truncates the name —
-                        and an account is identified by its address, so the address is the
-                        one string here that must never be cut to fit something else. */}
-                    <span className="chat-cmp-modelrow-name">{label}</span>
-                    <span className="chat-cmp-modelrow-meta" data-warn={broken ? '' : undefined} data-tight={tight ? '' : undefined}>
-                      {broken ? 'sign in again' : a.sessionPercent === null ? '—' : `${Math.round(a.sessionPercent)}%`}
-                    </span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
+        {accounts.length > 1 && (() => {
+          const active = accounts.find((a) => a.id === activeAccountId) ?? accounts[0];
+          const row = (a: AccountOption, isActive: boolean) => {
+            const broken = a.state === 'needs-relogin';
+            const tight = a.sessionPercent !== null && a.sessionPercent >= CONTEXT_TIGHT_PCT;
+            return (
+              <span className="chat-cmp-acct-line">
+                <span className="chat-cmp-acct-name">{a.email || a.id}</span>
+                <span className="chat-cmp-acct-meta" data-warn={broken ? '' : undefined} data-tight={tight ? '' : undefined}>
+                  {broken ? 'sign in again' : a.sessionPercent === null ? '—' : `${Math.round(a.sessionPercent)}%`}
+                </span>
+                {isActive && <span className="chat-cmp-acct-caret" aria-hidden>▾</span>}
+              </span>
+            );
+          };
+          return (
+            // Closed by default: four addresses stacked open were the tallest thing in a
+            // panel that exists to show three numbers, and only one of them is the answer to
+            // "which account am I on". The others are a click away, which is the right price
+            // for something you change rarely.
+            <div className="chat-cmp-acctwrap">
+              <button
+                type="button"
+                className="chat-cmp-acct is-head"
+                aria-expanded={acctOpen}
+                aria-haspopup="true"
+                disabled={!onAccountChange}
+                title={active.organizationName || active.email || active.id}
+                onClick={() => setAcctOpen((v) => !v)}
+              >
+                {row(active, true)}
+              </button>
+              {acctOpen && (
+                <div className="chat-cmp-acctlist" role="group" aria-label="Switch account">
+                  {/* The consequence is stated where the choice is made, not above a list you
+                      may never open. */}
+                  <span className="chat-cmp-acct-note">Restarts this chat</span>
+                  {accounts.filter((a) => a.id !== active.id).map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={false}
+                      className="chat-cmp-acct"
+                      disabled={!onAccountChange || a.state === 'needs-relogin'}
+                      title={a.state === 'needs-relogin'
+                        ? `${a.email || a.id} — signed out, sign in again from Settings`
+                        : `${a.organizationName || a.email || a.id}${a.preferred ? ' · preferred account' : ''}`}
+                      onClick={() => { setAcctOpen(false); onAccountChange?.(a.id); }}
+                    >
+                      {row(a, false)}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {costUsd != null && (
           <div className="chat-cmp-usageblock chat-cmp-usagefoot">
-            <div className="chat-cmp-usagerow" title="A Max/Pro plan is flat-rate, so this is a what-if.">
+            <div className="chat-cmp-usagerow" title="Estimated cost at public API rates. A Max/Pro plan is flat-rate, so this is a what-if.">
               <span className="chat-cmp-windowrow-title">
-                <span className="chat-cmp-windowrow-lead">Estimated cost</span>
-                {' '}<span className="chat-cmp-windowrow-reset">· public API rates</span>
+                <span className="chat-cmp-windowrow-lead">Est. cost</span>
+                {' '}<span className="chat-cmp-windowrow-reset">· API rates</span>
               </span>
               <span className="chat-cmp-usagerow-value is-sm">{fmtCost(costUsd)}</span>
             </div>

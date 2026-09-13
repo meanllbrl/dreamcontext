@@ -1225,16 +1225,16 @@ export function Composer({
   // The gauge, as a ring. `ctx.pct` drives an arc over a 6.5px-radius circle; the full
   // reading stays reachable as the button's title (a hover) and as `aria-valuetext` (a
   // screen reader) — demoted, never deleted.
-  // ONE ring, three arcs — not three concentric rings. Both were drawn and photographed at
-  // the size the mark actually renders (18px): concentric rings become a bullseye where 400k
-  // and 640k are indistinguishable, while arcs on a single ring stay legible because each
-  // band keeps its own stretch of the circumference. The arc LENGTHS are the bands' shares
-  // of the window, so the ring is a true 0→limit scale with coloured zones — the same
-  // geometry the popover's bar draws, which is why the two can't disagree.
-  const RING_R = 6.9;
-  const RING_W = 2.4;
-  const RING_C = 2 * Math.PI * RING_R;
-  const RING_GAP = 1.6;
+  // Apple Health's activity rings: three CONCENTRIC rings, one per band, each filling its own
+  // 0→100% and each carrying its own tone. What makes that shape legible at this size is not
+  // the count of rings — it is the thickness and the air between them, plus a track tinted in
+  // the ring's OWN colour rather than a neutral grey, so an empty ring still says which band
+  // it is. Geometry is derived, not typed: `r` marches inward by exactly stroke + gap, so the
+  // spacing can never drift as the numbers are tuned.
+  const RING_W = 2.6;
+  const RING_GAP = 1.1;
+  const RING_R0 = 10.2;          // outer radius; outer edge lands at 11.5 inside a 24 box
+  const ringR = (i: number) => RING_R0 - i * (RING_W + RING_GAP);
   const bands = ctx ? contextBands(ctx.used, ctx.limit) : [];
   const isTight = !!ctx && ctx.pct >= CONTEXT_TIGHT_PCT;
   // The handoff threshold. Same guard as the bar's marker: only when handoff is ON and the
@@ -1645,7 +1645,7 @@ export function Composer({
             aria-expanded={menu.open === 'usage'}
           >
             <svg
-              width="18" height="18" viewBox="0 0 18 18" fill="none"
+              width="24" height="24" viewBox="0 0 24 24" fill="none"
               role={ctx ? 'meter' : undefined}
               aria-valuemin={ctx ? 0 : undefined}
               aria-valuemax={ctx ? 100 : undefined}
@@ -1653,52 +1653,41 @@ export function Composer({
               aria-valuetext={ctx ? ctxReading : undefined}
               aria-hidden={ctx ? undefined : true}
             >
-              {bands.length === 0 && (
-                <circle className="chat-cmp-usagering-track" cx="9" cy="9" r={RING_R} strokeWidth={RING_W} />
-              )}
-              {(() => {
-                let offset = 0;
-                return bands.map((band) => {
-                  const span = RING_C * ((band.to - band.from) / (ctx!.limit || 1));
-                  // The gap between zones is taken out of the arc, never added between them:
-                  // the seams have to land exactly on 200k and 500k, and an arc that borrowed
-                  // a gap from its neighbour would put them somewhere else.
-                  const seg = Math.max(0.5, span - RING_GAP);
-                  const at = offset;
-                  offset += span;
-                  const notchFrac = handoffOn && contextHandoff!.nudgeAt > band.from
-                    && contextHandoff!.nudgeAt < band.to
-                    ? (contextHandoff!.nudgeAt - band.from) / (band.to - band.from)
-                    : null;
-                  return (
-                    <g key={band.key} transform="rotate(-90 9 9)">
+              {(bands.length ? bands : [null, null, null]).map((band, i) => {
+                const r = ringR(i);
+                const c = 2 * Math.PI * r;
+                // The notch rides whichever ring's band actually CONTAINS the threshold, so
+                // the mark and the arc it qualifies can never drift apart.
+                const notchFrac = band && handoffOn && contextHandoff!.nudgeAt > band.from
+                  && contextHandoff!.nudgeAt < band.to
+                  ? (contextHandoff!.nudgeAt - band.from) / (band.to - band.from)
+                  : null;
+                return (
+                  <g key={i} transform="rotate(-90 12 12)">
+                    <circle
+                      className="chat-cmp-usagering-track"
+                      data-band={band?.key}
+                      cx="12" cy="12" r={r} strokeWidth={RING_W}
+                    />
+                    {band && band.frac > 0 && (
                       <circle
-                        className="chat-cmp-usagering-track"
-                        cx="9" cy="9" r={RING_R} strokeWidth={RING_W} strokeLinecap="round"
-                        strokeDasharray={`${seg.toFixed(2)} ${(RING_C - seg).toFixed(2)}`}
-                        strokeDashoffset={`${(-at).toFixed(2)}`}
+                        className="chat-cmp-usagering-fill"
+                        data-band={band.key}
+                        cx="12" cy="12" r={r} strokeWidth={RING_W} strokeLinecap="round"
+                        strokeDasharray={`${(c * band.frac).toFixed(2)} ${c.toFixed(2)}`}
                       />
-                      {band.frac > 0 && (
-                        <circle
-                          className="chat-cmp-usagering-fill"
-                          data-band={band.key}
-                          cx="9" cy="9" r={RING_R} strokeWidth={RING_W} strokeLinecap="round"
-                          strokeDasharray={`${(seg * band.frac).toFixed(2)} ${(RING_C - seg * band.frac).toFixed(2)}`}
-                          strokeDashoffset={`${(-at).toFixed(2)}`}
-                        />
-                      )}
-                      {notchFrac !== null && (
-                        <circle
-                          className="chat-cmp-usagering-notch"
-                          cx="9" cy="9" r={RING_R} strokeWidth={RING_W}
-                          strokeDasharray={`1 ${RING_C.toFixed(2)}`}
-                          strokeDashoffset={`${(-(at + seg * notchFrac)).toFixed(2)}`}
-                        />
-                      )}
-                    </g>
-                  );
-                });
-              })()}
+                    )}
+                    {notchFrac !== null && (
+                      <circle
+                        className="chat-cmp-usagering-notch"
+                        cx="12" cy="12" r={r} strokeWidth={RING_W}
+                        strokeDasharray={`1 ${c.toFixed(2)}`}
+                        strokeDashoffset={`${(-c * notchFrac).toFixed(2)}`}
+                      />
+                    )}
+                  </g>
+                );
+              })}
             </svg>
           </button>
         )}

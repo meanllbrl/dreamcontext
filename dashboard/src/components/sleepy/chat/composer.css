@@ -710,13 +710,16 @@
    and `/compact` appears beside it WITHOUT hover, because at that point the action is the
    point and burying it would put it out of the keyboard's reach. */
 
+/* 28px, not 24px: three concentric rings need thickness and air between them to read as
+   three, and at 24 the innermost one closed into a dot. Measured at true size before the
+   number was changed — it is the smallest box in which the third ring is still a ring. */
 .chat-cmp-usagebtn {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -730,7 +733,15 @@
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
-.chat-cmp-usagering-track { stroke: var(--color-border-hover); }
+/* The unfilled part of a ring is that ring's OWN colour, dimmed — the Health-app move, and
+   the reason an empty ring still tells you which band it stands for. A neutral grey track
+   would make three empty rings indistinguishable from each other. */
+.chat-cmp-usagering-track {
+  stroke: color-mix(in srgb, var(--chat-band-calm) 15%, transparent);
+  fill: none;
+}
+.chat-cmp-usagering-track[data-band='caution'] { stroke: color-mix(in srgb, var(--chat-band-caution) 15%, transparent); }
+.chat-cmp-usagering-track[data-band='danger'] { stroke: color-mix(in srgb, var(--chat-band-danger) 15%, transparent); }
 /* Tone by BAND, not by a single escalating arc. The colour is a property of the region the
    session is in, so it is decided once, here, and every surface that draws the same reading
    (this ring, the panel's bar) reads it from the same three names. */
@@ -1155,6 +1166,150 @@
   background: var(--color-bg-tertiary);
   border-color: var(--color-accent);
   color: var(--color-text);
+}
+
+/* ── Cockpit skin — owner pick, 2026-09-13 ────────────────────────────────────────────
+   Every reading is a chip. The context block is the one tinted card because it is the
+   reading the panel exists for; everything under it is a neutral tile of the same family.
+   EVERY selector here is scoped under `.chat-cmp-usagemenu` on purpose: the model and mode
+   menus share `.chat-cmp-modelrow` and friends, and this skin is not theirs. */
+
+.chat-cmp-usagemenu .chat-cmp-usageblock.is-lead {
+  gap: 7px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-accent) 9%, var(--color-bg-tertiary));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 24%, transparent);
+}
+.chat-cmp-usagemenu .chat-cmp-usageblock.is-lead .chat-cmp-usagerow-value {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.chat-cmp-usagemenu .chat-cmp-bandbar { height: 8px; gap: 2px; }
+.chat-cmp-usagemenu .chat-cmp-bandseg { border-radius: 3px; }
+
+/* A rate-limit reading is a tile, and the tile is what carries the boundary — no rules,
+   no headings competing with the numbers inside them. */
+.chat-cmp-usagemenu .chat-cmp-windowrow {
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--color-bg-tertiary);
+}
+.chat-cmp-usagemenu .chat-cmp-windowrow .chat-cmp-usagebar { height: 3px; margin-top: 6px; }
+.chat-cmp-usagemenu .chat-cmp-usagefoot {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--color-bg-tertiary);
+}
+
+/* ── The ECO badge ────────────────────────────────────────────────────────────────────
+   Lit or unlit, like the one on a dashboard: filled and branded when the mode is on, a
+   quiet outline when it is off. The word travels with the glyph in both states, because a
+   symbol for "hand off" is one nobody has ever seen before. */
+.chat-cmp-eco {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border-hover);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, #000 14%, var(--color-bg-tertiary));
+  color: var(--chat-small-ink, var(--color-text-tertiary));
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.chat-cmp-eco:disabled { cursor: default; opacity: 0.6; }
+.chat-cmp-eco-glyph {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* The lamp's own word, set like a lamp: short, spaced, and the loudest thing on the badge. */
+.chat-cmp-eco-name {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+}
+/* What the mode DOES, on the badge itself. It used to be a sentence underneath — which is a
+   caption, and a caption is the thing this panel keeps being asked to stop printing. A car
+   does not explain its ECO lamp in a paragraph; the lamp says ECO and the needle shows the
+   rest. Three words is the whole explanation, and it is only on screen while the badge is. */
+.chat-cmp-eco-meaning {
+  font-weight: 400;
+  font-size: 11px;
+  opacity: 0.85;
+}
+.chat-cmp-eco[data-on] {
+  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 18%, transparent));
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+.chat-cmp-eco:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+
+/* ── The account dropdown ─────────────────────────────────────────────────────────────
+   One tile showing the account you are ON. The rest arrive on click. */
+.chat-cmp-acctwrap { display: flex; flex-direction: column; gap: 4px; }
+.chat-cmp-acct {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--color-bg-tertiary);
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.chat-cmp-acct:hover:not(:disabled) { border-color: var(--color-border-hover); }
+.chat-cmp-acct:disabled { cursor: default; opacity: 0.6; }
+.chat-cmp-acct:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.chat-cmp-acct.is-head {
+  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 18%, transparent));
+  border-color: var(--color-accent);
+}
+.chat-cmp-acct-line { display: flex; align-items: baseline; gap: 8px; }
+.chat-cmp-acct-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--color-text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.chat-cmp-acct.is-head .chat-cmp-acct-name { font-weight: 700; }
+.chat-cmp-acct-meta {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--chat-small-ink, var(--color-text-tertiary));
+  white-space: nowrap;
+}
+.chat-cmp-acct-meta[data-tight],
+.chat-cmp-acct-meta[data-warn] { color: var(--chat-warn-ink, var(--color-warning)); font-weight: 600; }
+.chat-cmp-acct-caret { flex: none; font-size: 9px; color: var(--chat-small-ink, var(--color-text-tertiary)); }
+.chat-cmp-acctlist { display: flex; flex-direction: column; gap: 4px; }
+.chat-cmp-acct-note {
+  padding: 1px 2px 2px;
+  font-size: 11px;
+  color: var(--chat-small-ink, var(--color-text-tertiary));
 }
 
 /* ── Measured inks for this panel ─────────────────────────────────────────────────────
