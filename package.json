@@ -48,6 +48,7 @@
     "verify:dream-actions": "node scripts/verify/dream-actions.mjs",
     "verify:chat-shelf-ui": "node scripts/verify/chat-shelf-ui.mjs",
     "verify:chat-composer": "node scripts/verify/chat-composer-ui.mjs",
+    "verify:pane-focus-click": "node scripts/verify/pane-focus-click.mjs",
     "verify:peer-mail": "node scripts/verify/peer-mail-ui.mjs",
     "verify:meeting-room": "node scripts/verify/meeting-room-ui.mjs",
     "verify:composer-shared": "node scripts/verify/composer-shared.mjs",

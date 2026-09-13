@@ -326,6 +326,45 @@ export function AgentSurface() {
   sessionListRef.current = sessionList;
   const [panes, setPanes] = useState<PaneState[]>([]);
   const [activePaneId, setActivePaneId] = useState('');
+
+  // ── A pointer-driven pane switch waits for the click it belongs to ───────────────────
+  //
+  // The action-focused pane is WIDER (a `flex-basis` bonus, animated over ~240ms). Switching
+  // on `mousedown` therefore re-lays out the row while the button is still held down: the
+  // element under the cursor slides away, `mouseup` lands on something else, and the browser
+  // fires the click on the nearest common ancestor of the two — never on the button that was
+  // pressed. So anything clicked in a background pane cost TWO clicks, the first one spent
+  // only on widening (owner report 09-13). The press now ARMS the switch and `mouseup`
+  // commits it one macrotask later: `click` is dispatched in the same task as `mouseup`, so
+  // only a timer is guaranteed to land AFTER the pressed element's own handler has run.
+  const armedPaneRef = useRef('');
+  const activatePane = useCallback((paneId: string) => {
+    if (paneId) setActivePaneId((cur) => (cur === paneId ? cur : paneId));
+  }, []);
+  const armPane = useCallback((paneId: string) => {
+    if (paneId) armedPaneRef.current = paneId;
+  }, []);
+  useEffect(() => {
+    const release = (now: boolean) => {
+      const pid = armedPaneRef.current;
+      armedPaneRef.current = '';
+      if (!pid) return;
+      if (now) activatePane(pid);
+      else window.setTimeout(() => activatePane(pid), 0);
+    };
+    // Capture + on the window: a child that stops propagation, or a release that happens
+    // outside the host (a selection dragged out of the pane), must still commit the switch.
+    const onUp = () => release(false);
+    // A native drag (tab DnD, a dragged selection) swallows the `mouseup` and has no click
+    // to protect — take the switch immediately rather than leaving it armed for later.
+    const onDragStart = () => release(true);
+    window.addEventListener('mouseup', onUp, true);
+    window.addEventListener('dragstart', onDragStart, true);
+    return () => {
+      window.removeEventListener('mouseup', onUp, true);
+      window.removeEventListener('dragstart', onDragStart, true);
+    };
+  }, [activatePane]);
   // Sessions the user minimized OUT of the side-by-side panes (to free terminal space)
   // while the overlay stays open — they live on as live progress chips in the corner dock,
   // restorable with a click. Kept alive in the garage exactly like any backgrounded tab.
@@ -2108,7 +2147,8 @@ export function AgentSurface() {
   // published them — so the ref can never be read stale.
   const paneActionsImpl: PaneActions = {
     setZoneTarget,
-    activate: (paneId) => { if (paneId !== activePaneId) setActivePaneId(paneId); },
+    // Called from a mousedown-capture, so it ARMS the switch — see `armPane` above.
+    activate: (paneId) => armPane(paneId),
     resume: (sid) => resumeSession(sid),
     close: (sid) => closeSessionById(sid),
   };
@@ -2737,18 +2777,27 @@ export function AgentSurface() {
     if (!el) return;
     // Read live from the DOM rather than from `panes`: the attribute is the pane id, so this
     // needs no state in its closure and the listener never goes stale as panes come and go.
-    const activate = (e: Event) => {
+    const paneOf = (e: Event) => {
       const at = e.target as Element | null;
-      const pid = (at?.closest?.('.agent-pane-slot[data-pane]') as HTMLElement | null)?.dataset.pane;
-      if (pid) setActivePaneId(pid);   // React bails out when it is already the active one
+      return (at?.closest?.('.agent-pane-slot[data-pane]') as HTMLElement | null)?.dataset.pane ?? '';
     };
-    el.addEventListener('mousedown', activate, true);
-    el.addEventListener('focusin', activate);
+    // The press only ARMS the pane (`armPane` above): widening it here would move the
+    // pressed element out from under the cursor and the click would never reach it.
+    const onDown = (e: Event) => armPane(paneOf(e));
+    // The keyboard path (Tab into another pane's composer) has no click to wait for, so it
+    // switches immediately — unless a press is already armed, which means this `focusin` is
+    // that press focusing what it landed on, and `mouseup` owns the switch.
+    const onFocusIn = (e: Event) => {
+      if (armedPaneRef.current) return;
+      activatePane(paneOf(e));   // React bails out when it is already the active one
+    };
+    el.addEventListener('mousedown', onDown, true);
+    el.addEventListener('focusin', onFocusIn);
     return () => {
-      el.removeEventListener('mousedown', activate, true);
-      el.removeEventListener('focusin', activate);
+      el.removeEventListener('mousedown', onDown, true);
+      el.removeEventListener('focusin', onFocusIn);
     };
-  }, [expanded]);
+  }, [expanded, armPane, activatePane]);
 
   // ── Per-session view-models (recomputed every render; bumpStatus re-renders on a
   //    live status change so the tabs + dock chips always track the real PTY state). ──
