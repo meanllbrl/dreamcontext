@@ -4,6 +4,7 @@ import { resolveKitTokens } from './labHtmlKit';
 import { appPageIds, findAppPage, findDataset, type AppSpec, type DatasetBundle } from './appModel';
 import {
   buildAppSrcdoc,
+  makeHeightDamper,
   isLabAppEnvelope,
   mintAppNonce,
   LAB_APP_PROTOCOL,
@@ -116,6 +117,8 @@ export function LabAppFrame({
   const [torn, setTorn] = useState(false);
   const [instanceKey, setInstanceKey] = useState(0);
   const [height, setHeight] = useState<number | null>(null);
+  // Per-instance, so a page or insight change (a remount) starts clean.
+  const dampHeightRef = useRef(makeHeightDamper());
   const datasetsRef = useRef(datasets);
   datasetsRef.current = datasets;
   const didMountThemeRef = useRef(false);
@@ -169,7 +172,7 @@ export function LabAppFrame({
       if (msg.type === 'height') {
         if (mode === 'full') return;
         if (typeof msg.px !== 'number' || !Number.isFinite(msg.px)) return;
-        setHeight(clampHeightForMode(msg.px, mode));
+        setHeight(dampHeightRef.current(clampHeightForMode(msg.px, mode)));
         return;
       }
       if (msg.type === 'navigate') {
