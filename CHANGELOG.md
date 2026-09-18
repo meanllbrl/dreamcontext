@@ -4,6 +4,45 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+### `/mcp` in Chat is a working panel, not a sentence pointing at another app (2026-09-18)
+
+Typing `/mcp` in the Chat window used to cost a turn and return a dead end. The headless
+engine does not refuse the command, it **answers** it: a result frame carrying
+`local_command: "mcp"` and the text *"24 MCP server(s): 3 connected, 21 not connected,
+0 disabled. Use `/mcp` in the terminal for details."* (measured against CLI 2.1.276). The
+user typed exactly the right thing and was sent to another application — while, on the
+machine this was found on, **12 of 24 configured servers were sitting at "Needs
+authentication"**: the tools the agent believed it had were dead, and nothing in the window
+could say so or fix it.
+
+- **The composer intercepts `/mcp` and opens a panel.** Every server, its health as the CLI
+  reports it, and **Sign in** / **Sign out** per row. The data is the CLI's own —
+  `GET /api/agent/mcp` runs `claude mcp list` and parses it (`src/lib/claude-mcp.ts`; that
+  command has no `--json`), and the actions run `claude mcp login|logout <name>` for one
+  server. Interception is narrow, like `/login`'s: *"what does /mcp do?"* still reaches the
+  model. The draft IS cleared here, unlike the sign-in's — a draft that is nothing but the
+  command has nothing left to keep once the command has been obeyed.
+- **The account is the subject.** The panel asks the config directory this conversation was
+  actually spawned under (`resolveConfigDir` → `accountEnvFor`), never the machine default,
+  so a session running on a second Claude account is told the truth about *its* servers.
+- **A login's verdict is a re-probe, never the exit code.** An OAuth abandoned in the
+  browser exits 0. After the child ends, the route re-runs `claude mcp get <name>` and
+  reports what that says, so a row can never claim a tool the agent does not have.
+- **The token is never handled, and the login child's output is discarded at the spawn** —
+  an interactive OAuth's stdout can carry a callback URL bearing an authorization code, the
+  same rule `claude auth login` has followed since the multi-account work. Nothing is
+  displayed, stored, logged or pasted.
+- **An unrecognised status is not rounded to the nearest known one.** A state the CLI has
+  not printed before is shown verbatim as *unknown*, so a future CLI cannot silently render
+  as "Connected".
+
+Proof: 16 unit tests (`claude-mcp.test.ts`, fixtures captured from the real CLI) and 26
+real-app assertions (`npm run verify:chat-mcp` — isolated HOME, scripted `claude` on PATH,
+real server, real Chromium), including a leak canary printed by the login child that must
+appear in no response and no pixel of the DOM, and an abandoned login that must leave its
+row saying "Needs sign-in". Against the live CLI on this machine, 24 of 24 servers parsed
+correctly.
+
 ### ECO speaks in two registers — firm from 300k, severe from 650k (2026-09-14)
 
 The handoff nudge shipped with one register and it ended on *"keep going and ignore this.

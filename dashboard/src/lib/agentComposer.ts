@@ -439,6 +439,21 @@ export function isSignInCommand(message: string): boolean {
   return /^\/login(\s|$)/.test(message.trim());
 }
 
+/**
+ * Whether a composed chat message is `/mcp`. Intercepted for the same reason `/login` is,
+ * and it is the worse of the two dead ends: the headless engine does not refuse this one, it
+ * ANSWERS it — with a result frame carrying `local_command: "mcp"` and the sentence
+ * "N MCP server(s): … Use `/mcp` in the terminal for details." (verified on CLI 2.1.276).
+ * The user typed exactly the right thing and got sent to another app, while the servers that
+ * need authenticating stayed broken. So the composer opens the MCP panel instead.
+ *
+ * Narrow in the same way and for the same reason: only the leading form, so "what does /mcp
+ * do?" still reaches the model.
+ */
+export function isMcpCommand(message: string): boolean {
+  return /^\/mcp(\s|$)/.test(message.trim());
+}
+
 // ─── `@peer` mentions ──────────────────────────────────────────────────────────
 //
 // The same three primitives as the `/` menu above, for addressing a CONNECTED

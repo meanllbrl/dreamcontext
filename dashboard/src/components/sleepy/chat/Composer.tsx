@@ -33,7 +33,7 @@ import { useVault } from '../../../context/VaultContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
 import { useAgentSessionStats, useClaudeAccounts, useUsageLimits } from '../../../hooks/useAgentCapabilities';
 import {
-  effortLabel, modelLabelFor, quotePath, isSignInCommand, contextLimitFor, usageLimits,
+  effortLabel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
   fmtTokens, CONTEXT_TIGHT_PCT, contextBands,
   slashQueryAt, filterSlashCommands, applySlashCommand, type ModelConfig,
   mentionQueryAt, filterPeerMentions, applyPeerMention, addressedPeer, mentionSegments,
@@ -185,7 +185,7 @@ function MicIcon() {
 export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
   quote, onClearQuote, onOpenTaskPicker, permissionMode = 'auto', projectPermissionMode,
-  onPermissionModeChange, onSignIn, onPeerMessage,
+  onPermissionModeChange, onSignIn, onMcpPanel, onPeerMessage,
   mode = DEFAULT_CHAT_MODE, onModeChange, onSetModelDefault, shelved = false,
   mentions, modelScope = 'session', idlePlaceholder,
   activeAccountId = '', onAccountChange,
@@ -253,6 +253,15 @@ export function Composer({
    *  with "isn't available in this environment", so sending them would spend a turn to be told
    *  nothing. The handler opens an interactive terminal Claude tab that CAN run the flow. */
   onSignIn: () => void;
+  /**
+   * Open the MCP panel — what `/mcp` does here instead of being sent.
+   *
+   * OPTIONAL, and the optionality is the rule: a host with nowhere to put the panel (the
+   * meeting room, a peer session card) leaves the command alone and lets it travel, which is
+   * today's behaviour. Swallowing `/mcp` into a handler that does not exist would be worse
+   * than the dead end it replaces.
+   */
+  onMcpPanel?: () => void;
   /**
    * Take over a message ADDRESSED to a connected project (`@acme-payments …`). Like `onSignIn`, this
    * is a message this session must not send: it belongs to another project's agent, and
@@ -1126,6 +1135,22 @@ export function Composer({
     // the user typing exactly the right thing. Hand it to the terminal instead, and keep the
     // draft: if the sign-in tab isn't what they wanted, their text is still here.
     if (isSignInCommand(message)) { onSignIn(); return; }
+
+    // `/mcp` is the other one, and it fails worse: the engine ANSWERS it, with a result frame
+    // whose text tells the user to use a terminal for the details. So it opens the MCP panel
+    // instead of spending a turn to deliver that.
+    if (onMcpPanel && isMcpCommand(message)) {
+      onMcpPanel();
+      // Cleared, unlike the sign-in above, and the difference is the message itself: `/login`
+      // may be sitting in front of a half-written sentence worth keeping, while a draft that
+      // IS the command has nothing left in it once the command has been obeyed. Leaving it
+      // would mean the user's next message silently begins with `/mcp`.
+      setDraft('');
+      session.syncDraft('');
+      setSlashQuery(null);
+      setNavBoth(NO_HISTORY_NAV);
+      return;
+    }
 
     // A message addressed to a peer is the OTHER thing this session must not send. It opens a
     // live session in that project instead (PeerSessionCard). The draft is cleared here rather

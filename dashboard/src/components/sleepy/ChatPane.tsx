@@ -460,6 +460,9 @@ type SlideOverState =
   /** A background shell's live output — a separate mode from `subagent` because a shell has
    *  no sidechain transcript to render; it has an output file and a stop action. */
   | { mode: 'shell'; run: SubAgentRun }
+  /** The MCP server list behind `/mcp`. Carries no subject of its own — its subject is the
+   *  account this conversation runs on, read at open time. */
+  | { mode: 'mcp' }
   | null;
 
 interface LightboxState { src: string; caption?: string; path?: string }
@@ -1802,6 +1805,10 @@ export function ChatPane({
           // composer, the composer squares the corners it would otherwise round against it.
           shelved={shelf.hasRows}
           onSignIn={onSignIn}
+          // `/mcp` opens the panel instead of being sent. The engine DOES answer that command
+          // — with a sentence telling the user to go and use a terminal — so forwarding it
+          // spends a turn to deliver a dead end. See `isMcpCommand`.
+          onMcpPanel={() => setSlideOver({ mode: 'mcp' })}
           // `@acme-payments …` opens a live session in that project instead of sending here — see
           // the peerSessions note above and PeerSessionCard.
           onPeerMessage={(peer, body) => {
@@ -1813,6 +1820,15 @@ export function ChatPane({
           // button stays visible (Composer.tsx is frozen T6 ownership; it has no gate to
           // omit it) but is inert until one is built.
           onOpenTaskPicker={() => {}}
+        />
+      )}
+      {slideOver?.mode === 'mcp' && (
+        <SlideOver
+          mode="mcp"
+          // The account this conversation is actually billed to and spawned under — the panel
+          // must report on THAT Claude install, not on whichever one the machine defaults to.
+          accountId={session.accountId}
+          onClose={() => setSlideOver(null)}
         />
       )}
       {slideOver?.mode === 'file' && (

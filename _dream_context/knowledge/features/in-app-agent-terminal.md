@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-09-13'
+updated: '2026-09-18'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -67,6 +67,8 @@ related_tasks:
     openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali
   - >-
     sleepy-acts-out-the-chat-mode-the-mascot-shows-plan-and-develop-not-just-status
+  - >-
+    chat-ekraninda-mcp-gercek-bir-panel-olur-sunucular-listelenir-yetkilendirme-oradan-yapilir
 type: feature
 name: in-app-agent-terminal
 description: >-
@@ -279,6 +281,7 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 
 ## Acceptance Criteria
 
+- [x] `/mcp` is a working panel, not a sentence pointing at another app. The headless engine ANSWERS `/mcp` — `local_command:"mcp"` plus "N MCP server(s): … Use `/mcp` in the terminal for details." (measured on CLI 2.1.276) — so the composer intercepts it (`isMcpCommand`, leading form only) and opens a slide-over listing every configured server with its health and a per-row **Sign in** / **Sign out**. The data is the CLI's own: `GET /api/agent/mcp` runs `claude mcp list` and parses it (`src/lib/claude-mcp.ts` — no `--json` exists on that command), and the actions run `claude mcp login|logout <name>`. Three load-bearing rules: the panel asks the config dir THIS conversation was spawned under (never the machine default); the verdict after a login is a `claude mcp get` RE-PROBE, never the exit code, because an OAuth abandoned in the browser exits 0 and a row must not claim a tool the agent lacks; the login child's output is discarded at the spawn, since an interactive OAuth's stdout can carry a callback URL bearing an authorization code. An unrecognised status is shown verbatim as *unknown* rather than rounded to a known one. 16 unit tests (`claude-mcp.test.ts`, fixtures captured from the real CLI) + 26 real-app assertions (`npm run verify:chat-mcp`), including a leak canary that must appear in no response and no pixel of the DOM.
 - [x] Per-instance board identity: boardInstanceKey() keys each ExcalidrawCanvas by board content identity (boardKey ?? slug), not render slot, so multiple boards in one Chat conversation each keep independent viewport state. registerPinchTarget() called lazily after excalidrawAPI mounts. Fullscreen overlay portaled to document.body (contain:layout paint fix). 13 tests in excalidraw-board-instance.test.ts.
 - [x] Composer auto-grow: composerHeight.ts computes height from measured line metrics; drag sets floor (not fixed); applied = min(ceiling, max(autoGrown, draggedFloor)); send clears draft but not the drag floor. 22 tests in chat-composer-height.test.ts.
 - [x] Phase-stamped group collapse: useGroupCollapse stamps user override with current RunGroupPhase; isGroupOpen(phase, toggle) returns toggle.open only when toggle.phase === phase, else automatic rule (open while running, collapsed when done). 89 tests in chat-entities.test.ts cover phase transitions.
@@ -621,6 +624,14 @@ Key files summary (post-2026-07-01 readability polish; 2026-07-04 basic-terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-18 — `/mcp` stops being a dead end
+
+Typing `/mcp` in Chat used to cost a turn and return a sentence telling the user to go and use a terminal — the engine recognises the command and answers it as a local command. On the machine this was found on, 11 of 24 configured servers were sitting at "Needs authentication", so the tools the agent believed it had were dead and the chat window could neither show that nor fix it.
+
+It now opens a real panel: every server, its health as the CLI reports it, and a sign-in per row that runs the CLI's own OAuth. New: `src/lib/claude-mcp.ts` (the parser + the three legs), `src/server/routes/agent-mcp.ts` (list/login/logout, desktop + loopback), `McpPanel.tsx` as a fourth `SlideOver` mode, and `isMcpCommand` beside `isSignInCommand` in the composer. The draft is cleared on interception, unlike `/login`'s — a draft that IS the command has nothing left to keep once it has been obeyed.
+
+Two decisions worth carrying forward. **A login's verdict is a re-probe, not an exit code**: abandoning the browser tab exits 0, and a panel that trusted that number would tell the user they had a tool they did not have. **A status the CLI has not printed before is not rounded to the nearest known one** — it is shown verbatim as unknown, so a future CLI state cannot silently render as "Connected".
 
 ### 2026-09-07 — 0.27.0: two answers about how a chat answer should LOOK, one of them negative
 
