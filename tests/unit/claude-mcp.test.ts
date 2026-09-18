@@ -10,8 +10,13 @@
  * always contains `: ` (a URL) while the name may not, and a launch command may contain ` - `
  * while a status never does — so a hand-written fixture that dodged those would prove nothing.
  */
-import { describe, it, expect } from 'vitest';
-import { parseMcpList, parseMcpListLine, parseMcpGetState } from '../../src/lib/claude-mcp.js';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
+import {
+  envForOrigin, parseMcpList, parseMcpListLine, parseMcpGetState, sharedMcpServerNames,
+} from '../../src/lib/claude-mcp.js';
 import { isMcpCommand } from '../../dashboard/src/lib/agentComposer.js';
 
 /** Verbatim `claude mcp list`, trimmed to the shapes that differ from one another. */
@@ -137,5 +142,64 @@ describe('isMcpCommand', () => {
   it('the other intercepted command is not this one', () => {
     expect(isMcpCommand('/login')).toBe(false);
     expect(isMcpCommand('')).toBe(false);
+  });
+});
+
+/**
+ * The shared-config half — the owner-reported gap (2026-09-18): a sandboxed session showed
+ * only its account's claude.ai connectors, and every local server the user had was missing.
+ *
+ * A sandbox's `.claude.json` carries NO MCP keys by design; the session reaches the machine's
+ * own servers through `--mcp-config <shared file>`. These tests pin the two pure decisions
+ * that follow from that: WHICH servers count as shared, and WHERE a leg for one must run.
+ *
+ * Injectable HOME throughout — the real `~/.claude.json` holds oauthAccount and spend history
+ * and is never read or written by a test.
+ */
+describe('the shared MCP config a sandboxed session is handed', () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'dc-mcp-home-'));
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+  });
+  afterEach(() => { rmSync(home, { recursive: true, force: true }); });
+
+  it('names exactly the user-scope servers, which is what the spawn passes by reference', () => {
+    writeFileSync(join(home, '.claude.json'), JSON.stringify({
+      mcpServers: { playwright: { command: 'npx' }, slack: { command: 'npx' } },
+      projects: { '/somewhere': { mcpServers: { posthog: { command: 'npx' } } } },
+    }));
+    // The PROJECT-scoped server is deliberately absent: `ensureSharedMcpConfig` carries the
+    // top-level map only, and a project's own `.mcp.json` still applies at spawn time.
+    expect(sharedMcpServerNames(home).sort()).toEqual(['playwright', 'slack']);
+  });
+
+  it('a machine with no user-scope servers shares nothing', () => {
+    writeFileSync(join(home, '.claude.json'), JSON.stringify({ mcpServers: {} }));
+    expect(sharedMcpServerNames(home)).toEqual([]);
+  });
+
+  it('a missing or unreadable config is empty, never a throw', () => {
+    expect(sharedMcpServerNames(home)).toEqual([]);
+    writeFileSync(join(home, '.claude.json'), '{ not json');
+    expect(sharedMcpServerNames(home)).toEqual([]);
+  });
+
+  it('a shared row\'s leg runs against the REAL HOME, whatever account the session is on', () => {
+    const sandbox = join(home, '.dreamcontext', 'claude-accounts', 'someone-example-com');
+    // The credential for a machine-local server belongs where that server is configured.
+    // Run under the sandbox it would be written where no session ever looks for it.
+    expect(envForOrigin('shared', sandbox, home)).toEqual({ CLAUDE_CONFIG_DIR: undefined });
+  });
+
+  it('an account row\'s leg stays in that account\'s own directory', () => {
+    const sandbox = join(home, '.dreamcontext', 'claude-accounts', 'someone-example-com');
+    expect(envForOrigin('account', sandbox, home)).toEqual({ CLAUDE_CONFIG_DIR: sandbox });
+  });
+
+  it('account #0 resolves to the real home on both origins — it has no sandbox to confuse', () => {
+    expect(envForOrigin('account', home, home)).toEqual({ CLAUDE_CONFIG_DIR: undefined });
+    expect(envForOrigin('shared', home, home)).toEqual({ CLAUDE_CONFIG_DIR: undefined });
   });
 });

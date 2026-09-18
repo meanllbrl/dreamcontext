@@ -22,9 +22,14 @@ could say so or fix it.
   server. Interception is narrow, like `/login`'s: *"what does /mcp do?"* still reaches the
   model. The draft IS cleared here, unlike the sign-in's — a draft that is nothing but the
   command has nothing left to keep once the command has been obeyed.
-- **The account is the subject.** The panel asks the config directory this conversation was
-  actually spawned under (`resolveConfigDir` → `accountEnvFor`), never the machine default,
-  so a session running on a second Claude account is told the truth about *its* servers.
+- **The panel mirrors the SPAWN, not a config directory.** A sandboxed account's
+  `.claude.json` carries no MCP keys at all — copying them per account would multiply every
+  MCP secret — so its session reaches the machine's own servers by reference, through
+  `--mcp-config <shared file>`. Asking the config directory alone therefore lost every local
+  server the user had (measured: 24 listed against 32 actually available). The panel runs
+  both listings in parallel and merges them, each row carrying the `origin` it came from —
+  which also decides where a sign-in lands, since a shared server's credential belongs in the
+  real home. A client claiming `shared` for a name the shared file does not carry is refused.
 - **A login's verdict is a re-probe, never the exit code.** An OAuth abandoned in the
   browser exits 0. After the child ends, the route re-runs `claude mcp get <name>` and
   reports what that says, so a row can never claim a tool the agent does not have.
@@ -36,12 +41,13 @@ could say so or fix it.
   not printed before is shown verbatim as *unknown*, so a future CLI cannot silently render
   as "Connected".
 
-Proof: 16 unit tests (`claude-mcp.test.ts`, fixtures captured from the real CLI) and 26
+Proof: 22 unit tests (`claude-mcp.test.ts`, fixtures captured from the real CLI) and 36
 real-app assertions (`npm run verify:chat-mcp` — isolated HOME, scripted `claude` on PATH,
 real server, real Chromium), including a leak canary printed by the login child that must
 appear in no response and no pixel of the DOM, and an abandoned login that must leave its
-row saying "Needs sign-in". Against the live CLI on this machine, 24 of 24 servers parsed
-correctly.
+row saying "Needs sign-in", and a sandboxed account that must still see its local servers.
+Against the live CLI on this machine, all 32 of the session's servers are listed — the 24 its
+account carries plus the 8 the machine shares into it.
 
 ### ECO speaks in two registers — firm from 300k, severe from 650k (2026-09-14)
 

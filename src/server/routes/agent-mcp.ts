@@ -2,10 +2,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { isLoopback } from './agent-spawn-shared.js';
-import { accountEnvFor, ClaudeAccountError, resolveConfigDir } from '../../lib/claude-accounts.js';
+import { ClaudeAccountError, resolveConfigDir } from '../../lib/claude-accounts.js';
 import { ensureSandbox } from '../../lib/claude-account-sandbox.js';
 import {
-  listMcpServers, loginMcpServer, logoutMcpServer, probeMcpServer, type McpServerStatus,
+  envForOrigin, listMcpForSession, loginMcpServer, logoutMcpServer, probeMcpServer,
+  sharedMcpServerNames, type McpOrigin, type McpServerRow,
 } from '../../lib/claude-mcp.js';
 
 /**
@@ -46,14 +47,32 @@ function guard(req: IncomingMessage, res: ServerResponse): boolean {
  * and otherwise repairs the sandbox, so `claude mcp login` writes its credential where that
  * account's sessions will actually read it.
  */
-function envForAccount(account: string): { env: Record<string, string | undefined> } | { error: string } {
+function configDirFor(account: string): { dir: string } | { error: string } {
   try {
     const dir = resolveConfigDir(account || null);
     ensureSandbox(dir);
-    return { env: accountEnvFor(dir) };
+    return { dir };
   } catch (err) {
     return { error: err instanceof ClaudeAccountError ? err.message : (err as Error).message };
   }
+}
+
+/**
+ * Which config directory a leg for this row must run against.
+ *
+ * A `shared` row is one the session only has by reference (`--mcp-config`), configured in the
+ * real home — so its sign-in belongs there, not in the sandbox. The claim is CHECKED rather
+ * than trusted: a name the shared file does not contain is not a shared server, whatever the
+ * client said, and falls back to the account's own directory.
+ */
+function envForRow(origin: McpOrigin, name: string, dir: string): Record<string, string | undefined> {
+  const shared = origin === 'shared' && sharedMcpServerNames().includes(name);
+  return envForOrigin(shared ? 'shared' : 'account', dir);
+}
+
+/** `origin` off the wire, defaulting to the account — an absent field is not a shared claim. */
+function readOrigin(value: unknown): McpOrigin {
+  return value === 'shared' ? 'shared' : 'account';
 }
 
 /** Control characters, by code point — a name carrying one is not a name. */
@@ -73,8 +92,8 @@ function isUsableServerName(name: string): boolean {
 }
 
 /** The server list, exactly as the panel draws it. */
-function wire(servers: McpServerStatus[]): {
-  servers: McpServerStatus[];
+function wire(servers: McpServerRow[]): {
+  servers: McpServerRow[];
   counts: { total: number; connected: number; needsAuth: number; other: number };
 } {
   const connected = servers.filter((s) => s.state === 'connected').length;
@@ -100,12 +119,14 @@ function wire(servers: McpServerStatus[]): {
 export async function handleAgentMcpList(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!guard(req, res)) return;
   const account = new URL(req.url ?? '', 'http://localhost').searchParams.get('account') ?? '';
-  const resolved = envForAccount(account);
+  const resolved = configDirFor(account);
   if ('error' in resolved) {
     sendError(res, 422, 'bad_account', resolved.error);
     return;
   }
-  const result = await listMcpServers(resolved.env);
+  // The SESSION's set, not the config directory's — see `listMcpForSession`. A sandboxed
+  // session's local servers arrive by reference and would otherwise be missing entirely.
+  const result = await listMcpForSession(resolved.dir);
   if (!result.ok) {
     if (result.reason === 'timeout') {
       sendError(res, 504, 'list_timeout', 'The server health check took too long. Try again.');
@@ -132,13 +153,14 @@ export async function handleAgentMcpLogin(req: IncomingMessage, res: ServerRespo
     sendError(res, 422, 'bad_server_name', 'That is not a usable MCP server name.');
     return;
   }
-  const resolved = envForAccount(account);
+  const resolved = configDirFor(account);
   if ('error' in resolved) {
     sendError(res, 422, 'bad_account', resolved.error);
     return;
   }
+  const env = envForRow(readOrigin(body?.origin), name, resolved.dir);
 
-  const run = await loginMcpServer(name, resolved.env);
+  const run = await loginMcpServer(name, env);
   if (!run.ran) {
     sendError(res, 500, 'spawn_failed', 'Could not start the sign-in — the Claude CLI did not launch.');
     return;
@@ -150,7 +172,7 @@ export async function handleAgentMcpLogin(req: IncomingMessage, res: ServerRespo
 
   // The verdict comes from the CLI, not from the exit code. A probe that cannot be read
   // reports itself as unknown rather than inventing a success.
-  const probed = await probeMcpServer(name, resolved.env);
+  const probed = await probeMcpServer(name, env);
   sendJson(res, 200, { name, state: probed?.state ?? 'unknown', label: probed?.label ?? '' });
 }
 
@@ -164,17 +186,18 @@ export async function handleAgentMcpLogout(req: IncomingMessage, res: ServerResp
     sendError(res, 422, 'bad_server_name', 'That is not a usable MCP server name.');
     return;
   }
-  const resolved = envForAccount(account);
+  const resolved = configDirFor(account);
   if ('error' in resolved) {
     sendError(res, 422, 'bad_account', resolved.error);
     return;
   }
+  const env = envForRow(readOrigin(body?.origin), name, resolved.dir);
 
-  const run = await logoutMcpServer(name, resolved.env);
+  const run = await logoutMcpServer(name, env);
   if (!run.ran) {
     sendError(res, 500, 'spawn_failed', 'Could not run the Claude CLI to sign out.');
     return;
   }
-  const probed = await probeMcpServer(name, resolved.env);
+  const probed = await probeMcpServer(name, env);
   sendJson(res, 200, { name, state: probed?.state ?? 'unknown', label: probed?.label ?? '' });
 }

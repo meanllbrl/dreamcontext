@@ -16,9 +16,11 @@ import './mcpPanel.css';
  * `claude mcp login|logout` for ONE server. No token is ever displayed, pasted or handled:
  * the CLI opens the browser, the CLI receives the callback, the CLI stores the credential.
  *
- * The account matters. A chat session runs under its account's config directory, so the panel
- * asks about THAT account — otherwise it would report on a Claude install this conversation
- * is not using.
+ * The panel mirrors the SPAWN, not a config directory. A chat session runs under its
+ * account's config directory AND, when that account is a sandbox, is handed the machine's own
+ * servers by reference (`--mcp-config`). Asking the config directory alone lost every local
+ * server the user had — the owner reported exactly that, and `listMcpForSession` is the
+ * answer: two listings, merged, each row carrying the `origin` it came from.
  */
 
 export interface McpServer {
@@ -27,6 +29,14 @@ export interface McpServer {
   state: 'connected' | 'needs-auth' | 'pending-approval' | 'failed' | 'disabled' | 'unknown';
   /** What the CLI called this state. Shown verbatim when the state is not one we know. */
   label: string;
+  /**
+   * Where this session gets the server from — `account` (its own config directory) or
+   * `shared` (a machine-local server handed to a sandboxed session by reference).
+   *
+   * Sent back on every action, because it decides WHICH config directory the sign-in runs
+   * against: a shared server's credential belongs in the real home, not in the sandbox.
+   */
+  origin: 'account' | 'shared';
 }
 
 interface McpListResponse {
@@ -103,7 +113,7 @@ export function McpPanel({ accountId, onClose }: McpPanelProps) {
     try {
       const next = await api.post<{ name: string; state: McpServer['state']; label: string }>(
         `/agent/mcp/${leg}`,
-        { name: server.name, account: accountId },
+        { name: server.name, account: accountId, origin: server.origin },
       );
       setData((prev) => (prev ? {
         ...prev,
@@ -162,7 +172,14 @@ export function McpPanel({ accountId, onClose }: McpPanelProps) {
           {data?.servers.map((server) => (
             <div className="mcp-row" key={server.name} data-tone={TONE[server.state]}>
               <div className="mcp-row-text">
-                <span className="mcp-row-name">{server.name}</span>
+                <span className="mcp-row-name">
+                  {server.name}
+                  {/* Named only where it changes what the row MEANS: a local server is one this
+                      machine runs, shared into whichever account the session is on, and its
+                      sign-in lands somewhere different from a connector's. An account row gets
+                      no chip — labelling every row would be noise. */}
+                  {server.origin === 'shared' && <span className="mcp-scope">local</span>}
+                </span>
                 <span className="mcp-row-target">{server.target}</span>
               </div>
               <span className="mcp-state" data-tone={TONE[server.state]}>{stateText(server)}</span>
@@ -196,7 +213,11 @@ export function McpPanel({ accountId, onClose }: McpPanelProps) {
         {data && (
           <p className="mcp-foot">
             Signing in opens your browser. dreamcontext never sees or stores the credential —
-            the Claude CLI completes the flow and keeps it in this account's own config.
+            the Claude CLI completes the flow and keeps it in its own config.
+            {data.servers.some((s) => s.origin === 'shared') && (
+              <> Rows marked <span className="mcp-scope">local</span> are this machine's own
+              servers, shared into every account you run a session on.</>
+            )}
           </p>
         )}
       </div>

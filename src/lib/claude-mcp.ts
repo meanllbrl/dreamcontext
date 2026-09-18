@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { executeClaudeDetached } from './automations/runner.js';
+import { accountEnvFor, isRealHomeConfigDir } from './claude-accounts.js';
+import { ensureSharedMcpConfig } from './claude-account-sandbox.js';
 
 /**
  * The MCP surface, read from the CLI that owns it.
@@ -48,6 +51,20 @@ export interface McpServerStatus {
   state: 'connected' | 'needs-auth' | 'pending-approval' | 'failed' | 'disabled' | 'unknown';
   /** The status text the CLI printed, glyph stripped — always shown for `unknown`. */
   label: string;
+}
+
+/**
+ * Where a row came from, which is also where its credential belongs.
+ *
+ * `account` — the session's own config directory (claude.ai connectors, plugins, project
+ * scope). `shared` — the machine's user-scope servers, handed to a sandboxed session by
+ * reference through `--mcp-config`.
+ */
+export type McpOrigin = 'account' | 'shared';
+
+/** One row as the panel draws it: a parsed listing line plus where the session gets it from. */
+export interface McpServerRow extends McpServerStatus {
+  origin: McpOrigin;
 }
 
 /** Health checks are N network round-trips; the whole listing is one command, so one budget. */
@@ -198,4 +215,82 @@ export async function logoutMcpServer(
   env: Record<string, string | undefined>,
 ): Promise<McpRun> {
   return runMcp(['logout', name], env, LOGOUT_TIMEOUT_MS, true);
+}
+
+/**
+ * The server names a SANDBOXED spawn is handed by reference, read from the very file the
+ * spawn points at.
+ *
+ * Read rather than re-derived from `~/.claude.json`: `ensureSharedMcpConfig` is what decides
+ * what a sandboxed session actually receives, so asking it — and then reading its output — is
+ * the only way this panel and that spawn cannot drift apart. Returns an empty array when
+ * there is nothing shared, which is also the account-#0 case.
+ */
+export function sharedMcpServerNames(home: string = homedir()): string[] {
+  const path = ensureSharedMcpConfig(home);
+  if (!path) return [];
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+    const servers = (parsed as { mcpServers?: Record<string, unknown> } | null)?.mcpServers;
+    return servers ? Object.keys(servers) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The environment a leg for THIS row must run under.
+ *
+ * A `shared` server is configured in the real home and its credential belongs there; running
+ * its sign-in under the sandbox would write the credential where no session will look for it.
+ */
+export function envForOrigin(
+  origin: McpOrigin,
+  configDir: string,
+  home: string = homedir(),
+): Record<string, string | undefined> {
+  return origin === 'shared' ? accountEnvFor(home, home) : accountEnvFor(configDir, home);
+}
+
+/**
+ * Every MCP server THIS SESSION actually has, for the account it runs on.
+ *
+ * Two listings, merged, because that is what the spawn does (see the module header): the
+ * account's own, plus the shared file's servers listed against the real home. They run in
+ * parallel — each is a fan-out of health checks, and running them in sequence would double
+ * the wait for no gain. A name already reported by the account wins: it is the same server,
+ * and the account's reading is the one the session's own config directory will use.
+ *
+ * Account #0 takes the single-listing path unchanged: nothing is shared by reference there,
+ * because its session reads the real `~/.claude.json` directly.
+ */
+export async function listMcpForSession(
+  configDir: string,
+  home: string = homedir(),
+): Promise<{ ok: true; servers: McpServerRow[] } | { ok: false; reason: 'spawn_failed' | 'timeout' }> {
+  const sandboxed = !isRealHomeConfigDir(configDir, home);
+  const sharedNames = sandboxed ? sharedMcpServerNames(home) : [];
+
+  const [account, shared] = await Promise.all([
+    listMcpServers(accountEnvFor(configDir, home)),
+    sharedNames.length
+      ? listMcpServers(accountEnvFor(home, home))
+      : Promise.resolve({ ok: true as const, servers: [] as McpServerStatus[] }),
+  ]);
+
+  // The account's listing is the one that must succeed. The shared leg degrading is reported
+  // as missing ROWS, never as a failed panel: a user whose connectors are listed can still
+  // sign into them while the other listing is timing out.
+  if (!account.ok) return account;
+
+  const rows: McpServerRow[] = account.servers.map((s) => ({ ...s, origin: 'account' as const }));
+  const seen = new Set(rows.map((r) => r.name));
+  if (shared.ok) {
+    for (const s of shared.servers) {
+      if (!sharedNames.includes(s.name) || seen.has(s.name)) continue;
+      rows.push({ ...s, origin: 'shared' });
+      seen.add(s.name);
+    }
+  }
+  return { ok: true, servers: rows };
 }

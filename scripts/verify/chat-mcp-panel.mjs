@@ -23,6 +23,12 @@
  *       pixel of the DOM
  *   §6  interception stays narrow: "what does /mcp do?" and `/mcpanel` still travel as
  *       ordinary messages
+ *   §7  A SANDBOXED ACCOUNT STILL SEES ITS LOCAL SERVERS (owner report 2026-09-18: "sadece
+ *       claude ai ile ilgili olan mcp'ler geldi lokaller gelmedi"). A sandbox's `.claude.json`
+ *       carries no MCP keys by design; its session reaches the machine's own servers through
+ *       `--mcp-config <shared file>`. So the panel must merge two listings, and a sign-in for
+ *       a shared row must run against the REAL HOME — where that server is configured and
+ *       where its credential belongs — not against the sandbox
  *
  * WHAT MAKES §3 AND §4 HONEST: the scripted `claude` records its own argv and env to a file,
  * and it decides each server's fate itself. A UI that flipped a row optimistically would pass
@@ -71,7 +77,22 @@ const SERVERS = [
 ];
 
 /** Which servers a sign-in actually completes for. `Google Calendar` is the abandoned one. */
-const LOGIN_SUCCEEDS = new Set(['claude.ai Figma', 'plugin:stripe:stripe']);
+const LOGIN_SUCCEEDS = new Set(['claude.ai Figma', 'plugin:stripe:stripe', 'playwright']);
+
+/**
+ * The MACHINE's own servers — user scope in the real `~/.claude.json`, and the contents of the
+ * shared `--mcp-config` file a sandboxed spawn is pointed at.
+ *
+ * A sandbox listing must NOT contain these (that is the architecture: no MCP keys are ever
+ * copied into a sandbox), and the panel must show them anyway, because the session has them.
+ */
+const LOCAL_SERVERS = [
+  { name: 'playwright', target: 'npx @playwright/mcp@latest', state: 'needs-auth' },
+  { name: 'analytics-mcp', target: 'npx analytics-mcp --stdio', state: 'connected' },
+];
+
+/** The sandboxed account the §7 assertions run against. */
+const SANDBOX_ID = 'someone-example-com';
 
 // ─── the scripted `claude` ────────────────────────────────────────────────────────────
 //
@@ -85,6 +106,7 @@ const CALLS = ${JSON.stringify(CALLS)};
 const STATES = ${JSON.stringify(STATES)};
 const LEAK = ${JSON.stringify(LEAK_CANARY)};
 const LOGIN_SUCCEEDS = new Set(${JSON.stringify([...LOGIN_SUCCEEDS])});
+const LOCAL = ${JSON.stringify(LOCAL_SERVERS.map((s) => s.name))};
 
 const LABEL = {
   'connected': '✔ Connected',
@@ -92,6 +114,18 @@ const LABEL = {
   'pending-approval': '⏸ Pending approval',
 };
 
+/**
+ * THE ARCHITECTURE, REPRODUCED. A sandbox's config directory knows nothing about the
+ * machine's own servers — no MCP key is ever copied into one — so a listing run under
+ * CLAUDE_CONFIG_DIR reports the account's connectors ONLY. The real home reports both.
+ * A panel that ran one listing under the sandbox therefore loses every local server, which
+ * is exactly the bug §7 exists to catch.
+ */
+function visible(all) {
+  return process.env.CLAUDE_CONFIG_DIR
+    ? all.filter((s) => !LOCAL.includes(s.name))
+    : all;
+}
 function states() { return JSON.parse(fs.readFileSync(STATES, 'utf-8')); }
 function write(next) { fs.writeFileSync(STATES, JSON.stringify(next, null, 2)); }
 function record(entry) {
@@ -106,11 +140,11 @@ if (argv[0] === 'mcp') {
   if (sub === 'list') {
     // The real command's shape, header line and all.
     process.stdout.write('Checking MCP server health…\\n\\n');
-    for (const s of list) process.stdout.write(s.name + ': ' + s.target + ' - ' + LABEL[s.state] + '\\n');
+    for (const s of visible(list)) process.stdout.write(s.name + ': ' + s.target + ' - ' + LABEL[s.state] + '\\n');
     process.exit(0);
   }
   if (sub === 'get') {
-    const found = list.find((s) => s.name === argv[2]);
+    const found = visible(list).find((s) => s.name === argv[2]);
     if (!found) { process.stdout.write('No MCP server found with name: ' + argv[2] + '\\n'); process.exit(1); }
     process.stdout.write(found.name + ':\\n  Scope: claude.ai config\\n  Status: ' + LABEL[found.state] + '\\n');
     process.exit(0);
@@ -206,8 +240,33 @@ function setupScratch() {
     hotkey: 'Ctrl+A', renderer: 'dom', chatView: true, screenMigrated: true,
     chatPermissionMode: 'auto', chatDefaultModel: 'opus', chatDefaultEffort: 'high',
   }, null, 2)}\n`);
-  writeFileSync(STATES, `${JSON.stringify(SERVERS, null, 2)}\n`);
+  writeFileSync(STATES, `${JSON.stringify([...SERVERS, ...LOCAL_SERVERS], null, 2)}\n`);
   writeFileSync(CALLS, '');
+
+  // ── the multi-account world §7 needs ────────────────────────────────────────────────
+  // A registered sandbox account, its directory, and the shared `--mcp-config` file a
+  // sandboxed spawn is pointed at. Written the way the real ones are: the register at
+  // ~/.dreamcontext/claude-accounts.json, the sandbox under ~/.dreamcontext/claude-accounts/<id>,
+  // and the shared file beside it carrying the machine's own servers.
+  const sandboxDir = join(HOME, '.dreamcontext', 'claude-accounts', SANDBOX_ID);
+  mkdirSync(sandboxDir, { recursive: true });
+  writeFileSync(join(sandboxDir, '.claude.json'), `${JSON.stringify({
+    // Deliberately NO mcpServers at any depth — that is what makes the sandbox a sandbox.
+    hasTrustDialogAccepted: true,
+    oauthAccount: { emailAddress: 'someone@example.com' },
+  }, null, 2)}\n`);
+  writeFileSync(join(HOME, '.dreamcontext', 'claude-accounts.json'), `${JSON.stringify({
+    accounts: [{
+      id: SANDBOX_ID, accountUuid: '', email: 'someone@example.com',
+      organizationUuid: '', organizationName: '', tier: '',
+      configDir: sandboxDir, preferred: false,
+    }],
+  }, null, 2)}\n`);
+  // The real home's user-scope servers. `ensureSharedMcpConfig` derives the shared file from
+  // exactly this map, so writing it here is what makes the server build the real thing.
+  writeFileSync(join(HOME, '.claude.json'), `${JSON.stringify({
+    mcpServers: Object.fromEntries(LOCAL_SERVERS.map((s) => [s.name, { command: 'npx', args: [s.name] }])),
+  }, null, 2)}\n`);
   spawnSync('git', ['init', '-q'], { cwd: PROJ });
 
   const bin = join(HOME, '.local', 'bin', 'claude');
@@ -263,16 +322,20 @@ async function run(chromium, base, report) {
   const listRes = await fetch(`${base}/api/agent/mcp`);
   const listed = await listRes.json();
   ok('GET /api/agent/mcp answers', listRes.ok, `status ${listRes.status}`);
+  const EXPECTED = SERVERS.length + LOCAL_SERVERS.length;
   ok('…with every configured server, parsed out of the CLI\'s own listing',
-    listed?.servers?.length === SERVERS.length,
-    `${listed?.servers?.length} of ${SERVERS.length}`);
+    listed?.servers?.length === EXPECTED,
+    `${listed?.servers?.length} of ${EXPECTED}`);
   ok('…names survive spaces, dots and colons intact',
     listed?.servers?.some((s) => s.name === 'plugin:stripe:stripe')
     && listed?.servers?.some((s) => s.name === 'claude.ai Google Calendar'),
     (listed?.servers ?? []).map((s) => s.name).join(' | '));
   ok('…and the counts name the problem the panel exists to fix',
-    listed?.counts?.connected === 1 && listed?.counts?.needsAuth === 3,
+    listed?.counts?.needsAuth === 4 && listed?.counts?.connected === 2,
     JSON.stringify(listed?.counts));
+  ok('account #0 reads one listing and marks every row as its own',
+    (listed?.servers ?? []).every((s) => s.origin === 'account'),
+    (listed?.servers ?? []).map((s) => `${s.name}:${s.origin}`).join(' | '));
 
   // ── the chat ──────────────────────────────────────────────────────────────────────
   console.log('\n── the project window');
@@ -302,11 +365,15 @@ async function run(chromium, base, report) {
   // so it is dismissed first — the same gesture a user makes.
   await chat.keyboard.press('Escape');
   await chat.keyboard.press('Enter');
-  ok('the panel opens', await until(chat, async () => (await chat.locator('.mcp-list').count()) > 0, 20000));
-  await chat.waitForTimeout(500);
-  /** Everything the CLI was asked from here on is the UI's doing — the two probe fetches this
-   *  script made itself are behind this mark, and counting them as the panel's would be the
-   *  assertion lying about which caller did what. */
+  // Waiting on ROWS, not on the list container: the container is rendered from the first
+  // paint (the panel says "health-checking…" inside it), so waiting on it would only prove
+  // the component mounted, and every row assertion below would race the real `claude mcp
+  // list` child. The rows are the signal that the listing actually came back.
+  ok('the panel opens and fills with what the CLI reported',
+    await until(chat, async () => (await chat.locator('.mcp-row').count()) > 0, 40000));
+  /** Everything the CLI was asked from here on is the UI's doing. Marked AFTER the listing
+   *  has landed, so the panel's own opening `list` is not counted as a stray call — and so
+   *  the two probe fetches this script made itself stay behind the mark too. */
   const uiFrom = calls().length;
   const uiCalls = () => calls().slice(uiFrom);
 
@@ -322,11 +389,12 @@ async function run(chromium, base, report) {
   console.log('\n── §2 the panel reports what the CLI reports');
   const rowText = async () => (await chat.locator('.mcp-row').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
   const rows = await rowText();
-  ok(`every server has a row (${rows.length})`, rows.length === SERVERS.length, rows.join(' || '));
+  ok(`every server has a row (${rows.length})`,
+    rows.length === SERVERS.length + LOCAL_SERVERS.length, rows.join(' || '));
   ok('the connected one reads Connected', rows.some((t) => t.includes('claude.ai Pixabay') && t.includes('Connected')),
     rows.find((t) => t.includes('Pixabay')));
   ok('the unauthenticated ones say so, and offer the sign-in',
-    (await chat.locator('.mcp-row[data-tone="warn"] .mcp-act').count()) === 3,
+    (await chat.locator('.mcp-row[data-tone="warn"] .mcp-act').count()) === 4,
     `${await chat.locator('.mcp-act').count()} action buttons in total`);
   await chat.screenshot({ path: join(SHOTS, '01-mcp-panel.png') });
   report.note('📸 01-mcp-panel.png');
@@ -410,6 +478,56 @@ async function run(chromium, base, report) {
     uiConversation
       === 'login:claude.ai Figma → get:claude.ai Figma → login:claude.ai Google Calendar → get:claude.ai Google Calendar',
     uiConversation);
+
+  // ── §7 a sandboxed account still sees the machine's own servers ───────────────────
+  console.log('\n── §7 a sandboxed account does not lose its local servers');
+  const sbRes = await fetch(`${base}/api/agent/mcp?account=${encodeURIComponent(SANDBOX_ID)}`);
+  const sb = await sbRes.json();
+  const sbNames = (sb?.servers ?? []).map((x) => x.name);
+  ok('the sandbox listing answers', sbRes.ok, `status ${sbRes.status}`);
+  // The bug, stated as an assertion: the sandbox's own config directory reports the
+  // connectors ONLY, so a single listing would stop here and the user would see no
+  // `playwright` at all.
+  ok('…the account\'s own connectors are there',
+    SERVERS.every((x) => sbNames.includes(x.name)), sbNames.join(' | '));
+  ok('…AND the machine\'s own servers are there too, which one listing would have lost',
+    LOCAL_SERVERS.every((x) => sbNames.includes(x.name)), sbNames.join(' | '));
+  ok('…each row says where the session gets it from',
+    (sb?.servers ?? []).filter((x) => x.origin === 'shared').map((x) => x.name).sort().join(',')
+      === LOCAL_SERVERS.map((x) => x.name).sort().join(','),
+    (sb?.servers ?? []).map((x) => `${x.name}:${x.origin}`).join(' | '));
+  ok('…and nothing is listed twice',
+    sbNames.length === new Set(sbNames).size, sbNames.join(' | '));
+
+  // Where a shared server's sign-in LANDS. Its credential belongs in the real home, where the
+  // server is configured; run under the sandbox it would be written where no session looks.
+  const beforeLogin = calls().length;
+  const shLogin = await fetch(`${base}/api/agent/mcp/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'playwright', account: SANDBOX_ID, origin: 'shared' }),
+  });
+  const shBody = await shLogin.json();
+  const shCalls = calls().slice(beforeLogin);
+  ok('signing into a local server runs against the REAL HOME, not the sandbox',
+    shCalls.filter((c) => c.sub === 'login').every((c) => c.configDir === null),
+    shCalls.map((c) => `${c.sub}@${c.configDir ? 'sandbox' : 'real-home'}`).join(' → '));
+  ok('…and its verdict is re-probed in that same place',
+    shCalls.some((c) => c.sub === 'get' && c.name === 'playwright' && c.configDir === null),
+    shCalls.map((c) => `${c.sub}:${c.name}`).join(' → '));
+  ok('…the row comes back connected', shBody?.state === 'connected', JSON.stringify(shBody));
+
+  // A client that CLAIMS shared for a name the shared file does not carry must not redirect
+  // the sign-in out of the sandbox.
+  const beforeLie = calls().length;
+  await fetch(`${base}/api/agent/mcp/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'claude.ai Figma', account: SANDBOX_ID, origin: 'shared' }),
+  });
+  ok('an unfounded `shared` claim is refused — the leg stays in the account\'s own directory',
+    calls().slice(beforeLie).filter((c) => c.sub === 'login').every((c) => c.configDir !== null),
+    calls().slice(beforeLie).map((c) => `${c.sub}@${c.configDir ? 'sandbox' : 'real-home'}`).join(' → '));
 
   await browser.close();
 }
