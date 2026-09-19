@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-09-18'
+updated: '2026-09-19'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -69,6 +69,8 @@ related_tasks:
     sleepy-acts-out-the-chat-mode-the-mascot-shows-plan-and-develop-not-just-status
   - >-
     chat-ekraninda-mcp-gercek-bir-panel-olur-sunucular-listelenir-yetkilendirme-oradan-yapilir
+  - >-
+    sir-girme-ve-komut-calistirma-sohbetin-icinde-olur-satir-ici-secret-karti-ve-oynat-dugmeli-canli-terminal
 type: feature
 name: in-app-agent-terminal
 description: >-
@@ -161,6 +163,12 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 - [x] As a developer, a `dream-html` block reads as PART of the transcript rather than an embedded foreign page: the same type size, leading and typefaces as the prose around it, my locale's casing rules, sentences that stay sentences, and no clipped numbers or columns at the width the chat pane actually gives it. (0.27.0)
 
 - [x] As a developer, I can take a rendered block OUT of the chat — PNG, PDF/print, a single self-contained HTML file, or copied to the clipboard as an image — so I can paste it into Slack or keep it, without a screenshot. (0.27.0)
+
+- [x] As a developer, when the agent needs a credential, a MASKED FIELD appears in the conversation: I paste, press save, and the app writes it into my `.env` — gitignored first, 0600, a tracked or symlinked file refused. The agent is told the variable name, the length and a fingerprint, never the value, so my key is not in a transcript that gets saved to disk. (2026-09-19)
+
+- [x] As a developer, when something has to be run by a human — `firebase login`, `npm login`, anything wanting a sudo password or a y/n — the agent draws the command with a ▶ and a REAL terminal opens in the chat. I type into it as I would my own; when the command exits, the exit code and (unless I turn it off before pressing ▶) the output tail go back to the agent and the turn carries on. I never leave the session. (2026-09-19)
+
+- [x] As a developer, a Bash permission card offers "▶ Run here" beside Deny/Allow, so the command that would hang waiting for an answer nobody was there to give runs in MY terminal instead, and its result comes back as the permission's answer. (2026-09-19)
 
 - [ ] As a developer, I can have a structured answer DRAWN as a built board (deterministic geometry — nodes, axes, lanes, a path) instead of authored markup, so it converts to visual memory at a glance. (Proposed in the depiction task's A–D; the owner put the board flip explicitly OUT OF SCOPE on 2026-09-06 — `dream-html` stays the depiction default. Not built: an inline board is still the live pan/zoom canvas, not a static SVG.)
 
@@ -907,3 +915,8 @@ Consolidates four completed 0.27.0 tasks:
 
 ### 2026-06-29 - Created
 - Feature PRD created.
+
+- [x] SECRET CARD — a credential reaches DISK without passing through the agent. `dream-view` gains `{"type":"secret", id, title, file?, fields[{key,label?,hint?}]}`; the card (`chat/SecretCard.tsx`, masked field shared with the checklist via `core/MaskedSecretInput`) POSTs to `POST /api/agent/secret` and posts back only the SERVER-built receipt (key · file · chars · `sha256:` prefix · added/updated). Every guard lives in `src/lib/env-secrets.ts` and is re-run on the raw body: `.env`-family path inside the project, realpath-contained parent, symlinked leaf refused (an arbitrary-file OVERWRITE otherwise), a git-TRACKED file refused outright, and the `.gitignore` entry placed BEFORE the write with a failure aborting it (issue #11's ordering guarantee); 0600 at write, value ends trimmed but never its middle, the LAST duplicate assignment rewritten (the one dotenv uses). Not desktop-gated on purpose — a bounded write behind the same CSRF/token gates as every other write, so the phone case keeps working. The client's copies of the constants are pinned to the owner by `tests/unit/chat-secret-mirror.test.ts`; 39 unit tests in `env-secrets.test.ts` cover the four refusals.
+- [x] RUN CARD — an interactive command runs INSIDE the transcript. `dream-view` gains `{"type":"run", id, command, why?, cwd?}`; `/api/agent/terminal` gains `kind=exec` (`$SHELL -ilc 'exec <cmd>'`, so the PTY's exit IS the command's, plus a BINARY `{type:'exit',code}` frame before close). `chat/InlineTerminal.tsx` is a real PTY built on the extracted `termCore.ts` factory — the same theme, cell metrics and font-ready open as the agent terminal, not a second hand-rolled xterm. On exit the card reports back through `postToSession` (the composer's own steer→queue chain, now shared with the checklist submit), so the agent continues by itself; the tail is ANSI-stripped, 40 lines / 6000 chars. The command is NOT vetted (shown in full, nothing runs until ▶) but the bridge runs the command the card SHOWED: a newline truncates rather than collapsing to a space, control bytes stripped, multi-line refused client-side, `cwd` realpath-contained. The output switch is asked BEFORE the run, because whether a command prints a credential is the user's call while looking at it.
+- [x] THE SAME ▶ ON A PERMISSION CARD — Bash requests render Deny / ▶ Run here / Allow. "Run here" opens the inline PTY on that exact command and answers the permission `deny` carrying the run report as the tool result. Deny, not allow, is load-bearing: allow would re-run the command headless, straight back into the prompt it just hung on; the message says the user ran it, so "denied" never reads as "refused".
+- [x] RUNTIME-VERIFIED IN THE REAL APP, and it found three defects tests could not. `npm run verify:chat-secret-run` drives the real server, the real `/ws/agent-chat`, the real PTY bridge and a real browser against a scratch vault + scripted `claude` (no tokens): 76 assertions × light+dark green, covering all three cards — the third by having the stand-in raise a real `can_use_tool` Bash request and hold the turn open until the answer comes back, so "the blocked turn resumes" is measured rather than reasoned. It also WRITES SCREENSHOTS by default (`tmp/verify-shots/<theme>-NN-<phase>.png`, each scrolled to the card it is about), because "did you validate it" is a question an assertion count cannot answer; including the canary (the pasted value must appear in neither the CLI's stdin nor a pixel of the DOM) and a real `read` typed into from the card. What it caught: **(1)** `-ilc 'exec <command>'` ran only the FIRST simple command — `exec` binds there, so `echo READY; read line` became `echo READY` and the card ran something other than what it displayed; now an inner non-interactive shell takes the command as an OPERAND (`execShellArgs`, regression-locked). **(2)** xterm SUSPENDS its write buffer and its keyboard handling while its element is off-screen — output arrived on the socket and never painted, keystrokes went nowhere; the card now reveals itself on open (twice, 250ms apart, because the 300px growth makes the transcript re-pin to the bottom and undo a single scroll). **(3)** `ChatPane`'s click-to-focus handed the caret back to the composer on every click inside the terminal (xterm's screen is a `div`, so it was not in the exempt list) — every keystroke meant for a live `read` landed in the message box. All three are invisible to unit tests and all three would have shipped.
