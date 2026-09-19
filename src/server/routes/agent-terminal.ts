@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { basename, dirname, join } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, statSync, chmodSync, readFileSync, writeFileSync, rmSync, watchFile, unwatchFile } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, chmodSync, readFileSync, writeFileSync, rmSync, watchFile, unwatchFile } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
@@ -21,6 +21,7 @@ import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizePrompt, EFFORT_LEVELS,
   findFirstTranscriptPath, claudeConversationExists, redeemPromptToken,
+  sanitizeExecCommand, sanitizeRelativeDir,
 } from './agent-spawn-shared.js';
 
 // Re-exported so src/server/index.ts's existing import keeps working unchanged —
@@ -594,8 +595,71 @@ export async function handleAgentInstallStatus(
 
 // ─── Embedded terminal (WebSocket ↔ node-pty) ─────────────────────────────────
 
-/** What the PTY runs: the real Claude Code agent, or a plain vault-scoped login shell. */
-type PtyKind = 'agent' | 'shell';
+/**
+ * Resolve a pre-sanitized RELATIVE directory against the project root and prove the result
+ * is still inside it — by realpath, so a symlinked subdirectory pointing at `/` is caught
+ * rather than trusted. Returns the real directory, or null for anything that is not an
+ * existing directory inside the project.
+ *
+ * The project's standing ★★★ rule is that any path reaching vault content is realpath-
+ * contained, and it applies to a SPAWN cwd for the same reason it applies to a read: the
+ * directory decides what a relative command in it touches.
+ */
+function resolveContainedDir(projectRoot: string, relDir: string): string | null {
+  try {
+    const root = realpathSync(projectRoot);
+    const target = realpathSync(join(root, relDir));
+    if (target !== root && !target.startsWith(root + '/')) return null;
+    return lstatSync(target).isDirectory() ? target : null;
+  } catch {
+    return null; // missing, unreadable, or not a directory
+  }
+}
+
+/**
+ * The argv a `kind=exec` PTY is spawned with: an interactive LOGIN shell that immediately
+ * `exec`s an inner, non-interactive shell running the user's command, with the command
+ * itself passed as an OPERAND rather than spliced into a command string.
+ *
+ * Three requirements meet here, and the obvious spelling satisfies none of them.
+ *
+ *  1. **The command must run whole.** The first version was `-ilc 'exec <command>'`, and it
+ *     was WRONG in a way a single command never shows: `exec` binds to the first simple
+ *     command, so `echo a; read x` replaced the shell with `echo a` and everything after the
+ *     `;` was silently dropped. Caught by the runtime verification (the process printed its
+ *     first line and exited instead of waiting for input) — a card that RAN SOMETHING OTHER
+ *     THAN WHAT IT SHOWED, which is the one thing the run card may never do.
+ *  2. **The PTY's exit must BE the command's exit.** Hence `exec` on the inner shell: the
+ *     login shell is replaced, the inner shell exits with its last command's status, and
+ *     there is no wrapper left to report a status of its own.
+ *  3. **Ctrl-C must end it.** The inner shell is NOT interactive, so SIGINT kills it rather
+ *     than being caught and answered with a fresh prompt — which is what would have happened
+ *     had we simply dropped `exec` and let the interactive login shell run the command.
+ *
+ * The command is an argv element the outer shell never re-parses (`"$0"`, or fish's
+ * `$argv[1]` — same mechanism the initial-prompt operand uses), so quotes, `&&`, pipes and
+ * metacharacters reach the inner shell exactly as the card displayed them. `-ilc` on the
+ * OUTER shell is what gives the command the PATH the user's own terminal would (the reason
+ * `firebase`, `gcloud` and nvm-managed binaries resolve at all).
+ */
+export function execShellArgs(shell: string, command: string): string[] {
+  const ref = basename(shell) === 'fish' ? '"$argv[1]"' : '"$0"';
+  const quoted = `'${shell.replace(/'/g, `'\\''`)}'`;
+  return ['-ilc', `exec ${quoted} -c ${ref}`, command];
+}
+
+/**
+ * What the PTY runs: the real Claude Code agent, a plain vault-scoped login shell, or ONE
+ * command the user pressed ▶ on in the Chat transcript (`exec` — the RUN card).
+ *
+ * `exec` adds no privilege over `shell`, which has been handing out a bare interactive login
+ * shell in the vault root since 0.22 behind the same desktop+loopback gate. It narrows one:
+ * the process is spawned with the command already set, it exits when the command exits, and
+ * its exit code is reported back on the control channel so the card can close and the turn
+ * can continue. Anything a hostile local page could do through `exec` it could already do
+ * through `shell` by writing the same bytes to stdin.
+ */
+type PtyKind = 'agent' | 'shell' | 'exec';
 
 interface PtyLike {
   onData(cb: (data: string) => void): void;
@@ -707,7 +771,23 @@ export function attachAgentTerminal(server: Server): void {
     // would open anyway, scoped to the vault) instead of `exec claude`. Any other value
     // — including absent — is the default Claude agent. Shell sessions ignore the
     // bypass/resume/session-id machinery (a shell has no permission model or conversation).
-    const kind: PtyKind = url.searchParams.get('kind') === 'shell' ? 'shell' : 'agent';
+    const kindParam = url.searchParams.get('kind');
+    const kind: PtyKind = kindParam === 'shell' ? 'shell' : kindParam === 'exec' ? 'exec' : 'agent';
+    // `kind=exec` runs ONE command (the Chat RUN card's ▶) and exits. The command is
+    // sanitized to a single line here; the working directory is resolved against the
+    // project root and REALPATH-CONTAINED below, so a relative path that escapes through a
+    // symlink cannot move the spawn outside the project the request named.
+    const execCommand = kind === 'exec' ? sanitizeExecCommand(url.searchParams.get('cmd')) : '';
+    if (kind === 'exec' && !execCommand) { rejectUpgrade(socket, 400); return; }
+    let execCwd = projectRoot;
+    if (kind === 'exec') {
+      const relDir = sanitizeRelativeDir(url.searchParams.get('cwd'));
+      if (relDir) {
+        const resolved = resolveContainedDir(projectRoot, relDir);
+        if (!resolved) { rejectUpgrade(socket, 400); return; }
+        execCwd = resolved;
+      }
+    }
     // Conversation continuity across an app reopen: `sessionId` pins a NEW conversation to
     // a client-generated UUID (`claude --session-id`); `resume` reopens that exact prior
     // conversation (`claude --resume`). Both are STRICT-UUID-validated before they ever
@@ -751,7 +831,7 @@ export function attachAgentTerminal(server: Server): void {
 
       const wss = new WebSocketServer({ noServer: true });
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind, model, effort, initialPrompt, deferPrompt);
+        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind, model, effort, initialPrompt, deferPrompt, execCommand, execCwd);
       });
     })();
   });
@@ -1304,6 +1384,8 @@ function startPtySession(
   effort = '',
   initialPrompt = '',
   deferPrompt = false,
+  execCommand = '',
+  execCwd = '',
 ): void {
   const shell = process.env.SHELL || '/bin/zsh';
   // Permission mode — the surface has exactly TWO modes (owner decision 2026-07-23:
@@ -1451,7 +1533,9 @@ function startPtySession(
   const promptArg = kind === 'agent' && submitPrompt ? ` ${promptRef}` : '';
   const shellArgs = kind === 'shell'
     ? ['-il']
-    : ['-ilc', `exec claude${idArg}${modelFlag}${effortFlag}${flag}${promptArg}`, ...(promptArg ? [submitPrompt] : [])];
+    : kind === 'exec'
+      ? execShellArgs(shell, execCommand)
+      : ['-ilc', `exec claude${idArg}${modelFlag}${effortFlag}${flag}${promptArg}`, ...(promptArg ? [submitPrompt] : [])];
   // An agent PTY exports its tab's STABLE roster id so the SessionStart hook (which
   // inherits this env through `claude`) can record roster id → live conversation id
   // on every rotation — the other half of the resume-staleness fix above. ONLY when
@@ -1471,7 +1555,7 @@ function startPtySession(
       name: 'xterm-color',
       cols: 80,
       rows: 24,
-      cwd: projectRoot,
+      cwd: kind === 'exec' && execCwd ? execCwd : projectRoot,
       // PATH is claude-aware: the login shell inherits the directory `claude` was
       // actually installed into, so `exec claude` resolves even when the install's
       // `export PATH` echo never reached the user's rc. Appended, never prepended —
@@ -1512,7 +1596,14 @@ function startPtySession(
     if (ws.readyState === ws.OPEN) {
       // Drain any coalesced output first so the exit line lands AFTER the final bytes.
       pump.flush();
-      const what = kind === 'shell' ? 'shell' : 'claude';
+      // The RUN card needs the exit CODE, not a line of terminal text to scrape: it decides
+      // from it whether to report success or failure back into the conversation. Sent as a
+      // BINARY frame, the same control channel the hook-driven status uses, so it can never
+      // be confused with output (always text frames) and an older client simply ignores it.
+      if (kind === 'exec') {
+        try { ws.send(Buffer.from(JSON.stringify({ type: 'exit', code: exitCode }))); } catch { /* closing */ }
+      }
+      const what = kind === 'shell' ? 'shell' : kind === 'exec' ? 'command' : 'claude';
       try { ws.send(`\r\n\x1b[2m[${what} exited with code ${exitCode}]\x1b[0m\r\n`); } catch { /* closing */ }
       ws.close();
     }

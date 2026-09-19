@@ -142,6 +142,53 @@ export function sanitizePrompt(v: string | null): string {
     .trim();
 }
 
+/** Cap on a `kind=exec` command, in characters. Mirrored by `MAX_RUN_COMMAND_CHARS` in
+ *  `dashboard/src/lib/chatViewSpec.ts`, which refuses to draw a card past it. */
+export const MAX_EXEC_COMMAND_CHARS = 2000;
+
+/**
+ * Sanitize the command a `kind=exec` PTY will run — the Chat surface's RUN card, where the
+ * user pressed ▶ on a command they were shown in full.
+ *
+ * What this does NOT do is vet the command. There is no allowlist to write: the string IS a
+ * shell command, it is the one the user read on the card before pressing the button, and the
+ * PTY it lands in is the same desktop+loopback-gated bridge that already hands out a bare
+ * interactive shell (`kind=shell`). A filter that blocked `rm` and allowed `sh -c …` would
+ * add no safety and would teach the surface's users that something had been checked.
+ *
+ * What it does do is keep the command to ONE line and a sane size. CR/LF are stripped rather
+ * than collapsed to spaces (unlike {@link sanitizePrompt}): a newline inside a shell command
+ * is a statement separator, so turning it into a space would silently FUSE two commands into
+ * one different command — the card must run what it showed, or nothing. The client refuses a
+ * multi-line command outright; anything that still arrives with one here is a client that did
+ * not, so the tail is dropped at the first break instead of being quietly welded on.
+ */
+export function sanitizeExecCommand(v: string | null): string {
+  if (!v) return '';
+  const firstLine = v.split(/[\r\n]/)[0] ?? '';
+  return firstLine
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    .slice(0, MAX_EXEC_COMMAND_CHARS)
+    .trim();
+}
+
+/**
+ * A `kind=exec` working directory: a RELATIVE path inside the project, or '' for the project
+ * root. Rejects anything absolute, any `..` segment, and any byte outside a boring path
+ * charset — the caller then resolves it against the project root and realpath-contains it,
+ * which is the check that actually holds.
+ */
+export function sanitizeRelativeDir(v: string | null): string {
+  if (!v) return '';
+  const raw = v.trim().replace(/^\.\//, '').replace(/\/+$/, '');
+  if (!raw || raw === '.') return '';
+  if (raw.length > 200 || raw.startsWith('/') || raw.includes('\\')) return '';
+  const segments = raw.split('/');
+  if (segments.some((seg) => !seg || seg === '..' || !/^[A-Za-z0-9_.][A-Za-z0-9._-]*$/.test(seg))) return '';
+  return segments.join('/');
+}
+
 // ─── Prompt hand-off tokens (the `?prompt=` escape hatch) ─────────────────────
 //
 // The initial prompt USED to ride the WS upgrade URL as `&prompt=<encoded>`, which puts it
