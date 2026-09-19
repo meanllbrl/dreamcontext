@@ -21,6 +21,22 @@ function tokenMatches(candidate: string | null, token: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * True when the request already carries the network token — as the cookie a prior
+ * tokenized visit set, or as `?token=` on this very URL.
+ *
+ * Split out of {@link checkNetworkAuth} because a WebSocket UPGRADE has no
+ * `ServerResponse` to answer on: it gets a raw `Duplex` and must write its own status
+ * line (`rejectUpgrade`). The upgrade path therefore needs the PREDICATE, not the
+ * responder — and the predicate must be this one copy, since a second hand-rolled cookie
+ * parser beside the real one is exactly how an auth check drifts out of agreement with
+ * itself. Pure: it never sets the cookie (see `checkNetworkAuth` for that half).
+ */
+export function hasValidNetworkToken(req: IncomingMessage, token: string): boolean {
+  if (tokenMatches(cookieToken(req), token)) return true;
+  return tokenMatches(queryToken(req), token);
+}
+
 function cookieToken(req: IncomingMessage): string | null {
   const header = req.headers.cookie;
   if (!header) return null;
@@ -30,6 +46,15 @@ function cookieToken(req: IncomingMessage): string | null {
     if (part.slice(0, eq).trim() === AUTH_COOKIE) return part.slice(eq + 1).trim();
   }
   return null;
+}
+
+/** `?token=` off this request's own URL, or null when absent/unparseable. */
+function queryToken(req: IncomingMessage): string | null {
+  try {
+    return new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`).searchParams.get('token');
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -47,13 +72,7 @@ export function checkNetworkAuth(req: IncomingMessage, res: ServerResponse, toke
   if (isLoopbackAddress(req.socket?.remoteAddress)) return true;
   if (tokenMatches(cookieToken(req), token)) return true;
 
-  let queryToken: string | null = null;
-  try {
-    queryToken = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`).searchParams.get('token');
-  } catch {
-    queryToken = null;
-  }
-  if (tokenMatches(queryToken, token)) {
+  if (tokenMatches(queryToken(req), token)) {
     // Not `Secure` — the local dashboard is plain HTTP. SameSite=Strict keeps
     // the cookie out of any cross-site request a hostile page could forge.
     res.setHeader('Set-Cookie', `${AUTH_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/`);

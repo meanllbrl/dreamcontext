@@ -1,4 +1,5 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
+import { isSameOriginAsHost, remoteAccessEnabled } from './remote-access.js';
 
 const MAX_BODY_SIZE = 1_048_576; // 1MB
 
@@ -67,17 +68,29 @@ export function isCrossSiteWrite(req: IncomingMessage): boolean {
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false;
   const origin = req.headers.origin;
   if (!origin) return false;
-  return !LOCAL_ORIGIN_RE.test(origin);
+  if (LOCAL_ORIGIN_RE.test(origin)) return false;
+  // Remote access (see `remote-access.ts`): the dashboard now answers on a tailnet address,
+  // so a phone's own writes carry `Origin: http://100.x.y.z:4173` — same-origin in every
+  // sense a browser means it, but not a spelling `LOCAL_ORIGIN_RE` can enumerate. Accept it
+  // only when the origin IS the host that was dialed; a drive-by page still sends its own
+  // origin and stays blocked, and with remote access off nothing here changes at all.
+  return !(remoteAccessEnabled() && isSameOriginAsHost(req));
 }
 
 /**
- * CORS for the local dashboard. Reflects ONLY loopback origins — never a
- * wildcard — so a third-party web page cannot read API responses.
+ * CORS for the local dashboard. Reflects ONLY a loopback origin — or, with remote access
+ * on, the host this request was sent to — never a wildcard, so a third-party web page
+ * cannot read API responses.
  * Returns true if the request was a handled OPTIONS preflight.
  */
 export function handleCors(req: IncomingMessage, res: ServerResponse): boolean {
   const origin = req.headers.origin;
-  if (origin && LOCAL_ORIGIN_RE.test(origin)) {
+  // Same widening as `isCrossSiteWrite`, and for the same reason: with remote access on, a
+  // reflectable origin is either a loopback spelling or the host this very request was sent
+  // to. Never a wildcard, and never a third-party origin.
+  const reflectable = !!origin
+    && (LOCAL_ORIGIN_RE.test(origin) || (remoteAccessEnabled() && isSameOriginAsHost(req)));
+  if (origin && reflectable) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');

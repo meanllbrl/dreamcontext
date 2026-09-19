@@ -6,6 +6,7 @@ import { exec } from 'node:child_process';
 import { Router } from './router.js';
 import { handleCors, isCrossSiteWrite, sendError } from './middleware.js';
 import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
+import { remoteAccessEnabled } from './remote-access.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
@@ -810,8 +811,10 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     // Self-gates (desktop + loopback + node-pty present); a no-op otherwise.
     attachAgentTerminal(server);
     // Agent Chat (beta): bridge a WebSocket to a headless stream-json `claude` process.
-    // Self-gates (desktop + loopback); a no-op otherwise.
-    attachAgentChat(server);
+    // Self-gates (desktop + loopback, or a token-bearing tailnet peer when remote access is
+    // on); a no-op otherwise. The token rides in because a WS upgrade has no ServerResponse
+    // to run the usual `checkNetworkAuth` against — it checks the predicate itself.
+    attachAgentChat(server, { networkToken });
 
     server.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
@@ -833,6 +836,19 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         for (const lanHost of listNetworkHosts(host)) {
           console.log(`    http://${lanHost}:${port}/?token=${networkToken}`);
         }
+        console.log('');
+        if (remoteAccessEnabled()) {
+          console.log('  REMOTE ACCESS IS ON — a token-bearing device on your tailnet');
+          console.log('  (100.64.0.0/10) can open Agent Chat and run claude on this machine.');
+          console.log('');
+        }
+      }
+      // Remote access without a network-exposed bind is a misconfiguration that LOOKS like it
+      // worked: no token is minted, so the gate can never pass and the phone just gets 403s.
+      // Say so here rather than letting it read as "the feature is broken".
+      if (!networkToken && remoteAccessEnabled()) {
+        console.log(`  NOTE: DREAMCONTEXT_REMOTE=1 is set but the bind is loopback (${host}),`);
+        console.log('  so nothing is reachable remotely. Re-run with --host <your tailnet IP>.');
         console.log('');
       }
       console.log('  Press Ctrl+C to stop.\n');

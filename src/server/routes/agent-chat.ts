@@ -46,6 +46,7 @@ import { readAccountRejections, recordAccountRejection } from '../../lib/claude-
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { resolveBoardAssets } from './knowledge.js';
+import { isTrustedRemotePeer } from '../remote-access.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizeChatMode, sanitizePrompt, sanitizeAccountId,
@@ -358,16 +359,20 @@ export function shouldRejectAutomationResume(
  * Attach the agent-chat WebSocket upgrade handler to the shared http server.
  * Path: `/api/agent/chat?vault=<name>&bypass=0|1&(sessionId|resume)=<uuid>&model=<alias>
  * &effort=<lvl>&mode=basic|plan|develop&promptToken=<token>&prompt=<inline>&deferPrompt=0|1`.
- * No-ops (rejects the upgrade) unless the desktop gate is on and the request is loopback.
+ * No-ops (rejects the upgrade) unless the desktop gate is on and the peer is trusted:
+ * loopback, or — with remote access explicitly enabled — a token-bearing tailnet device
+ * (see `remote-access.ts` for why that gate wants all three facts at once). `networkToken`
+ * is the server's per-process credential, null on a loopback bind where none is minted.
  */
-export function attachAgentChat(server: Server): void {
+export function attachAgentChat(server: Server, opts: { networkToken?: string | null } = {}): void {
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     let url: URL;
     try { url = new URL(req.url || '/', `http://${req.headers.host}`); }
     catch { socket.destroy(); return; }
     if (url.pathname !== '/api/agent/chat') return; // not ours — leave for others
 
-    if (!isDesktop() || !isLoopback(req)) { rejectUpgrade(socket, 403); return; }
+    const trusted = isLoopback(req) || isTrustedRemotePeer(req, opts.networkToken ?? null);
+    if (!isDesktop() || !trusted) { rejectUpgrade(socket, 403); return; }
 
     const vault = url.searchParams.get('vault');
     const projectRoot = resolveVaultProjectRoot(vault);
