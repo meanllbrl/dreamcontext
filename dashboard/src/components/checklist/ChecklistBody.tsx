@@ -1,8 +1,8 @@
-import { useState } from 'react';
 import { pickFiles } from '../../lib/desktop';
 import { doneCount, MAX_NOTE_CHARS, type ChecklistAction, type ChecklistState } from '../../lib/checklistState';
 import type { ChecklistItemSpec, ChecklistViewSpec } from '../../lib/chatViewSpec';
 import { MarkdownPreview } from '../core/MarkdownPreview';
+import { MaskedSecretInput } from '../core/MaskedSecretInput';
 import './ChecklistWindow.css';
 
 interface Props {
@@ -124,43 +124,21 @@ function ChecklistItemRow({
 }
 
 /**
- * The masked field for `wants:'secret'` (plan §1.13.5). Deliberately `type="text"`, NEVER
- * `type="password"` — a real password field is exactly what tells WebKit/the OS credential
- * manager to offer to save it, which is the one thing this field must never trigger. Masking
- * is done purely visually via `-webkit-text-security` (ChecklistWindow.css) plus a reveal
- * toggle, so the browser never learns this holds a secret at all.
+ * The masked field for `wants:'secret'` (plan §1.13.5). The input itself is the shared
+ * {@link MaskedSecretInput} — its header carries the masking discipline both secret
+ * surfaces live by.
+ *
+ * What stays HERE is the note, because the two surfaces make opposite promises and the
+ * promise is the whole design. THIS value is submitted as markdown into the conversation
+ * (the checklist walks the user through a procedure and hands the result back as text), so
+ * it says so. The Chat transcript's secret card writes to a file and tells the agent only a
+ * receipt — see `chat/SecretCard.tsx`. If you are about to unify these two notes, you are
+ * about to make one of them a lie.
  */
 function SecretField({ itemId, value, onChange }: { itemId: string; value: string; onChange: (v: string) => void }) {
-  const [revealed, setRevealed] = useState(false);
-  const inputId = `checklist-secret-${itemId}`;
-
   return (
     <div className="checklist-secret">
-      <div className="checklist-secret-row">
-        <input
-          id={inputId}
-          type="text"
-          className={`checklist-secret-input${revealed ? ' is-revealed' : ''}`}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Paste here…"
-          autoComplete="off"
-          spellCheck={false}
-          autoCorrect="off"
-          data-1p-ignore
-          data-lpignore="true"
-          aria-label="Secret value"
-        />
-        <button
-          type="button"
-          className="checklist-secret-toggle"
-          onClick={() => setRevealed((r) => !r)}
-          aria-pressed={revealed}
-          aria-label={revealed ? 'Hide value' : 'Reveal value'}
-        >
-          {revealed ? 'Hide' : 'Show'}
-        </button>
-      </div>
+      <MaskedSecretInput id={`checklist-secret-${itemId}`} value={value} onChange={onChange} />
       <p className="checklist-secret-note">
         Sent to the agent and stored in this conversation's transcript.
       </p>

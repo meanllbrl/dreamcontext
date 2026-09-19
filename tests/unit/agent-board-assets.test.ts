@@ -303,9 +303,22 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * hold": three things earn a block (a diagram, an interactive view, a deck), a named list
    * of what never does, and a dc-graph (nodes + edges the kit lays out and draws) as the one
    * example. Paid for by retiring the dc-flow vocabulary and the decision-on-screen bullet.
+   *
+   * 9800 -> 11200 on 2026-09-19, and this one is a RAISE, not a saving — the only one on
+   * this list where prose was not found to cut. The surface gained two capabilities whose
+   * entire delivery mechanism is this file: the `secret` card (a credential reaches disk
+   * without passing through the agent) and the `run` card (an interactive command runs in a
+   * PTY inside the transcript, and reports its exit back). Both were asked for as the two
+   * things that still forced the user out of the session. Each is a paragraph plus one
+   * example, compressed twice before this number moved; ~1,600 characters for two capability
+   * grants, against a briefing whose remaining prose is one rule per sentence, most of them
+   * bought with a regression. The standing instruction is to cut prose before raising the
+   * bound — the cut was attempted, and every candidate turned out to be a rule that would
+   * re-open something. Deleting one of those to save ~400 tokens a turn is the worse trade,
+   * and saying so here is the price of moving the number. Actual 10,992.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(9800);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(11200);
   });
 
   /**

@@ -1,8 +1,13 @@
-import { Terminal, type ITheme } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import { WebLinksAddon } from '@xterm/addon-web-links';
+import type { Terminal } from '@xterm/xterm';
+import type { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
-import '@xterm/xterm/css/xterm.css';
+import {
+  BASE_FONT, createStyledTerm, currentTermTheme, currentZoom, openWhenFontsReady, toXtermRgb, tokenRgb,
+} from './termCore';
+
+// Re-exported because callers have always imported it from here (the zoom control, the
+// pane sizing) — the primitive moved to `termCore.ts`, the import site did not have to.
+export { currentZoom };
 import { copyPreservingUnicode } from '../../lib/clipboard';
 import { nextLineShadow } from '../../lib/lineShadow';
 import { raiseAskAttention } from '../../lib/attention';
@@ -82,14 +87,6 @@ export type TermStatus = 'connecting' | 'open' | 'closed';
 export type SessionKind = 'agent' | 'shell' | 'chat' | 'automation';
 export const ACCENT = '#8b7bff';
 
-// Base xterm font size at 100% zoom. Multiplied by the app's `--zoom` so terminal
-// text tracks the window zoom control (which otherwise only scales CSS font tokens).
-const BASE_FONT = 14.5;
-export function currentZoom(): number {
-  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--zoom'));
-  return Number.isFinite(v) && v > 0 ? v : 1;
-}
-
 // A destructive action that needs the user's explicit OK before it runs. Surfaced as
 // a native-style confirmation sheet over the terminal; only raised for LIVE sessions
 // (an already-ended session is closed instantly, never nags).
@@ -100,92 +97,6 @@ export interface ConfirmRequest {
   confirmLabel: string;
   tone: ConfirmTone;
   onConfirm: () => void;
-}
-
-// ── Theme ──────────────────────────────────────────────────────────────────────
-
-function readXtermTheme(): ITheme {
-  const cs = getComputedStyle(document.body);
-  const g = (name: string, fallback: string) => cs.getPropertyValue(name).trim() || fallback;
-  const bg = g('--color-bg', '#14171f');
-  const accent = g('--color-accent', '#9d8cff');
-  // The 16 ANSI slots must keep conventional luminance ordering (0 = darkest →
-  // 15 = lightest) REGARDLESS of theme. The old mapping wired black/white/brightBlack
-  // straight to design tokens, which inverted them in light mode (black→#e9ebf0,
-  // white→#646464) and made the dim grays too light in dark mode — so when Claude's
-  // TUI fills a region with ANSI 7/8 as a background, the foreground collapsed to
-  // same-luminance-on-same-luminance (the unreadable pale blocks). The grayscale ramp
-  // is tuned per-theme so background fills BLEND with the surface; foreground
-  // readability on any pairing is then guaranteed by `minimumContrastRatio` below.
-  const isLight = currentTermTheme() === 'light';
-  const ramp = isLight
-    ? { black: '#292d34', brightBlack: '#646464', white: '#e9ebf0', brightWhite: '#ffffff' }
-    : { black: '#20242e', brightBlack: '#3b4151', white: '#c8ccd9', brightWhite: '#f5f6fa' };
-  // Deliberately SOFTER than --color-text: pure #f5f6fa on #14171f is ~17:1, which is
-  // harsh/eye-tiring for long sessions. A calm off-white (dark) / lifted ink (light)
-  // keeps text clearly present while dropping the glare. Dim text stays dim because
-  // minimumContrastRatio is only 3 (not 4.5), so the hierarchy isn't flattened bright.
-  const softFg = isLight ? '#33383f' : '#cdd3de';
-  return {
-    background: bg,
-    foreground: softFg,
-    cursor: accent,
-    cursorAccent: bg,
-    // Selection must be UNMISTAKABLE in both themes AND whether or not the terminal is the
-    // focused element. A pale semi-transparent violet was invisible on the white light-mode
-    // background; worse, while the selection is drawn UNFOCUSED xterm uses its faint default
-    // `selectionInactiveBackground` (a light gray — visible on dark, invisible on white),
-    // which is exactly what the light-mode bug was. So pin a SOLID deep brand-violet with
-    // white text for BOTH the active and inactive selection: ~5.3:1 white-on-violet, clearly
-    // visible on white AND on the dark canvas, regardless of focus.
-    selectionBackground: '#6a57d6',
-    selectionInactiveBackground: '#6a57d6',
-    selectionForeground: '#ffffff',
-    black: ramp.black,
-    red: g('--color-error', '#ff5a5f'),
-    green: g('--color-success', '#4ade80'),
-    yellow: g('--color-warning', '#ffae3b'),
-    blue: '#5b9dff',
-    magenta: accent,
-    cyan: '#3bd6c6',
-    white: ramp.white,
-    brightBlack: ramp.brightBlack,
-    brightRed: '#ff7a7f',
-    brightGreen: '#6ee7a0',
-    brightYellow: '#ffc46b',
-    brightBlue: '#8bbcff',
-    brightMagenta: accent,
-    brightCyan: '#6fe3d6',
-    brightWhite: ramp.brightWhite,
-  };
-}
-
-// ── Theme detection / colour reporting (so Claude themes to our surface) ────────
-
-function resolveRgb(cssColor: string): [number, number, number] | null {
-  if (!cssColor) return null;
-  const probe = document.createElement('span');
-  probe.style.color = cssColor;
-  probe.style.display = 'none';
-  document.body.appendChild(probe);
-  const c = getComputedStyle(probe).color;
-  document.body.removeChild(probe);
-  const m = /rgba?\(([0-9.]+),\s*([0-9.]+),\s*([0-9.]+)/.exec(c);
-  return m ? [Math.round(+m[1]), Math.round(+m[2]), Math.round(+m[3])] : null;
-}
-function toXtermRgb([r, g, b]: [number, number, number]): string {
-  const h = (v: number) => ((v * 257) & 0xffff).toString(16).padStart(4, '0');
-  return `rgb:${h(r)}/${h(g)}/${h(b)}`;
-}
-function tokenRgb(varName: string, fallback: string): [number, number, number] | null {
-  const v = getComputedStyle(document.body).getPropertyValue(varName).trim() || fallback;
-  return resolveRgb(v);
-}
-function currentTermTheme(): 'light' | 'dark' {
-  const bg = tokenRgb('--color-bg', '#14171f');
-  if (!bg) return 'dark';
-  const lum = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2];
-  return lum > 140 ? 'light' : 'dark';
 }
 
 // ── Session manager (imperative; one PTY ↔ ws ↔ xterm per session) ──────────────
@@ -268,34 +179,10 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
   const container = document.createElement('div');
   container.className = 'agent-pane-term';
 
-  const fontFamily = getComputedStyle(document.body).getPropertyValue('--font-mono').trim()
-    || "'JetBrains Mono', ui-monospace, Menlo, monospace";
-  // The first family in the stack — the actual webfont we must wait for (both weights)
-  // before xterm measures the cell width, or glyphs render thin inside an over-wide cell.
-  const primaryMono = (fontFamily.split(',')[0] || 'JetBrains Mono').replace(/['"]/g, '').trim();
-
-  const term = new Terminal({
-    fontFamily,
-    fontSize: BASE_FONT * currentZoom(),
-    lineHeight: 1.65,
-    letterSpacing: 0,
-    cursorBlink: true,
-    cursorStyle: 'bar',
-    fontWeightBold: '700',
-    theme: readXtermTheme(),
-    allowProposedApi: true,
-    scrollback: 5000,
-    // AA contrast floor: xterm auto-lifts any foreground that falls too close to its
-    // actual cell background — the safety net for Claude's TUI blocks that pair a default
-    // foreground with an ANSI 7/8 background fill (else unreadable same-on-same text).
-    // Kept at 3 (not the old 4.5): high enough to rescue those block fills, low enough
-    // that genuinely dim/secondary text STAYS dim instead of being force-brightened —
-    // preserving visual hierarchy and the calmer, less-harsh feel.
-    minimumContrastRatio: 3,
-  });
-  const fit = new FitAddon();
-  term.loadAddon(fit);
-  term.loadAddon(new WebLinksAddon());
+  // Built by the shared factory (`termCore.ts`): the theme, the type scale, the cell-metric
+  // discipline and the live theme-follow are the same ones the Chat transcript's RUN card
+  // gets, so the two terminals in this app cannot drift apart.
+  const { term, fit, fontFamily, primaryMono, stopThemeSync } = createStyledTerm();
 
   // ── Renderer (GPU vs native text) ────────────────────────────────────────────
   // Default is the WebGL addon: Claude's Ink TUI redraws most of the viewport every
@@ -329,10 +216,6 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
     if (cfg?.renderer) applyRenderer(cfg.renderer);
   };
   window.addEventListener(AGENT_SETTINGS_EVENT, onSettingsChange);
-
-  const themeObserver = new MutationObserver(() => { term.options.theme = readXtermTheme(); });
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
-  themeObserver.observe(document.body, { attributes: true, attributeFilter: ['data-theme', 'class'] });
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const theme = currentTermTheme();
@@ -730,16 +613,9 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
       // caret from the project the user is looking at (see the `focus` option's note).
       if (opts.focus !== false) term.focus();
     };
-    // Measure with the EXACT mono font (both weights) actually loaded — otherwise
-    // xterm builds its cell metrics from a wider fallback advance and every glyph
-    // renders thin inside an over-wide cell.
-    const fonts = document.fonts;
-    if (fonts?.load) {
-      Promise.all([
-        fonts.load(`${BASE_FONT}px "${primaryMono}"`),
-        fonts.load(`700 ${BASE_FONT}px "${primaryMono}"`),
-      ]).then(() => fonts.ready).then(doOpen).catch(doOpen);
-    } else doOpen();
+    // Measure with the EXACT mono font (both weights) actually loaded — see
+    // `openWhenFontsReady` for what goes wrong otherwise.
+    openWhenFontsReady(primaryMono, doOpen);
   }
 
   let disposed = false;
@@ -755,7 +631,7 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
     try { window.removeEventListener(AGENT_SETTINGS_EVENT, onSettingsChange); } catch { /* gone */ }
     try { webgl?.dispose(); } catch { /* atlas mid-init */ }
     webgl = null;
-    try { themeObserver.disconnect(); } catch { /* gone */ }
+    stopThemeSync();
     try { dataSub.dispose(); } catch { /* gone */ }
     try { bellSub.dispose(); } catch { /* gone */ }
     try { oscFg.dispose(); } catch { /* gone */ }

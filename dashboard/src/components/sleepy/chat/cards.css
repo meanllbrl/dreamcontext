@@ -659,6 +659,9 @@ video.chat-msg-user-media-el { cursor: default; }
   gap: var(--space-4);
   padding: var(--space-4);
 }
+/* The inline terminal of a "Run here" permission sits flush in the card's own padded
+   column, unlike the RUN card's (which insets itself out of an unpadded card). */
+.chat-permcard-body .chat-runterm { margin: 0; }
 .chat-permcard-desc {
   margin: 0;
   color: var(--color-text);

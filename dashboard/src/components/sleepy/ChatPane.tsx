@@ -1609,8 +1609,15 @@ export function ChatPane({
             // without this a click on the transcript parks focus on <body>, killing the
             // surface-level ⌘D/⌘T/⌘W chords (they listen inside the overlay host). Text
             // selection and real controls keep working — only a plain click refocuses.
+            //
+            // A RUN CARD'S TERMINAL IS EXEMPT, and it is the one exemption that is not a
+            // form control. xterm takes focus from a mousedown inside its screen, which is a
+            // `div` — so this handler fired straight afterwards and handed the caret back to
+            // the composer, and every keystroke meant for the process went into the message
+            // box instead. Measured, not theorised: `npm run verify:chat-secret-run` typed
+            // into a live `read` and watched the text land in the composer.
             if (!window.getSelection()?.isCollapsed) return;
-            if ((e.target as Element).closest('button, select, textarea, input, a')) return;
+            if ((e.target as Element).closest('button, select, textarea, input, a, .chat-runterm')) return;
             session.focus();
           }}
         >

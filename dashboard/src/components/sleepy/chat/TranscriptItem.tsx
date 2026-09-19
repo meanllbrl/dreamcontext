@@ -319,7 +319,7 @@ function AssistantMessage({
           // drawn wherever it was written.
           : segment.kind === 'view' && !viewsAllowed
             ? null
-            : <ChatBlockSegment key={i} segment={segment} conversationId={conversationId} />
+            : <ChatBlockSegment key={i} segment={segment} conversationId={conversationId} session={session} />
       ))}
       {/* UNGATED, on purpose: the strip is what makes a drop honest, so it cannot itself be
           conditional on the capability that caused the drop. */}

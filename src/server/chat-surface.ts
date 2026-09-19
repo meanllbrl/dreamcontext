@@ -43,8 +43,11 @@
  *                             unstyled markup, which is exactly the broken promise this
  *                             file's standing rule forbids.
  *   • `dream-view`          — `lib/chatViewSpec.ts` (`parseViewBlock`, the schema + caps) and
- *                             `chat/ChatViews.tsx` (insight + checklist). `pin` and
- *                             `progress` are hoisted OUT of the transcript onto the
+ *                             `chat/ChatViews.tsx` (insight + checklist + secret + run).
+ *                             `secret` submits to `POST /api/agent/secret`
+ *                             (`lib/env-secrets.ts` owns every guard) and `run` opens a PTY
+ *                             over `/api/agent/terminal?kind=exec` (`chat/InlineTerminal.tsx`).
+ *                             `pin` and `progress` are hoisted OUT of the transcript onto the
  *                             composer's shelf — `lib/shelfModel.ts` + `chat/PinShelf.tsx`
  * A capability named here that the view doesn't render is worse than one left unnamed: the
  * agent writes a promise the UI then breaks. Change one, change the other. Mechanically
@@ -171,9 +174,10 @@ const BRIEFING_REST = `## The rest of the surface
 
   \`task\`/\`knowledge\`/\`core\` take an \`id\` (the dreamcontext slug) and navigate the app.
   \`file\`/\`board\` take a \`path\`; \`reveal\` hands a \`path\` to the OS; \`ask\` loads \`text\` into
-  the composer; \`url\` opens an https \`url\`.
+  the composer; \`url\` opens an https \`url\`; \`develop\` takes a task \`id\` and hands that task
+  to a NEW session in Develop mode — the one button that opens a chat instead of a view.
 
-## \`dream-view\` — the five things HTML must NOT be
+## \`dream-view\` — the seven things HTML must NOT be
 
 **A tracked metric.** If the number lives in a dreamcontext Lab insight, name the slug and we
 draw the real card — current cache, canonical render, honest "as of". Never retype tracked
@@ -190,6 +194,28 @@ re-send the \`id\` to update.
 
 \`\`\`dream-view
 {"type":"checklist","id":"asc-key","title":"App Store Connect key","items":[{"id":"1","text":"Open Users and Access","wants":"secret"}]}
+\`\`\`
+
+**A CREDENTIAL you need — never ask for it in prose.** A masked field; on Submit the APP
+writes it into a \`.env\` and hands you a receipt (key, file, size, sha256 prefix). You never
+see the value and it is not in this conversation. \`file\` defaults to \`.env\` and must be a
+\`.env\`-family path in the project; up to 8 \`fields\`. Then use the key by NAME — never
+\`cat\` the file or echo the value, and say plainly that you cannot see it. Use this, not
+"paste your token here" (a live key in a saved transcript) and not a checklist's
+\`wants:secret\` (which hands it to you on purpose).
+
+\`\`\`dream-view
+{"type":"secret","id":"firebase","title":"Firebase CI token","file":".env","fields":[{"key":"FIREBASE_TOKEN","label":"Token","hint":"printed by firebase login:ci"}]}
+\`\`\`
+
+**A command only the USER can run** — a browser login, an OTP, a sudo password, a \`y/n\`.
+Drawn with a ▶ that opens a real terminal here; they type into it, and on exit the card posts
+the exit code and output tail back to you, so carry on from there. Never say "run this in
+your terminal", and never send an interactive command through Bash — it hangs with nobody at
+the keyboard. One line; \`cwd\` is project-relative; \`why\` says what makes it theirs.
+
+\`\`\`dream-view
+{"type":"run","id":"fb-login","command":"firebase login","why":"it opens a browser and waits for you to sign in"}
 \`\`\`
 
 **A fact that must not scroll away** — a row on the shelf docked to the composer. \`weight\`

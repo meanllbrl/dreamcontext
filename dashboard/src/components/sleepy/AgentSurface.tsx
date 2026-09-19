@@ -49,6 +49,7 @@ import { preparePrompt, developKickoffPrompt } from '../../lib/agentPrompt';
 import { clearPins } from '../../lib/pinStore';
 import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } from '../../lib/respawnTrace';
 import { dropScratch } from './chat/composerScratch';
+import { postToSession } from './chat/postToSession';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig, useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
@@ -1869,14 +1870,13 @@ export function AgentSurface() {
     const session = entry ? sessions.current.get(entry.id) : undefined;
     if (!session || session.kind !== 'chat') return false;
     const chat = session as ChatSession;
-    // `send`, not `sendText` — the owner's "Submit sends the filled-in list back as ONE
-    // message" means a real user turn, not a composer-draft append (`sendText` only
-    // appends to the draft). Mid-turn it follows the composer's ⏎ exactly (Composer.tsx's
-    // `commit`): steer it into the running turn, and fall back to the queue only when that
-    // cannot land. A checklist is filled in WHILE the agent works and is answering the thing
-    // it is doing right now — making it wait for the turn to end is the whole bug.
-    if (chat.busy) { if (!chat.steer(payload.markdown)) chat.enqueue(payload.markdown, { steerWhenPossible: true }); }
-    else chat.send(payload.markdown);
+    // `postToSession`, not `sendText` — the owner's "Submit sends the filled-in list back
+    // as ONE message" means a real user turn, not a composer-draft append (`sendText` only
+    // appends to the draft). That helper is the composer's ⏎ chain (steer the running turn,
+    // queue only when it cannot land), shared with the transcript's secret and run cards.
+    // A checklist is filled in WHILE the agent works and is answering the thing it is doing
+    // right now — making it wait for the turn to end is the whole bug.
+    postToSession(chat, payload.markdown);
     return true;
   }, [sessionList]);
 

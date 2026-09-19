@@ -1,6 +1,6 @@
 /**
  * Unit tests for `parseViewBlock` — the validator for the `dream-view` fence
- * (insight / checklist / pin / progress; `pin` has its own file).
+ * (insight / checklist / secret / run / pin / progress; `pin` has its own file).
  *
  * Two things carry the real risk here and are pinned hardest:
  *   • NOTHING THROWS — invalid JSON, `null`, an array, an unknown `type`, any cap breach.
@@ -13,9 +13,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseViewBlock, MAX_CHECKLIST_ITEMS, MAX_VIEW_BYTES, VIEW_TYPES,
+  MAX_SECRET_FIELDS, MAX_RUN_COMMAND_CHARS,
 } from '../../dashboard/src/lib/chatViewSpec.js';
 import type {
-  ChecklistViewSpec, InsightViewSpec,
+  ChecklistViewSpec, InsightViewSpec, SecretViewSpec, RunViewSpec,
 } from '../../dashboard/src/lib/chatViewSpec.js';
 
 describe('parseViewBlock — nothing throws', () => {
@@ -69,7 +70,7 @@ describe('parseViewBlock — the retired chart/page types', () => {
   it('is gone from VIEW_TYPES, so the briefing lockstep can never re-name it', () => {
     expect(VIEW_TYPES as readonly string[]).not.toContain('chart');
     expect(VIEW_TYPES as readonly string[]).not.toContain('page');
-    expect([...VIEW_TYPES]).toEqual(['insight', 'checklist', 'pin', 'progress', 'checkout']);
+    expect([...VIEW_TYPES]).toEqual(['insight', 'checklist', 'secret', 'run', 'pin', 'progress', 'checkout']);
   });
 });
 
@@ -209,5 +210,112 @@ describe('parseViewBlock — type: checklist', () => {
     expect(view.items.length).toBe(MAX_CHECKLIST_ITEMS);
     expect(view.items[0].id).toBe('0');
     expect(r.notices.some((n) => n.includes('6'))).toBe(true);
+  });
+});
+
+describe('parseViewBlock — type: secret', () => {
+  const ok = '{"type":"secret","id":"fb","title":"Firebase token","fields":[{"key":"FIREBASE_TOKEN"}]}';
+
+  it('accepts a minimal card and defaults the file to .env', () => {
+    const r = parseViewBlock(ok);
+    expect(r.notices).toEqual([]);
+    const v = r.view as SecretViewSpec;
+    expect(v).toMatchObject({ type: 'secret', id: 'fb', title: 'Firebase token', file: '.env' });
+    expect(v.fields).toEqual([{ key: 'FIREBASE_TOKEN' }]);
+  });
+
+  it('keeps a .env-family path, including one in a subdirectory', () => {
+    for (const file of ['.env.local', 'functions/.env']) {
+      const r = parseViewBlock(`{"type":"secret","id":"a","title":"T","file":${JSON.stringify(file)},"fields":[{"key":"K"}]}`);
+      expect((r.view as SecretViewSpec).file).toBe(file);
+      expect(r.notices).toEqual([]);
+    }
+  });
+
+  it.each([
+    ['an absolute path', '/etc/passwd'],
+    ['a traversal', '../.env'],
+    ['a non-dotenv file', 'src/config.ts'],
+  ])('falls back to .env and says so for %s', (_label, file) => {
+    const r = parseViewBlock(`{"type":"secret","id":"a","title":"T","file":${JSON.stringify(file)},"fields":[{"key":"K"}]}`);
+    expect((r.view as SecretViewSpec).file).toBe('.env');
+    expect(r.notices.join(' ')).toMatch(/\.env-family/);
+  });
+
+  it('drops a field whose key is not an environment variable name, loudly', () => {
+    const r = parseViewBlock('{"type":"secret","id":"a","title":"T","fields":[{"key":"A-B"},{"key":"OK"}]}');
+    expect((r.view as SecretViewSpec).fields).toEqual([{ key: 'OK' }]);
+    expect(r.notices.join(' ')).toMatch(/not a valid environment variable name/);
+  });
+
+  it('skips a card with no usable field rather than drawing an empty one', () => {
+    const r = parseViewBlock('{"type":"secret","id":"a","title":"T","fields":[]}');
+    expect(r.view).toBeNull();
+    expect(r.notices.join(' ')).toMatch(/names no environment variable/);
+  });
+
+  it.each([
+    ['no id', '{"type":"secret","title":"T","fields":[{"key":"K"}]}'],
+    ['an id with a slash', '{"type":"secret","id":"a/b","title":"T","fields":[{"key":"K"}]}'],
+    ['no title', '{"type":"secret","id":"a","fields":[{"key":"K"}]}'],
+  ])('skips a card with %s, and says why', (_label, json) => {
+    const r = parseViewBlock(json);
+    expect(r.view).toBeNull();
+    expect(r.notices.length).toBeGreaterThan(0);
+  });
+
+  it('caps the field count loudly', () => {
+    const fields = Array.from({ length: MAX_SECRET_FIELDS + 3 }, (_, i) => `{"key":"K${i}"}`).join(',');
+    const r = parseViewBlock(`{"type":"secret","id":"a","title":"T","fields":[${fields}]}`);
+    expect((r.view as SecretViewSpec).fields).toHaveLength(MAX_SECRET_FIELDS);
+    expect(r.notices.join(' ')).toMatch(/3 were dropped/);
+  });
+});
+
+describe('parseViewBlock — type: run', () => {
+  it('accepts a command and keeps it verbatim', () => {
+    const r = parseViewBlock('{"type":"run","id":"fb","command":"firebase login","why":"opens a browser"}');
+    expect(r.notices).toEqual([]);
+    expect(r.view).toEqual({ type: 'run', id: 'fb', command: 'firebase login', why: 'opens a browser' });
+  });
+
+  it('keeps a relative cwd and refuses one that escapes', () => {
+    expect((parseViewBlock('{"type":"run","id":"a","command":"ls","cwd":"functions"}').view as RunViewSpec).cwd)
+      .toBe('functions');
+    const escaped = parseViewBlock('{"type":"run","id":"a","command":"ls","cwd":"../.."}');
+    expect((escaped.view as RunViewSpec).cwd).toBeUndefined();
+    expect(escaped.notices.join(' ')).toMatch(/inside the project/);
+    const absolute = parseViewBlock('{"type":"run","id":"a","command":"ls","cwd":"/etc"}');
+    expect((absolute.view as RunViewSpec).cwd).toBeUndefined();
+  });
+
+  it('skips a multi-line command — a card must show in full what it will run', () => {
+    const r = parseViewBlock('{"type":"run","id":"a","command":"echo one\\necho two"}');
+    expect(r.view).toBeNull();
+    expect(r.notices.join(' ')).toMatch(/several lines/);
+  });
+
+  it('skips a command past the cap and names the way out', () => {
+    const r = parseViewBlock(`{"type":"run","id":"a","command":"${'x'.repeat(MAX_RUN_COMMAND_CHARS + 1)}"}`);
+    expect(r.view).toBeNull();
+    expect(r.notices.join(' ')).toMatch(/Write it to a script/);
+  });
+
+  it.each([
+    ['no command', '{"type":"run","id":"a"}'],
+    ['an empty command', '{"type":"run","id":"a","command":"   "}'],
+    ['no id', '{"type":"run","command":"ls"}'],
+  ])('skips a card with %s, and says why', (_label, json) => {
+    const r = parseViewBlock(json);
+    expect(r.view).toBeNull();
+    expect(r.notices.length).toBeGreaterThan(0);
+  });
+
+  it('does NOT vet the command itself — the user reads it and presses the button', () => {
+    // Pinned deliberately: a future "safety" allowlist here would be theatre (the agent can
+    // spell the same command another way) and would imply a check the surface does not do.
+    const r = parseViewBlock('{"type":"run","id":"a","command":"rm -rf ./build && npm ci"}');
+    expect((r.view as RunViewSpec).command).toBe('rm -rf ./build && npm ci');
+    expect(r.notices).toEqual([]);
   });
 });

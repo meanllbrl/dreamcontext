@@ -14,6 +14,10 @@
  *   • `insight`   — a tracked metric has ONE canonical rendering; retyping its numbers into
  *                   markup would fork the truth, so the agent names the slug and we draw it.
  *   • `checklist` — an always-on-top OS window, outside the transcript entirely.
+ *   • `secret`    — a value that must reach DISK without passing through the agent. HTML
+ *                   cannot have a privileged submit; markup the agent wrote could only ever
+ *                   hand the value back to the agent, which is the whole thing this avoids.
+ *   • `run`       — a real PTY the user types into. Not a picture of a terminal: a process.
  *   • `pin` / `progress` — the shelf docked to the composer, which never scrolls away.
  *
  * Pure and defensive by design: `parseViewBlock` runs on every streamed token via
@@ -29,11 +33,12 @@
 // Types
 // ---------------------------------------------------------------------------------------
 
-export const VIEW_TYPES = ['insight', 'checklist', 'pin', 'progress', 'checkout'] as const;
+export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'pin', 'progress', 'checkout'] as const;
 export type ChatViewType = typeof VIEW_TYPES[number];
 
 export type ChatViewSpec =
-  InsightViewSpec | ChecklistViewSpec | PinViewSpec | ProgressViewSpec | CheckoutViewSpec;
+  InsightViewSpec | ChecklistViewSpec | SecretViewSpec | RunViewSpec
+  | PinViewSpec | ProgressViewSpec | CheckoutViewSpec;
 
 /**
  * `type: "insight"` — a Lab insight drawn BY SLUG, with no markup from the agent at all.
@@ -73,6 +78,68 @@ export interface ChecklistItemSpec {
   text: string;
   hint?: string;
   wants?: 'note' | 'file' | 'secret';
+}
+
+/**
+ * `type: "secret"` — a masked field in the transcript whose value goes to a `.env` file and
+ * NOWHERE else. The one card on this surface the agent cannot read the output of.
+ *
+ * The checklist's `wants:'secret'` field is its older, honest sibling: it submits what you
+ * typed as markdown, into the conversation, and says so on its face. That is right for a
+ * value the agent has to USE in its next sentence and wrong for a credential, whose
+ * destination is a file and whose presence in a transcript the CLI persists to disk cannot
+ * be undone. Here the browser POSTs the value to `/api/agent/secret`, the SERVER writes it,
+ * and the agent receives a receipt: key, file, character count, sha256 fingerprint. Never
+ * the value.
+ *
+ * `file` is project-relative and must be a `.env`-family file; the server re-validates it
+ * and owns every real guard (realpath containment, symlink refusal, git-tracked refusal,
+ * gitignore-before-write). What is checked HERE is only what shapes the card.
+ */
+export interface SecretViewSpec {
+  type: 'secret';
+  id: string;
+  title: string;
+  intro?: string;
+  /** Project-relative `.env`-family path. Absent ⇒ `.env`. */
+  file: string;
+  fields: SecretFieldSpec[];
+  submitLabel?: string;
+}
+
+export interface SecretFieldSpec {
+  /** The environment variable name, exactly as it will appear in the file. */
+  key: string;
+  /** What to call it above the input. Absent ⇒ the key itself. */
+  label?: string;
+  hint?: string;
+}
+
+/**
+ * `type: "run"` — a command with a ▶ next to it, which opens a REAL PTY inside the
+ * transcript: the user answers its prompts, types the password, picks from its menu, and
+ * when the process exits the card reports the exit code back into the conversation so the
+ * turn continues on its own.
+ *
+ * For the commands an agent genuinely cannot run for itself — `firebase login` wants a
+ * browser round-trip, `npm login` wants an OTP, anything wanting a sudo password or a y/n.
+ * Headless, those either hang until the turn is killed or fail with a confusing error; the
+ * alternative the user actually used was another terminal window, which ends the session.
+ *
+ * Reporting back is the handshake and it is ON by default — the whole point is that the
+ * agent picks the thread back up without being told. It is the CARD's switch, not a field
+ * here: the user can drop the output and send only the exit code, and whether a command's
+ * output is safe to hand back is the user's call to make while looking at it, never a
+ * promise the agent gets to make on their behalf.
+ */
+export interface RunViewSpec {
+  type: 'run';
+  id: string;
+  command: string;
+  /** Why the user has to run it rather than the agent — shown as the card's one sentence. */
+  why?: string;
+  /** Project-relative working directory. Absent ⇒ the project root. */
+  cwd?: string;
 }
 
 /**
@@ -162,6 +229,22 @@ export interface CheckoutViewSpec {
 export const MAX_VIEW_BYTES = 64 * 1024;
 export const MAX_VIEWS_PER_MESSAGE = 4;
 export const MAX_CHECKLIST_ITEMS = 40;
+
+// MIRROR — the four below have ONE owner, `src/lib/env-secrets.ts`, which is what the
+// SERVER validates the submitted body against. The dashboard is a separate bundle and
+// cannot import from `src/`, so they are copied here byte-for-byte and pinned by a textual
+// drift test (`tests/unit/chat-secret-mirror.test.ts`). Change the owner, and the test
+// fails until this copy follows. Checking them here at all is only so the CARD can say
+// what is wrong before a round trip; the check that counts is the server's.
+export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+export const SECRET_FILE_RE = /^(?:[A-Za-z0-9_][A-Za-z0-9._-]*\/){0,3}\.env(?:\.[A-Za-z0-9_-]{1,32})?$/;
+export const MAX_SECRET_FIELDS = 8;
+export const MAX_SECRET_VALUE_CHARS = 8192;
+export const DEFAULT_SECRET_FILE = '.env';
+
+/** Longest command a `run` card will offer. A command past this is a script, and a script
+ *  belongs in a file the agent can write and the card can then run. */
+export const MAX_RUN_COMMAND_CHARS = 2000;
 
 // Shelf caps. The first four are enforced HERE (a payload the agent sent); the last two are
 // enforced by `lib/shelfModel.ts`, which owns how many entries a conversation keeps and how
@@ -372,6 +455,138 @@ function validateChecklist(obj: Record<string, unknown>, notices: string[]): { v
 }
 
 // ---------------------------------------------------------------------------------------
+// type: "secret"
+// ---------------------------------------------------------------------------------------
+
+/** Same id grammar as a checklist's, and for the same reason: it is part of a DOM id and a
+ *  React key, and a value that can carry separators is a value that can collide. */
+const SECRET_ID_RE = /^[a-zA-Z0-9._-]+$/;
+
+function validateSecretField(raw: unknown, notices: string[]): SecretFieldSpec | null {
+  if (!isRecord(raw)) return null;
+  const key = typeof raw.key === 'string' ? raw.key.trim() : '';
+  if (!key) return null;
+  if (!ENV_KEY_RE.test(key)) {
+    notices.push(`A secret field was dropped — "${key.slice(0, 40)}" is not a valid environment variable name.`);
+    return null;
+  }
+  const field: SecretFieldSpec = { key };
+  const label = optStr(raw.label, 80);
+  if (label) field.label = label;
+  const hint = optStr(raw.hint, 400);
+  if (hint) field.hint = hint;
+  return field;
+}
+
+/**
+ * A secret card survives validation only when it can actually DO its job: a title to say
+ * what is being asked for, at least one well-formed key, and a destination file this app is
+ * willing to write. Every one of those failures is a notice rather than a silent drop —
+ * a card that vanishes leaves the user staring at a sentence asking them to paste a token
+ * into a field that is not there, which is the one outcome worse than no card at all.
+ */
+function validateSecret(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  const idRaw = typeof obj.id === 'string' ? obj.id.trim() : '';
+  if (!idRaw || idRaw.length > 64 || !SECRET_ID_RE.test(idRaw)) {
+    notices.push('A secret card was skipped — its "id" is missing or contains characters other than letters, digits, ".", "_" and "-".');
+    return { view: null, notices };
+  }
+
+  const title = optStr(obj.title, 120);
+  if (!title) {
+    notices.push('A secret card was skipped — it has no title, so nothing would say what the value is for.');
+    return { view: null, notices };
+  }
+
+  // Absent is the documented default and stays silent; a file this surface will not write
+  // is loud, because the alternative is a card that looks fine and fails on submit.
+  let file = DEFAULT_SECRET_FILE;
+  if (obj.file !== undefined) {
+    const raw = typeof obj.file === 'string' ? obj.file.trim().replace(/^\.\//, '') : '';
+    if (raw && SECRET_FILE_RE.test(raw) && !raw.includes('..')) file = raw;
+    else {
+      notices.push(`A secret card asked to write ${JSON.stringify(obj.file)} — a secret can only go into a .env-family file inside the project, so ${DEFAULT_SECRET_FILE} was used.`);
+    }
+  }
+
+  const rawFields = Array.isArray(obj.fields) ? obj.fields : [];
+  let fields = rawFields
+    .map((f) => validateSecretField(f, notices))
+    .filter((f): f is SecretFieldSpec => f !== null);
+  if (fields.length > MAX_SECRET_FIELDS) {
+    const extra = fields.length - MAX_SECRET_FIELDS;
+    fields = fields.slice(0, MAX_SECRET_FIELDS);
+    notices.push(`A secret card had more than ${MAX_SECRET_FIELDS} fields — ${extra} were dropped.`);
+  }
+  if (fields.length === 0) {
+    notices.push('A secret card was skipped — it names no environment variable to write.');
+    return { view: null, notices };
+  }
+
+  const view: SecretViewSpec = { type: 'secret', id: idRaw, title, file, fields };
+  const intro = optStr(obj.intro, 2000);
+  if (intro) view.intro = intro;
+  const submitLabel = optStr(obj.submitLabel, 40);
+  if (submitLabel) view.submitLabel = submitLabel;
+  return { view, notices };
+}
+
+// ---------------------------------------------------------------------------------------
+// type: "run"
+// ---------------------------------------------------------------------------------------
+
+const RUN_ID_RE = /^[a-zA-Z0-9._-]+$/;
+/** A relative directory inside the project. No `..`, no absolute path, no `~`. */
+const RUN_CWD_RE = /^(?:[A-Za-z0-9_.][A-Za-z0-9._-]*)(?:\/[A-Za-z0-9_.][A-Za-z0-9._-]*){0,7}$/;
+
+/**
+ * What is NOT checked here, deliberately: the command itself, beyond its length and that it
+ * is one line. There is no safe-command list to write — the string is a shell command, it is
+ * shown to the user in full before anything happens, and nothing runs until they press ▶.
+ * A validator that rejected `rm` and allowed `npm run deploy` would be theatre: it would
+ * block nothing an agent could not spell another way, while teaching the user that the
+ * surface had vetted the command for them. The gate is the human and the PTY's own
+ * desktop+loopback boundary, and it is stated rather than implied.
+ *
+ * A NEWLINE is the one thing refused, and not for safety: a multi-line payload in a card
+ * whose whole job is to show you exactly what will run would hide its own tail below the
+ * first line. That is a legibility rule.
+ */
+function validateRun(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  const idRaw = typeof obj.id === 'string' ? obj.id.trim() : '';
+  if (!idRaw || idRaw.length > 64 || !RUN_ID_RE.test(idRaw)) {
+    notices.push('A run card was skipped — its "id" is missing or contains characters other than letters, digits, ".", "_" and "-".');
+    return { view: null, notices };
+  }
+
+  const command = typeof obj.command === 'string' ? obj.command.trim() : '';
+  if (!command) {
+    notices.push('A run card was skipped — it has no command to run.');
+    return { view: null, notices };
+  }
+  if (command.length > MAX_RUN_COMMAND_CHARS) {
+    notices.push(`A run card was skipped — its command is longer than ${MAX_RUN_COMMAND_CHARS} characters. Write it to a script and run that.`);
+    return { view: null, notices };
+  }
+  if (/[\r\n]/.test(command)) {
+    notices.push('A run card was skipped — its command spans several lines, and a card must show in full what it is about to run. Write it to a script and run that.');
+    return { view: null, notices };
+  }
+
+  const view: RunViewSpec = { type: 'run', id: idRaw, command };
+  const why = optStr(obj.why, 400);
+  if (why) view.why = why;
+  if (obj.cwd !== undefined) {
+    const raw = typeof obj.cwd === 'string' ? obj.cwd.trim().replace(/^\.\//, '').replace(/\/+$/, '') : '';
+    if (raw && raw !== '.' && RUN_CWD_RE.test(raw) && !raw.split('/').includes('..')) view.cwd = raw;
+    else if (raw && raw !== '.') {
+      notices.push(`A run card asked to run in ${JSON.stringify(obj.cwd)} — only a directory inside the project is allowed, so the project root was used.`);
+    }
+  }
+  return { view, notices };
+}
+
+// ---------------------------------------------------------------------------------------
 // type: "pin"
 // ---------------------------------------------------------------------------------------
 
@@ -381,9 +596,25 @@ function validateChecklist(obj: Record<string, unknown>, notices: string[]): { v
  *  so a future change to one surface's ids can't silently move the other's. */
 const PIN_ID_RE = /^[a-zA-Z0-9._-]+$/;
 const PIN_WEIGHTS = new Set(['tag', 'row']);
+/**
+ * The longest a task slug may be — derived, not chosen: a task document is `<slug>.md`
+ * under `_dream_context/state/`, a filename caps at 255 bytes, and the grammars below admit
+ * ASCII only, so 252 is exactly "every slug that can name a real task file".
+ *
+ * ── Why it is derived (owner report 2026-09-19) ───────────────────────────────────────
+ * The two gates a task slug passes through on this surface — this one and `develop`'s in
+ * `chat/chatActions.ts` — both used to carry a GUESSED ceiling (120 here, 64 there). Task
+ * names are sentence-style and `slugify` (src/lib/id.ts) truncates nothing, so both guesses
+ * sat below the real distribution: 64 dropped 63% of the Plan → Develop hand-off buttons
+ * the agent actually wrote, and 120 still drops the progress shelf of this project's 22
+ * longest tasks. One constant, shared by both gates, so neither can drift below reality
+ * again.
+ */
+export const MAX_SLUG_CHARS = 252;
+
 /** A task slug as `dreamcontext` writes one. Longer than a pin id because a task slug is a
  *  whole sentence kebab-cased (`two-new-agent-actions-pinned-session-facts-…`). */
-const PROGRESS_SLUG_RE = /^[A-Za-z0-9._-]{1,120}$/;
+const PROGRESS_SLUG_RE = new RegExp(`^[A-Za-z0-9._-]{1,${MAX_SLUG_CHARS}}$`);
 /** Keys that would mean the agent is ASSERTING progress instead of letting it be derived. */
 const ASSERTED_PROGRESS_KEYS = ['percent', 'pct', 'done', 'total'] as const;
 
@@ -561,6 +792,8 @@ export function parseViewBlock(json: string): { view: ChatViewSpec | null; notic
     switch (parsed.type) {
       case 'insight': return validateInsight(parsed, notices);
       case 'checklist': return validateChecklist(parsed, notices);
+      case 'secret': return validateSecret(parsed, notices);
+      case 'run': return validateRun(parsed, notices);
       case 'pin': return validatePin(parsed, notices);
       case 'progress': return validateProgress(parsed, notices);
       case 'checkout': return validateCheckout(parsed, notices);

@@ -154,3 +154,189 @@
   font-size: var(--font-size-xs);
   line-height: 1.5;
 }
+
+/* ── secret card ───────────────────────────────────────────────────────────────────────
+   A field in the transcript whose value goes to a file and never to the agent. The
+   `CardHeader` above it is the same molecule the permission and sub-agent cards use, so
+   this only has to style the body. */
+
+.chat-secretcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+}
+.chat-secretcard > .chat-m-cardhead { margin-bottom: calc(var(--space-1) * -1); }
+.chat-secretcard-file {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.chat-secretcard-intro,
+.chat-secretcard-hint,
+.chat-secretcard-note {
+  margin: 0;
+  padding: 0 var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+.chat-secretcard-hint,
+.chat-secretcard-note { color: var(--color-text-tertiary); }
+.chat-secretcard-note code {
+  font-family: var(--font-mono);
+  font-size: inherit;
+}
+.chat-secretcard-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+}
+.chat-secretcard-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.chat-secretcard-label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+.chat-secretcard-key {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.chat-secretcard-error {
+  margin: 0;
+  padding: 0 var(--space-4);
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+.chat-secretcard-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+}
+.chat-secretcard-foot .chat-secretcard-note { padding: 0; flex: 1; min-width: 0; }
+.chat-secretcard-receipt {
+  margin: 0;
+  padding: 0 var(--space-4);
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+.chat-secretcard-receipt code {
+  font-family: var(--font-mono);
+  color: var(--color-text);
+}
+.chat-secretcard-fp {
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+}
+
+/* ── run card ──────────────────────────────────────────────────────────────────────────
+   The command, the ▶, and the terminal it opens. The screen is height-BOUNDED on purpose:
+   a card in a transcript that grows with its own output would push the conversation it
+   belongs to off the screen. */
+
+.chat-runcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+}
+.chat-runcard > .chat-m-cardhead { margin-bottom: calc(var(--space-1) * -1); }
+.chat-runcard-why,
+.chat-runcard-note {
+  margin: 0;
+  padding: 0 var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+.chat-runcard-note { color: var(--color-text-tertiary); }
+.chat-runcard-cwd {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.chat-runcard-cmdrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+  min-width: 0;
+}
+.chat-runcard-cmd {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: pre;
+  overflow-x: auto;
+}
+.chat-runcard-copy {
+  flex: 0 0 auto;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.chat-runcard-copy:hover { background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
+.chat-runcard-play { flex: 0 0 auto; }
+.chat-runcard-share {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.chat-runcard-exit {
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+.chat-runcard-exit.is-ok { background: var(--color-success-soft, var(--color-bg-tertiary)); color: var(--color-success); }
+.chat-runcard-exit.is-bad { background: var(--color-error-soft, var(--color-bg-tertiary)); color: var(--color-error); }
+.chat-runcard-exit.is-unknown { background: var(--color-bg-tertiary); color: var(--color-text-tertiary); }
+
+.chat-runterm {
+  margin: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  overflow: hidden;
+}
+.chat-runterm-screen {
+  height: 300px;
+  padding: var(--space-2);
+}
+.chat-runterm-screen .xterm { height: 100%; }
+.chat-runterm-error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+}

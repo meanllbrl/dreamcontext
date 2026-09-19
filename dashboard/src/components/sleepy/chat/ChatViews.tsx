@@ -2,7 +2,10 @@ import { useVault } from '../../../context/VaultContext';
 import { isDesktop, openChecklistWindow } from '../../../lib/desktop';
 import { writeEnvelope } from '../../../lib/checklistStore';
 import type { ChatViewSpec, ChecklistViewSpec } from '../../../lib/chatViewSpec';
+import type { ChatSession } from '../chatSession';
 import type { ChatSegment } from './chatActions';
+import { SecretCard } from './SecretCard';
+import { RunCard } from './RunCard';
 import { HtmlView, HtmlPending } from './HtmlView';
 import { InsightView } from './InsightView';
 import './ChatViews.css';
@@ -19,14 +22,14 @@ import './ChatViews.css';
  *
  * Three kinds reach here: the agent's own HTML (`dream-html`, the surface's main expressive
  * channel since 2026-08-26), the typed `dream-view` payloads that survived the retirement of
- * `chart`/`page` (a tracked metric's canonical rendering, an OS window, a shelf row), and a
- * fence that hasn't closed yet — which now holds its own slot instead of trailing the
- * message as a pill.
+ * `chart`/`page` (a tracked metric's canonical rendering, an OS window, a shelf row, a
+ * privileged secret field, a live PTY), and a fence that hasn't closed yet — which now holds
+ * its own slot instead of trailing the message as a pill.
  *
  * Nothing here throws: every block arrived pre-validated from `lib/chatViewSpec.ts` (views)
  * or capped by byte size (html).
  */
-export function ChatBlockSegment({ segment, conversationId }: {
+export function ChatBlockSegment({ segment, conversationId, session }: {
   segment: Exclude<ChatSegment, { kind: 'prose' }>;
   /**
    * OPTIONAL because two of the three segment kinds have no use for it: `html` is a sandboxed
@@ -37,13 +40,20 @@ export function ChatBlockSegment({ segment, conversationId }: {
    * blocks cost the host anything.
    */
   conversationId?: string;
+  /**
+   * The live session, for the two cards that TALK BACK: a secret's receipt and a finished
+   * command's exit code are posted into the conversation so the agent carries on by itself.
+   * Absent on a read-only drill-in, where those cards render but their hand-back is a no-op
+   * (there is no turn to continue).
+   */
+  session?: ChatSession;
 }) {
   switch (segment.kind) {
     case 'html':
       return <HtmlView html={segment.html} />;
     case 'view':
       return conversationId
-        ? <ChatViewItem view={segment.view} conversationId={conversationId} />
+        ? <ChatViewItem view={segment.view} conversationId={conversationId} session={session} />
         : null;
     // A `dream-html` gets the block-sized slot it is about to fill; a `dream-view` keeps the
     // pill, because what IT resolves into is a small card and a card-sized skeleton would
@@ -70,15 +80,23 @@ export function ChatViewNotices({ notices }: { notices: string[] }) {
   );
 }
 
-function ChatViewItem({ view, conversationId }: {
+function ChatViewItem({ view, conversationId, session }: {
   view: ChatViewSpec;
   conversationId: string;
+  session?: ChatSession;
 }) {
   switch (view.type) {
     case 'insight':
       return <InsightView spec={view} />;
     case 'checklist':
       return <ChecklistCard spec={view} conversationId={conversationId} />;
+    // The two cards drawn IN the transcript that act on the machine rather than describe
+    // it: one writes a file the agent never reads, the other runs a process the user types
+    // into. Both hand a short report back to `session` when they are done.
+    case 'secret':
+      return <SecretCard spec={view} session={session} />;
+    case 'run':
+      return <RunCard spec={view} session={session} />;
     // Hoisted OUT of the transcript: a pin and a progress row live on the shelf docked to
     // the composer, which is the whole point of them — drawn here as well, they would scroll
     // away exactly like the inline card they exist to replace. `PinShelf` collects them.
