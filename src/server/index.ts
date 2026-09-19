@@ -150,6 +150,7 @@ import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent
 import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
+import { handleAgentSecret } from './routes/agent-secret.js';
 import {
   handleVoiceStt, handleVoiceTts, handleVoiceWarm, handleVoiceStatus, handleVoiceConfigPut, handleVoiceCorrect,
   handleVoiceFocus,
@@ -437,6 +438,11 @@ export function buildRouter(): Router {
   // Image drop → write under the active vault's temp dir (desktop-gated, vault-scoped:
   // NOT vault-agnostic, so it resolves contextRoot from the X-Dreamcontext-Vault header).
   router.post('/api/agent/drop', handleAgentDrop);
+  // A credential typed into the Chat surface's secret card → written straight into the
+  // project's `.env` by the SERVER, so it never travels through the agent or the
+  // transcript. Vault-SCOPED (the .env belongs to the project named in the header), and
+  // NOT desktop-gated — see the route's header for why.
+  router.post('/api/agent/secret', handleAgentSecret);
   // J.A.R.V.I.S mode's two audio legs. Desktop-gated, and the ONLY routes in this server
   // that spend money — hence the server-side concurrency and rate caps in
   // `lib/voice/limits.ts` rather than a client-side limit that a direct POST walks past.

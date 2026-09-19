@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { defaultGitTrackedCheck, type GitTrackedCheck } from '../git-tracked.js';
 import { basename, dirname, join, normalize, resolve, sep } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../frontmatter.js';
@@ -1055,38 +1055,12 @@ export type ShareState =
   | 'tracked-despite-private';
 
 /**
- * Reports the subset of `relPaths` (relative to `contextRoot`) that git
- * actually tracks. Injectable so tests need no real repo.
+ * Re-exported from `lib/git-tracked.ts`, which is now the single implementation — the
+ * secret writer (`lib/env-secrets.ts`) has to ask git the same question before it writes
+ * into a `.env`, and two copies of a "may I touch this file" check is exactly the pair
+ * that drifts. Kept as a re-export so every existing importer (and its tests) is unmoved.
  */
-export type GitTrackedCheck = (contextRoot: string, relPaths: string[]) => string[];
-
-/**
- * `git ls-files` resolves the nearest enclosing repository starting from
- * `cwd` and interprets pathspecs relative to that same `cwd` — so running it
- * with `cwd: contextRoot` correctly answers "is this path tracked" whether
- * the actual repo root is `contextRoot` itself or any ancestor directory,
- * with no repo-root discovery of our own required. `git ls-files` lists only
- * the tracked subset of the given pathspecs (an untracked path is simply
- * absent from the output, never an error) — so the return value already IS
- * "the tracked subset", no separate diffing needed. Never throws: outside a
- * repo, or git itself missing, both degrade to `[]` — the same "nothing is
- * tracked" answer a fresh, ungitted brain should give.
- */
-export const defaultGitTrackedCheck: GitTrackedCheck = (contextRoot, relPaths) => {
-  if (relPaths.length === 0) return [];
-  try {
-    const out = execFileSync('git', ['ls-files', '-z', '--', ...relPaths], {
-      cwd: contextRoot,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return out
-      .toString('utf-8')
-      .split('\0')
-      .filter((p) => p.length > 0);
-  } catch {
-    return [];
-  }
-};
+export { defaultGitTrackedCheck, type GitTrackedCheck };
 
 /**
  * The five-state detector `list`/`show`/`install --check` need to answer "is
