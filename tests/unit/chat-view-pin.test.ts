@@ -18,7 +18,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseViewBlock, sanitizeLoopbackUrl,
-  MAX_PIN_FACTS, MAX_PIN_DETAIL_CHARS, MAX_PIN_LEDE_CHARS, MAX_TAG_LABEL_CHARS,
+  MAX_PIN_FACTS, MAX_PIN_DETAIL_CHARS, MAX_PIN_LEDE_CHARS, MAX_TAG_LABEL_CHARS, MAX_SLUG_CHARS,
   type PinViewSpec, type ProgressViewSpec,
 } from '../../dashboard/src/lib/chatViewSpec.js';
 
@@ -310,11 +310,27 @@ describe('parseViewBlock — type: progress', () => {
   });
 
   it('skips a missing or non-slug task', () => {
-    for (const task of ['', '   ', '../../etc/passwd', 'a/b', 'x'.repeat(121), 42]) {
+    for (const task of ['', '   ', '../../etc/passwd', 'a/b', 'x'.repeat(253), 42]) {
       const r = parse({ type: 'progress', task });
       expect(r.view, `task ${JSON.stringify(task)} was accepted`).toBeNull();
       expect(r.notices[0]).toContain('task');
     }
+  });
+
+  /**
+   * REGRESSION (2026-09-19, the same defect as `develop`'s 64-char bound in
+   * `chat/chatActions.ts`): the ceiling used to be a guessed 120, which silently dropped the
+   * shelf row of this project's 22 longest tasks — and the Plan briefing asks for that row
+   * the moment the task exists, so the longest plans were the ones that lost it. The bound
+   * is now {@link MAX_SLUG_CHARS}: 252 = a 255-byte filename minus `.md`, i.e. every slug
+   * that can name a real task document.
+   */
+  it('accepts the sentence-style slugs dreamcontext actually creates', () => {
+    const real = 'sleep-does-not-reconcile-within-its-own-remit-116-runs-passed-over-a-feature-stuck-at-planning-with-0-22-criteria-and-additive-only-writes-left-6-contradictory-current-tool-counts-in-one-file';
+    expect(real.length).toBeGreaterThan(120);
+    expect(parse({ type: 'progress', task: real }).view).toEqual({ type: 'progress', task: real });
+    expect(parse({ type: 'progress', task: 'x'.repeat(MAX_SLUG_CHARS) }).view)
+      .toEqual({ type: 'progress', task: 'x'.repeat(MAX_SLUG_CHARS) });
   });
 
   it('IGNORES an agent-supplied percent and draws a notice — derived, never asserted', () => {
