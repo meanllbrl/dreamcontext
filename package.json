@@ -72,7 +72,8 @@
     "announce:shots:meeting": "node e2e/announce-shots-meeting-room.mjs",
     "announce:shots:gap": "node e2e/announce-shots-gap.mjs",
     "announce:shots:chat-html": "node e2e/announce-shots-chat-html.mjs",
-    "verify:pane-widen": "node scripts/verify/pane-focus-widen.mjs"
+    "verify:pane-widen": "node scripts/verify/pane-focus-widen.mjs",
+    "verify:mobile-chat": "node scripts/verify/mobile-chat.mjs"
   },
   "keywords": [
     "ai",

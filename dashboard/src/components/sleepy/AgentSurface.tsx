@@ -23,6 +23,8 @@ import {
 import { deriveSessionStatus, rollupProject, type ProjectRollup, type SessionRow } from './agentStatus';
 import { PaneFragment, type PaneActions } from './PaneFragment';
 import { AgentTabs, type PaneVM } from './AgentTabs';
+import { MobileSessionDrawer } from './MobileSessionDrawer';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { AgentDock } from './AgentDock';
 import { AgentFab } from './AgentFab';
 import {
@@ -303,6 +305,19 @@ export function AgentSurface() {
   // a fullscreen overlay by this local flag. Sessions live in the detached-DOM garage
   // either way, so toggling `expanded` NEVER remounts xterm/WebSocket/PTY.
   const [expanded, setExpanded] = useState(false);
+  // ── The phone branch ───────────────────────────────────────────────────────────────
+  // On a phone the chat IS the app: there is no room for the dashboard shell, and the
+  // top tab strip is unusable with a thumb. `isMobile` is narrow-viewport AND coarse-
+  // pointer (see useIsMobile) so a narrowed desktop window keeps every desktop
+  // affordance.
+  const isMobile = useIsMobile();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // The escape hatch, and the reason auto-expand cannot simply run on every render: once
+  // the user asks for the full dashboard, the surface must STAY collapsed. Without this the
+  // effect below would re-expand it on the next tick and the phone could never reach
+  // Settings — which is exactly where a missing prerequisite gets fixed.
+  const [mobileEscaped, setMobileEscaped] = useState(false);
+  const autoExpanded = useRef(false);
   // macOS-style zoom: when `expanded` flips false the surface stays rendered with a
   // `closing` class so the shrink-to-dock animation can play; `onAnimationEnd` (plus a
   // safety timeout for reduced-motion, where no animation event fires) then hides it.
@@ -2451,6 +2466,10 @@ export function AgentSurface() {
       // scripts/verify/chat-file-preview.mjs). Presence, not focus, for the same reason the
       // two menus above use it: these portal to <body>.
       if (document.querySelector('.image-viewer, .pdf-viewer, .fullscreen-overlay')) return;
+      // The phone's session drawer owns Esc while it is open — same presence test, same
+      // reason (it portals no focus of its own). Without this the one key closed the drawer
+      // AND collapsed the surface behind it, which on a phone means the chat vanishes.
+      if (document.querySelector('.mchat-drawer[data-open]')) return;
       const ae = document.activeElement as Element | null;
       if (ae?.closest('.agent-pane-slot')) return;   // Claude's TUI owns Esc
       // Any centered command surface on top of us owns Esc — ⌘K palette, ⌘P switcher,
@@ -2506,6 +2525,37 @@ export function AgentSurface() {
   useEffect(() => {
     if (!agentSettings.enabled && expanded) setExpanded(false);
   }, [agentSettings.enabled, expanded]);
+
+  // A phone opens straight INTO chat. The dashboard shell still exists behind the surface
+  // (and `Show full dashboard` in the drawer reveals it) — it is just never the landing
+  // screen on a device where the only thing that fits is one conversation.
+  useEffect(() => {
+    if (!isMobile) { autoExpanded.current = false; return; }
+    // ONCE per entry into the phone layout, never "whenever collapsed". A standing
+    // re-expand would fight every collapse path there is — Esc, the escape hatch, a future
+    // one nobody has written yet — and the fight shows up as a surface that flickers
+    // open/closed forever rather than as a clean bug. The ref resets when the layout leaves
+    // mobile, so a rotation back into it opens chat again.
+    if (autoExpanded.current || mobileEscaped || !agentSettings.enabled) return;
+    autoExpanded.current = true;
+    setExpanded(true);
+  }, [isMobile, mobileEscaped, agentSettings.enabled]);
+
+  // Leaving the phone layout (rotation to a wide landscape, or emulation off) must not
+  // strand the drawer open over a desktop surface that has a tab strip again.
+  useEffect(() => { if (!isMobile) setDrawerOpen(false); }, [isMobile]);
+
+  // The app's own title bar (`.window-chrome-bar`, z-index 40) sits ABOVE the agent overlay
+  // by design, so on a phone — where the surface covers the viewport from y=0 — it lands on
+  // top of the mobile header and eats every tap on the ☰ button. It is a window chrome for a
+  // window that does not exist here, so it goes while chat owns the screen. The flag rides on
+  // <body> because the bar is mounted in a different subtree (Shell) than this surface;
+  // clearing it on unmount and on collapse is what makes `Show full dashboard` bring it back.
+  useEffect(() => {
+    if (!isMobile || !expanded) return;
+    document.body.dataset.mobileChat = 'true';
+    return () => { delete document.body.dataset.mobileChat; };
+  }, [isMobile, expanded]);
 
   // ── Auto-title: name a tab from its first user message (Settings → Agents) ────────
   // Fires on BOTH busy edges of a live AGENT or CHAT session — the chat engine is a
@@ -2822,6 +2872,14 @@ export function AgentSurface() {
       };
     }),
   }));
+
+  // The phone's flat session list. It spans EVERY pane, not just the active one: a roster
+  // restored from a saved side-by-side layout still has two panes, and a list that showed
+  // only one of them would silently hide half the user's sessions on the one device where
+  // the panes are not visible to contradict it. Each row remembers its pane so selecting it
+  // can activate that pane too.
+  const mobileTabs = paneVMs.flatMap((pane) => pane.tabs.map((t) => ({ ...t, paneId: pane.id })));
+  const mobileActive = mobileTabs.find((t) => t.id === activePane?.active) ?? mobileTabs[0];
   // Collapsed dock rows — one chip per session, in roster order.
   const dockRows: SessionRow[] = sessionList.map((meta) => {
     const s = sessions.current.get(meta.id);
@@ -3094,6 +3152,9 @@ export function AgentSurface() {
         /* The minimized-sessions dock floats over our bottom-right corner — flag it so the
            corner pane's composer can clear its anchor chip (model/effort stay visible). */
         data-dock-floating={caps?.desktop && expanded && minimizedRows.length > 0 ? 'true' : undefined}
+        /* The phone layer's switch — every rule in `MobileChat.css` hangs off this one
+           attribute, so the desktop layout is untouched at any width. */
+        data-mobile={isMobile ? 'true' : undefined}
         /* The live pane count, for the focus-widening math in CSS — the focused pane's
            extra width is capped at what is left once every OTHER pane keeps `--pane-min`,
            and that cap cannot be computed without N. Read by BOTH the pane row and the tab
@@ -3105,6 +3166,40 @@ export function AgentSurface() {
             pane; the header IS the tab strip, so there's no separate title row and no
             second 38px bar), and the "New" split action. */}
         <div className="agent-overlay-head">
+          {/* The phone header: [☰ sessions] [active session name] [＋ new chat]. It REPLACES
+              the desktop trio rather than restyling it — the tab strip's per-tab ✕/minimize
+              buttons are 20px affordances that no thumb can hit, and a hidden-but-mounted
+              strip would still run its drag handlers over the transcript. */}
+          {isMobile && (
+            <>
+              <button
+                className="mchat-head-btn"
+                onClick={() => setDrawerOpen(true)}
+                aria-label="Sessions"
+                aria-haspopup="dialog"
+                aria-expanded={drawerOpen}
+              >
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
+                  <path d="M3 5.5h14M3 10h14M3 14.5h14" />
+                </svg>
+              </button>
+              <span className="mchat-head-title">
+                {mobileActive && <span className="mchat-dot" data-kind={mobileActive.info.kind} aria-hidden />}
+                {mobileActive?.title ?? 'Chat'}
+              </span>
+              <button
+                className="mchat-head-btn"
+                onClick={() => addSession(claudeKind)}
+                aria-label={chatMode ? 'New chat' : 'New agent'}
+              >
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
+                  <path d="M10 4v12M4 10h12" />
+                </svg>
+              </button>
+            </>
+          )}
+          {!isMobile && (
+            <>
           <button
             className="agent-overlay-collapse"
             title="Collapse (Esc)"
@@ -3219,11 +3314,33 @@ export function AgentSurface() {
               </>
             )}
           </div>
+            </>
+          )}
         </div>
         {body}
         {/* Each pane renders its OWN composer strip (files + skills + that agent's live
             model & effort) pinned to its bottom — see the `composer` prop above. */}
       </div>
+      {/* The phone's session drawer. A SIBLING for the same reason the picker below is one:
+          `.agent-surface` declares `contain: layout paint`, which would make it the containing
+          block for the drawer's `position: fixed` scrim and trap it inside the pane area. */}
+      {isMobile && (
+        <MobileSessionDrawer
+          open={drawerOpen}
+          sessions={mobileTabs}
+          activeId={mobileActive?.id ?? ''}
+          onClose={() => setDrawerOpen(false)}
+          onSelect={(sid) => {
+            const row = mobileTabs.find((t) => t.id === sid);
+            if (row) selectTab(row.paneId, sid);
+          }}
+          onCloseSession={closeSessionById}
+          onNewChat={() => addSession(claudeKind)}
+          openClaudeIds={sessionList.map((m) => m.claudeId).filter(Boolean) as string[]}
+          onResumePast={resumePastSession}
+          onExitToDashboard={() => { setMobileEscaped(true); setExpanded(false); }}
+        />
+      )}
       {/* Past chats picker. A SIBLING of `.agent-surface`, never a child: the surface
           declares `contain: layout paint`, which would make it the containing block for the
           modal's `position: fixed` scrim and trap the popup inside the pane area (the same
