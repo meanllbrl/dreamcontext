@@ -218,11 +218,34 @@ describe('toAction — develop kind (Plan → Develop hand-off)', () => {
       .toEqual({ label: 'x', action: 'develop', id: 'Task_v0.25.0-final' });
   });
 
-  it('accepts a 64-char slug and drops a 65-char one', () => {
-    const at64 = 'a'.repeat(64);
-    expect(toAction({ label: 'x', action: 'develop', id: at64 }))
-      .toEqual({ label: 'x', action: 'develop', id: at64 });
-    expect(toAction({ label: 'x', action: 'develop', id: 'a'.repeat(65) })).toBeNull();
+  it('accepts a 252-char slug and drops a 253-char one', () => {
+    // 252 = a 255-byte filename minus `.md`, i.e. every slug that can name a real task
+    // document. The bound used to be 64, which dropped most REAL hand-offs — see below.
+    const at252 = 'a'.repeat(252);
+    expect(toAction({ label: 'x', action: 'develop', id: at252 }))
+      .toEqual({ label: 'x', action: 'develop', id: at252 });
+    expect(toAction({ label: 'x', action: 'develop', id: 'a'.repeat(253) })).toBeNull();
+  });
+
+  /**
+   * REGRESSION, owner report 2026-09-19 ("plan mode very rarely offers the develop action").
+   * These are real slugs of real tasks in this repo's own `_dream_context/state/`: task names
+   * are sentence-style, so a slug well past 64 characters is the NORMAL case, not the exotic
+   * one. The old `{1,64}` bound dropped 63% of the hand-off buttons the plan agent actually
+   * wrote, in silence. Hand-built from the on-disk names rather than globbed, so the test
+   * still states its claim when the state folder changes.
+   */
+  it('accepts the sentence-style slugs dreamcontext actually creates', () => {
+    const real = [
+      'j-a-r-v-i-s-sesi-duyulur-olsun-duck-kendi-sesini-kismasin-cumleler-birbirini-kirpmasin-konusulan-cumle-vurgulansin-dikte-gercekten-local-whisper-kalitesinde-olsun',
+      'task-statuses-become-project-declarable-data-with-a-semantic-kind-so-planned-cancelled-or-any-custom-status-syncs-to-github-and-clickup-without-a-code-change',
+      'sleep-does-not-reconcile-within-its-own-remit-116-runs-passed-over-a-feature-stuck-at-planning-with-0-22-criteria-and-additive-only-writes-left-6-contradictory-current-tool-counts-in-one-file',
+    ];
+    for (const id of real) {
+      expect(id.length, id).toBeGreaterThan(64);
+      expect(toAction({ label: 'Go to development', action: 'develop', id }), id)
+        .toEqual({ label: 'Go to development', action: 'develop', id });
+    }
   });
 
   it('drops a slug carrying a separator, a traversal, whitespace or nothing at all', () => {
@@ -250,6 +273,27 @@ describe('toAction — develop kind (Plan → Develop hand-off)', () => {
       { label: 'Good', action: 'develop', id: 'real-slug' },
     ])));
     expect(r.actions).toEqual([{ label: 'Good', action: 'develop', id: 'real-slug' }]);
+  });
+
+  /** A dropped button is dropped OUT LOUD: the silent version is what let the hand-off go
+   *  missing without anyone being able to tell a broken button from an unwritten one. */
+  it('reports every dropped button as a visible notice', () => {
+    const one = parseChatActions(fence(JSON.stringify([
+      { label: 'Bad', action: 'develop', id: '../../etc/passwd' },
+      { label: 'Good', action: 'develop', id: 'real-slug' },
+    ])));
+    expect(one.notices).toHaveLength(1);
+    expect(one.notices[0]).toMatch(/A button was dropped/);
+
+    const many = parseChatActions(fence(JSON.stringify([
+      { label: 'Bad', action: 'develop', id: 'a b' },
+      { label: 'Worse', action: 'nope', id: 'x' },
+    ])));
+    expect(many.notices).toHaveLength(1);
+    expect(many.notices[0]).toMatch(/^2 buttons were dropped/);
+
+    const clean = parseChatActions(fence('[{"label":"Go","action":"develop","id":"real-slug"}]'));
+    expect(clean.notices).toEqual([]);
   });
 });
 

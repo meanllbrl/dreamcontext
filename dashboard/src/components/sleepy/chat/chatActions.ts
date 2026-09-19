@@ -31,7 +31,7 @@
  * there and not accepted here renders as a broken promise.
  */
 import {
-  parseViewBlock, MAX_VIEWS_PER_MESSAGE, type ChatViewSpec,
+  parseViewBlock, MAX_VIEWS_PER_MESSAGE, MAX_SLUG_CHARS, type ChatViewSpec,
 } from '../../../lib/chatViewSpec';
 // The one markdown construct that cannot survive a document being split — see
 // `buildSegments`. Imported rather than re-typed: the rule has one home.
@@ -177,8 +177,17 @@ function isHttpsUrl(raw: string): boolean {
 }
 
 /**
- * A dreamcontext slug, as `develop` carries it. Bounded to 64 characters so a runaway string
- * can't ride into a prompt.
+ * A dreamcontext slug, as `develop` carries it. Bounded — by {@link MAX_SLUG_CHARS}, the
+ * same ceiling the progress shelf uses — so a runaway string can't ride into a prompt.
+ *
+ * ── The bound used to be 64, and that BROKE the hand-off this regex exists to carry ───
+ * Owner report 2026-09-19: "Plan mode very rarely offers the switch-to-Develop action."
+ * The plan agent WAS writing it — 83 real `develop` buttons across the transcripts on this
+ * machine — and `toAction` dropped 49 of them (59%) on the length bound alone, in silence,
+ * so the answer simply ended with no button. 64 was never a property of a slug: task names
+ * are sentence-style since the lean-task-authoring change, `slugify` (src/lib/id.ts)
+ * truncates nothing, and 240 of this project's own 350 task slugs are longer than 64
+ * characters. Replaying all 83 through the parser now honours 83.
  *
  * HONEST LIMIT: this character class also matches `..`, so it is NOT a traversal guarantee
  * and must not be reused for anything that builds a path. It is safe HERE only because a
@@ -187,7 +196,7 @@ function isHttpsUrl(raw: string): boolean {
  * to a file resolve it themselves: the server's task routes gate on `isSafeTaskSlug`
  * (`src/lib/task-backend/local.ts`), and the spawned agent reads the task through the CLI.
  */
-const SAFE_SLUG_RE = /^[A-Za-z0-9._-]{1,64}$/;
+const SAFE_SLUG_RE = new RegExp(`^[A-Za-z0-9._-]{1,${MAX_SLUG_CHARS}}$`);
 
 /** One entry of a `dream-actions` array, or null if it can't be honoured as written. */
 export function toAction(raw: unknown): ChatAction | null {
@@ -224,12 +233,26 @@ export function toAction(raw: unknown): ChatAction | null {
   }
 }
 
-/** The actions in one fence body, or `[]` for anything that isn't a usable JSON array. */
-export function parseActionBlock(json: string): ChatAction[] {
+/**
+ * The actions in one fence body, or `[]` for anything that isn't a usable JSON array.
+ *
+ * `onDrop` fires once per entry that could not be honoured as written (and once for a body
+ * that isn't JSON at all), so `parseChatActions` can SAY that a button went missing. It used
+ * to drop them in silence, and that is precisely how a hand-off button the agent had
+ * correctly written stayed invisible for weeks — see {@link MAX_SLUG_CHARS}. A dropped
+ * button is still dropped, never rendered inert; it is now dropped out loud.
+ */
+export function parseActionBlock(json: string, onDrop?: () => void): ChatAction[] {
   let parsed: unknown;
-  try { parsed = JSON.parse(json); } catch { return []; }
+  try { parsed = JSON.parse(json); } catch { onDrop?.(); return []; }
   const list = Array.isArray(parsed) ? parsed : [parsed];
-  return list.map(toAction).filter((a): a is ChatAction => a !== null);
+  const out: ChatAction[] = [];
+  for (const raw of list) {
+    const action = toAction(raw);
+    if (action) out.push(action);
+    else onDrop?.();
+  }
+  return out;
 }
 
 /**
@@ -258,10 +281,16 @@ export function parseChatActions(raw: string): ParsedAnswer {
   let viewCount = 0;
   let htmlCount = 0;
 
+  let droppedActions = 0;
   let body = text.replace(ACTION_FENCE_RE, (_m, _indent, _fence, json: string) => {
-    actions.push(...parseActionBlock(json));
+    actions.push(...parseActionBlock(json, () => { droppedActions++; }));
     return '';
   });
+  if (droppedActions > 0) {
+    notices.push(droppedActions === 1
+      ? 'A button was dropped — its action or payload is not one this view can act on.'
+      : `${droppedActions} buttons were dropped — their action or payload is not one this view can act on.`);
+  }
 
   // The two block fences share one pass so `blocks` comes out in WRITTEN order. The caps
   // are counted per kind, because they bound different things: how many objects the app is
