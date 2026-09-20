@@ -188,11 +188,10 @@ type DropTarget =
   | { kind: 'reorder'; paneId: string; beforeSid: string };
 
 /**
- * The persisted shape of one roster entry (server `/api/agent/sessions`). Titles only —
+ * The persisted shape of one roster entry (server `/api/agent/sessions`). Metadata only —
  * never a live PTY — so renamed tabs survive a reload as dormant "Resume" tabs (no
  * auto-spawn of claude on launch). `minimized`/`size` are retained for persistence-format
- * compatibility but the pane layout itself is not persisted — restored tabs reopen in a
- * single pane.
+ * compatibility; `pane`/`active` ARE the layout, and carry it across a relaunch.
  */
 interface SavedMeta {
   title: string;
@@ -213,6 +212,19 @@ interface SavedMeta {
   /** The chat mode this tab was last in. Mirrors the server's `SavedMeta.mode`, which keeps it
    *  only alongside `kind: 'chat'` and only for a known `CHAT_MODES` value. */
   mode?: ChatMode;
+  /** 0-based index of the pane this tab sat in, left to right. Absent on legacy rosters →
+   *  pane 0, which is exactly the single-pane restore this surface used to do unconditionally. */
+  pane?: number;
+  /** Was this the visible tab of its pane? A pane with none falls back to its first tab. */
+  active?: boolean;
+}
+
+/** The whole `GET /api/agent/sessions` body: the roster plus the two surface-level facts that
+ *  live in the same per-vault, machine-local file (`src/server/routes/agent-sessions.ts`). */
+interface SavedSurface {
+  sessions: SavedMeta[];
+  activePane?: number;
+  chatPermissionMode?: ChatPermissionMode;
 }
 
 /**
@@ -798,11 +810,25 @@ export function AgentSurface() {
     // machine would get agent tabs auto-restored into doomed WS connections instead of the
     // Prereqs panel.
     if (hydratedRef.current || !(caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) || !settingsReady) return;
-    if (!agentSettings.restoreTabs) { hydratedRef.current = true; setHydrated(true); return; }
     let cancelled = false;
     (async () => {
       try {
-        const res = await scopedApi.get<{ sessions: SavedMeta[] }>('/agent/sessions');
+        const res = await scopedApi.get<SavedSurface>('/agent/sessions');
+        // The remembered permission mode is restored REGARDLESS of "Reopen past tabs": it is a
+        // preference about how the next chat opens, not a tab. localStorage cannot carry it —
+        // the desktop app picks a fresh loopback port every launch, so the origin (and the
+        // store) is new every time, and a mode chosen yesterday was silently back on `auto`
+        // this morning. The ref moves with the state because `spawn` reads the ref.
+        if (!cancelled && res.chatPermissionMode === 'bypass') {
+          chatPermissionModeRef.current = 'bypass';
+          setChatPermissionMode('bypass');
+          // Mirror into this origin's store too, so the surfaces that read it directly
+          // (and any second mount) agree with what the server just told us. `bus` delivery
+          // is harmless here — our own listener sets the same value we just set.
+          writeChatPermissionMode(bus, vault, 'bypass');
+        }
+        // Everything below restores TABS, which the preference does gate.
+        if (!agentSettings.restoreTabs) return;
         // Terminals are never remembered — drop any shell entry, plus any legacy roster
         // row still named "Terminal N" (a stale shell saved before we stopped persisting
         // them; auto-title only ever renames AGENTS, so that default name is a reliable
@@ -883,7 +909,14 @@ export function AgentSurface() {
               // surface (a tab saved as chat but restored as a terminal `agent` ignores it,
               // which `spawn`'s non-chat arm does by construction).
               const savedMode = knownChatMode(m.mode) ?? DEFAULT_CHAT_MODE;
-              const s = spawn(m.bypass, m.sessionId, true, kind, '', '', true, '', false, '', false, savedMode);
+              // `explicitBypass` (param 11) is TRUE here, so the tab reopens under the mode it
+              // was last RUNNING, not under the project's current default. A restored tab is
+              // exactly the kind of spawn that carries its own permission answer — the same
+              // exemption "Session ended · Resume" takes — and without it a chat the user put
+              // on Bypass yesterday came back on Auto, because the project default is resolved
+              // from a store that does not survive the relaunch. It cannot escalate anything:
+              // the value is whatever this tab's own process was acknowledged to be under.
+              const s = spawn(m.bypass, m.sessionId, true, kind, '', '', true, '', false, '', true, savedMode);
               return {
                 id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId,
                 ...(kind === 'chat' ? { mode: savedMode } : {}),
@@ -900,16 +933,52 @@ export function AgentSurface() {
           // on launch therefore cost the user every past chat they had, permanently, on
           // the first save after. Restored tabs now join whatever is already here.
           setSessionList((prev) => [...prev, ...restored]);
-          setPanes((prev) => {
-            if (prev.length === 0) {
-              return [{ id: nextPaneId(), tabs: restored.map((m) => m.id), active: restored[0].id }];
-            }
-            // Restored tabs join the first pane WITHOUT taking its `active` slot: a tab
-            // that is already open is one the user — or a run that stopped to ask — is
-            // looking at right now. A launch-time restore is background furniture and
-            // must not steal the foreground from it.
-            return prev.map((p, i) => (i === 0 ? { ...p, tabs: [...p.tabs, ...restored.map((m) => m.id)] } : p));
+          // THE PLACEMENT, rebuilt — the half this restore used to throw away. Every tab went
+          // into ONE pane, so five side-by-side panes reopened as one stack with one chat
+          // visible and the other four to be found in a tab strip. The arrangement IS the
+          // work on this surface, so it travels in the roster (`SavedMeta.pane`/`active`) and
+          // is regrouped here.
+          //
+          // Grouped by the SAVED index and then re-laid left to right, so gaps close instead
+          // of producing empty panes: a roster whose panes read 0, 2, 5 rebuilds as three
+          // adjacent panes in that order. `restored[i]` and `fresh[i]` are index-aligned by
+          // construction (`restored` is `fresh.map`), which is what lets the placement be read
+          // off the saved entry while the id comes from the spawned one.
+          const groups = new Map<number, SessionMeta[]>();
+          const activeIds = new Set<string>();
+          restored.forEach((m, i) => {
+            const saved = fresh[i];
+            const idx = Math.max(0, Math.floor(saved.pane ?? 0));
+            const bucket = groups.get(idx);
+            if (bucket) bucket.push(m); else groups.set(idx, [m]);
+            if (saved.active) activeIds.add(m.id);
           });
+          const ordered = [...groups.entries()].sort((a, b) => a[0] - b[0]);
+          // Which restored pane had focus, as a position in `ordered` — resolved here rather
+          // than stored, because the saved index is pre-gap-closing.
+          const focusAt = res.activePane === undefined
+            ? -1
+            : ordered.findIndex(([idx]) => idx === res.activePane);
+          const built = ordered.map(([, metas]) => ({
+            id: nextPaneId(),
+            tabs: metas.map((m) => m.id),
+            active: (metas.find((m) => activeIds.has(m.id)) ?? metas[0]).id,
+          }));
+          // Was anything already on screen when the roster landed? Read from the roster ref
+          // rather than from `panes` (which this effect deliberately does not close over, so
+          // it can never re-run on a layout change) — a tab and its pane arrive together.
+          const cleanRestore = sessionListRef.current.length === 0;
+          setPanes((prev) => {
+            if (prev.length === 0) return built;
+            // Something opened a tab while the roster was in flight (the D7 race above). Its
+            // pane keeps the foreground — a launch-time restore is background furniture and
+            // must not steal it — and the restored panes land beside it rather than all
+            // collapsing into it, which is the whole point of persisting the placement.
+            return [...prev, ...built];
+          });
+          // Focus follows the saved pane ONLY on a clean restore, for the same reason the
+          // branch above leaves `prev`'s foreground alone.
+          if (cleanRestore && focusAt >= 0) setActivePaneId(built[focusAt].id);
         }
       } catch { /* no saved roster (or non-desktop 403) — just start fresh */ }
       finally { if (!cancelled) { hydratedRef.current = true; setHydrated(true); } }
@@ -917,20 +986,40 @@ export function AgentSurface() {
     return () => { cancelled = true; };
   }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView, scopedApi]);
 
-  // Persist on every roster change (post-hydrate), debounced. AGENTS and CHATS are
+  // Persist on every roster OR LAYOUT change (post-hydrate), debounced. AGENTS and CHATS are
   // remembered — plain TERMINALS are session-local and never reopened on launch (the server
   // also can't resume a shell, and a stale `claude --resume` on a shell's id would wrongly
   // reopen it as an agent). Saves both dormant and live metas so a renamed live session is
   // captured too. `minimized`/`size` are inert defaults kept only for persisted-format
-  // compatibility. Best-effort: a failed PUT just means this change isn't mirrored.
+  // compatibility; `pane`/`active`/`activePane` are the live ones that carry the placement.
+  // Best-effort: a failed PUT just means this change isn't mirrored.
   useEffect(() => {
     if (!hydratedRef.current) return;
     const handle = setTimeout(() => {
+      // The layout, flattened to what survives a relaunch: which pane (by POSITION, since pane
+      // ids are minted per page load and mean nothing tomorrow) and which tab was visible in
+      // it. A session in no pane — minimized — has no placement and defaults to pane 0 on the
+      // way back in, which is where a restored-from-nothing tab has always gone.
+      const paneOf = new Map<string, number>();
+      const activeTabs = new Set<string>();
+      panes.forEach((p, i) => {
+        p.tabs.forEach((t) => paneOf.set(t, i));
+        if (p.active) activeTabs.add(p.active);
+      });
+      const activePaneIndex = panes.findIndex((p) => p.id === activePaneId);
       const payload = {
+        // The remembered permission mode rides with the roster: same per-vault, machine-local,
+        // gitignored file, and the same reason for being server-side at all (localStorage dies
+        // with the launch's loopback port). Sent on every roster write, so the value on disk
+        // is always the one this surface is actually running under.
+        chatPermissionMode,
+        ...(activePaneIndex >= 0 ? { activePane: activePaneIndex } : {}),
         sessions: sessionList
           .filter((m) => m.kind !== 'shell')
           .map((m) => ({
             title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
+            ...(paneOf.has(m.id) ? { pane: paneOf.get(m.id) } : {}),
+            ...(activeTabs.has(m.id) ? { active: true } : {}),
             // Only carried for automation tabs — the server's `coerceMeta` drops it for
             // every other kind anyway, but there's no reason to send it otherwise.
             ...(m.kind === 'automation' && m.automation ? { automation: m.automation } : {}),
@@ -943,7 +1032,10 @@ export function AgentSurface() {
       void scopedApi.put('/agent/sessions', payload).catch(() => { /* best-effort mirror */ });
     }, 400);
     return () => clearTimeout(handle);
-  }, [sessionList, scopedApi]);
+    // `panes`/`activePaneId`/`chatPermissionMode` join the roster in the deps because they are
+    // now part of what is persisted — a split, a tab drag or a permission change has to reach
+    // disk, and the 400ms debounce is what keeps a drag from writing once per frame.
+  }, [sessionList, panes, activePaneId, chatPermissionMode, scopedApi]);
 
   // ── Session actions ────────────────────────────────────────────────────────
   // claudeId omitted → a fresh conversation (new UUID via `--session-id`); provided with
@@ -1340,17 +1432,38 @@ export function AgentSurface() {
     });
   }, [spawn, modelForSession, effortForSession]);
 
-  // The `bypass` dropdown in a chat composer. The mode is ONE setting PER PROJECT (there is a
-  // single `chatPermissionMode` for this vault, and every composer's chip in this project
-  // shows it), so changing it from any pane must mean three things at once:
-  //   1. remembered      — persisted, so every FUTURE chat spawns under it (`spawn`'s chat arm),
-  //   2. applied now     — every LIVE chat conversation switches without being restarted
-  //                        (`set_permission_mode`), because a chip that reads "bypass" while
-  //                        the running process is still on `auto` is simply lying,
-  //   3. or else resumed — if a CLI rejects the live switch, that conversation is respawned
-  //                        with `--resume` under the new mode, which reaches the same end
-  //                        state at the cost of a process restart.
-  const changeChatPermissionMode = useCallback((mode: 'auto' | 'bypass') => {
+  /**
+   * The `bypass` segment in ONE chat composer. Switches THAT conversation, and remembers the
+   * choice as this project's default for the next one.
+   *
+   * IT USED TO SWITCH EVERY CHAT IN THE VAULT, and that was the defect, not the design going
+   * missing. The mode was modelled as one project-wide setting, so the loop pushed
+   * `set_permission_mode` into every live session — and because CLI 2.1.220+ REFUSES every
+   * live switch into bypass, "apply to all" meant "respawn all". One click on one composer
+   * therefore restarted five panes the user had not touched, and each restart is a real
+   * dispose→`--resume` round trip with a real chance of coming back wrong. It also drove the
+   * conversation loss: N simultaneous respawns block the event loop on N synchronous
+   * `claude` spawns, the server's resume hand-off wait is starved, and a resume that cannot
+   * take its conversation silently starts an unpinned new one (see
+   * `RESUME_HANDOFF_MIN_POLLS` in `src/server/routes/agent-chat.ts`). A blank pane, for a
+   * conversation nobody asked to change.
+   *
+   * So the write follows the READ, which was already per-session: the composer's indicator
+   * has always shown the CLI's own `permissionMode` for that pane (see ChatPane's note on
+   * `inBypass`), precisely because a Plan→Develop hand-off can run `auto` inside a
+   * bypass-remembered project. One control now reads and writes the same scope.
+   *
+   * Three things still happen, two of them narrowed to `sid`:
+   *   1. remembered      — persisted per vault, so every FUTURE chat spawns under it
+   *                        (`spawn`'s chat arm) and it survives a relaunch (the roster file
+   *                        carries it; localStorage does not survive the fresh loopback port),
+   *   2. applied now     — THIS conversation switches without being restarted
+   *                        (`set_permission_mode`), because a chip that reads "bypass" while
+   *                        the running process is still on `auto` is simply lying,
+   *   3. or else resumed — if the CLI rejects the live switch (always, for →bypass), THIS
+   *                        conversation alone is respawned with `--resume` under the new mode.
+   */
+  const changeChatPermissionMode = useCallback((sid: string, mode: 'auto' | 'bypass') => {
     // Eagerly, so any spawn in THIS tick that resolves the project default (a brand-new chat,
     // a Delegate launch) reads the mode just chosen rather than the one being replaced. The
     // fallback respawn below does NOT rely on this — it is handed the requested mode as an
@@ -1360,21 +1473,16 @@ export function AgentSurface() {
     // feeds our own `useInstanceEvent` above and moves the state — one write path, no
     // second `setChatPermissionMode` here that could disagree with what was stored.
     writeChatPermissionMode(bus, vault, mode);
-    // A SNAPSHOT of the roster, not `sessions.current.forEach` — and this is load-bearing, not
-    // tidiness. `Map.prototype.forEach` visits entries ADDED DURING ITERATION, and the fallback
-    // below adds one: `resumeChatSession` deletes the old id and registers the replacement. For
-    // a session whose socket is already gone (an ended tab, a server restart, a tab still
-    // connecting) `setPermissionMode` fails SYNCHRONOUSLY — `sendControl` returns false on a
-    // non-OPEN socket — so the fallback ran inside the loop, the loop then visited the
-    // replacement, whose own socket was still CONNECTING, which failed for the same reason and
-    // respawned again: an unbounded `claude` spawn storm on one click. Iterating a copy makes a
-    // session spawned UNDER the new mode invisible to this pass, which is also the correct
-    // semantics — it has nothing left to switch.
-    Array.from(sessions.current.values()).forEach((s) => {
-      if (s.kind !== 'chat') return;
-      const cs = s as ChatSession;
-      cs.setPermissionMode(mode, () => resumeChatSession(cs, mode === 'bypass'));
-    });
+    // The roster entry records the mode this TAB is moving to, so the relaunch restores it
+    // under the mode it was actually running (the hydrate spawn passes `explicitBypass`).
+    // Optimistic on purpose: both routes below — the live switch and the respawn fallback —
+    // land on exactly `mode`, and the respawn's own roster remap re-states it from the new
+    // session a beat later.
+    setSessionList((prev) => prev.map((m) => (m.id === sid ? { ...m, bypass: mode === 'bypass' } : m)));
+    const s = sessions.current.get(sid);
+    if (!s || s.kind !== 'chat') return;
+    const cs = s as ChatSession;
+    cs.setPermissionMode(mode, () => resumeChatSession(cs, mode === 'bypass'));
   }, [bus, vault, resumeChatSession]);
 
   /**
@@ -2199,7 +2307,7 @@ export function AgentSurface() {
     changeEffort: (sid, level) => chatActionsRef.current.changeEffort(sid, level),
     continueInTerminal: (cs) => chatActionsRef.current.continueInTerminal(cs),
     resumeChat: (cs) => chatActionsRef.current.resumeChat(cs),
-    changePermissionMode: (mode) => chatActionsRef.current.changePermissionMode(mode),
+    changePermissionMode: (sid, mode) => chatActionsRef.current.changePermissionMode(sid, mode),
     changeMode: (sid, mode) => chatActionsRef.current.changeMode(sid, mode),
     changeAccount: (sid, accountId) => chatActionsRef.current.changeAccount(sid, accountId),
     handoffToDevelop: (cs, taskSlug) => chatActionsRef.current.handoffToDevelop(cs, taskSlug),

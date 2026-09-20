@@ -130,23 +130,33 @@ describe('a chat respawn carries the composer draft', () => {
   });
 
   /**
-   * Found while fixing the draft loss, in the same function: the permission fallback is
-   * REENTRANT unless the roster is snapshotted first.
+   * The permission switch touches exactly ONE conversation — the one whose composer was
+   * clicked.
    *
-   * `Map.prototype.forEach` visits entries added during iteration. `setPermissionMode` fails
-   * SYNCHRONOUSLY on a non-OPEN socket (`sendControl` returns false), so for an ended or
-   * still-connecting tab the fallback respawn ran inside the loop, registered its replacement,
-   * and the loop visited THAT — whose socket was necessarily still CONNECTING, so it failed the
-   * same way and respawned again. One click, unbounded `claude` processes.
+   * It used to iterate the whole roster, because the mode was modelled as a single project-wide
+   * setting. Two failures came out of that, and this test stands on both:
+   *
+   *   • Owner report 2026-09-18: one click on one composer stopped and respawned EVERY open
+   *     chat. CLI 2.1.220+ refuses every live switch INTO bypass, so "apply to all" is
+   *     literally "respawn all", and a respawn is a dispose→`--resume` round trip the user
+   *     never asked for on four other conversations.
+   *   • The re-entrancy this test originally guarded: `Map.prototype.forEach` visits entries
+   *     added DURING iteration, and `setPermissionMode` fails synchronously on a non-OPEN
+   *     socket, so the fallback respawned inside the loop, the loop visited the replacement
+   *     (still CONNECTING), and it respawned again — unbounded `claude` processes on one
+   *     click. Snapshotting the roster fixed that; switching one session removes the loop.
+   *
+   * So the assertion is now the absence of ANY roster-wide iteration, which subsumes both.
    */
-  it('switches permission over a SNAPSHOT of the roster, never the live Map', () => {
+  it('switches permission on ONE session, never across the roster', () => {
     const src = code(read(SURFACE));
     const fn = src.slice(src.indexOf('const changeChatPermissionMode'));
     const body = fn.slice(0, fn.indexOf('}, [bus'));
-    expect(body).toContain('Array.from(sessions.current.values())');
-    expect(body, 'iterating the live Map re-enters through the respawn fallback')
-      .not.toMatch(/sessions\.current\.forEach/);
-    // The fallback itself is the whole reason the snapshot is needed — if this ever stops
+    // The session is looked up by the id the composer passed, not enumerated.
+    expect(body).toContain('sessions.current.get(sid)');
+    expect(body, 'a roster-wide switch respawns conversations nobody asked to change')
+      .not.toMatch(/sessions\.current\.(forEach|values)/);
+    // The fallback respawn is still the only route into Bypass — if this ever stops
     // respawning, re-derive the test rather than deleting it.
     expect(body).toMatch(/resumeChatSession\(cs[,)]/);
     // …and it must ask for the mode the user just PICKED. Handing the fallback `cs.bypass`

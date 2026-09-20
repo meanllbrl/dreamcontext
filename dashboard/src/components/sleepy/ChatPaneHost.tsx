@@ -38,8 +38,11 @@ export interface ChatSurfaceActions {
   continueInTerminal: (cs: ChatSession) => void;
   /** State 12's "Session ended · Resume" — respawn the same UUID as a fresh chat. */
   resumeChat: (cs: ChatSession) => void;
-  /** App-wide remembered permission-mode default (not per session — see AgentSurface). */
-  changePermissionMode: (mode: 'auto' | 'bypass') => void;
+  /** Flip THIS conversation between Auto and Bypass, and remember the choice as the project's
+   *  default for the next chat. Session-scoped like `changeModel`/`changeMode` beside it —
+   *  it used to switch every chat in the vault; see AgentSurface's note for why that was the
+   *  bug rather than the design. */
+  changePermissionMode: (sid: string, mode: 'auto' | 'bypass') => void;
   /** Re-brief this conversation's agent. A mode is a spawn-time system-prompt append, so
    *  this RESPAWNS the session under the new brief (same conversation UUID, transcript kept)
    *  rather than switching anything live — see AgentSurface's `changeChatMode`. */
@@ -84,7 +87,7 @@ function ChatPaneHostInner({
   const onContinueInTerminal = useCallback(() => actions.continueInTerminal(session), [actions, session]);
   const onResume = useCallback(() => actions.resumeChat(session), [actions, session]);
   const onPermissionModeChange = useCallback(
-    (next: 'auto' | 'bypass') => actions.changePermissionMode(next), [actions],
+    (next: 'auto' | 'bypass') => actions.changePermissionMode(session.id, next), [actions, session],
   );
   const onModeChange = useCallback((next: ChatMode) => actions.changeMode(session.id, next), [actions, session]);
   const onHandoffToDevelop = useCallback(

@@ -469,20 +469,24 @@ async function run(chromium, base, report) {
   ok('…and the trigger tells the truth rather than the project default (B2a)',
     (await permWord()) === 'auto', await permWord());
 
-  // ── §9b — the segment reads per-session but WRITES per-project, and says so ───────
+  // ── §9b — the segment says what a click does, and what it ALSO does ──────────────
   //
-  // Driven in the one state where the two scopes genuinely disagree: a hand-off session
-  // running `auto` inside a project that remembers `bypass`. The display must show the
-  // session (or the chip lies about the process) and the note must show the project (or a
-  // click silently rewrites every other chat in the project). Both, at once, or neither is
-  // trustworthy.
+  // Driven in the one state where the session and the remembered default genuinely disagree:
+  // a hand-off session running `auto` inside a project that remembers `bypass`. The display
+  // must show the session (or the chip lies about the process) and the note must name the
+  // remembered default (or the second half of the click — "and this becomes the default" — is
+  // invisible). Both, at once, or neither is trustworthy.
+  //
+  // The note used to read "applies to every chat in this project", and it was telling the
+  // truth about a genuine defect: one click respawned every open conversation. The write is
+  // now session-scoped (see §9c), so the copy had to move with it.
   console.log('\n── §9b the permission segment names BOTH scopes');
   await modeTrigger().click();
   await page.waitForTimeout(300);
   const notes = (await vis('.chat-cmp-modemenu .chat-cmp-permnote').allInnerTexts()).join(' | ');
-  ok('the menu states that a permission change reaches the whole project',
-    /every chat in this project/i.test(notes), notes);
-  ok('…and names the PROJECT default (bypass) …', /project default:\s*bypass/i.test(notes), notes);
+  ok('the menu states that a permission change applies to THIS chat',
+    /applies to this chat/i.test(notes) && !/every chat in this project/i.test(notes), notes);
+  ok('…and names the REMEMBERED default (bypass) …', /currently:\s*bypass/i.test(notes), notes);
   ok('…while the segment still shows THIS session (auto) — the scopes are named, not merged',
     (await vis('.chat-cmp-segment-opt.is-auto.is-active').count()) === 1
     && (await page.locator('.chat-cmp-segment-opt.is-bypass.is-active').count()) === 0,
@@ -610,6 +614,64 @@ async function run(chromium, base, report) {
     await vis('.chat-cmp-input').first().fill('');
   } else {
     report.note('⚠ SKIPPED §12 — no live chat composer at this point (see §10b).');
+  }
+
+  // ── §9c — a permission click reaches ONE pane, not the whole surface ─────────────
+  //
+  // THE REPORT (owner, 2026-09-18): "auto→bypass geçişinde tüm sessionlar duruyor ve
+  // değişiyor" — every open chat stopped and changed, though only one composer was touched.
+  // The switch was modelled as a project-wide setting, so it pushed `set_permission_mode`
+  // into every live session; and because the CLI refuses every live switch INTO bypass, that
+  // meant respawning every one of them. Conversations the user never asked to change took a
+  // dispose→`--resume` round trip, which is exactly where they came back blank.
+  //
+  // The decisive direction is →AUTO, and picking it is not a detail. →bypass is refused by a
+  // process that did not boot with the flag, so it respawns; a process that DID boot with it
+  // accepts the switch live. That asymmetry means a socket count can read "1 new socket"
+  // under both the old and the new code depending on how each pane was launched, and proves
+  // nothing. →auto LANDS on every process, so under the old roster-wide loop it moved every
+  // pane's indicator at once — which is exactly what the other pane reading `bypass` here
+  // rules out.
+  console.log('\n── §9c a permission click reaches ONE pane, not the whole surface');
+  await page.locator('.chat-cmp-input:visible').first().click();
+  await page.keyboard.press('Meta+d');
+  const split = await until(async () => (await vis('.agent-pane-slot[data-pane]').count()) >= 2, 20000);
+  ok('⌘D opens a second pane', split, `${await vis('.agent-pane-slot[data-pane]').count()} pane(s)`);
+  if (!split) {
+    report.note('⚠ SKIPPED §9c — the split never opened, so there is no second pane to protect.');
+  } else {
+    const paneIds = await page.$$eval('.agent-pane-slot[data-pane]', (els) => els.map((e) => e.dataset.pane));
+    const [paneA, paneB] = paneIds;
+    const permIn = async (pane) => (await page.locator(
+      `.agent-pane-slot[data-pane="${pane}"] .chat-cmp-modeltrigger .chat-cmp-modeltrigger-effort`,
+    ).first().innerText()).trim();
+    const pickIn = async (pane, which) => {
+      await page.locator(`.agent-pane-slot[data-pane="${pane}"] .chat-cmp-modeltrigger`).first().click();
+      await page.waitForTimeout(300);
+      await vis(`.chat-cmp-segment-opt.is-${which}`).first().click();
+      await page.waitForTimeout(700);
+    };
+    // The REMEMBERED half, in passing: the fresh split inherits the project default, while the
+    // Develop hand-off in the original pane keeps its own `auto` (§9's non-escalation rule).
+    ok('the fresh split opens under the remembered default (bypass)',
+      await until(async () => (await permIn(paneB)) === 'bypass', 20000), await permIn(paneB));
+
+    // Setup: bring BOTH panes to bypass, so the flip below has something to leave alone.
+    await pickIn(paneA, 'bypass');
+    const bothOnBypass = await until(
+      async () => (await permIn(paneA)) === 'bypass' && (await permIn(paneB)) === 'bypass', 20000);
+    ok('both panes are on bypass before the flip', bothOnBypass,
+      `${await permIn(paneA)} / ${await permIn(paneB)}`);
+
+    const preFlipSockets = (await sockets()).length;
+    await pickIn(paneB, 'auto');
+    ok('picking Auto in one pane moves THAT pane',
+      await until(async () => (await permIn(paneB)) === 'auto', 20000), await permIn(paneB));
+    ok('…and leaves the other pane on bypass — one click, one conversation',
+      (await permIn(paneA)) === 'bypass', `paneA=${await permIn(paneA)}`);
+    ok('…and respawns nothing: →auto lands live, so no pane is restarted',
+      (await sockets()).length === preFlipSockets,
+      JSON.stringify((await sockets()).slice(preFlipSockets).map((u) => u.slice(-90))));
   }
 
   // ── §11b — the legacy Terminal composer's Skills picker ──────────────────────────

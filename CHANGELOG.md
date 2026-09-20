@@ -4,6 +4,56 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+### A permission switch changes one conversation, and your pane layout comes back (2026-09-20)
+
+Flipping **Auto → Bypass** in one chat composer stopped and respawned **every open chat in the
+project**, and the panes came back **blank** — the whole conversation gone, not hidden. Separately,
+the mode you picked was forgotten every launch, and five side-by-side panes reopened as one pane
+with one chat visible.
+
+The first three were **one modelling error with a five-link tail**, and no link is obvious alone.
+The mode was stored as a single project-wide setting, so the switch looped the entire roster
+pushing `set_permission_mode`. CLI 2.1.220+ **refuses** every live switch into `bypassPermissions`
+for a process that did not boot with the flag, so *apply to all* is literally *restart all*. N
+simultaneous restarts block the event loop on N synchronous `claude` spawns, which starves the
+server's resume hand-off wait — its budget was **wall-clock**, and nothing polls while the loop is
+blocked, so all 1.5s could be spent inside one block. The resuming session then found the
+conversation still held, skipped `--resume` (held) *and* `--session-id` (a transcript exists), and
+started a **brand-new, unpinned conversation**. Its SessionStart hook rewrote the tab→session map,
+so the transcript replay resolved the tab's pinned id to the new empty file. A blank pane, an
+orphaned pin, permanently.
+
+- **One click, one conversation.** The permission segment now switches the chat it belongs to.
+  The *reading* was already per-session — the indicator has to show what the running process is
+  under, because a Plan → Develop hand-off runs `auto` inside a `bypass` project — so this only
+  made the write agree. The choice is still remembered as the default for the next chat.
+- **A resume that cannot take its conversation refuses instead of forking.** The pane raises
+  *"Session ended · Resume"* carrying a sentence that says nothing was lost, and the button works
+  the moment the other holder lets go. A visible, recoverable failure beats an invisible permanent
+  one. The hand-off wait now counts **polls, not milliseconds**, so a blocked event loop cannot
+  spend the budget without ever looking.
+- **Your arrangement is remembered.** Which pane each tab sat in, which tab was in front of each,
+  and which pane had focus now travel in the same per-vault, machine-local, gitignored file as the
+  tab names. It could not live in the browser's storage for the same reason the permission mode
+  could not: the desktop app picks a **fresh loopback port every launch**, so the origin is new and
+  the store is empty, every time.
+- **Each chat reopens under its own permission answer**, not the project default — the same
+  exemption Resume already took, and what makes *"remember my choice"* true per conversation.
+
+Corrected along the way: this codebase asserted in two places that Claude Code ≥2.1.x flushes a
+transcript only on exit. Measured on 2.1.276 — it is written **live**, within ~2s. The loss was
+never a flush race.
+
+Proof: a new `npm run verify:pane-layout-restore` (16/16 — isolated HOME, real server, real
+Chromium) rebuilds three panes with the right tabs, the right tab in front of each and the right
+pane focused, then checks every restored tab's WebSocket upgrade carries **its own** permission
+next to its conversation id — the fixture is adversarial, storing `bypass` as the default while one
+tab was saved on `auto`. `verify:chat-composer` gains a section proving a click in one pane leaves
+the other where it was, driven in the `→auto` direction because that one lands on every process and
+would have moved every indicator. Every assertion was **mutation-tested**: with the fixes reverted,
+the restore harness fails 9 checks and the composer harness reports `paneA=auto`. Plus 8 new unit
+tests pinning both server guards, 18 on the stored layout, and 9787 green overall.
+
 ### `/mcp` in Chat is a working panel, and MCP servers can finally be shared with a team (2026-09-20)
 
 Typing `/mcp` in the Chat window used to cost a turn and return a dead end. The headless

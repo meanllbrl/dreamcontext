@@ -316,6 +316,116 @@ describe('sanitizeRoster — mode (how a chat tab is briefed)', () => {
  * tell a security refusal from a crash. The roster GET therefore answers "may I resume
  * this here" up front, computed fresh on every request rather than persisted.
  */
+describe('sanitizeRoster — pane placement (the layout that used to be thrown away)', () => {
+  // Five side-by-side panes reopened as ONE pane with one chat visible, because the roster
+  // persisted titles and nothing else. The placement travels as an INDEX (pane ids are minted
+  // per page load and mean nothing tomorrow) plus a per-pane `active` flag.
+  it('keeps a 0-based pane index', () => {
+    const out = sanitizeRoster({ sessions: [valid({ pane: 0 }), valid({ pane: 3 })] });
+    expect(out?.[0].pane).toBe(0);
+    expect(out?.[1].pane).toBe(3);
+  });
+
+  it('clamps a pane index into range rather than dropping it — a layout hint degrades, never errors', () => {
+    expect(sanitizeRoster({ sessions: [valid({ pane: -5 })] })?.[0].pane).toBe(0);
+    expect(sanitizeRoster({ sessions: [valid({ pane: 9999 })] })?.[0].pane).toBe(MAX_SESSIONS - 1);
+    expect(sanitizeRoster({ sessions: [valid({ pane: 2.7 })] })?.[0].pane).toBe(2);
+  });
+
+  it('drops a non-numeric pane entirely (absent reads as pane 0 on the client)', () => {
+    for (const pane of ['1', null, NaN, Infinity, {}]) {
+      expect(sanitizeRoster({ sessions: [{ ...valid(), pane }] })?.[0]).not.toHaveProperty('pane');
+    }
+  });
+
+  it('keeps `active` only when it is exactly true', () => {
+    expect(sanitizeRoster({ sessions: [valid({ active: true })] })?.[0].active).toBe(true);
+    for (const active of ['true', 1, {}, null]) {
+      expect(sanitizeRoster({ sessions: [{ ...valid(), active }] })?.[0]).not.toHaveProperty('active');
+    }
+  });
+});
+
+describe('handleAgentSessionsGet — the remembered permission mode + placement', () => {
+  const dirs: string[] = [];
+  const realDesktop = process.env.DREAMCONTEXT_DESKTOP;
+
+  afterEach(() => {
+    if (realDesktop === undefined) delete process.env.DREAMCONTEXT_DESKTOP;
+    else process.env.DREAMCONTEXT_DESKTOP = realDesktop;
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  function rosterWith(blob: Record<string, unknown>): string {
+    const contextRoot = mkdtempSync(join(tmpdir(), 'dc-roster-mode-'));
+    dirs.push(contextRoot);
+    mkdirSync(join(contextRoot, 'state'), { recursive: true });
+    writeFileSync(join(contextRoot, 'state', '.agent-sessions.json'), `${JSON.stringify(blob)}\n`, 'utf-8');
+    return contextRoot;
+  }
+
+  async function get(contextRoot: string): Promise<Record<string, unknown>> {
+    process.env.DREAMCONTEXT_DESKTOP = '1';
+    let responseBody: unknown = null;
+    const res = {
+      writeHead() {},
+      end(data: string) { try { responseBody = JSON.parse(data); } catch { responseBody = data; } },
+      setHeader() {},
+    } as unknown as ServerResponse;
+    const home = mkdtempSync(join(tmpdir(), 'dc-roster-mode-home-'));
+    dirs.push(home);
+    await handleAgentSessionsGet({} as IncomingMessage, res, {}, contextRoot, home);
+    return responseBody as Record<string, unknown>;
+  }
+
+  // The client stores this in localStorage, and the desktop app picks a FRESH loopback port
+  // every launch — a new origin, an empty store. So a mode chosen yesterday read `auto` this
+  // morning. The roster file is the per-vault, machine-local, gitignored home it needed.
+  it('returns a stored bypass', async () => {
+    expect((await get(rosterWith({ sessions: [], chatPermissionMode: 'bypass' }))).chatPermissionMode)
+      .toBe('bypass');
+  });
+
+  it('reads anything else as auto — a permission gate fails safe, never open', async () => {
+    for (const stored of ['bypassPermissions', 'BYPASS', 1, true, null, undefined]) {
+      expect((await get(rosterWith({ sessions: [], chatPermissionMode: stored }))).chatPermissionMode)
+        .toBe('auto');
+    }
+  });
+
+  it('is auto for a legacy roster that predates the field', async () => {
+    expect((await get(rosterWith({ sessions: [] }))).chatPermissionMode).toBe('auto');
+  });
+
+  it('returns the focused pane and each tab\'s placement', async () => {
+    const body = await get(rosterWith({
+      activePane: 1,
+      chatPermissionMode: 'auto',
+      sessions: [
+        { title: 'Plan', bypass: false, minimized: false, size: 1, pane: 0, active: true },
+        { title: 'Build', bypass: true, minimized: false, size: 1, pane: 1, active: true },
+      ],
+    }));
+    expect(body.activePane).toBe(1);
+    const sessions = body.sessions as Array<Record<string, unknown>>;
+    expect(sessions.map((m) => m.pane)).toEqual([0, 1]);
+    expect(sessions.map((m) => m.active)).toEqual([true, true]);
+    // Each tab keeps its OWN permission answer, which is what lets a restored tab reopen
+    // under the mode it was running rather than under the project default.
+    expect(sessions.map((m) => m.bypass)).toEqual([false, true]);
+  });
+
+  it('degrades a corrupt roster to empty + auto rather than throwing', async () => {
+    const contextRoot = mkdtempSync(join(tmpdir(), 'dc-roster-mode-'));
+    dirs.push(contextRoot);
+    mkdirSync(join(contextRoot, 'state'), { recursive: true });
+    writeFileSync(join(contextRoot, 'state', '.agent-sessions.json'), '{ not json', 'utf-8');
+    const body = await get(contextRoot);
+    expect(body.sessions).toEqual([]);
+    expect(body.chatPermissionMode).toBe('auto');
+  });
+});
+
 describe('handleAgentSessionsGet — the transient `bound` flag', () => {
   const UUID = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
   const dirs: string[] = [];
