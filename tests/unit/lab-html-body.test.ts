@@ -153,8 +153,14 @@ describe('the sandboxed iframe (security pins — C5 unit half)', () => {
     expect(HTML_KIT_CSP).toContain("default-src 'none'");
     expect(HTML_KIT_CSP).toContain("style-src 'unsafe-inline'");
     expect(HTML_KIT_CSP).toContain("script-src 'unsafe-inline'");
-    // No connect-src / img-src grant may ever creep in — 'none' must stay total.
-    expect(HTML_KIT_CSP).not.toMatch(/connect-src|img-src|https?:/);
+    // No connect-src grant may ever creep in, and no source may name a host: 'none'
+    // stays total for everything that would leave the document. `font-src data:` and
+    // `img-src data:` are the two carve-outs and they are not fetches — the bytes ride
+    // in the srcdoc. Asserted by exact shape so a host/blob/wildcard cannot ride in on
+    // the same directive name.
+    expect(HTML_KIT_CSP).not.toMatch(/connect-src|https?:/);
+    expect(HTML_KIT_CSP).toContain('img-src data:');
+    expect(HTML_KIT_CSP).not.toMatch(/img-src[^;]*(https?:|blob:|\*|'self')/);
   });
 
   it('the embedded kit string IS lab-html-kit.css, byte for byte (mirror drift guard)', () => {

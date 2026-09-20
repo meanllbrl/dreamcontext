@@ -30,22 +30,29 @@
 /**
  * The CSP embedded as the FIRST element of every srcdoc.
  *
- * `font-src data:` is the only allowance beyond drawing, and it is not a network grant: a
- * `data:` URL resolves inside the document, contacts no host, and issues no request. It
- * exists because the app's reading face could not otherwise cross the frame boundary — the
- * block fell back to system-ui while the transcript around it rendered in Inter, a measured
- * 10% difference in the same string at the same size (F5, 2026-09-02). The bytes ride in
- * the document, which is the same property that lets an exported block render offline.
+ * `font-src data:` and `img-src data:` are the only allowances beyond drawing, and NEITHER
+ * is a network grant: a `data:` URL resolves inside the document, contacts no host, and
+ * issues no request. `font-src` exists because the app's reading face could not otherwise
+ * cross the frame boundary — the block fell back to system-ui while the transcript around
+ * it rendered in Inter, a measured 10% difference in the same string at the same size (F5,
+ * 2026-09-02). `img-src` exists because a picture could not cross it either: under
+ * `default-src 'none'` an `<img>` is blocked even when its bytes are already IN the
+ * document, so an authored block or a Lab app could reason about a screen it was unable to
+ * SHOW (measured 2026-09-15 — a funnel step's own screenshot, inlined, rendered as a broken
+ * image). The bytes ride in the document, which is the same property that lets an exported
+ * block render offline.
  *
- * What it deliberately does NOT say is `font-src https:` or a host allow-list. Either would
- * turn "this frame cannot reach the network" into "this frame cannot reach the network
- * except…", and the whole security argument for not sanitizing the markup is that there is
- * no exception.
+ * What it deliberately does NOT say is `font-src https:`, `img-src https:`, `img-src blob:`
+ * or a host allow-list. Any of those would turn "this frame cannot reach the network" into
+ * "this frame cannot reach the network except…", and the whole security argument for not
+ * sanitizing the markup is that there is no exception. `data:` is the exception-shaped thing
+ * that is not one: it is the document quoting itself.
  */
 import { SANDBOX_FONT_CSS } from './sandboxFont.js';
 
 export const SANDBOX_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:";
+  "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; " +
+  "font-src data:; img-src data:";
 
 /** The sandbox grant — scripts yes, same-origin NEVER (that would void the CSP). */
 export const SANDBOX_GRANT = 'allow-scripts';

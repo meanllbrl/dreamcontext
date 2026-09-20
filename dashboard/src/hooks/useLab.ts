@@ -3,7 +3,7 @@ import { useApi } from '../context/VaultContext';
 import type { FunnelCacheEntry, FunnelPrev, FunnelSnapshot } from '../components/lab/funnel/funnelModel';
 import type { MatrixCacheEntry, MatrixSnapshot } from '../components/lab/matrixModel';
 import type { AppCacheEntry, DatasetCacheEntry } from '../components/lab/appModel';
-import type { InsightSize, Render } from '../components/lab/chartRegistry';
+import type { InsightHeight, InsightSize, InsightWidth, Render } from '../components/lab/chartRegistry';
 
 /** Tweak kinds. No `range` type — a relative range is an `enum` tweak keyed `range`. */
 export type TweakType = 'enum' | 'date' | 'string';
@@ -20,7 +20,7 @@ export interface PublicTweak {
 /** The render list has ONE owner in the dashboard: the chart registry (which
  *  mirrors the engine's `RENDERS`, drift-tested). Re-exported here so every
  *  existing `import type { Render } from '../hooks/useLab'` keeps working. */
-export type { InsightSize, Render };
+export type { InsightHeight, InsightSize, InsightWidth, Render };
 
 export interface Binding {
   objective: string;
@@ -35,8 +35,12 @@ export interface InsightSummary {
   category: string | null;
   group: string | null;
   render: Render;
-  /** Manifest board-footprint override, or null (the render's default span wins). */
+  /** Legacy single-axis footprint override, or null. Superseded by width/height. */
   size: InsightSize | null;
+  /** Explicit column span, or null (falls back to size, then the render default). */
+  width: InsightWidth | null;
+  /** Explicit body-height ceiling, or null (falls back to size, then `m`). */
+  height: InsightHeight | null;
   unit: string | null;
   binding: Binding | null;
   latest: number | null;
@@ -103,6 +107,8 @@ export interface PublicManifest {
   group: string | null;
   render: Render;
   size: InsightSize | null;
+  width: InsightWidth | null;
+  height: InsightHeight | null;
   unit: string | null;
   binding: Binding | null;
   credentials_used: string[];

@@ -123,6 +123,8 @@ function itemSummary(item: ResolvedReportItem): InsightSummary {
     group: null,
     render: (item.render ?? 'number') as InsightSummary['render'],
     size: null,
+    width: null,
+    height: null,
     unit: item.unit,
     binding: null,
     latest: item.latest,

@@ -1129,6 +1129,8 @@
         "--group",
         "--render",
         "--size",
+        "--width",
+        "--height",
         "--adapter",
         "--unit",
         "--ttl"

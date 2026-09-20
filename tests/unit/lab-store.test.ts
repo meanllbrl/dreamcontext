@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -160,5 +160,57 @@ describe('isSafeInsightSlug', () => {
     expect(isSafeInsightSlug('Bad_Slug')).toBe(false);
     expect(isSafeInsightSlug('double--dash')).toBe(false);
     expect(isSafeInsightSlug('trailing-')).toBe(false);
+  });
+});
+
+describe('card width/height — the two axes `size` conflated', () => {
+  /** A hand-written manifest, the way an author edits one. */
+  function handWrite(slug: string, lines: string[]): void {
+    mkdirSync(join(root, 'lab', 'insights'), { recursive: true });
+    writeFileSync(
+      insightPath(root, slug),
+      ['---', 'title: Hand', 'render: app', ...lines, '---', '', '## Meaning', '', 'x', ''].join('\n'),
+      'utf-8',
+    );
+  }
+
+  it('parses explicit width and height off a hand-written manifest', () => {
+    handWrite('wide-tall', ['width: 3', 'height: xl']);
+    const m = getInsight(root, 'wide-tall')!;
+    expect(m.width).toBe(3);
+    expect(m.height).toBe('xl');
+  });
+
+  it('accepts a width that survived YAML as a string', () => {
+    handWrite('str-width', ["width: '2'"]);
+    expect(getInsight(root, 'str-width')!.width).toBe(2);
+  });
+
+  it('degrades an out-of-range width or height to null — reads stay lenient', () => {
+    handWrite('bad', ['width: 7', 'height: enormous']);
+    const m = getInsight(root, 'bad')!;
+    expect(m.width).toBeNull();
+    expect(m.height).toBeNull();
+  });
+
+  it('leaves both null when the manifest names neither — legacy size still decides', () => {
+    const m = createInsight(root, { slug: 'legacy', title: 'L', render: 'app', size: 'l' });
+    expect(m.size).toBe('l');
+    expect(m.width).toBeNull();
+    expect(m.height).toBeNull();
+  });
+
+  it('round-trips width/height written at create time', () => {
+    createInsight(root, { slug: 'made', title: 'M', render: 'app', width: 2, height: 'l' });
+    const m = getInsight(root, 'made')!;
+    expect(m.width).toBe(2);
+    expect(m.height).toBe('l');
+  });
+
+  it('rejects an out-of-range width or height on WRITE — writes stay strict', () => {
+    expect(() => createInsight(root, { slug: 'w9', title: 'X', width: 9 as never }))
+      .toThrow(/width must be one of/);
+    expect(() => createInsight(root, { slug: 'hz', title: 'X', height: 'huge' as never }))
+      .toThrow(/height must be one of/);
   });
 });

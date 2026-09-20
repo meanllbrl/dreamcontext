@@ -28,8 +28,22 @@ export const APP_SPEC_KIND = 'app/v1';
 // nothing safe to silently collapse — dropping a page breaks a route and
 // every deep link into it, so caps here reject rather than truncate). ──
 export const MAX_APP_PAGES = 12;
-/** Byte cap on the whole serialized spec (every page's html + shell). */
-export const MAX_APP_BYTES = 300_000;
+/** Cap on the whole serialized spec (every page's html + shell).
+ *
+ *  ⚠ MEASURED IN UTF-16 CODE UNITS (`JSON.stringify(spec).length`), NOT BYTES — the name
+ *  says bytes and the two diverge on any non-ASCII tile. A Turkish-language spec reading
+ *  298.080 here is ~301.900 actual UTF-8 bytes. Kept as `.length` on purpose: it is what
+ *  every caller has already measured against, and switching the metric would silently
+ *  shrink every existing tile's headroom. Ask "how much room is left" with
+ *  `JSON.stringify(spec).length`; `Buffer.byteLength` overstates the usage.
+ *
+ *  Raised 300k → 500k on 2026-09-15. The 300k ceiling was set before app tiles embedded
+ *  live screenshots: `calbuddy-funnel-explorer` carries 31 inlined webp frames (~138k on
+ *  one page) because the Lab iframe runs under `default-src 'none'` and cannot FETCH an
+ *  image — the bytes have to arrive inside the document. That tile hit 298.080/300.000
+ *  with 1.920 left, where a one-sentence copy fix broke the build. The cap still exists to
+ *  stop a tile shipping a database inline; it is not meant to price out a screenshot. */
+export const MAX_APP_BYTES = 500_000;
 /** Page id charset — used in URLs (`/lab/<slug>/p/<pageId>`) and as bridge
  *  `navigate` targets, so it is kept URL-safe and predictable. */
 export const APP_PAGE_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;

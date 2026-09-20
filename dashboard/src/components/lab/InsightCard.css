@@ -144,11 +144,23 @@
 /* A card is a thumbnail, never the whole dataset: the body is bounded so no
    render (a long legend, a raw table) can stretch its grid row. Anything that
    needs more room is what the detail panel is for. */
+/* HEIGHT IS A CEILING, NOT A FIXED SIZE. A short body still shrinks to its content;
+   only what exceeds the ceiling scrolls inside the card. The four steps come from the
+   manifest's `height` (see cardHeight) — `m` is the historical 280px, so a card that
+   names nothing renders exactly as it did before this existed. Why it needed to be
+   authorable at all: `size: l` bought a second COLUMN and left the height at 280, so an
+   app tile with a control row + stat row + table was clipped into an inner scrollbar no
+   matter how much board the author gave it. */
 .lab-card-body {
   min-height: 40px;
   max-height: 280px;
   overflow: auto;
 }
+
+.lab-card--h-s .lab-card-body { max-height: 180px; }
+.lab-card--h-m .lab-card-body { max-height: 280px; }
+.lab-card--h-l .lab-card-body { max-height: 440px; }
+.lab-card--h-xl .lab-card-body { max-height: 620px; }
 
 .lab-card-tweaks-toggle {
   border: none;

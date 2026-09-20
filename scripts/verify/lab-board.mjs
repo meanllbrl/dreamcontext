@@ -13,9 +13,13 @@
  *      line, pie (<7 series), pie with ≥7 series (the bar degrade), bar,
  *      bar_compare, stacked, table, heatmap, funnel;
  *   2. the SIZE-AWARE grid: funnel/table span 2 columns and a `size: l` card
- *      does too, everything else spans 1, no card overflows its own box — and
- *      under the narrow breakpoint the wide cards degrade to 1 column instead
- *      of pushing the board sideways;
+ *      does too, a `width: 3` card takes a third, everything else spans 1, no
+ *      card overflows its own box — and under the narrow breakpoint the wide
+ *      cards degrade to 1 column instead of pushing the board sideways. HEIGHT
+ *      is its own axis: `height` moves the card body's ceiling (`s` down, `xl`
+ *      up, absent = the historical 280px) and a long body actually uses it —
+ *      the thing `size` could never express, which is why a `size: l` app tile
+ *      stayed clipped into an inner scrollbar no matter how wide it got;
  *   3. RangeControl on a card chains PATCH → sync (#235): the preset persists to
  *      the MANIFEST FILE and the tile re-renders with data from the new window;
  *      a deliberately failing source reports the failure honestly instead of
@@ -168,6 +172,31 @@ export default async function (ctx) {
 }`,
   },
   {
+    // `width: 3` + `height: xl` — the two axes `size` could never express. Height is a
+    // CEILING, so this card is seeded with enough rows to actually reach it; a short body
+    // would pass the assertion by accident.
+    // `raw` on purpose: every CHART render caps its own rows (the table card tops out
+    // ~210px no matter what it is fed), so a chart can never prove a height ceiling was
+    // released — it would pass by self-limiting. `raw` dumps the payload uncapped, which
+    // is the only body here that genuinely wants more room than 280px.
+    slug: 'wide-tall', title: 'Wide tall', render: 'raw', width: 3, height: 'xl',
+    script: `${DAYS_HELPER}
+export default async function (ctx) {
+  const ts = days(ctx);
+  return Array.from({ length: 24 }, (_, s) => ({
+    name: 'series ' + (s + 1),
+    points: ts.map((t, i) => ({ t, v: 100 + s * 10 + i })),
+  }));
+}`,
+  },
+  {
+    slug: 'short-number', title: 'Short number', render: 'number', height: 's', unit: 'mrr',
+    script: `${DAYS_HELPER}
+export default async function (ctx) {
+  return [{ name: 'mrr', points: days(ctx).map((t, i) => ({ t, v: 900 + i })) }];
+}`,
+  },
+  {
     slug: 'wide-number', title: 'Wide number', render: 'number', size: 'l', unit: 'mrr',
     script: `${DAYS_HELPER}
 export default async function (ctx) {
@@ -256,6 +285,8 @@ function setup() {
       '--group', 'Mixed renders',
       ...(insight.unit ? ['--unit', insight.unit] : []),
       ...(insight.size ? ['--size', insight.size] : []),
+      ...(insight.width ? ['--width', String(insight.width)] : []),
+      ...(insight.height ? ['--height', insight.height] : []),
     ]);
     writeFileSync(join(LAB, 'scripts', `${insight.slug}.mjs`), `${insight.script}\n`, 'utf-8');
     if (insight.tweaks) declareTweaks(insight.slug, insight.tweaks);
@@ -354,13 +385,48 @@ async function main() {
     const unit = (await cardOf(page, 'Signups').boundingBox()).width;
     const spans = {};
     for (const title of ['Signups', 'Sessions', 'Traffic mix', 'Browser share', 'Revenue by plan',
-      'Weekly compare', 'Channel stack', 'Daily heat', 'Metric table', 'Wide number', 'Activation funnels']) {
+      'Weekly compare', 'Channel stack', 'Daily heat', 'Metric table', 'Wide number',
+      'Activation funnels', 'Wide tall', 'Short number']) {
       spans[title] = await spanOf(page, title, unit);
     }
     ok('funnel card spans 2 columns on a wide viewport', spans['Activation funnels'] === 2, JSON.stringify(spans));
     ok('table card spans 2 columns (its registry default)', spans['Metric table'] === 2, JSON.stringify(spans));
     ok('a `size: l` manifest override spans 2 columns', spans['Wide number'] === 2, JSON.stringify(spans));
-    const singles = ['Signups', 'Sessions', 'Traffic mix', 'Browser share', 'Revenue by plan', 'Weekly compare', 'Channel stack', 'Daily heat'];
+    // The two axes `size` conflated. `width: 3` must buy a THIRD column (the board is
+    // 1600px here, well past the 900px the 3-span container query asks for), and `height`
+    // must change the body ceiling — which `size` never could.
+    ok('a `width: 3` manifest override spans 3 columns', spans['Wide tall'] === 3, JSON.stringify(spans));
+    const bodyCap = (t) => cardOf(page, t).locator('.lab-card-body')
+      .evaluate((el) => Math.round(parseFloat(getComputedStyle(el).maxHeight)));
+    const [tallCap, shortCap, defaultCap] = await Promise.all([
+      bodyCap('Wide tall'), bodyCap('Short number'), bodyCap('Signups'),
+    ]);
+    ok('`height: xl` raises the body ceiling above the default', tallCap > defaultCap,
+      `xl=${tallCap} default=${defaultCap}`);
+    ok('`height: s` lowers it below the default', shortCap < defaultCap,
+      `s=${shortCap} default=${defaultCap}`);
+    ok('a card naming no height keeps the historical 280px ceiling', defaultCap === 280, String(defaultCap));
+    // Height is a CEILING, and a ceiling is only real if content STOPS there. Proven by
+    // forcing an absurdly tall child into each body and measuring where it clips — a
+    // seeded payload can't prove this, because every chart render caps its own rows and
+    // would pass by self-limiting rather than by the ceiling doing its job.
+    const clipAt = (t) => cardOf(page, t).locator('.lab-card-body').evaluate((el) => {
+      const probe = document.createElement('div');
+      probe.style.height = '4000px';
+      el.appendChild(probe);
+      const h = el.clientHeight;
+      probe.remove();
+      return h;
+    });
+    const [tallClip, shortClip, defaultClip] = await Promise.all([
+      clipAt('Wide tall'), clipAt('Short number'), clipAt('Signups'),
+    ]);
+    ok('an overflowing body clips at ITS OWN ceiling, not a shared one',
+      tallClip === tallCap && shortClip === shortCap && defaultClip === defaultCap,
+      `xl=${tallClip}/${tallCap} s=${shortClip}/${shortCap} default=${defaultClip}/${defaultCap}`);
+    ok('so `height: xl` shows materially more of the same body than the default',
+      tallClip > defaultClip * 2, `xl=${tallClip} default=${defaultClip}`);
+    const singles = ['Signups', 'Sessions', 'Traffic mix', 'Browser share', 'Revenue by plan', 'Weekly compare', 'Channel stack', 'Daily heat', 'Short number'];
     ok('every other card spans 1 column', singles.every((t) => spans[t] === 1), JSON.stringify(spans));
 
     // The body is the scroll container (`overflow: auto`), so IT is where a chart
