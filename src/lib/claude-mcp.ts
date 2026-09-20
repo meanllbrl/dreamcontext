@@ -5,139 +5,145 @@ import { accountEnvFor, isRealHomeConfigDir } from './claude-accounts.js';
 import { ensureSharedMcpConfig } from './claude-account-sandbox.js';
 
 /**
- * The MCP surface, read from the CLI that owns it.
+ * The MCP surface, read from the session that actually has it.
  *
  * ── Why this file exists ────────────────────────────────────────────────────────────────
- * `/mcp` typed into the Chat surface is a dead end, and it is a dead end in the most
- * frustrating way available: the user types exactly the right thing and the engine answers
- * with a sentence telling them to go somewhere else. Verified on CLI 2.1.276 — a headless
- * `-p` run of `/mcp` returns a result frame carrying `local_command: "mcp"` and the text
- * "24 MCP server(s): 3 connected, 21 not connected, 0 disabled. Use `/mcp` in the terminal
- * for details." The panel that word "details" refers to exists only in the TUI.
+ * `/mcp` typed into the Chat surface was a dead end: the headless engine answers it with
+ * "N MCP server(s): … Use `/mcp` in the terminal for details." (CLI 2.1.276). The user types
+ * exactly the right thing and is sent to another application, while unauthenticated servers
+ * stay dead with nothing in the window able to say so.
  *
- * That sentence is also where the cost lives: on the machine this was built for, 11 of 24
- * servers sat at "Needs authentication", which means the tools the agent believes it has are
- * dead, and nothing in the chat window could say so or fix it.
+ * ── The source of truth is the SESSION, and nothing else (2026-09-20) ───────────────────
+ * The first two cuts of this file asked `claude mcp list`, and both were wrong — the second
+ * one silently, which is worse. That command reports the CONFIGURATION of a config directory.
+ * The panel needs to answer a different question: which servers does the conversation in this
+ * window actually have? Those are not the same question, and on the machine this was built
+ * for they disagreed about 26 of 32 servers:
  *
- * So the Chat surface grows its own panel, and this module is its source of truth. It does
- * NOT reimplement MCP: every answer here comes from `claude mcp …`, the same commands a user
- * would run by hand, so a CLI that changes its behaviour changes this panel with it.
+ *   • A sandboxed account's `.claude.json` carries NO MCP keys at all (copying them per
+ *     account would multiply every MCP secret), so a sandboxed session reaches the machine's
+ *     own servers BY REFERENCE — the spawn adds `--mcp-config <shared file>`. `claude mcp
+ *     list` cannot be told about that file: before the subcommand the variadic flag swallows
+ *     `mcp list` as filenames, after it the flag is rejected, and with `=` it parses but the
+ *     servers still do not appear. All three measured.
+ *   • `claude mcp list` reported twelve claude.ai connectors as "✔ Connected" that the session
+ *     itself reported as `needs-auth` — because an OAuth credential is stored per config
+ *     directory, and the listing was describing the account's configuration rather than this
+ *     directory's credentials.
+ *
+ * So the listing is taken from the session's OWN `system/init` frame, which carries
+ * `mcp_servers: [{ name, status, source }]` — the engine's own answer about the engine's own
+ * tools. It is produced by running `claude -p "/mcp"`, which the engine handles as a local
+ * command: `num_turns: 0`, `total_cost_usd: 0`. The truthful reading is also the free one.
+ *
+ * ── What `source` buys ──────────────────────────────────────────────────────────────────
+ * The frame says where each server came from, which is what decides whether an action is even
+ * possible. Measured values: `project` (the repo's `.mcp.json` — shared with the whole team,
+ * and connected for an account seeing the repo for the FIRST time, no approval step in a
+ * headless run), `claudeai` (the account's connectors), `plugin`, and `dynamic` (handed in by
+ * `--mcp-config`). A `dynamic` server cannot be signed into from a sandbox at all —
+ * `claude mcp login` does not know it exists there ("No MCP server named …", measured) — so
+ * the panel must not offer a button that cannot work.
  *
  * ── The token is never handled ──────────────────────────────────────────────────────────
- * Authenticating is `claude mcp login <name>`: the CLI opens the browser, the CLI receives
- * the callback, the CLI writes its own credential into its own config directory. This process
- * never sees, stores, displays, logs or asks anyone to paste a token — and the login child's
- * output is DISCARDED rather than buffered, because an interactive OAuth flow's stdout can
- * carry a callback URL bearing an authorization code (the same rule `claude auth login` has
- * followed since the multi-account work; see `agent-accounts.ts`). What comes back from a
- * login is one thing: a freshly probed status for that one server.
- *
- * ── Why the output is parsed, and what happens when it cannot be ────────────────────────
- * `claude mcp list` has no `--json` on this CLI (checked: its only option is `-h`), so the
- * human-readable lines are parsed. The parser is pure and fixture-tested, and it refuses to
- * guess twice over: a line it does not recognise yields `null` and is dropped, and a STATUS
- * label it does not recognise is carried through verbatim as `unknown` rather than being
- * rounded to the nearest known state. A future CLI that invents a fourth status will show
- * that status to the user, spelled the way the CLI spelled it — never silently as "connected".
+ * Signing in is `claude mcp login <name>`: the CLI opens the browser, the CLI receives the
+ * callback, the CLI writes its own credential into its own directory. This process never
+ * sees, stores, displays or asks anyone to paste a token, and the login child's output is
+ * DISCARDED rather than buffered, because an interactive OAuth's stdout can carry a callback
+ * URL bearing an authorization code (the rule `claude auth login` has followed since the
+ * multi-account work).
  */
 
-/** What `claude mcp list` says about one server, as the panel draws it. */
-export interface McpServerStatus {
-  /** The server's name, exactly as configured (`claude.ai Figma`, `plugin:stripe:stripe`). */
+/** Where the engine says a server came from. Unrecognised values are carried, never guessed. */
+export type McpSource = 'project' | 'claudeai' | 'plugin' | 'dynamic' | 'user' | 'unknown';
+
+/** What the engine says about a server's readiness. Same rule: unknown stays unknown. */
+export type McpStatus = 'connected' | 'needs-auth' | 'failed' | 'pending' | 'unknown';
+
+/** One row as the panel draws it — the session's own view of one server. */
+export interface McpServerRow {
   name: string;
-  /** URL or launch command, as listed. May carry a trailing transport note — `(HTTP)`. */
-  target: string;
-  /** The recognised state. `unknown` means the CLI said something new; read `label`. */
-  state: 'connected' | 'needs-auth' | 'pending-approval' | 'failed' | 'disabled' | 'unknown';
-  /** The status text the CLI printed, glyph stripped — always shown for `unknown`. */
-  label: string;
+  status: McpStatus;
+  /** The engine's own word for the status, kept verbatim for anything unrecognised. */
+  statusLabel: string;
+  source: McpSource;
+  /** The engine's own word for the source, same reason. */
+  sourceLabel: string;
 }
 
-/**
- * Where a row came from, which is also where its credential belongs.
- *
- * `account` — the session's own config directory (claude.ai connectors, plugins, project
- * scope). `shared` — the machine's user-scope servers, handed to a sandboxed session by
- * reference through `--mcp-config`.
- */
-export type McpOrigin = 'account' | 'shared';
-
-/** One row as the panel draws it: a parsed listing line plus where the session gets it from. */
-export interface McpServerRow extends McpServerStatus {
-  origin: McpOrigin;
-}
-
-/** Health checks are N network round-trips; the whole listing is one command, so one budget. */
-const LIST_TIMEOUT_MS = 90_000;
+/** The probe is a local command: no turn, no tokens. It still boots hooks, so give it room. */
+const LIST_TIMEOUT_MS = 120_000;
 /** An interactive browser OAuth. Same ceiling `claude auth login` gets. */
 const LOGIN_TIMEOUT_MS = 5 * 60_000;
 /** Logout is local bookkeeping. */
 const LOGOUT_TIMEOUT_MS = 30_000;
 
-/**
- * `✔ Connected` → `connected`. The glyph is stripped first because it is decoration: the
- * CLI has already changed it once (`✓`/`✔`), and matching on WORDS survives that.
- */
-function readState(label: string): McpServerStatus['state'] {
-  const text = label.replace(/^[^A-Za-z]+/, '').trim().toLowerCase();
-  if (text.startsWith('connected')) return 'connected';
-  if (text.startsWith('needs authentication')) return 'needs-auth';
-  if (text.startsWith('pending approval')) return 'pending-approval';
-  if (text.startsWith('disabled')) return 'disabled';
-  if (text.startsWith('failed') || text.startsWith('error')) return 'failed';
-  return 'unknown';
-}
+/** Recognised statuses. Anything else is reported as `unknown` WITH the engine's own word. */
+const STATUSES: Record<string, McpStatus> = {
+  connected: 'connected',
+  'needs-auth': 'needs-auth',
+  needs_auth: 'needs-auth',
+  failed: 'failed',
+  error: 'failed',
+  pending: 'pending',
+};
+
+/** Recognised sources, same contract. */
+const SOURCES: Record<string, McpSource> = {
+  project: 'project',
+  claudeai: 'claudeai',
+  plugin: 'plugin',
+  dynamic: 'dynamic',
+  user: 'user',
+  local: 'user',
+};
 
 /**
- * One listing line → one server, or `null` for anything that is not one.
+ * The `mcp_servers` array out of a session's `system/init` frame.
  *
- * The shape is `NAME: TARGET - STATUS`, and both separators are ambiguous in a way that
- * decides the split direction:
- *   • the NAME may not contain `: `, but the TARGET always does (`https://…`) — so the name
- *     is taken from the FIRST `: `;
- *   • the STATUS never contains ` - `, but a launch command may — so the status is taken
- *     from the LAST ` - `.
- * Anything without both separators is a header ("Checking MCP server health…"), a blank, or
- * a form this parser has not seen. It is dropped rather than half-read.
+ * Returns `null` — not `[]` — when no init frame was found or it carried no array. The two
+ * are different facts: an empty array means "this session has no MCP servers", while a
+ * missing frame means "we could not read this session", and a caller that conflated them
+ * would tell the user they have nothing when the truth is that we do not know.
  */
-export function parseMcpListLine(line: string): McpServerStatus | null {
-  const raw = line.trim();
-  if (!raw) return null;
-  const nameCut = raw.indexOf(': ');
-  if (nameCut <= 0) return null;
-  const rest = raw.slice(nameCut + 2);
-  const statusCut = rest.lastIndexOf(' - ');
-  if (statusCut <= 0) return null;
-  const name = raw.slice(0, nameCut).trim();
-  const target = rest.slice(0, statusCut).trim();
-  const label = rest.slice(statusCut + 3).trim();
-  if (!name || !target || !label) return null;
-  return { name, target, state: readState(label), label: label.replace(/^[^A-Za-z]+/, '').trim() };
-}
-
-/** Every server in a `claude mcp list` transcript, in the order the CLI printed them. */
-export function parseMcpList(stdout: string): McpServerStatus[] {
-  const out: McpServerStatus[] = [];
+export function parseInitMcpServers(stdout: string): McpServerRow[] | null {
   for (const line of stdout.split('\n')) {
-    const server = parseMcpListLine(line);
-    if (server) out.push(server);
+    const text = line.trim();
+    if (!text.startsWith('{')) continue;
+    let frame: unknown;
+    try { frame = JSON.parse(text); } catch { continue; }
+    const obj = frame as { type?: string; subtype?: string; mcp_servers?: unknown };
+    if (obj.type !== 'system' || obj.subtype !== 'init') continue;
+    if (!Array.isArray(obj.mcp_servers)) return null;
+    const rows: McpServerRow[] = [];
+    for (const raw of obj.mcp_servers) {
+      const entry = raw as { name?: unknown; status?: unknown; source?: unknown };
+      if (typeof entry?.name !== 'string' || !entry.name) continue;
+      const statusLabel = typeof entry.status === 'string' ? entry.status : '';
+      const sourceLabel = typeof entry.source === 'string' ? entry.source : '';
+      rows.push({
+        name: entry.name,
+        status: STATUSES[statusLabel] ?? 'unknown',
+        statusLabel,
+        source: SOURCES[sourceLabel] ?? 'unknown',
+        sourceLabel,
+      });
+    }
+    return rows;
   }
-  return out;
+  return null;
 }
 
 /**
- * `claude mcp get <name>` → the state of that ONE server.
+ * Can this row be signed into from here?
  *
- * Used after a login instead of re-listing: re-running the full list would health-check 24
- * servers to answer a question about one. The output is a `key: value` block, and only
- * `Status:` is load-bearing here.
+ * Only a server the CLI can NAME in this config directory is a login target. A `dynamic`
+ * server is handed to the session by reference and is invisible to `claude mcp login`, so
+ * offering the button would be offering a failure. What fixes a `dynamic` server is moving
+ * its definition into the project's `.mcp.json`, which is the Settings surface's job.
  */
-export function parseMcpGetState(stdout: string): Pick<McpServerStatus, 'state' | 'label'> | null {
-  const line = stdout.split('\n').map((l) => l.trim()).find((l) => /^Status:/i.test(l));
-  if (!line) return null;
-  const label = line.slice(line.indexOf(':') + 1).trim();
-  if (!label) return null;
-  return { state: readState(label), label: label.replace(/^[^A-Za-z]+/, '').trim() };
+export function canSignIn(row: McpServerRow): boolean {
+  return (row.status === 'needs-auth' || row.status === 'failed') && row.source !== 'dynamic';
 }
 
 /** What the CLI leg answered, before any interpretation. `ran` is false when it never started. */
@@ -148,83 +154,29 @@ export interface McpRun {
   stdout: string;
 }
 
-/** The one place this module actually spawns. `env` comes from the ACCOUNT gate, never by hand. */
-async function runMcp(
-  args: string[],
-  env: Record<string, string | undefined>,
-  timeoutMs: number,
-  discardOutput = false,
-): Promise<McpRun> {
-  const execution = await executeClaudeDetached(['mcp', ...args], {
-    cwd: homedir(),
-    env,
-    timeoutMs,
-    discardOutput,
-  });
-  return {
-    ran: execution.spawned,
-    timedOut: execution.timedOut,
-    exitCode: execution.exitCode,
-    stdout: execution.stdout,
-  };
-}
-
 /**
- * Every configured MCP server, health-checked, for ONE account.
+ * The environment a leg runs under: the session's OWN account, always.
  *
- * The account matters and is not cosmetic: a chat session runs under its account's
- * `CLAUDE_CONFIG_DIR`, so the panel must ask the same directory the session will ask. (A
- * sandbox reports the same servers as the real home here — its claude.ai connectors come from
- * the account itself — but that is the CLI's answer to give, not ours to assume.)
+ * An earlier cut routed a machine-local server's sign-in to the real home, reasoning that its
+ * credential belonged where the server was configured. That was built on the wrong model —
+ * the credential has to be where the SESSION will look for it, which is this config
+ * directory — and it is moot now that `canSignIn` refuses the only rows it applied to.
  */
-export async function listMcpServers(env: Record<string, string | undefined>): Promise<
-  { ok: true; servers: McpServerStatus[] } | { ok: false; reason: 'spawn_failed' | 'timeout' }
-> {
-  const run = await runMcp(['list'], env, LIST_TIMEOUT_MS);
-  if (!run.ran) return { ok: false, reason: 'spawn_failed' };
-  if (run.timedOut) return { ok: false, reason: 'timeout' };
-  return { ok: true, servers: parseMcpList(run.stdout) };
-}
-
-/** One server's state, freshly checked. `null` when the CLI answered in a shape we cannot read. */
-export async function probeMcpServer(
-  name: string,
-  env: Record<string, string | undefined>,
-): Promise<Pick<McpServerStatus, 'state' | 'label'> | null> {
-  const run = await runMcp(['get', name], env, LIST_TIMEOUT_MS);
-  if (!run.ran || run.timedOut) return null;
-  return parseMcpGetState(run.stdout);
+export function envForSession(
+  configDir: string,
+  home: string = homedir(),
+): Record<string, string | undefined> {
+  return accountEnvFor(configDir, home);
 }
 
 /**
- * Authenticate with one server — the CLI's own OAuth, start to finish.
- *
- * `discardOutput` is the load-bearing argument, not a tidiness choice: see the module header.
- * The RESULT of a login is never read from the exit code either; the caller re-probes.
- */
-export async function loginMcpServer(
-  name: string,
-  env: Record<string, string | undefined>,
-): Promise<McpRun> {
-  return runMcp(['login', name], env, LOGIN_TIMEOUT_MS, true);
-}
-
-/** Clear one server's stored credential. */
-export async function logoutMcpServer(
-  name: string,
-  env: Record<string, string | undefined>,
-): Promise<McpRun> {
-  return runMcp(['logout', name], env, LOGOUT_TIMEOUT_MS, true);
-}
-
-/**
- * The server names a SANDBOXED spawn is handed by reference, read from the very file the
+ * The server names a sandboxed spawn is handed by reference, read from the very file the
  * spawn points at.
  *
  * Read rather than re-derived from `~/.claude.json`: `ensureSharedMcpConfig` is what decides
- * what a sandboxed session actually receives, so asking it — and then reading its output — is
- * the only way this panel and that spawn cannot drift apart. Returns an empty array when
- * there is nothing shared, which is also the account-#0 case.
+ * what a sandboxed session receives, so asking it — and then reading its output — is the only
+ * way this surface and that spawn cannot drift apart. These are the servers a Settings screen
+ * offers to move into the project, because they are the ones no teammate can see.
  */
 export function sharedMcpServerNames(home: string = homedir()): string[] {
   const path = ensureSharedMcpConfig(home);
@@ -238,59 +190,103 @@ export function sharedMcpServerNames(home: string = homedir()): string[] {
   }
 }
 
-/**
- * The environment a leg for THIS row must run under.
- *
- * A `shared` server is configured in the real home and its credential belongs there; running
- * its sign-in under the sandbox would write the credential where no session will look for it.
- */
-export function envForOrigin(
-  origin: McpOrigin,
-  configDir: string,
-  home: string = homedir(),
-): Record<string, string | undefined> {
-  return origin === 'shared' ? accountEnvFor(home, home) : accountEnvFor(configDir, home);
+/** The `--mcp-config` argument this account's spawns carry, if any. Mirrors `agent-chat.ts`. */
+function mcpConfigArgs(configDir: string, home: string): string[] {
+  if (isRealHomeConfigDir(configDir, home)) return [];
+  const path = ensureSharedMcpConfig(home);
+  return path ? ['--mcp-config', path] : [];
 }
 
 /**
- * Every MCP server THIS SESSION actually has, for the account it runs on.
+ * Every MCP server THIS SESSION has, as the engine itself reports them.
  *
- * Two listings, merged, because that is what the spawn does (see the module header): the
- * account's own, plus the shared file's servers listed against the real home. They run in
- * parallel — each is a fan-out of health checks, and running them in sequence would double
- * the wait for no gain. A name already reported by the account wins: it is the same server,
- * and the account's reading is the one the session's own config directory will use.
- *
- * Account #0 takes the single-listing path unchanged: nothing is shared by reference there,
- * because its session reads the real `~/.claude.json` directly.
+ * `projectRoot` is load-bearing and was missing from the first cut: MCP servers can be
+ * PROJECT-scoped (the repo's `.mcp.json`), and that scope is resolved from the working
+ * directory. Probing from the home directory made every team-shared server invisible — which
+ * is exactly the configuration this feature is meant to encourage.
  */
-export async function listMcpForSession(
+export async function readSessionMcpServers(
+  projectRoot: string,
   configDir: string,
   home: string = homedir(),
-): Promise<{ ok: true; servers: McpServerRow[] } | { ok: false; reason: 'spawn_failed' | 'timeout' }> {
-  const sandboxed = !isRealHomeConfigDir(configDir, home);
-  const sharedNames = sandboxed ? sharedMcpServerNames(home) : [];
+): Promise<
+  { ok: true; servers: McpServerRow[] } | { ok: false; reason: 'spawn_failed' | 'timeout' | 'unreadable' }
+> {
+  const execution = await executeClaudeDetached([
+    '-p', '/mcp',
+    '--output-format', 'stream-json',
+    '--verbose',
+    ...mcpConfigArgs(configDir, home),
+  ], {
+    cwd: projectRoot,
+    env: envForSession(configDir, home),
+    timeoutMs: LIST_TIMEOUT_MS,
+  });
 
-  const [account, shared] = await Promise.all([
-    listMcpServers(accountEnvFor(configDir, home)),
-    sharedNames.length
-      ? listMcpServers(accountEnvFor(home, home))
-      : Promise.resolve({ ok: true as const, servers: [] as McpServerStatus[] }),
-  ]);
+  if (!execution.spawned) return { ok: false, reason: 'spawn_failed' };
+  if (execution.timedOut) return { ok: false, reason: 'timeout' };
+  const servers = parseInitMcpServers(execution.stdout);
+  if (!servers) return { ok: false, reason: 'unreadable' };
+  return { ok: true, servers };
+}
 
-  // The account's listing is the one that must succeed. The shared leg degrading is reported
-  // as missing ROWS, never as a failed panel: a user whose connectors are listed can still
-  // sign into them while the other listing is timing out.
-  if (!account.ok) return account;
+/** The one place the action legs spawn. Always in the project, always as this account. */
+async function runMcp(
+  args: string[],
+  projectRoot: string,
+  configDir: string,
+  timeoutMs: number,
+  home: string,
+): Promise<McpRun> {
+  const execution = await executeClaudeDetached(['mcp', ...args], {
+    cwd: projectRoot,
+    env: envForSession(configDir, home),
+    timeoutMs,
+    // An interactive OAuth's stdout can carry a callback URL bearing an authorization code.
+    discardOutput: true,
+  });
+  return {
+    ran: execution.spawned,
+    timedOut: execution.timedOut,
+    exitCode: execution.exitCode,
+    stdout: execution.stdout,
+  };
+}
 
-  const rows: McpServerRow[] = account.servers.map((s) => ({ ...s, origin: 'account' as const }));
-  const seen = new Set(rows.map((r) => r.name));
-  if (shared.ok) {
-    for (const s of shared.servers) {
-      if (!sharedNames.includes(s.name) || seen.has(s.name)) continue;
-      rows.push({ ...s, origin: 'shared' });
-      seen.add(s.name);
-    }
-  }
-  return { ok: true, servers: rows };
+/**
+ * Authenticate with one server — the CLI's own OAuth, start to finish.
+ *
+ * Run in the PROJECT, so a server defined in the repo's `.mcp.json` is a valid target and its
+ * credential lands in the account this conversation runs on. The RESULT is never read from the
+ * exit code: an OAuth abandoned in the browser exits 0, so the caller re-reads the session.
+ */
+export async function loginMcpServer(
+  name: string,
+  projectRoot: string,
+  configDir: string,
+  home: string = homedir(),
+): Promise<McpRun> {
+  return runMcp(['login', name], projectRoot, configDir, LOGIN_TIMEOUT_MS, home);
+}
+
+/** Clear one server's stored credential for this account. */
+export async function logoutMcpServer(
+  name: string,
+  projectRoot: string,
+  configDir: string,
+  home: string = homedir(),
+): Promise<McpRun> {
+  return runMcp(['logout', name], projectRoot, configDir, LOGOUT_TIMEOUT_MS, home);
+}
+
+/** One server's state now, re-read from the session — the verdict after an action. */
+export async function probeMcpServer(
+  name: string,
+  projectRoot: string,
+  configDir: string,
+  home: string = homedir(),
+): Promise<McpServerRow | null> {
+  const result = await readSessionMcpServers(projectRoot, configDir, home);
+  if (!result.ok) return null;
+  return result.servers.find((s) => s.name === name) ?? null;
 }

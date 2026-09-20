@@ -7,36 +7,32 @@ import './mcpPanel.css';
  *
  * Before this existed, `/mcp` was the most frustrating kind of dead end: the headless engine
  * RECOGNISES the command and answers it, with "N MCP server(s): … Use `/mcp` in the terminal
- * for details." The user typed exactly the right thing and was told to go to another app —
- * while, on the machine this was built for, 11 of 24 servers sat unauthenticated, meaning the
- * tools the agent believed it had were dead and nothing here could say so.
+ * for details." The user typed exactly the right thing and was told to go to another app.
  *
- * So the composer intercepts `/mcp` (never sending it, never spending a turn) and opens this.
- * Everything shown comes from `claude mcp …` through `GET /api/agent/mcp`; the buttons run
- * `claude mcp login|logout` for ONE server. No token is ever displayed, pasted or handled:
- * the CLI opens the browser, the CLI receives the callback, the CLI stores the credential.
+ * ── What this panel shows, and why that took three attempts ─────────────────────────────
+ * It shows what THIS CONVERSATION has — read from the session's own `system/init` frame,
+ * which is the engine's answer about the engine's own tools. Two earlier cuts asked
+ * `claude mcp list` instead, which describes a config DIRECTORY, and the two answers
+ * disagreed about 26 of 32 servers on the machine this was built for: local servers missing
+ * entirely, and a dozen connectors reported "Connected" that the session could not use.
  *
- * The panel mirrors the SPAWN, not a config directory. A chat session runs under its
- * account's config directory AND, when that account is a sandbox, is handed the machine's own
- * servers by reference (`--mcp-config`). Asking the config directory alone lost every local
- * server the user had — the owner reported exactly that, and `listMcpForSession` is the
- * answer: two listings, merged, each row carrying the `origin` it came from.
+ * A row therefore never claims a tool the agent does not have, which is the whole point of
+ * the panel — the servers that need attention are exactly the ones the agent is quietly
+ * missing.
  */
+
+export type McpStatus = 'connected' | 'needs-auth' | 'failed' | 'pending' | 'unknown';
+export type McpSource = 'project' | 'claudeai' | 'plugin' | 'dynamic' | 'user' | 'unknown';
 
 export interface McpServer {
   name: string;
-  target: string;
-  state: 'connected' | 'needs-auth' | 'pending-approval' | 'failed' | 'disabled' | 'unknown';
-  /** What the CLI called this state. Shown verbatim when the state is not one we know. */
-  label: string;
-  /**
-   * Where this session gets the server from — `account` (its own config directory) or
-   * `shared` (a machine-local server handed to a sandboxed session by reference).
-   *
-   * Sent back on every action, because it decides WHICH config directory the sign-in runs
-   * against: a shared server's credential belongs in the real home, not in the sandbox.
-   */
-  origin: 'account' | 'shared';
+  status: McpStatus;
+  /** The engine's own word, shown verbatim when the status is not one we recognise. */
+  statusLabel: string;
+  source: McpSource;
+  sourceLabel: string;
+  /** False when no button here could sign this server in — see the `dynamic` note below. */
+  signInAvailable: boolean;
 }
 
 interface McpListResponse {
@@ -51,25 +47,41 @@ export interface McpPanelProps {
   onClose: () => void;
 }
 
-/** Tone per state — meaning, not decoration. `unknown` stays neutral rather than guessing. */
-const TONE: Record<McpServer['state'], string> = {
+/** Tone per status — meaning, not decoration. `unknown` stays neutral rather than guessing. */
+const TONE: Record<McpStatus, string> = {
   connected: 'good',
   'needs-auth': 'warn',
-  'pending-approval': 'warn',
+  pending: 'warn',
   failed: 'bad',
-  disabled: 'muted',
   unknown: 'muted',
 };
 
-/** The one-word state, in this surface's words. `unknown` defers to the CLI's own label. */
-function stateText(server: McpServer): string {
-  switch (server.state) {
+/** The status in this surface's words. `unknown` defers to whatever the engine called it. */
+function statusText(server: McpServer): string {
+  switch (server.status) {
     case 'connected': return 'Connected';
     case 'needs-auth': return 'Needs sign-in';
-    case 'pending-approval': return 'Pending approval';
+    case 'pending': return 'Pending approval';
     case 'failed': return 'Failed';
-    case 'disabled': return 'Disabled';
-    default: return server.label || 'Unknown';
+    default: return server.statusLabel || 'Unknown';
+  }
+}
+
+/**
+ * Where the server comes from, named the way it matters to the reader.
+ *
+ * `project` is the one worth calling out in every row: it means the definition lives in the
+ * repo, so everyone who clones it gets the server too. The others are this machine's or this
+ * account's, and shared with nobody.
+ */
+function scopeText(server: McpServer): string {
+  switch (server.source) {
+    case 'project': return 'shared with the repo';
+    case 'claudeai': return 'your Claude account';
+    case 'plugin': return 'plugin';
+    case 'dynamic': return 'this machine';
+    case 'user': return 'this machine';
+    default: return server.sourceLabel || '';
   }
 }
 
@@ -78,8 +90,8 @@ export function McpPanel({ accountId, onClose }: McpPanelProps) {
   const [data, setData] = useState<McpListResponse | null>(null);
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState(true);
-  /** The server a login/logout is currently running for — one at a time, by design: each one
-   *  takes over the browser, and two OAuth tabs racing for the same callback is a lost login. */
+  /** The server an action is running for — one at a time, by design: a sign-in takes over the
+   *  browser, and two OAuth tabs racing for the same callback is a lost login. */
   const [busy, setBusy] = useState<string>('');
   const [note, setNote] = useState<string>('');
 
@@ -90,7 +102,7 @@ export function McpPanel({ accountId, onClose }: McpPanelProps) {
       const q = accountId ? `?account=${encodeURIComponent(accountId)}` : '';
       setData(await api.get<McpListResponse>(`/agent/mcp${q}`));
     } catch (err) {
-      setError((err as Error).message || 'Could not read your MCP servers.');
+      setError((err as Error).message || 'Could not read this session\'s MCP servers.');
     } finally {
       setLoading(false);
     }
@@ -101,9 +113,9 @@ export function McpPanel({ accountId, onClose }: McpPanelProps) {
   /**
    * Run one leg and fold its verdict back into the row.
    *
-   * The server answers with the state it RE-PROBED after the child exited, never with the
-   * exit code, so a sign-in abandoned in the browser leaves the row saying "Needs sign-in" —
-   * which is the truth — instead of flipping to Connected and lying about which tools exist.
+   * The server answers with the status it RE-READ from the session after the child exited,
+   * never with the exit code, so a sign-in abandoned in the browser leaves the row saying
+   * "Needs sign-in" instead of flipping to Connected and lying about which tools exist.
    */
   const act = useCallback(async (server: McpServer, leg: 'login' | 'logout') => {
     setBusy(server.name);
@@ -111,20 +123,19 @@ export function McpPanel({ accountId, onClose }: McpPanelProps) {
       ? `Finish signing in to ${server.name} in your browser.`
       : `Signing out of ${server.name}…`);
     try {
-      const next = await api.post<{ name: string; state: McpServer['state']; label: string }>(
+      const next = await api.post<{ name: string; status: McpStatus; statusLabel: string }>(
         `/agent/mcp/${leg}`,
-        { name: server.name, account: accountId, origin: server.origin },
+        { name: server.name, account: accountId },
       );
       setData((prev) => (prev ? {
         ...prev,
         servers: prev.servers.map((s) => (s.name === next.name
-          ? { ...s, state: next.state, label: next.label }
+          ? { ...s, status: next.status, statusLabel: next.statusLabel }
           : s)),
-        counts: prev.counts,
       } : prev));
-      setNote(next.state === 'connected'
+      setNote(next.status === 'connected'
         ? `${server.name} is connected.`
-        : `${server.name}: ${next.label || 'not connected'}.`);
+        : `${server.name}: ${next.statusLabel || 'still not connected'}.`);
     } catch (err) {
       setNote((err as Error).message || 'That did not go through.');
     } finally {
@@ -133,6 +144,8 @@ export function McpPanel({ accountId, onClose }: McpPanelProps) {
   }, [api, accountId]);
 
   const counts = data?.counts;
+  /** Servers this account cannot sign into from here — the panel owes them an explanation. */
+  const stranded = (data?.servers ?? []).filter((s) => s.status === 'needs-auth' && !s.signInAvailable);
 
   return (
     <>
@@ -141,8 +154,8 @@ export function McpPanel({ accountId, onClose }: McpPanelProps) {
           <span className="chat-slideover-name">MCP servers</span>
           <span className="chat-slideover-path">
             {counts
-              ? `${counts.total} configured · ${counts.connected} connected${counts.needsAuth ? ` · ${counts.needsAuth} need sign-in` : ''}`
-              : 'Checking server health…'}
+              ? `${counts.total} in this chat · ${counts.connected} live${counts.needsAuth ? ` · ${counts.needsAuth} need sign-in` : ''}`
+              : 'Reading this session…'}
           </span>
         </div>
         <button
@@ -159,34 +172,25 @@ export function McpPanel({ accountId, onClose }: McpPanelProps) {
       <div className="chat-slideover-body">
         {note && <p className="mcp-note">{note}</p>}
         {loading && !data && (
-          <p className="chat-slideover-status">
-            Health-checking every configured server. This takes a few seconds.
-          </p>
+          <p className="chat-slideover-status">Asking this session which servers it has…</p>
         )}
         {error && <p className="chat-slideover-status error">{error}</p>}
         {data && data.servers.length === 0 && !error && (
-          <p className="chat-slideover-status">No MCP servers are configured for this account.</p>
+          <p className="chat-slideover-status">This chat has no MCP servers.</p>
         )}
 
         <div className="mcp-list">
           {data?.servers.map((server) => (
-            <div className="mcp-row" key={server.name} data-tone={TONE[server.state]}>
+            <div className="mcp-row" key={server.name} data-tone={TONE[server.status]}>
               <div className="mcp-row-text">
-                <span className="mcp-row-name">
-                  {server.name}
-                  {/* Named only where it changes what the row MEANS: a local server is one this
-                      machine runs, shared into whichever account the session is on, and its
-                      sign-in lands somewhere different from a connector's. An account row gets
-                      no chip — labelling every row would be noise. */}
-                  {server.origin === 'shared' && <span className="mcp-scope">local</span>}
-                </span>
-                <span className="mcp-row-target">{server.target}</span>
+                <span className="mcp-row-name">{server.name}</span>
+                <span className="mcp-row-target">{scopeText(server)}</span>
               </div>
-              <span className="mcp-state" data-tone={TONE[server.state]}>{stateText(server)}</span>
-              {/* Only the two states a button can actually change. A pending-approval server is
-                  approved by the project trust prompt, and a disabled one by config — offering
-                  a sign-in there would be a button that does nothing. */}
-              {(server.state === 'needs-auth' || server.state === 'failed') && (
+              <span className="mcp-state" data-tone={TONE[server.status]}>{statusText(server)}</span>
+              {/* A button only where one can do something. A server handed to this account by
+                  reference is invisible to `claude mcp login`, so offering a sign-in there
+                  would be offering a failure — the note under the list says what fixes it. */}
+              {server.signInAvailable && (
                 <button
                   type="button"
                   className="mcp-act"
@@ -196,7 +200,7 @@ export function McpPanel({ accountId, onClose }: McpPanelProps) {
                   {busy === server.name ? 'Signing in…' : 'Sign in'}
                 </button>
               )}
-              {server.state === 'connected' && (
+              {server.status === 'connected' && server.source !== 'dynamic' && (
                 <button
                   type="button"
                   className="mcp-act mcp-act--quiet"
@@ -210,14 +214,20 @@ export function McpPanel({ accountId, onClose }: McpPanelProps) {
           ))}
         </div>
 
+        {stranded.length > 0 && (
+          <p className="mcp-foot mcp-foot--warn">
+            {stranded.length === 1 ? '1 server needs' : `${stranded.length} servers need`} a sign-in
+            that cannot be done from this account: {stranded.map((s) => s.name).join(', ')}. They
+            reach this chat from your machine's own config, which the sign-in command cannot see.
+            Moving them into this project's <code>.mcp.json</code> fixes it for good — and gives
+            them to everyone who clones the repo. Settings → MCP servers does that.
+          </p>
+        )}
+
         {data && (
           <p className="mcp-foot">
-            Signing in opens your browser. dreamcontext never sees or stores the credential —
-            the Claude CLI completes the flow and keeps it in its own config.
-            {data.servers.some((s) => s.origin === 'shared') && (
-              <> Rows marked <span className="mcp-scope">local</span> are this machine's own
-              servers, shared into every account you run a session on.</>
-            )}
+            This is what the conversation actually has, read from the session itself. Signing in
+            opens your browser; dreamcontext never sees or stores the credential.
           </p>
         )}
       </div>

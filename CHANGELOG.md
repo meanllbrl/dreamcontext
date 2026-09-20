@@ -4,50 +4,55 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
-### `/mcp` in Chat is a working panel, not a sentence pointing at another app (2026-09-18)
+### `/mcp` in Chat is a working panel, and MCP servers can finally be shared with a team (2026-09-20)
 
 Typing `/mcp` in the Chat window used to cost a turn and return a dead end. The headless
 engine does not refuse the command, it **answers** it: a result frame carrying
-`local_command: "mcp"` and the text *"24 MCP server(s): 3 connected, 21 not connected,
-0 disabled. Use `/mcp` in the terminal for details."* (measured against CLI 2.1.276). The
-user typed exactly the right thing and was sent to another application — while, on the
-machine this was found on, **12 of 24 configured servers were sitting at "Needs
-authentication"**: the tools the agent believed it had were dead, and nothing in the window
-could say so or fix it.
+`local_command: "mcp"` and the text *"24 MCP server(s): … Use `/mcp` in the terminal for
+details."* (measured against CLI 2.1.276). The user typed exactly the right thing and was
+sent to another application — while, on the machine this was found on, **26 of 32 servers
+were unauthenticated**: the tools the agent believed it had were dead, and nothing in the
+window could show that or fix it.
 
-- **The composer intercepts `/mcp` and opens a panel.** Every server, its health as the CLI
-  reports it, and **Sign in** / **Sign out** per row. The data is the CLI's own —
-  `GET /api/agent/mcp` runs `claude mcp list` and parses it (`src/lib/claude-mcp.ts`; that
-  command has no `--json`), and the actions run `claude mcp login|logout <name>` for one
-  server. Interception is narrow, like `/login`'s: *"what does /mcp do?"* still reaches the
-  model. The draft IS cleared here, unlike the sign-in's — a draft that is nothing but the
-  command has nothing left to keep once the command has been obeyed.
-- **The panel mirrors the SPAWN, not a config directory.** A sandboxed account's
-  `.claude.json` carries no MCP keys at all — copying them per account would multiply every
-  MCP secret — so its session reaches the machine's own servers by reference, through
-  `--mcp-config <shared file>`. Asking the config directory alone therefore lost every local
-  server the user had (measured: 24 listed against 32 actually available). The panel runs
-  both listings in parallel and merges them, each row carrying the `origin` it came from —
-  which also decides where a sign-in lands, since a shared server's credential belongs in the
-  real home. A client claiming `shared` for a name the shared file does not carry is refused.
-- **A login's verdict is a re-probe, never the exit code.** An OAuth abandoned in the
-  browser exits 0. After the child ends, the route re-runs `claude mcp get <name>` and
-  reports what that says, so a row can never claim a tool the agent does not have.
-- **The token is never handled, and the login child's output is discarded at the spawn** —
-  an interactive OAuth's stdout can carry a callback URL bearing an authorization code, the
-  same rule `claude auth login` has followed since the multi-account work. Nothing is
-  displayed, stored, logged or pasted.
-- **An unrecognised status is not rounded to the nearest known one.** A state the CLI has
-  not printed before is shown verbatim as *unknown*, so a future CLI cannot silently render
-  as "Connected".
+- **`/mcp` opens a panel showing what THIS CONVERSATION has.** The composer intercepts the
+  command (narrowly — *"what does /mcp do?"* still reaches the model) and the panel lists
+  every server with its live status, its scope, and a **Sign in** / **Sign out** where an
+  action can actually work.
+- **The source is the session, not a config file — the correction that took three cuts.**
+  `claude mcp list` describes a config DIRECTORY, and on the owner's machine it and the
+  session disagreed about **26 of 32 servers**: machine-local ones missing entirely, and a
+  dozen connectors reported "Connected" that the session could not use, because an OAuth
+  credential is stored per config directory. The panel now reads the session's own
+  `system/init` frame, which carries `mcp_servers: [{name, status, source}]`. The probe is
+  `claude -p "/mcp"`, which the engine answers as a local command — `num_turns: 0`,
+  `total_cost_usd: 0` — so the truthful reading is also the free one, and it replaced a
+  90-second health-check listing. The generalised lesson is written down as
+  *Ask the subject, not its configuration*.
+- **No button is drawn where none can work.** The frame says where each server came from. A
+  server handed to a sandboxed session by reference is invisible to `claude mcp login` ("No
+  MCP server named …", measured), so those rows get an explanation and a pointer to the fix
+  instead of a sign-in that would fail.
+- **The verdict after a sign-in is a re-read of the session, never the exit code.** An OAuth
+  abandoned in the browser exits 0. And the login child's output is discarded at the spawn,
+  because an interactive OAuth's stdout can carry a callback URL bearing an authorization
+  code. Nothing is displayed, stored, logged or pasted.
+- **Settings → MCP servers: the scope a team can share.** A colleague who opens dreamcontext
+  could never reach your MCP servers, because a server in your `~/.claude.json` is yours
+  alone and a claude.ai connector belongs to your account. The repo's `.mcp.json` is the one
+  scope that travels: measured, an account that had never opened the repo saw a server there
+  `connected` on its first run, with no approval step and nothing copied. The new Settings
+  section shares one on a click — and **refuses to publish a secret**, rewriting every
+  `env`/`headers` literal into a `${VAR}` reference and naming the variables the team must
+  set, because that file is committed and a brain repo is synced across a team. A server
+  whose URL carries its own token is refused outright.
 
-Proof: 22 unit tests (`claude-mcp.test.ts`, fixtures captured from the real CLI) and 36
-real-app assertions (`npm run verify:chat-mcp` — isolated HOME, scripted `claude` on PATH,
-real server, real Chromium), including a leak canary printed by the login child that must
-appear in no response and no pixel of the DOM, and an abandoned login that must leave its
-row saying "Needs sign-in", and a sandboxed account that must still see its local servers.
-Against the live CLI on this machine, all 32 of the session's servers are listed — the 24 its
-account carries plus the 8 the machine shares into it.
+Proof: 41 unit tests and 40 real-app assertions (`npm run verify:chat-mcp` — isolated HOME, a
+scripted `claude` that reproduces the config-vs-session gap, real server, real Chromium),
+including a leak canary printed by the login child that must appear in no response and no
+pixel of the DOM, an abandoned login that must leave its row saying "Needs sign-in", and a
+shared server whose secret must reach neither the repo file nor the API response. Against the
+live CLI on this machine the panel now reports all 32 of the session's servers with the same
+6 live / 26 needing sign-in that the agent's own startup notice reports.
 
 ### ECO speaks in two registers — firm from 300k, severe from 650k (2026-09-14)
 

@@ -19,6 +19,7 @@ import { GitHubLogin } from '../components/brain/GitHubLogin';
 import { OriginSetup } from '../components/brain/OriginSetup';
 import { SystemDependencies, FeatureDepsNotice } from '../components/settings/SystemDependencies';
 import { ClaudeAccounts } from '../components/settings/ClaudeAccounts';
+import { McpServers } from '../components/settings/McpServers';
 import { LinkedRepos } from '../components/brain/LinkedRepos';
 import { readAutoCheckpointOnOpen, writeAutoCheckpointOnOpen } from '../lib/brainSyncPrefs';
 import { isDesktop } from '../lib/desktop';
@@ -350,6 +351,12 @@ export function SettingsPage({ focus }: SettingsPageProps) {
               reason this block exists. */}
           <SettingGroup title={t('settings.agents.accounts.title')}>
             <ClaudeAccounts />
+          </SettingGroup>
+
+          {/* Directly under the accounts, because it answers the question the accounts raise:
+              an account is per person, so what do all of them SHARE? The repo's servers. */}
+          <SettingGroup title="MCP servers">
+            <McpServers />
           </SettingGroup>
 
           {!agentCfg ? (
