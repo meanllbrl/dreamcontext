@@ -166,7 +166,7 @@ The same memory mechanism powers every surface of the project. Files are structu
 curl -fsSL https://cdn.jsdelivr.net/npm/dreamcontext/install.sh | sh
 ```
 
-> Served from the published npm package via CDN — works with a private repo, no GitHub access needed. On macOS this also installs the optional [desktop app](#desktop-app) into `~/Applications` (skip with `DREAMCONTEXT_INSTALL_NO_APP=1`).
+> Served from the published npm package via CDN — works with a private repo, no GitHub access needed. **No Node.js? No problem** — on macOS the installer offers to install Homebrew (with your confirmation) and Node.js for you, and adds Homebrew to your shell profile so `dreamcontext` stays on PATH in your next terminal (skip the automatic install with `DREAMCONTEXT_INSTALL_NO_NODE=1`, answer every prompt yes with `DREAMCONTEXT_INSTALL_YES=1`). On macOS it also installs the optional [desktop app](#desktop-app) into `~/Applications` (skip with `DREAMCONTEXT_INSTALL_NO_APP=1`).
 
 **Manual install (npm):**
 
