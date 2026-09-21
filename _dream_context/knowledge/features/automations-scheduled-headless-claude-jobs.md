@@ -3,16 +3,17 @@ id: feat_iixpNXAm
 type: feature
 name: automations-scheduled-headless-claude-jobs
 description: >-
-  User-defined, launchd-scheduled jobs that run headless Claude sessions
-  (bypassPermissions) to produce recurring outputs—daily digests, weekly
-  reports, research runs—driven by markdown manifests, gated by machine-local
-  SHA256 approval tripwire, ships fully disabled until explicitly installed and
-  approved.
+  User-defined jobs that run headless Claude sessions unattended to produce
+  recurring outputs, driven by markdown manifests and gated by a machine-local
+  SHA256 approval tripwire; ships fully disabled until installed and approved.
+  Since 2026-09-19 they are also AGENTS: the page is a member list (photo, mode
+  sched|call), and every agent is a channel where a finished run posts one
+  message and keeps a thread.
 pinned: false
 date: '2026-07-26'
 status: active
 created: '2026-07-26'
-updated: '2026-09-07'
+updated: '2026-09-21'
 released_version: v0.22.0
 tags:
   - 'topic:agents'
@@ -36,6 +37,21 @@ related_tasks:
   - fix-agents-an-automation-tab-opening-on-launch-wiped-the-saved-roster
   - >-
     fix-automations-the-question-is-visible-on-the-card-open-chat-reaches-the-run-that-asked-and-a-run-needing-a-human-opens-itself
+  - >-
+    automations-become-agents-every-automation-is-a-slack-like-thread-the-agent-posts-important-updates-to-and-the-user-replies-in
+  - >-
+    agents-step-1-the-agents-page-becomes-a-member-list-where-i-create-and-edit-agents-with-a-photo-a-mode-and-a-model
+  - >-
+    agents-step-2-a-finished-run-pushes-one-message-into-the-agents-feed-and-the-message-shape-is-the-design-to-approve
+  - >-
+    agents-step-3-a-pushed-message-can-carry-a-question-with-options-a-structured-summary-several-files-and-a-board
+  - >-
+    agents-step-4-replying-in-a-thread-or-mentioning-an-agent-resumes-its-session-or-calls-it-and-the-answer-comes-back-as-a-post
+  - >-
+    agents-run-across-my-devices-sessions-sync-every-question-and-answer-pushes-immediately-and-a-refresh-button-pulls-now
+  - retire-the-telegram-channel-for-agents-end-to-end
+  - >-
+    stop-auto-opening-automation-runs-as-chat-tabs-and-take-automations-out-of-the-chat-screen
 ---
 
 ## Why
@@ -55,6 +71,17 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 - [x] As a user, when a run stops to ask me something, I can read the question itself on the board — not a badge telling me a verdict is owed without saying what on — and answer it where I am.
 - [x] As a user, a run that stopped to ask (or crashed) opens itself as a chat tab when I next open the app, with the asking conversation already loaded; a clean run stays quiet with its notification.
 - [x] As a user, a tab that opens itself never costs me the tabs I opened — my saved chats survive the launch race.
+
+### Automations become AGENTS, and every agent is a channel (epic, 2026-09-19 →)
+
+- [x] As a user, the sidebar says **Agents**, not Automations, and the page is a MEMBER LIST: each agent is a card with a photo, a name, what it does in rendered markdown and when it next runs — not a row of scheduler plumbing.
+- [x] As a user, I create and edit an agent in one dialog — describe it in plain language and the name and time fill themselves in once, pick a preset photo or upload one — and I choose whether it runs **on a schedule** or **only when I call it**; an on-call agent is never fired by the dispatcher.
+- [x] As a user, a finished run is a MESSAGE in the channel, so I can follow what my agents did without opening a single session — day dividers, a New watermark, unread counts on the sidebar.
+- [x] As a user, the run itself decides what goes into the channel: it posts what is IMPORTANT, in its own words, and an unremarkable run posts nothing at all — never a transcript dump and never a summary derived after the fact.
+- [ ] As a user, a pushed message can carry a QUESTION with options, a structured summary, several files and a board — so I can act on it from the channel. (step 3, `todo`)
+- [ ] As a user, replying in a thread or @-mentioning an agent resumes its session (or calls an on-call agent), and the answer comes back as a post in the same thread. (step 4, `todo`)
+- [ ] As a user, the channel's input is the CHAT'S OWN composer — the same field, file picker and Send, with the model/effort trigger hidden because a channel reply is not a model choice. (branch `feat/agents-channel-composer`, `in_review`; 7 of 8 criteria verified, the 8th is the owner's own UX verdict)
+- [ ] As a user, my agents' sessions follow me across devices: a question or an answer pushes immediately and a refresh button pulls now. (`todo`)
 
 ## Acceptance Criteria
 
@@ -91,8 +118,30 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 - [x] Reaching one run from both the auto-open and a history-row click yields exactly ONE tab — never two CLIs resumed onto one transcript. An automation tab carries its own colour on the tab element (`data-session-kind`, accent left edge + wash), not only a 10px glyph. The run history reads as a stack, capped at 6 rows with the hidden count stated.
 - [x] Tests: `tests/unit/automations-attention.test.ts` (16, including the exact production state — 60 session-less gate rows burying the asking run, and the question record still reaching it), `automations-store.test.ts` (+5 coalescing), `automations-route.test.ts` (+5), `automation-run-chat.test.ts` (+4); `verify:automations` 50/50 and `verify:automation-run-chat` 42/42 × light+dark; `scripts/verify/automation-tab-restore.mjs` 8/8.
 
+### Agents epic — step 1 (members) and step 2 (the feed), 2026-09-19/20
+
+- [x] **The manifest gained two fields and the approval hash gained one** — `mode: sched|call` and `photo`. `mode` is hashed **only when it is `call`**, so every manifest already on disk keeps its exact hash and nothing blocks on upgrade, while the direction that MATTERS cannot travel silently: an agent approved as *only when I call it* could otherwise have a schedule bolted on by a synced edit, keep a byte-identical hash, and start running headless on a timer with nobody shown a diff. Found in review, not in design.
+- [x] **`mode: call` is refused at every firing path, not just `isDue`** — including the DRAIN phase, which re-resolves the manifest and had been checking `enabled` but not `mode`, so a fire queued while an agent was scheduled would still run after it was made on-call. Mutation-tested: without the guard the on-call agent fires, with it nothing does.
+- [x] **A symlink inside `automations/photos` is refused** — the directory is served over HTTP.
+- [x] **One message per RUN, built by joining the thread entries with the run cache** (`feed.ts`), with exactly one `started` and one terminal system entry per run; a short-circuited run writes nothing.
+- [x] **`automations post|thread|read` are CLI verbs the RUN uses itself**, and the preamble carries a THREAD clause plus `DREAMCONTEXT_AUTOMATION_SLUG/RUN` on the spawn, so a run posts while it works rather than being summarised afterwards.
+- [x] **Thread storage is day-filed and gitignore-migrated across all three pre-existing shapes** (`automations/threads/*/*` wildcard + a 4th share negation, migration `0.28.0` through the repair path), with the F2 silent-unshare hazard regression-tested against real `git`.
+- [x] **The feed does ONE BOUNDED read per agent (14 days), not two unbounded ones** — found by review as the design's own R5 mitigation left unimplemented: `limit` had only trimmed the RESPONSE while `buildFeed` read each agent's entire retained history from disk, synchronously, twice per agent, on every 15-second poll, per tab. `readThread` gained a `days` window that slices the day-file list BEFORE opening anything, and unread is now derived from the entries already in hand — which makes the sidebar count and the per-message bars the same computation by construction. The window is 14, not R5's suggested 2: two bounds the cost but empties the channel of anything older than yesterday, and older history stays reachable via `automations thread <slug>`, which takes no window.
+- [x] **A failed run's message says WHY it failed** — it read "Nothing to report." with plenty to report — **and offers no file card for a document it never wrote**: `RunEvent.outputPath` is recorded regardless of outcome and the runner leaves a ZERO-BYTE file there, so `existsSync` was true and the card opened on a blank page. The predicate is "has bytes".
+- [x] **A control does not name an action it cannot perform** — a run with no replies says "Open thread", not the criterion's "Reply in thread", because replying does not exist until step 4. Deliberate deviation, flagged for the owner to overrule at the gate.
+- [x] **Evidence:** `verify:agents-members` 64/64 and `verify:agents-feed` 37/37 (later 73/73 with the composer branch) against a real server, a real runner and real Chromium; full unit suite 9390 passed.
+- [ ] **The owner's UX verdict is the one criterion an agent cannot sign** — step 2 stays `in_review` at 7/8 until three real runs are read as messages in the desktop app. Step 3 is deliberately not started until it lands.
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-09-20 — Telegram and "Run now" come OFF the agents page
+
+The owner removed both from the surface, and the reasoning is the channel's whole premise: you talk to an agent by writing in its thread and tagging it, so a separate "Run now" button and a separate Telegram binding are a second way to do a thing the channel already does. Neither capability is deleted from the subsystem; they stop being page furniture.
+
+### 2026-09-20 — The channel's input must be the chat's own composer, not a second one
+
+A hand-written composer for the agents channel was rejected on this project's own `component-reuse-over-*` rule. `ComposerHost` had already abstracted the composer away from chat and `meetingHost.ts` was already a second non-chat host over a polled HTTP thread — the same shape the agents channel needs — so the work is an ADAPTER, not a rewrite, and hiding the model/effort trigger is an existing prop (`showMode`). Two traps recorded with it: `--dc-bottom-strip` is published by the CURRENT composer and the FAB lands on top of Send if it is not carried over, and `composerScratch` keys attachments by `convId`, so `claudeId: ''` would share a bucket with the meeting room.
 
 ### 2026-08-28 — Reaching a waiting run, and the auto-open that cost the user their chats (shipped in 0.27.0)
 
@@ -353,6 +402,18 @@ The review-queue model (shipped 2026-08-04 under `f9ffba0`) was **retired and de
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-19/21 — Automations become AGENTS: a member list, then a channel
+
+The owner's framing, given with a screenshot of the current page: *every panel gets a v2, and Automations is the first and most important one.* Automations should read like a Slack workspace — agents you create and give a cadence, a channel where each run is a message with unread state, a thread per run where the agent writes only what matters and you can ask it things.
+
+Shipped in this window: **step 1** (`completed`) — the sidebar reads Agents, the page is a member list with photos, a create/edit dialog with presets, a profile popover, two-click delete, and `mode: sched|call` on the manifest with the dispatcher refusing to fire an on-call agent at every path including drain. **Step 2** (`in_review`, 7/8) — a finished run posts one message into `#agents`, built by joining day-filed thread entries with the run cache; `automations post|thread|read` let the RUN write into its own channel while it works. A branch (`feat/agents-channel-composer`, unmerged) makes the channel's input the chat's own composer. Steps 3 (rich message payloads) and 4 (reply/mention resumes the session) are `todo` and deliberately not started.
+
+Three things worth carrying forward:
+
+- **The UX gate is the owner's, and it is real.** Step 1 took three rejected rounds on look alone; step 2's final criterion is *"the owner reads three real runs as messages in the desktop app"* and no agent may tick it. The epic's own rule is that the owner tries each slice in the real app before the next slice starts.
+- **Review found what design had promised and the build had skipped** — twice. `mode` missing from the approval hash (a capability could be silently escalated by a synced edit) and R5's read bound never implemented (the entire retained history re-read from disk twice per agent per 15s poll, per tab). Both were caught by a clean reviewer, not by tests, and both fixes were mutation-checked.
+- **Runtime verification against a real server + real runner + real Chromium** caught a failed run reporting "Nothing to report." and a file card offering a zero-byte document. Neither was visible to typechecking or unit tests.
 
 ### 2026-09-07 - Released in 0.27.0
 
