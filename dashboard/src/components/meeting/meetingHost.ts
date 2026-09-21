@@ -72,6 +72,9 @@ export function useMeetingComposerHost(
     // from the vault-agnostic `/api/agent/usage-limits`, and they are exactly the numbers a
     // room that is about to spend N headless runs wants in front of it.
     claudeId: '',
+    // …which is not a scratch key either. Named explicitly so the room's staged chips cannot
+    // be shown to the agents channel, the other host that reports no conversation.
+    scratchId: 'meeting-room',
     getModel: (): ComposerHostModel => ({
       draft: draft.current,
       // The room never replaces the draft wholesale — there is no rewind and no external

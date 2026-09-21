@@ -103,6 +103,15 @@ import {
   handleAutomationsQueue,
   handleAutomationsAttention,
   handleAutomationsAttentionAck,
+  handleAutomationsThreads,
+  handleAutomationsThreadGet,
+  handleAutomationsThreadRead,
+  handleAutomationsCreate,
+  handleAutomationsUpdate,
+  handleAutomationsDelete,
+  handleAutomationsPhotoGet,
+  handleAutomationsPhotoUpload,
+  handleAutomationsSay,
 } from './routes/automations.js';
 import {
   handleThesesList,
@@ -566,6 +575,13 @@ export function buildRouter(): Router {
   // approval, the sleep-lock deferral, and the orphan guard are all enforced
   // inside `runAutomation`, not in these handlers.
   router.get('/api/automations', handleAutomationsList);
+  // Create is a POST on the COLLECTION, so it shares no shape with any `/:slug`
+  // route and needs no ordering care. Unlike `run`/`approve` a prompt DOES
+  // travel in this body — and then gets approved on this machine by the same
+  // primitive the CLI's `create` calls. See the handler's own comment: the
+  // tripwire exists to catch a manifest changing under the owner, not to stop
+  // the owner writing one at their own keyboard.
+  router.post('/api/automations', handleAutomationsCreate);
   router.get('/api/automations/runs', handleAutomationsRunStatus);
   // `dispatcher` is the machine-local scheduler switch — the dashboard half of
   // `automations install`. Same ordering constraint as `runs`: it MUST precede
@@ -592,8 +608,16 @@ export function buildRouter(): Router {
   // the same window rather than swallowing it.
   router.get('/api/automations/attention', handleAutomationsAttention);
   router.post('/api/automations/attention/ack', handleAutomationsAttentionAck);
+  // The #agents feed. Literal `threads`, so it goes above `/:slug` with the
+  // rest — and its read/ack is split for the same reason attention's is: a
+  // poll that consumed unread would clear a badge for a window nobody was
+  // looking at.
+  router.get('/api/automations/threads', handleAutomationsThreads);
+  router.post('/api/automations/threads/read', handleAutomationsThreadRead);
+  router.post('/api/automations/threads/say', handleAutomationsSay);
   // Before `/:slug` — a literal sub-path registered after a param route is
   // swallowed by it, the same ordering constraint `runs` above documents.
+  router.get('/api/automations/:slug/thread', handleAutomationsThreadGet);
   router.get('/api/automations/:slug/session', handleAutomationsSession);
   router.get('/api/automations/:slug', handleAutomationsShow);
   router.post('/api/automations/:slug/run', handleAutomationsRunNow);
@@ -604,6 +628,16 @@ export function buildRouter(): Router {
   // theses comment below) — registration order relative to `/:slug` is not
   // load-bearing for these, only relative to one another (never ambiguous:
   // each has a unique literal suffix).
+  // Agent identity: edit, delete, and the photo. Same distinct-shape note as
+  // `flow`/`telegram` below — each carries a unique literal suffix, so only
+  // their order relative to one another would ever matter, and it doesn't.
+  // `delete` is a POST on purpose: `index.ts`'s cross-site write guard is
+  // written against state-changing POSTs, and reaching for a prettier verb
+  // that slips past a central security check is a bad trade.
+  router.post('/api/automations/:slug/update', handleAutomationsUpdate);
+  router.post('/api/automations/:slug/delete', handleAutomationsDelete);
+  router.get('/api/automations/:slug/photo', handleAutomationsPhotoGet);
+  router.post('/api/automations/:slug/photo', handleAutomationsPhotoUpload);
   router.get('/api/automations/:slug/flow', handleAutomationsFlow);
   router.get('/api/automations/:slug/telegram', handleAutomationsTelegramGet);
   router.post('/api/automations/:slug/telegram', handleAutomationsTelegramSet);

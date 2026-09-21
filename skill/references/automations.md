@@ -92,7 +92,8 @@ Automations are usually born from a conversation, not a form. When a user descri
 1. **Detect the intent.** The shape is a recurring cadence plus an output. Watch for time-of-day or day-of-week phrasing combined with "do X" or "write X up" or "check on X".
 2. **Dedupe first.** Before proposing anything new, check whether an automation already covers this. Use `dreamcontext automations list`, or `dreamcontext memory recall "<keywords>"`. Extend an existing automation's prompt rather than creating a near-duplicate.
 3. **Agree the schedule and the output, in the user's own words.** Confirm the days, the time, and what the output should look like and where it should go, before writing anything.
-4. **Scaffold it.** `dreamcontext automations create <slug> --title "..." --days <daily|mon,wed> --at HH:MM [--model] [--effort] [--timeout] [--catchup]`.
+4. **Scaffold it.** `dreamcontext automations create <slug> --title "..." --days <daily|mon,wed> --at HH:MM [--model] [--effort] [--timeout] [--catchup] [--photo]`.
+   **Ask which MODE it is before you ask for a time.** `--mode sched` (the default) runs on a wall-clock schedule. `--mode call` has no schedule at all: the dispatcher never fires it, `list` reports it as `When you call it` rather than a broken manifest, and it runs only when a human asks for it (`automations run <slug>`, or Run now on the Agents page). "her sabah" is `sched`; "çağırdığımda", "when I ask", "on demand" is `call` — and asking a person for a time they do not have one for is how a `call` agent ends up scheduled by accident.
 5. **Write the prompt from the conversation.** Edit the manifest's `## Prompt` section (and `## Output instructions` if the user cares how the result is formatted) to say, in full, what the scheduled run should do. This prompt is everything. The scheduled run has no user to ask follow-up questions, so it must be self-contained. Every run is already told to open its document with a one-line result, because that line becomes the desktop notification — for most runs the notification is the only thing the user reads, so it has to carry the answer rather than announce that a file exists.
 6. **Live-test it with the user watching.** `dreamcontext automations run <slug> --force` runs it right now, ignoring the schedule, and shows the user the actual output before they trust it to run unattended.
 7. **Confirm.** Once the user is happy with a live-tested run, the automation is ready. `automations create` already auto-approved it on this machine, since the creator is the local human who wrote the prompt. Nothing further is required here, but see the approval section below for what happens the moment anyone else touches it.
@@ -122,6 +123,46 @@ A newly created automation lives on this machine only. It does not sync to the t
 
 - **Approving a shared automation on a second machine runs it twice.** There is no cross-machine coordination and no owner: approval is machine-local, so every machine that approves an enabled shared automation fires it on its own clock, and the two runs then fight over the same synced cache record. What stands between you and doing that unwittingly is a warning at every approval surface — the CLI `approve`, the dashboard's approve screen, and the in-session approval question all check whether the synced run history holds recent runs this machine's own session-binding store never recorded (i.e. runs that happened on a teammate's machine), and say plainly that approving here runs it duplicated, not moved. The warning is advisory, never a block, because duplication is occasionally wanted — but the intended pattern is one machine runs it, everyone else reads its shared output. Events older than the binding TTL, and events that never spawned a session, are left out of that evidence rather than guessed about; a private automation shows no such warning at all, since its cache never syncs and every run in it is local by construction.
 - **A private automation's output still feeds the local brain during sleep.** Marking something private controls what leaves this machine over git, not what this machine's own agent can read. See "Sleep reads their output" below for the one place that distinction matters: knowledge files are synced regardless of any automation's sharing flag, so distilling a private automation's output into knowledge can republish it through a different door. When that happens, `dreamcontext sleep done` refuses to finish: it lists every knowledge file involved and the private automation it came from, and only proceeds once you pass `--ack-private-derivation`. That flag has no shorter alias, on purpose, and there is no way to discard the disclosure without acknowledging it. If you don't want the material published, edit or delete the listed knowledge files first, then acknowledge.
+
+---
+
+## The channel: what a run says, and to whom
+
+Every automation is also a **channel**, and every fire is a **thread** in it. The dashboard's Agents page opens on `#agents` — one message per run, across every agent, newest at the bottom.
+
+**The run itself decides what to say.** Summaries are never derived from a transcript: a derived summary posts on every run whether or not anything happened, and the whole value of a channel is that an unremarkable run stays quiet.
+
+```
+dreamcontext automations post <slug> "<one or two sentences>" [--file <brain-relative path>]
+```
+
+- **Post only what is IMPORTANT** — a finding, a number that moved, something that needs a decision. Not progress narration, not "starting now", not the whole document (it is saved already and rides as a file card). **Zero posts is the right number for an unremarkable run**, and the run's preamble says so.
+- **A run needs no ids.** The runner exports `DREAMCONTEXT_AUTOMATION_SLUG` and `DREAMCONTEXT_AUTOMATION_RUN` into the child's environment, so `post` binds to the run that is calling it. Those are HINTS, not capabilities: the slug is still a required positional and is still validated, so a leaked or forged variable grants nothing. With no run resolvable at all, `post` **refuses** with a non-zero exit and writes nothing — a post in a thread no run will ever close reads to a human as an agent talking to itself.
+- **`--file` takes brain-relative paths only**, at most four. An absolute or escaping path is refused at write, never stored.
+
+**The runner writes the bookkeeping itself** — `started` when a child actually spawns, then exactly one of `ok` / `failed` / `timeout`, plus `asked` when a run stops to ask. A SCHEDULED fire that never ran (`blocked`, `deferred`, `orphaned`) writes **nothing**, or a still-due automation would post every five minutes forever. These `system` entries appear only inside the thread panel, as grey one-line rows; the feed shows the agent's own words.
+
+**Calling an agent by hand.** The channel has its own text field. Type `@<slug>`, say what you need, and that agent runs once with your sentence in its prompt — your message appears in the channel as your own row, its answer arrives underneath. The ask is not a reply and is never counted as one: it is the question the run's message answers.
+
+- **One agent per message, and the mention is required.** There is no default agent, so a message with nobody named would land and never be answered; Send stays off until one is.
+- **One run at a time per project.** The field says who is holding the slot rather than failing on send — the same single-job rule the dashboard's "run now" has always had.
+- **An ask an agent cannot answer is refused at the door**, not swallowed: an automation that is turned off, or edited since it was approved, gets a 409 and **nothing is written to its channel**. For the dispositions that can only be discovered after the fire (the sleep lock, the orphan guard), an ask — and only an ask — writes a terminal `skipped` entry saying why. A scheduled fire still stays silent on those paths for the reason above; an ask happens once, so it answers once.
+- **The ask reaches the prompt fenced and labelled as speech**, after the approved prompt, never as the job description. This is the one place a request body reaches a run's prompt, and the reason it is not an approval hole is that the approval hash covers the stored manifest: an ask is never stored, never hashed and never replayed by the scheduler. It is the owner typing, which is authorisation in the present tense.
+
+**Reading it:**
+
+```
+dreamcontext automations thread <slug> [--run <id>] [--limit N] [--json]
+dreamcontext automations read <slug> [--up-to <id>]
+```
+
+Unread is **per machine** — a watermark in `~/.dreamcontext/`, never synced, because a synced one makes another machine's badges wrong. It is monotonic: marking an older entry read never rewinds it. Your own replies never badge you.
+
+**Where it lives, and why the format is what it is.** `automations/threads/<slug>/<YYYY-MM-DD>.md` — markdown frontmatter, then one fenced JSON entry per marker. One file per slug per **day**, because one file per slug conflicts on every run from two machines and one file per run is 288 files a day for a five-minute automation. Entries are **append-only and sorted by id**, never by clock, so two machines' appends merge without coordination; the reader tolerates git conflict markers and de-duplicates by id, which makes a conflicted thread **readable before anyone resolves it**. That is the format's most important property.
+
+**A thread is never injected into a prompt.** It is a teammate-writable synced file, and treating it as an instruction source would be exactly the hazard the pattern block's framing exists to prevent.
+
+**Threads follow their automation's sharing.** A private automation's channel is git-ignored; a shared one's publishes alongside its manifest, cache and output. This needed a base wildcard (`automations/threads/*/*`) plus a fourth negation per shared slug, and upgrading vaults get both through a migration that repairs the ignore block's ORDER — appending a wildcard below existing negations silently disables every one of them.
 
 ---
 
@@ -293,6 +334,9 @@ Full flags for every verb live in [cli-reference.md](cli-reference.md#automation
 | `automations list` / `show <slug>` | See every automation, or one in full: schedule, approval state, run history, and whether a previous run is still orphaned. |
 | `automations run <slug> --force` | Run it right now, ignoring the schedule. The live-test step of the capture protocol. |
 | `automations learn <slug> --lesson "…"` | Record what a run learned into its pattern. The run calls this itself; you can too. |
+| `automations post <slug> "…" [--file <p>]` | Post to this agent's channel. The run calls this itself; only what is IMPORTANT, and zero posts is a valid run. |
+| `automations thread <slug> [--run <id>]` | Read a channel, or one run's thread. |
+| `automations read <slug>` | Mark this machine's unread cleared for that channel. |
 | `automations session <slug> [--run N]` | Read the claude session a run actually had: turns, tool calls, failures. |
 | `automations flow <slug>` | Print this automation's flow graph — its own `## Flow` block, or the one implied by its schedule/prompt/review mode — and any problems in it. |
 | `automations questions [slug]` | List questions awaiting a human answer, project-wide or for one automation. |

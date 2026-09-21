@@ -7,6 +7,7 @@ import { migration1007 } from './0.10.7.js';
 import { migration0180 } from './0.18.0.js';
 import { migration0230 } from './0.23.0.js';
 import { migration0230SoulSplit } from './0.23.0-soul-split.js';
+import { migration0280 } from './0.28.0.js';
 import type { Migration } from './types.js';
 
 /**
@@ -19,7 +20,7 @@ import type { Migration } from './types.js';
 // the runner gates each step by its own id, merges same-version changelog
 // entries, and unfinishedAgentTasks matches each agentTask id separately.
 // The user-split entry stays FIRST so its residue task is printed first.
-export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit];
+export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280];
 
 /**
  * Return all migrations whose version falls in the half-open range (from, to].

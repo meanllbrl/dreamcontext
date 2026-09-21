@@ -1,5 +1,6 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
-import { dirname } from 'node:path';
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, extname, join } from 'node:path';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import {
   getAutomation,
@@ -8,6 +9,15 @@ import {
   readPattern,
   setAutomationEnabled,
   deriveFlowFromManifest,
+  createAutomation,
+  updateAutomation,
+  removeAutomation,
+  writeFlowSection,
+  automationPhotosDir,
+  photoRelPathFor,
+  resolveAutomationPhoto,
+  cadenceLabel,
+  isSafeAutomationSlug,
 } from '../../lib/automations/store.js';
 import { resolveRunSession, readSessionDigest } from '../../lib/automations/session.js';
 import { foreignRunEvidence } from '../../lib/automations/session-registry.js';
@@ -16,6 +26,7 @@ import {
   approveAutomation,
   listRegisteredProjects,
   registerProject,
+  revokeApproval,
   readDispatcherHeartbeat,
 } from '../../lib/automations/registry.js';
 import {
@@ -32,15 +43,40 @@ import {
   NOTIFY_SOUND_OK,
 } from '../../lib/automations/notifier.js';
 import { formatSchedule } from '../../lib/automations/schedule.js';
+import { sniffImageType, EXT_BY_IMAGE_TYPE } from '../../lib/image-sniff.js';
 import { allPendingQuestions, claimQuestion, pendingQuestion } from '../../lib/automations/hitl.js';
 import { resumeWithAnswer } from '../../lib/automations/verdict.js';
 import { queuedFire, type QueuedFire } from '../../lib/automations/queue.js';
 import { ackAttention, attentionRuns, attentionWatermark } from '../../lib/automations/attention.js';
+import { buildFeed } from '../../lib/automations/feed.js';
+import { appendThreadEntry, markThreadRead, readThread, threadUnread } from '../../lib/automations/threads.js';
 import { readAutomationSession } from '../../lib/automations/session-registry.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../lib/automations/telegram.js';
 import { startAutomationJob, currentAutomationJob } from '../automation-job.js';
-import { AutomationError, type AutomationCache, type AutomationManifest, type AutomationQuestion, type FlowGraph } from '../../lib/automations/types.js';
+
+/** The feed's hard ceiling. A channel is read from the bottom: a window past
+ *  this is scrollback nobody reaches, and the poll that refreshes it every
+ *  few seconds pays for every message it carries. */
+const FEED_MAX_MESSAGES = 200;
+/** What one line in the composer may carry. A generous paragraph, not a
+ *  document — an ask is a sentence to an agent that already knows its job, and
+ *  `THREAD_TEXT_MAX_CHARS` would truncate anything longer in the store anyway. */
+const SAY_MAX_CHARS = 2000;
+import {
+  AutomationError,
+  AUTOMATION_MODES,
+  EFFORT_LEVELS,
+  MAX_TIMEOUT_MINUTES,
+  WEEKDAYS,
+  type AutomationCache,
+  type AutomationManifest,
+  type AutomationMode,
+  type AutomationQuestion,
+  type EffortLevel,
+  type FlowGraph,
+  type Weekday,
+} from '../../lib/automations/types.js';
 
 /**
  * `/api/automations*` — the dashboard's read + "run now" + approve surface
@@ -62,10 +98,32 @@ import { AutomationError, type AutomationCache, type AutomationManifest, type Au
 interface AutomationSummary {
   slug: string;
   title: string;
+  /** See `AutomationMode` — `'call'` agents show no pause switch and are never
+   *  fired by the dispatcher. */
+  mode: AutomationMode;
+  /** True when this agent has a photo that actually resolves and exists RIGHT
+   *  NOW (`resolveAutomationPhoto`), not merely a `photo` string in its
+   *  frontmatter. The card renders initials when this is false, so the manifest
+   *  never gets to promise a picture the photo route would then refuse. The raw
+   *  path is deliberately NOT on the wire: the client fetches the bytes from
+   *  `GET /api/automations/:slug/photo` and has no use for a filesystem path. */
+  hasPhoto: boolean;
   enabled: boolean;
   schedule: AutomationManifest['schedule'];
   scheduleLabel: string;
+  /** What this agent DOES, in the owner's own words — its `## Prompt`, capped.
+   *  The dialog writes the prompt from the plain-language description, so the
+   *  prompt IS the description and there is no second field to drift from it. */
+  description: string;
+  /** `scheduleLabel` for a scheduled agent, 'When you call it' for an on-call
+   *  one. One server-side string so the card, the profile popover and the CLI
+   *  can never word an agent's cadence differently. */
+  cadenceLabel: string;
   model: string | null;
+  /** On the summary (not only the detail) because the Edit dialog prefills
+   *  from the LIST — opening it must not have to fetch the manifest first, or
+   *  the form flashes a default effort the owner never chose. */
+  effort: AutomationManifest['effort'];
   timeoutMinutes: number;
   catchupHours: number;
   approved: boolean;
@@ -147,7 +205,12 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     enabled: m.enabled,
     schedule: m.schedule,
     scheduleLabel: formatSchedule(m.schedule),
+    mode: m.mode,
+    hasPhoto: resolveAutomationPhoto(contextRoot, m.photo) !== null,
+    description: m.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),
+    cadenceLabel: cadenceLabel(m),
     model: m.model,
+    effort: m.effort,
     timeoutMinutes: m.timeoutMinutes,
     catchupHours: m.catchupHours,
     approved: approval.approved,
@@ -774,6 +837,417 @@ export async function handleAutomationsDisable(
   await setEnabled(res, params, contextRoot, false);
 }
 
+// ─── Create / edit / delete an agent, and its photo ──────────────────────────
+//
+// These are the FIRST routes in this file that write a manifest, so the
+// security stance stated at the top of the file needs one addition rather than
+// a restatement: nothing here lets a request choose a PATH. The slug is a
+// client-supplied string, which is exactly why every one of these handlers
+// runs it through `isSafeAutomationSlug` before it reaches a path join, and the
+// photo's filename is derived from the uploaded bytes' magic number plus that
+// validated slug — never from a filename, a content-type header, or anything
+// else the client sends.
+//
+// The PROMPT is still never supplied over HTTP in the sense the file header
+// means: a prompt written here lands in a manifest, and that manifest is then
+// approved on THIS machine by the same `approveAutomation` primitive the CLI
+// calls. A person sitting at this Mac authoring their own agent is the entire
+// trust model — the tripwire exists to catch a manifest changing UNDER them
+// (a teammate's sync, a hand edit), not to stop them writing one.
+
+/** How much of an agent's prompt a card shows. Bounded because the list
+ *  endpoint is polled and a prompt has no length limit — the dialog holds the
+ *  whole thing, this is the preview. */
+const DESCRIPTION_MAX_CHARS = 600;
+
+/** An agent photo is a small square rendered at 56px at its largest. 4 MB is
+ *  already absurdly generous for that and bounds what one manifest can pin
+ *  into the brain directory. */
+const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
+
+function str(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined;
+}
+
+/** A client-supplied mode, or `undefined` when absent. Throws on a value that
+ *  is present and wrong, rather than silently falling back to `'sched'` — a
+ *  dialog that sends garbage has a bug, and scheduling an agent the owner
+ *  asked to be on-call is the wrong way to find out. */
+function readMode(v: unknown): AutomationMode | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v === 'string' && (AUTOMATION_MODES as readonly string[]).includes(v)) return v as AutomationMode;
+  throw new AutomationError(`Invalid mode — must be one of: ${AUTOMATION_MODES.join(', ')}.`);
+}
+
+function readEffort(v: unknown): EffortLevel | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null || v === '') return null;
+  if (typeof v === 'string' && (EFFORT_LEVELS as readonly string[]).includes(v)) return v as EffortLevel;
+  throw new AutomationError(`Invalid effort — must be one of: ${EFFORT_LEVELS.join(', ')}.`);
+}
+
+/** `days` off the wire: `'daily'` or an array of weekdays. Every token is
+ *  checked here so the error names the bad day rather than the whole schedule. */
+function readDays(v: unknown): 'daily' | Weekday[] | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (v === 'daily') return 'daily';
+  if (!Array.isArray(v)) throw new AutomationError('Invalid days — use "daily" or a list of weekdays.');
+  const days = v.map((d) => String(d).trim().toLowerCase());
+  const bad = days.filter((d) => !(WEEKDAYS as readonly string[]).includes(d));
+  if (bad.length > 0) throw new AutomationError(`Invalid weekday(s): ${bad.join(', ')}.`);
+  if (days.length === 0) throw new AutomationError('Pick at least one day, or switch the agent to on-call.');
+  return days as Weekday[];
+}
+
+function readTimeout(v: unknown): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 1 || n > MAX_TIMEOUT_MINUTES) {
+    throw new AutomationError(`timeout_minutes must be between 1 and ${MAX_TIMEOUT_MINUTES}.`);
+  }
+  return n;
+}
+
+/**
+ * Turn a title into a slug the store will accept.
+ *
+ * The result is still handed to `isSafeAutomationSlug` inside
+ * `createAutomation` — this is a convenience, not the gate. It exists so the
+ * dialog can send a title and let ONE implementation derive the slug, rather
+ * than the browser and the server each having their own idea of what
+ * "Daily insight digest" becomes and quietly disagreeing.
+ */
+function slugifyTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
+
+/**
+ * Record approval of a just-written manifest on THIS machine.
+ *
+ * The exact pairing `automations create` uses (`registerProject` then
+ * `approveAutomation`), and it is deliberately duplicated here rather than
+ * pulled into the store: `updateAutomation` must not grant trust on its own
+ * (see its doc comment), so the grant belongs to each local write SURFACE,
+ * where a human is demonstrably present and the button says what it is doing.
+ *
+ * Registering the project is not incidental — a brand-new brain has no entry
+ * in `~/.dreamcontext/automations.json`, so without it the dispatcher would
+ * tick and never look here, and the owner's first agent would silently never
+ * fire.
+ */
+function approveHere(contextRoot: string, manifest: AutomationManifest): void {
+  const projectRoot = dirname(contextRoot);
+  registerProject(projectRoot);
+  approveAutomation(projectRoot, manifest, new Date());
+}
+
+/** POST /api/automations — create an agent and approve it on this machine. */
+export async function handleAutomationsCreate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'bad_body', 'Expected a JSON body.');
+    return;
+  }
+  try {
+    const title = (str(body.title) ?? '').trim();
+    if (!title) throw new AutomationError('Give the agent a name.');
+    const prompt = (str(body.prompt) ?? '').trim();
+    if (!prompt) throw new AutomationError('Describe what the agent should do — that description is its prompt.');
+
+    const mode = readMode(body.mode) ?? 'sched';
+    const slug = (str(body.slug) ?? '').trim() || slugifyTitle(title);
+    if (!isSafeAutomationSlug(slug)) {
+      throw new AutomationError(`"${title}" does not make a usable name — try plain letters and numbers.`);
+    }
+    if (getAutomation(contextRoot, slug)) {
+      throw new AutomationError(`An agent called "${slug}" already exists.`);
+    }
+
+    let manifest = createAutomation(contextRoot, {
+      slug,
+      title,
+      mode,
+      // The photo is uploaded SEPARATELY, after the manifest exists, because
+      // its filename is `<slug>.<ext>` and the slug is only settled here. The
+      // client posts the bytes to the photo route next; a failure there leaves
+      // an agent with initials, never a half-written manifest.
+      photo: null,
+      days: readDays(body.days) ?? 'daily',
+      at: str(body.at) ?? '09:00',
+      model: str(body.model) ?? null,
+      effort: readEffort(body.effort) ?? null,
+      timeoutMinutes: readTimeout(body.timeoutMinutes),
+      prompt,
+    });
+    // Same ordering as the CLI's create: the flow is derived and written
+    // BEFORE approval, so the hash granted covers the exact manifest on disk.
+    manifest = writeFlowSection(contextRoot, manifest.slug, deriveFlowFromManifest(manifest));
+    approveHere(contextRoot, manifest);
+
+    sendJson(res, 200, { automation: summarize(dirname(contextRoot), contextRoot, manifest) });
+  } catch (err) {
+    if (err instanceof AutomationError) {
+      sendError(res, 400, 'invalid', err.message);
+      return;
+    }
+    console.error('[automations] create failed', err);
+    sendError(res, 500, 'create_failed', 'Failed to create the agent.');
+  }
+}
+
+/**
+ * POST /api/automations/:slug/update — edit an agent and RE-approve it here.
+ *
+ * Re-approval is the point of the button's wording ("Save and re-approve on
+ * this Mac"): `prompt`, `model`, `effort` and `timeoutMinutes` are all
+ * approval-hashed, so an edit necessarily changes the hash and would otherwise
+ * leave the agent blocked until someone approved it by hand. The person who
+ * just typed the new prompt is the person the tripwire would be asking.
+ */
+export async function handleAutomationsUpdate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'bad_body', 'Expected a JSON body.');
+    return;
+  }
+  try {
+    if (!isSafeAutomationSlug(params.slug) || !getAutomation(contextRoot, params.slug)) {
+      sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
+      return;
+    }
+    const manifest = updateAutomation(contextRoot, params.slug, {
+      title: str(body.title),
+      mode: readMode(body.mode),
+      days: readDays(body.days),
+      at: str(body.at),
+      model: body.model === undefined ? undefined : (str(body.model) ?? null),
+      effort: readEffort(body.effort),
+      timeoutMinutes: readTimeout(body.timeoutMinutes),
+      enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+      prompt: str(body.prompt),
+    });
+    approveHere(contextRoot, manifest);
+    sendJson(res, 200, { automation: summarize(dirname(contextRoot), contextRoot, manifest) });
+  } catch (err) {
+    if (err instanceof AutomationError) {
+      sendError(res, 400, 'invalid', err.message);
+      return;
+    }
+    console.error('[automations] update failed', err);
+    sendError(res, 500, 'update_failed', 'Failed to save the agent.');
+  }
+}
+
+/**
+ * POST /api/automations/:slug/delete — remove the manifest, its cache, its
+ * lock/sidecar and its photo, and revoke this machine's approval.
+ *
+ * POST rather than DELETE deliberately: `index.ts`'s cross-site write guard is
+ * written against state-changing POSTs, and a verb that slips past a central
+ * security check to read more nicely is a bad trade.
+ *
+ * Revoking approval is not tidiness. A slug can come BACK — re-created here, or
+ * synced in from a teammate — and a stale grant keyed by that slug would mean
+ * the new manifest arrived pre-trusted without anyone reading it.
+ */
+export async function handleAutomationsDelete(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    if (!isSafeAutomationSlug(params.slug) || !getAutomation(contextRoot, params.slug)) {
+      sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
+      return;
+    }
+    removeAutomation(contextRoot, params.slug);
+    try {
+      revokeApproval(dirname(contextRoot), params.slug);
+    } catch (err) {
+      // The manifest is already gone, which is the part that matters — a
+      // registry that could not be rewritten must not turn a completed delete
+      // into an error the user would retry against a slug that no longer exists.
+      console.error('[automations] delete: could not revoke approval', err);
+    }
+    sendJson(res, 200, { ok: true, slug: params.slug });
+  } catch (err) {
+    if (err instanceof AutomationError) {
+      sendError(res, 400, 'invalid', err.message);
+      return;
+    }
+    console.error('[automations] delete failed', err);
+    sendError(res, 500, 'delete_failed', 'Failed to delete the agent.');
+  }
+}
+
+/**
+ * POST /api/automations/:slug/photo — raw image bytes in, `<slug>.<ext>` out.
+ *
+ * Modelled on `/api/agent/drop`, and hardened the same way, because it is the
+ * one place in this file where a request body becomes a FILE inside the brain:
+ *
+ *  - the body is capped PER CHUNK while streaming, so an oversized upload is
+ *    refused mid-flight rather than buffered into memory first;
+ *  - the type comes from MAGIC BYTES, never the `Content-Type` header — a
+ *    header saying `image/png` over a shell script would otherwise write a
+ *    `.png` that is not one;
+ *  - SVG is not in the allow-list (`sniffImageType` has no SVG branch), for
+ *    the reason stated in `agent-chat.ts`: an SVG can carry `<script>`, and
+ *    this file IS served back to the dashboard;
+ *  - the written path is `<photos dir>/<validated slug><derived ext>` — every
+ *    component constructed here, none of it client-chosen.
+ *
+ * Writing the manifest's `photo` key is part of the same request: an uploaded
+ * file no manifest points at would be a leak of disk with no owner.
+ */
+export async function handleAutomationsPhotoUpload(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const slug = params.slug;
+  if (!isSafeAutomationSlug(slug) || !getAutomation(contextRoot, slug)) {
+    sendError(res, 404, 'not_found', `Agent not found: ${slug}`);
+    return;
+  }
+
+  const buf = await readCappedBody(req, res, MAX_PHOTO_BYTES);
+  if (!buf) return; // 413 already sent, or the stream errored
+  if (buf.length === 0) {
+    sendError(res, 400, 'empty', 'No image data was received.');
+    return;
+  }
+
+  const type = sniffImageType(buf);
+  if (!type) {
+    sendError(res, 415, 'unsupported_type', 'That file is not a PNG, JPEG, GIF or WebP image.');
+    return;
+  }
+
+  try {
+    const ext = EXT_BY_IMAGE_TYPE[type];
+    const rel = photoRelPathFor(slug, ext);
+    const dir = automationPhotosDir(contextRoot);
+    mkdirSync(dir, { recursive: true });
+    // An agent has exactly ONE photo file, so a new upload in a different
+    // format must take the old one with it — otherwise `daily.png` lingers
+    // after `daily.webp` replaces it, unreferenced and undeletable from the UI.
+    for (const otherExt of Object.values(EXT_BY_IMAGE_TYPE)) {
+      if (otherExt === ext) continue;
+      try { unlinkSync(join(dir, `${slug}${otherExt}`)); } catch { /* never existed */ }
+    }
+    writeFileSync(join(dir, `${slug}${ext}`), buf);
+    // `photo` is not approval-hashed, so this write cannot block the agent —
+    // which is why it does not re-approve and does not need to.
+    const manifest = updateAutomation(contextRoot, slug, { photo: rel });
+    sendJson(res, 200, { automation: summarize(dirname(contextRoot), contextRoot, manifest) });
+  } catch (err) {
+    if (err instanceof AutomationError) {
+      sendError(res, 400, 'invalid', err.message);
+      return;
+    }
+    console.error('[automations] photo upload failed', err);
+    sendError(res, 500, 'photo_failed', 'Failed to save the photo.');
+  }
+}
+
+/**
+ * GET /api/automations/:slug/photo — the bytes, or a 404.
+ *
+ * Reads through `resolveAutomationPhoto`, which is the ONLY reason this route
+ * cannot be turned into an arbitrary file reader: the manifest is synced
+ * markdown whose `photo` string a teammate or a hand edit controls, and that
+ * gate refuses anything not sitting directly inside the photos directory. A
+ * 404 here is what the card renders initials for.
+ *
+ * `no-store` because a photo is replaced in place at a stable URL — a cached
+ * one would leave the owner looking at the picture they just changed.
+ */
+export async function handleAutomationsPhotoGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const manifest = isSafeAutomationSlug(params.slug) ? getAutomation(contextRoot, params.slug) : null;
+    const abs = manifest ? resolveAutomationPhoto(contextRoot, manifest.photo) : null;
+    if (!abs) {
+      sendError(res, 404, 'no_photo', 'This agent has no photo.');
+      return;
+    }
+    const ext = extname(abs).toLowerCase();
+    const type = PHOTO_CONTENT_TYPE[ext];
+    if (!type) {
+      // A file with an extension outside the allow-list can only have arrived
+      // by a hand edit — serve nothing rather than guess a content type.
+      sendError(res, 404, 'no_photo', 'This agent has no photo.');
+      return;
+    }
+    const bytes = readFileSync(abs);
+    res.writeHead(200, {
+      'Content-Type': type,
+      'Content-Length': bytes.length,
+      'Cache-Control': 'no-store',
+    });
+    res.end(bytes);
+  } catch {
+    sendError(res, 404, 'no_photo', 'This agent has no photo.');
+  }
+}
+
+/** The extensions this route will hand back, and as what. Derived from the
+ *  same magic-byte allow-list the upload uses, so the two can never disagree
+ *  about which types exist. */
+const PHOTO_CONTENT_TYPE: Record<string, string> = Object.fromEntries(
+  Object.entries(EXT_BY_IMAGE_TYPE).map(([mime, ext]) => [ext, mime]),
+);
+
+/**
+ * Stream a request body with a PER-CHUNK cap — the same shape as
+ * `agent-drop.ts`'s reader and for the same reason: a
+ * buffer-then-check would let an oversized upload allocate first and be
+ * refused afterwards, which is not a cap at all.
+ */
+function readCappedBody(req: IncomingMessage, res: ServerResponse, max: number): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let done = false;
+    const finish = (v: Buffer | null) => { if (!done) { done = true; resolve(v); } };
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > max) {
+        sendError(res, 413, 'too_large', `The photo exceeds the ${Math.round(max / (1024 * 1024))} MB limit.`);
+        req.destroy();
+        finish(null);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => finish(Buffer.concat(chunks)));
+    req.on('error', () => finish(null));
+  });
+}
+
 // ─── Dispatcher (the machine-local scheduler switch) ─────────────────────────
 
 /**
@@ -1040,5 +1514,203 @@ export async function handleAutomationsAttentionAck(
     sendJson(res, 200, { watermark: attentionWatermark(projectRoot) });
   } catch {
     sendError(res, 500, 'attention_ack_failed', 'Failed to record the watermark.');
+  }
+}
+
+// ─── The channel ───────────────────────────────────────────────────────────
+
+/**
+ * GET /api/automations/threads — the whole `#agents` feed.
+ *
+ * One message per RUN across every agent, plus the per-slug unread counts the
+ * filter chips and the sidebar badge read. MUST be registered before
+ * `/api/automations/:slug` — `threads` would otherwise be captured as a slug,
+ * the same rule `runs` and `questions` already follow.
+ *
+ * Reading this NEVER consumes unread. The watermark advances only through the
+ * explicit ack below, for the reason `attention` splits the two: a poll that
+ * marked things read would clear a badge for a window nobody was looking at.
+ */
+export async function handleAutomationsThreads(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const url = new URL(req.url ?? '', 'http://localhost');
+    const rawLimit = Number.parseInt(url.searchParams.get('limit') ?? '', 10);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, FEED_MAX_MESSAGES) : FEED_MAX_MESSAGES;
+    sendJson(res, 200, buildFeed(contextRoot, { limit }));
+  } catch {
+    sendError(res, 500, 'feed_failed', 'Failed to read the agents channel.');
+  }
+}
+
+/**
+ * GET /api/automations/:slug/thread?run=<fired-at> — one run's thread, in id
+ * order, for the panel that opens from a message.
+ *
+ * Omitting `run` returns the agent's whole channel — the CLI's `thread` verb
+ * without a run, over HTTP.
+ */
+export async function handleAutomationsThreadGet(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const manifest = getAutomation(contextRoot, params.slug);
+    if (!manifest) {
+      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
+      return;
+    }
+    const url = new URL(req.url ?? '', 'http://localhost');
+    const runId = url.searchParams.get('run') ?? undefined;
+    const entries = readThread(contextRoot, params.slug, { runId });
+    sendJson(res, 200, {
+      slug: params.slug,
+      title: manifest.title,
+      runId: runId ?? null,
+      entries,
+      unread: threadUnread(contextRoot, params.slug),
+    });
+  } catch {
+    sendError(res, 500, 'thread_failed', 'Failed to read that thread.');
+  }
+}
+
+/**
+ * POST /api/automations/threads/read — advance this machine's read watermark.
+ *
+ * Body is `{ slug, upToId }`. The advance is MONOTONIC inside
+ * `markThreadRead`: an older id than the one on disk is ignored, so two
+ * windows acking out of order cannot rewind the mark and re-badge messages the
+ * user already read.
+ *
+ * Grants nothing and starts nothing — it only ever narrows what a future read
+ * returns, which is why it needs no capability beyond being a local write.
+ */
+export async function handleAutomationsThreadRead(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const body = await parseJsonBody(req);
+    const slug = typeof body?.slug === 'string' ? body.slug : '';
+    const upToId = typeof body?.upToId === 'string' ? body.upToId : '';
+    if (!slug || !upToId) {
+      sendError(res, 400, 'bad_read', 'Body must be { slug, upToId }.');
+      return;
+    }
+    if (!getAutomation(contextRoot, slug)) {
+      sendError(res, 404, 'not_found', `Automation not found: ${slug}`);
+      return;
+    }
+    markThreadRead(contextRoot, slug, upToId);
+    sendJson(res, 200, { unread: threadUnread(contextRoot, slug) });
+  } catch {
+    sendError(res, 500, 'thread_read_failed', 'Failed to record the read mark.');
+  }
+}
+
+/**
+ * POST /api/automations/threads/say — the `#agents` composer. Call ONE agent
+ * by name with a message, and post that message into the channel as the thing
+ * its run answers.
+ *
+ * Body is `{ slug, text }`. MUST be registered before `/api/automations/:slug`
+ * for the same reason `threads` is.
+ *
+ * THIS IS THE ONE PLACE A REQUEST BODY REACHES A RUN'S PROMPT, and the
+ * sibling `POST /:slug/run` documents that it deliberately does not. The
+ * difference is what the two carry: `run` replays stored, approved
+ * configuration, so a body there would be an edit nobody reviewed, while this
+ * route carries a sentence a person is typing right now — authorisation in the
+ * present tense. `runAutomation` still re-checks approval, the sleep lock and
+ * the orphan guard, and the ask lands in the prompt fenced and labelled as
+ * speech (`buildAskBlock`), never as the job description.
+ *
+ * ORDER MATTERS AND THERE IS NO `await` INSIDE IT. The busy check, the thread
+ * write and the job start run as one synchronous block, so nothing can slip a
+ * second job in between and leave a question in the channel that nothing is
+ * answering. The ask is written FIRST so it is the run's opening entry — the
+ * feed keys the exchange on that, and it is also what makes the message appear
+ * the instant the composer's request returns instead of on the next poll.
+ */
+export async function handleAutomationsSay(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const body = await parseJsonBody(req);
+    const slug = typeof body?.slug === 'string' ? body.slug.trim() : '';
+    const text = typeof body?.text === 'string' ? body.text.trim() : '';
+    if (!slug || !text) {
+      sendError(res, 400, 'bad_say', 'Body must be { slug, text }.');
+      return;
+    }
+    if (text.length > SAY_MAX_CHARS) {
+      sendError(res, 400, 'say_too_long', `Keep it under ${SAY_MAX_CHARS} characters.`);
+      return;
+    }
+    const manifest = getAutomation(contextRoot, slug);
+    if (!manifest) {
+      sendError(res, 404, 'not_found', `Automation not found: ${slug}`);
+      return;
+    }
+    if (!manifest.enabled) {
+      sendError(res, 409, 'say_disabled', `${manifest.title} is turned off. Turn it on to call it.`);
+      return;
+    }
+    // Checked HERE as well as inside the runner, and not as a duplicate: the
+    // runner's check stops the run, this one stops the MESSAGE. Without it an
+    // unapproved agent leaves the owner's words sitting in the channel under
+    // an answer that is only ever going to be "it is not approved".
+    const projectRoot = dirname(contextRoot);
+    if (!checkApproval(projectRoot, manifest).approved) {
+      sendError(
+        res, 409, 'say_unapproved',
+        `${manifest.title} is not approved on this machine yet — approve it and ask again.`,
+      );
+      return;
+    }
+    // ── synchronous from here to the job start ──
+    const busy = currentAutomationJob(contextRoot);
+    if (busy?.status === 'running') {
+      const other = getAutomation(contextRoot, busy.slug);
+      sendError(
+        res, 409, 'say_busy',
+        `${other?.title ?? busy.slug} is still running — one at a time for now. Try again when it finishes.`,
+      );
+      return;
+    }
+    const fireAt = new Date();
+    const runId = fireAt.toISOString();
+    appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text, via: 'dashboard', now: fireAt });
+    const { job, started } = startAutomationJob(contextRoot, slug, { text, fireAt });
+    // Unreachable given the busy check above (nothing can interleave between
+    // them), and handled anyway: the ask is already on disk at this point, so
+    // a job that was NOT started would leave it in the channel with nothing
+    // coming. Belt and braces, because the cost of being wrong is a message
+    // that reads "running" for ever.
+    if (!started) {
+      appendThreadEntry(contextRoot, slug, {
+        runId, kind: 'system', event: 'skipped', via: 'dashboard',
+        text: 'It did not run — another agent had already taken the run slot.',
+      });
+    }
+    sendJson(res, 200, { job, started, runId, slug });
+  } catch (err) {
+    if (err instanceof AutomationError) {
+      sendError(res, 400, 'say_refused', err.message);
+      return;
+    }
+    sendError(res, 500, 'say_failed', 'Failed to send that to the channel.');
   }
 }

@@ -88,7 +88,14 @@ describe('AC3f — a take in flight cannot be raced', () => {
   });
 
   it('the button is DISABLED across the whole post-release pipeline, not just while recording', () => {
-    expect(composer).toMatch(/disabled=\{!connected \|\| voice\.state === 'transcribing' \|\| voiceCorrecting\}/);
+    // `canCompose`, not `connected`: the composer now separates "the transport is up" from
+    // "the user can act", because a surface can be perfectly connected and still have nowhere
+    // to send (the agents channel, while another agent holds the project's one run slot — see
+    // the `unavailable` prop). `canCompose = connected && !unavailable`, so this guard is
+    // strictly STRONGER than the one it replaced and the property under test is unchanged:
+    // a mic press cannot be raced, and now also cannot fire into a surface that is down.
+    expect(composer).toMatch(/disabled=\{!canCompose \|\| voice\.state === 'transcribing' \|\| voiceCorrecting\}/);
+    expect(composer).toMatch(/const canCompose = connected && !unavailable;/);
   });
 
   it('an async transcript NEVER overwrites text the owner typed while it was in flight', () => {

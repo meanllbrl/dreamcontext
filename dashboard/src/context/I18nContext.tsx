@@ -7,7 +7,11 @@ const translations: Record<string, Record<string, string>> = {
     'nav.roadmap': 'Roadmap',
     'nav.hypotheses': 'Hypotheses',
     'nav.labpage': 'Insights',
-    'nav.automations': 'Automations',
+    // The page is the AGENTS page now — a member list of agents with photos,
+    // cadences and models, not a list of scheduled jobs. The `Page` union
+    // value stays 'automations': renaming the route key would break persisted
+    // nav state for no user-visible gain.
+    'nav.automations': 'Agents',
     'nav.core': 'Core',
     'nav.knowledge': 'Knowledge',
     'nav.sleep': 'Sleep Cycle',

@@ -25,7 +25,16 @@ export type RunStatus =
   /** The run did not happen because a proposal is unanswered. Unlike every
    *  other non-`ok` status here it is NOT a fault — it is the scheduler waiting
    *  on the human — so it must never be badged as an error. */
-  | 'awaiting-review';
+  | 'awaiting-review'
+  /** The run did not happen because the MANIFEST changed and nobody has
+   *  re-approved it — the tripwire, not the run's own work. Also not a fault.
+   *
+   *  This member was MISSING from this mirror while `RUN_STATUSES` in
+   *  `src/lib/automations/types.ts` carried it, so a card holding this status
+   *  fell through `statusWord`'s `default` and printed the raw enum
+   *  `awaiting-approval` at a human. `automations-card-status-parity.test.ts`
+   *  now reads the BACKEND list as its source of truth so this cannot recur. */
+  | 'awaiting-approval';
 export type Weekday = 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat';
 
 export interface AutomationSchedule {
@@ -45,14 +54,34 @@ export interface AutomationCacheSummary {
   outputPath: string | null;
 }
 
+/** How an agent is triggered — mirrors `AutomationMode` in
+ *  `src/lib/automations/types.ts`. `'call'` has no schedule, is never fired by
+ *  the dispatcher, and therefore shows no pause switch (pausing something that
+ *  never fires on its own is a switch with nothing behind it). */
+export type AutomationMode = 'sched' | 'call';
+
 /** One row from GET /api/automations. */
 export interface AutomationSummary {
   slug: string;
   title: string;
+  mode: AutomationMode;
+  /** The agent has a photo that RESOLVES right now — server-checked, not just
+   *  a string in its frontmatter. False ⇒ render initials. */
+  hasPhoto: boolean;
+  /** The agent's `## Prompt`, capped server-side. What it does, in the owner's
+   *  own words — the dialog writes this field, so there is no second
+   *  description to drift from the prompt. */
+  description: string;
+  /** `scheduleLabel` for a scheduled agent, 'When you call it' for an on-call
+   *  one. Computed server-side so no surface words a cadence differently. */
+  cadenceLabel: string;
   enabled: boolean;
   schedule: AutomationSchedule | null;
   scheduleLabel: string;
   model: string | null;
+  /** On the summary so the Edit dialog can prefill straight from the list
+   *  rather than fetching the manifest and flashing a default first. */
+  effort: 'low' | 'medium' | 'high' | null;
   timeoutMinutes: number;
   catchupHours: number;
   approved: boolean;
@@ -280,6 +309,9 @@ export interface AutomationRunJob {
   finishedAt: number | null;
   outcome: AutomationRunOutcome | null;
   error: string | null;
+  /** The thread root this job's fire belongs to, when the job was started by
+   *  the `#agents` composer. `null` for a plain "run now". */
+  runId?: string | null;
 }
 
 /** List every automation (for the board). Empty on an older backend / no route. */
@@ -454,6 +486,94 @@ export function useSetAutomationEnabled() {
   return useMutation({
     mutationFn: ({ slug, enabled }: { slug: string; enabled: boolean }) =>
       api.post<{ automation: AutomationSummary }>(`/automations/${slug}/${enabled ? 'enable' : 'disable'}`, {}),
+    onSuccess: (_data, { slug }) => {
+      queryClient.invalidateQueries({ queryKey: ['automations'] });
+      queryClient.invalidateQueries({ queryKey: ['automations', slug] });
+    },
+  });
+}
+
+/**
+ * What the New agent / Edit agent dialog sends. Every field optional on the
+ * edit path (it is a PATCH in spirit), so a dialog that knows nothing about
+ * `catchup_hours`, `shared`, `review` or the flow can never blank them by
+ * omitting them.
+ */
+export interface AgentDraft {
+  title: string;
+  prompt: string;
+  mode: AutomationMode;
+  days: 'daily' | Weekday[];
+  at: string;
+  model: string | null;
+  effort: 'low' | 'medium' | 'high' | null;
+}
+
+/**
+ * Create an agent — writes the manifest and approves it ON THIS MACHINE, which
+ * is why the dialog's button says exactly that. Invalidates the list, so the
+ * new card appears without a refresh.
+ */
+export function useCreateAgent() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: (draft: AgentDraft) =>
+      api.post<{ automation: AutomationSummary }>('/automations', draft).then((r) => r.automation),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['automations'] });
+    },
+  });
+}
+
+/**
+ * Edit an agent — re-hashes the manifest and RE-APPROVES it here, because
+ * `prompt`, `model`, `effort` and `timeoutMinutes` are all approval-hashed and
+ * an edit would otherwise leave the agent blocked until someone approved by
+ * hand the change they had just typed.
+ */
+export function useUpdateAgent() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ slug, draft }: { slug: string; draft: Partial<AgentDraft> }) =>
+      api.post<{ automation: AutomationSummary }>(`/automations/${slug}/update`, draft).then((r) => r.automation),
+    onSuccess: (_data, { slug }) => {
+      queryClient.invalidateQueries({ queryKey: ['automations'] });
+      queryClient.invalidateQueries({ queryKey: ['automations', slug] });
+    },
+  });
+}
+
+/** Delete an agent — manifest, cache and photo, plus this machine's approval
+ *  grant. Armed by a two-click confirm in the dialog footer, never a native
+ *  `confirm()`. */
+export function useDeleteAgent() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: (slug: string) => api.post<{ ok: true; slug: string }>(`/automations/${slug}/delete`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['automations'] });
+    },
+  });
+}
+
+/**
+ * Upload an agent's photo — RAW BYTES, never a base64 JSON envelope: the
+ * server types the file by its magic bytes, and a string it had to decode
+ * first would only get in the way of that.
+ *
+ * Runs AFTER the create/update that settles the slug, because the photo is
+ * stored as `<slug>.<ext>`. A failure here leaves an agent with initials,
+ * never a half-written manifest.
+ */
+export function useUploadAgentPhoto() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ slug, bytes }: { slug: string; bytes: Blob }) =>
+      api.postBytes<{ automation: AutomationSummary }>(`/automations/${slug}/photo`, bytes).then((r) => r.automation),
     onSuccess: (_data, { slug }) => {
       queryClient.invalidateQueries({ queryKey: ['automations'] });
       queryClient.invalidateQueries({ queryKey: ['automations', slug] });
@@ -734,5 +854,154 @@ export function useAckAttention() {
   return useMutation({
     mutationFn: (upTo: string) => api.post<{ watermark: string | null }>('/automations/attention/ack', { upTo }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['automations-attention'] }); },
+  });
+}
+
+// ─── The #agents channel ───────────────────────────────────────────────────
+//
+// Mirrors `FeedMessage` / `FeedResult` in `src/lib/automations/feed.ts` and the
+// three thread routes in `src/server/routes/automations.ts` (frozen, read-only
+// from here) — the dashboard has no import path into `src/`, so the shapes are
+// duplicated the way every other block in this file duplicates its backend.
+
+/** The STATUS WORD a message shows. A word, never a badge (K26/K40). */
+export type FeedStatus = 'running' | 'done' | 'failed' | 'timeout' | 'needs-you' | 'skipped';
+
+export interface FeedFile {
+  /** Brain-relative — the server normalises an absolute cache path before it
+   *  reaches here, so there is one spelling to open. */
+  path: string;
+  name: string;
+}
+
+export interface FeedMessage {
+  /** `<slug>::<runId>`. Stable across polls: the React key AND the id the
+   *  thread panel and the read ack are addressed by. */
+  key: string;
+  slug: string;
+  title: string;
+  hasPhoto: boolean;
+  runId: string;
+  at: string;
+  status: FeedStatus;
+  durationMs: number | null;
+  costUsd: number | null;
+  /** What the owner typed to call this agent, for a run that is an ASK rather
+   *  than a scheduled fire. Renders ABOVE the agent's reply — one exchange,
+   *  one message — and is never counted as a reply. */
+  ask: { text: string; at: string } | null;
+  text: string;
+  /** `post` — the agent chose to say this. `result` — it said nothing and this
+   *  is its document's opening line. `error` — it failed, and this is why. The
+   *  reader is entitled to tell them apart, so the card does. */
+  textFrom: 'post' | 'result' | 'error' | 'skipped' | 'none';
+  files: FeedFile[];
+  /** Authored entries beyond the body. System rows are not replies. */
+  replyCount: number;
+  lastReplyAt: string | null;
+  unread: boolean;
+  newestId: string | null;
+}
+
+export interface AgentFeed {
+  messages: FeedMessage[];
+  unreadBySlug: Record<string, number>;
+  unreadTotal: number;
+  agents: { slug: string; title: string; hasPhoto: boolean }[];
+}
+
+export interface ThreadEntry {
+  id: string;
+  runId: string;
+  kind: 'system' | 'agent' | 'user';
+  event?: 'started' | 'ok' | 'failed' | 'timeout' | 'asked' | 'replied' | 'skipped';
+  at: string;
+  text: string;
+  files?: string[];
+  via: 'runner' | 'cli' | 'dashboard' | 'chat';
+}
+
+/**
+ * The whole channel. Polled, because a badge that only moves on navigation is
+ * a badge nobody trusts — an agent fires while you are looking at the page and
+ * the message has to arrive on its own.
+ *
+ * Reading NEVER consumes unread server-side; the watermark moves only through
+ * `useMarkThreadRead`, once a message has actually been on screen.
+ */
+export function useAgentFeed(
+  /** True while a run this window started is still in flight. Fifteen seconds
+   *  is the right cadence for catching up on work that happened while you were
+   *  away; it is the wrong one for watching an agent you just called by hand,
+   *  where the whole exchange can be over before the first poll lands. */
+  live = false,
+) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['automations-feed'],
+    queryFn: () => api.get<AgentFeed>('/automations/threads'),
+    refetchInterval: live ? 2_000 : 15_000,
+    refetchOnWindowFocus: true,
+    retry: 0,
+  });
+}
+
+/** One run's thread, for the panel. Polled only while open. */
+export function useAgentThread(slug: string | null, runId: string | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['automations', slug, 'thread', runId],
+    queryFn: () =>
+      api.get<{ slug: string; title: string; entries: ThreadEntry[] }>(
+        `/automations/${slug}/thread?run=${encodeURIComponent(runId ?? '')}`,
+      ),
+    enabled: !!slug && !!runId,
+    refetchInterval: 15_000,
+    retry: 0,
+  });
+}
+
+/**
+ * Advance this machine's read mark. MONOTONIC server-side, so firing this for
+ * a message the user scrolled past on the way to an older one cannot rewind
+ * anything.
+ *
+ * Deliberately does NOT invalidate the feed on success: re-fetching would
+ * re-render the list under the reader's eyes the moment a message is marked
+ * read, and the New divider would jump. The next poll picks it up.
+ */
+export function useMarkThreadRead() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: (v: { slug: string; upToId: string }) =>
+      api.post<{ unread: { count: number } }>('/automations/threads/read', v),
+    onSuccess: (_d, v) => {
+      queryClient.invalidateQueries({ queryKey: ['automations', v.slug, 'thread'] });
+    },
+  });
+}
+
+/**
+ * THE COMPOSER — call one agent by name with a message.
+ *
+ * Invalidates the feed on success, unlike `useMarkThreadRead` right above:
+ * there the re-render would yank the list under someone reading, here it is
+ * the entire point. The server writes the ask synchronously before it starts
+ * the run, so the refetch this triggers already contains the message —
+ * nothing optimistic, and nothing to reconcile if the run then refuses.
+ */
+export function useSayInChannel() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: (v: { slug: string; text: string }) =>
+      api.post<{ job: { id: string; slug: string; status: string }; started: boolean; runId: string }>(
+        '/automations/threads/say', v,
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['automations-feed'] });
+      queryClient.invalidateQueries({ queryKey: ['automations-run-job'] });
+    },
   });
 }

@@ -12,7 +12,7 @@ pinned: false
 date: '2026-07-26'
 status: active
 created: '2026-07-26'
-updated: '2026-09-07'
+updated: '2026-09-19'
 released_version: v0.22.0
 tags:
   - 'topic:agents'
@@ -36,6 +36,21 @@ related_tasks:
   - fix-agents-an-automation-tab-opening-on-launch-wiped-the-saved-roster
   - >-
     fix-automations-the-question-is-visible-on-the-card-open-chat-reaches-the-run-that-asked-and-a-run-needing-a-human-opens-itself
+  - >-
+    automations-become-agents-every-automation-is-a-slack-like-thread-the-agent-posts-important-updates-to-and-the-user-replies-in
+  - >-
+    agents-step-1-the-agents-page-becomes-a-member-list-where-i-create-and-edit-agents-with-a-photo-a-mode-and-a-model
+  - >-
+    agents-step-2-a-finished-run-pushes-one-message-into-the-agents-feed-and-the-message-shape-is-the-design-to-approve
+  - >-
+    agents-step-3-a-pushed-message-can-carry-a-question-with-options-a-structured-summary-several-files-and-a-board
+  - >-
+    agents-step-4-replying-in-a-thread-or-mentioning-an-agent-resumes-its-session-or-calls-it-and-the-answer-comes-back-as-a-post
+  - >-
+    agents-run-across-my-devices-sessions-sync-every-question-and-answer-pushes-immediately-and-a-refresh-button-pulls-now
+  - >-
+    stop-auto-opening-automation-runs-as-chat-tabs-and-take-automations-out-of-the-chat-screen
+  - retire-the-telegram-channel-for-agents-end-to-end
 ---
 
 ## Why

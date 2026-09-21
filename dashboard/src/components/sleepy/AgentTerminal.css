@@ -1253,7 +1253,11 @@
 .agent-dock {
   position: fixed;
   right: var(--space-5);
-  bottom: var(--space-5);
+  /* See `.agent-fab`: steps over a page's bottom-anchored composer strip when
+     one is mounted. The `--floating` rule below overrides `bottom` outright
+     with its own lift, which is correct — with the overlay open, the page's
+     own strip is covered and no longer the thing to clear. */
+  bottom: calc(var(--space-5) + var(--dc-bottom-strip, 0px));
   z-index: 18;
 }
 /* The minimized-sessions dock floats ABOVE the expanded overlay (z-index 20) — and with the

@@ -15,6 +15,7 @@ import { backfillQuestionSession, createQuestion, pendingQuestion } from './hitl
 import { foreignRunEvidence, recordAutomationSession } from './session-registry.js';
 import { enqueueFire } from './queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
+import { appendThreadEntry } from './threads.js';
 import { fetchTransport, notifyTelegram, readTelegramConfigForSlug } from './telegram.js';
 import {
   clearRunSidecar,
@@ -43,6 +44,7 @@ import {
   type AutomationManifest,
   type RunEvent,
   type RunStatus,
+  type ThreadSystemEvent,
 } from './types.js';
 
 /**
@@ -98,6 +100,17 @@ export function buildPreamble(
     '(the numbers, the finding, what changed) — not "the job ran". That sentence becomes ' +
     'the desktop notification the user reads. Put a heading after it, never before it. ' +
     'To send a different banner, add a `## Notification` section and it wins.' +
+    // The thread is a CHANNEL a human reads, not a log. Without the "what NOT
+    // to post" half of this clause a run narrates itself — "starting now",
+    // "step 2 of 4" — and the channel becomes the transcript it exists to
+    // spare them. Same framing discipline as `buildLearningDirective`: name
+    // the floor (zero posts is a valid run) or everything gets posted.
+    ' THREAD: this run has a channel the human reads. Post only what is IMPORTANT — a finding, ' +
+    'a number that moved, something that needs a decision — with ' +
+    `\`dreamcontext automations post ${m.slug} "<one or two sentences>" [--file <brain-relative path>]\`. ` +
+    'Your slug and run are already in your environment; no ids needed. Do NOT post progress ' +
+    'narration, "starting now", or your whole document (it is saved for them already). ' +
+    'Zero posts is the right number for an unremarkable run.' +
     // Without this line, a run (or its resumed chat) that gets asked "why
     // didn't this reach my Telegram?" concludes — correctly, from its own
     // view — that no Telegram connection exists, and starts recommending the
@@ -180,6 +193,45 @@ export function sanitizeAutomationPrompt(s: string): string {
  * manifest, and the notes read as commentary on instructions already given
  * rather than as a preface that frames them.
  */
+/** "1m 12s" / "4s". The thread's system rows are read by a human at a glance,
+ *  and `72104ms` is not a glance. Duration and cost on the MESSAGE come from
+ *  the run cache, which owns them — this is only the one-line row inside the
+ *  thread panel, so it stays deliberately small rather than importing a
+ *  formatter across the client/server line. */
+function formatRunDuration(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return s === 0 ? `${m}m` : `${m}m ${s}s`;
+}
+
+/**
+ * Every thread write in this file goes through here, and every one of them is
+ * BEST-EFFORT. A thread is a display surface; the cache is the record. If an
+ * append fails (a full disk, a day file at its entry cap, a slug that somehow
+ * got past validation) the run's disposition must not change by one bit —
+ * same rule as the queue write below, and for the same reason: the user's job
+ * ran, and losing the note about it is strictly better than losing the job.
+ *
+ * Failures are LOGGED, not swallowed, so a channel that stops filling has a
+ * trail in the dispatcher log instead of looking like an agent that went quiet.
+ */
+function postSystemEntry(
+  contextRoot: string,
+  slug: string,
+  runId: string,
+  event: ThreadSystemEvent,
+  text: string,
+  logFn: (msg: string) => void,
+): void {
+  try {
+    appendThreadEntry(contextRoot, slug, { runId, kind: 'system', event, text, via: 'runner' });
+  } catch (err) {
+    logFn(`automation "${slug}": thread ${event} entry not written — ${(err as Error).message}`);
+  }
+}
+
 export function composePrompt(
   m: AutomationManifest,
   projectRoot: string,
@@ -191,6 +243,9 @@ export function composePrompt(
   /** The connected per-automation Telegram chat, when one exists — see
    *  `buildPreamble`. */
   telegramChatId?: string | null,
+  /** What the human typed into `#agents` to call this agent, when this fire is
+   *  an ask rather than a schedule. See {@link buildAskBlock}. */
+  ask?: string | null,
 ): string {
   const parts = [buildPreamble(m, projectRoot, fireAt, outputPath, telegramChatId), '', m.prompt.trim()];
   // The graph goes BEFORE the approved prompt, deliberately, and it is the only
@@ -207,7 +262,44 @@ export function composePrompt(
   if (pattern) parts.push('', pattern);
   const learning = buildLearningDirective(m);
   if (learning) parts.push('', learning);
+  // LAST, and deliberately so. Everything above is standing configuration a
+  // human approved at some point in the past; this is that same human typing
+  // right now. When the two disagree, the live instruction wins — which is
+  // only true because of where it sits.
+  const askBlock = ask ? buildAskBlock(ask) : '';
+  if (askBlock) parts.push('', askBlock);
   return sanitizeAutomationPrompt(parts.join('\n'));
+}
+
+/**
+ * The block that carries a human's live ask from `#agents`.
+ *
+ * WHY THIS IS NOT AN APPROVAL HOLE, since it is the obvious objection: the
+ * approval hash covers the MANIFEST, and it exists to stop a stored prompt
+ * that was edited behind the owner's back from running unreviewed. An ask is
+ * never stored in the manifest, never replayed by the scheduler, and reaches
+ * this function only from a person typing into their own dashboard in that
+ * moment — a stronger authorisation than a recorded approval, not a weaker
+ * one. What it must NOT do is masquerade as the manifest, so it is fenced and
+ * labelled as speech, and the run's job description is still the approved
+ * prompt above.
+ *
+ * The text is quoted data on the way in and stays inside the fence; every
+ * prompt built here still goes through `sanitizeAutomationPrompt`.
+ */
+export function buildAskBlock(ask: string): string {
+  const text = ask.trim();
+  if (!text) return '';
+  return [
+    '--- THE OWNER JUST ASKED YOU THIS, IN THE #agents CHANNEL ---',
+    text,
+    '--- END OF WHAT THEY SAID ---',
+    '',
+    'That is a live instruction from the human who owns this project, typed a moment ago. Do what',
+    'they asked, within the job described above. If it narrows the job, narrow it; if it asks for',
+    'something the job does not cover, do that instead and say so. Still nobody to ask follow-ups',
+    'of, and the output contract is unchanged: your final message is the document.',
+  ].join('\n');
 }
 
 // ─── Notification summary extraction ────────────────────────────────────────
@@ -694,6 +786,11 @@ interface RunOptionsBase {
    *  contract `tick.ts` holds for polling). Defaults to the real per-slug
    *  sender, which is a no-op when the automation has no bot configured. */
   sendTelegram?: (text: string) => Promise<void>;
+  /** What the human typed to call this agent from `#agents`. Present ONLY for
+   *  a fire a person started by hand; the scheduler never sets it. Rides into
+   *  the prompt through `buildAskBlock` and nowhere else — it is not stored,
+   *  not hashed, and not replayed. */
+  ask?: string | null;
 }
 
 type RunHostOpts =
@@ -868,6 +965,35 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       coalesceRepeat: params.coalesceRepeat === true,
     });
     logFn(`automation "${slug}": ${params.status}${params.error ? ` — ${params.error}` : ''}`);
+    // The run's terminal entry, AFTER `recordRun` so the thread can never claim
+    // an outcome the cache does not have. Only the three statuses that mean the
+    // job itself ran and ended get one: `blocked`/`deferred`/`orphaned` never
+    // started (there is no `started` entry to close), and `awaiting-*` is a
+    // question. The gate is the same shape as `params.notify` below, and exists
+    // for the same reason — a still-due automation must not narrate every tick.
+    //
+    // CAREFUL WITH THAT LAST ONE: "`awaiting-*` is a question, which the
+    // `asked` entry already covers" is true of the two MID-RUN review paths
+    // and FALSE of the step-4.5 short-circuit, which returns
+    // `awaiting-approval`/`awaiting-review` for a question raised by an
+    // EARLIER fire and never calls `createQuestion` — so nothing writes
+    // `asked` and this gate writes nothing either, leaving a run with no entry
+    // at all. That is correct for a scheduled fire (still owed, must not
+    // narrate every tick) and was a hole for a human ask, which is owed an
+    // answer; `answerIfSilent` in server/automation-job.ts closes it by asking
+    // the thread what is in it rather than by listing statuses here.
+    if (params.status === 'ok' || params.status === 'failed' || params.status === 'timeout') {
+      postSystemEntry(
+        contextRoot,
+        slug,
+        fireAt.toISOString(),
+        params.status,
+        params.status === 'ok'
+          ? `Finished in ${formatRunDuration(params.durationMs)}.`
+          : `${params.status === 'timeout' ? 'Timed out' : 'Failed'} after ${formatRunDuration(params.durationMs)}${params.error ? ` — ${params.error}` : ''}`,
+        logFn,
+      );
+    }
     // Notify on COMPLETION, success included. A silent success defeats the point
     // of the feature: the run happened with nobody at the keyboard, so "your
     // digest is ready" is the whole payload. `params.notify` stays the gate for
@@ -1253,7 +1379,9 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       useFlowOutput ? { ...manifest, outputDir: flow.reportTarget } : manifest,
       fireAt,
     );
-    const prompt = composePrompt(manifest, projectRoot, fireAt, outputPath, flow, telegramCfg?.chatId ?? null);
+    const prompt = composePrompt(
+      manifest, projectRoot, fireAt, outputPath, flow, telegramCfg?.chatId ?? null, opts.ask ?? null,
+    );
 
     // Steps 7–12 — spawn (detached, own process group), wire the host, collect,
     // wait under the timeout half of the kill matrix, parse. All of it lives in
@@ -1270,7 +1398,15 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     ensureSandbox(automationConfigDir);
     const execution = await executeClaudeDetached(claudeArgs, {
       cwd: projectRoot,
-      env: accountEnvFor(automationConfigDir),
+      // The two thread vars are HINTS, not capabilities. `automations post`
+      // still requires the slug as a positional and validates it, so a leaked
+      // or forged env var grants nothing it did not already have — it only
+      // spares the run from having to know its own fire time to post.
+      env: {
+        ...accountEnvFor(automationConfigDir),
+        DREAMCONTEXT_AUTOMATION_SLUG: slug,
+        DREAMCONTEXT_AUTOMATION_RUN: fireAt.toISOString(),
+      },
       timeoutMs,
       spawnImpl: spawnFn,
       killImpl: killFn,
@@ -1288,6 +1424,14 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           startedAt: spawnedAt.toISOString(),
           timeoutAt: new Date(spawnedAt.getTime() + timeoutMs).toISOString(),
         });
+
+        // The thread's ROOT entry. It is written here, next to the sidecar,
+        // rather than before the spawn, because the thread should only claim a
+        // run that actually started a child — every path that gives up before
+        // this point (blocked, deferred, the orphan guard) leaves the channel
+        // silent, which is the whole reason a still-due automation does not
+        // write an entry every five minutes forever.
+        postSystemEntry(contextRoot, slug, fireAt.toISOString(), 'started', 'Run started.', logFn);
 
         // Step 10 — host wiring.
         if (opts.host === 'server') {
@@ -1426,6 +1570,18 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
               nowISO: nowFn().toISOString(),
             });
             reviewCardId = q.id;
+            // `asked` belongs to the run that asked it. The APPROVAL question
+            // (the one raised before an unapproved manifest ever runs) writes
+            // nothing: its session is forced null and it is not a run of the
+            // job, so a thread entry there would open a run that never fires.
+            postSystemEntry(
+              contextRoot,
+              slug,
+              fireAt.toISOString(),
+              'asked',
+              `Asked: ${q.question.slice(0, 200)}`,
+              logFn,
+            );
             recordAutomationSession(slug, claudeResult.sessionId, home);
             // Deliberately NOT written to the output directory: publishing is
             // what the question gates. The document lives in the session, which
@@ -1463,6 +1619,18 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
               nowISO: nowFn().toISOString(),
             });
             reviewCardId = q.id;
+            // `asked` belongs to the run that asked it. The APPROVAL question
+            // (the one raised before an unapproved manifest ever runs) writes
+            // nothing: its session is forced null and it is not a run of the
+            // job, so a thread entry there would open a run that never fires.
+            postSystemEntry(
+              contextRoot,
+              slug,
+              fireAt.toISOString(),
+              'asked',
+              `Asked: ${q.question.slice(0, 200)}`,
+              logFn,
+            );
             recordAutomationSession(slug, claudeResult.sessionId, home);
             // Deliberately NOT written to the output directory: publishing is
             // what the question gates, exactly as the flow's own gate above.

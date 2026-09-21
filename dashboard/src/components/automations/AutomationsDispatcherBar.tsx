@@ -135,14 +135,11 @@ export function AutomationsDispatcherBar({ onToast }: { onToast?: (msg: string) 
 
   if (dispatcher.installed) {
     return (
-      <div className="auto-dispatch auto-dispatch--on">
+      <div className="auto-dispatch auto-dispatch--on auto-dispatch--tight">
         <span className="auto-dispatch-dot" aria-hidden="true" />
         <div className="auto-dispatch-text">
-          <strong>Scheduler is on.</strong>
-          <span>
-            Wakes every 5 minutes and runs what's due — last check {fmtWhen(dispatcher.lastTickCompletedAt)}.
-            Each automation still runs only once you approve it on this machine.
-          </span>
+          <strong>Scheduler is on</strong>
+          <span>— last check {fmtWhen(dispatcher.lastTickCompletedAt)}.</span>
         </div>
         <button className="auto-dispatch-btn auto-dispatch-btn--ghost" onClick={doUninstall} disabled={busy}>
           {uninstall.isPending ? 'Turning off…' : 'Turn off'}
@@ -152,16 +149,18 @@ export function AutomationsDispatcherBar({ onToast }: { onToast?: (msg: string) 
   }
 
   return (
-    <div className="auto-dispatch auto-dispatch--off">
+    <div className="auto-dispatch auto-dispatch--off auto-dispatch--tight">
       <span className="auto-dispatch-dot" aria-hidden="true" />
       <div className="auto-dispatch-text">
-        <strong>Scheduler is off — nothing runs on a schedule.</strong>
-        <span>
-          Turning it on installs one background job that wakes every 5 minutes and runs whatever is
-          due. It never runs an automation you haven't approved on this machine.
-        </span>
+        <strong>Scheduler is off</strong>
+        <span>— nothing runs on a schedule. You can still call an agent from the channel.</span>
       </div>
-      <button className="auto-dispatch-btn" onClick={() => doInstall(false)} disabled={busy}>
+      <button
+        className="auto-dispatch-btn"
+        title="Installs one background job that wakes every 5 minutes and runs whatever is due. It never runs an automation you haven't approved on this machine."
+        onClick={() => doInstall(false)}
+        disabled={busy}
+      >
         {install.isPending ? 'Turning on…' : 'Turn on scheduler'}
       </button>
     </div>

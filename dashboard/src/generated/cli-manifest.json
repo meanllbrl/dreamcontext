@@ -61,6 +61,8 @@
         "--title",
         "--days",
         "--at",
+        "--mode",
+        "--photo",
         "--model",
         "--effort",
         "--timeout",
@@ -136,6 +138,18 @@
       ]
     },
     {
+      "path": "automations post",
+      "desc": "Post to this automation's channel (a run calls this about itself)",
+      "args": [
+        "<slug>",
+        "<text>"
+      ],
+      "valueFlags": [
+        "--file",
+        "--run"
+      ]
+    },
+    {
       "path": "automations propose",
       "desc": "Stop and ask a human before acting (a run calls this about itself; it cannot be called by hand)",
       "args": [
@@ -153,6 +167,16 @@
       "desc": "List questions awaiting a human answer — an approval diff to trust, or a run that stopped mid-flight to ask",
       "args": [
         "[slug]"
+      ]
+    },
+    {
+      "path": "automations read",
+      "desc": "Mark this automation's channel read on this machine",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--up-to"
       ]
     },
     {
@@ -227,6 +251,17 @@
       "desc": "Post this automation's waiting question now and report what its bot can see",
       "args": [
         "<slug>"
+      ]
+    },
+    {
+      "path": "automations thread",
+      "desc": "Read an automation's channel — every run, or one run's thread",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--run",
+        "--limit"
       ]
     },
     {

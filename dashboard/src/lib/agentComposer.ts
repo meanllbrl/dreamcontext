@@ -473,6 +473,19 @@ export interface PeerMention {
   /** Whether the peer vault ships a logo (`assets/logo.*` in ITS tree) — the client
    *  builds the image URL itself via `peerLogoUrl`. Optional: older servers omit it. */
   logo?: boolean;
+  /**
+   * The face to draw INSTEAD of `peerLogoUrl(vault, this.vault)`, for a caller whose
+   * addressees are not peer vaults at all.
+   *
+   * `peerLogoUrl` is a fixed builder over the peer-logo route, which is the right answer when
+   * the thing being mentioned IS a connected project. The agents channel addresses this
+   * project's own AGENTS, whose photos live behind a different route entirely
+   * (`automationPhotoUrl`) — and the whole point of that channel is that agents have faces, so
+   * the one place the face went missing must not be the picker you choose them from.
+   *
+   * Set it only alongside `logo: true`; the row falls back to the `◈` glyph otherwise.
+   */
+  logoUrl?: string;
 }
 
 /**

@@ -5,6 +5,7 @@ import { NavIcon } from './NavIcons';
 import { GitHubMark } from '../brain/GitHubLogin';
 import { useAuthStatus, useBrainStatus } from '../../hooks/useBrainStatus';
 import { useAnnouncementInbox } from '../../hooks/useAnnouncements';
+import { useAgentFeed } from '../../hooks/useAutomations';
 import { useTheses } from '../../hooks/useTheses';
 import { BrainSyncControl } from '../brain/BrainSyncControl';
 import { useVault } from '../../context/VaultContext';
@@ -113,6 +114,13 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   const { data: authStatus } = useAuthStatus();
   const { data: brainStatus } = useBrainStatus();
   const { unread } = useAnnouncementInbox();
+  // PROJECT-WIDE unread in the agents channel. The rail is the only place a
+  // message is visible from another page, so without this an agent that fired
+  // while the user was in Tasks is a thing they find out about tomorrow.
+  // Per MACHINE, like every other thread read mark — a teammate reading it on
+  // their laptop must not clear this badge here.
+  const { data: agentFeed } = useAgentFeed();
+  const agentUnread = agentFeed?.unreadTotal ?? 0;
   // Hypotheses is in the rail for everyone, on or off. It used to be hidden
   // while the learning layer was disabled, which made the layer undiscoverable
   // by exactly the people who had never turned it on: the page that explains it
@@ -199,6 +207,9 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
                     <span className="sidebar-label">{label}</span>
                     {page === 'announcements' && unread.length > 0 && (
                       <span className="sidebar-badge">{unread.length}</span>
+                    )}
+                    {page === 'automations' && agentUnread > 0 && (
+                      <span className="sidebar-badge">{agentUnread}</span>
                     )}
                     {off && <span className="sidebar-lab-tag sidebar-off-tag">{t('nav.off')}</span>}
                     {!off && lab && <span className="sidebar-lab-tag">{t('nav.lab')}</span>}

@@ -1,0 +1,601 @@
+/*
+ * The #agents channel — the feed, a message, and the read-only thread panel.
+ *
+ * ACCENT BUDGET (K8) on this screen: the selected filter chip, the unread bar
+ * on a message, and focus rings. Nothing else is tinted. The New divider and
+ * the `needs you` status word spend the WARNING colour, not the accent, and
+ * they are the only two things that do.
+ */
+
+.agents-feed {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.agents-feed-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The column wears `.chat-pane` so the composer's auto-grow ceiling resolves against THIS
+   pane (`closest('.chat-pane')`) and so the chat's reading tokens are in scope for the
+   composer's own rules. One rule does not transfer and is overridden here, exactly as the
+   meeting room overrides it: the class is written for a pane that fills its window, and
+   `position: absolute; inset: 0` would lift this column out of the row it shares with the
+   thread panel and lay it over it. Everything else the class carries is what is wanted,
+   which is why the class is worn rather than the tokens copied. */
+.agents-feed-main.chat-pane {
+  position: relative;
+  inset: auto;
+}
+
+/* ─── filter chips ─── */
+
+.agents-chips {
+  flex-shrink: 0;
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.agents-chips::-webkit-scrollbar { display: none; }
+
+.agents-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 15px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 220ms ease, color 220ms ease, border-color 220ms ease;
+}
+
+.agents-chip:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.agents-chip--on {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-contrast, #fff);
+}
+
+.agents-chip-label {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The count is the chip's VALUE — it answers the filter before it is clicked,
+   so it is never hidden and never a separate badge floating off the edge. */
+.agents-chip-count {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+/* ─── the scroller ─── */
+
+.agents-feed-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) 0 var(--space-6);
+}
+
+.agents-feed-note {
+  margin: 0;
+  padding: var(--space-6) var(--space-5);
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.agents-feed-zero {
+  padding: var(--space-8) var(--space-5);
+  max-width: 460px;
+}
+
+.agents-feed-zero-lede {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.agents-feed-zero-note {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+/* ─── dividers ─── */
+
+.agents-feed-day {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) var(--space-5) var(--space-2);
+}
+
+.agents-feed-day::before,
+.agents-feed-day::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.agents-feed-day span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+/* WHERE YOU CAME IN. The one red thing on the page, and it does not move
+   while you read — see the pinning note in AgentsFeed.tsx. */
+.agents-feed-new {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) var(--space-5) var(--space-1);
+}
+
+.agents-feed-new::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-danger, #e5484d);
+}
+
+.agents-feed-new span {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--color-danger, #e5484d);
+}
+
+/* ─── one message ─── */
+
+.agent-msg {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  border-left: 2px solid transparent;
+}
+
+.agent-msg:hover {
+  background: var(--color-bg-secondary);
+}
+
+/* Unread is a BAR, not a fill: a tint across the row says "this whole message
+   is special", where the truth is only "you have not seen this yet". */
+.agent-msg--unread {
+  border-left-color: var(--color-accent);
+}
+
+.agent-msg-av {
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.agent-msg-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-msg-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.agent-msg-name {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.agent-msg-name:hover { text-decoration: underline; }
+
+.agent-msg-time,
+.agent-msg-meta {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* K26/K40: a WORD. The only colour spent here is on the two states that are
+   not "it went fine" — and `needs you` is warning, not danger, because a
+   question is not a fault. */
+.agent-msg-status {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.agent-msg-status--failed,
+.agent-msg-status--timeout {
+  color: var(--color-danger, #e5484d);
+}
+
+.agent-msg-status--needs-you {
+  color: var(--color-warning, #f5a623);
+  font-weight: 600;
+}
+
+.agent-msg-status--running {
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+/* The ROW spans the channel; the PROSE does not. A message that ran the full
+   width of a wide window would be a 130-character line, which is past the
+   point where the eye reliably finds the start of the next one. Everything
+   else — the files row, the replies row, the dividers, the composer — takes
+   the whole width, so the space is used rather than reserved. */
+.agent-msg-text {
+  max-width: 92ch;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-msg-text--quiet {
+  color: var(--color-text-secondary);
+}
+
+.agent-msg-from {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+/* ─── the file card ─── */
+
+.agent-msg-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.agent-msg-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 220ms ease;
+}
+
+.agent-msg-file:hover { border-color: var(--color-text-secondary); }
+
+.agent-msg-file-glyph {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.agent-msg-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── the replies row ─── */
+
+.agent-msg-replies {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+
+.agent-msg-replies span { color: var(--color-text-secondary); font-size: 12px; }
+
+.agent-msg-replies:hover { text-decoration: underline; }
+
+/* "Open thread" on a run nobody has spoken in is a way IN, not a highlight —
+   so it does not spend the accent. */
+.agent-msg-replies--quiet {
+  color: var(--color-text-secondary);
+}
+
+/* ─── the thread panel ─── */
+
+.agents-feed-main--split {
+  border-right: 1px solid var(--color-border);
+}
+
+.agent-thread {
+  flex-shrink: 0;
+  width: 380px;
+  max-width: 45%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-bg);
+}
+
+.agent-thread-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  height: 48px;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.agent-thread-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.agent-thread-sub {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-thread-close {
+  border: 0;
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.agent-thread-close:hover { color: var(--color-text); }
+
+.agent-thread-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: var(--space-4);
+}
+
+.agent-thread-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) var(--space-4) var(--space-2);
+}
+
+.agent-thread-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.agent-thread-divider span {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.agent-thread-empty {
+  margin: 0;
+  padding: var(--space-4);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+/* A system row is BOOKKEEPING: one grey line, no avatar, no surface. It is in
+   here and nowhere else — four of these per run in the feed would bury the
+   one line the agent actually wrote. */
+.agent-thread-sys {
+  display: flex;
+  gap: var(--space-2);
+  padding: 3px var(--space-4);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.agent-thread-sys-time { font-variant-numeric: tabular-nums; flex-shrink: 0; }
+
+.agent-thread-sys-text { overflow-wrap: anywhere; }
+
+.agent-thread-post {
+  padding: var(--space-2) var(--space-4);
+}
+
+.agent-thread-post-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.agent-thread-post-who {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.agent-thread-post-time {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-thread-post-text {
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-thread-post-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.agent-thread-post-file {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+}
+
+/* ─── the inert composer ─── */
+
+.agent-thread-foot {
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+/* K2: a 40px field. Disabled, but still the real shape — a shrunken or absent
+   composer would make the reader wonder whether replying exists at all. */
+.agent-thread-input {
+  width: 100%;
+  height: 40px;
+  padding: 10px var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 14px;
+  resize: none;
+  cursor: not-allowed;
+}
+
+/* K5: one sentence, and it answers the question the disabled field raises. */
+.agent-thread-note {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+/* A failure REASON is the body, not an aside — it is the most important thing
+   in the channel when it happens. Muted rather than red: the status word is
+   already carrying the alarm, and two red things in one message is one too
+   many (K8). */
+.agent-msg-text--error {
+  color: var(--color-text-secondary);
+}
+
+/* ─── the composer ───────────────────────────────────────────────────────
+   The channel's text field is the CHAT's composer, mounted through
+   `agentsChannelHost.ts` — so there are no field, Send or `@`-picker rules
+   here any more. `composer.css` owns all three, and that is the point: this
+   channel used to ship a second textarea, a second picker and a second Send
+   with their own `.agent-say*`/`.agent-mention*` styling, which is exactly
+   what the owner asked to stop ("bizim composer componentlerini ve stilini
+   kullansana").
+
+   What is left is the STRIP around it: the border and background that seat it
+   under the scroll area, and the one sentence beneath it.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.agents-composer {
+  position: relative;
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+/* The composer ships its OWN strip chrome — a top border, a background and horizontal
+   padding — because in the chat it IS the strip, docked to the pane's bottom edge. Here the
+   strip is `.agents-composer`: it is what runs edge to edge, what `--dc-bottom-strip` is
+   measured from, and what lines the field up with the notice in the page header. The
+   composer's copy would draw a second rule 20px inside the first, so it is suppressed —
+   everything else the card carries is exactly what is wanted. */
+.agents-composer .chat-cmp {
+  padding: 0;
+  border-top: 0;
+  background: none;
+}
+
+/* K5: one sentence, 14px, under the field. */
+.agents-composer-note {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.agents-composer-note--error { color: var(--color-danger, #e5484d); }
+.agents-composer-note strong { font-weight: 600; color: var(--color-text); }
+
+/* ─── your own row ───────────────────────────────────────────────────────
+   Your ask, above the answer it produced. Deliberately NOT a bubble and not
+   right-aligned: this is a channel, and in a channel your message is a row
+   like everyone else's. The only difference is the avatar, because you do not
+   have a photo here.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.agent-you-av {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  border: 1px dashed var(--color-border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
+.agent-msg-name--plain { cursor: default; }
+.agent-msg-name--plain:hover { text-decoration: none; }
+
+/* A fire that never became a run. Reported, not alarmed — nothing broke, it
+   just did not happen, and the body says why. */
+.agent-msg-status--skipped {
+  color: var(--color-warning, #f5a623);
+}
