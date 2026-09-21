@@ -58,9 +58,48 @@ Task `automations-redesign-the-flow-graph-is-the-manifest-the-run-asks-in-chat-a
 
 **Why it happened:** `kind` was a UX enum (what icon?), reused as a structural discriminator (does this tab have a chat?). When automation tabs were added, `kind: 'automation'` made them render the right icon but also excluded them from mounting.
 
+### Occurrence 3: `connected` was also the account-usage poll gate (2026-09-21, found by a clean reviewer)
+
+Task `agents-step-2-…-the-message-shape-is-the-design-to-approve`. The chat `Composer`'s
+`connected` prop means "the transport has settled" and gates everything the user can do —
+the textarea's `disabled`, Send, the model trigger, `commit`'s own guard. The `#agents`
+channel enforces one run per project at a time, so while another agent held the slot it
+passed `connected={!busyWith}`: honest-looking, and it disabled the field correctly.
+
+`connected` is ALSO the `enabled` flag of two react-query hooks — `useUsageLimits` and
+`useClaudeAccounts`, the account's 5-hour and weekly caps. So the channel froze those polls
+for the entire duration of every run, and on a page first opened mid-run the query had never
+fetched, `hasUsage` was false, and **the usage button was not drawn at all** — the reading a
+channel about to spend a headless run most wants in front of it, missing exactly when it
+mattered. The host's own comment claimed the opposite ("the ACCOUNT's caps still are [shown]").
+
+**Fix:** a separate `unavailable?: { reason: string }` prop for "this surface has nowhere to
+send", with `canCompose = connected && !unavailable` threaded through the eleven action gates
+while the two account-level polls stayed on raw `connected`. `connected` went back to meaning
+only the transport.
+
+**Why it happened:** not display drift — the field was a control predicate already. It simply
+had readers nobody enumerated before giving it a second meaning. The new meaning was true of
+the field's most visible consumer (the disabled textarea) and false of its quietest ones.
+
+## Generalisation (after occurrence 3)
+
+The family is wider than display→safety. The invariant is: **a field that already has readers
+must not acquire a second meaning.** Display→safety is the common case because display rules
+churn, but occurrence 3 was control→control, and the cost was the same shape — the new meaning
+fit the loud consumer and silently broke the quiet ones.
+
+So before reusing any flag for a second thing, GREP ITS READERS AND JUDGE EACH ONE. If you
+cannot say out loud what the new meaning does to every reader, you are not reusing a field,
+you are overloading it. Cheap to check, and invisible once shipped: a frozen data fetch throws
+nothing, logs nothing, and renders a stale number.
+
 ## The litmus test
 
 Ask: **"If I change this field's rules for UX reasons, does something unrelated break in a way tests won't catch?"** If yes, split it.
+
+And its converse, from occurrence 3: **"who else reads this field, and is the new meaning true
+for every one of them?"** Enumerate them — do not reason about them.
 
 Display rules are low-stakes and change often. Safety rules are high-stakes and must be deliberate. Never let the first control the second.
 
@@ -75,6 +114,7 @@ Display rules are low-stakes and change often. Safety rules are high-stakes and 
 - Task `one-window-holds-every-open-project-as-a-live-chip-strip` (M9 review finding, 2026-08-09)
 - Task `automations-redesign...` (runtime verification defect #3, 2026-08-10)
 - Pattern discussion in sleep cycle 2026-08-11 (this is the third cycle this signal appeared, now two occurrences = pattern)
+- Task `agents-step-2-a-finished-run-pushes-one-message-into-the-agents-feed-and-the-message-shape-is-the-design-to-approve` (occurrence 3, clean review finding, 2026-09-21) — widened the pattern from display→safety to any field acquiring a second meaning
 
 ## Last verified
 
