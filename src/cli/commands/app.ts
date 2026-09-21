@@ -62,9 +62,31 @@ export function pickAssetForArch(assetNames: string[], arch: Platform['arch']): 
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
-/** User-writable install dir (no admin needed). */
+/** User-writable install dir (no admin needed) — where a FIRST install goes. */
 export function defaultInstallDir(home: string = homedir()): string {
   return join(home, 'Applications');
+}
+
+/**
+ * Where an install/update should actually write: beside the bundle that is already
+ * installed, falling back to {@link defaultInstallDir} when there is none.
+ *
+ * WHY THIS EXISTS (owner report, 2026-09-21: "iki app yarattın"). `app status` reads the
+ * MANIFEST, which records the path the bundle was installed to; `app install`/`app update`
+ * wrote to `~/Applications` unconditionally. Move the app to `/Applications` once — by hand,
+ * or with `--dir` — and the two stop agreeing: `update` lays a SECOND bundle down in
+ * `~/Applications` while `status` keeps reporting the first, so the user updates one copy and
+ * keeps launching the other. Both copies then sit in Spotlight and Launchpad under one name.
+ *
+ * An update is by definition an update OF SOMETHING, so the honest default is that thing's
+ * own directory. An explicit `--dir` still wins — that is how you deliberately move it, and
+ * the manifest then follows it there.
+ */
+export function installDirFor(explicit: string | undefined, home: string = homedir()): string {
+  if (explicit) return resolve(explicit);
+  const installed = readAppManifest(home);
+  if (installed?.path && existsSync(installed.path)) return dirname(installed.path);
+  return defaultInstallDir(home);
 }
 
 /** Installed-app manifest path: ~/.dreamcontext/app.json. */
@@ -189,19 +211,69 @@ export function verifyCodesign(appDir: string): boolean | null {
   }
 }
 
-/** True if a dreamcontext-beta process is currently running. */
-export function isAppRunning(): boolean {
+/**
+ * Decide "is the app running" from a process listing.
+ *
+ * Split out from {@link isAppRunning} so the rule is testable without a running app: the
+ * caller supplies `ps` output and this answers. `selfPid` is excluded because `app install
+ * --from .../dreamcontext-beta.app` and `app status` both carry the bundle path on their OWN
+ * command line, and a check that matches itself always says yes.
+ *
+ * The marker is the bundle's EXECUTABLE directory, never the bundle name alone: only a
+ * launched app runs out of `<bundle>/Contents/MacOS/`, while the name appears in any command
+ * that merely mentions the path.
+ */
+export function appRunningIn(psOutput: string, selfPid: number, marker: string): boolean {
+  // An ABSOLUTE marker is anchored to the start of the command, never merely contained in it.
+  // `/Applications/…` is a SUFFIX of `/Users/me/Applications/…`, so a substring test reports
+  // the copy under the home directory as the one in /Applications — which is exactly the
+  // situation this check has to tell apart, since the duplicate is what prompted the fix.
+  // A relative marker (the bundle-name fallback, when no install path is known) has no
+  // anchor available and stays a containment test.
+  const anchored = marker.startsWith('/');
+  for (const line of psOutput.split('\n')) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (!m) continue;
+    if (Number(m[1]) === selfPid) continue;
+    if (anchored ? m[2].startsWith(marker) : m[2].includes(marker)) return true;
+  }
+  return false;
+}
+
+/**
+ * True if a dreamcontext-beta process is currently running.
+ *
+ * ── Why this reads `ps` and not `pgrep` (measured 2026-09-21) ───────────────────────
+ * It used to be `pgrep -f "<bundle>/Contents/MacOS/"`, and that answered "no" for an app the
+ * owner was looking at. Two independent reasons, either one fatal:
+ *
+ *   1. macOS `pgrep -f` matches only the first ~66 characters of a process's argument
+ *      string. At the default install path the marker lands at chars 35..72 and straddles
+ *      the cutoff, so it can never be seen — 100% of the time, not intermittently.
+ *   2. Worse, and the one that made the first explanation look sufficient when it was not:
+ *      `pgrep` cannot see some live processes AT ALL. Measured on this machine while the app
+ *      was running from `/Applications` (marker at chars 15..51, comfortably inside any
+ *      truncation window): `ps -A` listed 660 processes, `pgrep -f .` listed 644, and the
+ *      app was in the 16-process difference. No pattern found it — not the full path, not
+ *      the bare binary name, not a five-character prefix.
+ *
+ * `ps -Ao pid=,args=` lists it with its full argv in the same shell, so the fix is to stop
+ * asking pgrep. That also retires the conflict the old comment was stuck in: the marker had
+ * been lengthened past the bare bundle name to stop the command from matching itself, which
+ * is exactly what pushed it out of pgrep's window. Matching in-process lets us keep the long
+ * marker AND drop our own pid, so both constraints hold at once.
+ *
+ * `path` narrows the check to ONE bundle — the installed one — so a stale copy somewhere
+ * else on disk is not reported as "your app is running".
+ */
+export function isAppRunning(path?: string): boolean {
   try {
-    // Match the RUNNING bundle executable path, not the bundle name alone —
-    // otherwise `dreamcontext app install --from .../dreamcontext-beta.app` (and
-    // even `app status`) would match their own command line. The launched binary
-    // always runs from `<bundle>/Contents/MacOS/`.
-    const out = execFileSync('pgrep', ['-f', `${APP_BUNDLE_NAME}/Contents/MacOS/`], { encoding: 'utf-8' })
-      .toString()
-      .trim();
-    return out.length > 0;
+    const out = execFileSync('ps', ['-Ao', 'pid=,args='], { encoding: 'utf-8', maxBuffer: 8 * 1024 * 1024 }).toString();
+    const marker = path ? join(path, 'Contents', 'MacOS') + '/' : `${APP_BUNDLE_NAME}/Contents/MacOS/`;
+    return appRunningIn(out, process.pid, marker);
   } catch {
-    // pgrep exits non-zero when no match — that's "not running", not an error.
+    // `ps` failing is not evidence the app is stopped, but a status line has to say
+    // something; "no" is the same answer the old code gave and the safer one to act on.
     return false;
   }
 }
@@ -473,7 +545,7 @@ async function doInstall(from: string | undefined, dir: string | undefined): Pro
   }
 
   try {
-    const res = installAppBundle(source, { installDir: dir, sourceLabel });
+    const res = installAppBundle(source, { installDir: installDirFor(dir), sourceLabel });
     console.log(chalk.green(`✓ Installed dreamcontext-beta ${res.version ?? ''}`.trim()) + chalk.dim(` → ${res.path}`));
     if (res.signatureValid === false) {
       console.log(
@@ -521,7 +593,7 @@ async function doUpdate(from: string | undefined, dir: string | undefined): Prom
       console.log(chalk.green(`Desktop app is up to date (${installed.version}).`));
       return;
     }
-    const res = installAppBundle(dl.archivePath, { installDir: dir, sourceLabel: 'github' });
+    const res = installAppBundle(dl.archivePath, { installDir: installDirFor(dir), sourceLabel: 'github' });
     console.log(chalk.green(`✓ Updated dreamcontext-beta ${installed.version} → ${res.version ?? dl.version}`));
     if (res.wasRunning) console.log(chalk.yellow('Restart the app to apply the update.'));
   } finally {
@@ -539,7 +611,7 @@ function doStatus(): void {
   console.log(`Desktop app: ${installed.version}`);
   console.log(`  path:      ${installed.path}${onDisk ? '' : chalk.red('  (missing!)')}`);
   console.log(`  source:    ${installed.source}`);
-  console.log(`  running:   ${isAppRunning() ? 'yes' : 'no'}`);
+  console.log(`  running:   ${isAppRunning(installed.path) ? 'yes' : 'no'}`);
 }
 
 // ─── Registration ────────────────────────────────────────────────────────────
@@ -549,9 +621,9 @@ export function registerAppCommand(program: Command): void {
 
   app
     .command('install')
-    .description('Install the desktop app to ~/Applications (no quarantine, no admin)')
+    .description('Install the desktop app (no quarantine, no admin)')
     .option('--from <path>', 'Install from a local .app, .tar.gz, or .zip instead of GitHub Releases')
-    .option('--dir <dir>', 'Install directory (default: ~/Applications)')
+    .option('--dir <dir>', 'Install directory (default: beside the installed app, else ~/Applications)')
     .action(async (opts: { from?: string; dir?: string }) => {
       await doInstall(opts.from, opts.dir);
     });
@@ -560,7 +632,7 @@ export function registerAppCommand(program: Command): void {
     .command('update')
     .description('Update the installed desktop app to the latest version')
     .option('--from <path>', 'Update from a local artifact instead of GitHub Releases')
-    .option('--dir <dir>', 'Install directory (default: ~/Applications)')
+    .option('--dir <dir>', 'Install directory (default: beside the installed app, else ~/Applications)')
     .action(async (opts: { from?: string; dir?: string }) => {
       await doUpdate(opts.from, opts.dir);
     });

@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, statSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import chalk from 'chalk';
 import { input } from '@inquirer/prompts';
@@ -8,7 +8,7 @@ import { writeFrontmatter } from '../../lib/frontmatter.js';
 import { generateId, slugify, today } from '../../lib/id.js';
 import { success, error, info, header } from '../../lib/format.js';
 import { buildKnowledgeIndex, STANDARD_TAGS } from '../../lib/knowledge-index.js';
-import { moveKnowledgeFile, moveKnowledgeDir } from '../../lib/knowledge-move.js';
+import { moveKnowledgeFile, moveKnowledgeDir, resolveKnowledgeTarget } from '../../lib/knowledge-move.js';
 import { mergeKnowledgeFiles } from '../../lib/knowledge-merge.js';
 import { readSleepState, writeSleepState, bumpKnowledgeAccess, migrateKnowledgeAccessKey } from './sleep.js';
 
@@ -25,20 +25,30 @@ export function registerKnowledgeCommand(program: Command): void {
   // Create
   knowledge
     .command('create')
-    .argument('<name>')
+    .argument('<name>', 'Knowledge name, optionally folder-qualified: "recall-tuning" or "patterns/refuse-before-cleanup"')
     .option('-d, --description <desc>', 'Description')
     .option('-t, --tags <tags>', 'Tags (comma-separated)')
     .option('-c, --content <content>', 'Content body')
     .description('Create a new knowledge file')
     .action(async (name: string, opts: { description?: string; tags?: string; content?: string }) => {
       const dir = getKnowledgeDir();
-      const slug = slugify(name);
-      const filePath = join(dir, `${slug}.md`);
-
-      if (existsSync(filePath)) {
-        error(`Knowledge file already exists: ${slug}.md`);
+      // `<folder>/<name>` files INTO that folder rather than folding the separator into the
+      // filename — see `resolveKnowledgeTarget`. Slugifying the whole argument used to write
+      // `knowledge/patterns-foo.md` at the root, which reports success and is then missing
+      // from every surface that reads the folder.
+      const target = resolveKnowledgeTarget(name, slugify);
+      if (!target.ok) {
+        error(target.message);
         return;
       }
+      const { folder, slug, relPath } = target;
+      const filePath = join(dir, `${relPath}.md`);
+
+      if (existsSync(filePath)) {
+        error(`Knowledge file already exists: ${relPath}.md`);
+        return;
+      }
+      if (folder) mkdirSync(join(dir, folder), { recursive: true });
 
       const description = opts.description || await input({ message: 'Description:' });
       const tagsStr = opts.tags || await input({ message: 'Tags (comma-separated):' });
@@ -58,7 +68,10 @@ export function registerKnowledgeCommand(program: Command): void {
         },
         `\n${content || '(Content to be added)'}\n`,
       );
-      success(`Knowledge file created: ${slug}.md`);
+      // The PATH, not the bare slug: the whole defect was a file quietly landing somewhere
+      // other than where the author asked for it, and the success line is where that becomes
+      // visible or stays hidden.
+      success(`Knowledge file created: ${relPath}.md`);
     });
 
   // Index

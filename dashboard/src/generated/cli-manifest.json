@@ -9,7 +9,7 @@
     },
     {
       "path": "app install",
-      "desc": "Install the desktop app to ~/Applications (no quarantine, no admin)",
+      "desc": "Install the desktop app (no quarantine, no admin)",
       "args": [],
       "valueFlags": [
         "--from",

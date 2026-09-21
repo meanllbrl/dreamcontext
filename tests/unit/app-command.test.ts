@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -15,6 +15,9 @@ import {
   installAppBundle,
   readBundleVersion,
   appAutoUpdateEnabled,
+  installDirFor,
+  defaultInstallDir,
+  appRunningIn,
   maybeTriggerAppUpdate,
   downloadLatestArtifact,
   APP_BUNDLE_NAME,
@@ -308,5 +311,105 @@ describe.skipIf(!isDarwin)('installAppBundle (macOS, real ditto/swap)', () => {
     void leftovers;
     expect(existsSync(join(installDir, `.${APP_BUNDLE_NAME}.new-${process.pid}`))).toBe(false);
     expect(existsSync(join(installDir, `.${APP_BUNDLE_NAME}.old-${process.pid}`))).toBe(false);
+  });
+});
+
+// ── The two defects the owner hit on 2026-09-21, in one sitting ─────────────────────────
+//
+// He ended up with `dreamcontext-beta.app` in BOTH `/Applications` and `~/Applications`, and
+// `app status` told him the one he was looking at was not running. Two separate bugs that
+// compound: the duplicate is what an update creates, and the false negative is what stops
+// anyone noticing which copy is live.
+
+describe('installDirFor — an update updates the app you HAVE', () => {
+  it('goes beside the installed bundle, not to ~/Applications', () => {
+    // The whole defect: `status` reads the manifest (here /Applications) while install wrote
+    // to ~/Applications unconditionally, so `update` laid down a SECOND bundle and the user
+    // updated one copy while launching the other.
+    const home = mkdtempSync(join(tmpdir(), 'dc-app-dir-'));
+    const installed = join(home, 'Elsewhere');
+    mkdirSync(join(installed, APP_BUNDLE_NAME), { recursive: true });
+    writeAppManifest(
+      { version: '0.28.0', path: join(installed, APP_BUNDLE_NAME), installedAt: 1, source: 'local' },
+      home,
+    );
+    expect(installDirFor(undefined, home)).toBe(installed);
+    expect(installDirFor(undefined, home)).not.toBe(defaultInstallDir(home));
+  });
+
+  it('falls back to ~/Applications when nothing is installed yet', () => {
+    const home = mkdtempSync(join(tmpdir(), 'dc-app-dir-'));
+    expect(installDirFor(undefined, home)).toBe(defaultInstallDir(home));
+  });
+
+  it('falls back when the manifest points at a bundle that is GONE', () => {
+    // A manifest outliving its bundle must not send an install into a directory the user
+    // deleted — that would silently resurrect the copy they just removed.
+    const home = mkdtempSync(join(tmpdir(), 'dc-app-dir-'));
+    writeAppManifest(
+      { version: '0.28.0', path: join(home, 'Deleted', APP_BUNDLE_NAME), installedAt: 1, source: 'local' },
+      home,
+    );
+    expect(installDirFor(undefined, home)).toBe(defaultInstallDir(home));
+  });
+
+  it('an explicit --dir still wins — that is how you move it on purpose', () => {
+    const home = mkdtempSync(join(tmpdir(), 'dc-app-dir-'));
+    mkdirSync(join(home, 'Applications', APP_BUNDLE_NAME), { recursive: true });
+    writeAppManifest(
+      { version: '0.28.0', path: join(home, 'Applications', APP_BUNDLE_NAME), installedAt: 1, source: 'local' },
+      home,
+    );
+    expect(installDirFor('/Applications', home)).toBe('/Applications');
+  });
+});
+
+describe('appRunningIn — a running app reports running', () => {
+  const SELF = 4242;
+  const MARKER = `${APP_BUNDLE_NAME}/Contents/MacOS/`;
+  // Real `ps -Ao pid=,args=` output, including the leading-space alignment ps actually emits.
+  const PS = [
+    '    1 /sbin/launchd',
+    ' 94896 /Applications/dreamcontext-beta.app/Contents/MacOS/dreamcontext-desktop',
+    ' 12864 /usr/bin/node /Users/x/projects/dreamcontext/dist/index.js dashboard',
+  ].join('\n');
+
+  it('finds the app ps can see — the case pgrep answered "no" to', () => {
+    // Measured 2026-09-21: `ps -A` listed 660 processes, `pgrep -f .` listed 644, and the
+    // running app was in the difference. No pattern found it, not even a 5-char prefix.
+    expect(appRunningIn(PS, SELF, MARKER)).toBe(true);
+  });
+
+  it('…at the OTHER install path too, where the 66-char truncation bites', () => {
+    const ps = ' 1932 /Users/mehmetnuraydin/Applications/dreamcontext-beta.app/Contents/MacOS/dreamcontext-desktop';
+    expect(appRunningIn(ps, SELF, MARKER)).toBe(true);
+  });
+
+  it('says no when nothing is running', () => {
+    expect(appRunningIn('    1 /sbin/launchd\n  500 /usr/bin/ssh-agent', SELF, MARKER)).toBe(false);
+  });
+
+  it('does NOT match the command asking the question', () => {
+    // The reason the old marker was lengthened past the bare bundle name in the first place:
+    // `app install --from …/dreamcontext-beta.app` carries the path on its own command line.
+    // Dropping our own pid is what lets the marker stay long AND stay honest.
+    const ps = ` ${SELF} node dreamcontext app install --from /tmp/dreamcontext-beta.app/Contents/MacOS/`;
+    expect(appRunningIn(ps, SELF, MARKER)).toBe(false);
+  });
+
+  it('the bundle NAME alone is not evidence — only the executable directory is', () => {
+    // A bundle sitting in a tarball, being copied, or named in any command is not a launched
+    // app. Only `<bundle>/Contents/MacOS/` means a process is executing out of it.
+    const ps = ' 777 /usr/bin/ditto /tmp/build/dreamcontext-beta.app /Applications/dreamcontext-beta.app';
+    expect(appRunningIn(ps, SELF, MARKER)).toBe(false);
+  });
+
+  it('scoped to ONE bundle, so a stale copy elsewhere is not your app', () => {
+    // `isAppRunning(installed.path)` narrows the marker to the installed bundle — otherwise a
+    // forgotten copy under ~/Applications would report the /Applications app as running.
+    const scoped = `${join('/Applications', APP_BUNDLE_NAME)}/Contents/MacOS/`;
+    const ps = ' 999 /Users/x/Applications/dreamcontext-beta.app/Contents/MacOS/dreamcontext-desktop';
+    expect(appRunningIn(ps, SELF, scoped)).toBe(false);
+    expect(appRunningIn(ps, SELF, MARKER)).toBe(true);
   });
 });
