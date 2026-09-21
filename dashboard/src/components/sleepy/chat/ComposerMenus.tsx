@@ -44,17 +44,17 @@ export function ModeMenu({
    *  process is worse than none. */
   permission: PermissionMode;
   /**
-   * The PROJECT's remembered default — what a click on the segment actually writes.
+   * The PROJECT's remembered default — what a NEW chat in this project will open under.
    *
-   * It exists because the segment reads and writes at DIFFERENT SCOPES, and that asymmetry is
-   * real rather than a bug to paper over: the display has to be this session's truth (a
-   * hand-off runs `auto` inside a `bypass`-remembered project, and a chip that lied about that
-   * would be worse than no chip), while the write has to stay project-wide because this is the
-   * vault default's only control — re-scoping it would orphan the setting, and the owner's
-   * no-set-default rule for this menu forbids adding a second control to carry it.
+   * The segment used to read per-session and write per-project, and this prop existed to name
+   * that asymmetry out loud. The write has since been narrowed to the session (one click was
+   * respawning every pane in the vault — see AgentSurface's `changeChatPermissionMode`), so
+   * the two scopes no longer disagree about what the click does. The prop survives because the
+   * click still has a SECOND effect worth stating: the mode is remembered, so the next chat
+   * opens under it.
    *
-   * So the two scopes are NAMED instead of conflated. Optional: a caller that has no project
-   * value to show gets the plain per-mode description it always had.
+   * Optional: a caller with no project value to show gets the plain per-mode description it
+   * always had.
    */
   projectPermission?: PermissionMode;
   onPermissionChange: (mode: PermissionMode) => void;
@@ -62,10 +62,11 @@ export function ModeMenu({
 }) {
   const note = (PERMISSIONS.find((p) => p.id === permission) ?? PERMISSIONS[0]).desc;
   // ALWAYS stated, not only when the two diverge. A scope line that appears exactly when
-  // something is unusual teaches the user to read its ABSENCE as "this one is just for here",
-  // which is the misreading it exists to prevent — and the click is project-wide either way.
+  // something is unusual teaches the user to read its ABSENCE as "this applies everywhere",
+  // which is the misreading it exists to prevent — and both halves of the sentence are true
+  // on every click.
   const scopeNote = projectPermission
-    ? `Applies to every chat in this project (project default: ${projectPermission}).`
+    ? `Applies to this chat, and becomes the default for new chats (currently: ${projectPermission}).`
     : null;
   return (
     <div className="chat-cmp-modemenu chat-cmp-modelmenu" role="menu" aria-label="Mode and permission">

@@ -43,7 +43,6 @@
 .mcp-row-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .mcp-row-name { font-size: 13px; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mcp-row-target {
-  font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--color-text-tertiary);
   overflow: hidden;
@@ -82,15 +81,16 @@
   line-height: 1.5;
 }
 
-/* Scope chip — only on rows whose origin changes what the row means (see McpPanel). */
-.mcp-scope {
-  margin-left: 6px;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--color-text-tertiary) 14%, transparent);
-  color: var(--color-text-tertiary);
+/* The stranded-servers explanation: a warning the reader must not skim past. */
+.mcp-foot--warn {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  color: var(--color-text-secondary);
+}
+.mcp-foot code {
   font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.02em;
-  vertical-align: middle;
+  font-size: 10.5px;
+  color: var(--color-text);
 }

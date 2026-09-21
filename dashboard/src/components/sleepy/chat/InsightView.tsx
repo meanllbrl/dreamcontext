@@ -32,6 +32,8 @@ function toSummary(detail: NonNullable<ReturnType<typeof useLabInsight>['data']>
     group: m.group,
     render: m.render,
     size: m.size,
+    width: m.width ?? null,
+    height: m.height ?? null,
     unit: m.unit,
     binding: m.binding,
     latest: detail.cache?.latest ?? null,

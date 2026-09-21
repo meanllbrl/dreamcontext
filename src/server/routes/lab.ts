@@ -50,6 +50,8 @@ function toPublicManifest(m: InsightManifest) {
     group: m.group,
     render: m.render,
     size: m.size,
+    width: m.width,
+    height: m.height,
     unit: m.unit,
     binding: m.binding,
     credentials_used: m.credentials_used,
@@ -78,8 +80,12 @@ function toSummary(contextRoot: string, m: InsightManifest) {
     category: m.category,
     group: m.group,
     render: m.render,
-    // The board's card sizing: `s`/`m` → 1 column, `l` → 2, null → the render's default.
+    // The board's card sizing. `size` is the LEGACY single axis (`s`/`m` → 1 column,
+    // `l` → 2, null → the render's default) and only ever meant width; `width`/`height`
+    // are the two real axes and take precedence when the manifest names them.
     size: m.size,
+    width: m.width,
+    height: m.height,
     unit: m.unit,
     binding: m.binding,
     latest: cache?.latest ?? null,

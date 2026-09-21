@@ -18,11 +18,16 @@ import { CHAT_MODES, type ChatMode } from '../chat-modes.js';
  * "persistence gotcha"), and the in-memory `sessionSeq`/`sessionList` reset to 0/[] on
  * reload — so without a server-side mirror, "Fitness"/"Refactor" become "Agent N" again.
  *
- * We persist ONLY the roster metadata — title, bypass default, minimized flag, and the
- * row size — never a live PTY. On reopen the client restores these as DORMANT "Resume"
- * tabs that spawn a real Claude Code session only when the user clicks resume (no
- * auto-spawn of `claude` on launch). The blob lives at
- * `<contextRoot>/state/.agent-sessions.json` (already gitignored).
+ * We persist ONLY metadata — title, permission mode, the Claude conversation id, and the
+ * PLACEMENT (which pane, which tab was visible, which pane had focus) — never a live PTY.
+ * On reopen the client restores these as DORMANT "Resume" tabs that spawn a real Claude Code
+ * session only when the user clicks resume (no auto-spawn of `claude` on launch). The blob
+ * lives at `<contextRoot>/state/.agent-sessions.json` (already gitignored).
+ *
+ * Placement is here because the same "fresh port every launch" gotcha destroys it: the pane
+ * row is React state in a realm that does not survive the relaunch, and localStorage — the
+ * usual home for a layout — is empty on the new origin. Without a server-side mirror, five
+ * side-by-side panes reopen as one pane with one chat visible.
  *
  * Desktop-only (mirrors agent-drop / agent-terminal): a browser/npm dashboard never
  * reaches it (403). The loopback CSRF guard already fronts the PUT in the server entry.
@@ -66,6 +71,26 @@ export interface SavedMeta {
    * the mode with no extra brief at all, and therefore the safe direction.
    */
   mode?: ChatMode;
+  /**
+   * Which PANE this tab sat in, as a 0-based index into the surface's left-to-right pane row.
+   *
+   * The roster used to persist titles only, and the client's own comment said so out loud:
+   * "the pane layout itself is not persisted — restored tabs reopen in a single pane". For
+   * one or two tabs that reads as a tidy-up; for the five side-by-side panes this surface
+   * exists to support it is data loss, because the arrangement IS the work (a plan pane next
+   * to the build pane next to the log). Reopening collapses all five into one stack with one
+   * chat visible and the rest to be hunted for in a tab strip.
+   *
+   * An INDEX, not a pane id: pane ids (`pane-N`) are minted per page load and mean nothing
+   * across a relaunch, while "third from the left" survives verbatim. Gaps are harmless — the
+   * client sorts the groups and rebuilds them in order — so an entry whose pane no longer has
+   * any other member simply becomes its own pane.
+   */
+  pane?: number;
+  /** Was this the ACTIVE (visible) tab of its pane? At most one per pane survives coercion's
+   *  caller — the client writes one — and a pane whose flag is missing falls back to its
+   *  first tab, which is what a fresh pane does anyway. */
+  active?: boolean;
 }
 
 /** Hard ceiling on rostered sessions (extras are dropped, not rejected). */
@@ -133,6 +158,12 @@ function coerceMeta(raw: unknown): SavedMeta {
   const mode = kind === 'chat' && typeof o.mode === 'string' && (CHAT_MODES as readonly string[]).includes(o.mode)
     ? (o.mode as ChatMode)
     : undefined;
+  // A pane index is clamped into range rather than dropped: it is a layout hint, and the
+  // worst a clamped value can do is put a tab in the nearest real pane. MAX_SESSIONS is the
+  // ceiling because a roster of N tabs can never need more than N panes.
+  const pane = typeof o.pane === 'number' && Number.isFinite(o.pane)
+    ? Math.min(MAX_SESSIONS - 1, Math.max(0, Math.floor(o.pane)))
+    : undefined;
   return {
     title: title || DEFAULT_TITLE,
     bypass: o.bypass === true,
@@ -142,7 +173,31 @@ function coerceMeta(raw: unknown): SavedMeta {
     ...(kind ? { kind } : {}),
     ...(automation ? { automation } : {}),
     ...(mode ? { mode } : {}),
+    ...(pane !== undefined ? { pane } : {}),
+    ...(o.active === true ? { active: true } : {}),
   };
+}
+
+/**
+ * This vault's remembered chat permission mode, riding in the SAME file as the roster.
+ *
+ * WHY IT IS HERE and not in `/launcher/agent-settings` with the other chat defaults: that
+ * blob is global, and a permission gate must never cross projects (`agentSettings.ts` spells
+ * out the reasoning — flipping bypass while looking at project A must not arm project B).
+ * This file is already the per-vault, machine-local, gitignored home for exactly that class
+ * of state, so the mode travels with the roster rather than earning a second endpoint.
+ *
+ * WHY IT NEEDS A SERVER HOME AT ALL: the client stores it in `localStorage`, and the desktop
+ * app picks a FRESH loopback port every launch — a new origin, an empty store. So a mode the
+ * user chose yesterday was gone this morning, every morning.
+ *
+ * Only an exact `'bypass'` opts in; anything else reads as `'auto'`, the same fail-safe
+ * direction `readChatPermissionMode` takes on the client.
+ */
+export type ChatPermissionMode = 'auto' | 'bypass';
+
+function coercePermissionMode(raw: unknown): ChatPermissionMode {
+  return raw === 'bypass' ? 'bypass' : 'auto';
 }
 
 /**
@@ -158,18 +213,44 @@ export function sanitizeRoster(body: unknown): SavedMeta[] | null {
   return sessions.slice(0, MAX_SESSIONS).map(coerceMeta);
 }
 
-/** Read + sanitize the persisted roster. Missing/corrupt/hand-edited → `[]` (never throws). */
-function readRoster(contextRoot: string): SavedMeta[] {
+/**
+ * The whole persisted blob: the roster plus the two surface-level facts that belong to the
+ * same per-vault, machine-local scope — which pane had focus, and the remembered permission
+ * mode. Separate from {@link sanitizeRoster} so that function keeps its exact contract (and
+ * its unit tests), and so a body with a valid `sessions` but junk beside it still stores the
+ * sessions.
+ */
+export interface SavedSurface {
+  sessions: SavedMeta[];
+  /** 0-based index of the pane that had focus, clamped like {@link SavedMeta.pane}. */
+  activePane?: number;
+  chatPermissionMode: ChatPermissionMode;
+}
+
+function coerceActivePane(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isFinite(raw)
+    ? Math.min(MAX_SESSIONS - 1, Math.max(0, Math.floor(raw)))
+    : undefined;
+}
+
+/** Read + sanitize the persisted surface. Missing/corrupt/hand-edited → empty + `'auto'`
+ *  (never throws), which is the fail-safe direction for the permission mode. */
+function readSurface(contextRoot: string): SavedSurface {
   try {
-    const raw = readFileSync(storePath(contextRoot), 'utf-8');
-    return sanitizeRoster(JSON.parse(raw)) ?? [];
+    const raw = JSON.parse(readFileSync(storePath(contextRoot), 'utf-8')) as Record<string, unknown>;
+    const activePane = coerceActivePane(raw?.activePane);
+    return {
+      sessions: sanitizeRoster(raw) ?? [],
+      ...(activePane !== undefined ? { activePane } : {}),
+      chatPermissionMode: coercePermissionMode(raw?.chatPermissionMode),
+    };
   } catch {
-    return [];
+    return { sessions: [], chatPermissionMode: 'auto' };
   }
 }
 
-/** Atomically persist the roster (temp file + rename) so a crash can't leave a half-written blob. */
-function writeRoster(contextRoot: string, sessions: SavedMeta[]): void {
+/** Atomically persist the surface (temp file + rename) so a crash can't leave a half-written blob. */
+function writeSurface(contextRoot: string, surface: SavedSurface): void {
   // The roster is PER-MACHINE state (renamed tabs + Claude resume ids), never committed.
   // User projects track `state/*.md` (task PRDs) but do NOT blanket-ignore state dotfiles,
   // so — mirroring the task-backend secrets pattern — ensure the ignore entry BEFORE
@@ -185,7 +266,7 @@ function writeRoster(contextRoot: string, sessions: SavedMeta[]): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = storePath(contextRoot);
   const tmp = `${path}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ sessions }, null, 2) + '\n', 'utf-8');
+  writeFileSync(tmp, JSON.stringify(surface, null, 2) + '\n', 'utf-8');
   renameSync(tmp, path);
 }
 
@@ -228,11 +309,16 @@ export async function handleAgentSessionsGet(
     sendError(res, 403, 'desktop_only', 'Agent session roster is only available in the desktop app.');
     return;
   }
-  const sessions: SessionRosterEntry[] = readRoster(contextRoot).map((m) => ({
+  const saved = readSurface(contextRoot);
+  const sessions: SessionRosterEntry[] = saved.sessions.map((m) => ({
     ...m,
     bound: !!m.sessionId && isAutomationBoundSession(m.sessionId, home) !== null,
   }));
-  sendJson(res, 200, { sessions });
+  sendJson(res, 200, {
+    sessions,
+    ...(saved.activePane !== undefined ? { activePane: saved.activePane } : {}),
+    chatPermissionMode: saved.chatPermissionMode,
+  });
 }
 
 /**
@@ -260,13 +346,23 @@ export async function handleAgentSessionsPut(
     sendError(res, 400, 'invalid_sessions', 'sessions must be an array.');
     return;
   }
-  const serialized = JSON.stringify({ sessions });
+  const raw = body as Record<string, unknown>;
+  const activePane = coerceActivePane(raw.activePane);
+  const surface: SavedSurface = {
+    sessions,
+    ...(activePane !== undefined ? { activePane } : {}),
+    // Absent reads as `'auto'`, so a legacy client that only ever sends `{ sessions }` cannot
+    // silently leave a stored `'bypass'` in place — a permission gate has to be re-asserted by
+    // whoever writes the file, never inherited from what happened to be there.
+    chatPermissionMode: coercePermissionMode(raw.chatPermissionMode),
+  };
+  const serialized = JSON.stringify(surface);
   if (Buffer.byteLength(serialized, 'utf-8') > MAX_BYTES) {
     sendError(res, 400, 'too_large', 'session roster payload is too large.');
     return;
   }
   try {
-    writeRoster(contextRoot, sessions);
+    writeSurface(contextRoot, surface);
     sendJson(res, 200, { ok: true });
   } catch (err) {
     console.error('[agent-sessions] roster write failed:', err);

@@ -143,6 +143,26 @@ export const RESUME_HANDOFF_WAIT_MS = 1500;
 const RESUME_HANDOFF_POLL_MS = 25;
 
 /**
+ * Minimum number of polls that must actually RUN before the wait may give up, regardless of
+ * what the clock says.
+ *
+ * A wall-clock deadline alone is the wrong instrument here, and the case that proves it is
+ * the one the owner hit: a permission switch used to respawn EVERY chat in the vault at once,
+ * so the event loop went into a burst of synchronous `child_process.spawn` + briefing-file
+ * writes. Nothing polls while the loop is blocked, and `Date.now()` keeps moving — so the
+ * budget could be spent entirely inside one block, the loop exits on its very first check
+ * with the conversation still held, and `startChatSession` takes the silent fall-through:
+ * `idArg` empty, a BRAND-NEW unpinned conversation, the transcript orphaned. The tab keeps
+ * its pinned id while the live conversation is somewhere else, so the pane comes back blank
+ * and stays blank.
+ *
+ * Counting polls makes the budget mean "we looked this many times", which is what the wait
+ * was always trying to say. On an unblocked loop the two agree and the ordinary case still
+ * costs one Set lookup and no delay.
+ */
+const RESUME_HANDOFF_MIN_POLLS = Math.ceil(RESUME_HANDOFF_WAIT_MS / RESUME_HANDOFF_POLL_MS);
+
+/**
  * Give the previous holder of `resumeId`'s conversation a moment to release it.
  *
  * Resolves as soon as nothing holds it (the overwhelmingly common case: immediately), or
@@ -158,8 +178,17 @@ async function awaitResumeHandoff(contextRoot: string, resumeId: string): Promis
   const candidates = [mapped, resumeId].filter((c) => c && claudeConversationExists(c));
   if (!candidates.length) return;
   const deadline = Date.now() + RESUME_HANDOFF_WAIT_MS;
-  while (candidates.some((c) => liveConversations.has(c)) && Date.now() < deadline) {
+  let polls = 0;
+  while (candidates.some((c) => liveConversations.has(c))
+    && (polls < RESUME_HANDOFF_MIN_POLLS || Date.now() < deadline)) {
+    polls += 1;
     await new Promise((r) => { setTimeout(r, RESUME_HANDOFF_POLL_MS); });
+  }
+  // Giving up here is not fatal on its own, but it IS the doorway to the silent fall-through
+  // described on RESUME_HANDOFF_MIN_POLLS — and that failure is invisible from the outside
+  // (a blank pane, no error). Say so in the log so the next report has something to stand on.
+  if (candidates.some((c) => liveConversations.has(c))) {
+    console.warn(`[agent-chat] resume hand-off timed out after ${polls} polls — ${resumeId} is still held; this resume may start an unpinned conversation.`);
   }
 }
 
@@ -543,6 +572,42 @@ export function startChatSession(
   const freshPin = !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
     ? pinId : '';
   const idArg = resumeTarget ? ['--resume', resumeTarget] : freshPin ? ['--session-id', freshPin] : [];
+
+  /**
+   * A RESUME THAT CANNOT TAKE ITS CONVERSATION REFUSES — it never quietly forks.
+   *
+   * The three lines above can all come up empty at once, and until this guard they did so
+   * SILENTLY: `resumeTarget` blocked because the conversation is still held, `freshPin`
+   * blocked because a transcript for it exists, so `idArg` came out `[]` and the spawn
+   * started a brand-new, UNPINNED conversation. The tab kept its pinned id, the live
+   * conversation was somewhere else entirely, and `chat-history` — which resolves through the
+   * tab-session map the new process's SessionStart hook had just rewritten — replayed the new
+   * empty file. That is the owner's report exactly: "session kaybı yaşanıyor, tüm geçmiş text
+   * yok oluyor." Not hidden for one launch; the pin was orphaned for good, and the new
+   * conversation was not even resumable.
+   *
+   * `awaitResumeHandoff` makes this rare (and `RESUME_HANDOFF_MIN_POLLS` makes its budget
+   * honest under a blocked event loop), but rare is the wrong target for a failure whose cost
+   * is a lost conversation. Refusing turns an invisible, permanent loss into a visible,
+   * recoverable one: the pane raises its "Session ended" banner carrying this message, and its
+   * Resume button succeeds the moment the other holder lets go.
+   *
+   * SCOPED TO `resumeId`. A brand-new session (`sessionId` only) whose id is somehow held is
+   * not covered here — it has no transcript to lose, and `freshPin` already declines to pin it.
+   */
+  if (resumeId && !resumeTarget && !freshPin) {
+    try {
+      ws.send(JSON.stringify({
+        type: 'dc_meta',
+        subtype: 'error',
+        message: 'This conversation is still open in another pane or is still shutting down. '
+          + 'Nothing was lost — press Resume in a moment to reopen it.',
+      }));
+    } catch { /* the socket is already gone */ }
+    try { ws.close(); } catch { /* already closed */ }
+    return;
+  }
+
   const heldConversation = resumeTarget || freshPin;
   if (heldConversation) liveConversations.add(heldConversation);
   let releaseHeld = () => {

@@ -12,7 +12,7 @@ pinned: false
 date: '2026-08-23'
 status: active
 created: '2026-08-23'
-updated: '2026-09-07'
+updated: '2026-09-21'
 released_version: 0.27.0
 tags:
   - 'topic:agents'
@@ -91,6 +91,7 @@ Both need a surface that PERSISTS and, for progress, one that is DERIVED from th
 - [x] **The warning compares against the RESOLVED checkout**, so a session that claimed A and wrote into B is warned exactly like one that declared nothing; the count is composed per request, OUTSIDE the 12s git memo, so it never describes a state the user has already left.
 - [x] **`reset` withdraws a claim without pinning the project root** — the registry entry is deleted, so resolution falls back to claim -> transcript -> frames -> root and the answer returns to the observers. "I withdraw this" is not "I claim the root".
 - [x] **The client parses `checkout` only to stay quiet and refresh** — no unknown-type notice, nothing rendered, and `useShelf` invalidates the `agent-session-facts` query for that conversation so the chip moves with the sentence instead of at the next 15s poll.
+- [x] **The progress row's slug ceiling is DERIVED, not guessed** (2026-09-19, `b1f05631`) — it was a round 120, which silently refused the shelf row for this project's 22 longest tasks; 13 of the 127 progress views recorded on this machine were being dropped. Worse, the Plan-mode briefing asks for that row the moment the task exists, so the LONGEST plans were exactly the ones that lost it. The bound is now `MAX_SLUG_CHARS` (252 = a 255-byte filename minus `.md`) — the same constant the chat-actions `develop` gate moved to on the same day, from the same class of defect one file over — and the test pins it against a real sentence-style slug rather than a round number nobody measured.
 - [x] **Evidence** — `chat-shelf.mjs` 72/72 (was 60) and `chat-shelf-ui.mjs` 92/92 against a real server, a real browser, real `git worktree add` and real WS turns; 285 unit tests green over the touched suites; tsc clean in both roots.
 
 ## Constraints & Decisions
@@ -278,6 +279,10 @@ MAX_TAGS_PER_LINE is declared at chatViewSpec.ts:163 but has zero references any
 Original design had progress detail expand in-place (like long pins). Owner changed to floating popover after live testing 2026-08-23 so row costs same height open or closed. In-place expansion scoped to long PINS only.
 
 ## Changelog
+
+### 2026-09-19 — A guessed ceiling was eating the shelf row of the longest tasks
+
+Two files, one defect, found from opposite ends on the same day: the progress view's slug bound (120) and the chat-action `develop` button's (64) were both invented numbers with no relationship to what a slug can be. `slugify` truncates nothing and this project's task names are sentence-style, so 240 of its 350 slugs exceed 64 and 22 exceed 120. Both now use `MAX_SLUG_CHARS`. The generalisable half is not the number: a parser that DISCARDS input must say what it discarded, because a row (or a button) that silently vanishes presents as "the agent rarely writes it" rather than "the parser rarely honours it" — and that misdiagnosis is what kept both alive.
 <!-- LIFO: newest entry at top -->
 
 ### 2026-09-07 - Released in 0.27.0 — the shelf follows a session into a linked code repo

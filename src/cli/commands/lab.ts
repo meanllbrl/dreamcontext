@@ -17,13 +17,17 @@ import { findAppPage } from '../../lib/lab/app.js';
 import { queryDataset, resolveDatasetAsOf, type DatasetQuery } from '../../lib/lab/datasetQuery.js';
 import { htmlToText } from '../../lib/lab/htmlText.js';
 import {
+  INSIGHT_HEIGHTS,
   INSIGHT_SIZES,
+  INSIGHT_WIDTHS,
   LabError,
   RENDERS,
   type DatasetCacheEntry,
   type FunnelCacheEntry,
   type InsightCache,
+  type InsightHeight,
   type InsightSize,
+  type InsightWidth,
   type MatrixCacheEntry,
   type MatrixSet,
   type Render,
@@ -462,11 +466,15 @@ export function registerLabCommand(program: Command): void {
     .option('--group <group>', 'Dashboard section this insight groups under')
     // Enum text derives from RENDERS so a new render never needs a CLI edit.
     .option('--render <render>', `${RENDERS.join('|')} (default number)`)
-    .option('--size <size>', `${INSIGHT_SIZES.join('|')} — board footprint (default: the render's own)`)
+    // `--size` is the LEGACY single axis and only ever meant width; --width/--height are
+    // the two real ones and override it.
+    .option('--size <size>', `${INSIGHT_SIZES.join('|')} — legacy footprint (prefer --width/--height)`)
+    .option('--width <n>', `${INSIGHT_WIDTHS.join('|')} — board columns (default: the render's own)`)
+    .option('--height <h>', `${INSIGHT_HEIGHTS.join('|')} — card body height ceiling (default m)`)
     .option('--adapter <adapter>', 'http|script (default http)')
     .option('--unit <unit>', 'Display unit (e.g. "users")')
     .option('--ttl <minutes>', 'Cache TTL in minutes (default 1440)')
-    .action((slug: string, opts: { title: string; category?: string; group?: string; render?: string; size?: string; adapter?: string; unit?: string; ttl?: string }) => {
+    .action((slug: string, opts: { title: string; category?: string; group?: string; render?: string; size?: string; width?: string; height?: string; adapter?: string; unit?: string; ttl?: string }) => {
       const root = ensureContextRoot();
       try {
         const m = createInsight(root, {
@@ -476,6 +484,10 @@ export function registerLabCommand(program: Command): void {
           group: opts.group ?? null,
           render: (opts.render as Render) ?? 'number',
           size: opts.size as InsightSize | undefined,
+          // Parsed here so a bad value hits validateManifestForWrite's message, not a silent
+          // NaN that would quietly fall through to the render default.
+          width: opts.width != null ? (Number(opts.width) as InsightWidth) : undefined,
+          height: opts.height as InsightHeight | undefined,
           adapter: (opts.adapter as 'http' | 'script') ?? 'http',
           unit: opts.unit ?? null,
           ttl_minutes: opts.ttl ? Number(opts.ttl) : undefined,

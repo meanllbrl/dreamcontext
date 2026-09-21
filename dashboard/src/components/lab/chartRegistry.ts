@@ -40,11 +40,21 @@ export const RENDERS = [
 
 export type Render = (typeof RENDERS)[number];
 
-/** An author's manifest override for a card's board footprint. */
+/** LEGACY single-axis manifest override. Only ever meant WIDTH — a card marked `l` got
+ *  two columns and the same fixed body height as every other card, which is how a tall
+ *  render ended up clipped into an inner scrollbar no matter what its author asked for.
+ *  Still honoured; `width`/`height` below override it. */
 export type InsightSize = 's' | 'm' | 'l';
 
-/** How many board columns a card takes (the grid grants 2 only where 2 exist). */
-export type CardSpan = 1 | 2;
+/** How many board columns a card takes (the grid grants a span only where it exists). */
+export type CardSpan = 1 | 2 | 3;
+
+/** Manifest column span. */
+export type InsightWidth = 1 | 2 | 3;
+
+/** Manifest body-height CEILING (not a fixed height — a short body still shrinks).
+ *  `m` is the historical 280px, so an insight naming nothing renders as before. */
+export type InsightHeight = 's' | 'm' | 'l' | 'xl';
 
 export interface ChartRegistryEntry {
   /** The board card's body. */
@@ -175,11 +185,32 @@ export function detailBodyFor(render: string): ComponentType<ChartBodyProps> {
   return entry.DetailBody ?? entry.CardBody;
 }
 
-/** Board columns for a card: the manifest's `size` wins, else the render's default. */
-export function cardSpan(render: string, size: InsightSize | null | undefined): CardSpan {
+/** Board columns for a card. Precedence: explicit `width` → legacy `size` → the
+ *  render's own default. A width the build does not know degrades to the next rule
+ *  rather than blanking the card — same leniency `chartEntry` has. */
+export function cardSpan(
+  render: string,
+  size: InsightSize | null | undefined,
+  width?: InsightWidth | null,
+): CardSpan {
+  if (width === 1 || width === 2 || width === 3) return width;
   if (size === 'l') return 2;
   if (size === 's' || size === 'm') return 1;
   return chartEntry(render).defaultSpan;
+}
+
+/** Body-height ceiling for a card. Precedence: explicit `height` → legacy `size`
+ *  (`s` was always the compact one, `l` the roomy one) → `m`, the historical 280px.
+ *  The value is a class suffix, not a pixel number: the pixels live in the stylesheet
+ *  next to the rest of the card metrics. */
+export function cardHeight(
+  size: InsightSize | null | undefined,
+  height?: InsightHeight | null,
+): InsightHeight {
+  if (height === 's' || height === 'm' || height === 'l' || height === 'xl') return height;
+  if (size === 's') return 's';
+  if (size === 'l') return 'l';
+  return 'm';
 }
 
 /** Does this render open routed pages of its own instead of the slide-over? */

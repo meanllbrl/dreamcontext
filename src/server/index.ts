@@ -155,6 +155,9 @@ import {
 import {
   handleAgentMcpList, handleAgentMcpLogin, handleAgentMcpLogout,
 } from './routes/agent-mcp.js';
+import {
+  handleAgentMcpProjectGet, handleAgentMcpProjectAdopt, handleAgentMcpProjectRemove,
+} from './routes/agent-mcp-project.js';
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
 import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
@@ -405,11 +408,16 @@ export function buildRouter(): Router {
   router.post('/api/agent/accounts/remove', handleAgentAccountsRemove);
   router.post('/api/agent/accounts/auto-switch', handleAgentAccountsAutoSwitch);
   router.post('/api/agent/accounts/switch-policy', handleAgentAccountsSwitchPolicy);
-  // The MCP panel behind `/mcp` in Chat. Vault-agnostic for the same reason the accounts
-  // routes are: MCP configuration belongs to the Claude install and the account, not a vault.
+  // The MCP panel behind `/mcp` in Chat. Deliberately NOT vault-agnostic: a server can be
+  // PROJECT-scoped (the repo's `.mcp.json`, how a team shares servers), and that scope is
+  // resolved from the working directory — so every leg needs the project.
   router.get('/api/agent/mcp', handleAgentMcpList);
   router.post('/api/agent/mcp/login', handleAgentMcpLogin);
   router.post('/api/agent/mcp/logout', handleAgentMcpLogout);
+  // Settings → MCP servers: the repo's `.mcp.json`, the only scope a TEAM can share.
+  router.get('/api/agent/mcp/project', handleAgentMcpProjectGet);
+  router.post('/api/agent/mcp/project/adopt', handleAgentMcpProjectAdopt);
+  router.post('/api/agent/mcp/project/remove', handleAgentMcpProjectRemove);
   router.get('/api/agent/session-model', handleAgentSessionModel);
   router.get('/api/agent/session-stats', handleAgentSessionStats);
   router.get('/api/agent/chat-history', handleAgentChatHistory);
@@ -698,7 +706,7 @@ export function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/mcp', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/meeting'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/meeting'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

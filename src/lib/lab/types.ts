@@ -65,9 +65,28 @@ export const RENDERS = [
 export type Render = (typeof RENDERS)[number];
 
 /** Optional manifest override for how much board a card takes: `s`/`m` = one
- *  column, `l` = two. Absent = the render's own default span decides. */
+ *  column, `l` = two. Absent = the render's own default span decides.
+ *
+ *  ⚠ `size` ONLY EVER MEANT WIDTH, and that is the bug it grew into: a card marked `l`
+ *  got two columns and the SAME fixed body height as every other card, so a tall render
+ *  (an app tile with a control row + stat row + table) was clipped into an inner
+ *  scrollbar no matter what the author asked for. `width`/`height` below split the two
+ *  axes. `size` is kept and still works — it is the fallback when neither is given. */
 export const INSIGHT_SIZES = ['s', 'm', 'l'] as const;
 export type InsightSize = (typeof INSIGHT_SIZES)[number];
+
+/** How many board columns the card spans. 3 is the practical ceiling: the grid's
+ *  tracks are `minmax(280px, 1fr)`, so a 3-span card needs ~900px of board before the
+ *  span is granted at all (below that it silently falls back — see LabBoard.css). */
+export const INSIGHT_WIDTHS = [1, 2, 3] as const;
+export type InsightWidth = (typeof INSIGHT_WIDTHS)[number];
+
+/** Card BODY height ceiling. Not a fixed height — a ceiling: a short body still
+ *  shrinks to its content, and anything past the ceiling scrolls inside the card
+ *  exactly as it does today. `m` is the historical 280px, so an insight that names
+ *  nothing renders byte-identically to before. */
+export const INSIGHT_HEIGHTS = ['s', 'm', 'l', 'xl'] as const;
+export type InsightHeight = (typeof INSIGHT_HEIGHTS)[number];
 
 /** Tweak kinds. There is NO `range` type: a relative range is an `enum` tweak
  *  whose key is `range`; an explicit range is two `date` tweaks (`from`/`to`). */
@@ -137,8 +156,13 @@ export interface InsightManifest {
   /** Dashboard section grouping, or null (renders under "Ungrouped"). */
   group: string | null;
   render: Render;
-  /** Board footprint override, or null (the render's default span wins). */
+  /** Board footprint override, or null (the render's default span wins).
+   *  Legacy single axis — `width`/`height` take precedence when present. */
   size: InsightSize | null;
+  /** Explicit column span, or null (falls back to `size`, then the render default). */
+  width: InsightWidth | null;
+  /** Explicit body-height ceiling, or null (falls back to `size`, then `m`). */
+  height: InsightHeight | null;
   /** null when the `source:` block is malformed (read stays lenient). */
   source: InsightSource | null;
   refresh: { ttl_minutes: number };

@@ -6,7 +6,9 @@ import { today } from '../id.js';
 import { writeCredentialsExample } from './required-credentials.js';
 import { parseRelativeRange } from './tweaks.js';
 import {
+  INSIGHT_HEIGHTS,
   INSIGHT_SIZES,
+  INSIGHT_WIDTHS,
   LabError,
   RENDERS,
   TWEAK_TYPES,
@@ -15,8 +17,10 @@ import {
   type ExtractConfig,
   type InsightCache,
   type InsightManifest,
+  type InsightHeight,
   type InsightSize,
   type InsightSource,
+  type InsightWidth,
   type Render,
   type TweakDecl,
 } from './types.js';
@@ -71,6 +75,19 @@ function toRender(v: unknown): Render {
 function toSize(v: unknown): InsightSize | null {
   const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
   return (INSIGHT_SIZES as readonly string[]).includes(s) ? (s as InsightSize) : null;
+}
+
+/** LENIENT width parse. Accepts the number or its string form (`width: 3` and
+ *  `width: "3"` both survive YAML round-trips); anything else → null. */
+function toWidth(v: unknown): InsightWidth | null {
+  const n = typeof v === 'number' ? v : Number(typeof v === 'string' ? v.trim() : NaN);
+  return (INSIGHT_WIDTHS as readonly number[]).includes(n) ? (n as InsightWidth) : null;
+}
+
+/** LENIENT height parse: absent or unrecognised → null (then `size`, then `m`). */
+function toHeight(v: unknown): InsightHeight | null {
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return (INSIGHT_HEIGHTS as readonly string[]).includes(s) ? (s as InsightHeight) : null;
 }
 
 function toAgg(v: unknown): Agg {
@@ -172,6 +189,8 @@ export function readInsightFile(filePath: string): InsightManifest {
     group: strOrNull(data.group),
     render: toRender(data.render),
     size: toSize(data.size),
+    width: toWidth(data.width),
+    height: toHeight(data.height),
     source: parseSource(data.source),
     refresh: { ttl_minutes: Number.isFinite(ttlRaw) && ttlRaw > 0 ? ttlRaw : DEFAULT_TTL_MINUTES },
     tweaks: parseTweaks(data.tweaks),
@@ -456,8 +475,13 @@ export interface CreateInsightInput {
   slug: string;
   title: string;
   render?: Render;
-  /** Board footprint override (`s`/`m` = 1 column, `l` = 2). Omit for the default. */
+  /** Board footprint override (`s`/`m` = 1 column, `l` = 2). Omit for the default.
+   *  Legacy single axis — prefer `width`/`height`, which override it. */
   size?: InsightSize;
+  /** Column span 1-3. Omit to fall back to `size`, then the render's default. */
+  width?: InsightWidth;
+  /** Body-height ceiling. Omit to fall back to `size`, then `m` (the historical 280px). */
+  height?: InsightHeight;
   adapter?: 'http' | 'script';
   category?: string | null;
   group?: string | null;
@@ -479,6 +503,12 @@ export function validateManifestForWrite(input: CreateInsightInput): void {
   }
   if (input.size && !(INSIGHT_SIZES as readonly string[]).includes(input.size)) {
     throw new LabError(`size must be one of: ${INSIGHT_SIZES.join(', ')}.`);
+  }
+  if (input.width != null && !(INSIGHT_WIDTHS as readonly number[]).includes(input.width)) {
+    throw new LabError(`width must be one of: ${INSIGHT_WIDTHS.join(', ')}.`);
+  }
+  if (input.height && !(INSIGHT_HEIGHTS as readonly string[]).includes(input.height)) {
+    throw new LabError(`height must be one of: ${INSIGHT_HEIGHTS.join(', ')}.`);
   }
   if (input.adapter && input.adapter !== 'http' && input.adapter !== 'script') {
     throw new LabError('adapter must be "http" or "script".');
@@ -540,6 +570,8 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
     group: input.group ?? null,
     render,
     size: input.size ?? null,
+    width: input.width ?? null,
+    height: input.height ?? null,
     unit: input.unit ?? null,
     source,
     refresh: { ttl_minutes: input.ttl_minutes ?? DEFAULT_TTL_MINUTES },

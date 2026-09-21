@@ -3,7 +3,7 @@ import type { InsightSummary } from '../../hooks/useLab';
 import { useApplyTweaks, useLabInsight, useSyncInsight } from '../../hooks/useLab';
 import { TweakEditor } from './TweakEditor';
 import { RangeControl, nonWindowTweaks } from './RangeControl';
-import { cardSpan, chartEntry } from './chartRegistry';
+import { cardHeight, cardSpan, chartEntry } from './chartRegistry';
 import { HtmlInsightBody } from './HtmlInsightBody';
 import { LabAppBody } from './LabAppBody';
 import './InsightCard.css';
@@ -99,14 +99,18 @@ export function InsightCard({
   const entry = chartEntry(summary.render);
   const CardBody = entry.CardBody;
 
+  // WIDTH and HEIGHT are separate axes. Some renders need ~2 board columns on their own
+  // (a funnel or a metric table IS a table); the manifest can override the span with
+  // `width` (or the legacy `size`) and the body's height ceiling with `height`. The grid
+  // grants a span only where the board is actually wide enough (LabBoard.css), so a
+  // 3-span card on a narrow board falls back instead of overflowing.
+  const span = cardSpan(summary.render, summary.size, summary.width);
   return (
     <div
-      // Some renders need ~2 board columns (a funnel or metric table is a table);
-      // a manifest `size` can override that. The grid grants the span only where
-      // it is actually wide enough (LabBoard.css).
       className={[
         'lab-card lab-card--clickable',
-        cardSpan(summary.render, summary.size) === 2 ? 'lab-card--wide' : '',
+        span > 1 ? `lab-card--span${span}` : '',
+        `lab-card--h-${cardHeight(summary.size, summary.height)}`,
         dragging ? 'lab-card--dragging' : '',
         dropTarget ? 'lab-card--drop-target' : '',
       ].filter(Boolean).join(' ')}

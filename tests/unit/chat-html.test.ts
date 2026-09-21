@@ -124,13 +124,18 @@ describe('the sandbox is the boundary', () => {
     expect(CHAT_HTML_CSP).toContain("default-src 'none'");
     expect(CHAT_HTML_CSP).toContain("style-src 'unsafe-inline'");
     expect(CHAT_HTML_CSP).toContain("script-src 'unsafe-inline'");
-    expect(CHAT_HTML_CSP).not.toMatch(/connect-src|img-src|https?:/);
-    // `font-src data:` is the ONE addition (F5 — the reading face could not otherwise
-    // cross the frame boundary) and it is not a network source: a data: URL contacts no
-    // host. This asserts the exact shape, so `font-src https:` or a host allow-list — both
-    // of which WOULD reach the network — cannot slip in behind the same directive name.
+    expect(CHAT_HTML_CSP).not.toMatch(/connect-src|https?:/);
+    // `font-src data:` (F5 — the reading face could not otherwise cross the frame
+    // boundary) and `img-src data:` (2026-09-15 — neither could a picture: under
+    // `default-src 'none'` an <img> is blocked even when its bytes are already IN the
+    // document) are the ONLY additions, and NEITHER is a network source: a data: URL
+    // contacts no host. Each is asserted by EXACT shape, so `https:`, a host allow-list
+    // or `blob:` — all of which WOULD reach outside the document — cannot slip in behind
+    // the same directive name.
     expect(CHAT_HTML_CSP).toContain('font-src data:');
-    expect(CHAT_HTML_CSP).not.toMatch(/font-src[^;]*(https?:|\*|'self')/);
+    expect(CHAT_HTML_CSP).not.toMatch(/font-src[^;]*(https?:|blob:|\*|'self')/);
+    expect(CHAT_HTML_CSP).toContain('img-src data:');
+    expect(CHAT_HTML_CSP).not.toMatch(/img-src[^;]*(https?:|blob:|\*|'self')/);
   });
 
   it('carries the reading face INSIDE the document, since it can never fetch one', () => {

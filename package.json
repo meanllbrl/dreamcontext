@@ -51,6 +51,7 @@
     "verify:chat-mcp": "node scripts/verify/chat-mcp-panel.mjs",
     "verify:chat-secret-run": "node scripts/verify/chat-secret-run.mjs",
     "verify:pane-focus-click": "node scripts/verify/pane-focus-click.mjs",
+    "verify:pane-layout-restore": "node scripts/verify/pane-layout-restore.mjs",
     "verify:peer-mail": "node scripts/verify/peer-mail-ui.mjs",
     "verify:meeting-room": "node scripts/verify/meeting-room-ui.mjs",
     "verify:composer-shared": "node scripts/verify/composer-shared.mjs",

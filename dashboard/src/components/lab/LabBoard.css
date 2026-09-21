@@ -359,12 +359,20 @@
   container: lab-grid / inline-size;
 }
 
-/* Funnel cards render a table and need ~2 columns — but only where 2 columns
-   actually exist (2 × 280px track + one gap). Below that the span would force
-   an implicit second column and overflow the board, so it degrades to 1. */
+/* A card spans more than one column ONLY where the columns actually exist —
+   2 tracks need 2 × 280px + one gap, 3 need 3 × 280px + two gaps. Below that the
+   span would force an implicit extra column and overflow the board, so each step
+   degrades to the widest one that fits (and finally to 1). Ordered widest-last so
+   the later rule wins when both match. */
 @container lab-grid (min-width: 600px) {
-  .lab-board-grid > .lab-card--wide {
+  .lab-board-grid > .lab-card--span2,
+  .lab-board-grid > .lab-card--span3 {
     grid-column: span 2;
+  }
+}
+@container lab-grid (min-width: 900px) {
+  .lab-board-grid > .lab-card--span3 {
+    grid-column: span 3;
   }
 }
 

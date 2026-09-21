@@ -1311,10 +1311,30 @@ function spawnAutoSleep(): void {
   if (process.platform === 'win32') return;
   const cliEntry = process.argv[1];
   if (!cliEntry) return;
+  // THE BACKGROUND CYCLE IS TAB-LESS — it must not inherit the identity of the tab
+  // whose Stop hook happened to trigger it. This hook runs INSIDE that tab's claude,
+  // so its env carries DREAMCONTEXT_TAB_SESSION, and `executeClaudeDetached` spreads
+  // `process.env` into the cycle's own `claude`. The `isNestedClaudeHook` ancestry
+  // guard cannot catch that: we spawn DETACHED, so the tab's claude is never above
+  // the cycle (the child reparents to pid 1 and `… sleep auto-run` is not a
+  // claude-like command), and the walk counts ONE claude — "not nested". The cycle's
+  // own SessionStart/UserPromptSubmit hooks would then act as if they WERE the user's
+  // tab: repoint the tab→conversation map at the consolidation (the tab resumes the
+  // wrong conversation, and its chat reads as LOST), overwrite the tab's captured
+  // first prompt with the sleep prompt, and consume the human's pending handoff
+  // banner into a run nobody is watching — the last of which
+  // `selectHandoffForSessionStart` already documents as forbidden ("a headless
+  // automation can neither receive nor consume a human's pending handoff").
+  // Stripping at the SPAWN is the root fix; the two record gates below refuse the
+  // same thing again by env flag, so neither alone is load-bearing.
+  const env = { ...process.env };
+  delete env.DREAMCONTEXT_TAB_SESSION;
+  delete env.CLAUDE_CODE_SESSION_ID;
   const child = spawn(process.execPath, [cliEntry, 'sleep', 'auto-run'], {
     detached: true,
     stdio: 'ignore',
     cwd: process.cwd(),
+    env,
   });
   child.unref();
 }
@@ -1551,6 +1571,16 @@ export function registerHookCommand(program: Command): void {
   // Memoized per hook invocation (each fire is a fresh process, and ancestry can't
   // change mid-fire) — the Stop path now asks twice (turn state + session map), and
   // caching keeps that at one `ps` exec.
+  // A DETACHED background auto-sleep cycle never owns a tab. `isNestedClaudeHook`
+  // answers a different question (is another claude ABOVE us in the process tree)
+  // and structurally cannot answer this one — detachment severs that ancestry — so
+  // this is a separate, honestly-named check rather than a widening of that one.
+  // The runner sets DREAMCONTEXT_AUTO_SLEEP=1 on the cycle's claude
+  // (src/lib/auto-sleep-runner.ts), and it is inherited by every hook the cycle fires.
+  function isBackgroundAutoSleep(): boolean {
+    return process.env.DREAMCONTEXT_AUTO_SLEEP === '1';
+  }
+
   let nestedClaudeCache: boolean | undefined;
   function isNestedClaudeHook(): boolean {
     if (nestedClaudeCache !== undefined) return nestedClaudeCache;
@@ -1597,6 +1627,7 @@ export function registerHookCommand(program: Command): void {
     try {
       const tabId = process.env.DREAMCONTEXT_TAB_SESSION;
       if (!tabId || !UUID_RE.test(tabId) || !UUID_RE.test(sessionId)) return;
+      if (isBackgroundAutoSleep()) return;
       if (isNestedClaudeHook()) return;
       recordAgentSession(root, tabId, sessionId);
     } catch { /* best-effort — resume falls back to the pinned id */ }
@@ -2005,7 +2036,7 @@ export function registerHookCommand(program: Command): void {
         if (prompt && UUID_RE.test(tabId) && UUID_RE.test(sid)) {
           const entry = readAgentSessionEntry(root, tabId);
           const captured = entry?.current === sid && !!entry.firstPrompt;
-          if (!captured && !isNestedClaudeHook()) recordAgentFirstPrompt(root, tabId, sid, prompt);
+          if (!captured && !isBackgroundAutoSleep() && !isNestedClaudeHook()) recordAgentFirstPrompt(root, tabId, sid, prompt);
         }
       } catch { /* best-effort — auto-title falls back to the transcript when it lands */ }
 
