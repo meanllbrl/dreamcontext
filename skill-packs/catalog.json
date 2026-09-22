@@ -407,6 +407,35 @@
         "meta-marketing (ad-creative teardown handoff)",
         "design/onboarding-design (app-demo / FTE reconstruction handoff)"
       ]
+    },
+    {
+      "name": "jev-verify",
+      "file": "jev-verify/SKILL.md",
+      "description": "Load when validation should run in the real browser and be judged in plain language: 'validate this in the browser', 'does the screen show X', 'check every task/row for Y', 'walk the funnel and screenshot each step', 'run the acceptance criteria against the app', 'UI doğrulaması', 'ekranı kontrol et', 'funnel'ı gez', or a goal-skill validation method of Browser (jev-verify). Playwright drives the page, TypeSafe Jev (System One model via OpenRouter) judges the page's text state in ~0.5 s for a fraction of a cent, code decides. Tools: assert (scripted route + expect/reject checkpoints), walk (autonomous flow walk with screenshots), judge (map-reduce typed questions over items).",
+      "tags": [
+        "validation",
+        "playwright",
+        "browser",
+        "e2e",
+        "jev",
+        "typesafe",
+        "system-one",
+        "acceptance-criteria",
+        "funnel",
+        "qa"
+      ],
+      "alwaysApply": false,
+      "bundleDir": true,
+      "requiresBinaries": [
+        "playwright (npm i -D playwright && npx playwright install chromium)"
+      ],
+      "requiresEnv": [
+        "OPENROUTER_JEV_KEY (a dedicated OpenRouter key; env, ./.env or ~/.dreamcontext/.env)"
+      ],
+      "crossPackDeps": [
+        "goal-skill (Browser (jev-verify) validation method for goal-validator)",
+        "engineering (browser checks that judge what the user reads)"
+      ]
     }
   ],
   "agents": [

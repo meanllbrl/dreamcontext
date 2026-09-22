@@ -1,0 +1,17 @@
+{
+  "empty": {
+    "type": "noul",
+    "instructions": "Is {item}[\"Incremental Revenue\"] empty (blank, missing, or whitespace only)?"
+  },
+  "category": {
+    "type": "choice",
+    "instructions": "Which revenue category does {item}[\"Incremental Revenue\"] open with or clearly express?",
+    "criteria": {
+      "direct_revenue": "Direct Revenue — directly raises sales, acceptance or recovery.",
+      "long_term_leverage": "Long Term Leverage — future capacity or infrastructure (hiring, systems, roadmap).",
+      "productivity": "Productivity — team efficiency (onboarding, self-learning, faster process).",
+      "other": "Some other category, or an explanation that names none of the above.",
+      "empty": "The field is empty."
+    }
+  }
+}
