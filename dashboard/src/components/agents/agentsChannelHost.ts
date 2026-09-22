@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import type { ComposerHost, ComposerHostModel } from '../sleepy/chat/composerHost';
 import type { PeerMention } from '../../lib/agentComposer';
 import { automationPhotoUrl } from '../../api/client';
+import { dropScratch } from '../sleepy/chat/composerScratch';
 import { mentionedIn, withoutMention, type ComposerAgent } from '../../lib/agentChannelMention';
 
 /**
@@ -181,6 +182,118 @@ export function useAgentsChannelHost(
     // Unreachable by construction — and no-ops rather than throws, because a UI assertion that
     // fires on an unreachable path is a crash, not a bug report. `steer` answers false so the
     // composer's fallback would queue rather than silently swallow, if it ever did run.
+    steer: () => false,
+    enqueue: () => {},
+    interrupt: () => {},
+  }), []);
+
+  return { host, note, setNote, focusComposer: () => focusTarget.current?.focus() };
+}
+
+/**
+ * A {@link ComposerHost} over ONE RUN'S THREAD.
+ *
+ * The same adapter as the channel above and deliberately not a fork of it — the two differ in
+ * exactly two places, and everything else (the stable `useMemo` with no deps, every live value
+ * through a ref, `busy: false`, the unreachable steer/enqueue/interrupt, the `send → false`
+ * refusal contract that preserves the draft AND the staged chips) is shared by construction:
+ *
+ *  1. THE ADDRESS GATE IS GONE. A thread has one recipient — the run it belongs to — so there
+ *     is nothing to resolve and no `@` to require. An empty body is still refused, for the
+ *     same reason the channel refuses a bare `@agent`: it is someone mid-sentence, not a reply.
+ *  2. THE NOTE IS THE DELIVERY, not the address. The panel writes the server's own refusal
+ *     sentence into it; nothing is derived from the draft, because there is no "and then what
+ *     happens?" left to answer once the recipient is fixed.
+ *
+ * ITS OWN SCRATCH BUCKET, per slug. `claudeId: ''` means "no conversation to measure", and
+ * `composerScratch` keys attachments by that id — so an unnamed bucket here would pool this
+ * panel's staged files with the channel's and the meeting room's, which is the collision the
+ * channel already had to name its own bucket to escape. Per SLUG rather than per run: a thread
+ * panel is re-opened on the newest run constantly, and a file staged a second before that
+ * happens belongs to the agent you are talking to, not to the run id that was on screen.
+ */
+/**
+ * Every thread scratch bucket this app run has minted.
+ *
+ * WHY A REGISTRY AND NOT AN UNMOUNT CLEANUP IN THE HOOK. `composerScratch`'s own header is
+ * explicit that a chip is revoked "NOT when a pane unmounts, which is the whole point of this
+ * module" — the store exists precisely so staged files OUTLIVE a remount. `AgentThreadPanel`
+ * is mounted as `{openThread && <AgentThreadPanel …>}`, so it unmounts every time the panel
+ * is closed and remounts on the next open, often for the same agent. Dropping from the hook's
+ * own cleanup would therefore throw away a file the user had just attached because they
+ * glanced at another message and came back — which is the EXACT bug the channel already hit
+ * and fixed by moving its drop up to the page (see `AutomationsPage`'s own note).
+ *
+ * So the ids are recorded where they are minted and revoked where the channel's is: leaving
+ * the PAGE. A `Set` rather than one fixed key because there is one bucket per agent, and the
+ * page cannot know which threads were opened.
+ */
+const threadScratchIds = new Set<string>();
+
+/** The bucket for one agent's thread composer, recorded so the page can revoke it. */
+function threadScratchId(slug: string): string {
+  const id = `agents-thread-${slug}`;
+  threadScratchIds.add(id);
+  return id;
+}
+
+/**
+ * Revoke every thread bucket — called from the Agents page's unmount, beside the channel's.
+ *
+ * Leaving the page is what ends these conversations for good; switching views inside it, or
+ * closing and reopening a thread panel, is not. Idempotent: `dropScratch` no-ops on a bucket
+ * that is already gone, and the set is cleared so a second call has nothing to do.
+ */
+export function dropThreadScratch(): void {
+  for (const id of threadScratchIds) dropScratch(id);
+  threadScratchIds.clear();
+}
+
+export function useAgentThreadHost(
+  target: { slug: string; title: string; runId: string },
+  send: (text: string) => void,
+): AgentsChannelComposer {
+  const live = useRef({ target, send });
+  live.current.target = target;
+  live.current.send = send;
+
+  const draft = useRef('');
+  const focusTarget = useRef<HTMLElement | null>(null);
+  const [note, setNote] = useState<ChannelNote | null>(null);
+
+  const host = useMemo<ComposerHost>(() => ({
+    claudeId: '',
+    // Read through the ref, but computed ONCE: the host is stable for the panel's life and
+    // the panel remounts when the slug changes, so this cannot go stale under itself. Minting
+    // it through `threadScratchId` is what puts it on the page's revoke list — see that
+    // function for why the drop does NOT hang off this hook's own unmount.
+    scratchId: threadScratchId(live.current.target.slug),
+    getModel: (): ComposerHostModel => ({
+      draft: draft.current,
+      draftEpoch: 0,
+      history: [],
+      // Same reasoning as the channel: the transcript is rendered ABOVE this composer by the
+      // panel itself, as thread entries. Handing them over as `items` would put other
+      // people's posts into ↑/↓ prompt history.
+      items: [],
+      slashCommands: [],
+      context: null,
+    }),
+    syncDraft: (text) => { draft.current = text; },
+    setFocusTarget: (el) => { focusTarget.current = el; },
+    send: (text) => {
+      const body = text.trim();
+      if (!body) {
+        setNote({ kind: 'error', text: 'A reply needs something to say.' });
+        // FALSE, so the composer clears nothing — the staged attachment chips survive a
+        // refusal exactly as they do in the channel.
+        return false as const;
+      }
+      draft.current = '';
+      setNote(null);
+      live.current.send(body);
+      return undefined;
+    },
     steer: () => false,
     enqueue: () => {},
     interrupt: () => {},

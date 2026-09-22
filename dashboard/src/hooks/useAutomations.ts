@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
 
@@ -896,6 +897,17 @@ export interface FeedMessage {
    *  reader is entitled to tell them apart, so the card does. */
   textFrom: 'post' | 'result' | 'error' | 'skipped' | 'none';
   files: FeedFile[];
+  /** The BODY post's figures — `automations post --kv`. At most
+   *  `THREAD_SUMMARY_MAX_ROWS` (6) rows; null when the post carried none. */
+  summary: ThreadSummaryRow[] | null;
+  /** The open question this run is stopped on. A JOIN against the question
+   *  store, not a field on any thread entry — a question's state changes when
+   *  it is answered, and an entry is append-only. Null when nothing is asked. */
+  question: { id: string; text: string; choices: string[] } | null;
+  /** Waiting on the reader: the `needs-you` status word, or an open question.
+   *  What the "Needs you" chip counts — derived server-side so the chip and the
+   *  rows can never disagree. */
+  needsYou: boolean;
   /** Authored entries beyond the body. System rows are not replies. */
   replyCount: number;
   lastReplyAt: string | null;
@@ -907,7 +919,18 @@ export interface AgentFeed {
   messages: FeedMessage[];
   unreadBySlug: Record<string, number>;
   unreadTotal: number;
+  /** Project-wide count of messages waiting on the reader. THE chip count —
+   *  never re-derived client-side, or two screens would disagree about one
+   *  channel the way `unread` already proved they can. */
+  needsYouTotal: number;
   agents: { slug: string; title: string; hasPhoto: boolean }[];
+}
+
+/** One row of a posted summary — a figure that moved, not prose. Mirrors
+ *  `ThreadSummaryRow` in `src/lib/automations/types.ts`. */
+export interface ThreadSummaryRow {
+  key: string;
+  value: string;
 }
 
 export interface ThreadEntry {
@@ -918,6 +941,8 @@ export interface ThreadEntry {
   at: string;
   text: string;
   files?: string[];
+  /** Figures posted with `--kv`. Absent, never empty. */
+  summary?: ThreadSummaryRow[];
   via: 'runner' | 'cli' | 'dashboard' | 'chat';
 }
 
@@ -996,12 +1021,189 @@ export function useSayInChannel() {
   const api = useApi();
   return useMutation({
     mutationFn: (v: { slug: string; text: string }) =>
-      api.post<{ job: { id: string; slug: string; status: string }; started: boolean; runId: string }>(
-        '/automations/threads/say', v,
-      ),
+      api.post<{
+        /** `kind` says which of the two things the mention STARTED: a `run` is a
+         *  fresh fire of a call-mode agent, a `reply` is a resume of a scheduled
+         *  agent's latest session. Both land in the same channel; only the
+         *  second has a turn to poll. */
+        job: { id: string; slug?: string; status: string; kind: 'run' | 'reply' };
+        started: boolean;
+        runId: string;
+        slug: string;
+        mode: 'sched' | 'call';
+      }>('/automations/threads/say', v),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['automations-feed'] });
       queryClient.invalidateQueries({ queryKey: ['automations-run-job'] });
     },
+  });
+}
+
+// ─── Replying in a run's thread ─────────────────────────────────────────────
+
+/** One reply turn, as `GET /api/automations/reply-job/:id` reports it. Mirrors
+ *  `ReplyJobState` in `src/server/automation-job.ts`. */
+export interface ReplyJobState {
+  id: string;
+  slug: string;
+  runId: string;
+  entryId: string;
+  status: 'running' | 'ok' | 'refused' | 'failed';
+  /** The server's own sentence on a non-ok settle — never a generic "failed". */
+  reason: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+/** How this machine's reply turn ended, for the composer's one-line note.
+ *  `unknown` is the SERVER-RESTART case and is terminal: the job is gone, so
+ *  nothing will ever report its outcome to this client. */
+export interface ReplyDelivery {
+  status: 'running' | 'ok' | 'refused' | 'failed' | 'unknown';
+  /** The server's sentence, or null for `ok`/`running`. `unknown` carries none
+   *  — the copy for it is `t('agents.thread.unknown')`, rendered by the view so
+   *  the Turkish survives (this module holds no user-facing prose). */
+  reason: string | null;
+}
+
+/** Cache key the poller writes its terminal state into. Read it with
+ *  {@link useReplyDelivery} — see that hook for why this is a cache entry and
+ *  not a field on the mutation. */
+function replyDeliveryKey(slug: string, runId: string): readonly unknown[] {
+  return ['automations', slug, 'reply-delivery', runId];
+}
+
+/** How often the client asks the server whether a reply turn has settled. */
+const REPLY_POLL_MS = 2_000;
+
+/**
+ * Consecutive failed polls before the client stops asking.
+ *
+ * A 404 is terminal on its own (the job is gone), but every OTHER failure — the server down,
+ * the socket refused, a proxy hiccup — used to retry every 2s for as long as the tab lived,
+ * with nothing to stop it. Five is enough to ride out a restart or a blip and small enough
+ * that a genuinely unreachable server costs ten seconds rather than the session. A SUCCESSFUL
+ * poll resets it, so a long turn punctuated by the odd failure still runs to its real end.
+ */
+const REPLY_POLL_MAX_ERRORS = 5;
+
+/**
+ * THE REPLY. Post into one run's thread and follow the turn it starts.
+ *
+ * The mutation itself resolves the moment the server has written the `user`
+ * entry and started the job (202) — the turn that answers it can take as long
+ * as the automation's timeout, so the reply is a JOB and this polls it.
+ *
+ * WHY THE OUTCOME LANDS IN THE QUERY CACHE rather than on this mutation: the
+ * mutation settles at 202, long before the turn does, so its own `data` can
+ * never describe the outcome. The poll writes into
+ * `['automations', slug, 'reply-delivery', runId]`, which {@link useReplyDelivery}
+ * reads — that keeps the signature frozen for the surfaces coded against it
+ * while giving the composer somewhere honest to read the result from.
+ *
+ * A 404 IS TERMINAL, NOT A RETRY. It means the server restarted while the turn
+ * was running, so nothing on this machine will ever report the outcome: the
+ * poller stops, the delivery reads `unknown`, and the thread is closed later by
+ * the server's own reconciliation. Deliberately no re-send — a re-send would
+ * deliver the same instruction twice.
+ */
+export function useReplyToAgentThread() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  /**
+   * The poll chain's own lifetime. `setTimeout` outlives the component that armed it, so
+   * without these a user who navigates away mid-turn leaves a request loop running against a
+   * cache nothing reads — and on a failing server, running for as long as the tab is open.
+   * The timer handle is tracked so the cleanup can cancel the one that is pending, and the
+   * flag stops the in-flight request from arming the next one after unmount.
+   */
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = null;
+    };
+  }, []);
+
+  return useMutation<
+    { entry: ThreadEntry; job: { id: string; status: string } },
+    Error,
+    { slug: string; runId: string; text: string }
+  >({
+    mutationFn: ({ slug, runId, text }) =>
+      api.post<{ entry: ThreadEntry; job: { id: string; status: string } }>(
+        `/automations/${slug}/thread/reply`,
+        { text, runId },
+      ),
+    onSuccess: (data, { slug, runId }) => {
+      // The `user` entry is already on disk, so the thread can show it now.
+      queryClient.invalidateQueries({ queryKey: ['automations', slug, 'thread'] });
+      queryClient.setQueryData<ReplyDelivery>(replyDeliveryKey(slug, runId), {
+        status: 'running',
+        reason: null,
+      });
+
+      const settle = (delivery: ReplyDelivery) => {
+        queryClient.setQueryData<ReplyDelivery>(replyDeliveryKey(slug, runId), delivery);
+        queryClient.invalidateQueries({ queryKey: ['automations', slug, 'thread'] });
+        queryClient.invalidateQueries({ queryKey: ['automations-feed'] });
+      };
+
+      /** Arm the next tick, unless this hook's component has gone. */
+      const again = (poll: () => void) => {
+        if (!alive.current) return;
+        timer.current = setTimeout(poll, REPLY_POLL_MS);
+      };
+
+      /** Consecutive failures. Reset by any answered poll — see the constant. */
+      let errors = 0;
+
+      const poll = async (): Promise<void> => {
+        // The timer fired, so nothing is pending until the next `again`.
+        timer.current = null;
+        if (!alive.current) return;
+        try {
+          const { job } = await api.get<{ job: ReplyJobState }>(`/automations/reply-job/${data.job.id}`);
+          errors = 0;
+          if (job.status === 'running') {
+            again(() => { void poll(); });
+            return;
+          }
+          settle({ status: job.status, reason: job.reason });
+        } catch (err) {
+          // 404 — the job is gone with the process that owned it. Terminal.
+          if ((err as { status?: number }).status === 404) {
+            settle({ status: 'unknown', reason: null });
+            return;
+          }
+          // Any OTHER failure is this one request, not the job — so try again
+          // rather than declaring an outcome we did not observe. But only up to
+          // the budget: past it the server is not answering, and an unbounded
+          // retry would keep asking for as long as the tab is open. Settling as
+          // `unknown` is the honest report — the turn may well have finished,
+          // and this client can no longer find out.
+          if (++errors >= REPLY_POLL_MAX_ERRORS) {
+            settle({ status: 'unknown', reason: null });
+            return;
+          }
+          again(() => { void poll(); });
+        }
+      };
+      again(() => { void poll(); });
+    },
+  });
+}
+
+/** Read how the reply turn for `runId` ended. Undefined until one is sent. */
+export function useReplyDelivery(slug: string | null, runId: string | null) {
+  return useQuery<ReplyDelivery>({
+    queryKey: replyDeliveryKey(slug ?? '', runId ?? ''),
+    // Written by the poller in `useReplyToAgentThread`, never fetched: there is
+    // no endpoint for "how did the last reply go", only for one job by id.
+    queryFn: () => ({ status: 'running', reason: null }),
+    enabled: false,
   });
 }

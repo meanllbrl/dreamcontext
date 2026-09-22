@@ -246,6 +246,14 @@
   font-weight: 600;
 }
 
+/* The same ink as the status word's needs-you state, on its own class: this
+   says the reader still owes the run an answer, which a FINISHED run can also
+   be doing — so it cannot be a second `.agent-msg-status` (see AgentMessage). */
+.agent-msg-needs {
+  color: var(--color-warning, #f5a623);
+  font-weight: 600;
+}
+
 .agent-msg-status--running {
   color: var(--color-text-secondary);
   font-style: italic;
@@ -313,6 +321,174 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Why a board is a chip here at all (K5, one sentence): off-desktop its canvas
+   would render empty, so the chip says where it opens instead of drawing a lie. */
+.agent-msg-file-note {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+/* ─── a posted image ─── */
+
+/* A button, not a bare <img>: it opens the same viewer the chip does, so the
+   picture is the affordance rather than a thing you have to find a chip for.
+   Bounded because a message is a ROW in a channel — a full-height screenshot
+   would push the next agent off the screen. */
+.agent-msg-img {
+  display: block;
+  max-width: 320px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg-secondary);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 220ms ease;
+}
+
+.agent-msg-img:hover { border-color: var(--color-text-secondary); }
+
+.agent-msg-img img {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+}
+
+/* ─── the figures a post carried (--kv) ─── */
+
+/* NO border and NO fill: this is part of the message's prose, not a card of its
+   own (see AgentSummaryBlock's header). The rows are a definition list, so the
+   label stays secondary and the NUMBER — the thing being looked for — takes the
+   mono face and the full text colour. */
+.agent-msg-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: var(--space-2) 0 0;
+}
+
+.agent-msg-kv-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.agent-msg-kv-key {
+  flex: 0 0 auto;
+  min-width: 120px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.agent-msg-kv-value {
+  margin: 0;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+/* ─── the question a run stopped to ask ─── */
+
+/* The one block in a message that is a SURFACE, and the exception earns itself:
+   everything else here reports, this one is the run waiting on you. A tinted
+   surface rather than a filled swatch — the accent stays on the button, which is
+   the thing to press (K8). */
+.agent-msg-question {
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-bg-secondary));
+}
+
+.agent-msg-question-text {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.agent-msg-question-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.agent-msg-question-choice {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: opacity 220ms ease;
+}
+
+.agent-msg-question-choice:hover:not(:disabled) { opacity: 0.88; }
+.agent-msg-question-choice:disabled { opacity: 0.5; cursor: default; }
+
+/* A question with no options is answered in prose, so it gets a field — a
+   question that offered nothing to press and no way to type would strand the
+   run with no way through at all. */
+.agent-msg-question-free {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.agent-msg-question-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* K2: a field is 40px. */
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.agent-msg-question-input:focus-visible {
+  outline: none;
+  border-color: var(--color-border-focus);
+}
+
+.agent-msg-question-send {
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.agent-msg-question-send:disabled { opacity: 0.5; cursor: default; }
+
+/* The receipt keeps the block's footprint so the column does not jump when the
+   buttons go — and says what happened, not merely that something did. */
+.agent-msg-question--done {
+  border-color: var(--color-border);
+  background: var(--color-bg-secondary);
+}
+
+.agent-msg-question-receipt {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
 }
 
 /* ─── the replies row ─── */

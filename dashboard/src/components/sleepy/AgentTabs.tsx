@@ -1,6 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
+import { AgentAvatar } from '../agents/AgentAvatar';
+import { useAutomations } from '../../hooks/useAutomations';
 import type { SessionStatusInfo } from './agentStatus';
 import type { SessionKind } from './agentSession';
 
@@ -58,6 +60,12 @@ export interface TabVM {
   /** Claude agent (◇), Claude chat (◆) or a plain login shell (>_) — a mono glyph
    *  before the title. */
   sessionKind: SessionKind;
+  /** Which automation this tab's run belongs to, for `sessionKind: 'automation'`
+   *  ONLY — it is what lets the strip draw the agent's photo where the other
+   *  kinds get a glyph. Undefined everywhere else, and undefined for an
+   *  automation tab restored from a roster written before it existed, which the
+   *  render below falls back from rather than assuming. */
+  automationSlug?: string;
   /** Bypass-permissions armed for this session (shows a ⚡). */
   bypass: boolean;
   /** A backgrounded session finished / rang the bell since you last looked at it. */
@@ -144,6 +152,28 @@ export function AgentTabs({
    */
   const [menu, setMenu] = useState<TabMenuState | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * The roster, for the one thing this strip needs from it: whether an automation tab's
+   * agent has a photo to draw. Cached and shared by react-query with every other reader on
+   * the page, so a second pane's tab bar costs nothing — and a failure is simply no photo,
+   * which is the fallback that was already there.
+   */
+  const { data: roster } = useAutomations();
+  /**
+   * The agent's face for an automation tab, or null to let the glyph render.
+   *
+   * Null in every case the avatar would be a lie: a non-automation tab, a roster entry
+   * written before `automationSlug` existed, an agent since deleted, and an agent with no
+   * photo — `AgentAvatar` would draw initials there, and initials in a 14px mono slot next
+   * to the title that already says the name is noise, not information.
+   */
+  const photoFor = (tab: TabVM): React.ReactElement | null => {
+    if (tab.sessionKind !== 'automation' || !tab.automationSlug) return null;
+    const agent = (roster ?? []).find((a) => a.slug === tab.automationSlug);
+    if (!agent?.hasPhoto) return null;
+    return <AgentAvatar slug={agent.slug} title={agent.title} hasPhoto size={14} />;
+  };
   // Stable per-instance id on the app's overlay stack, so Esc arbitrates LIFO with the ⌘K
   // palette / composer popovers instead of the earliest-registered listener winning.
   const overlayId = useId();
@@ -287,14 +317,27 @@ export function AgentTabs({
                   }
                   aria-hidden
                 >{
-                  tab.sessionKind === 'shell' ? '>_'
-                    : tab.sessionKind === 'chat' ? '◆'
-                      // An automation run is the one tab you did not open yourself — it ran
-                      // unattended, with bypassPermissions, while nobody was watching. The
-                      // glyph is deliberately unlike the other three so a strip of tabs
-                      // makes that legible at a glance.
-                      : tab.sessionKind === 'automation' ? '⬡'
-                        : '◇'
+                  // AN AUTOMATION RUN GETS A FACE. Everywhere else in the app an agent is a
+                  // photo and a name (that is the channel's whole premise), and this strip
+                  // was the one surface where the same agent was an abstract glyph. The
+                  // avatar is the agents surface's OWN component, so a photo replaced in
+                  // place looks the same here as on its card — and it falls back to the
+                  // agent's initials by itself if the image 404s mid-session.
+                  //
+                  // The GLYPH SURVIVES as the fallback, for three real cases: an automation
+                  // tab whose roster entry predates `automationSlug`, one whose agent has
+                  // been deleted, and one whose agent simply has no photo. Every
+                  // non-automation kind is byte-identical to before.
+                  photoFor(tab) ?? (
+                    tab.sessionKind === 'shell' ? '>_'
+                      : tab.sessionKind === 'chat' ? '◆'
+                        // An automation run is the one tab you did not open yourself — it ran
+                        // unattended, with bypassPermissions, while nobody was watching. The
+                        // glyph is deliberately unlike the other three so a strip of tabs
+                        // makes that legible at a glance.
+                        : tab.sessionKind === 'automation' ? '⬡'
+                          : '◇'
+                  )
                 }</span>
                 {renaming ? (
                   <input

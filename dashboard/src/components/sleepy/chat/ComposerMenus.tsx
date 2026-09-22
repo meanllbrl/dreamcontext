@@ -6,6 +6,7 @@ import {
   type ModelConfig, type ModelOption, type UsageLimit,
 } from '../../../lib/agentComposer';
 import { CHAT_MODE_ROWS, type ChatMode } from '../../../lib/chatModes';
+import { MaturityTag } from '../../common/MaturityTag';
 import { SleepyMascot } from '../SleepyMascot';
 
 /**
@@ -90,9 +91,11 @@ export function ModeMenu({
             </span>
             <span className="chat-cmp-modelrow-head">
               <span className="chat-cmp-modelrow-name">{row.name}</span>
-              {(row.badge ?? row.maturity) && (
-                <span className="chat-cmp-badge is-muted">{row.badge ?? row.maturity}</span>
-              )}
+              {/* `label`, so the chip is MUTED whichever field it came from — `badge` is a
+                  mode you cannot pick, `maturity` is one that is not finished, and neither
+                  is a recommendation. chatModes.ts owns the distinction between the two
+                  fields; this surface only has to not blur it. */}
+              <MaturityTag label={row.badge ?? row.maturity} className="chat-cmp-badge" />
             </span>
             <span className="chat-cmp-modelrow-insight">{row.insight}</span>
           </button>
@@ -161,6 +164,11 @@ function ModelRow({
     >
       <span className="chat-cmp-modelrow-head">
         <span className="chat-cmp-modelrow-name">{option.label}</span>
+        {/* NOT a MaturityTag, deliberately: this badge says "Recommended" — it steers you
+            TOWARD the row. A maturity chip makes the opposite claim ("not finished") and is
+            muted for that reason, so routing this through it would both misname the thing
+            and grey out the one word in the menu whose job is to stand out. It keeps
+            `.chat-cmp-badge`'s accent rules, which now exist for this row alone. */}
         {note?.badge && <span className="chat-cmp-badge">{note.badge}</span>}
         {/* Price is the SERVER's number (one table, the same one the cost estimate charges
             with). A server that can't price this id simply omits it and the row carries its

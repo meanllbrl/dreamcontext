@@ -5,17 +5,20 @@ import { AgentDialog } from '../components/agents/AgentDialog';
 import { AgentsFeed } from '../components/agents/AgentsFeed';
 import { SlideOver } from '../components/sleepy/chat/SlideOver';
 import { dropScratch } from '../components/sleepy/chat/composerScratch';
+import { dropThreadScratch } from '../components/agents/agentsChannelHost';
 import { classifyReference } from '../components/sleepy/chat/chatEntities';
 import '../components/sleepy/chat/overlays.css';
-import { useAutomations } from '../hooks/useAutomations';
+import { useAgentFeed, useAutomations } from '../hooks/useAutomations';
 import { AutomationsEmptyState } from '../components/automations/AutomationsEmptyState';
 import { AutomationsDispatcherBar } from '../components/automations/AutomationsDispatcherBar';
 import './AutomationsPage.css';
 
-/** The page's two views. `messages` is the channel — the feed of what the
+/** The page's three views. `messages` is the channel — the feed of what the
  *  agents did — and it is where the page OPENS. `agents` is the roster behind
- *  it: who these agents are, not what they said. */
-type AgentsView = 'messages' | 'agents';
+ *  it: who these agents are, not what they said. `files` is every document the
+ *  agents have attached, newest first — the same paths the messages carry,
+ *  gathered for the times you remember a file but not which run posted it. */
+type AgentsView = 'messages' | 'agents' | 'files';
 
 /**
  * The Agents page — no `<h1>`, the sidebar already labels the active page
@@ -34,6 +37,64 @@ type AgentsView = 'messages' | 'agents';
  * The `Page` union value stays `'automations'`: renaming the route key would
  * break persisted nav state for no user-visible gain.
  */
+/**
+ * EVERY FILE THE AGENTS HAVE POSTED, newest first.
+ *
+ * Derived from the feed the channel already reads rather than from a route of
+ * its own: the paths are on the messages, so a second endpoint would be a
+ * second answer to "what has been attached" that could disagree with the first.
+ * De-duplicated by path — the published document rides on its run's message AND
+ * can be attached by a post, and one document is one row.
+ *
+ * ONE VIEWER. A row opens the same `SlideOver` a file card in a message opens,
+ * so a document does not change behaviour depending on which list you found it in.
+ */
+function AgentsFiles({ onOpenFile }: { onOpenFile: (path: string) => void }) {
+  const { data } = useAgentFeed();
+  const rows = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { path: string; name: string; title: string; at: string }[] = [];
+    // Newest message first: the feed is oldest-first (chat reading order), and a
+    // file list is a search surface, where the thing you just made is at the top.
+    for (const m of [...(data?.messages ?? [])].reverse()) {
+      for (const f of m.files) {
+        if (seen.has(f.path)) continue;
+        seen.add(f.path);
+        out.push({ path: f.path, name: f.name, title: m.title, at: m.at });
+      }
+    }
+    return out;
+  }, [data]);
+
+  // The channel's own file-chip rules, reused rather than re-declared: a chip
+  // here and a chip in a message are the same object, and this lane does not own
+  // the stylesheet that draws them.
+  return (
+    <div className="agents-channel-body">
+      {rows.length === 0 ? (
+        /* K31: the empty state answers the question the tab asked. */
+        <p className="agents-feed-note">No agent has attached a file yet.</p>
+      ) : (
+        <div className="agent-msg-files">
+          {rows.map((r) => (
+            <button
+              key={r.path}
+              type="button"
+              className="agent-msg-file"
+              onClick={() => onOpenFile(r.path)}
+              title={r.path}
+            >
+              <span className="agent-msg-file-glyph" aria-hidden="true">◧</span>
+              <span className="agent-msg-file-name">{r.name}</span>
+              <span className="agent-msg-file-note">{r.title}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AutomationsPage() {
   const [view, setView] = useState<AgentsView>('messages');
 
@@ -54,7 +115,14 @@ export function AutomationsPage() {
    * `composerScratch.ts`). Leaving the PAGE is what ends the channel; switching views inside
    * it is not.
    */
-  useEffect(() => () => dropScratch('agents-channel'), []);
+  useEffect(() => () => {
+    dropScratch('agents-channel');
+    // …and every THREAD bucket the panel minted while this page was open. One per agent, so
+    // the page cannot name them and the host that mints them keeps the list. Same reason,
+    // same moment: a thread panel closes and reopens constantly (it is `{openThread && …}`),
+    // and a drop on ITS unmount would bin a file staged a second earlier.
+    dropThreadScratch();
+  }, []);
 
   const [toast, setToast] = useState<string | null>(null);
   /** The zero-state owns a create path of its own: with no agents there is no
@@ -146,6 +214,15 @@ export function AutomationsPage() {
               Agents
               <span className="agents-switch-count">{agents.length}</span>
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === 'files'}
+              className={`agents-switch-opt${view === 'files' ? ' agents-switch-opt--on' : ''}`}
+              onClick={() => setView('files')}
+            >
+              Files
+            </button>
           </div>
 
           <button type="button" className="agents-new-btn" onClick={() => setCreating(true)}>
@@ -196,6 +273,8 @@ export function AutomationsPage() {
             onOpenAgent={() => setView('agents')}
           />
         </div>
+      ) : view === 'files' ? (
+        <AgentsFiles onOpenFile={setOpenFile} />
       ) : (
         <AgentsMembers onToast={setToast} onNewAgent={() => setCreating(true)} />
       )}

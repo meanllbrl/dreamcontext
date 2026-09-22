@@ -1038,22 +1038,28 @@
   text-wrap: pretty;
 }
 
+/* LAYOUT ONLY for a mode row's chip — the ink comes from `.dc-maturity`
+   (components/common/maturity-tag.css), the one component every "not finished yet"
+   marker in the app now renders through. The class name survives as a passthrough
+   because the verify scripts address this chip by it.
+
+   The remaining SELF-CONTAINED user is the model menu's "Recommended" badge, which is
+   not a maturity marker at all and keeps its accent ink below. */
 .chat-cmp-badge {
   margin-left: 6px;
   margin-right: auto;   /* pushes the meta to the row's right edge */
+}
+
+/* The model-note badge: an accent chip that says "pick me". Scoped to the model row so
+   it cannot reach a `.dc-maturity` wearing the same passthrough class. `text-transform`
+   is gone here too (K15) — the copy is already sentence case. */
+.chat-cmp-modelrow-head > .chat-cmp-badge:not(.dc-maturity) {
   padding: 1px 6px;
   border-radius: var(--radius-full);
   background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
   color: var(--color-accent);
-  font-family: var(--font-mono);
   font-size: 9.5px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-/* "Soon" is not a recommendation — a muted badge says unavailable, an accent one says pick me. */
-.chat-cmp-badge.is-muted {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-tertiary);
+  letter-spacing: var(--letter-spacing-body);
 }
 
 .chat-cmp-disclosure {

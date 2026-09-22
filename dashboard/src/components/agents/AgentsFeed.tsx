@@ -79,6 +79,12 @@ export function AgentsFeed({
   const { vault } = useVault();
   const [filter, setFilter] = useState<Filter>({ kind: 'all' });
   const [openThread, setOpenThread] = useState<FeedMessage | null>(null);
+  /** Owned HERE rather than taken as a prop: the only thing that raises one is
+   *  an answer this feed's own question block could not record, and threading a
+   *  callback down from the page for that would make the page responsible for a
+   *  failure it has no part in. Reuses the page's `.agents-toast` style so the
+   *  two read as one surface. */
+  const [toast, setToast] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const messages = useMemo(() => data?.messages ?? [], [data]);
@@ -102,7 +108,11 @@ export function AgentsFeed({
     switch (filter.kind) {
       case 'all': return true;
       case 'unread': return m.unread;
-      case 'needs': return m.status === 'needs-you';
+      // `needsYou`, not the status word: a finished run with an unanswered
+      // question is waiting on the reader too, and the chip's COUNT is the
+      // server's own `needsYouTotal` — a filter keyed on something narrower
+      // would show fewer rows than the number on the chip that opened it.
+      case 'needs': return m.needsYou;
       case 'failed': return m.status === 'failed' || m.status === 'timeout';
       case 'agent': return m.slug === filter.slug;
     }
@@ -165,7 +175,10 @@ export function AgentsFeed({
   const chips: { id: string; label: string; count: number; filter: Filter; slug?: string; title?: string; hasPhoto?: boolean }[] = [
     { id: 'all', label: 'All', count: messages.length, filter: { kind: 'all' } },
     { id: 'unread', label: 'Unread', count: messages.filter((m) => m.unread).length, filter: { kind: 'unread' } },
-    { id: 'needs', label: 'Needs you', count: messages.filter((m) => m.status === 'needs-you').length, filter: { kind: 'needs' } },
+    // THE SERVER'S OWN NUMBER. Deriving it here a second way is what let the
+    // chip and the rows disagree about one channel before — `buildFeed` counts
+    // it once, from the same `needsYou` the filter above reads.
+    { id: 'needs', label: 'Needs you', count: data?.needsYouTotal ?? 0, filter: { kind: 'needs' } },
     { id: 'failed', label: 'Failed', count: messages.filter((m) => m.status === 'failed' || m.status === 'timeout').length, filter: { kind: 'failed' } },
     ...(data?.agents ?? []).map((a) => ({
       id: `agent:${a.slug}`,
@@ -193,14 +206,33 @@ export function AgentsFeed({
   // One sentence under the field, one owner: the host derives it from the live draft, and a
   // server refusal is written into the same place rather than stacking a second line under it.
   const noteRef = useRef<(n: { kind: 'error' | 'hint'; text: string } | null) => void>(() => {});
+  /**
+   * The exchange an @mention just started, remembered until the feed carries it.
+   *
+   * Step-4's criterion is that a mention "posts my message and OPENS ITS THREAD" — and the
+   * panel renders a `FeedMessage`, which does not exist yet at the moment the 200 lands: the
+   * server has written the ask, but this client learns the message's shape from the next feed
+   * read. So the pair is parked here and the effect below opens the panel the instant the
+   * matching message appears, rather than the feed inventing a half-message to show now.
+   */
+  const [pendingOpen, setPendingOpen] = useState<{ slug: string; runId: string } | null>(null);
   const onSend = useCallback((target: { slug: string }, body: string) => {
     say.mutate({ slug: target.slug, text: body }, {
+      onSuccess: (res) => setPendingOpen({ slug: res.slug, runId: res.runId }),
       // The composer has already emptied the field by the time this lands, so what a refusal
       // can still save is the REASON, on screen. Retyping is the cost of a 409; losing both
       // the sentence AND the explanation is not a cost anyone agreed to.
       onError: (err) => noteRef.current({ kind: 'error', text: (err as Error).message }),
     });
   }, [say]);
+
+  useEffect(() => {
+    if (!pendingOpen) return;
+    const m = messages.find((x) => x.slug === pendingOpen.slug && x.runId === pendingOpen.runId);
+    if (!m) return;
+    setOpenThread(m);
+    setPendingOpen(null);
+  }, [pendingOpen, messages]);
 
   const { host, note, setNote } = useAgentsChannelHost(agents, onSend);
   noteRef.current = setNote;
@@ -314,6 +346,7 @@ export function AgentsFeed({
                   onOpenThread={setOpenThread}
                   onOpenFile={onOpenFile}
                   onOpenAgent={onOpenAgent}
+                  onToast={setToast}
                 />
               </div>
             );
@@ -376,7 +409,15 @@ export function AgentsFeed({
           onClose={() => setOpenThread(null)}
           onOpenFile={onOpenFile}
           onOpenAgent={onOpenAgent}
+          onToast={setToast}
         />
+      )}
+
+      {/* Click to dismiss — an answer that failed to record is something the
+          reader needs to have SEEN, so it does not time itself out from under
+          a glance away. */}
+      {toast && (
+        <div className="agents-toast" role="status" onClick={() => setToast(null)}>{toast}</div>
       )}
     </div>
   );

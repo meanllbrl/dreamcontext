@@ -1,0 +1,158 @@
+/* AgentThreadCard — the `agent-thread` dream-view card.
+ *
+ * Its own file rather than a block in ChatViews.css: that stylesheet is another lane's in
+ * this wave, and a card that ships with its component is the convention the agents surface
+ * already follows (AgentAvatar.css, AgentsFeed.css). The box itself is `.chat-viewcard`,
+ * shared with the checklist/secret/run cards, so only what is new to this card is here.
+ *
+ * No baked hex: every colour is a theme token, so both themes follow for free. */
+
+.chat-agentthread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+}
+
+/* The header's avatar sits in the glyph slot, so it must not be squashed by it. */
+.chat-agentthread > .chat-m-cardhead { margin-bottom: calc(var(--space-1) * -1); }
+
+/* ── head asides ──────────────────────────────────────────────────────────────────────── */
+
+/* Unread is a COUNT and takes the accent, matching the sidebar badge it mirrors. */
+.chat-agentthread-unread {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
+}
+
+/* "Needs you" is a WORD, not a badge (K26/K40) — it outranks the count when both apply,
+   because a thread waiting on an answer is not merely unread. */
+.chat-agentthread-needs {
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* ── entries ──────────────────────────────────────────────────────────────────────────── */
+
+.chat-agentthread-entries {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0 var(--space-4);
+  list-style: none;
+}
+
+.chat-agentthread-entry {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+/* A system row is bookkeeping, and reads as quieter than what a person or an agent said. */
+.chat-agentthread-entry[data-kind='system'] { color: var(--color-text-tertiary); }
+
+.chat-agentthread-entry-time {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+.chat-agentthread-entry-who {
+  flex: 0 0 auto;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.chat-agentthread-entry-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── actions ──────────────────────────────────────────────────────────────────────────── */
+
+.chat-agentthread-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+}
+
+.chat-agentthread-reply {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.chat-agentthread-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+}
+.chat-agentthread-input:focus-visible {
+  outline: none;
+  border-color: var(--color-border-focus);
+}
+
+.chat-agentthread-btn {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.chat-agentthread-btn:hover:not(:disabled) { border-color: var(--color-border-hover); }
+.chat-agentthread-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* K8 — the one accent-filled control on this card is the send, which is its primary action. */
+.chat-agentthread-btn.is-primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+/* ── notes ────────────────────────────────────────────────────────────────────────────── */
+
+/* K5 — one sentence, and it answers the question the control above it raises. */
+.chat-agentthread-note {
+  margin: 0;
+  padding: 0 var(--space-4);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+.chat-agentthread-note.is-bad { color: var(--color-error); }
