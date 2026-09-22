@@ -28,13 +28,31 @@ import {
   HITL_CHANNELS,
   HITL_DIR,
   QUESTION_KINDS,
+  THREAD_FILES_MAX,
+  THREAD_SUMMARY_MAX_ROWS,
 } from '../../src/lib/automations/types.js';
+import { QUESTION_CHOICES_MAX, QUESTION_CHOICE_MAX_CHARS } from '../../src/lib/automations/hitl.js';
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 
 const SKILL_MD = readFileSync(join(ROOT, 'skill', 'SKILL.md'), 'utf-8');
 const AUTOMATIONS_MD = readFileSync(join(ROOT, 'skill', 'references', 'automations.md'), 'utf-8');
 const CLI_REFERENCE_MD = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
+const INTEGRATIONS_MD = readFileSync(join(ROOT, 'skill', 'references', 'integrations.md'), 'utf-8');
+/** The installed copies. `dreamcontext update` regenerates these FROM `skill/`, so a
+ *  drift here means someone edited the mirror (which is clobbered on the next update)
+ *  or shipped a source edit without propagating it. Either way the agent that loads
+ *  the skill reads the stale half. */
+const MIRROR_SKILL_MD = readFileSync(join(ROOT, '.claude', 'skills', 'dreamcontext', 'SKILL.md'), 'utf-8');
+const MIRROR_AUTOMATIONS_MD = readFileSync(
+  join(ROOT, '.claude', 'skills', 'dreamcontext', 'references', 'automations.md'), 'utf-8',
+);
+const MIRROR_CLI_REFERENCE_MD = readFileSync(
+  join(ROOT, '.claude', 'skills', 'dreamcontext', 'references', 'cli-reference.md'), 'utf-8',
+);
+const MIRROR_INTEGRATIONS_MD = readFileSync(
+  join(ROOT, '.claude', 'skills', 'dreamcontext', 'references', 'integrations.md'), 'utf-8',
+);
 const SLEEP_MD = readFileSync(join(ROOT, 'skill', 'references', 'sleep.md'), 'utf-8');
 const SLEEP_PRODUCT_MD = readFileSync(join(ROOT, 'agents', 'sleep-product.md'), 'utf-8');
 
@@ -574,4 +592,176 @@ describe('sleep docs — automations/hitl/ and its machine-local siblings are ex
     expect(SLEEP_PRODUCT_MD).toContain('~/.dreamcontext/telegram/*.json');
     expect(SLEEP_PRODUCT_MD).toContain('~/.dreamcontext/automations/*.sessions.json');
   });
+});
+
+/**
+ * The CHANNEL — the agents epic's docs half (feature-integration-pattern items 1, 3, 4, 5, 9).
+ *
+ * Every assertion below pins a claim an agent acts on: which flags exist and what
+ * their caps are, what an attachment actually renders as and WHERE (three of the four
+ * kinds are reach-limited, and an agent that does not know which will promise a board
+ * to someone on a phone), how a reply is refused, and that a reply into a shared
+ * agent's thread is published to the team. Caps are derived from the constants that
+ * enforce them rather than hardcoded, so raising a cap in code fails the doc loudly
+ * instead of leaving it quietly wrong.
+ */
+describe('skill/references/automations.md — the channel: posting, attachments, replies', () => {
+  const content = AUTOMATIONS_MD;
+
+  it('documents --kv and its cap, bound to THREAD_SUMMARY_MAX_ROWS', () => {
+    expect(content).toContain('--kv key=value');
+    expect(content).toMatch(new RegExp(`at most ${THREAD_SUMMARY_MAX_ROWS} rows`, 'i'));
+    // The split rule is the one an agent gets wrong: a greedy split turns
+    // `--kv change=+4% vs=last week` into a row whose value is silently truncated.
+    expect(content).toMatch(/split on the FIRST `=` only/i);
+    expect(content).toMatch(/figures, not prose/i);
+  });
+
+  it('documents the --file cap and the symlink refusal, bound to THREAD_FILES_MAX', () => {
+    expect(content).toMatch(new RegExp(`at most ${THREAD_FILES_MAX}`, 'i'));
+    expect(content).toMatch(/is a symlink/i);
+    expect(content).toMatch(/realpath resolves outside the brain/i);
+  });
+
+  it('documents propose --choice with both caps and the review prerequisite', () => {
+    expect(content).toContain('--choice');
+    expect(content).toMatch(new RegExp(`at most ${QUESTION_CHOICES_MAX} choices`, 'i'));
+    expect(content).toMatch(new RegExp(`at most ${QUESTION_CHOICE_MAX_CHARS} characters`, 'i'));
+    // Without this an agent offers buttons on a `review: off` automation, the CLI
+    // refuses, and the run has spent a turn discovering a prerequisite the doc knew.
+    expect(content).toMatch(/refuses under `review: off`/i);
+    // The store-side floor is a DIFFERENT promise from the CLI refusal, and both
+    // matter: one protects a file synced from a teammate, the other protects a run
+    // from believing it offered five options.
+    expect(content).toContain('parseChoices');
+  });
+
+  it('states what each attachment kind renders as AND where it works', () => {
+    // Reach is the load-bearing half. Boards and the document viewer read through the
+    // desktop-gated file route; images do not. An agent that flattens these promises
+    // a board to a phone.
+    expect(content).toMatch(/\.excalidraw\.md/);
+    expect(content).toMatch(/live board/i);
+    expect(content).toMatch(/desktop app/i);
+    expect(content).toMatch(/browser dashboard and phone/i);
+  });
+
+  it('states .svg is never rendered as an image, and why', () => {
+    expect(content).toMatch(/never rendered as an image/i);
+    expect(content).toMatch(/script-bearing document/i);
+  });
+
+  it('states the image CSP and that a PDF from the same route carries none', () => {
+    expect(content).toContain("Content-Security-Policy: default-src 'none'; sandbox");
+    expect(content).toMatch(/a PDF fetched from the same route carries no CSP/i);
+  });
+
+  it('names every reply refusal code the route can answer with', () => {
+    // These are the server's own sentences and the UI renders them verbatim; an agent
+    // that cannot name them will invent a generic "failed" when asked what happened.
+    for (const code of [
+      'reply_disabled', 'reply_unapproved', 'bad_text',
+      'bad_run', 'stale_run', 'not_bound', 'question_pending', 'busy',
+    ]) {
+      expect(content, `automations.md never names refusal "${code}"`).toContain(`\`${code}\``);
+    }
+    expect(content).toMatch(/writes \*\*nothing\*\*/i);
+  });
+
+  it('distinguishes a call agent running once from a sched agent resuming its session', () => {
+    expect(content).toMatch(/\*\*`call`\*\* agent.*\*\*runs once\*\*/is);
+    expect(content).toMatch(/\*\*`sched`\*\* agent with a bound session \*\*resumes that session\*\*/i);
+  });
+
+  it('states the open-question mention is refused ASYNCHRONOUSLY, not as a 409', () => {
+    // The asymmetry is real and deliberate; a doc that flattened it would have an
+    // agent reporting a 409 that never arrives.
+    expect(content).toMatch(/refused asynchronously/i);
+  });
+
+  it('states a reply in a SHARED agent thread goes to the team brain', () => {
+    expect(content).toMatch(/goes to the team brain/i);
+    expect(content).toMatch(/not a private aside/i);
+  });
+
+  it('documents the usage-limit degrade: marked failed, nothing published', () => {
+    expect(content).toMatch(/usage limit/i);
+    expect(content).toMatch(/no output file is written/i);
+    // The false-positive direction is the expensive one and the doc must say so, or a
+    // future reader "improves" the detector into suppressing real documents.
+    expect(content).toMatch(/still publishes normally/i);
+  });
+});
+
+describe('skill/references/cli-reference.md — post/propose rows carry the new flags', () => {
+  const content = CLI_REFERENCE_MD;
+
+  it('the post row names --kv with its cap', () => {
+    expect(content).toMatch(/`automations post .*--kv key=value/);
+    expect(content).toMatch(new RegExp(`\`--kv\` is repeatable up to ${THREAD_SUMMARY_MAX_ROWS}`));
+  });
+
+  it('the post row names the --file cap', () => {
+    expect(content).toMatch(new RegExp(`\`--file\` is repeatable up to ${THREAD_FILES_MAX}`));
+  });
+
+  it('the propose row names --choice with both caps and the review: off refusal', () => {
+    expect(content).toMatch(/`automations propose <slug> \[--choice <text>\]`/);
+    expect(content).toMatch(new RegExp(`repeatable up to ${QUESTION_CHOICES_MAX}, ${QUESTION_CHOICE_MAX_CHARS} chars each`));
+    expect(content).toMatch(/review: off/);
+  });
+});
+
+describe('skill/references/integrations.md — agent-thread is the eighth dream-view', () => {
+  const content = INTEGRATIONS_MD;
+
+  it('counts eight, not seven', () => {
+    expect(content).toMatch(/the eight things HTML must NOT be/);
+    expect(content).not.toMatch(/the seven things HTML must NOT be/);
+  });
+
+  it('carries agent-thread in the type union', () => {
+    expect(content).toContain('"agent-thread"');
+  });
+
+  it('states it is derived from disk and that asserted contents are dropped with a notice', () => {
+    expect(content).toMatch(/\*\*Derived from disk/i);
+    expect(content).toMatch(/dropped with a notice/i);
+  });
+
+  it('names the renderer, so the capability and the component stay findable together', () => {
+    expect(content).toContain('AgentThreadCard.tsx');
+  });
+});
+
+describe('skill/SKILL.md — the channel clause stays inside the capabilities row', () => {
+  it('names the reply/mention capability and the usage-limit degrade in one clause', () => {
+    expect(SKILL_MD).toMatch(/replying in a thread or `@`-mentioning an agent resumes its bound session/i);
+    expect(SKILL_MD).toMatch(/publishes \*\*nothing\*\*/i);
+    expect(SKILL_MD).toContain('agent-thread');
+  });
+
+  it('the Reference Index line points at the channel content', () => {
+    expect(SKILL_MD).toMatch(/\[automations\.md\]\(references\/automations\.md\)\*\*:.*the channel/is);
+  });
+});
+
+/**
+ * The installed mirror. `skill/` is the source; `.claude/skills/dreamcontext/` is what
+ * a running agent actually loads, regenerated by `dreamcontext update`. A feature
+ * documented only in the source is invisible to the agent that needs it — the exact
+ * failure feature-integration-pattern item 9 exists to prevent — so the two are pinned
+ * byte-identical rather than trusted to a remembered manual step.
+ */
+describe('.claude/skills/dreamcontext — the installed mirror matches its source', () => {
+  for (const [name, source, mirror] of [
+    ['SKILL.md', SKILL_MD, MIRROR_SKILL_MD],
+    ['references/automations.md', AUTOMATIONS_MD, MIRROR_AUTOMATIONS_MD],
+    ['references/cli-reference.md', CLI_REFERENCE_MD, MIRROR_CLI_REFERENCE_MD],
+    ['references/integrations.md', INTEGRATIONS_MD, MIRROR_INTEGRATIONS_MD],
+  ] as const) {
+    it(`${name} is byte-identical to skill/${name}`, () => {
+      expect(mirror, `.claude/skills/dreamcontext/${name} has drifted from skill/${name} — edit skill/ and propagate, never the mirror`).toBe(source);
+    });
+  }
 });
