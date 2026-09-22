@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { BrandMark } from '../brand/BrandMark';
+import { MaturityTag } from '../common/MaturityTag';
 import { NavIcon } from './NavIcons';
 import { GitHubMark } from '../brain/GitHubLogin';
 import { useAuthStatus, useBrainStatus } from '../../hooks/useBrainStatus';
@@ -21,8 +22,29 @@ interface SidebarProps {
   collapsed: boolean;
 }
 
-interface NavItem { page: Page; labelKey: string; lab?: boolean; beta?: boolean }
-interface NavGroup { labelKey: string; items: NavItem[] }
+/**
+ * How finished a surface is — ONE field replacing the `lab`/`beta` booleans, and the same
+ * vocabulary the composer menu and Settings now speak. See `MaturityTag.tsx` for why "Lab"
+ * is gone: the style guide says the `lab` CLI name never surfaces to a user, and the rail
+ * was printing it on five rows including the Insights page itself.
+ */
+export type MaturityLevel = 'alpha' | 'beta' | 'off';
+
+interface NavItem {
+  page: Page;
+  labelKey: string;
+  maturity?: MaturityLevel;
+  /**
+   * The one item the product is built around. Emphasis on HUE-NEUTRAL channels only —
+   * weight, ink and position — because the rail's colour channel is fully spent (accent =
+   * active + unread) and K8 caps the accent budget. See `.sidebar-item[data-hero]`.
+   */
+  hero?: boolean;
+}
+/** `hue` is a CSS CUSTOM PROPERTY NAME, not a colour: the group sets `--nav-hue` from it
+ *  and `.sidebar-icon` mixes it into a tinted surface. Keeping the name (not the value)
+ *  here is what keeps every hue resolving through `tokens.css` in both themes. */
+interface NavGroup { labelKey: string; hue: string; items: NavItem[] }
 
 // Grouped by job-to-be-done so the rail reads as a scannable hierarchy rather
 // than one flat list of 9+ items:
@@ -36,17 +58,21 @@ interface NavGroup { labelKey: string; items: NavItem[] }
 const NAV_GROUPS: NavGroup[] = [
   {
     labelKey: 'nav.group.workspace',
+    hue: '--nav-hue-workspace',
     items: [
+      // FIRST, and that is the emphasis — position is the loudest signal a rail has, and
+      // it costs no colour. Agents is the product's centre of gravity (owner, 2026-09-22).
+      { page: 'automations', labelKey: 'nav.automations', maturity: 'beta', hero: true },
       { page: 'tasks', labelKey: 'nav.tasks' },
-      { page: 'roadmap', labelKey: 'nav.roadmap', beta: true },
-      { page: 'hypotheses', labelKey: 'nav.hypotheses', lab: true },
-      { page: 'lab', labelKey: 'nav.labpage', lab: true },
-      { page: 'automations', labelKey: 'nav.automations', lab: true },
-      { page: 'council', labelKey: 'nav.council', lab: true },
+      { page: 'roadmap', labelKey: 'nav.roadmap', maturity: 'beta' },
+      { page: 'hypotheses', labelKey: 'nav.hypotheses', maturity: 'alpha' },
+      { page: 'lab', labelKey: 'nav.labpage', maturity: 'alpha' },
+      { page: 'council', labelKey: 'nav.council', maturity: 'alpha' },
     ],
   },
   {
     labelKey: 'nav.group.memory',
+    hue: '--nav-hue-memory',
     items: [
       { page: 'core', labelKey: 'nav.core' },
       { page: 'knowledge', labelKey: 'nav.knowledge' },
@@ -55,6 +81,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     labelKey: 'nav.group.brain',
+    hue: '--nav-hue-brain',
     items: [
       { page: 'brain', labelKey: 'nav.brain' },
       { page: 'sleep', labelKey: 'nav.sleep' },
@@ -62,6 +89,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     labelKey: 'nav.group.control',
+    hue: '--nav-hue-control',
     items: [
       { page: 'packs', labelKey: 'nav.packs' },
       { page: 'settings', labelKey: 'nav.settings' },
@@ -183,17 +211,25 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
       </div>
 
       {NAV_GROUPS.map((group) => (
-        <div key={group.labelKey} className="sidebar-group">
+        // The group publishes its hue ONCE, as a custom property; `.sidebar-icon` and
+        // `.sidebar-group-label` read `--nav-hue` from the cascade. No per-item plumbing,
+        // and a group without a hue falls back to the neutral default in the CSS.
+        <div
+          key={group.labelKey}
+          className="sidebar-group"
+          style={{ '--nav-hue': `var(${group.hue})` } as React.CSSProperties}
+        >
           <span className="sidebar-group-label">{t(group.labelKey)}</span>
           <ul className="sidebar-nav">
-            {group.items.map(({ page, labelKey, lab, beta }) => {
+            {group.items.map(({ page, labelKey, maturity, hero }) => {
               staggerIndex += 1;
               const label = t(labelKey);
-              // An off layer replaces its Lab tag rather than adding a second
+              // An off layer replaces its maturity tag rather than adding a second
               // one — two tags on one row is noise, and "off" is the more
               // useful of the two to whoever is looking.
               const off = page === 'hypotheses' && learningOff;
-              const tag = off ? t('nav.off') : lab ? t('nav.lab') : beta ? t('nav.beta') : null;
+              const level: MaturityLevel | undefined = off ? 'off' : maturity;
+              const tag = level ? t(`maturity.${level}`) : null;
               const isAbout = page === 'about';
               return (
                 <li key={page} className={`animate-stagger animate-stagger-${staggerIndex}`}>
@@ -202,6 +238,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
                     onClick={isAbout ? openAbout : () => onNavigate(page)}
                     title={tag ? `${label} — ${tag}` : label}
                     aria-current={activePage === page ? 'page' : undefined}
+                    data-hero={hero || undefined}
                   >
                     <span className="sidebar-icon"><NavIcon page={page} /></span>
                     <span className="sidebar-label">{label}</span>
@@ -211,9 +248,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
                     {page === 'automations' && agentUnread > 0 && (
                       <span className="sidebar-badge">{agentUnread}</span>
                     )}
-                    {off && <span className="sidebar-lab-tag sidebar-off-tag">{t('nav.off')}</span>}
-                    {!off && lab && <span className="sidebar-lab-tag">{t('nav.lab')}</span>}
-                    {!off && beta && <span className="sidebar-lab-tag sidebar-beta-tag">{t('nav.beta')}</span>}
+                    <MaturityTag level={level} className="sidebar-maturity" />
                   </button>
                 </li>
               );

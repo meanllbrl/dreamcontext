@@ -166,6 +166,25 @@
   --chart-7: #d63f95;
   --chart-8: #0ea5a5;
 
+  /* ─── Nav SECTION IDENTITY ───
+     Static chrome, never a status. The ★★★ rule is colour = MOOD, movement = MODE, and
+     this does not contend with it: a group hue never changes at runtime and never carries
+     news, so there is nothing about it to miss. It is spent as a TINTED SURFACE on the
+     idle icon badge (Sidebar.css), and the ACTIVE badge still takes the full accent — so
+     identity always loses to status, which is the property that makes it compliant.
+
+     NOT --chart-1: that IS --color-accent, and a Workspace hue equal to the accent would
+     make every idle Workspace icon read as active. --chart-3/-5 stay unused too — both
+     neighbour --color-warning, reserved for genuinely hot things.
+
+     RE-DECLARED in the dark block on purpose, even though --chart-* already are: it is
+     what makes the drift test's "exists in both blocks" check meaningful, so a hue added
+     light-only fails loudly instead of silently inheriting. */
+  --nav-hue-workspace: var(--chart-2);
+  --nav-hue-memory:    var(--chart-4);
+  --nav-hue-brain:     var(--chart-8);
+  --nav-hue-control:   var(--chart-6);
+
   /* ─── Semantic Colors (data viz) ─── */
   --color-success: hsl(142 71% 40%);
   --color-success-subtle: hsl(142 71% 95%);
@@ -313,6 +332,13 @@
   --chart-6: #c8ccd9;
   --chart-7: #f472b6;
   --chart-8: #22d3ee;
+
+  /* Nav section identity — see the :root block for why these are aliases AND why they are
+     re-declared here rather than left to inherit through --chart-*. */
+  --nav-hue-workspace: var(--chart-2);
+  --nav-hue-memory:    var(--chart-4);
+  --nav-hue-brain:     var(--chart-8);
+  --nav-hue-control:   var(--chart-6);
 
   /* Semantic colors lifted for dark contrast */
   --color-success: hsl(142 71% 55%);

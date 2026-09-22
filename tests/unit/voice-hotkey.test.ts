@@ -190,10 +190,23 @@ describe('the Voice card is a folded ALPHA group at the bottom of the AGENT sect
   it('renders folded, with an ALPHA chip', () => {
     expect(card).toMatch(/collapsible/);
     expect(card).not.toMatch(/defaultOpen/);      // folded is the point
-    // ALPHA, not BETA (owner, 2026-09-13). The class name still says `beta` because it is
-    // the chip's STYLE, not its word; the word is what the two announcing surfaces must
-    // agree on, and the composer's mode card carries the same one.
-    expect(card).toMatch(/settings-beta-badge">ALPHA/);
+    // ALPHA, not BETA (owner, 2026-09-13), and that is still the whole point of this
+    // assertion. What changed on 2026-09-22 is only HOW it is said: the chip was a literal
+    // `<span className="settings-beta-badge">ALPHA</span>` — a class that said `beta` while
+    // the word said ALPHA, which the old comment here had to apologise for. It is now
+    // `<MaturityTag level="alpha">`, one component shared with the rail and the composer
+    // menu, so the level is data instead of a class/word mismatch and the copy comes from
+    // i18n (`maturity.alpha`) rather than being typed into the markup.
+    expect(card).toMatch(/import \{ MaturityTag \} from/);
+    expect(card).toMatch(/<MaturityTag level="alpha"\s*\/>/);
+    expect(card).not.toMatch(/level="beta"/);
+    // The other half of the old comment, now actually asserted rather than just asserted-in-
+    // prose: the composer's mode card is the second surface announcing this mode, and the two
+    // must not disagree about how finished it is. Case-insensitive on purpose — `chatModes.ts`
+    // owns that literal and still spells it `ALPHA`, so this keeps holding if it is ever
+    // sentence-cased to match the chip.
+    const modes = readFileSync(join(ROOT, 'dashboard/src/lib/chatModes.ts'), 'utf-8');
+    expect(modes).toMatch(/id: 'jarvis'[^}]*maturity: 'alpha'/i);
   });
 
   it('uses the same hotkey grammar as the agent hotkey field a few rows above', () => {

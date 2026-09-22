@@ -128,9 +128,8 @@
   color: var(--color-text-tertiary);
 }
 
-/* The label uses flex `gap`, so drop the badge's own left margin to avoid double spacing. */
-.settings-nav-label .settings-beta-badge,
-.settings-nav-label .settings-lab-badge {
+/* The label uses flex `gap`, so the chip needs no left margin of its own here. */
+.settings-nav-label .dc-maturity {
   margin-left: 0;
 }
 
@@ -241,22 +240,17 @@
   margin-bottom: var(--space-3);
 }
 
-/* "BETA" / "Lab" tag next to a section title or nav item (e.g. Sleepy). Both ride
-   the same accent-violet chip — the shared "not-final surface" marker language used
-   in the sidebar (Council's Lab chip). */
-.settings-beta-badge,
-.settings-lab-badge {
-  display: inline-block;
-  margin-left: var(--space-2);
-  padding: 1px 6px;
-  border-radius: 5px;
-  font-size: 10px;
-  font-weight: var(--font-weight-bold);
-  letter-spacing: 0.6px;
+/* `.settings-beta-badge` / `.settings-lab-badge` are GONE — Settings renders
+   `<MaturityTag>` like the rail and the composer menu do, so the three chips that used
+   to say "Lab" / "BETA" / "ALPHA" in three stylesheets are now one component with one
+   vocabulary. Only the spacing this page needs around it stays here. */
+.settings-section-title > .dc-maturity,
+.settings-nav-label > .dc-maturity {
   vertical-align: middle;
-  color: var(--color-accent, #a78bfa);
-  background: color-mix(in srgb, var(--color-accent, #a78bfa) 16%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-accent, #a78bfa) 35%, transparent);
+}
+
+.settings-section-title > .dc-maturity {
+  margin-left: var(--space-2);
 }
 
 .settings-checkboxes {
