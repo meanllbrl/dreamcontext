@@ -1,5 +1,22 @@
 [
   {
+    "date": "2026-09-22",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Finish the agents epic on the channel branch. A run's post can now carry a question with up to 4 buttoned options (`automations propose --choice`), a `--kv` structured summary, typed files and a board; replying in a thread or @-mentioning an agent resumes its bound session (or runs a `call` agent once) through a reply-job registry, with @mention semantics differing by agent mode and the answer coming back as a post. Chat reaches the same thread through an `agent-thread` dream-view card. A run that hits the account usage limit is gated: marked failed, publishing nothing, rather than filing the limit banner as its document. The side menu drops three disagreeing badge implementations for one `MaturityTag` on an `alpha|beta|off` ladder (retiring the `Lab` chip word), adds static per-section `--nav-hue` tints that always lose to active/unread, redraws 4 icons, and moves Agents to the top marked Beta. 12 implementer lanes, 4 plan rounds, 2 review rounds, validation PASS.",
+    "breaking": false,
+    "summary": "UNMERGED (branch feat/agents-channel-composer): agents steps 3+4 land end to end — a run's message can ask, attach and be replied to, and the side menu gets one maturity model, section hues and honest icons",
+    "references": [
+      "file:dashboard/src/components/common/MaturityTag.tsx",
+      "file:src/lib/automations/hitl.ts",
+      "file:src/server/routes/agent-chat.ts",
+      "task:agents-epic-finished-end-to-end-and-the-side-menu-gets-one-maturity-model-section-hues-and-honest-icons"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-21",
     "type": "feat",
     "scope": "agents",

@@ -1,0 +1,387 @@
+/*
+ * New agent / Edit agent.
+ *
+ * The accent budget (Tilki K8) is spent HERE and nowhere else in this file:
+ * the primary button's fill, the focus ring, and the on switch (which lives on
+ * the card, not in this dialog). A selected chip is a neutral surface with a
+ * strong border and semibold text — the same way the day chips and the mode
+ * chips read — so the eye lands on the one button that commits.
+ */
+
+.agent-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(9, 12, 29, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}
+
+.agent-modal {
+  width: min(600px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  padding: var(--space-5) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
+  animation: agent-pop 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes agent-pop {
+  from { transform: translateY(8px); opacity: 0; }
+}
+
+/* K1: one title. Sentence case, no uppercase, no decorative icon. */
+.agent-modal-title {
+  margin: 0;
+  font-family: var(--font-display, inherit);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  color: var(--color-text);
+}
+
+/* ─── Photo row ─── */
+
+.agent-photo-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.agent-photo-preview {
+  display: inline-grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--color-bg-tertiary);
+}
+
+.agent-photo-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.agent-photo-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-photo-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.agent-presets {
+  display: flex;
+  gap: 6px;
+}
+
+.agent-preset {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  border: 2px solid transparent;
+  display: inline-grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 150ms;
+}
+
+/* A picked preset is marked with the TEXT colour, not the accent — six tinted
+   squares plus an accent ring would be two colour channels saying one thing. */
+.agent-preset--on {
+  border-color: var(--color-text);
+}
+
+/* ─── Fields (K2: one 40px row each; K15: sentence-case 14px labels) ─── */
+
+.agent-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.agent-input,
+.agent-select,
+.agent-textarea {
+  height: 40px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 0 12px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 150ms;
+  width: 100%;
+}
+
+.agent-textarea {
+  height: auto;
+  min-height: 76px;
+  padding: 10px 12px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.agent-input:focus-visible,
+.agent-select:focus-visible,
+.agent-textarea:focus-visible,
+.agent-btn:focus-visible,
+.agent-chip:focus-visible,
+.agent-preset:focus-visible {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+.agent-select {
+  appearance: none;
+  padding-right: 32px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--color-text-secondary) 50%),
+    linear-gradient(135deg, var(--color-text-secondary) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 17px, calc(100% - 11px) 17px;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.agent-time {
+  width: 112px;
+  flex: 0 0 auto;
+}
+
+/* Name · Model · Effort in ONE row — K2. Name takes the space because it is
+   the only free-text field of the three. */
+.agent-row3 {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: var(--space-3);
+}
+
+/* ─── Chips (K92: a MODE axis, so visible and side by side) ─── */
+
+.agent-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.agent-chip {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+
+.agent-chip:hover {
+  background: var(--color-bg-tertiary);
+}
+
+/* Selected = neutral surface + strong border + semibold. NOT the accent (K8). */
+.agent-chip--on {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.agent-chip--day {
+  width: 44px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+}
+
+.agent-sched-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding-top: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* ─── The reveal (K18) ─── */
+
+.agent-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 180ms cubic-bezier(0.4, 0, 1, 1),
+    opacity 180ms cubic-bezier(0.4, 0, 1, 1);
+}
+
+.agent-reveal--on {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.agent-reveal > div {
+  overflow: hidden;
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-reveal,
+  .agent-reveal--on {
+    transition: opacity 120ms linear;
+  }
+  .agent-modal {
+    animation: none;
+  }
+}
+
+/* ─── Notes and the summary sentence (K5: 14px, one sentence) ─── */
+
+.agent-note {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.agent-note b {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.agent-note--reveal {
+  padding-top: var(--space-2);
+}
+
+.agent-summary {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.agent-summary b {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.agent-error {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--color-error);
+}
+
+/* ─── Buttons ─── */
+
+.agent-modal-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.agent-modal-spacer {
+  flex: 1;
+}
+
+.agent-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 150ms, border-color 150ms, opacity 150ms;
+}
+
+.agent-btn:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+  background: var(--color-bg-tertiary);
+}
+
+.agent-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The ONE accent fill in this dialog (K8). */
+.agent-btn--primary {
+  background: var(--gradient-brand);
+  border-color: transparent;
+  color: var(--color-text-on-brand);
+  font-weight: 600;
+}
+
+.agent-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+  background: var(--gradient-brand);
+}
+
+.agent-btn--danger {
+  color: var(--color-error);
+  border-color: transparent;
+  background: transparent;
+}
+
+.agent-btn--danger:hover:not(:disabled) {
+  background: var(--color-error-subtle);
+  border-color: transparent;
+}
+
+/* Armed: the label already says "Click again to delete", so the surface only
+   has to make it unmissable — a filled danger button, not a new colour added
+   to the page. */
+.agent-btn--armed,
+.agent-btn--armed:hover:not(:disabled) {
+  background: var(--color-error);
+  color: var(--color-text-on-brand);
+  font-weight: 600;
+}
+
+@media (max-width: 560px) {
+  .agent-row3 {
+    grid-template-columns: 1fr;
+  }
+}

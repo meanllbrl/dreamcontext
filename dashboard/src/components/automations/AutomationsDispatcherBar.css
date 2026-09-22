@@ -112,3 +112,29 @@
   max-width: 580px;
   margin: var(--space-2) 0 0;
 }
+
+/* ─── the tight variant ──────────────────────────────────────────────────
+   For the two states that are not a problem to solve: "on" and "off". Both
+   are true every single time the page opens, so the paragraph under them was
+   read once and then occupied a third of the channel's first screen for ever.
+   One line, sentence continuing inline, same dot and same button.
+
+   The two WARN states keep their paragraph on purpose — there the "why" IS
+   the fix, and it is the first time the reader has seen it.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.auto-dispatch--tight {
+  padding: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.auto-dispatch--tight .auto-dispatch-text {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.auto-dispatch--tight .auto-dispatch-text span {
+  font-size: 13px;
+}

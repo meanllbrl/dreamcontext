@@ -19,7 +19,21 @@
 }
 
 .adp-head { flex: 0 0 auto; padding: 20px 20px 16px; border-bottom: 1px solid var(--color-border); }
-.adp-head-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.adp-head-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.adp-head-id { flex: 1; min-width: 0; }
+.adp-head-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.adp-head-badges:empty { display: none; }
+
+/* Edit, in the slot "Run now" used to occupy. Neutral (K8) — the accent on this
+   screen belongs to Approve, the one action with consequences. */
+.adp-edit {
+  height: 30px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 7px;
+  background: var(--color-bg-secondary); color: var(--color-text);
+  font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+.adp-edit:hover { background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
+.adp-edit:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent); }
 .adp-spacer { flex: 1; }
 
 .adp-run {
@@ -36,8 +50,8 @@
 }
 .adp-close:hover { background: var(--color-bg-secondary); color: var(--color-text); }
 
-.adp-title { font-family: var(--font-family-display); font-weight: 700; font-size: 19px; color: var(--color-text); letter-spacing: -0.015em; line-height: 1.25; }
-.adp-slug { font-family: var(--font-mono); font-size: 11.5px; color: var(--color-text-tertiary); margin-top: 7px; }
+.adp-title { font-family: var(--font-family-display); font-weight: 700; font-size: 18px; color: var(--color-text); letter-spacing: -0.015em; line-height: 1.25; }
+.adp-slug { font-size: 13px; color: var(--color-text-secondary); margin-top: 3px; }
 
 .adp-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px 26px; }
 .adp-loading { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; text-align: center; }
@@ -65,8 +79,11 @@
 
 .adp-section-label {
   display: flex; align-items: center; gap: 7px;
-  font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
-  color: var(--color-text-tertiary); margin-bottom: 10px;
+  /* K15/K5: this was a 10px UPPERCASE mono label with tracking — a decorative
+     heading at a size nobody reads. A section label is a short sentence-case
+     phrase at body-adjacent size, in the body's own face. */
+  font-size: 13px; font-weight: 600; letter-spacing: normal; text-transform: none;
+  color: var(--color-text); margin-bottom: 10px;
 }
 /* Used where the label sits inline in its own header row (Flow, Telegram) —
    that row already carries the bottom margin the label wants. */
@@ -77,8 +94,12 @@
 .adp-review-row + .adp-review-row { border-top: 1px solid var(--color-border); }
 .adp-review-row:not(.adp-review-row--block) { display: flex; align-items: baseline; gap: 12px; }
 .adp-review-label {
-  flex: 0 0 140px; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase;
-  letter-spacing: 0.06em; color: var(--color-text-tertiary); display: block; margin-bottom: 4px;
+  /* The review table's field names stay MONO — these are literal manifest keys
+     (`timeoutMinutes`, `outputDir`), and a human comparing them against a file
+     needs to read them as identifiers. Only the uppercasing and the unreadable
+     10px go (K15/K5). */
+  flex: 0 0 140px; font-family: var(--font-mono); font-size: 12px; text-transform: none;
+  letter-spacing: normal; color: var(--color-text-secondary); display: block; margin-bottom: 4px;
 }
 .adp-review-row:not(.adp-review-row--block) .adp-review-label { margin-bottom: 0; }
 .adp-review-value { font-size: 12.5px; color: var(--color-text); word-break: break-word; }
@@ -102,7 +123,7 @@
 .adp-detail-row { display: flex; align-items: baseline; gap: 12px; padding: 8px 12px; }
 .adp-detail-row + .adp-detail-row { border-top: 1px solid var(--color-border); }
 .adp-detail-label {
-  flex: 0 0 90px; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase;
+  flex: 0 0 90px; font-family: var(--font-mono); font-size: 12px; text-transform: none;
   letter-spacing: 0.06em; color: var(--color-text-tertiary);
 }
 .adp-detail-value { font-size: 12.5px; color: var(--color-text); word-break: break-word; }
@@ -283,11 +304,9 @@
 
 .adp-prompt-summary {
   cursor: pointer;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--color-text-tertiary);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
   margin-bottom: 12px;
   user-select: none;
 }
@@ -297,94 +316,43 @@
 .adp-prompt-details[open] .adp-prompt-summary { margin-bottom: 12px; }
 .adp-prompt-details .adp-review-block--static:last-child { margin-bottom: 0; }
 
-/* ── Telegram (D8) — per-automation bot credentials ──────────────────────── */
+/* The open question, moved here off the member card. Full width at the top of
+   the body — this screen has the room the card did not, and the question is
+   the only thing on it asking a human for something. */
+.adp-ask {
+  margin-bottom: 18px;
+}
 
-.adp-telegram {
+/* Same correction the card made to the inherited block: the UPPERCASE label
+   over a fully tinted box breaks K15 and spends an accent budget this screen
+   needs for Approve. Weight moves to a warning rule down the left edge. */
+.adp-ask .auto-ask {
+  padding: 12px 14px;
   border: 1px solid var(--color-border);
-  border-radius: 11px;
-  padding: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-4);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
 }
 
-.adp-telegram-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.adp-telegram-status {
-  font-size: 11.5px;
-  color: var(--color-text-tertiary);
-}
-
-.adp-telegram-status--on { color: var(--color-success); }
-
-.adp-telegram-toggle {
-  border: none;
-  background: none;
-  padding: 0;
-  font-size: 11px;
+.adp-ask .auto-ask-label {
+  font-size: 14px;
   font-weight: 600;
-  color: var(--color-accent);
-  cursor: pointer;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--color-text);
 }
 
-.adp-telegram-toggle:hover { opacity: 0.8; }
+.adp-ask .auto-ask-glyph { color: var(--color-warning); font-size: 13px; }
 
-.adp-telegram-body {
-  margin-top: var(--space-3);
-}
-
-.adp-telegram-hint {
-  margin: 0 0 var(--space-3);
-  font-size: 11.5px;
-  line-height: 1.55;
+.adp-ask .auto-ask-when {
+  font-family: inherit;
+  font-size: 12.5px;
   color: var(--color-text-secondary);
 }
 
-.adp-telegram-hint code {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--color-text);
-}
-
-.adp-telegram-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.adp-telegram-input {
-  flex: 1 1 160px;
-  min-width: 0;
-  padding: 5px 9px;
-  font-size: 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-secondary);
-  color: var(--color-text);
-}
-
-.adp-telegram-input:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
-.adp-telegram-save {
-  flex: 0 0 auto;
-  border: none;
-  border-radius: var(--radius-md);
-  padding: 5px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  background: var(--gradient-brand);
-  color: var(--color-text-on-brand);
-}
-
-.adp-telegram-save:disabled {
-  cursor: default;
-  opacity: 0.55;
+.adp-ask .auto-ask-question {
+  font-size: 13.5px;
+  line-height: 1.5;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
 }

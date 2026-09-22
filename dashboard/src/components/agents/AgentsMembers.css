@@ -1,0 +1,35 @@
+.agents-members {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-5);
+}
+
+.agents-members-toolbar {
+  margin-bottom: var(--space-4);
+}
+
+.agents-members-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--space-3);
+  align-content: start;
+  /* Each card takes its NATURAL height. Stretching them to match the tallest
+     in the row — which is what a grid does by default — meant one agent with
+     an open question left its two neighbours with 200px of empty card under
+     their text. Aligned footers are not worth a void. */
+  align-items: start;
+}
+
+.agents-members-note {
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+  padding: 40px var(--space-5);
+  text-align: center;
+}
+
+.agents-members-note--error {
+  color: var(--color-error);
+}

@@ -147,3 +147,34 @@
 @media (max-width: 720px) {
   .auto-intro { padding-top: var(--space-6); }
 }
+
+/* The zero-state's primary action — the one accent fill on this screen (K8),
+   and the reason a vault with no agents is no longer a dead end that only the
+   CLI can open. */
+.auto-intro-new-btn {
+  align-self: center;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0 18px;
+  height: 38px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--gradient-brand);
+  color: var(--color-text-on-brand);
+  transition: filter var(--transition-fast), transform var(--transition-fast);
+}
+
+.auto-intro-new-btn:hover {
+  filter: brightness(1.06);
+}
+
+.auto-intro-new-btn:active {
+  transform: scale(0.98);
+}
+
+.auto-intro-new-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}

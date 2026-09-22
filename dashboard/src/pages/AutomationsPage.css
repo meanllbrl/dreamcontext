@@ -1,0 +1,327 @@
+/*
+ * The Agents page — a CHANNEL with a roster behind it.
+ *
+ * Accent budget (K8): the New agent button's fill and focus rings. The header,
+ * the members pill and the selected view are all neutral surfaces.
+ */
+
+.agents-page {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: var(--color-bg);
+}
+
+.agents-page--empty {
+  overflow: hidden;
+}
+
+/* ─── channel header ─── */
+
+.agents-head {
+  flex-shrink: 0;
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+  padding: 0 var(--space-5) var(--space-3);
+}
+
+.agents-head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 56px;
+  min-width: 0;
+}
+
+/* K1: one title. `#agents` is the channel's name and nothing repeats it. */
+.agents-channel {
+  margin: 0;
+  font-family: var(--font-display, inherit);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  color: var(--color-text);
+  flex-shrink: 0;
+}
+
+/* K31: says what is in here, rather than restating the name. */
+.agents-channel-sub {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-head-spacer {
+  flex: 1;
+}
+
+/* The faces, as decoration beside a sentence that already gives the count —
+   NOT a control. As a control they rendered "AI MI SM 3": three clipped
+   monograms and a bare number, which is the exact opposite of a readable
+   choice. */
+.agents-faces {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.agents-faces .agent-av {
+  margin-left: -7px;
+  border: 2px solid var(--color-bg-secondary);
+  border-radius: 8px;
+}
+
+.agents-faces .agent-av:first-child {
+  margin-left: 0;
+}
+
+/* The view switch. Both destinations NAMED and both always visible, so the
+   choice reads without being clicked. Selected is a raised neutral surface,
+   never an accent fill (K8) — the accent on this page belongs to New agent. */
+.agents-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  flex-shrink: 0;
+}
+
+.agents-switch-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 150ms, color 150ms;
+}
+
+.agents-switch-opt:hover {
+  color: var(--color-text);
+}
+
+.agents-switch-opt--on {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.agents-switch-count {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+  border-radius: 999px;
+  padding: 1px 6px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.agents-switch-opt--on .agents-switch-count {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.agents-switch-opt:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg-tertiary), 0 0 0 4px var(--color-accent);
+}
+
+/* The one accent fill on this page (K8). */
+.agents-new-btn {
+  flex-shrink: 0;
+  height: 34px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--gradient-brand);
+  color: var(--color-text-on-brand);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter var(--transition-fast), transform var(--transition-fast);
+}
+
+.agents-new-btn:hover { filter: brightness(1.06); }
+.agents-new-btn:active { transform: scale(0.98); }
+
+.agents-new-btn:focus-visible,
+.agents-inline-link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg-secondary), 0 0 0 4px var(--color-accent);
+}
+
+/* ─── the channel body ─── */
+
+/*
+ * The channel's body — and it STRETCHES. It used to centre its children, which
+ * is right for one small card in an empty page and wrong for everything else:
+ * the feed took its content width and sat in the middle with ~157px dead on
+ * each side of a 1208px page, while the scheduler bar directly above it ran
+ * edge to edge. The mismatch is what read as broken — a column narrower than
+ * the notice above it looks like a mistake even before you notice the waste.
+ *
+ * Horizontal padding is ZERO on purpose: the chips, the messages and the
+ * composer each carry their own `--space-5`, which is the same inset
+ * `.agents-head` uses, so the agent's name lines up with `#agents` in the
+ * header instead of being indented past it.
+ */
+.agents-channel-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0;
+}
+
+/* K31 + K5: an empty channel answers the question you arrived with, in body-
+   sized sentences — not an 11px grey footnote about a mechanism. */
+.agents-channel-empty {
+  max-width: 460px;
+  text-align: center;
+}
+
+.agents-channel-empty-lede {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.agents-channel-empty-note {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.agents-inline-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* ─── toast ─── */
+
+.agents-toast {
+  position: absolute;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: 70;
+  max-width: 420px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+}
+
+@media (max-width: 720px) {
+  .agents-channel-sub { display: none; }
+}
+
+/* "2 agents are waiting on you" — a NOTICE in the channel, not the feed. It
+   exists because the channel is the default view and a question nobody can see
+   from it is a question nobody answers. Step 2 replaces it with real unread
+   messages carrying the question itself. */
+.agents-needyou {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* Full width, matching the scheduler bar it sits directly under — it is
+     the same KIND of thing (a channel-level notice with a way out), and a
+     520px card centred beneath an edge-to-edge bar read as two unrelated
+     notices rather than two rows of the same header. */
+  margin: var(--space-3) var(--space-5) 0;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+
+.agents-needyou:hover {
+  border-color: var(--color-border-hover);
+  border-left-color: var(--color-warning);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.agents-needyou:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+.agents-needyou-faces {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.agents-needyou-faces .agent-av {
+  margin-left: -8px;
+  border: 2px solid var(--color-bg-secondary);
+  border-radius: 9px;
+}
+
+.agents-needyou-faces .agent-av:first-child {
+  margin-left: 0;
+}
+
+.agents-needyou-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.agents-needyou-text strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.agents-needyou-text span {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.agents-needyou-go {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+}
+
+/* NOTE: the second `.agents-channel-body` rule that used to live here — the
+   one that re-added `align-items: center` so the notice could stack above the
+   empty state — is GONE. It was 138 lines from the first and won the cascade,
+   which is how the centring outlived the empty state it was written for. One
+   rule now, above. */

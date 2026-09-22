@@ -7,6 +7,7 @@ import { ConnectionsManager } from '../components/settings/ConnectionsManager';
 import { EmbeddingModelCard } from '../components/settings/EmbeddingModelCard';
 import { TaskOverrideEditor } from '../components/settings/TaskOverrideEditor';
 import { SETTINGS_ICONS } from '../components/settings/SettingsIcons';
+import { MaturityTag, type MaturityLevel } from '../components/common/MaturityTag';
 import { CloudTaskSync } from '../components/settings/CloudTaskSync';
 import { SettingGroup, SettingRow, SettingChoice, Toggle } from '../components/settings/SettingRow';
 import { VoiceSettings } from '../components/settings/VoiceSettings';
@@ -138,14 +139,13 @@ const SETTINGS_NAV: SettingsNavGroup[] = [
 ];
 
 /** Section header: the name once, then the one sentence that explains it. */
-function SectionHead({ titleKey, descKey, badge }: { titleKey: string; descKey: string; badge?: 'beta' | 'lab' }) {
+function SectionHead({ titleKey, descKey, badge }: { titleKey: string; descKey: string; badge?: MaturityLevel }) {
   const { t } = useI18n();
   return (
     <div className="settings-section-head">
       <h2 className="settings-section-title">
         {t(titleKey)}
-        {badge === 'beta' && <span className="settings-beta-badge">BETA</span>}
-        {badge === 'lab' && <span className="settings-lab-badge">{t('nav.lab')}</span>}
+        <MaturityTag level={badge} />
       </h2>
       <p className="settings-section-desc">{t(descKey)}</p>
     </div>
@@ -302,8 +302,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                     </span>
                     <span className="settings-nav-label">
                       {t(item.labelKey)}
-                      {item.lab && <span className="settings-lab-badge">{t('nav.lab')}</span>}
-                      {item.beta && <span className="settings-beta-badge">BETA</span>}
+                      <MaturityTag level={item.lab ? 'alpha' : item.beta ? 'beta' : undefined} />
                     </span>
                   </button>
                 );
@@ -601,7 +600,10 @@ export function SettingsPage({ focus }: SettingsPageProps) {
               onSelect={() => updateSleep.mutate({ recall_mode: mode })}
               title={t(labelKey)}
               hint={t(hintKey)}
-              badge={experimental ? <span className="settings-beta-badge">{t('settings.recall.experimental')}</span> : undefined}
+              // `label`, not `level`: "Experimental" is literal copy about THIS choice, not
+              // a rung on the ladder — and a label is always muted, which is right for a
+              // mode you can pick but should think about first.
+              badge={experimental ? <MaturityTag label={t('settings.recall.experimental')} /> : undefined}
             >
               {mode === 'hybrid' && recallMode === 'hybrid' && <EmbeddingModelCard />}
             </SettingChoice>

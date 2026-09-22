@@ -8,6 +8,21 @@ import type { Page } from './Sidebar';
  * what an abstract glyph means. The whole set shares one
  * stroke weight and corner rounding so it feels like a single character, kept in
  * the same spirit as Sleepy's two-eyes mark (see {@link SleepyEyes}).
+ *
+ * ── TWO INVARIANTS, now enforced by `tests/unit/sidebar-nav.test.ts` ──────────
+ * 1. ONE stroke weight and ONE linecap/linejoin pair for the whole set — a second
+ *    `strokeWidth` literal anywhere in this file fails the drift test. The set
+ *    reading as one hand is the only reason a rail of 15 custom glyphs does not
+ *    look like 15 downloads.
+ * 2. Every `Page` in `NAV_GROUPS` has an entry in {@link ICONS} and vice versa,
+ *    so a nav item can never ship with a blank badge.
+ *
+ * ── "Literal" is a standard this set had to be held to, not a compliment ──────
+ * Four glyphs were redrawn on 2026-09-22 because they depicted a category rather
+ * than their page. The worst was Automations: an ALARM CLOCK, drawn when the page
+ * was a list of scheduled jobs. That page is now a member list of AGENTS — people
+ * with photos who post messages — so the clock described a feature that no longer
+ * exists, on the item the product cares most about.
  */
 const STROKE = {
   fill: 'none',
@@ -64,12 +79,14 @@ function RoadmapIcon() {
   );
 }
 
-/** Council — two speech bubbles facing off: a debate. */
+/** Council — two speech bubbles facing off: a debate. Both are now CLOSED shapes with
+    the same corner rhythm; the second used to be a partial path, so at 14px the pair read
+    as one bubble and a stray stroke rather than as two voices. */
 function CouncilIcon() {
   return (
     <Svg>
-      <path d="M3 5.5h9a1.8 1.8 0 0 1 1.8 1.8v3.4A1.8 1.8 0 0 1 12 12.5H7l-3 2.6V12.5a1.8 1.8 0 0 1-1-1.6V7.3A1.8 1.8 0 0 1 3 5.5z" />
-      <path d="M21 11.5v3.4a1.8 1.8 0 0 1-1.8 1.8H16l-2.4 2.1v-2.1" />
+      <path d="M2.8 6.4a1.8 1.8 0 0 1 1.8-1.8h7.2a1.8 1.8 0 0 1 1.8 1.8v3.4a1.8 1.8 0 0 1-1.8 1.8H6.6l-3.8 2.8v-2.8a1.8 1.8 0 0 1 0-5.2z" />
+      <path d="M17 9.4h2.6a1.8 1.8 0 0 1 1.8 1.8v3.4a1.8 1.8 0 0 1-1.8 1.8h-.8v2.6l-3.4-2.6h-3a1.8 1.8 0 0 1-1.8-1.8v-1" />
     </Svg>
   );
 }
@@ -122,11 +139,14 @@ function BrainIcon() {
   );
 }
 
-/** Sleep cycle — a crescent moon. */
+/** Sleep cycle — a crescent moon with two drifting z's. The moon alone was a filled
+    silhouette that read as Insights' old bulb at 14px; the z's say SLEEP, not "night". */
 function SleepIcon() {
   return (
     <Svg>
-      <path d="M20.5 14.6A8.2 8.2 0 0 1 9.4 3.5a8.2 8.2 0 1 0 11.1 11.1z" />
+      <path d="M18.6 13.9A7.4 7.4 0 0 1 8.6 3.9a7.4 7.4 0 1 0 10 10z" />
+      <path d="M15.4 3.4h3.1l-3.1 3.4h3.1" />
+      <path d="M19.9 8.9h2.2l-2.2 2.4h2.2" />
     </Svg>
   );
 }
@@ -154,13 +174,16 @@ function SettingsIcon() {
   );
 }
 
-/** Insights (lab) — a lightbulb: the moment an insight lands. */
+/** Insights — a rising sparkline over its baseline, with a dot at the latest point.
+    Was a lightbulb, which is what every app draws for everything; Insights is TRACKED
+    METRICS, and a trend line is the thing the page actually shows. */
 function LabIcon() {
   return (
     <Svg>
-      <path d="M12 2.8a6 6 0 0 1 3.7 10.7c-.75.6-1.2 1.3-1.2 2.1v.9H9.5v-.9c0-.8-.45-1.5-1.2-2.1A6 6 0 0 1 12 2.8z" />
-      <line x1="9.8" y1="19.4" x2="14.2" y2="19.4" />
-      <line x1="10.6" y1="21.4" x2="13.4" y2="21.4" />
+      <path d="M3 20.2V4" />
+      <path d="M3 20.2h18" />
+      <path d="M6.2 16.4l4-4.6 3.2 2.6 4.6-6.2" />
+      <circle cx="18" cy="8.2" r="1.5" fill="currentColor" stroke="none" />
     </Svg>
   );
 }
@@ -186,22 +209,35 @@ function AnnouncementsIcon() {
   );
 }
 
-/** Automations — an alarm clock: work that goes off at a set time with nobody
-    there. The only circle-with-hands in the set, so it never reads as Insights'
-    bulb or Sleep's moon at 14px. */
+/** Agents — two overlapping people, the front one with a speech tail.
+ *
+ * THE PAGE IS A MEMBER LIST: agents have photos, names and modes, and they POST. The
+ * previous glyph was an alarm clock, drawn back when the page was a list of scheduled
+ * jobs — it depicted a retired feature on the product's most important rail item. Two
+ * heads say "these are a roster of someones"; the tail says "they talk to you"; and
+ * overlapping them keeps both legible at 14px, where two separate figures would smear.
+ * No clock, no gear, no lightning: none of those is what a user comes here to find. */
 function AutomationsIcon() {
   return (
     <Svg>
-      <circle cx="12" cy="13.6" r="7.1" />
-      <path d="M12 9.9v3.7l2.5 1.5" />
-      <path d="M5.1 6.6a3.1 3.1 0 0 1 3.6-2.2" />
-      <path d="M18.9 6.6a3.1 3.1 0 0 0-3.6-2.2" />
+      {/* The one behind — head and shoulder only, enough to read as a second member. */}
+      <circle cx="16.4" cy="7.2" r="2.5" />
+      <path d="M13.9 13.2a4.6 4.6 0 0 1 7.6 1.9" />
+      {/* The one in front, carrying the speech tail. */}
+      <circle cx="8.8" cy="8.6" r="3.2" />
+      <path d="M3 18.4a6 6 0 0 1 11.6 0v1.9H6.2l-2.6 2.1v-2.1H3z" />
     </Svg>
   );
 }
 
-/** Page → icon. Sleepy is handled separately (its animated eyes mark). */
-const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
+/**
+ * Page → icon. Sleepy is handled separately (its animated eyes mark).
+ *
+ * EXPORTED for `tests/unit/sidebar-nav.test.ts`, which pins this map against
+ * `NAV_GROUPS` in both directions — a nav item with no glyph, or a glyph for a page
+ * that left the rail, both fail there instead of shipping as a blank badge.
+ */
+export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   tasks: TasksIcon,
   roadmap: RoadmapIcon,
   hypotheses: HypothesesIcon,

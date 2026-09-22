@@ -2975,6 +2975,12 @@ export function AgentSurface() {
         title: meta?.title ?? id,
         info: deriveSessionStatus({ dormant: meta?.dormant, status: s?.status, busy: s?.busy, asking: s?.asking }),
         sessionKind: meta?.kind ?? 'agent',
+        // WHICH AGENT this tab's run belongs to, so the strip can draw its FACE
+        // instead of the generic automation glyph. Read straight off the roster
+        // entry the hydrate path already round-trips (`SavedMeta.automation`) —
+        // nothing new is persisted, and it stays undefined for every other kind,
+        // which is what keeps a non-automation tab byte-identical to today.
+        automationSlug: meta?.automation?.slug,
         bypass: !!meta?.bypass,
         attention: !meta?.dormant && !!s?.attention,
       };

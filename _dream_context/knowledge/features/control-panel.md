@@ -2,7 +2,7 @@
 id: feat_ControlPanel_v06
 status: active
 created: '2026-05-31'
-updated: '2026-09-07'
+updated: '2026-09-22'
 released_version: v0.8.7
 tags:
   - control-panel
@@ -13,6 +13,8 @@ tags:
 related_tasks:
   - settings-dort-gruba-toplanir-tekrarlayan-metin-teklenir-ve-save-dugmesi-kalkar
   - dashboard-settings-page-section-nav-menu
+  - >-
+    agents-epic-finished-end-to-end-and-the-side-menu-gets-one-maturity-model-section-hues-and-honest-icons
 type: feature
 name: control-panel
 description: ''
@@ -103,7 +105,20 @@ The dashboard was a read-only task/knowledge/brain viewer with no way to configu
 - [x] A21. A bad value cannot be silently persisted: `useInstantSave.save()` returns `false` on failure so the caller reverts its optimistic state, `SaveMark` renders the error message beside the control and — unlike the `saved` mark, which clears after 1,800 ms — an error is NEVER auto-dismissed. Config-backed switches keep no local mirror, so a failed write leaves the control showing what is on disk.
 - [x] A22. Controls the server would reject are disabled with the reason stated in-row rather than left flippable: the team-sync switch reads `settings.teamsync.needsRepo` ("Pick a repository below first — there is nowhere to sync to yet.") when no origin exists, instead of round-tripping to a `400 no_origin`.
 
+### Slice 8 — The rail gets one maturity model, section hues and honest icons (2026-09-22, branch `feat/agents-channel-composer`, UNMERGED)
+
+- [x] A23. **One maturity vocabulary, `alpha | beta | off`, replacing three implementations that disagreed.** The rail printed `Lab` on five items *including the Insights page itself*, while the style guide forbids the word `Lab` in the UI; the composer said `ALPHA` from a free-form `maturity?: string`; Settings said `BETA` from a `badge === 'beta'` check plus a literal `ALPHA` in `VoiceSettings`. The nav item's `lab`/`beta` booleans are gone, replaced by one `maturity?: 'alpha'|'beta'|'off'`. Copy is sentence case.
+- [x] A24. **`badge` and `maturity` stay two different claims, deliberately.** `badge` = *announced but NOT offered* (paired with `disabled`); `maturity` = *offered and unfinished* (never disables). One `MaturityTag` component renders both — `level` for a ladder rung, `label` for a literal always-muted chip — and `chatModes.ts` was not touched, so the `chat-modes` and `chat-mode-mirror` drift tests stay green by construction. `.chat-cmp-badge` survives as a passthrough class so far-away verify selectors keep working; only its visual rules moved.
+- [x] A25. **Per-section hue tokens (`--nav-hue-*`) as a TINTED SURFACE, never a filled swatch**, at a 10% / 22% / 55% mix against the neutral chrome. The live colour channels still win: active page is full accent, an unread badge is accent, and no hue may resolve to `--chart-1` (that IS the accent — idle Workspace icons would read as active) or touch `--color-warning`. `--nav-hue` defaults to today's grey, so a group without a hue renders byte-for-byte as before. Every hue is redeclared in **both** theme blocks as deliberate ceremony: it makes the drift test's "exists in both" assertion meaningful, so a future light-only hue fails loudly instead of silently inheriting.
+- [x] A26. **Agents is emphasised without a new colour** — it moves first in Workspace, takes a `data-hero` weight/ink treatment, and its icon ring carries *more of the same hue* (45% instead of 22%). A new hue, a pulse and a larger icon were all rejected.
+- [x] A27. **Four icons redrawn, eleven kept**, one stroke weight and one linecap/linejoin pair pinned by a test: Agents becomes two overlapping avatar heads with a speech tail (the alarm clock described the retired feature), Insights a rising sparkline, Sleep a moon with z's (disambiguating it from the former bulb at 14px), Council's second bubble redrawn to the first's stroke rhythm. Every `Page` in `NAV_GROUPS` has an `ICONS` entry and a resolving key in both `en` and `tr`, and vice versa.
+- [x] A28. `verify:sidebar-rail` green in both themes, expanded and collapsed; no verify script pins the nav label `'Automations'`.
+
 ## Constraints & Decisions
+
+- **[2026-09-22]** A NAV GROUP HUE IS NOT A MOOD, and that is why it is allowed. `orthogonal-encoding-channels.md` reserves colour for status/mood — but it governs *a single small element carrying N independent **states***. A section hue never changes at runtime, never carries news, and nothing about it can be *missed*: it is static identity, the same category as the icon's drawing. It is compliant only because it (a) never occupies accent or warning, (b) always loses to active and unread, and (c) sits at a tinted-surface emphasis nobody reads as status. If the owner overrules it, the retreat is one CSS block — leave `--nav-hue` at its default and the rail is byte-identical to today.
+- **[2026-09-22]** THE LABEL STAYS "Agents", not "Agentic Automations". The rail label *is* the page title, and must survive a 220px rail, a 56px collapsed rail and Turkish — where "Agentic Automations" wraps, is invisible collapsed, says the same thing twice, and reads worse as *"Ajan Otomasyonları"*. "Agentic Automations" is the right name for the *feature* in docs, the announcement and the skill; the rail is not docs.
+- **[2026-09-22]** THE MIGRATION LANDS AS TWO SEPARATELY-REVERTIBLE UNITS — component + rail first, then everything beyond the rail (composer menu, Settings, task-override editor, voice settings). Revert the second and the first still ships. The split is drawn exactly where the risk is: the far-from-the-rail surfaces are the ones whose verify selectors a badge-class rename can break.
 
 - **[2026-09-06]** SHIPPED in 0.27.0 with the four-group nav and the no-Save contract intact. What ships is NOT frozen membership: the Sleepy section left Settings with the notch-capture removal and a Sleep section (debt thresholds / per-specialist models) joined MEMORY in the same release. The feature owns the four groups and the row grammar; individual sections come and go inside them.
 - **[2026-09-06]** WHY auto-save replaced an explicit Save, restated because it is the load-bearing decision: the page ran TWO saving models side by side (Platforms + the ten cloud-task fields + native memory waited on a global button parked in the top-left corner; learning, recall, cloud sync, auto-checkpoint, Connections, Agents and Sleepy already wrote through on change) and nothing on screen said which control belonged to which. The button was disabled most of the time, and it was detached from the control being changed. Moving Save down into each section was REJECTED — two models side by side was the complaint itself, and per-section buttons would have made three.
@@ -146,6 +161,10 @@ The dashboard was a read-only task/knowledge/brain viewer with no way to configu
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-22 - Slice 8: one rail maturity model, section hues, four redrawn icons
+
+Reconciled from the agents-epic task. The `lab`/`beta` nav booleans collapse into one `maturity` field rendered by one `MaturityTag`; `--nav-hue-*` tints each section's icon badge without taking accent or warning; Agents moves first in Workspace with a hero weight and a stronger ring of its own hue; Agents/Insights/Sleep/Council icons redrawn, eleven kept. Shipped on `feat/agents-channel-composer`, unmerged.
 
 ### 2026-09-07 - Reconciled against the 0.27.0 release
 - Consolidated task `settings-dort-gruba-toplanir-tekrarlayan-metin-teklenir-ve-save-dugmesi-kalkar` (completed 2026-09-06, version **0.27.0**). Status `in_review` → `active`: the redesign is live in the shipped dashboard, verified in code — four-group `SETTINGS_NAV`, no `settings-save-row` / dirty state / `persistCloudConfig`, every write through `useInstantSave` or a direct `onChange` mutation.

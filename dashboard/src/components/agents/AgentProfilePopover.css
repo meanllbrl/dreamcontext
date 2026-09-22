@@ -1,0 +1,135 @@
+/* The profile card. Neutral throughout — the only accent it can show is a
+   focus ring, because every action in here is a secondary button (K8). */
+.agent-pop {
+  position: fixed;
+  z-index: 55;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: agent-pop-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes agent-pop-in {
+  from { transform: translateY(6px); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-pop { animation: none; }
+}
+
+.agent-pop-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.agent-pop-id {
+  min-width: 0;
+}
+
+.agent-pop-id b {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.agent-pop-id small {
+  display: block;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.agent-pop-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.agent-pop-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* The description renders REAL markdown here — this is the surface with room
+   to be a document, unlike the card, which shows the same text as prose.
+   Bounded and scrollable: a prompt can be hundreds of lines, and a popover
+   that grows past the viewport is a popover you cannot close. */
+.agent-pop-desc {
+  max-height: 260px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.agent-pop-desc--empty {
+  font-style: italic;
+}
+
+/* Every block inside is normalised to the popover's rhythm — a markdown h1 at
+   its native size would out-shout the agent's own name two rows above it. */
+.agent-pop-desc > :first-child { margin-top: 0; }
+.agent-pop-desc > :last-child { margin-bottom: 0; }
+
+.agent-pop-desc p,
+.agent-pop-desc ul,
+.agent-pop-desc ol,
+.agent-pop-desc pre,
+.agent-pop-desc blockquote {
+  margin: 0 0 8px;
+}
+
+.agent-pop-desc h1,
+.agent-pop-desc h2,
+.agent-pop-desc h3,
+.agent-pop-desc h4 {
+  margin: 12px 0 5px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--color-text);
+}
+
+.agent-pop-desc strong { color: var(--color-text); font-weight: 600; }
+
+.agent-pop-desc ul,
+.agent-pop-desc ol { padding-left: 18px; }
+
+.agent-pop-desc li { margin-bottom: 3px; }
+
+.agent-pop-desc blockquote {
+  padding-left: 10px;
+  border-left: 2px solid var(--color-border);
+  color: var(--color-text-tertiary);
+}
+
+.agent-pop-desc code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--color-bg-tertiary);
+}
+
+.agent-pop-desc pre {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-bg-tertiary);
+  overflow-x: auto;
+}
+
+.agent-pop-desc pre code { padding: 0; background: none; }
+
+.agent-pop-desc a { color: var(--color-accent); }
+
+.agent-pop-desc table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.agent-pop-desc th,
+.agent-pop-desc td { padding: 3px 6px; border: 1px solid var(--color-border); text-align: left; }

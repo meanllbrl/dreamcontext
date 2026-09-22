@@ -1,0 +1,343 @@
+/*
+ * The member card.
+ *
+ * THE FIRST VERSION HAD NO HIERARCHY — name, cadence, description, last run and
+ * the buttons all sat at one weight on one flat surface, and the name (the only
+ * string that says which agent this is) was clipped to a single line. This one
+ * is built as three bands with real separation:
+ *
+ *   head  — avatar + NAME (largest, two lines) + meta + the switch
+ *   body  — what it does, as prose, flexing so every footer in a row aligns
+ *   foot  — a RECESSED strip (K10: nested surfaces differ by a tone) behind a
+ *           hairline, carrying the status word and the actions
+ *
+ * Accent budget (K8): the ON switch and focus rings, nothing else. The card
+ * border, the name and the buttons all stay neutral. Tone colour appears ONLY
+ * on a status that needs a human — a card whose footer is coloured on every
+ * card is texture, not information (K26).
+ */
+
+.agent-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  overflow: hidden;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+
+.agent-card:hover {
+  border-color: var(--color-border-hover);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+/* ─── head ─── */
+
+.agent-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 16px 10px;
+  min-width: 0;
+}
+
+.agent-card-face {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin-top: 1px;
+  cursor: pointer;
+  display: inline-flex;
+  border-radius: 13px;
+  flex-shrink: 0;
+}
+
+.agent-card-face:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+.agent-card-id {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* The NAME. Largest thing on the card, two lines, never one-line-truncated —
+   a member list whose members cannot be told apart is not a list. */
+.agent-card-name {
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.2px;
+  color: var(--color-text);
+  cursor: pointer;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.agent-card-name:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.agent-card-name:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+  border-radius: 3px;
+}
+
+/* cadence · model. One muted line — K15: sentence case, no uppercase chip. */
+.agent-card-meta {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* An on-call agent has no schedule, and saying so in the same grey as a time
+   loses the one fact that distinguishes it. Weight, not colour. */
+.agent-card-oncall {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* ─── body ─── */
+
+.agent-card-desc {
+  margin: 0;
+  padding: 0 16px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ─── foot ─── */
+
+.agent-card-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 9px 12px 9px 16px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+  min-width: 0;
+}
+
+.agent-card-status {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.agent-card-status-word {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.agent-card-status-when,
+.agent-card-status-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Colour ONLY where a human is needed or something broke. A healthy card's
+   footer is plain text (K26). */
+.agent-card[data-tone='bad'] .agent-card-status-word { color: var(--color-error); }
+.agent-card[data-tone='attention'] .agent-card-status-word { color: var(--color-warning); }
+.agent-card[data-tone='attention'] .agent-card-status-note { color: var(--color-warning); font-weight: 600; }
+
+.agent-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.agent-card-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 150ms, background 150ms;
+}
+
+.agent-card-btn:hover {
+  border-color: var(--color-border-hover);
+  background: var(--color-bg);
+}
+
+.agent-card-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg-tertiary), 0 0 0 4px var(--color-accent);
+}
+
+/* ─── the dashed "and one more" tile ─── */
+
+.agent-card--new {
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-style: dashed;
+  background: transparent;
+  color: var(--color-text-secondary);
+  min-height: 150px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.agent-card-new-plus {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--color-bg-tertiary);
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.agent-card--new:hover {
+  border-color: var(--color-text-secondary);
+  color: var(--color-text);
+  box-shadow: none;
+}
+
+.agent-card--new:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+/* ─── the pause switch — one of the three accent slots (K8) ─── */
+
+.agent-switch {
+  width: 34px;
+  height: 20px;
+  margin-top: 3px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 0;
+  padding: 0;
+  position: relative;
+  cursor: pointer;
+  background: var(--color-bg-tertiary);
+  transition: background 200ms;
+}
+
+.agent-switch--on {
+  background: var(--color-accent);
+}
+
+.agent-switch:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.agent-switch-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: left 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.agent-switch--on .agent-switch-knob {
+  left: 17px;
+}
+
+.agent-switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+/* ─── the open question, restyled for this card ───
+ *
+ * It arrives from the previous card's stylesheet wearing an UPPERCASE label
+ * ("WAITING FOR YOUR VERDICT") over a fully tinted box, which is two rules
+ * broken at once: K15 (no uppercase ornament headings) and K8 (a tint that
+ * spends the accent budget of a card whose own switch is the accent). The
+ * block still has to be unmissable — it is the one thing on this page asking
+ * a human for something — so the weight moves to a single warning RULE down
+ * its left edge and a sentence-case label, and the fill goes away.
+ */
+.agent-card .auto-ask {
+  margin: 0 16px 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.agent-card .auto-ask-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--color-text);
+}
+
+.agent-card .auto-ask-glyph {
+  color: var(--color-warning);
+  font-size: 12px;
+}
+
+.agent-card .auto-ask-when {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.agent-card .auto-ask-question {
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-card,
+  .agent-switch,
+  .agent-switch-knob {
+    transition: none;
+  }
+}

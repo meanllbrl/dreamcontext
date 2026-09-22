@@ -358,15 +358,30 @@
   margin-top: var(--space-4);
 }
 
+/* K15: no uppercase labels. This shouted in `text-transform: uppercase` with 0.06em
+   tracking; the group name is now sentence case and carries its section's hue as a small
+   marker instead — the identity moves from the shouting to the colour. */
 .sidebar-group-label {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 0 var(--space-3);
   margin-bottom: var(--space-1);
   font-size: var(--font-size-xs, 11px);
   font-weight: var(--font-weight-semibold);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-body);
   color: var(--color-text-tertiary);
+}
+
+/* The group marker: a 2×10 bar in the section hue. Small enough to be chrome, present
+   enough that the four groups are distinguishable without reading a word. */
+.sidebar-group-label::before {
+  content: '';
+  flex-shrink: 0;
+  width: 2px;
+  height: 10px;
+  border-radius: var(--radius-full);
+  background: var(--nav-hue, var(--color-text-tertiary));
 }
 
 /* ─── Collapsed: icon-only ────────────────────────────────────────────────── */
@@ -380,7 +395,15 @@
   margin: 0;
   padding: 0;
   overflow: hidden;
-  border-top: 1px solid var(--color-border);
+  /* The divider takes the section hue too, so the four groups stay readable at 56px where
+     the label itself is gone. Mixed toward the border so it reads as a rule, not a rail. */
+  border-top: 1px solid color-mix(in srgb, var(--nav-hue, var(--color-border)) 30%, var(--color-border));
+}
+
+/* The marker is part of the label's text row — with the label collapsed to zero height it
+   would otherwise sit on the divider. */
+.sidebar--collapsed .sidebar-group-label::before {
+  display: none;
 }
 
 .sidebar--collapsed .sidebar-group + .sidebar-group {
@@ -444,7 +467,21 @@
 
 /* Shared icon badge — the rounded, tinted box every rail icon sits in. This is
    the container that used to belong to Sleepy alone; promoting it to all items
-   makes the custom SVG family read as one set (and lets Sleepy's eyes share it). */
+   makes the custom SVG family read as one set (and lets Sleepy's eyes share it).
+ *
+ * ── THE SECTION HUE LIVES HERE, and only in the IDLE state ───────────────────
+ * The rail's colour channel is already spoken for: accent = active, accent = unread.
+ * The ★★★ rule (colour = MOOD, movement = MODE) governs a small element carrying two
+ * live STATES; a group hue is not a state — it never changes at runtime and never
+ * carries news. It is compliant because it (a) never touches accent or warning,
+ * (b) always LOSES to active/unread (see the override below, which is unchanged),
+ * and (c) is spent as a TINTED SURFACE, not a fill — the 10/22/55 mix is the
+ * `chat-msg-user-bubble` recipe pulled down for chrome.
+ *
+ * The default is a var() FALLBACK, never a declaration on this element — declaring
+ * `--nav-hue` here would win over the group's inherited value and every badge would
+ * be grey. It makes the mapping TOTAL: an item outside any group (the footer's
+ * announcements and sync buttons) renders byte-for-byte as it did before this existed. */
 .sidebar-icon {
   display: inline-flex;
   align-items: center;
@@ -454,9 +491,9 @@
   height: 24px;
   flex-shrink: 0;
   border-radius: var(--radius-sm);
-  background: var(--color-bg-tertiary);
-  box-shadow: 0 0 0 1px var(--color-border);
-  color: var(--color-text-tertiary);
+  background: color-mix(in srgb, var(--nav-hue, var(--color-text-tertiary)) 10%, var(--color-bg-tertiary));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--nav-hue, var(--color-text-tertiary)) 22%, var(--color-border));
+  color: color-mix(in srgb, var(--nav-hue, var(--color-text-tertiary)) 55%, var(--color-text-tertiary));
   transition:
     color var(--transition-fast),
     background var(--transition-fast),
@@ -473,10 +510,33 @@
 }
 
 /* Active item: the badge lights up in the accent so the current section is
-   unmistakable even at a glance in the collapsed icon-only rail. */
+   unmistakable even at a glance in the collapsed icon-only rail.
+   DELIBERATELY UNCHANGED by the section-hue work above: status must always beat
+   identity, and this rule is what guarantees it. */
 .sidebar-item--active .sidebar-icon {
   color: var(--color-accent);
   background: var(--color-accent-soft);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+/* ─── The hero row ─────────────────────────────────────────────────────────────
+   Agents is the product's centre of gravity, and it earns emphasis on channels that
+   cost NO colour: it sits first in its group (Sidebar.tsx), it idles at the weight
+   and ink its neighbours only reach on hover, and its badge carries MORE OF THE SAME
+   hue rather than a second one. K8's accent budget is untouched — the only accent on
+   this row is the unread badge it already had. No pulse either: motion is spoken for
+   (`--nudge`), and the ★★★ rule gives movement to MODE. */
+.sidebar-item[data-hero] {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.sidebar-item[data-hero] .sidebar-icon {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--nav-hue, var(--color-text-tertiary)) 45%, var(--color-border));
+}
+
+/* …but never over the active state, which owns the badge outright. */
+.sidebar-item[data-hero].sidebar-item--active .sidebar-icon {
   box-shadow: 0 0 0 1px var(--color-accent);
 }
 
@@ -487,47 +547,19 @@
   letter-spacing: var(--letter-spacing-body);
 }
 
-/* ─── Lab tag ─────────────────────────────────────────────────────────────── */
-/* A tiny "Lab" chip marking experimental surfaces (e.g. Council). Mirrors the
-   Settings BETA badge so the two read as the same family of "not-final" markers.
-   It rides at the trailing edge of the nav item and disappears with the label
-   when the rail collapses to icon-only. */
-.sidebar-lab-tag {
+/* ─── Maturity tag ─────────────────────────────────────────────────────────────
+   The chip itself is `.dc-maturity` (components/common/maturity-tag.css) — ONE
+   component for the rail, the composer menu and Settings, which were three chips with
+   three vocabularies. This rule contributes only the rail's LAYOUT; the ink lives with
+   the component. `.sidebar-lab-tag` / `.sidebar-beta-tag` / `.sidebar-off-tag` are
+   gone with it, and so is the amber Beta (--color-warning is reserved for genuinely
+   hot things, and Agents now wears Beta). */
+.sidebar-maturity {
   margin-left: auto;
-  flex-shrink: 0;
-  padding: 0 5px;
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: var(--font-weight-bold);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  line-height: 1.6;
-  color: var(--color-accent);
-  background: var(--color-accent-soft);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
 }
 
-.sidebar--collapsed .sidebar-lab-tag {
+.sidebar--collapsed .sidebar-maturity {
   display: none;
-}
-
-/* Beta variant of the chip — a warm amber, distinct from Lab's accent-violet, so
-   a "not-final" surface (Roadmap) reads apart from an "experimental" one (Council)
-   even though they share the same chip shape. */
-.sidebar-beta-tag {
-  color: var(--color-warning, #d98324);
-  background: color-mix(in srgb, var(--color-warning, #d98324) 14%, transparent);
-  border-color: color-mix(in srgb, var(--color-warning, #d98324) 35%, transparent);
-}
-
-/* Off variant — a surface whose layer is switched off. Neutral grey, because
-   this is a state, not a warning: the item stays in the rail precisely so the
-   layer can be found and turned on from its own page. */
-.sidebar-off-tag {
-  color: var(--color-text-tertiary);
-  background: var(--color-bg-tertiary);
-  border-color: var(--color-border);
 }
 
 /* The row itself dims to match — enough to read as inactive at a glance, never

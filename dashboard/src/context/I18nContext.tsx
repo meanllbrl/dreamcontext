@@ -7,7 +7,11 @@ const translations: Record<string, Record<string, string>> = {
     'nav.roadmap': 'Roadmap',
     'nav.hypotheses': 'Hypotheses',
     'nav.labpage': 'Insights',
-    'nav.automations': 'Automations',
+    // The page is the AGENTS page now — a member list of agents with photos,
+    // cadences and models, not a list of scheduled jobs. The `Page` union
+    // value stays 'automations': renaming the route key would break persisted
+    // nav state for no user-visible gain.
+    'nav.automations': 'Agents',
     'nav.core': 'Core',
     'nav.knowledge': 'Knowledge',
     'nav.sleep': 'Sleep Cycle',
@@ -17,17 +21,44 @@ const translations: Record<string, Record<string, string>> = {
     'nav.taxonomy': 'Taxonomy',
     'nav.about': 'What is this?',
     'nav.announcements': 'Announcements',
-    'nav.lab': 'Lab',
-    'nav.beta': 'Beta',
-    // Shown in place of the Lab tag on a surface whose layer is switched off —
+    // ─── Maturity ladder ─────────────────────────────────────────────────────
+    // ONE vocabulary for every "not finished yet" chip in the app — the rail, the
+    // composer's mode menu and Settings, which used to say Lab / ALPHA / BETA and
+    // disagree. `nav.lab`/`nav.beta`/`nav.off` are retired: the style guide says the
+    // `lab` CLI name never surfaces to a user, and the rail was printing "Lab" on five
+    // rows including the Insights page itself. Sentence case, because K15 forbids
+    // uppercase labels and all three old chips shouted.
+    'maturity.alpha': 'Alpha',
+    'maturity.beta': 'Beta',
+    // Shown in place of the maturity tag on a surface whose layer is switched off —
     // the item stays in the rail so the layer can be found and turned on.
-    'nav.off': 'Off',
+    'maturity.off': 'Off',
     'nav.group.workspace': 'Workspace',
     'nav.group.memory': 'Memory',
     'nav.group.brain': 'Brain',
     'nav.group.control': 'Control Panel',
     'nav.collapse': 'Collapse',
     'nav.expand': 'Expand',
+    // ─── Agents channel — the #agents feed, its threads and replies ───────────
+    // Written here by the sidebar lane because this file has ONE owner; the feed and
+    // thread lanes consume these through `t()` and never add keys of their own.
+    // `agents.called` carries a `{name}` placeholder the caller substitutes — `t()` is
+    // a plain lookup by design, so interpolation stays at the call site.
+    'agents.needsYou': 'Needs you',
+    'agents.question.answer': 'Answer',
+    'agents.question.sent': 'Answer delivered, session resumed',
+    'agents.thread.reply': 'Reply in thread',
+    'agents.thread.open': 'Open thread',
+    'agents.thread.resumed': 'Session resumed on this Mac',
+    'agents.thread.working': 'Working…',
+    'agents.thread.finished': 'Reply turn finished',
+    'agents.thread.stale': 'This conversation moved on — reply on the newest run.',
+    'agents.thread.unknown': 'Delivery unknown — the server restarted while this reply was running.',
+    'agents.thread.empty': 'No runs yet — the first fire opens this thread.',
+    'agents.called': '{name} called, one run started',
+    'agents.openSession': 'Open session',
+    'agents.openSessionFailed': "Couldn't open the session",
+    'agents.boardDesktopOnly': 'Boards open in the desktop app',
     // ─── Announcements — What's New page + unread popup ──────────────────────
     'announcements.title': "What's New",
     'announcements.subtitle': 'One page per release — what shipped, shown in the app itself.',

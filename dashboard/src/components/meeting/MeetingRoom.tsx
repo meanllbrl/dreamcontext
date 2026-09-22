@@ -13,6 +13,7 @@ import {
 import { startTitleBarDrag } from '../../lib/desktop';
 import { ItemView } from '../sleepy/chat/TranscriptItem';
 import { Composer } from '../sleepy/chat/Composer';
+import { dropScratch } from '../sleepy/chat/composerScratch';
 import { meetingChatItem, rosterMention, useMeetingComposerHost } from './meetingHost';
 // The chat's own three stylesheets, in the order ChatPane imports them. `ChatPane.css` is
 // here for its TOKENS, not its shell: `--chat-text`, `--chat-lh`, `--chat-line-width` and
@@ -147,6 +148,13 @@ export function MeetingRoom() {
   }, [sendTargetId, reply, post]);
 
   const { host, focusComposer } = useMeetingComposerHost(items, (text) => { void send(text); });
+
+  // The room's staged chips die with the room. Its `composerScratch` bucket is the fixed
+  // `'meeting-room'` and nothing ever calls `dropScratch` on it — `closeSessionById`, the one
+  // caller, only knows about chat sessions. In practice this window's close takes the whole JS
+  // context with it, so the object URLs go anyway; this is here so the bucket has an owner
+  // rather than relying on that, exactly as the agents channel does.
+  useEffect(() => () => dropScratch('meeting-room'), []);
 
   // Selecting a thread hands the caret back to the composer — the only reason this window
   // keeps the focus handle the composer registers.

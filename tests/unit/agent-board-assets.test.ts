@@ -316,9 +316,40 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * bound — the cut was attempted, and every candidate turned out to be a rule that would
    * re-open something. Deleting one of those to save ~400 tokens a turn is the worse trade,
    * and saying so here is the price of moving the number. Actual 10,992.
+   *
+   * 11200 -> 11400 on 2026-09-22, for the EIGHTH `dream-view` type: `agent-thread`, a run's
+   * channel drawn from disk (the agent names its own agent, the app draws the thread — the
+   * same bargain `insight` and `progress` strike, and the reason a retyped exchange cannot
+   * fork the file the Agents page reads). One sentence plus one example, 156 characters.
+   *
+   * The cut was attempted first, as the rule requires, and ONE candidate was found: the
+   * closing "Nothing else about how you do the work changes." (47 chars) — a reassurance,
+   * not a rule, and the only sentence in the file that isn't one. It is gone. Three others
+   * were examined and REJECTED, recorded here so the next person does not re-derive them:
+   *   • the `secret` section (~700) — the 9800->11200 raise above was BOUGHT for the secret
+   *     and run cards; cutting one re-opens exactly what was paid for;
+   *   • the `pin` drop + `checkout` reset example fences (~94) — the prose says WHEN to drop
+   *     ("drop it once there is none left"), never HOW, and the validator drops an unknown
+   *     key with a notice, so an agent guessing `{"remove":true}` gets a silent no-op;
+   *   • the `dc-` class vocabulary — the kit-lockstep test below pins it as the schema an
+   *     agent writes against, so cutting a class removes a capability.
+   * That left 156 in and 47 out against 71 characters of headroom, so this is a RAISE and is
+   * paid for in the form this docstring requires. Actual 11,237; 11,400 leaves ~160 so the
+   * next small addition is not a crisis, and is close enough that it still binds.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(11200);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(11400);
+  });
+
+  /**
+   * The bound alone would let the briefing drift 160 characters at a time with nobody
+   * noticing until it next binds. This pins the MEASURED length instead, so any edit has to
+   * come back here and say what it changed — which is the whole mechanism the docstring
+   * above depends on. The band is ±20: a wording tweak is not a regression, a new paragraph
+   * is.
+   */
+  it('is the length its docstring claims — within a wording tweak', () => {
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 11237)).toBeLessThanOrEqual(20);
   });
 
   /**

@@ -15,7 +15,7 @@
  * automations-schedule.test.ts under a forced `TZ`.
  */
 
-import { WEEKDAYS, type Schedule, type Weekday } from './types.js';
+import { WEEKDAYS, type AutomationMode, type Schedule, type Weekday } from './types.js';
 
 export interface DueVerdict {
   due: boolean;
@@ -26,7 +26,7 @@ export interface DueVerdict {
    *  this function has no `enabled` input. Tick checks `manifest.enabled` and
    *  skips calling `isDue` at all for a disabled automation, deciding
    *  'disabled' one layer up. See this module's isDue doc comment. */
-  reason: 'due' | 'no-schedule' | 'disabled' | 'not-yet' | 'already-ran' | 'outside-catchup';
+  reason: 'due' | 'no-schedule' | 'on-call' | 'disabled' | 'not-yet' | 'already-ran' | 'outside-catchup';
 }
 
 /** Lenient: anything that doesn't cleanly resolve to a valid schedule is
@@ -93,7 +93,21 @@ export function isDue(
   lastFireAt: string | null,
   now: Date,
   catchupHours: number,
+  /**
+   * The agent's {@link AutomationMode}. Defaults to `'sched'` so every existing
+   * caller keeps its exact behaviour, and so a caller that forgets to pass it
+   * fails toward "evaluate the schedule" — which for an on-call agent is a
+   * null schedule and therefore still not due.
+   *
+   * Checked FIRST, before the schedule is even looked at, because the answer
+   * for an on-call agent is never "when does it fire" — it is "it doesn't".
+   * The distinct `'on-call'` reason matters: a tick that reported these as
+   * `'no-schedule'` would file a deliberate design next to a malformed
+   * manifest, and `list` would tell the owner their agent is broken.
+   */
+  mode: AutomationMode = 'sched',
 ): DueVerdict {
+  if (mode === 'call') return { due: false, fireAt: null, reason: 'on-call' };
   if (schedule === null) return { due: false, fireAt: null, reason: 'no-schedule' };
 
   const fire = mostRecentFire(schedule, now);

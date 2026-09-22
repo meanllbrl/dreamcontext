@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type React from 'react';
 import { SettingGroup, SettingRow, Toggle } from './SettingRow';
+import { MaturityTag } from '../common/MaturityTag';
 import { isDesktop } from '../../lib/desktop';
 import { chordFromEvent, formatHotkey, hotkeyLabel, isLatchKey, parseHotkey } from '../../lib/voice/hotkey';
 import { adoptVoicePrefs } from '../../lib/voice/voicePrefs';
@@ -183,7 +184,7 @@ export function VoiceSettings() {
       // transcription, spoken answers — and is still earlier than beta, and the two surfaces
       // that announce it must not disagree about how finished it is: the composer's mode card
       // carries the same word.
-      badge={<span className="settings-beta-badge">ALPHA</span>}
+      badge={<MaturityTag level="alpha" />}
       note={
         isDesktop()
           ? 'Hold the microphone in the chat composer, speak, and hear the answer. Everything runs through OpenRouter on one key, stored on this machine.'

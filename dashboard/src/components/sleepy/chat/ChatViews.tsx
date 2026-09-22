@@ -6,6 +6,7 @@ import type { ChatSession } from '../chatSession';
 import type { ChatSegment } from './chatActions';
 import { SecretCard } from './SecretCard';
 import { RunCard } from './RunCard';
+import { AgentThreadCard } from './AgentThreadCard';
 import { HtmlView, HtmlPending } from './HtmlView';
 import { InsightView } from './InsightView';
 import './ChatViews.css';
@@ -97,6 +98,12 @@ function ChatViewItem({ view, conversationId, session }: {
       return <SecretCard spec={view} session={session} />;
     case 'run':
       return <RunCard spec={view} session={session} />;
+    // DERIVED FROM DISK, like `insight` above: the agent names its own channel and the app
+    // draws the thread, so a retyped exchange cannot fork the file the Agents page reads.
+    // It takes no `session` — a reply here goes to the AGENT's session over HTTP, not back
+    // into this conversation's turn, which is what the two cards above use theirs for.
+    case 'agent-thread':
+      return <AgentThreadCard spec={view} />;
     // Hoisted OUT of the transcript: a pin and a progress row live on the shelf docked to
     // the composer, which is the whole point of them — drawn here as well, they would scroll
     // away exactly like the inline card they exist to replace. `PinShelf` collects them.

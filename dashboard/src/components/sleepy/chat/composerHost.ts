@@ -35,6 +35,21 @@ export interface ComposerHost {
    * is no conversation to measure" and the context ring simply isn't drawn.
    */
   claudeId: string;
+  /**
+   * What `composerScratch` keys the attachment chips and the reply quote by, when the
+   * conversation id cannot be it.
+   *
+   * Absent (a `ChatSession`) ⇒ {@link claudeId}, which is the honest owner of anything staged
+   * against a conversation and the one id no respawn changes. Supplied ⇒ a host that reports
+   * `claudeId: ''` and therefore has NO conversation to key by: `''` is not an id, it is the
+   * absence of one, so every such host would otherwise share a single bucket and a file
+   * staged in the meeting room would reappear in the agents channel.
+   *
+   * Deliberately NOT folded into `claudeId`: that field is also the session-stats poll's key,
+   * and a truthy value there starts a 5-second `/agent/session-stats` request for a
+   * conversation that does not exist.
+   */
+  scratchId?: string;
   /** The live model, re-read on every render — never a snapshot (see Composer's header). */
   getModel(): ComposerHostModel;
   /** Mirror every keystroke back to the host, so an EXTERNAL append (a dropped file's path,
@@ -42,8 +57,19 @@ export interface ComposerHost {
   syncDraft(text: string): void;
   /** Register the textarea so the host can focus it (click-to-focus on the transcript). */
   setFocusTarget(el: HTMLElement | null): void;
-  /** Send now. The only delivery a host MUST implement. */
-  send(text: string): void;
+  /**
+   * Send now. The only delivery a host MUST implement.
+   *
+   * Return `false` to REFUSE the delivery — the agents channel does this for a message that
+   * names no agent, because a channel post nobody is listening to would land, sit there and
+   * never be answered. A refusal means NOTHING left the composer, so the composer clears
+   * nothing: the draft, the attachment chips and the reply quote all stay exactly as the user
+   * left them. Anything else is the surface taking the message away without delivering it.
+   *
+   * Returning nothing means "delivered", which is what `ChatSession.send` (a `void` method)
+   * already says — so every existing host satisfies this unchanged.
+   */
+  send(text: string): void | false;
   /**
    * The three BUSY-ONLY deliveries: steer into the running turn, hold for the next one, stop.
    * Every control that reaches them is drawn only while the `busy` prop is true, so a host

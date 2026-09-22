@@ -18,6 +18,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   ANSWERED_QUESTION_KEEP,
+  QUESTION_CHOICES_MAX,
+  QUESTION_CHOICE_MAX_CHARS,
   allPendingQuestions,
   backfillQuestionSession,
   canResume,
@@ -41,6 +43,9 @@ import {
   type CreateQuestionInput,
 } from '../../src/lib/automations/hitl.js';
 import { HITL_DIR, type AutomationQuestion } from '../../src/lib/automations/types.js';
+// The keyboard renderer is the consumer whose failure mode the choice caps exist to
+// prevent, so the floor is asserted against the real one rather than against a shape.
+import { renderQuestionKeyboard } from '../../src/lib/automations/telegram.js';
 
 let contextRoot: string;
 let root: string;
@@ -381,5 +386,90 @@ describe('reads are lenient and never throw', () => {
     const names = readFileSync(questionPath(contextRoot, 'eod-digest', q.id), 'utf-8');
     expect(names.length).toBeGreaterThan(0);
     expect(existsSync(`${questionPath(contextRoot, 'eod-digest', q.id)}.tmp`)).toBe(false);
+  });
+});
+
+/**
+ * THE CHOICES FLOOR.
+ *
+ * These caps stopped being cosmetic the moment a run could author its own option set
+ * (`automations propose --choice`). `renderQuestionKeyboard` maps each choice straight
+ * into a Telegram `inline_keyboard` button's `text`, so ONE over-long or newline-bearing
+ * choice makes the whole send fail — the human never sees the question, and the run waits
+ * for an answer that can no longer be given. That is an availability bug reachable from
+ * agent-authored content, which is why the sanitisation lives in `parseChoices` rather
+ * than at any one call site.
+ *
+ * The floor is tested on the READ path as well as the write path on purpose: a question
+ * file can arrive from an older build, a hand edit, or a teammate's synced vault.
+ */
+describe('choices are sanitised and capped — the floor for every producer and reader', () => {
+  it('caps the count at QUESTION_CHOICES_MAX, keeping the first ones', () => {
+    const q = ask({ choices: ['a', 'b', 'c', 'd', 'e', 'f'] });
+    expect(QUESTION_CHOICES_MAX).toBe(4);
+    expect(q.choices).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('truncates a long label rather than dropping it — a clumsy choice still answers', () => {
+    const q = ask({ choices: ['x'.repeat(300)] });
+    expect(QUESTION_CHOICE_MAX_CHARS).toBe(64);
+    expect(q.choices).toHaveLength(1);
+    expect(q.choices[0]).toHaveLength(64);
+  });
+
+  it('strips newlines and control characters — a button label has no use for them', () => {
+    const q = ask({ choices: ['send\nnow', 'a\u0000b', 'tab\there'] });
+    expect(q.choices).toEqual(['send now', 'a b', 'tab here']);
+    for (const c of q.choices) expect(c).not.toMatch(/[\u0000-\u001f\u007f]/);
+  });
+
+  it('drops a choice that is only whitespace once stripped, without shifting a real one out', () => {
+    const q = ask({ choices: ['  ', '\n\t', 'approve', 'reject'] });
+    expect(q.choices).toEqual(['approve', 'reject']);
+  });
+
+  it('a non-array or non-string entry contributes nothing rather than throwing', () => {
+    expect(ask({ choices: undefined as unknown as string[] }).choices).toEqual([]);
+    expect(ask({ choices: [1, null, 'ok'] as unknown as string[] }).choices).toEqual(['ok']);
+  });
+
+  /**
+   * AC A2's own wording, driven end to end: a file ON DISK carrying nine choices, one of
+   * them 300 characters with an embedded newline, reads back clean AND produces a
+   * Telegram keyboard the Bot API would accept.
+   */
+  it('a planted 9-choice file reads back as 4 clean labels and renders a valid keyboard', () => {
+    const q = ask();
+    const path = questionPath(contextRoot, 'eod-digest', q.id);
+    const raw = JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>;
+    raw.choices = [
+      `${'L'.repeat(300)}\nsecond line`,
+      'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
+    ];
+    writeFileSync(path, JSON.stringify(raw), 'utf-8');
+
+    const back = readQuestion(path);
+    expect(back).not.toBeNull();
+    expect(back!.choices).toHaveLength(4);
+    for (const c of back!.choices) {
+      expect(c.length).toBeLessThanOrEqual(64);
+      expect(c).not.toMatch(/[\u0000-\u001f\u007f]/);
+    }
+
+    const keyboard = renderQuestionKeyboard(back!) as { inline_keyboard: { text: string; callback_data: string }[][] };
+    expect(keyboard.inline_keyboard).toHaveLength(4);
+    for (const [row] of keyboard.inline_keyboard) {
+      expect(row.text.length).toBeGreaterThan(0);
+      expect(row.text.length).toBeLessThanOrEqual(64);
+      expect(row.text).not.toMatch(/\n/);
+      // The Bot API's own 64-BYTE limit is on callback_data, which we generate.
+      expect(Buffer.byteLength(row.callback_data, 'utf-8')).toBeLessThanOrEqual(64);
+    }
+  });
+
+  it('no choices at all still means a free-text question, with no keyboard', () => {
+    const q = ask({ choices: [] });
+    expect(q.choices).toEqual([]);
+    expect(renderQuestionKeyboard(q)).toBeUndefined();
   });
 });

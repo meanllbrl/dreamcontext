@@ -187,7 +187,8 @@ export function Composer({
   quote, onClearQuote, onOpenTaskPicker, permissionMode = 'auto', projectPermissionMode,
   onPermissionModeChange, onSignIn, onMcpPanel, onPeerMessage,
   mode = DEFAULT_CHAT_MODE, onModeChange, onSetModelDefault, shelved = false,
-  mentions, modelScope = 'session', idlePlaceholder,
+  mentions, modelScope = 'session', idlePlaceholder, unavailable,
+  showModel = true,
   activeAccountId = '', onAccountChange,
   contextHandoff, onContextHandoffChange,
 }: {
@@ -339,6 +340,31 @@ export function Composer({
    * advertising a menu that never opens.
    */
   idlePlaceholder?: string;
+  /**
+   * The field is DOWN for a reason of the surface's own, and this is the sentence that says
+   * which. Present ⇒ the field and Send are disabled and the placeholder is `reason`.
+   *
+   * Deliberately NOT `connected: false`, which was the first shape of this and was wrong:
+   * `connected` means the TRANSPORT has not settled, and it is read by two things that have
+   * nothing to do with composing — `useUsageLimits` and `useClaudeAccounts`, the account's
+   * 5-hour and weekly caps, which are machine-global and shared by every pane. The agents
+   * channel is down for a completely different reason (one run per project at a time, and
+   * another agent holds the slot), and expressing that as `connected: false` froze those
+   * polls for the whole duration of every run — and drew NO usage button at all on a page
+   * first opened mid-run, since the query had never fetched. Exactly the reading a channel
+   * about to spend a headless run most wants in front of it, missing exactly when it matters.
+   */
+  unavailable?: { reason: string };
+  /**
+   * Draw the model + effort trigger. Default ON, because every surface that composes into a
+   * process the USER is choosing a model for has something behind it.
+   *
+   * Off for the agents channel, and not as a simplification: an automation runs on the model
+   * IT is configured with, so a trigger there would read as "pick the model for this run" and
+   * change nothing. Same rule as `showMode`/`showAttach` below — a control is drawn when there
+   * is something behind it.
+   */
+  showModel?: boolean;
   /** Which account THIS conversation is running on, so the picker can mark it. '' means the
    *  server resolved the default and no explicit account was named. */
   activeAccountId?: string;
@@ -442,7 +468,11 @@ export function Composer({
   // upload that settles after a respawn reach the new pane. `submit` reads the store directly
   // rather than a ref, which is what retired the old "ref first, state second" hazard: there
   // is no second copy left to be a render behind.
-  const convId = session.claudeId;
+  // The SCRATCH key — the attachment chips and the reply quote. Normally the conversation id,
+  // for the reasons composerScratch.ts gives; a host with no conversation supplies its own,
+  // because `''` is not a key, it is the ABSENCE of one, and two such hosts sharing it would
+  // share a bucket (a file staged in the meeting room reappearing in the agents channel).
+  const convId = session.scratchId || session.claudeId;
   const [attachments, setAttachments] = useState<Attachment[]>(() => readScratch(convId).attachments);
   useEffect(() => {
     setAttachments(readScratch(convId).attachments);
@@ -710,6 +740,15 @@ export function Composer({
   // nulls for the whole life of a chat — which is why this readout used to stay blank
   // forever. The polled stats remain as the fallback for a RESUMED conversation, whose
   // earlier turns are already on disk but whose usage this process has not seen stream by.
+  /**
+   * CAN THE USER ACT? Every control that writes into this composer is gated on this, not on
+   * `connected` — a surface can be perfectly connected and still have nowhere to send (see
+   * `unavailable`). The two ACCOUNT-level polls below stay on raw `connected` on purpose:
+   * they are machine-global readings shared by every pane, and a field that is down for this
+   * surface's own reason is no reason to stop reading the account's caps.
+   */
+  const canCompose = connected && !unavailable;
+
   const stats = useAgentSessionStats(session.claudeId, connected).data;
   // `used > 0` on the fallback too: a transcript whose only turn was a synthetic notice
   // (e.g. "Please run /login") reports zero tokens, and "0% 0/1.0M" is noise, not a reading.
@@ -748,7 +787,7 @@ export function Composer({
   const { limits: usageBars, staleAsOf } = usageLimits(ctx, usageRes, Date.now(), contextHandoff);
 
   const runCompact = () => {
-    if (!connected) return;
+    if (!canCompose) return;
     session.send('/compact');
   };
 
@@ -766,8 +805,8 @@ export function Composer({
   /** Everything `commit` builds the message from, re-read AFTER the await below — this
    *  render's closure would be stale by then (the user keeps typing; the turn can flip
    *  busy) and the message has to be the one that was actually in the box. */
-  const liveRef = useRef({ draft, busy, connected, quote });
-  liveRef.current = { draft, busy, connected, quote };
+  const liveRef = useRef({ draft, busy, connected: canCompose, quote });
+  liveRef.current = { draft, busy, connected: canCompose, quote };
   /** Guards the window between "⏎ pressed" and "upload settled" against a second submit. */
   const sendingRef = useRef(false);
   const [awaitingUpload, setAwaitingUpload] = useState(false);
@@ -1185,9 +1224,15 @@ export function Composer({
     // The steer can refuse (a card is open, the process is gone, the socket shut) and then the
     // message falls back into the queue — the one thing that must never happen is ⏎ eating the
     // text, which is what the original `if (busy) return` did.
+    //
+    // A host may also REFUSE (`send` returning false — the agents channel, for a message that
+    // names no agent). Nothing was delivered, so NOTHING below runs: the draft, the chips and
+    // the quote are all still the user's, untouched. Clearing them on a refusal would be the
+    // composer taking the message away without sending it, which is the one failure mode the
+    // steer fallback above also exists to prevent.
     if (mode === 'queue') session.enqueue(message);
     else if (isBusy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
-    else session.send(message);
+    else if (session.send(message) === false) return;
     setDraft('');
     session.syncDraft('');
     setNavBoth(NO_HISTORY_NAV);
@@ -1201,7 +1246,7 @@ export function Composer({
   };
 
   const submit = (mode: SubmitMode = 'auto') => {
-    if (!connected || !hasSendableContent || sendingRef.current) return;
+    if (!canCompose || !hasSendableContent || sendingRef.current) return;
     // Nothing in flight — the common case, and it stays synchronous.
     if (uploadsRef.current.size === 0) { commit(mode); return; }
     // A screenshot pasted and sent in the same breath: the message can only name the file
@@ -1221,7 +1266,7 @@ export function Composer({
 
   // ONLY disconnection disables the textarea — it must stay focusable while Claude
   // works (a disabled textarea drops focus to <body>, killing surface-level chords).
-  const disabled = !connected;
+  const disabled = !canCompose;
   const modelLabel = modelLabelFor(modelConfig, model);
   const effortValue = effort || modelConfig.defaultEffort;
   const modeRow = chatModeRow(mode);
@@ -1323,7 +1368,7 @@ export function Composer({
                     have not touched in a month is a recall problem, and a logo answers it
                     faster than a name. The `◈` is the floor, never an empty gap. */}
                 {p.logo
-                  ? <img className="chat-cmp-mention-logo" src={peerLogoUrl(vault, p.vault)} alt="" aria-hidden />
+                  ? <img className="chat-cmp-mention-logo" src={p.logoUrl ?? peerLogoUrl(vault, p.vault)} alt="" aria-hidden />
                   : <span className="chat-cmp-mention-glyph" aria-hidden>◈</span>}
                 @{p.vault}
               </span>
@@ -1368,7 +1413,7 @@ export function Composer({
           />
         </div>
       )}
-      {menu.open === 'model' && (
+      {menu.open === 'model' && showModel && (
         <div ref={menu.menuRef}>
           <ModelMenu
             config={modelConfig}
@@ -1493,7 +1538,7 @@ export function Composer({
             // two are saying something more urgent than where to find a feature.
             // Blank while the meter has the slot: two things in one place, one of them a
             // sentence about how to start something that has already started.
-            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : busy ? 'Claude is working — ⏎ queues your next message…' : idlePlaceholder ?? 'Message Claude…   ·   "/" for skills'}
+            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : busy ? 'Claude is working — ⏎ queues your next message…' : idlePlaceholder ?? 'Message Claude…   ·   "/" for skills'}
             value={draft}
             disabled={disabled}
             onChange={(e) => {
@@ -1746,7 +1791,7 @@ export function Composer({
             type="button"
             className="chat-cmp-compact-btn"
             onClick={runCompact}
-            disabled={!connected}
+            disabled={!canCompose}
             title="Ask Claude to compact the conversation"
           >
             <span aria-hidden>⚠</span>
@@ -1756,12 +1801,13 @@ export function Composer({
 
         {/* Model and effort as ONE trigger: they are read together ("Opus, Xhigh") and set
             together, and two adjacent text pills for one decision was half this row's width. */}
+        {showModel && (
         <div className="chat-cmp-model-wrap">
           <button
             type="button"
             {...{ [MENU_TRIGGER_ATTR]: '' }}
             className="chat-cmp-modeltrigger"
-            disabled={!connected}
+            disabled={!canCompose}
             onClick={() => menu.toggle('model')}
             title="Model and reasoning effort — switch applies from the next turn"
             aria-haspopup="menu"
@@ -1772,6 +1818,7 @@ export function Composer({
             <span className="chat-cmp-caret" aria-hidden>▾</span>
           </button>
         </div>
+        )}
 
         {/* Round icon buttons, sized to sit level with the model/effort text beside them —
             a label would only repeat what ⏎ already does.
@@ -1801,7 +1848,7 @@ export function Composer({
             // A real gesture is required for autoplay, and a context menu on a long press
             // would swallow the pointerup that ends the take.
             onContextMenu={(e) => e.preventDefault()}
-            disabled={!connected || voice.state === 'transcribing' || voiceCorrecting}
+            disabled={!canCompose || voice.state === 'transcribing' || voiceCorrecting}
             title={
               voice.state === 'recording' ? `Recording — ${voice.elapsed}s. Let go to send.`
                 : voice.state === 'transcribing' ? 'Transcribing…'
@@ -1893,7 +1940,7 @@ export function Composer({
           <button
             type="button"
             className="chat-cmp-send is-queue"
-            disabled={!connected || awaitingUpload}
+            disabled={!canCompose || awaitingUpload}
             onClick={() => submit('queue')}
             title="Queue for the next turn — held above, editable until it goes"
             aria-label="Queue for the next turn"
@@ -1908,10 +1955,10 @@ export function Composer({
             type="button"
             // Empty-handed it is an outline; with something to send it fills in — "can I send
             // this?" answered by the button's weight rather than by a disabled label.
-            className={`chat-cmp-send${!connected || !hasSendableContent || awaitingUpload ? '' : ' is-enabled'}`}
+            className={`chat-cmp-send${!canCompose || !hasSendableContent || awaitingUpload ? '' : ' is-enabled'}`}
             // Held (not dropped) while a pasted image finishes attaching — `submit` is
             // already waiting on it, so a second press would only be a double-send.
-            disabled={!connected || !hasSendableContent || awaitingUpload}
+            disabled={!canCompose || !hasSendableContent || awaitingUpload}
             onClick={() => submit('auto')}
             title={awaitingUpload ? 'Attaching the pasted image…'
               : busy ? 'Send into the running turn (⏎) — picked up at the next step'

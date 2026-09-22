@@ -5,15 +5,14 @@ import {
   useAutomation,
   useAutomationFlow,
   useAutomationSession,
-  useAutomationTelegram,
-  useRunAutomation,
-  useSetAutomationTelegram,
 } from '../../hooks/useAutomations';
 import { openAutomationRunChat, runChatUnavailableReason } from '../../lib/automationRunChat';
 import { useVault } from '../../context/VaultContext';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
 import { useOverlayId } from '../../lib/useOverlayId';
 import { AutomationFlowCanvas } from './AutomationFlowCanvas';
+import { AgentAvatar } from '../agents/AgentAvatar';
+import { AskBlock } from './AutomationCard';
 import './AutomationDetailPanel.css';
 
 /**
@@ -30,7 +29,10 @@ import './AutomationDetailPanel.css';
 
 interface Props {
   summary: AutomationSummary;
-  runningSlug: string | null;
+  /** Kept on the contract, unread by this panel: it no longer starts runs (the
+   *  "Run now" button is gone — an agent is called from its thread), and a
+   *  caller that already tracks the running slug should not have to learn that. */
+  runningSlug?: string | null;
   /** D5: skip straight to the newest run's chat hand-off instead of the
    *  history list — set when the panel was opened from a card's own "open
    *  chat" button rather than a plain card click. See `RunHandoff` below,
@@ -38,6 +40,9 @@ interface Props {
   autoOpenLatestRun?: boolean;
   onClose: () => void;
   onToast: (msg: string) => void;
+  /** Open the Edit dialog for this agent. Optional so a caller that has no
+   *  dialog to open simply shows no button, rather than one that does nothing. */
+  onEdit?: (slug: string) => void;
 }
 
 function fmtWhen(iso: string | null): string {
@@ -218,119 +223,6 @@ function PatternBlock({ pattern }: { pattern: AutomationPattern }) {
 }
 
 /**
- * D8: per-automation Telegram — a bot token + authorized chat id, so this ONE
- * automation's HITL asks (and any other channel-bound conversation) can reach a
- * human over Telegram instead of only the dashboard's chat. UX mirrors
- * `LabCredentialsBanner.tsx` (collapsible, an inline form, write-only), but two
- * things differ from Lab on purpose, not by oversight:
- *
- *  1. Storage is `~/.dreamcontext/telegram/<slug>.json` — machine-local, NEVER
- *     the brain — so there is no gitignore-first step to mirror the way Lab's
- *     `writeCredential` has one.
- *  2. `useAutomationTelegram` deliberately returns NO token, ever —
- *     `{ configured, chatId }` only (`TelegramConfigView`). This component must
- *     not, and does not, try to display or pre-fill one: a bot token is the
- *     ability to resume a `bypassPermissions` session on THIS machine (see
- *     `card-registry.ts`'s threat model), not a preference, and the read API
- *     was built to make that impossible to leak back onto a screen by mistake.
- */
-function TelegramBanner({ slug, onToast }: { slug: string; onToast: (msg: string) => void }) {
-  const { data: telegram, isLoading } = useAutomationTelegram(slug);
-  const setTelegram = useSetAutomationTelegram();
-  const [botToken, setBotToken] = useState('');
-  const [chatId, setChatId] = useState('');
-  const [chatIdTouched, setChatIdTouched] = useState(false);
-  // Defaults OPEN while nothing is set (there's a form to fill in) and closed
-  // once configured (a status line is enough) — decided ONCE, the first time
-  // `telegram` loads, then left alone: binding `open` straight to server state
-  // would collapse the disclosure out from under someone mid-edit the moment
-  // their own save round-trips.
-  const [expanded, setExpanded] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    if (!telegram) return;
-    if (expanded === null) setExpanded(!telegram.configured);
-    // chatId is NOT a secret (unlike the token, it's returned by the read hook)
-    // — pre-filling it makes "replace the token, keep the same chat" the common
-    // case require typing only the token. Only while the human hasn't already
-    // started typing their own value.
-    if (telegram.chatId && !chatIdTouched) setChatId(telegram.chatId);
-  }, [telegram, expanded, chatIdTouched]);
-
-  const handleSave = () => {
-    const token = botToken.trim();
-    const chat = chatId.trim();
-    if (!token || !chat) return;
-    setTelegram.mutate({ slug, botToken: token, chatId: chat }, {
-      onSuccess: () => {
-        setBotToken('');
-        setExpanded(false);
-        onToast('Telegram connected — this automation will reply there.');
-      },
-      onError: (err) => onToast(`Could not save Telegram credentials — ${(err as Error).message}`),
-    });
-  };
-
-  return (
-    <div className="adp-telegram">
-      <div className="adp-telegram-head">
-        <span className="adp-section-label adp-section-label--inline">Telegram</span>
-        <span className={`adp-telegram-status${telegram?.configured ? ' adp-telegram-status--on' : ''}`}>
-          {isLoading ? 'checking…' : telegram?.configured ? `connected — chat ${telegram.chatId}` : 'not set up'}
-        </span>
-        <span className="adp-spacer" />
-        <button
-          type="button"
-          className="adp-telegram-toggle"
-          onClick={() => setExpanded((e) => !(e ?? !telegram?.configured))}
-          aria-expanded={expanded ?? false}
-        >
-          {expanded ? 'hide' : telegram?.configured ? 'replace' : 'set up'}
-        </button>
-      </div>
-      {expanded && (
-        <div className="adp-telegram-body">
-          <p className="adp-telegram-hint">
-            A bot token here is the ability to resume this automation's <code>bypassPermissions</code> session
-            from Telegram on THIS machine — a capability, not a preference. It is stored at{' '}
-            <code>~/.dreamcontext/telegram/{slug}.json</code> (this machine only, never synced to the brain),
-            and once saved this screen can never show it back to you.
-          </p>
-          <div className="adp-telegram-form">
-            <input
-              type="password"
-              className="adp-telegram-input"
-              placeholder="Bot token"
-              autoComplete="off"
-              value={botToken}
-              onChange={(e) => setBotToken(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
-            />
-            <input
-              type="text"
-              className="adp-telegram-input"
-              placeholder="Authorized chat id"
-              autoComplete="off"
-              value={chatId}
-              onChange={(e) => { setChatId(e.target.value); setChatIdTouched(true); }}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
-            />
-            <button
-              type="button"
-              className="adp-telegram-save"
-              onClick={handleSave}
-              disabled={setTelegram.isPending || !botToken.trim() || !chatId.trim()}
-            >
-              {setTelegram.isPending ? 'Saving…' : 'Save'}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
  * The run hand-off: pressing `session` on a run opens that run's conversation as a real
  * chat tab, and this is the two-second window in between.
  *
@@ -419,10 +311,9 @@ function RunHandoff({
   );
 }
 
-export function AutomationDetailPanel({ summary, runningSlug, autoOpenLatestRun, onClose, onToast }: Props) {
+export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onToast, onEdit }: Props) {
   const detail = useAutomation(summary.slug);
   const flowResp = useAutomationFlow(summary.slug);
-  const runNow = useRunAutomation();
   const approve = useApproveAutomation();
   const overlayId = useOverlayId('automation-detail-panel');
   /** Which run's session is open, 1-based newest-first. Null = the history list. */
@@ -474,24 +365,19 @@ export function AutomationDetailPanel({ summary, runningSlug, autoOpenLatestRun,
     setOpenSession(1);
   }, [autoOpenLatestRun, openSession, history.length]);
 
-  const thisRunning = runningSlug === summary.slug;
-  const otherRunning = runningSlug !== null && !thisRunning;
-  // D-A: only `never-approved` (path 3) is a HARD block — see `AutomationCard`'s
-  // identical `hardBlocked` comment. `manifest-changed`/`payload-format-changed`
-  // (path 2) resolve BY running: the next fire (including this button) spawns a
-  // restricted, question-only session that asks about the diff in its own chat.
+  // D-A: only `never-approved` (path 3) is a HARD block — a synced manifest
+  // with no prior grant, refused short-circuit, no spawn ever.
+  // `manifest-changed`/`payload-format-changed` (path 2) resolve BY running:
+  // the next fire spawns a restricted, question-only session that asks about
+  // the diff in its own chat.
   const neverApprovedBlock = !approved && approvalReason === 'never-approved';
-  const runDisabled = runNow.isPending || thisRunning || otherRunning || neverApprovedBlock || cache?.status === 'orphaned';
 
-  const handleRun = () => {
-    runNow.mutate(summary.slug, {
-      onSuccess: (data) => {
-        if (!data.started) onToast(`Another run (${data.job.slug}) is already in progress.`);
-        else onToast('Run started.');
-      },
-      onError: (err) => onToast(`Could not start — ${(err as Error).message}`),
-    });
-  };
+  // `runDisabled` / `handleRun` USED to live here for a "Run now" button in the
+  // head. Both are gone with it (owner, 2026-09-20): an agent is called by
+  // mentioning it in its thread, and a second, differently-worded way to make
+  // the same thing happen is the conversation the thread already is.
+  // `runningSlug` is still a prop because the board owns it; this panel simply
+  // no longer starts a run.
 
   /** The run's chat tab is open — dismiss this modal so the conversation is the screen.
    *  Stable identity: `RunHandoff` dispatches from an effect that depends on it, and a new
@@ -516,7 +402,10 @@ export function AutomationDetailPanel({ summary, runningSlug, autoOpenLatestRun,
   // this screen's Approve button used to.
   const reasonCopy: Record<NonNullable<typeof approvalReason>, string> = {
     'never-approved': 'This automation has never been approved on this machine. Nothing will run until it is reviewed and approved below.',
-    'manifest-changed': "This automation's manifest changed since it was last approved. The next run — including “Run now” — will stop and ask about the change in its own chat session before doing anything else; answer there to re-approve it.",
+    // Named a “Run now” button until that button was removed. The sentence has
+    // to describe what a reader can still observe, so it now names the next run
+    // itself rather than a control that is not on the screen.
+    'manifest-changed': "This agent's manifest changed since it was last approved. Its next run will stop and ask about the change in its own chat session before doing anything else; answer there to re-approve it.",
     'payload-format-changed': 'The approval format itself changed — not a normal manifest edit, but still resolved the same way: the next run asks about it in its own chat session.',
   };
 
@@ -524,8 +413,38 @@ export function AutomationDetailPanel({ summary, runningSlug, autoOpenLatestRun,
     <>
       <div className="adp-overlay" onClick={onClose} />
       <div className="adp-panel" role="dialog" aria-modal="true" aria-label={summary.title}>
+        {/* The head is now the AGENT, not a badge rail: the same face, name and
+            cadence the card shows, so opening a card does not land you on a
+            screen that speaks a different language about the same thing. */}
         <div className="adp-head">
           <div className="adp-head-row">
+            <AgentAvatar
+              slug={summary.slug}
+              title={summary.title}
+              hasPhoto={summary.hasPhoto}
+              size={44}
+              version={cache?.lastRunAt ?? undefined}
+            />
+            <div className="adp-head-id">
+              <div className="adp-title">{summary.title}</div>
+              <div className="adp-slug">
+                {summary.cadenceLabel}
+                {summary.model && <> · {summary.model}</>}
+                {summary.effort && <> · {summary.effort} effort</>}
+              </div>
+            </div>
+            <span className="adp-spacer" />
+            {/* Edit, reachable from here — the owner asked for it and the
+                alternative was closing this panel to find the card again.
+                "Run now" USED to sit in this slot and is deliberately gone:
+                an agent is called by mentioning it in its thread, not by a
+                button on a details screen (owner, 2026-09-20). */}
+            {onEdit && (
+              <button type="button" className="adp-edit" onClick={() => onEdit(summary.slug)}>Edit</button>
+            )}
+            <span className="adp-close" onClick={onClose} title="Close (Esc)">✕</span>
+          </div>
+          <div className="adp-head-badges">
             {approved ? (
               <span className="auto-badge auto-badge--approved">approved</span>
             ) : neverApprovedBlock ? (
@@ -534,18 +453,23 @@ export function AutomationDetailPanel({ summary, runningSlug, autoOpenLatestRun,
               <span className="auto-badge auto-badge--review">manifest changed — will ask</span>
             )}
             {cache?.status === 'orphaned' && <span className="auto-badge auto-badge--orphaned">orphaned run</span>}
-            {!summary.enabled && <span className="auto-badge auto-badge--muted">disabled</span>}
-            <span className="adp-spacer" />
-            <button className="adp-run" onClick={handleRun} disabled={runDisabled} title={thisRunning ? 'Running…' : 'Run now'}>
-              {thisRunning || runNow.isPending ? 'Running…' : '▶ Run now'}
-            </button>
-            <span className="adp-close" onClick={onClose} title="Close (Esc)">✕</span>
+            {!summary.enabled && <span className="auto-badge auto-badge--muted">paused</span>}
           </div>
-          <div className="adp-title">{summary.title}</div>
-          <div className="adp-slug">{summary.slug} · {summary.scheduleLabel}</div>
         </div>
 
         <div className="adp-body">
+          {/* The open question, in the run's own words, with the approval
+              decision inline. It USED to sit on the member card; the owner's
+              model is that an unanswered question is a message belonging in the
+              channel as an unread, not stapled to an identity card. Until that
+              channel ships (step 2), it lives here — one click from the card's
+              status word, and never nowhere. First in the body because it is
+              the only thing on this screen asking a human for something. */}
+          {summary.pendingQuestion && (
+            <div className="adp-ask">
+              <AskBlock summary={summary} question={summary.pendingQuestion} onToast={onToast} />
+            </div>
+          )}
           {cache?.status === 'orphaned' && (
             <div className="adp-danger-banner">
               <span className="adp-danger-glyph">⚠</span>
@@ -804,15 +728,15 @@ export function AutomationDetailPanel({ summary, runningSlug, autoOpenLatestRun,
                   {cache?.outputPath && (
                     <div className="adp-detail-row">
                       <span className="adp-detail-label">Last output</span>
-                      <span className="adp-detail-value adp-detail-value--mono">{cache.outputPath}</span>
+                      {/* Brain-relative: the absolute path wrapped to four lines
+                          in a 200px rail and the leading `/Users/<name>/…` is the
+                          part that identifies nothing. Full path on hover. */}
+                      <span className="adp-detail-value adp-detail-value--mono" title={cache.outputPath}>
+                        {cache.outputPath.replace(/^.*?_dream_context\//, '')}
+                      </span>
                     </div>
                   )}
                 </div>
-
-                {/* D8: per-automation Telegram — always visible regardless of
-                    approval state, since it's this automation's own standing
-                    config rather than something the approval gate covers. */}
-                <TelegramBanner slug={summary.slug} onToast={onToast} />
 
                 {openSession !== null ? (
                   <RunHandoff
