@@ -55,6 +55,52 @@ function hasUnsafeSegment(p: string): boolean {
   return p.split('/').some((seg) => seg === '' || seg === '.' || seg === '..');
 }
 
+/** Where a `knowledge create <name>` should land. */
+export type KnowledgeTarget =
+  | { ok: true; /** `null` when the name carries no folder. */ folder: string | null; slug: string; relPath: string }
+  | { ok: false; message: string };
+
+/**
+ * Split an authored knowledge name into the folder it names and the file it names, slugifying
+ * each segment on its own.
+ *
+ * WHY THIS EXISTS. `knowledge create` slugified the WHOLE argument, and `slugify` turns every
+ * non-alphanumeric run into `-`. So `knowledge create "patterns/foo"` wrote
+ * `knowledge/patterns-foo.md` — at the ROOT, with the folder flattened into the filename. It
+ * reported success and recall found the file, so nothing looked wrong; the one surface that
+ * actually needed it did not have it, because the `/patterns` skill lists the
+ * `knowledge/patterns/` DIRECTORY. A pattern filed that way is invisible exactly where
+ * patterns are read from. Three landed that way before anyone noticed (2026-09-21).
+ *
+ * Slugifying per SEGMENT rather than over the whole string is the whole fix: a separator is
+ * structure and has to survive, while everything inside a segment is a name and has to fold.
+ *
+ * Path safety is {@link hasUnsafeSegment}, the same rule `moveKnowledgeFile` applies — so
+ * `create`-with-a-folder and `create`-then-`move` cannot disagree about what a legal location
+ * is, and neither can be talked out of `knowledge/` with `..`.
+ */
+export function resolveKnowledgeTarget(
+  rawName: string,
+  slugifySegment: (s: string) => string,
+): KnowledgeTarget {
+  const cleaned = normalizeSlug(rawName);
+  if (!cleaned) return { ok: false, message: `Invalid knowledge name: "${rawName}"` };
+
+  const parts = cleaned.split('/').map((seg) => slugifySegment(seg));
+  // Checked AFTER slugifying, because slugifying is what can empty a segment: `patterns//foo`
+  // or `patterns/!!!` both look fine until the folding leaves nothing behind.
+  if (hasUnsafeSegment(parts.join('/'))) {
+    return {
+      ok: false,
+      message: `Invalid knowledge name: "${rawName}". Use "<folder>/<name>" with no ".." and no empty segments.`,
+    };
+  }
+
+  const slug = parts[parts.length - 1];
+  const folder = parts.length > 1 ? parts.slice(0, -1).join('/') : null;
+  return { ok: true, folder, slug, relPath: folder ? `${folder}/${slug}` : slug };
+}
+
 /**
  * Move a knowledge file into a topical subfolder:
  *   `knowledge/<slug>.md` → `knowledge/<folder>/<basename(slug)>.md`

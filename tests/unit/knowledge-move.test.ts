@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { moveKnowledgeFile, moveKnowledgeDir } from '../../src/lib/knowledge-move.js';
+import { moveKnowledgeFile, moveKnowledgeDir, resolveKnowledgeTarget } from '../../src/lib/knowledge-move.js';
+import { slugify } from '../../src/lib/id.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -363,5 +364,88 @@ describe('knowledge-move (board directory)', () => {
     // No path-based link existed, so nothing was rewritten — bare link intact.
     expect(r.wikilinksRewritten.length).toBe(0);
     expect(read(root, 'knowledge/overview.md')).toContain('[[recall.excalidraw.md]]');
+  });
+});
+
+// ── `knowledge create <folder>/<name>` files into the folder ──────────────────────────────
+//
+// The defect (2026-09-21): `create` slugified the WHOLE argument, and `slugify` folds every
+// non-alphanumeric run into `-`. So `knowledge create "patterns/foo"` wrote
+// `knowledge/patterns-foo.md` at the ROOT. It printed success and recall found it, so nothing
+// looked broken — but the `/patterns` skill lists the `knowledge/patterns/` DIRECTORY, so a
+// pattern filed that way is missing exactly where patterns are read from. Three landed that
+// way before anyone noticed.
+describe('resolveKnowledgeTarget', () => {
+  it('keeps the separator as structure and folds only the segments', () => {
+    const t = resolveKnowledgeTarget('patterns/refuse-before-cleanup', slugify);
+    expect(t.ok).toBe(true);
+    if (!t.ok) return;
+    expect(t.folder).toBe('patterns');
+    expect(t.slug).toBe('refuse-before-cleanup');
+    expect(t.relPath).toBe('patterns/refuse-before-cleanup');
+    // The regression itself, stated: this is what the old code produced.
+    expect(t.relPath).not.toBe('patterns-refuse-before-cleanup');
+  });
+
+  it('still folds inside a segment — the separator is the only thing spared', () => {
+    const t = resolveKnowledgeTarget('Patterns/Refuse Before Cleanup!', slugify);
+    expect(t.ok).toBe(true);
+    if (!t.ok) return;
+    expect(t.relPath).toBe('patterns/refuse-before-cleanup');
+  });
+
+  it('a plain name has no folder and is unchanged in behaviour', () => {
+    const t = resolveKnowledgeTarget('recall tuning', slugify);
+    expect(t.ok).toBe(true);
+    if (!t.ok) return;
+    expect(t.folder).toBeNull();
+    expect(t.relPath).toBe('recall-tuning');
+  });
+
+  it('nests more than one level', () => {
+    const t = resolveKnowledgeTarget('patterns/frontend/composer-seams', slugify);
+    expect(t.ok).toBe(true);
+    if (!t.ok) return;
+    expect(t.folder).toBe('patterns/frontend');
+    expect(t.relPath).toBe('patterns/frontend/composer-seams');
+  });
+
+  it('tolerates the shapes a person actually types', () => {
+    for (const raw of ['/patterns/foo', 'patterns/foo/', 'patterns\\foo', ' patterns/foo ', 'patterns/foo.md']) {
+      const t = resolveKnowledgeTarget(raw, slugify);
+      expect(t.ok, raw).toBe(true);
+      if (t.ok) expect(t.relPath, raw).toBe('patterns/foo');
+    }
+  });
+
+  // The gate, and why it is checked AFTER slugifying: folding is what can empty a segment.
+  it('refuses a name that escapes knowledge/', () => {
+    for (const raw of ['../secrets', 'patterns/../../etc/passwd', 'patterns/..']) {
+      const t = resolveKnowledgeTarget(raw, slugify);
+      expect(t.ok, raw).toBe(false);
+    }
+  });
+
+  it('refuses a segment that slugifies to nothing', () => {
+    // `!!!` is not `..`, but it folds to '' and would write `knowledge/patterns/.md`.
+    for (const raw of ['patterns/!!!', 'patterns//foo', '!!!/foo', '   ']) {
+      const t = resolveKnowledgeTarget(raw, slugify);
+      expect(t.ok, raw).toBe(false);
+    }
+  });
+
+  it('agrees with moveKnowledgeFile about where a folder-qualified file belongs', () => {
+    // The property that matters beyond either function: `create patterns/x` and
+    // `create x` + `move x patterns` must land in the SAME place, or the vault grows two
+    // conventions for one idea.
+    const root = mkdtempSync(join(tmpdir(), 'dc-kt-'));
+    mkdirSync(join(root, 'knowledge'), { recursive: true });
+    writeFileSync(join(root, 'knowledge', 'x.md'), '---\nname: x\n---\n\nbody\n', 'utf-8');
+
+    const moved = moveKnowledgeFile(root, 'x', 'patterns');
+    expect(moved.ok).toBe(true);
+    const created = resolveKnowledgeTarget('patterns/x', slugify);
+    expect(created.ok).toBe(true);
+    if (moved.ok && created.ok) expect(moved.newSlug).toBe(created.relPath);
   });
 });

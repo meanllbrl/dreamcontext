@@ -1,5 +1,126 @@
 [
   {
+    "date": "2026-09-21",
+    "type": "feat",
+    "scope": "agents",
+    "description": "The #agents channel stops carrying a hand-rolled text field and mounts the real chat Composer through an adapter host modelled on meetingHost.ts, deleting AgentChannelComposer.tsx and roughly 4k chars of bespoke CSS. Three additions land at the shared seam rather than locally: showModel, unavailable={{reason}} (expressing the run slot as connected:false was the first shape and was wrong — connected also gates useUsageLimits and useClaudeAccounts, so it froze the account's usage caps for every run's duration and drew no usage button at all on a page opened mid-run), and PeerMention.logoUrl, since this channel's premise is that agents have faces. composerScratch keyed by convId meant this channel and the meeting room shared one draft bucket; fixed at the seam with ComposerHost.scratchId rather than by reusing claudeId, which is also the session-stats key and a truthy value there starts a 5s poll for a conversation that does not exist. Two bugs only a screenshot caught: commit cleared the field after a host had restored a refused draft, and the 'name an agent with @' note was latched at send time so it sat red under a draft that by then named one — it is derived from the live draft now. verify:agents-feed 73/73 against a real server, real runner and Chromium. NOT merged, never pushed, no PR.",
+    "breaking": false,
+    "summary": "UNMERGED (branch feat/agents-channel-composer): a finished run is a message in #agents, and the channel's field is the chat's own Composer",
+    "references": [
+      "commit:4daa1126",
+      "file:dashboard/src/components/agents/agentsChannelHost.ts",
+      "task:agents-step-2-a-finished-run-pushes-one-message-into-the-agents-feed-and-the-message-shape-is-the-design-to-approve"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-21",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Fix the Plan mode hand-off losing its task when the slug was a real one rather than the short synthetic value the tests used, and make a hand-off button that cannot be honoured say so instead of silently doing nothing. The progress-shelf assertions were repointed at a slug of the shape a task can actually have, so the suite stops passing on an input production never produces.",
+    "breaking": false,
+    "summary": "The Plan to Develop hand-off survives a real task slug, a dropped button says so, and the progress shelf is pinned to a slug a task can actually have",
+    "references": [
+      "commit:5b094e64",
+      "commit:b1f05631"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-21",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add two transcript cards. The secret card draws a masked field whose value the APP writes straight into .env — the agent never sees the credential, in the transcript or anywhere else — so a key can be handed over mid-session without leaking into context or into a session log. The run card's play button (and the same glyph on a Bash permission card) opens a real terminal inside the chat over the new kind=exec PTY session, so an interactive login or a one-off command finishes without leaving the session. Both were then driven through the real app end to end and photographed rather than asserted from unit tests.",
+    "breaking": false,
+    "summary": "A masked secret field and a live terminal land in the transcript: a pasted credential reaches .env without passing through the agent, and a run card's play button opens a real terminal in the chat",
+    "references": [
+      "commit:c40b61b1",
+      "commit:844ed261",
+      "commit:7f207600"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-21",
+    "type": "feat",
+    "scope": "terminal",
+    "description": "Extend the PTY bridge beyond long-lived shells with a kind=exec session: a single command is run, its output streams to the surface, and the session reports its own exit code and then ends. This is what lets a chat run card own a real process rather than handing the user a command to paste into a terminal elsewhere.",
+    "breaking": false,
+    "summary": "The PTY bridge gains kind=exec: one command that runs, streams and reports its own exit",
+    "references": [
+      "commit:3557760d"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-21",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add a mobile layout to Agent Chat so the surface is usable from a phone over the tailnet: the sidebar collapses into a single drawer that carries the project, the live sessions and the session history together, rather than three separate desktop rails that have nowhere to go on a narrow screen.",
+    "breaking": false,
+    "summary": "The phone gets a real chat layout, and one drawer carries the project, the live sessions and the past ones",
+    "references": [
+      "commit:1430f0b9"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-21",
+    "type": "feat",
+    "scope": "server",
+    "description": "Let the dashboard server accept a request from another device on the tailnet when it carries the access token, so Agent Chat can be opened from a phone rather than only from localhost. The same change fixes the CSRF arm that was classifying the tailnet device's own writes as cross-site and rejecting them, which made the surface readable but unusable.",
+    "breaking": false,
+    "summary": "A token-bearing tailnet device can open Agent Chat, and its own writes stop reading as cross-site",
+    "references": [
+      "commit:338c10ab"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-21",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add an in-chat MCP panel behind the /mcp slash entry: it lists the MCP servers the current session actually has, rather than telling the user to go run a terminal command. A follow-up fix repointed the panel at the SESSION as its source of truth instead of a config directory, so a server the session did not load is not drawn as if it were live.",
+    "breaking": false,
+    "summary": "/mcp opens a real panel that lists the session's own servers, instead of pointing at a terminal command",
+    "references": [
+      "commit:a64fab39",
+      "commit:cb651660"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-21",
+    "type": "change",
+    "scope": "context",
+    "description": "Replace the single 200k handoff nudge with a two-band register. Past 300k the note is firm — hand off unless the task is nearly done or the state genuinely cannot be written down, and 'I am mid-task' is explicitly not a reason. Past 650k it is severe: finish the current turn, then hand off before starting anything new, and if the agent decides to continue anyway it must say so and say why. The one-register version was measured against six real sessions and produced zero handoffs, which is why the register now tracks the band; 300k itself was chosen from 434 measured sessions rather than picked. The announcement copy was corrected to match.",
+    "breaking": false,
+    "summary": "ECO's handoff note gains two registers: it asks at 300k and insists at 650k, instead of one flat nudge at 200k",
+    "references": [
+      "commit:cd4f9a0c",
+      "commit:ace0a86f",
+      "file:src/lib/context-handoff.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ],
+    "supersedes": "2026-09-13|context"
+  },
+  {
     "date": "2026-09-13",
     "type": "docs",
     "scope": "announcements",

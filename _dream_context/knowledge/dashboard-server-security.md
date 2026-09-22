@@ -2,9 +2,11 @@
 id: know_C9fbD0LE
 name: dashboard-server-security
 description: >-
-  Threat model and four mitigations for the local dreamcontext dashboard HTTP
+  Threat model and five mitigations for the local dreamcontext dashboard HTTP
   server: loopback binding, network-exposure token gate, Origin/Host CSRF check,
-  and path-traversal guard.
+  path-traversal guard, and the three-fact intersection gate that lets a
+  token-bearing tailnet device open Agent Chat while a tunnel structurally
+  cannot.
 tags:
   - security
   - backend
@@ -183,12 +185,41 @@ Requires:
 
 `tests/unit/agent-reveal-grant.test.ts` (21 tests) covers: the desktop gate, body/existence guards, the open-vs-reveal decision per type (a `.sh` is never handed to the opener bare), reaching a file outside the project root (the route's whole purpose), project-relative resolution plus its traversal refusal, and grant semantics end-to-end — refused → granted → served, with the sibling file still refused, plus idempotency. `tests/unit/request-vault-name.test.ts` (9 tests) pins the GET-only `?vault=` fallback, including that a mutating method never reads it.
 
+## 5. Remote access over a tailnet — the intersection gate (2026-09-19, `338c10ab`)
+
+The phone case broke the model this file was built on. `src/server/routes/agent-chat.ts` gated the WS upgrade on `isDesktop() && isLoopback(req)`, and a phone is not loopback. The naive fix — relax the predicate — would hand the dashboard's **entire unauthenticated write API** to whatever can reach the port, which is exactly the threat model above.
+
+What shipped instead is `src/server/remote-access.ts`: one predicate, and it is the **intersection of three independent facts**. Any one missing refuses the upgrade.
+
+1. **`DREAMCONTEXT_REMOTE=1` in the SERVER's own environment.** Explicit consent, held by the process that was started deliberately; without it nothing about the pre-existing behaviour changes.
+2. **The peer is on the tailnet** — `100.64.0.0/10` or Tailscale's IPv6 prefix.
+3. **The request carries the existing `dreamcontext_token`.**
+
+### Why the intersection is the load-bearing part
+
+**A tunnel cannot satisfy it.** cloudflared, ngrok and every quick-tunnel terminate either at loopback or at a public edge; neither is a tailnet peer. So opening a tunnel tomorrow — for the read-only sharing surface this project already has a task for — cannot incidentally open the agent surface. That property is worth more than the gate itself: it is what makes this safe to leave switched on.
+
+Two things found on the way, both worth not re-deriving:
+
+- **The WS upgrade never ran `checkNetworkAuth` at all.** That check lived in the HTTP handler; the upgrade path bypassed it. So "relax the loopback check" would have opened an *unauthenticated* socket, not a token-gated one. Both paths now share the one predicate.
+- **CSRF was refusing the phone's OWN writes.** The Origin/Host check (mitigation 2) recognised only `localhost` spellings, so a write from `http://100.x:4173` read as cross-site and took a 403. Origin is now compared against **Host** rather than against a list of loopback names — which is the check that was meant all along. `evil.com` is still refused.
+
+### What deliberately did NOT move
+
+**The PTY terminal stays loopback-only** (`kind=shell` and the new `kind=exec`). xterm on a phone is a surface nobody asked for, and shipping it would have doubled the blast radius for free. The secret-writing route (`POST /api/agent/secret`), by contrast, is deliberately NOT desktop-gated: it is a bounded write behind the same token/CSRF gates as every other write, and gating it would break the phone case it was partly built for.
+
+Verified against a real server across six scenarios: LAN HTTP without a token → 401, with → 200; LAN WS chat with a token but no tailnet address → 403; loopback WS unchanged.
+
 ## Sources
 
 - Session `f007d91a-b861-47c2-8154-033cf8899871` — security review + DECISION to pull hardening into v0.5.0
 - `src/server/index.ts`, `src/server/middleware.ts`, `src/server/safe-path.ts`, `src/server/routes/core.ts`
 - `tests/unit/server-security.test.ts`
+- `tests/unit/remote-access.test.ts`; `src/server/remote-access.ts`, `src/server/routes/agent-chat.ts`, `src/server/network-auth.ts`, `src/server/middleware.ts`
+- Session `0fc877ce-9607-41fa-b5bc-ef9f5ddd4027` — the phone/tailnet design conversation and the six-scenario verification
 
 ## Last Verified
+
+2026-09-19 — Remote access over a tailnet (mitigation 5) added: the three-fact intersection gate in `src/server/remote-access.ts`, the WS-upgrade auth hole it closed, and the Origin-vs-Host CSRF correction. PTY terminal deliberately left loopback-only.
 
 2026-07-25 — Desktop-gated OS handoff (Agent Chat file access: `/api/agent/grant`, `/api/agent/reveal`, `GET /api/agent/file` outside-root handling) added as a second occurrence of the narrow-allowlist containment pattern. Network-exposure token gate (mitigation 4) shipped in v0.18.0+. Original three mitigations (loopback bind, CSRF check, path-traversal guard) shipped in commit `0f3965f` as part of v0.5.0.
