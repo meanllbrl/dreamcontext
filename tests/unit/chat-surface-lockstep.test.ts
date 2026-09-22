@@ -93,6 +93,27 @@ describe('CHAT_SURFACE_BRIEFING <-> dream-view parser lockstep', () => {
    * mechanism whose documentation is optional gets deleted by the next person shortening this
    * prose, so the example is pinned here alongside the rule it teaches.
    */
+  /**
+   * `agent-thread` is the eighth type and the third DERIVED one, and derived is the whole
+   * claim: the agent names its channel, the app reads the file. An example that carried the
+   * thread's contents would teach exactly the habit `validateAgentThread` then has to
+   * punish — and, worse than a dropped percent, a retyped exchange would look right while
+   * being a frozen copy of a synced file. So the example's SHAPE is pinned here, next to the
+   * progress rule it mirrors, rather than left to whoever next shortens this prose.
+   */
+  it('demonstrates agent-thread by NAME only — its contents are read from disk', () => {
+    const threads = examples
+      .map((json) => JSON.parse(json) as Record<string, unknown>)
+      .filter((v) => v.type === 'agent-thread');
+    expect(threads.length, 'the briefing demonstrates no agent-thread block at all').toBe(1);
+    expect(typeof threads[0].slug, 'the example names no agent').toBe('string');
+    for (const key of ['entries', 'text', 'messages']) {
+      expect(threads[0][key], `an agent-thread example carries "${key}"`).toBeUndefined();
+    }
+    // The prose half — the rule that stops the contents being written in the first place.
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/never write its entries yourself/i);
+  });
+
   it('demonstrates the pin drop — the only way an agent can retire a stale fact', () => {
     const drops = examples
       .map((json) => JSON.parse(json) as Record<string, unknown>)

@@ -373,6 +373,14 @@ export type ThreadSystemEvent = 'started' | 'ok' | 'failed' | 'timeout' | 'asked
  *  behalf" are different claims and a reader is entitled to tell them apart. */
 export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat';
 
+/** One row of a posted summary — a FIGURE that moved, never prose. Deliberately
+ *  not a free-form block: a summary the agent can write at any length is a
+ *  second body, and the message already has one. */
+export interface ThreadSummaryRow {
+  key: string;
+  value: string;
+}
+
 export interface ThreadEntry {
   /** Time-prefixed, sortable, and THE MERGE KEY — see `newThreadEntryId`. A
    *  duplicated id after a git merge is de-duplicated on read. */
@@ -391,6 +399,11 @@ export interface ThreadEntry {
   /** Brain-relative paths only, validated at write. An absolute or escaping
    *  path is rejected before it is stored, never after it is read. */
   files?: string[];
+  /** A bounded key/value block on an `agent` entry — at most
+   *  {@link THREAD_SUMMARY_MAX_ROWS} rows. ABSENT, never empty: a zero-row
+   *  summary is a summary that was not posted, and rendering an empty block
+   *  would put a heading over nothing. */
+  summary?: ThreadSummaryRow[];
   via: ThreadVia;
 }
 
@@ -420,6 +433,14 @@ export const THREAD_DAY_MAX_ENTRIES = 500;
 export const THREAD_RETENTION_DAYS = 90;
 /** Per entry. Four is what a message card can show without becoming a folder. */
 export const THREAD_FILES_MAX = 4;
+
+/** Per entry. Six rows is a glance; more is a table, and a table belongs in the
+ *  document the post attaches, not in the post. */
+export const THREAD_SUMMARY_MAX_ROWS = 6;
+/** A label, not a sentence. */
+export const THREAD_SUMMARY_KEY_MAX_CHARS = 40;
+/** A figure with its unit ("down 4% WoW", "$1,204"), not a paragraph. */
+export const THREAD_SUMMARY_VALUE_MAX_CHARS = 120;
 
 /** The marker every entry block opens with. The READER RE-SYNCS ON THIS: an
  *  interleaved append from two processes costs at most one skipped entry

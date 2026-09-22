@@ -49,11 +49,16 @@ import { resumeWithAnswer } from '../../lib/automations/verdict.js';
 import { queuedFire, type QueuedFire } from '../../lib/automations/queue.js';
 import { ackAttention, attentionRuns, attentionWatermark } from '../../lib/automations/attention.js';
 import { buildFeed } from '../../lib/automations/feed.js';
-import { appendThreadEntry, markThreadRead, readThread, threadUnread } from '../../lib/automations/threads.js';
-import { readAutomationSession } from '../../lib/automations/session-registry.js';
+import {
+  appendThreadEntry, listThreadRuns, markThreadRead, readThread, threadUnread,
+} from '../../lib/automations/threads.js';
+import { latestBoundSession, readAutomationSession } from '../../lib/automations/session-registry.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../lib/automations/telegram.js';
-import { startAutomationJob, currentAutomationJob } from '../automation-job.js';
+import {
+  startAutomationJob, currentAutomationJob,
+  startAutomationReplyJob, currentReplyJob, reconcileReplyThreads,
+} from '../automation-job.js';
 
 /** The feed's hard ceiling. A channel is read from the bottom: a window past
  *  this is scrollback nobody reaches, and the poll that refreshes it every
@@ -76,6 +81,7 @@ import {
   type EffortLevel,
   type FlowGraph,
   type Weekday,
+  THREAD_TEXT_MAX_CHARS,
 } from '../../lib/automations/types.js';
 
 /**
@@ -1538,6 +1544,12 @@ export async function handleAutomationsThreads(
   contextRoot: string,
 ): Promise<void> {
   try {
+    // THE RECONCILE CALL SITE. There is no "project opened" lifecycle in this server —
+    // `contextRoot` is resolved per request — so the first threads-overview request for a
+    // vault in a new process IS that vault's boot. Memoized per contextRoot inside, so the
+    // 15-second poll pays for it exactly once; awaited so a restart's "outcome unknown"
+    // note is already in the payload the client is about to render.
+    await reconcileReplyThreads(contextRoot);
     const url = new URL(req.url ?? '', 'http://localhost');
     const rawLimit = Number.parseInt(url.searchParams.get('limit') ?? '', 10);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, FEED_MAX_MESSAGES) : FEED_MAX_MESSAGES;
@@ -1569,11 +1581,21 @@ export async function handleAutomationsThreadGet(
     const url = new URL(req.url ?? '', 'http://localhost');
     const runId = url.searchParams.get('run') ?? undefined;
     const entries = readThread(contextRoot, params.slug, { runId });
+    // The open question this run is stopped on, JOINED here rather than stored on an
+    // entry — `choices[]` and `state` live on the question file and would go stale the
+    // moment it was answered. The panel renders it inline so answering happens in place
+    // instead of sending the reader to another surface.
+    const open = allPendingQuestions(contextRoot).find(
+      (q) => q.slug === params.slug
+        && q.kind === 'flow-hitl'
+        && (runId === undefined || q.runFiredAt === runId),
+    );
     sendJson(res, 200, {
       slug: params.slug,
       title: manifest.title,
       runId: runId ?? null,
       entries,
+      question: open ? { id: open.id, text: open.question, choices: open.choices } : null,
       unread: threadUnread(contextRoot, params.slug),
     });
   } catch {
@@ -1692,6 +1714,36 @@ export async function handleAutomationsSay(
     }
     const fireAt = new Date();
     const runId = fireAt.toISOString();
+
+    // A SCHEDULED agent that has already run on this machine is TALKED TO, not re-run:
+    // @mentioning it resumes the session its last run left behind, which is the whole
+    // promise of the channel. A `call` agent — and a `sched` one with nothing bound here
+    // yet — falls through to the run path below, because there is no conversation to
+    // continue.
+    //
+    // The ask is still written FIRST and is still `ordered[0]`, so the feed's own
+    // ask/answer grouping is untouched; only what the ask STARTS changes. The reply gets
+    // this FRESH runId rather than the run it resumes, so the exchange is its own message
+    // with the human's words at its head.
+    //
+    // No `pendingQuestion` pre-check here, deliberately: `resumeWithMessage` owns that
+    // guard, and its refusal reaches the channel within seconds as a `system:failed`
+    // entry carrying its own sentence. A second copy of the check here would drift from
+    // the one that actually decides.
+    if (manifest.mode === 'sched' && latestBoundSession(slug)) {
+      const entry = appendThreadEntry(contextRoot, slug, {
+        runId, kind: 'user', text, via: 'dashboard', now: fireAt,
+      });
+      const replyJob = startAutomationReplyJob(contextRoot, slug, {
+        runId, text, entryId: entry.id,
+      });
+      sendJson(res, 200, {
+        job: { id: replyJob.id, status: replyJob.status, kind: 'reply' },
+        started: true, runId, slug, mode: 'sched',
+      });
+      return;
+    }
+
     appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text, via: 'dashboard', now: fireAt });
     const { job, started } = startAutomationJob(contextRoot, slug, { text, fireAt });
     // Unreachable given the busy check above (nothing can interleave between
@@ -1705,7 +1757,7 @@ export async function handleAutomationsSay(
         text: 'It did not run — another agent had already taken the run slot.',
       });
     }
-    sendJson(res, 200, { job, started, runId, slug });
+    sendJson(res, 200, { job: { ...job, kind: 'run' }, started, runId, slug, mode: manifest.mode });
   } catch (err) {
     if (err instanceof AutomationError) {
       sendError(res, 400, 'say_refused', err.message);
@@ -1713,4 +1765,148 @@ export async function handleAutomationsSay(
     }
     sendError(res, 500, 'say_failed', 'Failed to send that to the channel.');
   }
+}
+
+/**
+ * POST /api/automations/:slug/thread/reply — a human's reply into one run's own session.
+ *
+ * Body is `{ text, runId }`. Answers `202 { entry, job }` and lets the client poll
+ * `reply-job/:id`: the resume spawns a detached child that may run for the automation's
+ * whole timeout, and holding an HTTP socket open for that is not a thing to do.
+ *
+ * THE ORDER OF THE REFUSALS IS LOAD-BEARING, and the first three are not decoration:
+ * `resumeWithMessage` re-checks neither `enabled` nor APPROVAL, and what it spawns is a
+ * `bypassPermissions` child on an approved manifest's session. So a reply to an agent
+ * whose approval has since been revoked would otherwise run with the authority of the
+ * approval it no longer has. The same two rungs guard `handleAutomationsSay` above, for
+ * the same reason and in the same order.
+ *
+ * Every refusal after those carries the SERVER'S OWN SENTENCE — the strings in
+ * `verdict.ts` are already written for a human to read, and a generic "failed" here would
+ * be strictly less true.
+ */
+export async function handleAutomationsThreadReply(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const slug = params.slug;
+    const manifest = getAutomation(contextRoot, slug);
+    if (!manifest) {
+      sendError(res, 404, 'not_found', `Automation not found: ${slug}`);
+      return;
+    }
+    if (!manifest.enabled) {
+      sendError(res, 409, 'reply_disabled', `${manifest.title} is turned off. Turn it on to reply.`);
+      return;
+    }
+    if (!checkApproval(dirname(contextRoot), manifest).approved) {
+      sendError(
+        res, 409, 'reply_unapproved',
+        `${manifest.title} is not approved on this machine yet — approve it and reply again.`,
+      );
+      return;
+    }
+
+    const body = await parseJsonBody(req);
+    const text = typeof body?.text === 'string' ? body.text.replace(/\0/g, '').trim() : '';
+    if (!text) {
+      sendError(res, 400, 'bad_text', 'A reply needs something to say.');
+      return;
+    }
+    if (text.length > THREAD_TEXT_MAX_CHARS) {
+      sendError(res, 400, 'bad_text', `Keep it under ${THREAD_TEXT_MAX_CHARS} characters.`);
+      return;
+    }
+
+    // `runId` becomes BOTH a thread grouping key and a `DREAMCONTEXT_AUTOMATION_RUN` env
+    // value on a bypassPermissions child, so it is validated for shape AND for identity.
+    const runId = typeof body?.runId === 'string' ? body.runId.trim() : '';
+    const parsed = new Date(runId);
+    if (!runId || Number.isNaN(parsed.getTime()) || parsed.toISOString() !== runId) {
+      sendError(res, 400, 'bad_run', 'That run id is not a timestamp this channel wrote.');
+      return;
+    }
+    // NEWEST RUN ONLY, and this is a correctness rule rather than a convenience one:
+    // `latestBoundSession` below resolves the LATEST session for the slug regardless of
+    // which run the caller names. Accepting an older run would file the human's words
+    // under that run's thread while they actually reached a different conversation — a
+    // thread that lies about which exchange it is. The UI only ever offers Reply on the
+    // newest run, so in practice this fires when a scheduled fire or someone's @mention
+    // opened a newer run while the panel was sitting open.
+    const newest = listThreadRuns(contextRoot, slug, 1)[0]?.runId ?? null;
+    if (newest !== runId) {
+      sendError(res, 409, 'stale_run', 'This conversation moved on — reply on the newest run.');
+      return;
+    }
+
+    // THE MACHINE-LOCAL BINDING IS THE AUTHORITY. Null means no run on THIS machine ever
+    // produced a session, so nothing here could carry the reply — and a reply that will
+    // never execute must not be left in the channel looking delivered.
+    if (!latestBoundSession(slug)) {
+      sendError(
+        res, 409, 'not_bound',
+        'this automation has no session to talk to yet — it has not completed a run on this machine',
+      );
+      return;
+    }
+    if (pendingQuestion(contextRoot, slug)) {
+      sendError(
+        res, 409, 'question_pending',
+        'this automation is waiting for your answer to its own question — answer that first',
+      );
+      return;
+    }
+    // The cheap half of the lock story: when a run is visibly in flight we refuse up
+    // front and write NOTHING, so the common case costs the user a retry instead of an
+    // entry in the channel marked undelivered. The lock can still be taken between here
+    // and the resume — that residual race settles inside the job, which appends its own
+    // "not delivered" entry with the lock's own reason.
+    const busy = currentAutomationJob(contextRoot);
+    if (busy?.status === 'running') {
+      const other = getAutomation(contextRoot, busy.slug);
+      sendError(
+        res, 409, 'busy',
+        `${other?.title ?? busy.slug} is still running — one at a time for now. Try again when it finishes.`,
+      );
+      return;
+    }
+
+    const entry = appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text, via: 'dashboard' });
+    const job = startAutomationReplyJob(contextRoot, slug, { runId, text, entryId: entry.id });
+    sendJson(res, 202, { entry, job: { id: job.id, status: job.status } });
+  } catch (err) {
+    if (err instanceof AutomationError) {
+      sendError(res, 400, 'reply_refused', err.message);
+      return;
+    }
+    sendError(res, 500, 'reply_failed', 'Failed to deliver that reply.');
+  }
+}
+
+/**
+ * GET /api/automations/reply-job/:id — poll one reply turn.
+ *
+ * A 404 is TERMINAL for the client, not a retry: it means this server no longer knows
+ * the job, which happens when the process restarted mid-reply. The poller stops and says
+ * delivery is unknown rather than spinning against an id nothing will ever answer; the
+ * thread itself is closed by reconciliation on the next overview request.
+ *
+ * MUST be registered above `/api/automations/:slug` — `reply-job` would otherwise be
+ * captured as a slug, the same ordering rule `runs`, `questions` and `threads` follow.
+ */
+export async function handleAutomationsReplyJob(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  _contextRoot: string,
+): Promise<void> {
+  const job = currentReplyJob(params.id ?? '');
+  if (!job) {
+    sendError(res, 404, 'job_unknown', 'That reply is no longer being tracked on this machine.');
+    return;
+  }
+  sendJson(res, 200, { job });
 }

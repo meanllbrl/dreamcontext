@@ -3,8 +3,11 @@ import { basename, relative, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { listAutomations, readAutomationCache, resolveAutomationPhoto } from './store.js';
 import { extractNotificationSummary } from './runner.js';
+import { allPendingQuestions } from './hitl.js';
 import { readThread, threadReadWatermark } from './threads.js';
-import type { AutomationManifest, RunEvent, ThreadEntry } from './types.js';
+import type {
+  AutomationManifest, AutomationQuestion, RunEvent, ThreadEntry, ThreadSummaryRow,
+} from './types.js';
 
 /**
  * The FEED — what `#agents` actually shows.
@@ -68,6 +71,21 @@ export interface FeedMessage {
    *  is entitled to know which one they are reading. */
   textFrom: 'post' | 'result' | 'error' | 'skipped' | 'none';
   files: FeedFile[];
+  /** The body post's key/value block, or null. Figures that moved, ≤6 rows. */
+  summary: ThreadSummaryRow[] | null;
+  /**
+   * The open question this run is stopped on — a JOIN against `hitl.ts`, NOT a
+   * thread field.
+   *
+   * Deliberately not stored on the entry: a question's state changes when it is
+   * answered, and an entry is append-only and never rewritten. Reading it live
+   * is the only way the block on screen can disappear the moment it is
+   * answered rather than at the next write.
+   */
+  question: { id: string; text: string; choices: string[] } | null;
+  /** Waiting on the READER: either the run stopped to ask, or it has an open
+   *  question. What the "Needs you" chip counts. */
+  needsYou: boolean;
   /** AUTHORED entries beyond the body (agent posts + user replies). System
    *  rows are not replies — they are bookkeeping, and counting them would say
    *  "2 replies" about a run nobody has spoken in. */
@@ -85,13 +103,37 @@ export interface FeedResult {
   unreadBySlug: Record<string, number>;
   /** Project-wide, for the sidebar badge. */
   unreadTotal: number;
+  /** Project-wide count of messages waiting on the reader — what the
+   *  "Needs you" chip shows. Derived from the same pass as `unread`, so the
+   *  chip and the rows can never disagree. */
+  needsYouTotal: number;
   /** Every agent in the channel, for the chip row and the avatars — including
    *  those that have never run, so a new agent is visible before its first
    *  fire. */
   agents: { slug: string; title: string; hasPhoto: boolean }[];
 }
 
-const TERMINAL: Record<string, FeedStatus> = { ok: 'done', failed: 'failed', timeout: 'timeout', skipped: 'skipped' };
+/**
+ * System events that END a message, and the word each becomes.
+ *
+ * `replied` is here and its ONLY producer is a reply turn's own settle: an
+ * @mention of a scheduled agent opens a run id that no dispatcher ever fired,
+ * so the run cache has no row for it and `statusFor`'s cache fallback has
+ * nothing to fall back to. Without this the message would read "running" for
+ * ever. A reply turn that did NOT succeed appends `failed` instead, so both
+ * directions are covered by one entry.
+ *
+ * THE THIRD DIRECTION, which is the one a future edit will want to "fix":
+ * `statusFor` returns the FIRST terminal it finds in id order, so an `ok` run
+ * that was later replied to UNSUCCESSFULLY still reads `done`. That is
+ * correct — the status word describes THE RUN, and the run did finish. The
+ * reply turn's failure is not hidden: it is the text of its own `failed` entry
+ * in the thread. Flipping a finished run to `failed` because a later
+ * conversation failed would be the lie.
+ */
+const TERMINAL: Record<string, FeedStatus> = {
+  ok: 'done', failed: 'failed', timeout: 'timeout', skipped: 'skipped', replied: 'done',
+};
 /** Four is what a message card can show without becoming a folder — the same
  *  ceiling `THREAD_FILES_MAX` puts on one post. */
 const FILES_PER_MESSAGE = 4;
@@ -181,6 +223,9 @@ export function buildFeedMessage(
   entries: ThreadEntry[],
   run: RunEvent | null,
   watermark: string | null,
+  /** The slug's pending question for THIS run, when it has one. Resolved by the
+   *  caller so the whole feed costs one questions read, not one per run. */
+  question: AutomationQuestion | null = null,
 ): FeedMessage {
   const ordered = [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const started = ordered.find((e) => e.kind === 'system' && e.event === 'started');
@@ -235,6 +280,7 @@ export function buildFeedMessage(
     : null;
   const fallback = body ? null : failure ?? skipped ?? resultLine(run?.outputPath ?? null);
   const newest = ordered[ordered.length - 1] ?? null;
+  const status = statusFor(ordered, run);
 
   return {
     key: `${manifest.slug}::${runId}`,
@@ -248,13 +294,24 @@ export function buildFeedMessage(
     // spawn a second or two later, or (until the spawn lands) with the raw
     // run id.
     at: ask?.at ?? started?.at ?? ordered[0]?.at ?? runId,
-    status: statusFor(ordered, run),
+    status,
     durationMs: run?.durationMs ?? null,
     costUsd: run?.costUsd ?? null,
     ask: ask ? { text: ask.text, at: ask.at } : null,
     text: body?.text ?? fallback ?? '',
     textFrom: body ? 'post' : failure ? 'error' : skipped ? 'skipped' : fallback ? 'result' : 'none',
     files: files.slice(0, FILES_PER_MESSAGE),
+    // The BODY's summary, not the run's: a later post's figures belong to that
+    // post, and it is in the thread where its own rows are read with it.
+    summary: body?.summary ?? null,
+    question: question
+      ? { id: question.id, text: question.question, choices: question.choices }
+      : null,
+    // Two independent ways to be waiting on someone. `needs-you` is the run
+    // having stopped to ask; an open question is one nobody has answered yet —
+    // and a run can be finished and still owe an answer, so neither implies
+    // the other.
+    needsYou: status === 'needs-you' || question !== null,
     replyCount: rest.length,
     lastReplyAt: rest[rest.length - 1]?.at ?? null,
     // Your OWN replies never make a message unread — the same rule
@@ -285,6 +342,24 @@ export function buildFeed(
   const unreadBySlug: Record<string, number> = {};
   const agents: FeedResult['agents'] = [];
 
+  // ONE questions read for the WHOLE feed, indexed by the run each question
+  // belongs to. Per-run `pendingQuestion` calls would re-walk the same
+  // directories once per message behind a 15-second poll — the same
+  // grows-with-history cost `FEED_DAY_WINDOW` exists to cap on the other side.
+  // `flow-hitl` only: an `approval` question is the manifest-diff ask raised
+  // BEFORE a run, so it belongs to no run in this feed and answering it is a
+  // different screen's job.
+  const questionByRun = new Map<string, AutomationQuestion>();
+  try {
+    for (const q of allPendingQuestions(contextRoot)) {
+      if (q.kind !== 'flow-hitl') continue;
+      const key = `${q.slug}::${q.runFiredAt}`;
+      if (!questionByRun.has(key)) questionByRun.set(key, q);
+    }
+  } catch {
+    // A question store that cannot be read costs the chips, never the feed.
+  }
+
   for (const manifest of manifests) {
     const hasPhoto = resolveAutomationPhoto(contextRoot, manifest.photo) !== null;
     agents.push({ slug: manifest.slug, title: manifest.title, hasPhoto });
@@ -314,7 +389,11 @@ export function buildFeed(
     }
     for (const [runId, runEntries] of byRun) {
       messages.push(
-        buildFeedMessage(contextRoot, manifest, hasPhoto, runId, runEntries, runsByFire.get(runId) ?? null, watermark),
+        buildFeedMessage(
+          contextRoot, manifest, hasPhoto, runId, runEntries,
+          runsByFire.get(runId) ?? null, watermark,
+          questionByRun.get(`${manifest.slug}::${runId}`) ?? null,
+        ),
       );
     }
   }
@@ -330,6 +409,11 @@ export function buildFeed(
     messages: limited,
     unreadBySlug,
     unreadTotal: Object.values(unreadBySlug).reduce((n, v) => n + v, 0),
+    // Counted over `limited`, the same list the chips filter — a total that
+    // counted messages the window dropped would point at rows nobody can
+    // reach. `unreadTotal` differs deliberately: it is a per-slug sum and the
+    // sidebar badge reads it.
+    needsYouTotal: limited.filter((m) => m.needsYou).length,
     agents,
   };
 }

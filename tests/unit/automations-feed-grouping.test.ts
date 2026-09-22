@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { buildFeed, buildFeedMessage } from '../../src/lib/automations/feed.js';
 import { appendThreadEntry, markThreadRead } from '../../src/lib/automations/threads.js';
 import { createAutomation } from '../../src/lib/automations/store.js';
+import { createQuestion } from '../../src/lib/automations/hitl.js';
 import type { RunEvent, ThreadEntry } from '../../src/lib/automations/types.js';
 
 /**
@@ -180,6 +181,49 @@ describe('the status word', () => {
     const entries = [entry({ kind: 'system', event: 'started', text: 'Run started.' })];
     const m = buildFeedMessage(contextRoot, MANIFEST, false, RUN, entries, runEvent({ status: 'timeout' }), null);
     expect(m.status).toBe('timeout');
+  });
+
+  /**
+   * D12 — a reply turn's OWN terminal.
+   *
+   * An @mention of a scheduled agent opens a run id no dispatcher ever fired,
+   * so there is no cache row and the fallback above has nothing to fall back
+   * to. Without `replied` in TERMINAL these messages read "running" for ever.
+   */
+  it('A15a: a reply-turn run with NO cache entry reads done, never running', () => {
+    const entries = [
+      entry({ kind: 'user', via: 'dashboard', text: '@digest what changed?' }),
+      entry({ kind: 'agent', via: 'cli', text: 'Three insights moved.' }),
+      entry({ kind: 'system', event: 'replied', text: 'Reply turn finished · 1m 12s · $0.03' }),
+    ];
+    // `null` run: the whole point — the cache has never heard of this fire.
+    expect(buildFeedMessage(contextRoot, MANIFEST, false, RUN, entries, null, null).status).toBe('done');
+  });
+
+  it('A15b: a REFUSED reply turn on a fresh runId reads failed', () => {
+    const entries = [
+      entry({ kind: 'user', via: 'dashboard', text: '@digest what changed?' }),
+      entry({ kind: 'system', event: 'failed', text: 'Not delivered — a run was in progress.' }),
+    ];
+    expect(buildFeedMessage(contextRoot, MANIFEST, false, RUN, entries, null, null).status).toBe('failed');
+  });
+
+  it('A15c: an ok run whose LATER reply turn failed still reads done — and the failure is in the thread', () => {
+    // The status word describes THE RUN, and the run finished. Flipping it to
+    // `failed` because a later conversation failed would be the lie; the reply
+    // turn's own entry is where that failure is legible. Pinned so a future
+    // "fix" cannot invert it.
+    const entries = [
+      entry({ kind: 'system', event: 'started', text: 'Run started.' }),
+      entry({ kind: 'agent', via: 'cli', text: 'Digest published.' }),
+      entry({ kind: 'system', event: 'ok', text: 'Finished in 4m 12s.' }),
+      entry({ kind: 'user', via: 'dashboard', text: 'can you re-check Tuesday?' }),
+      entry({ kind: 'system', event: 'failed', text: 'Not delivered — a run was in progress.' }),
+    ];
+    const m = buildFeedMessage(contextRoot, MANIFEST, false, RUN, entries, runEvent(), null);
+    expect(m.status).toBe('done');
+    const failure = entries.find((e) => e.event === 'failed');
+    expect(failure?.text).toMatch(/Not delivered/);
   });
 });
 
@@ -393,5 +437,121 @@ describe('an ask that stops on a question', () => {
     expect(m.status).toBe('skipped');
     expect(m.status).not.toBe('running');
     expect(m.textFrom).toBe('skipped');
+  });
+});
+
+describe('the open question a message is stopped on', () => {
+  /**
+   * A JOIN against hitl.ts, never a thread field. An entry is append-only and
+   * never rewritten, so a question stored ON one could not disappear when it is
+   * answered — reading it live is what lets the block vanish the moment the
+   * human presses a button rather than at the next write.
+   */
+  beforeEach(() => {
+    createAutomation(contextRoot, { slug: 'digest', title: 'Daily digest', days: 'daily', at: '18:00', prompt: 'go' });
+  });
+
+  function ask(runFiredAt: string, choices: string[] = ['approve', 'reject']) {
+    return createQuestion(contextRoot, {
+      slug: 'digest', runFiredAt, kind: 'flow-hitl', sessionId: null, channel: 'chat',
+      question: 'Publish the digest?', choices,
+    });
+  }
+
+  it('attaches the pending question to ITS run, and marks that message needsYou', () => {
+    const run = '2026-09-20T18:00:00.000Z';
+    appendThreadEntry(contextRoot, 'digest', {
+      runId: run, kind: 'system', event: 'asked', text: 'Asked: publish?', via: 'runner', now: new Date(run),
+    });
+    const q = ask(run);
+
+    const feed = buildFeed(contextRoot, { home });
+    const [m] = feed.messages;
+    expect(m.question).toEqual({ id: q.id, text: 'Publish the digest?', choices: ['approve', 'reject'] });
+    expect(m.needsYou).toBe(true);
+    expect(feed.needsYouTotal).toBe(1);
+  });
+
+  it('does NOT attach it to a DIFFERENT run of the same agent', () => {
+    const asked = '2026-09-20T18:00:00.000Z';
+    const other = '2026-09-21T18:00:00.000Z';
+    for (const at of [asked, other]) {
+      appendThreadEntry(contextRoot, 'digest', {
+        runId: at, kind: 'system', event: 'started', text: 'Run started.', via: 'runner', now: new Date(at),
+      });
+    }
+    ask(asked);
+
+    const feed = buildFeed(contextRoot, { home });
+    const byRun = new Map(feed.messages.map((m) => [m.runId, m]));
+    expect(byRun.get(asked)!.question).not.toBeNull();
+    expect(byRun.get(other)!.question).toBeNull();
+    expect(byRun.get(other)!.needsYou).toBe(false);
+    expect(feed.needsYouTotal).toBe(1);
+  });
+
+  it('ignores an APPROVAL question — it belongs to no run in this feed', () => {
+    // The manifest-diff ask is raised BEFORE a run, with its session forced
+    // null. Answering it is a different screen's job, and attaching it here
+    // would put buttons on a message whose run it never belonged to.
+    const run = '2026-09-20T18:00:00.000Z';
+    appendThreadEntry(contextRoot, 'digest', {
+      runId: run, kind: 'system', event: 'started', text: 'Run started.', via: 'runner', now: new Date(run),
+    });
+    createQuestion(contextRoot, {
+      slug: 'digest', runFiredAt: run, kind: 'approval', sessionId: null, channel: 'chat',
+      question: 'The manifest changed — re-approve?', choices: ['approve', 'reject'],
+    });
+
+    const feed = buildFeed(contextRoot, { home });
+    expect(feed.messages[0].question).toBeNull();
+    expect(feed.needsYouTotal).toBe(0);
+  });
+
+  it('a FINISHED run can still owe an answer — needsYou is not the status word', () => {
+    // Two independent ways to be waiting: the run having stopped to ask, and a
+    // question nobody has answered. Neither implies the other.
+    const run = '2026-09-20T18:00:00.000Z';
+    appendThreadEntry(contextRoot, 'digest', {
+      runId: run, kind: 'system', event: 'ok', text: 'Finished in 4m.', via: 'runner', now: new Date(run),
+    });
+    ask(run);
+
+    const [m] = buildFeed(contextRoot, { home }).messages;
+    expect(m.status).toBe('done');
+    expect(m.needsYou).toBe(true);
+  });
+
+  it('needsYou is true for an asked run even with no question record on disk', () => {
+    const run = '2026-09-20T18:00:00.000Z';
+    appendThreadEntry(contextRoot, 'digest', {
+      runId: run, kind: 'system', event: 'asked', text: 'Asked: publish?', via: 'runner', now: new Date(run),
+    });
+    const [m] = buildFeed(contextRoot, { home }).messages;
+    expect(m.question).toBeNull();
+    expect(m.status).toBe('needs-you');
+    expect(m.needsYou).toBe(true);
+  });
+});
+
+describe('the summary block on a message', () => {
+  it('carries the BODY post\'s rows, not a later post\'s', () => {
+    const entries = [
+      entry({ kind: 'system', event: 'started', text: 'Run started.' }),
+      entry({ kind: 'agent', via: 'cli', text: 'WAU moved.', summary: [{ key: 'WAU', value: '-4%' }] }),
+      entry({ kind: 'agent', via: 'cli', text: 'Also filed a task.', summary: [{ key: 'Tasks', value: '1' }] }),
+      entry({ kind: 'system', event: 'ok', text: 'Finished.' }),
+    ];
+    const m = buildFeedMessage(contextRoot, MANIFEST, false, RUN, entries, runEvent(), null);
+    // A later post's figures are read WITH that post, in the thread.
+    expect(m.summary).toEqual([{ key: 'WAU', value: '-4%' }]);
+  });
+
+  it('is null when the body posted no figures', () => {
+    const entries = [
+      entry({ kind: 'system', event: 'started', text: 'Run started.' }),
+      entry({ kind: 'agent', via: 'cli', text: 'nothing numeric' }),
+    ];
+    expect(buildFeedMessage(contextRoot, MANIFEST, false, RUN, entries, runEvent(), null).summary).toBeNull();
   });
 });

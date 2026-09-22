@@ -43,10 +43,13 @@
  *                             unstyled markup, which is exactly the broken promise this
  *                             file's standing rule forbids.
  *   • `dream-view`          — `lib/chatViewSpec.ts` (`parseViewBlock`, the schema + caps) and
- *                             `chat/ChatViews.tsx` (insight + checklist + secret + run).
- *                             `secret` submits to `POST /api/agent/secret`
+ *                             `chat/ChatViews.tsx` (insight + checklist + secret + run +
+ *                             agent-thread). `secret` submits to `POST /api/agent/secret`
  *                             (`lib/env-secrets.ts` owns every guard) and `run` opens a PTY
  *                             over `/api/agent/terminal?kind=exec` (`chat/InlineTerminal.tsx`).
+ *                             `agent-thread` is DERIVED FROM DISK like `insight`: the agent
+ *                             names its channel and `chat/AgentThreadCard.tsx` draws the
+ *                             thread, so asserted contents are dropped with a notice.
  *                             `pin` and `progress` are hoisted OUT of the transcript onto the
  *                             composer's shelf — `lib/shelfModel.ts` + `chat/PinShelf.tsx`
  * A capability named here that the view doesn't render is worse than one left unnamed: the
@@ -177,7 +180,7 @@ const BRIEFING_REST = `## The rest of the surface
   the composer; \`url\` opens an https \`url\`; \`develop\` takes a task \`id\` and hands that task
   to a NEW session in Develop mode — the one button that opens a chat instead of a view.
 
-## \`dream-view\` — the seven things HTML must NOT be
+## \`dream-view\` — the eight things HTML must NOT be
 
 **A tracked metric.** If the number lives in a dreamcontext Lab insight, name the slug and we
 draw the real card — current cache, canonical render, honest "as of". Never retype tracked
@@ -253,9 +256,14 @@ you send is ignored and drawn as a notice.
 {"type":"progress","task":"my-task-slug"}
 \`\`\`
 
+**An agent's thread**, drawn from disk. Name the agent; never write its entries yourself.
+
+\`\`\`dream-view
+{"type":"agent-thread","slug":"daily-digest"}
+\`\`\`
+
 Only name paths that exist — a wrong one renders as a dead card. At most ~4 buttons, and only
-for a real next step. Don't narrate the mechanism ("I'll draw you a diagram"), just write it.
-Nothing else about how you do the work changes.`;
+for a real next step. Don't narrate the mechanism ("I'll draw you a diagram"), just write it.`;
 
 export const CHAT_SURFACE_BRIEFING = `${BRIEFING_HEAD}
 ${BRIEFING_DRAW_HTML}

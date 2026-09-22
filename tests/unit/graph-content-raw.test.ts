@@ -10,7 +10,7 @@
  * page a large document in.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
@@ -150,5 +150,97 @@ describe('graph/content — raw PDF', () => {
     );
     expect(status()).toBe(404);
     expect(body().error).toBe('not_found');
+  });
+});
+
+/**
+ * The arm now also carries the raster images an agent posts into its thread, which is why
+ * it grew a CSP — and why that CSP is SCOPED. Both sides are pinned here: an image must
+ * carry it, and a PDF must NOT, because `sandbox` is a document directive and the
+ * Knowledge page frames its PDFs through a script-backed viewer.
+ */
+describe('graph/content — raw images, and the CSP that must not reach the PDF', () => {
+  const PNG_BYTES = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+
+  beforeEach(() => {
+    writeFileSync(join(contextRoot, 'knowledge', 'shot.png'), PNG_BYTES);
+    writeFileSync(join(contextRoot, 'knowledge', 'plot.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>', 'utf-8');
+  });
+
+  it('serves a PNG as image/png, inline, nosniff, WITH the sandbox CSP', async () => {
+    const { res, status, header, done } = makeRes();
+    await handleGraphContentGet(makeReq('/api/graph/content?path=knowledge/shot.png&raw=1'), res, {}, contextRoot);
+    await done();
+    expect(status()).toBe(200);
+    expect(header('Content-Type')).toBe('image/png');
+    expect(header('Content-Disposition')).toBe('inline');
+    expect(header('X-Content-Type-Options')).toBe('nosniff');
+    expect(header('Content-Security-Policy')).toBe("default-src 'none'; sandbox");
+  });
+
+  it('serves a PDF with NO Content-Security-Policy at all — the viewer is script-backed', async () => {
+    const { res, status, header, done } = makeRes();
+    await handleGraphContentGet(
+      makeReq('/api/graph/content?path=knowledge/legal/assets/msa.pdf&raw=1'), res, {}, contextRoot,
+    );
+    await done();
+    expect(status()).toBe(200);
+    expect(header('Content-Type')).toBe('application/pdf');
+    // The two headers a PDF has always had are untouched…
+    expect(header('Content-Disposition')).toBe('inline');
+    expect(header('X-Content-Type-Options')).toBe('nosniff');
+    // …and the new one is absent. A `sandbox` here would plausibly render it blank.
+    expect(header('Content-Security-Policy')).toBeUndefined();
+  });
+
+  it('will NOT serve an .svg as a document — it falls through to the text arm', async () => {
+    const { res, status, header, body, done } = makeRes();
+    await handleGraphContentGet(makeReq('/api/graph/content?path=knowledge/plot.svg&raw=1'), res, {}, contextRoot);
+    await done();
+    expect(status()).toBe(200);
+    // An SVG is script-bearing, and this route is framed same-origin by the PDF viewer.
+    expect(header('Content-Type')).not.toBe('image/svg+xml');
+    expect(body()).toHaveProperty('content');
+  });
+});
+
+describe('graph/content — REAL-path containment', () => {
+  it('refuses a symlink inside the vault that points outside it', async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), 'dc-graph-outside-'));
+    writeFileSync(join(outsideDir, 'secret.pdf'), PDF_BYTES, 'utf-8');
+    // Lexically inside the vault, really outside — the case a resolve()-only check passes.
+    symlinkSync(join(outsideDir, 'secret.pdf'), join(contextRoot, 'knowledge', 'link.pdf'));
+
+    const { res, status, body } = makeRes();
+    await handleGraphContentGet(makeReq('/api/graph/content?path=knowledge/link.pdf&raw=1'), res, {}, contextRoot);
+    expect(status()).toBe(400);
+    expect(body().error).toBe('invalid_path');
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  it('refuses a real file under a symlinked DIRECTORY — the case an lstat on the leaf would miss', async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), 'dc-graph-outsidedir-'));
+    writeFileSync(join(outsideDir, 'secret.pdf'), PDF_BYTES, 'utf-8');
+    symlinkSync(outsideDir, join(contextRoot, 'knowledge', 'linked'));
+
+    const { res, status, body } = makeRes();
+    await handleGraphContentGet(
+      makeReq('/api/graph/content?path=knowledge/linked/secret.pdf&raw=1'), res, {}, contextRoot,
+    );
+    expect(status()).toBe(400);
+    expect(body().error).toBe('invalid_path');
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  it('still serves an ordinary file — the harder check did not break the normal path', async () => {
+    const { res, status, done } = makeRes();
+    await handleGraphContentGet(
+      makeReq('/api/graph/content?path=knowledge/legal/assets/msa.pdf&raw=1'), res, {}, contextRoot,
+    );
+    await done();
+    expect(status()).toBe(200);
   });
 });

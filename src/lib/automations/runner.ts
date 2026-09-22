@@ -6,6 +6,7 @@ import { notifyViaBundle, NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from './notifie
 import { ensureGitignoreEntries, removeGitignoreEntries } from '../gitignore.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
+import { readEnvelopeLimitSignal, type LimitSignal } from '../claude-limit-signal.js';
 import { accountEnvFor, resolveConfigDir } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
 import { inspectSleepLock } from '../sleep-consolidation.js';
@@ -15,7 +16,7 @@ import { backfillQuestionSession, createQuestion, pendingQuestion } from './hitl
 import { foreignRunEvidence, recordAutomationSession } from './session-registry.js';
 import { enqueueFire } from './queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
-import { appendThreadEntry } from './threads.js';
+import { appendThreadEntry, readThreadRun } from './threads.js';
 import { fetchTransport, notifyTelegram, readTelegramConfigForSlug } from './telegram.js';
 import {
   clearRunSidecar,
@@ -111,6 +112,17 @@ export function buildPreamble(
     'Your slug and run are already in your environment; no ids needed. Do NOT post progress ' +
     'narration, "starting now", or your whole document (it is saved for them already). ' +
     'Zero posts is the right number for an unremarkable run.' +
+    // The RICHER shapes, after the floor above so the floor keeps the last word: a run
+    // told what it MAY attach before it is told that zero posts is fine will attach
+    // something to every post. Each clause names a real mechanism — `--kv`, `--file` and
+    // `automations propose --choice` all exist; a preamble that names a verb the CLI does
+    // not have spends the run's turn discovering that.
+    ' Attach up to 4 brain-relative paths with --file (markdown opens in a viewer, images ' +
+    'inline, .excalidraw.md as a live board), and up to 6 key=value rows with --kv — --kv ' +
+    'is for numbers, not prose. To ask with buttons: ' +
+    `\`dreamcontext automations propose ${m.slug} --title … --body … --choice "A" --choice ` +
+    '"B"` (≤4, ≤64 chars each; needs review on). Never post a question as plain text — it ' +
+    'has nothing to press.' +
     // Without this line, a run (or its resumed chat) that gets asked "why
     // didn't this reach my Telegram?" concludes — correctly, from its own
     // view — that no Telegram connection exists, and starts recommending the
@@ -207,6 +219,26 @@ function formatRunDuration(ms: number): string {
 }
 
 /**
+ * What a capped run says for itself — ONE sentence, because it becomes three things at
+ * once: the run's `error`, the `system:failed` line in its thread, and the notification
+ * body. It names the window (a user who knows it was the weekly cap knows to stop
+ * retrying today), states plainly that nothing was published (the failure mode this whole
+ * gate exists to end was a banner published AS the document), and gives the reset when the
+ * envelope carried one.
+ *
+ * Local time on purpose: `resetsAt` is a moment the user waits for, and an ISO string in
+ * UTC is arithmetic they should not have to do.
+ */
+function limitReason(sig: LimitSignal): string {
+  const window = sig.window === 'session' ? '5-hour' : sig.window === 'weekly' ? 'weekly' : 'account';
+  if (sig.resetsAtMs === null) {
+    return `It stopped at the ${window} usage limit — nothing was published. Try again once the window resets.`;
+  }
+  const at = new Date(sig.resetsAtMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `It stopped at the ${window} usage limit — nothing was published. The window reopens ${at}.`;
+}
+
+/**
  * Every thread write in this file goes through here, and every one of them is
  * BEST-EFFORT. A thread is a display surface; the cache is the record. If an
  * append fails (a full disk, a day file at its entry cap, a slug that somehow
@@ -229,6 +261,31 @@ function postSystemEntry(
     appendThreadEntry(contextRoot, slug, { runId, kind: 'system', event, text, via: 'runner' });
   } catch (err) {
     logFn(`automation "${slug}": thread ${event} entry not written — ${(err as Error).message}`);
+  }
+}
+
+/**
+ * The last thing the run POSTED in this fire's thread, for the notification body.
+ *
+ * Best-effort in exactly the way `postSystemEntry` is, and for the same reason: a channel
+ * that cannot be read must not change what the run reports or silence its banner. A read
+ * failure degrades to null, and the caller falls back to the document's opening line.
+ *
+ * Scoped to this run — `readThreadRun` filters by `runId`, so yesterday's post can never
+ * become today's banner.
+ */
+function lastAgentPost(
+  contextRoot: string,
+  slug: string,
+  runId: string,
+  logFn: (msg: string) => void,
+): string | null {
+  try {
+    const posts = readThreadRun(contextRoot, slug, runId).filter((e) => e.kind === 'agent');
+    return posts[posts.length - 1]?.text.trim() || null;
+  } catch (err) {
+    logFn(`automation "${slug}": could not read the thread for the banner — ${(err as Error).message}`);
+    return null;
   }
 }
 
@@ -401,6 +458,13 @@ export interface ClaudeResult {
   durationMs: number | null;
   permissionDenials: number;
   subtype: string | null;
+  /**
+   * The account's own refusal, when this envelope IS one. Read once here rather than at
+   * each use site: a capped turn comes back `is_error: false` with the limit banner sitting
+   * in `result`, so every consumer that keys off `isError` alone believes the run
+   * succeeded. `runAutomation` is the consumer that matters — see the usage-limit gate.
+   */
+  limit: LimitSignal | null;
 }
 
 const UNPARSEABLE: Omit<ClaudeResult, 'raw'> = {
@@ -413,6 +477,9 @@ const UNPARSEABLE: Omit<ClaudeResult, 'raw'> = {
   durationMs: null,
   permissionDenials: 0,
   subtype: null,
+  // Nothing parsed, so there is no envelope to read a refusal off. The raw stdout still
+  // reaches `outputPath` on that path, which is the pre-existing behaviour for garbage.
+  limit: null,
 };
 
 /** PURE — never throws. Unparseable JSON or a missing/non-string `result`
@@ -438,6 +505,10 @@ export function parseClaudeJson(stdout: string): ClaudeResult {
       durationMs: typeof p.duration_ms === 'number' ? p.duration_ms : null,
       permissionDenials: Array.isArray(p.permission_denials) ? p.permission_denials.length : 0,
       subtype: typeof p.subtype === 'string' ? p.subtype : null,
+      // Computed HERE because this is the one place that holds both halves at once: the
+      // whole envelope (for the structured readers, which carry the window and the reset)
+      // and the narrowed `result` string (for the gated text reader).
+      limit: readEnvelopeLimitSignal(p, result),
     };
   } catch {
     return { raw: stdout, ...UNPARSEABLE };
@@ -1015,7 +1086,14 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       // job they asked for was "update the insights", withholds the entire
       // answer one click away for no reason.
       if (params.status === 'ok') {
-        const summary = params.summary ?? (params.outputPath ? `→ ${basename(params.outputPath)}` : 'done');
+        // THE AGENT'S OWN WORDS WIN. `params.summary` is the document's opening line, which
+        // is the right banner for a run that said nothing — but a run that CHOSE to post
+        // picked that sentence for this human to read, and the banner is realistically the
+        // only thing they see. Falling back in this order means the channel and the
+        // notification never disagree about what the run's headline was.
+        const summary = lastAgentPost(contextRoot, slug, fireAt.toISOString(), logFn)
+          ?? params.summary
+          ?? (params.outputPath ? `→ ${basename(params.outputPath)}` : 'done');
         // A run that ended owing a verdict must NOT read as "your digest is
         // ready" — nothing was published, and the banner is realistically the
         // only thing the user sees. It has to ask, not report.
@@ -1556,7 +1634,25 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // Checked BEFORE the `review` modes so a graph that says "ask" wins over
         // frontmatter that says "don't": the two can disagree, and the safe
         // resolution of that disagreement is to ask.
-        if (status === 'ok' && flow.needsHitl && !proposedThisRun) {
+        // THE USAGE-LIMIT GATE, and it sits HERE for a reason worth not re-deriving.
+        //
+        // A capped run comes back `is_error: false`, so `status` is 'ok' — which means the
+        // chain below does not merely publish the banner as the day's document. It can hand
+        // the banner to `createQuestion` as the BODY of a review question (the two arms
+        // right under this one) and end `awaiting-review`, so a quota message sits in the
+        // human's verdict queue as though the agent had produced it, and sleep consumes it
+        // as truth. Gating AFTER the chain, or gating on `status`, both leave that open —
+        // so this runs before either can.
+        //
+        // The session backfill above is deliberately NOT skipped: the session exists and is
+        // resumable, and a human asking the run what happened is exactly the right move.
+        if (claudeResult.limit) {
+          status = 'failed';
+          error = limitReason(claudeResult.limit);
+          // `finalOutputPath` stays null, so nothing publishes, nothing reaches Telegram,
+          // and the feed offers no file card for a document that was never written.
+          logFn(`automation "${slug}": ${error}`);
+        } else if (status === 'ok' && flow.needsHitl && !proposedThisRun) {
           const document = claudeResult.result ?? '';
           try {
             const q = createQuestion(contextRoot, {

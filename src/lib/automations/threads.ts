@@ -1,4 +1,7 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync,
+  realpathSync, renameSync, rmSync, writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { nanoid } from 'nanoid';
@@ -10,10 +13,14 @@ import {
   THREAD_ENTRY_MAX_BYTES,
   THREAD_FILES_MAX,
   THREAD_RETENTION_DAYS,
+  THREAD_SUMMARY_KEY_MAX_CHARS,
+  THREAD_SUMMARY_MAX_ROWS,
+  THREAD_SUMMARY_VALUE_MAX_CHARS,
   THREAD_TEXT_MAX_CHARS,
   type ThreadEntry,
   type ThreadEntryKind,
   type ThreadRunSummary,
+  type ThreadSummaryRow,
   type ThreadSystemEvent,
   type ThreadVia,
 } from './types.js';
@@ -152,6 +159,22 @@ function parseEntry(json: string): ThreadEntry | null {
     const files = Array.isArray(r.files)
       ? r.files.filter((f): f is string => typeof f === 'string' && f.length > 0).slice(0, THREAD_FILES_MAX)
       : undefined;
+    // Read back with the SAME caps the writer applies, for the same reason
+    // `files` is: an entry can arrive from a teammate's synced vault or a
+    // hand edit, so the caps have to hold on the way IN as well as on the way
+    // out. A malformed row is dropped, never thrown on — this function is
+    // total by contract.
+    const summary = Array.isArray(r.summary)
+      ? r.summary
+        .map((row) => (row && typeof row === 'object' && !Array.isArray(row) ? row as Record<string, unknown> : null))
+        .filter((row): row is Record<string, unknown> => row !== null)
+        .map((row) => ({
+          key: typeof row.key === 'string' ? row.key.trim().slice(0, THREAD_SUMMARY_KEY_MAX_CHARS) : '',
+          value: typeof row.value === 'string' ? row.value.trim().slice(0, THREAD_SUMMARY_VALUE_MAX_CHARS) : '',
+        }))
+        .filter((row) => row.key.length > 0 && row.value.length > 0)
+        .slice(0, THREAD_SUMMARY_MAX_ROWS)
+      : undefined;
     return {
       id: r.id,
       runId: r.runId,
@@ -160,6 +183,7 @@ function parseEntry(json: string): ThreadEntry | null {
       at: r.at,
       text: typeof r.text === 'string' ? r.text : '',
       ...(files && files.length > 0 ? { files } : {}),
+      ...(summary && summary.length > 0 ? { summary } : {}),
       via: (r.via === 'runner' || r.via === 'cli' || r.via === 'dashboard' || r.via === 'chat')
         ? (r.via as ThreadVia)
         : 'runner',
@@ -313,11 +337,40 @@ export interface AppendThreadEntryInput {
   event?: ThreadSystemEvent;
   text: string;
   files?: string[];
+  /** A bounded key/value block. Capped and trimmed here, refused (never
+   *  silently truncated) when the caller sends too many rows. */
+  summary?: ThreadSummaryRow[];
   via: ThreadVia;
   /** Injected for tests and for a catch-up write that answers for an earlier
    *  fire — never read from the clock inside this module. */
   now?: Date;
+  /**
+   * RECONCILIATION ONLY — the derived `<userEntryId>~r` id, so two processes
+   * closing the SAME orphaned reply write byte-identical ids and `readThread`'s
+   * dedupe collapses them to one entry with no lock and no cross-process
+   * coordination. CLI `post` and the runner never pass this.
+   *
+   * Validated against {@link RECONCILE_ID_PATTERN} rather than trusted: an
+   * arbitrary caller-chosen id would break the one property everything here
+   * rests on — that `id` is time-ordered — and could push a read watermark past
+   * entries nobody has seen.
+   */
+  id?: string;
 }
+
+/**
+ * The ONLY id shape a caller may supply: a real entry id plus the `~r` suffix.
+ *
+ * `~` (0x7E) sorts above every base36 and nanoid character, so `<id>~r` lands
+ * immediately after the entry it closes and before any id with a later
+ * timestamp prefix.
+ *
+ * The suffix quantifier is deliberately LOOSE (`+`, not `{6}`). Today
+ * `newThreadEntryId` emits `seq(2) + nanoid(4)` — exactly 6 — so a strict form
+ * would also match; this is robustness against a future `SEQ_MAX` widening,
+ * not a repair of something broken.
+ */
+const RECONCILE_ID_PATTERN = /^[0-9a-z]{9,}_[A-Za-z0-9_-]+~r$/;
 
 /**
  * Containment for a `files[]` path. Brain-relative, inside the brain, never the
@@ -332,6 +385,41 @@ function isContainedBrainRel(contextRoot: string, raw: string): boolean {
   const absRoot = resolve(contextRoot);
   const abs = resolve(absRoot, normalize(trimmed));
   return abs.startsWith(absRoot + sep);
+}
+
+/**
+ * The same containment question asked of the FILESYSTEM, for a path that
+ * already exists.
+ *
+ * `isContainedBrainRel` above is lexical and pure on purpose — a run posts the
+ * document it is still writing, so a path that does not exist yet has to pass.
+ * That leaves one hole it cannot close: a symlink INSIDE the brain pointing
+ * out of it is lexically contained and really is not. Modelled on
+ * `isReadablePatternFile` (src/lib/patterns.ts), including why both checks are
+ * needed — `lstatSync` rejects the link itself, and the `realpathSync`
+ * comparison additionally catches a link ABOVE the file (a symlinked
+ * subdirectory) that an `lstat` on the leaf would miss.
+ *
+ * DEFENCE IN DEPTH, NOT THE CONTROL. `readThread` re-reads `files[]` off disk
+ * with only a typeof/count filter, so a path written into a shared slug's
+ * thread by a teammate never passes through here at all — the serving side is
+ * what has to refuse that. This refuses a local run's bad path loudly, at the
+ * source, where the error can still name who wrote it.
+ *
+ * Returns true for a path that does not exist: nothing to resolve yet, and the
+ * lexical check has already had its say.
+ */
+function resolvesInsideBrain(contextRoot: string, abs: string): boolean {
+  try {
+    if (!existsSync(abs)) return true;
+    if (lstatSync(abs).isSymbolicLink()) return false;
+    const realRoot = realpathSync(resolve(contextRoot));
+    const real = realpathSync(abs);
+    return real.startsWith(realRoot + sep);
+  } catch {
+    // Vanished or unreadable between the checks — refuse rather than guess.
+    return false;
+  }
 }
 
 /**
@@ -362,6 +450,35 @@ export function appendThreadEntry(contextRoot: string, slug: string, input: Appe
     if (!isContainedBrainRel(contextRoot, f)) {
       throw new AutomationError(`Refusing a file outside the brain: "${f}"`);
     }
+    if (!resolvesInsideBrain(contextRoot, resolve(resolve(contextRoot), normalize(f)))) {
+      throw new AutomationError(`Refusing a file that resolves outside the brain: "${f}"`);
+    }
+  }
+
+  // Refused over the cap rather than truncated: an agent that believes it
+  // posted eight figures and shows six has been silently edited, which is the
+  // failure mode every other cap in this file exists to avoid.
+  const summary = (input.summary ?? []).map((row) => ({
+    key: (row?.key ?? '').trim(),
+    value: (row?.value ?? '').trim(),
+  }));
+  if (summary.length > THREAD_SUMMARY_MAX_ROWS) {
+    throw new AutomationError(`A summary carries at most ${THREAD_SUMMARY_MAX_ROWS} rows.`);
+  }
+  for (const row of summary) {
+    if (!row.key || !row.value) {
+      throw new AutomationError('A summary row needs both a key and a value.');
+    }
+    if (row.key.length > THREAD_SUMMARY_KEY_MAX_CHARS) {
+      throw new AutomationError(`A summary key is at most ${THREAD_SUMMARY_KEY_MAX_CHARS} characters: "${row.key}"`);
+    }
+    if (row.value.length > THREAD_SUMMARY_VALUE_MAX_CHARS) {
+      throw new AutomationError(`A summary value is at most ${THREAD_SUMMARY_VALUE_MAX_CHARS} characters: "${row.key}"`);
+    }
+  }
+
+  if (input.id !== undefined && !RECONCILE_ID_PATTERN.test(input.id)) {
+    throw new AutomationError(`Refusing a caller-supplied entry id: "${input.id}"`);
   }
 
   const now = input.now ?? new Date();
@@ -384,13 +501,14 @@ export function appendThreadEntry(contextRoot: string, slug: string, input: Appe
   const text = input.text.replace(/\0/g, '').slice(0, THREAD_TEXT_MAX_CHARS);
 
   const entry: ThreadEntry = {
-    id: newThreadEntryId(now.getTime()),
+    id: input.id ?? newThreadEntryId(now.getTime()),
     runId: input.runId.trim(),
     kind: input.kind,
     ...(input.event ? { event: input.event } : {}),
     at: now.toISOString(),
     text,
     ...(files.length > 0 ? { files } : {}),
+    ...(summary.length > 0 ? { summary } : {}),
     via: input.via,
   };
 

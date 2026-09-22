@@ -17,7 +17,7 @@ import { resolveAgentSession } from '../../lib/agent-session-map.js';
 import { readHandoffRecord, stampHandoffRecord, writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, shouldRotateForHandoff } from '../../lib/context-watch.js';
 import { readSetupConfig, readBrainLocal, writeBrainLocal } from '../../lib/setup-config.js';
 import { safeChildPath } from '../safe-path.js';
-import { resolveChatReference } from '../chat-reference-path.js';
+import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
 import { modeBriefing, type ChatMode } from '../chat-modes.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
@@ -1872,7 +1872,33 @@ function resolveServablePath(
 ): { abs: string } | { deny: 'invalid' | 'needs_grant'; abs?: string } {
   const ref = resolveChatReference(contextRoot ? projectRootOf(contextRoot) : null, contextRoot, rawPath);
   if (!ref) return { deny: 'invalid' };
-  if (!ref.outside) return { abs: ref.abs };
+
+  // `ref.outside` is LEXICAL — it compares resolved strings, so a symlink that lives
+  // inside the project and points out of it is "inside" by that test and outside in fact.
+  // That gap is reachable: an agent's thread `files[]` paths are read back off disk, and
+  // for a SHARED agent those files are written by whoever syncs the brain. So the decision
+  // is re-taken over the REAL paths, which also catches a symlinked DIRECTORY above the
+  // leaf — the case an `lstat` on the file itself would miss.
+  //
+  // A MISSING path is not a containment answer at all — `realpathSync` throws ENOENT for
+  // one, and treating that as "outside" turned every 404 into a needs_grant card offering
+  // access to a file that does not exist. So ENOENT keeps the lexical verdict and lets the
+  // caller's own not-found branch answer; a dangling symlink lands there too, which is
+  // correct — it resolves to nothing, so there is nothing to disclose.
+  //
+  // Any OTHER realpath failure (a permission error, a race, a loop) still fails CLOSED to
+  // `needs_grant`: an answer we could not verify must ask rather than serve.
+  let outside = ref.outside;
+  if (contextRoot) {
+    try {
+      outside = !isInside(realpathSync.native(projectRootOf(contextRoot)), realpathSync.native(ref.abs));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') outside = true;
+    }
+  }
+  if (!outside) return { abs: ref.abs };
+  // The grant is keyed on the LEXICAL path the card named and the user approved. Prior
+  // consent to a named file stands; re-deriving it per read would make grants meaningless.
   return readGrants(contextRoot).includes(ref.abs)
     ? { abs: ref.abs }
     : { deny: 'needs_grant', abs: ref.abs };

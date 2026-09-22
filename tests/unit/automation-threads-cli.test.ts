@@ -3,8 +3,11 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createProgram } from '../../src/cli/program.js';
-import { createAutomation } from '../../src/lib/automations/store.js';
+import { createAutomation, writeRunSidecar } from '../../src/lib/automations/store.js';
 import { appendThreadEntry, readThread, threadUnread } from '../../src/lib/automations/threads.js';
+import { listQuestions, QUESTION_CHOICE_MAX_CHARS, QUESTION_CHOICES_MAX } from '../../src/lib/automations/hitl.js';
+import { THREAD_SUMMARY_MAX_ROWS } from '../../src/lib/automations/types.js';
+import { defaultPgidProbe } from '../../src/lib/automations/verdict.js';
 
 /**
  * `automations post` — the ONE way anything reaches a channel on an agent's
@@ -173,6 +176,160 @@ describe('automations post — attachments stay inside the brain', () => {
     ]);
     expect(code).toBe(1);
     expect(readThread(contextRoot, 'digest')).toEqual([]);
+  });
+});
+
+describe('automations post --kv — the summary block', () => {
+  beforeEach(() => {
+    process.env.DREAMCONTEXT_AUTOMATION_RUN = RUN_ID;
+  });
+
+  it('writes the rows in the order they were given', async () => {
+    const { code } = await run([
+      'automations', 'post', 'digest', 'WAU moved.',
+      '--kv', 'wau=12,431', '--kv', 'change=+4%',
+    ]);
+    expect(code).toBe(0);
+    expect(readThread(contextRoot, 'digest')[0].summary).toEqual([
+      { key: 'wau', value: '12,431' },
+      { key: 'change', value: '+4%' },
+    ]);
+  });
+
+  it('splits on the FIRST = only — the value is the half allowed to contain one', async () => {
+    await run(['automations', 'post', 'digest', 'a figure', '--kv', 'a=b=c']);
+    expect(readThread(contextRoot, 'digest')[0].summary).toEqual([{ key: 'a', value: 'b=c' }]);
+  });
+
+  it('trims both halves', async () => {
+    await run(['automations', 'post', 'digest', 'spaced', '--kv', '  wau  =  12  ']);
+    expect(readThread(contextRoot, 'digest')[0].summary).toEqual([{ key: 'wau', value: '12' }]);
+  });
+
+  it('a post with no --kv carries no summary key at all', async () => {
+    await run(['automations', 'post', 'digest', 'just words']);
+    expect(readThread(contextRoot, 'digest')[0]).not.toHaveProperty('summary');
+  });
+
+  it(`accepts ${THREAD_SUMMARY_MAX_ROWS} rows`, async () => {
+    const kv = Array.from({ length: THREAD_SUMMARY_MAX_ROWS }, (_, i) => ['--kv', `k${i}=${i}`]).flat();
+    const { code } = await run(['automations', 'post', 'digest', 'six rows', ...kv]);
+    expect(code).toBe(0);
+    expect(readThread(contextRoot, 'digest')[0].summary).toHaveLength(THREAD_SUMMARY_MAX_ROWS);
+  });
+
+  it(`refuses a ${THREAD_SUMMARY_MAX_ROWS + 1}th row and writes NOTHING`, async () => {
+    const kv = Array.from({ length: THREAD_SUMMARY_MAX_ROWS + 1 }, (_, i) => ['--kv', `k${i}=${i}`]).flat();
+    const { code, out } = await run(['automations', 'post', 'digest', 'seven rows', ...kv]);
+    expect(code).toBe(1);
+    // `you gave 7` is the CLI's OWN sentence, and the assertion is pinned to it
+    // on purpose: the store refuses an over-cap summary too, with a message that
+    // also reads "at most 6 rows". Asserting the shared half would pass with the
+    // CLI's check deleted — which is exactly what the first run of this
+    // mutation showed. The count is what tells a run what it actually did.
+    expect(out).toContain(`you gave ${THREAD_SUMMARY_MAX_ROWS + 1}`);
+    // The refusal is only worth having if the post did not land anyway.
+    expect(readThread(contextRoot, 'digest')).toEqual([]);
+  });
+
+  it('refuses a row missing its value, and one missing its key', async () => {
+    const noValue = await run(['automations', 'post', 'digest', 'half a row', '--kv', 'wau']);
+    expect(noValue.code).toBe(1);
+    expect(noValue.out).toContain('needs both halves');
+
+    const noKey = await run(['automations', 'post', 'digest', 'half a row', '--kv', '=12']);
+    expect(noKey.code).toBe(1);
+
+    expect(readThread(contextRoot, 'digest')).toEqual([]);
+  });
+});
+
+describe('automations propose --choice — the buttons a run offers', () => {
+  /** A live sidecar for THIS process, so `proposeFromRun`'s process-group guard
+   *  sees its own caller. Without it every propose below refuses as "not from
+   *  inside the run", and the choice assertions would pass for the wrong reason. */
+  function sidecarForThisProcess(slug: string): void {
+    const pgid = defaultPgidProbe(process.pid);
+    if (pgid === null) throw new Error('cannot read this process group — the propose guard cannot be satisfied');
+    writeRunSidecar(contextRoot, slug, {
+      slug,
+      runnerPid: process.pid,
+      childPid: process.pid,
+      childPgid: pgid,
+      fireAt: RUN_ID,
+      startedAt: RUN_ID,
+      timeoutAt: '2099-01-01T00:00:00.000Z',
+    });
+  }
+
+  beforeEach(() => {
+    createAutomation(contextRoot, {
+      slug: 'asker', title: 'The asker', days: 'daily', at: '09:00', prompt: 'Ask me.', review: 'agent',
+    });
+    sidecarForThisProcess('asker');
+  });
+
+  it('passes the choices through to the question on disk', async () => {
+    const { code } = await run([
+      'automations', 'propose', 'asker', '--title', 'Ship it?', '--body', 'The draft is ready.',
+      '--choice', 'Ship', '--choice', 'Hold',
+    ]);
+    expect(code).toBe(0);
+    const [q] = listQuestions(contextRoot, 'asker');
+    expect(q.choices).toEqual(['Ship', 'Hold']);
+  });
+
+  it('a proposal with no --choice still asks for free text', async () => {
+    await run(['automations', 'propose', 'asker', '--title', 'Thoughts?', '--body', 'Open question.']);
+    expect(listQuestions(contextRoot, 'asker')[0].choices).toEqual([]);
+  });
+
+  it(`accepts ${QUESTION_CHOICES_MAX} choices`, async () => {
+    const flags = Array.from({ length: QUESTION_CHOICES_MAX }, (_, i) => ['--choice', `opt${i}`]).flat();
+    const { code } = await run(['automations', 'propose', 'asker', '--title', 'T', '--body', 'B', ...flags]);
+    expect(code).toBe(0);
+    expect(listQuestions(contextRoot, 'asker')[0].choices).toHaveLength(QUESTION_CHOICES_MAX);
+  });
+
+  it(`refuses a ${QUESTION_CHOICES_MAX + 1}th choice and creates NOTHING`, async () => {
+    const flags = Array.from({ length: QUESTION_CHOICES_MAX + 1 }, (_, i) => ['--choice', `opt${i}`]).flat();
+    const { code, out } = await run(['automations', 'propose', 'asker', '--title', 'T', '--body', 'B', ...flags]);
+    expect(code).toBe(1);
+    expect(out).toContain(`at most ${QUESTION_CHOICES_MAX} choices`);
+    // REFUSED, not silently truncated to 4 by `parseChoices` — the whole reason
+    // the CLI checks at all is that a run which believes it offered five
+    // options should be told it did not.
+    expect(listQuestions(contextRoot, 'asker')).toEqual([]);
+  });
+
+  it(`refuses a choice of ${QUESTION_CHOICE_MAX_CHARS + 1} characters and creates NOTHING`, async () => {
+    const tooLong = 'x'.repeat(QUESTION_CHOICE_MAX_CHARS + 1);
+    const { code, out } = await run([
+      'automations', 'propose', 'asker', '--title', 'T', '--body', 'B', '--choice', 'ok', '--choice', tooLong,
+    ]);
+    expect(code).toBe(1);
+    expect(out).toContain(`at most ${QUESTION_CHOICE_MAX_CHARS} characters`);
+    expect(listQuestions(contextRoot, 'asker')).toEqual([]);
+  });
+
+  it(`accepts a choice of exactly ${QUESTION_CHOICE_MAX_CHARS} characters`, async () => {
+    const exact = 'x'.repeat(QUESTION_CHOICE_MAX_CHARS);
+    const { code } = await run(['automations', 'propose', 'asker', '--title', 'T', '--body', 'B', '--choice', exact]);
+    expect(code).toBe(0);
+    expect(listQuestions(contextRoot, 'asker')[0].choices).toEqual([exact]);
+  });
+
+  it('still refuses under review: off, and says so about the buttons too', async () => {
+    createAutomation(contextRoot, {
+      slug: 'quietly', title: 'No review', days: 'daily', at: '09:00', prompt: 'Nope.', review: 'off',
+    });
+    sidecarForThisProcess('quietly');
+    const { code, out } = await run([
+      'automations', 'propose', 'quietly', '--title', 'T', '--body', 'B', '--choice', 'Yes',
+    ]);
+    expect(code).toBe(1);
+    expect(out).toContain('review off');
+    expect(listQuestions(contextRoot, 'quietly')).toEqual([]);
   });
 });
 

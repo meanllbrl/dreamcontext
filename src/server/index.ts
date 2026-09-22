@@ -106,6 +106,8 @@ import {
   handleAutomationsThreads,
   handleAutomationsThreadGet,
   handleAutomationsThreadRead,
+  handleAutomationsThreadReply,
+  handleAutomationsReplyJob,
   handleAutomationsCreate,
   handleAutomationsUpdate,
   handleAutomationsDelete,
@@ -623,9 +625,13 @@ export function buildRouter(): Router {
   router.get('/api/automations/threads', handleAutomationsThreads);
   router.post('/api/automations/threads/read', handleAutomationsThreadRead);
   router.post('/api/automations/threads/say', handleAutomationsSay);
+  // Literal `reply-job`, so it goes above `/:slug` with the rest — registered after a
+  // param route it would be read as a slug named "reply-job" and 404 every poll.
+  router.get('/api/automations/reply-job/:id', handleAutomationsReplyJob);
   // Before `/:slug` — a literal sub-path registered after a param route is
   // swallowed by it, the same ordering constraint `runs` above documents.
   router.get('/api/automations/:slug/thread', handleAutomationsThreadGet);
+  router.post('/api/automations/:slug/thread/reply', handleAutomationsThreadReply);
   router.get('/api/automations/:slug/session', handleAutomationsSession);
   router.get('/api/automations/:slug', handleAutomationsShow);
   router.post('/api/automations/:slug/run', handleAutomationsRunNow);

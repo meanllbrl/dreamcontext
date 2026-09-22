@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -33,7 +33,10 @@ import {
   threadWatermarkPath,
 } from '../../src/lib/automations/threads.js';
 import { createAutomation } from '../../src/lib/automations/store.js';
-import { AutomationError, THREAD_DAY_MAX_ENTRIES, THREAD_ENTRY_MARKER, THREAD_TEXT_MAX_CHARS } from '../../src/lib/automations/types.js';
+import {
+  AutomationError, THREAD_DAY_MAX_ENTRIES, THREAD_ENTRY_MARKER,
+  THREAD_SUMMARY_MAX_ROWS, THREAD_TEXT_MAX_CHARS,
+} from '../../src/lib/automations/types.js';
 
 let projectRoot: string;
 let contextRoot: string;
@@ -119,6 +122,74 @@ describe('append and read', () => {
     expect(() => post('x', { files: ['/etc/passwd'] })).toThrow(AutomationError);
     expect(() => post('x', { files: ['../../../etc/passwd'] })).toThrow(AutomationError);
     expect(readThread(contextRoot, 'digest')).toHaveLength(0);
+  });
+
+  /**
+   * D13(a) — the SYMLINK half of files[] containment.
+   *
+   * `isContainedBrainRel` is lexical and pure by design, because a run posts
+   * the document it is still writing. That leaves the hole these cover: a link
+   * that is lexically inside the brain and really is not. Both directions are
+   * needed — `lstat` on the leaf misses a symlinked PARENT, and a realpath
+   * check alone would accept a leaf link whose target happens to be inside.
+   *
+   * Defence in depth, not the control: a teammate's synced entry never passes
+   * through `appendThreadEntry`, so the serving side carries that load. This
+   * refuses a local run's bad path loudly, where the error can still name it.
+   */
+  it('D6: refuses a files[] path that IS a symlink out of the brain', () => {
+    const secret = join(projectRoot, 'outside-secret.txt');
+    writeFileSync(secret, 'token', 'utf-8');
+    symlinkSync(secret, join(contextRoot, 'leaked.md'));
+
+    expect(() => post('x', { files: ['leaked.md'] })).toThrow(/resolves outside the brain/i);
+    expect(readThread(contextRoot, 'digest')).toHaveLength(0);
+  });
+
+  it('D6: refuses a files[] path under a SYMLINKED DIRECTORY that leaves the brain', () => {
+    const outsideDir = join(projectRoot, 'outside-dir');
+    mkdirSync(outsideDir, { recursive: true });
+    writeFileSync(join(outsideDir, 'notes.md'), 'token', 'utf-8');
+    // The leaf is a perfectly ordinary file; only its PARENT is the link, which
+    // is exactly the case an lstat on the leaf would wave through.
+    symlinkSync(outsideDir, join(contextRoot, 'linked'));
+
+    expect(() => post('x', { files: ['linked/notes.md'] })).toThrow(/resolves outside the brain/i);
+    expect(readThread(contextRoot, 'digest')).toHaveLength(0);
+  });
+
+  it('D6: refuses a symlink even when its target is INSIDE the brain', () => {
+    // This is the case the realpath check alone cannot see, and the reason
+    // `lstat` is not redundant with it: the link resolves to a contained path,
+    // so containment is satisfied and the entry would be accepted. A `files[]`
+    // path is a document the run WROTE; a link is not one, and the same line
+    // is taken by `isReadablePatternFile` over the same shared-vault threat.
+    mkdirSync(join(contextRoot, 'automations', 'output', 'digest'), { recursive: true });
+    const real = join(contextRoot, 'automations', 'output', 'digest', '2026-09-20.md');
+    writeFileSync(real, '# real', 'utf-8');
+    symlinkSync(real, join(contextRoot, 'shortcut.md'));
+
+    expect(() => post('x', { files: ['shortcut.md'] })).toThrow(/resolves outside the brain/i);
+    expect(readThread(contextRoot, 'digest')).toHaveLength(0);
+  });
+
+  it('D6: still accepts a real file inside the brain, and one not written yet', () => {
+    mkdirSync(join(contextRoot, 'automations', 'output', 'digest'), { recursive: true });
+    const real = join(contextRoot, 'automations', 'output', 'digest', '2026-09-20.md');
+    writeFileSync(real, '# real', 'utf-8');
+
+    const e = post('x', {
+      files: [
+        'automations/output/digest/2026-09-20.md',
+        // A run attaches the document it is mid-write on; a path that does not
+        // exist yet must stay legal or the preamble's own contract breaks.
+        'automations/output/digest/not-written-yet.md',
+      ],
+    });
+    expect(e.files).toEqual([
+      'automations/output/digest/2026-09-20.md',
+      'automations/output/digest/not-written-yet.md',
+    ]);
   });
 
   it('refuses an unsafe slug rather than joining it into a path', () => {
@@ -339,5 +410,108 @@ describe('newThreadEntryId — the two properties the store depends on', () => {
     // sort it into the wrong day and push a read watermark past unseen entries.
     newThreadEntryId(2_000_000_000_000);
     expect(newThreadEntryId(1_000_000_000_000) < newThreadEntryId(2_000_000_000_000)).toBe(true);
+  });
+});
+
+describe('summary rows — figures that moved, not a second body', () => {
+  it('round-trips through the day file', () => {
+    post('WAU is down 4%.', { summary: [{ key: 'WAU', value: '12,400 (-4%)' }, { key: 'Signups', value: '318' }] });
+    const [e] = readThread(contextRoot, 'digest');
+    expect(e.summary).toEqual([{ key: 'WAU', value: '12,400 (-4%)' }, { key: 'Signups', value: '318' }]);
+  });
+
+  it('is ABSENT rather than empty when nothing was posted', () => {
+    // An empty block would render a heading over nothing.
+    const e = post('no figures', { summary: [] });
+    expect(e.summary).toBeUndefined();
+    expect(readThread(contextRoot, 'digest')[0].summary).toBeUndefined();
+  });
+
+  it('REFUSES a 7th row rather than truncating to 6', () => {
+    const rows = Array.from({ length: THREAD_SUMMARY_MAX_ROWS + 1 }, (_, i) => ({ key: `k${i}`, value: `${i}` }));
+    expect(() => post('x', { summary: rows })).toThrow(/at most 6 rows/i);
+    expect(readThread(contextRoot, 'digest')).toHaveLength(0);
+  });
+
+  it('refuses an over-long key or value, and a row missing either half', () => {
+    expect(() => post('x', { summary: [{ key: 'k'.repeat(41), value: '1' }] })).toThrow(/at most 40 characters/i);
+    expect(() => post('x', { summary: [{ key: 'k', value: 'v'.repeat(121) }] })).toThrow(/at most 120 characters/i);
+    expect(() => post('x', { summary: [{ key: '  ', value: '1' }] })).toThrow(/needs both a key and a value/i);
+    expect(() => post('x', { summary: [{ key: 'k', value: '   ' }] })).toThrow(/needs both a key and a value/i);
+    expect(readThread(contextRoot, 'digest')).toHaveLength(0);
+  });
+
+  it('READ BACK is capped too — a hand-edited or teammate-synced entry cannot exceed the caps', () => {
+    // The writer is not the only way an entry reaches this file: a shared
+    // slug's thread is teammate-writable and a day file can be hand-edited.
+    post('seed');
+    const day = threadDayPath(contextRoot, 'digest', new Date());
+    const planted = {
+      id: '0zzzzzzzz_planted', runId: RUN, kind: 'agent', at: new Date().toISOString(),
+      text: 'planted', via: 'cli',
+      summary: [
+        ...Array.from({ length: 9 }, (_, i) => ({ key: `k${i}`, value: `${i}` })),
+        { key: 'x'.repeat(200), value: 'y'.repeat(400) },
+      ],
+    };
+    appendFileSync(day, `${THREAD_ENTRY_MARKER}\n\`\`\`json\n${JSON.stringify(planted)}\n\`\`\`\n\n`, 'utf-8');
+
+    const e = readThread(contextRoot, 'digest').find((x) => x.id === '0zzzzzzzz_planted')!;
+    expect(e.summary).toHaveLength(THREAD_SUMMARY_MAX_ROWS);
+    for (const row of e.summary!) {
+      expect(row.key.length).toBeLessThanOrEqual(40);
+      expect(row.value.length).toBeLessThanOrEqual(120);
+    }
+  });
+
+  it('a malformed summary degrades to absent — readThread stays total', () => {
+    post('seed');
+    const day = threadDayPath(contextRoot, 'digest', new Date());
+    const planted = {
+      id: '0zzzzzzzz_broken', runId: RUN, kind: 'agent', at: new Date().toISOString(),
+      text: 'broken', via: 'cli', summary: ['not an object', 7, { key: 'k' }, null],
+    };
+    appendFileSync(day, `${THREAD_ENTRY_MARKER}\n\`\`\`json\n${JSON.stringify(planted)}\n\`\`\`\n\n`, 'utf-8');
+
+    const e = readThread(contextRoot, 'digest').find((x) => x.id === '0zzzzzzzz_broken');
+    expect(e).toBeDefined();
+    expect(e!.summary).toBeUndefined();
+  });
+});
+
+describe('the reconciliation id override', () => {
+  /**
+   * R2'-e — two processes closing the same orphaned reply write byte-identical
+   * ids, so `readThread`'s dedupe collapses them with no lock and no
+   * cross-process coordination.
+   */
+  it('accepts a derived <userEntryId>~r id and DEDUPES a second identical write', () => {
+    const user = appendThreadEntry(contextRoot, 'digest', { runId: RUN, kind: 'user', text: 'ping', via: 'dashboard' });
+    const derived = `${user.id}~r`;
+
+    for (let i = 0; i < 2; i++) {
+      appendThreadEntry(contextRoot, 'digest', {
+        runId: RUN, kind: 'system', event: 'replied', via: 'runner', id: derived,
+        text: 'Outcome unknown — the server restarted during this reply.',
+      });
+    }
+
+    const entries = readThread(contextRoot, 'digest');
+    expect(entries.filter((e) => e.id === derived)).toHaveLength(1);
+    // …and it sorts immediately AFTER the entry it closes: `~` is above every
+    // base36 and nanoid character, and below any later timestamp prefix.
+    expect(entries.map((e) => e.id)).toEqual([user.id, derived]);
+  });
+
+  it('refuses any other caller-supplied id — the sort key is not negotiable', () => {
+    for (const bad of ['whatever', 'aaa~r', '000000000_abcdef', `${'0'.repeat(9)}_abcdef~x`, '../escape~r']) {
+      expect(() => post('x', { id: bad })).toThrow(/Refusing a caller-supplied entry id/i);
+    }
+    expect(readThread(contextRoot, 'digest')).toHaveLength(0);
+  });
+
+  it('mints its own id when none is supplied — post and the runner never pass one', () => {
+    const e = post('x');
+    expect(e.id).toMatch(/^[0-9a-z]{9}_[A-Za-z0-9_-]{6}$/);
   });
 });
