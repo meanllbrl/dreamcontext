@@ -25,6 +25,8 @@ import {
   type AutomationQuestion,
   type ReviewMode,
   type FlowGraph,
+  type ThreadSummaryRow,
+  THREAD_SUMMARY_MAX_ROWS,
 } from '../../lib/automations/types.js';
 import {
   listAutomations,
@@ -65,6 +67,8 @@ import {
   allPendingQuestions,
   claimQuestion,
   pendingQuestion,
+  QUESTION_CHOICE_MAX_CHARS,
+  QUESTION_CHOICES_MAX,
 } from '../../lib/automations/hitl.js';
 import { nodeEntry, isKnownNodeKind } from '../../lib/automations/flow-registry.js';
 import {
@@ -137,6 +141,31 @@ function handleAutomationsError(err: unknown): void {
  *  lives in the store (`THREAD_FILES_MAX`), not here — one place refuses, and
  *  it is the one every writer goes through. */
 function collectFile(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+/**
+ * Commander's repeatable-option collector for `post --kv key=value`.
+ *
+ * Splits on the FIRST `=` only, because the VALUE is the half allowed to
+ * contain one — `--kv change=+4% vs=last week` is a figure, and a greedy split
+ * would silently drop everything after the second separator.
+ *
+ * It only PARSES. Every refusal (an empty key, a seventh row) is raised in the
+ * action through the same `error()` + non-zero-exit path every other refusal in
+ * this file uses — a collector that threw would go through commander's own
+ * error machinery, which this CLI does not configure and which exits the
+ * process rather than setting a code.
+ */
+function collectKv(value: string, previous: ThreadSummaryRow[]): ThreadSummaryRow[] {
+  const at = value.indexOf('=');
+  const key = at === -1 ? value.trim() : value.slice(0, at).trim();
+  const val = at === -1 ? '' : value.slice(at + 1).trim();
+  return [...previous, { key, value: val }];
+}
+
+/** Commander's repeatable-option collector for `propose --choice`. */
+function collectChoice(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
@@ -1001,7 +1030,13 @@ export function registerAutomationsCommand(program: Command): void {
     .option('--summary <text>', 'One line for the notification banner (default: the body\'s first line)')
     .option('--body <text>', 'What the human judges: the proposed document, or what you want to do next')
     .option('--body-file <path>', 'Read the body from a file instead')
-    .action((slug: string, opts: { title?: string; summary?: string; body?: string; bodyFile?: string }) => {
+    .option(
+      '--choice <text>',
+      `An option the human can press (repeatable, max ${QUESTION_CHOICES_MAX}, ${QUESTION_CHOICE_MAX_CHARS} chars each)`,
+      collectChoice,
+      [],
+    )
+    .action((slug: string, opts: { title?: string; summary?: string; body?: string; bodyFile?: string; choice: string[] }) => {
       const root = ensureContextRoot();
       try {
         const manifest = requireAutomation(root, slug);
@@ -1013,6 +1048,24 @@ export function registerAutomationsCommand(program: Command): void {
         if (manifest.review === 'off') {
           warn(`"${slug}" has review off — a proposal would be created that nothing is watching for.`);
           console.log(chalk.dim(`  Set \`review: agent\` in automations/${slug}.md, then re-approve (it is a hashed field).`));
+          console.log(chalk.dim('  That applies to --choice too: buttons nobody is watching for are still nobody watching.'));
+          process.exitCode = 1;
+          return;
+        }
+        // The caps are enforced in `parseChoices` (hitl.ts) for every producer
+        // and every reader, and that floor TRUNCATES silently — correct for a
+        // file synced from a teammate, wrong for a run typing a command right
+        // now. So the CLI refuses instead: a run that believes it offered five
+        // options and got four should be told, not quietly corrected.
+        const choices = opts.choice.map((c) => c.trim()).filter(Boolean);
+        if (choices.length > QUESTION_CHOICES_MAX) {
+          error(`A question offers at most ${QUESTION_CHOICES_MAX} choices — you gave ${choices.length}.`);
+          process.exitCode = 1;
+          return;
+        }
+        const tooLong = choices.find((c) => c.length > QUESTION_CHOICE_MAX_CHARS);
+        if (tooLong) {
+          error(`A choice is at most ${QUESTION_CHOICE_MAX_CHARS} characters — "${tooLong}" is ${tooLong.length}.`);
           process.exitCode = 1;
           return;
         }
@@ -1026,7 +1079,10 @@ export function registerAutomationsCommand(program: Command): void {
           process.exitCode = 1;
           return;
         }
-        const result = proposeFromRun(root, slug, { title: opts.title, summary: opts.summary, body });
+        const result = proposeFromRun(root, slug, {
+          title: opts.title, summary: opts.summary, body,
+          ...(choices.length > 0 ? { choices } : {}),
+        });
         if (!result.ok) {
           error(result.reason);
           process.exitCode = 1;
@@ -1034,6 +1090,9 @@ export function registerAutomationsCommand(program: Command): void {
         }
         success(`Proposal recorded for "${slug}" — waiting for a human verdict.`);
         console.log(chalk.dim(`  card ${result.card.id}`));
+        if (result.card.choices.length > 0) {
+          console.log(chalk.dim(`  choices: ${result.card.choices.join(' · ')}`));
+        }
         console.log(chalk.dim('  Stop here. Your session stays on disk; the verdict resumes it.'));
       } catch (err) {
         handleAutomationsError(err);
@@ -1054,14 +1113,33 @@ export function registerAutomationsCommand(program: Command): void {
     .argument('<text>', 'One or two sentences: what is IMPORTANT about this run')
     .description('Post to this automation\'s channel (a run calls this about itself)')
     .option('--file <path>', 'Brain-relative path to attach (repeatable, max 4)', collectFile, [])
+    .option('--kv <pair>', `A key=value summary row (repeatable, max ${THREAD_SUMMARY_MAX_ROWS})`, collectKv, [])
     .option('--run <id>', 'The run this belongs to (default: this run, from the environment)')
-    .action((slug: string, text: string, opts: { file: string[]; run?: string }) => {
+    .action((slug: string, text: string, opts: { file: string[]; kv: ThreadSummaryRow[]; run?: string }) => {
       const root = ensureContextRoot();
       try {
         const manifest = requireAutomation(root, slug);
         if (!manifest) return;
         if (!text.trim()) {
           error('A post needs something to say.');
+          process.exitCode = 1;
+          return;
+        }
+        // The summary is FIGURES, and both halves have to be there for a row to
+        // mean anything — `--kv wau` names a number it never gives. Refused
+        // here rather than dropped, so a run that believes it reported a figure
+        // is told that it did not.
+        const blank = opts.kv.find((row) => !row.key || !row.value);
+        if (blank) {
+          error(`A --kv row needs both halves: "${blank.key}${blank.value ? `=${blank.value}` : ''}" is missing one.`);
+          process.exitCode = 1;
+          return;
+        }
+        // Refused LOUDLY rather than left to the store's own cap: a run that
+        // thinks it posted seven rows and got six has been lied to about what
+        // the human will read.
+        if (opts.kv.length > THREAD_SUMMARY_MAX_ROWS) {
+          error(`A summary carries at most ${THREAD_SUMMARY_MAX_ROWS} rows — you gave ${opts.kv.length}.`);
           process.exitCode = 1;
           return;
         }
@@ -1086,11 +1164,15 @@ export function registerAutomationsCommand(program: Command): void {
           kind: 'agent',
           text,
           files: opts.file,
+          ...(opts.kv.length > 0 ? { summary: opts.kv } : {}),
           via: 'cli',
         });
         success(`Posted to "${slug}".`);
         console.log(chalk.dim(`  run ${runId} · entry ${entry.id}`));
         if (entry.files?.length) console.log(chalk.dim(`  files: ${entry.files.join(', ')}`));
+        if (entry.summary?.length) {
+          console.log(chalk.dim(`  summary: ${entry.summary.map((r) => `${r.key}=${r.value}`).join(' · ')}`));
+        }
         // Retention is ANNOUNCED, never silent — the same rule the answered-
         // question prune follows. A channel that quietly loses its history is
         // indistinguishable from one that was never written to.

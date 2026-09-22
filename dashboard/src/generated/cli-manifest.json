@@ -146,6 +146,7 @@
       ],
       "valueFlags": [
         "--file",
+        "--kv",
         "--run"
       ]
     },
@@ -159,7 +160,8 @@
         "--title",
         "--summary",
         "--body",
-        "--body-file"
+        "--body-file",
+        "--choice"
       ]
     },
     {
