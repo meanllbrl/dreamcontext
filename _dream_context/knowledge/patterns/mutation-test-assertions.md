@@ -103,6 +103,30 @@ In the test or commit message, note that you ran the mutation:
 expect(slotWidth).toBeCloseTo(transcriptWidth, -1);
 ```
 
+## The stronger form: a mutation that changes the DESIGN, not just the test
+
+The protocol above treats the mutation as a *check* on an assertion. Three times in one build
+(2026-09-22, agents epic) it did something better: running the mutation changed what got built.
+
+- **T4 — `lstat` on a path that may not exist.** The write-side symlink check was mutation-tested by
+  pointing it at a file the run had not written yet. It threw instead of refusing, which is how the
+  check learned it must be gated on `existsSync` — and, in the same moment, why the *write* half can
+  never be the real control: nothing is there to `lstat`. The serve half was promoted to the control
+  and the write half demoted to defence-in-depth, because of a mutation.
+- **T5 — an assertion that passed in both directions.** A choice-cap test asserted the CLI refused an
+  over-cap `--choice`. Mutating the CLI guard away left it green, because the store truncated anyway
+  — which is what moved the caps out of the CLI and into `parseChoices`, where every producer *and
+  every reader of a file on disk* inherits them. The test did not just fail to prove the fix; it
+  revealed the fix was in the wrong layer.
+- **T11 — a colour probe that could not see its own subject.** A rail-hue assertion passed against
+  the pre-change build because it sampled a pixel the hue never reached. Rewriting it as a claim
+  about the tinted badge, in both themes and at 56px collapsed, is what surfaced that the hue had to
+  live on `.sidebar-icon` — the only element rendered collapsed.
+
+**The rule this adds:** when a mutation passes, do not only rewrite the assertion. Ask *why* the
+mutation was invisible. An assertion that cannot see a change is often pointing at a layer where the
+change does not actually live — and that is a design finding, not a test finding.
+
 ## When to Use This Pattern
 
 **Always mutation-test:**
@@ -127,6 +151,9 @@ expect(slotWidth).toBeCloseTo(transcriptWidth, -1);
 - Mutation-checked in both directions: with the fix stubbed off it fails, with the fix applied it passes
 
 ## Changelog
+
+### 2026-09-22 - Third occurrence, and the stronger form
+- Three mutations in one build (agents epic T4 lstat, T5 choice caps, T11 rail-hue probe) each moved the DESIGN, not just the assertion. Added "The stronger form" section: when a mutation passes, ask why it was invisible — the answer is usually that the change lives in the wrong layer.
 
 ### 2026-08-27 - Created
 - Pattern created from the chat shelf pill assertion that passed on the wrong code

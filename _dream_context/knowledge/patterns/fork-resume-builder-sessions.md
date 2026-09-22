@@ -2,7 +2,7 @@
 id: fork-resume-builder-sessions
 name: "Fork/Resume Builder Sessions (CLI session lifecycle for goal-skill v2)"
 description: "Builders resume and fork; judges stay fresh. `claude -p --resume <id>` continues a session at cache-read price, `--fork-session` inherits its context while leaving the parent resumable — so planners/implementers share one lineage and every reviewer starts clean. The fork base must be a CLI-minted builder session, never the orchestrator's own chat."
-tags: ["architecture", "topic:agents", "sdd"]
+tags: ["kind:pattern", "architecture", "topic:agents", "sdd"]
 pinned: false
 date: "2026-07-18"
 ---
@@ -39,6 +39,32 @@ The reason is independence, not convenience: a judge that inherited the builder'
 
 Because builder sessions are resumable, their ids are worth persisting past the current orchestrator run. `goal-skill` v2's task doc carries a session registry recording the planner's id, any re-fork id (if plan-review convergence required a fresh re-fork), and one id per implementer (each forked from the planner). Any later session — even a different orchestrator run, days later — can `--resume` a recorded builder id and continue exactly where that builder left off, without re-establishing context. See `goal-skill`'s SKILL.md for the literal registry block format.
 
+## Resuming across ACCOUNT sandboxes
+
+A builder session belongs to the *lineage*, not to the account that minted it. When a lane stalls on
+an account usage limit, the orchestrator resumes that same session id under a **different account
+sandbox** by setting `CLAUDE_CONFIG_DIR` on the spawn (`accountEnvFor(resolveConfigDir(n))`) — the
+lane picks up mid-lane with its full context and finishes on capacity that is still available.
+Observed three times in one build (2026-09-22): T8 stalled and resumed on a second account; T10's
+`delta3` finished under the limit on a third; a fourth attempt was then made from the orchestrator
+directly when every sandbox was capped.
+
+Two things make this safe, and both are worth stating because they are easy to get wrong:
+
+- **`CLAUDE_CONFIG_DIR` is the ONLY thing that changes.** It is what selects the account's config
+  sandbox. Anything else you merge into that env reaches a child spawned with elevated permissions —
+  which is why the same codebase types its resume-spawn `env` to exactly the two
+  `DREAMCONTEXT_AUTOMATION_*` hint keys rather than an open `Record`, making `PATH`, `HOME`,
+  `NODE_OPTIONS` and `CLAUDE_CONFIG_DIR` itself unrepresentable from a caller.
+- **Absence is a valid value.** `accountEnvFor` returns `{ CLAUDE_CONFIG_DIR: undefined }` for
+  account #0 (the real home dir) — deliberately, to *remove* an inherited value rather than set one.
+  Any assertion about the account on a spawn must read "absent, **or** equal to `accountEnvFor`'s
+  value", never "present and equal".
+
+**The operational consequence:** an account limit is a *pause*, not a lane failure. Before retrying a
+lane from scratch — which re-pays the whole exploration — check whether its session id is recorded
+and another sandbox has capacity. Restarting is the expensive answer to a cheap problem.
+
 ## Evidence
 
 Two real probe sessions, captured as session digests under `_dream_context/state/.session-digests/`:
@@ -55,4 +81,4 @@ The resume round on `d68255f2` (asking a follow-up without forking) cost approxi
 
 ## Last Verified
 
-2026-07-18.
+2026-09-22 — the fork/resume mechanics re-confirmed in the agents epic, plus the cross-account resume above.
