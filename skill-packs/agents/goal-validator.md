@@ -66,6 +66,13 @@ First line exactly `PASS` or `FAIL`. Then: the validation method run, the exact
 command(s) + output evidence, and (on FAIL) the specific failures with file/line so the
 implementer can act.
 
-> Note: Playwright / browser E2E is not supported in v1 (no browser tooling). If the
-> recorded method requires it, return FAIL with a note that the orchestrator must
+- **Browser (jev-verify)**: when the method names `Browser (jev-verify)`, run
+  `node .claude/skills/jev-verify/scripts/assert.mjs --spec <path>` (write the spec from the
+  task's inline expect lines if none is recorded, in the screen's own words, with `reject`
+  decoys). PASS only on exit 0 and cite `report.md`; exit 3 (inconclusive) is FAIL with the
+  inconclusive criteria listed; exit 2 (`unobtainable`: no key / no Playwright / no Chromium)
+  is FAIL with the doctor line quoted — never re-agree the method yourself, report it.
+
+> Note: without the `jev-verify` pack installed there is no browser tooling. If the recorded
+> method requires it, return FAIL with a note that the orchestrator must install the pack or
 > re-agree a supported method with the user.

@@ -244,6 +244,7 @@ When in doubt about a command or flag, open [cli-reference.md](references/cli-re
    - Writing / reviewing system prompts or agent definitions → `system-prompts`
    - Diagrams / boards in the vault → `excalidraw`
    - Watching / transcribing a video → `video-watching`
+   - Validating a screen or flow in the real browser, walking a funnel with screenshots, judging many rows by the same question → `jev-verify`
    - Discovering or validating a business idea → `business-idea-discovery` / `business-idea-validation`
 
    Skip triage only when the request is (a) a 1-line factual question, (b) purely about dreamcontext mechanics (this skill), or (c) outside every available skill's domain. When in doubt, load.

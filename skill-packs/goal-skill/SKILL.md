@@ -199,8 +199,11 @@ need up front, then go hands-off until the final report:
 
 1. Confirm the goal in one sentence ("Is this the goal: …?").
 2. **"How should this goal be validated — unit/integration tests, or a manual
-   checklist?"** (Playwright/browser E2E is not supported; if the user needs it, tell
-   them so and agree on the closest supported method.)
+   checklist, or Browser (jev-verify)?"** Browser validation is available when the
+   `jev-verify` pack is installed: the task records `Validation method: Browser (jev-verify)`
+   plus a spec path (or inline expect lines the validator turns into a spec), and the
+   validator runs `assert.mjs` — PASS only on exit 0 with the report as evidence. Without
+   the pack, say so and agree on the closest supported method.
 3. If the project declares **custom task fields** (`_dream_context/overrides/task.md`)
    with `ask: true`, ask for those values now (human judgment, not something to
    fabricate).
