@@ -111,6 +111,20 @@ if (ask) {
   process.exit(0);
 }
 
+// A RESUME, which is what an @mention to a SCHEDULED agent with a bound session now
+// starts (see D8): the prompt is \`buildThreadMessagePreamble\`, not the run's ask block,
+// so it carries a different marker and this branch has to read it. Answering with the
+// words back is the same end-to-end proof the ask branch gives — it shows the human's
+// sentence reached the RESUMED prompt rather than merely landing in the channel.
+const replyMatch = prompt.match(/--- THE HUMAN'S MESSAGE \\(verbatim\\) ---\\n([\\s\\S]*?)\\n--- END MESSAGE ---/);
+const replied = replyMatch ? replyMatch[1].trim() : '';
+if (replied) {
+  spawnSync(process.execPath, [${JSON.stringify(DIST_INDEX)}, 'automations', 'post', slug, 'You asked for: ' + replied], { encoding: 'utf-8' });
+  out({ session_id: 'standin-reply-' + slug, is_error: false, result: 'Answered: ' + replied,
+    total_cost_usd: 0.02, num_turns: 1, duration_ms: 4000, permission_denials: [] });
+  process.exit(0);
+}
+
 if (slug === 'breaker') { process.stderr.write('the site returned 403\\n'); process.exit(2); }
 
 if (slug === 'digest') {
@@ -351,7 +365,9 @@ async function main() {
 
     // ── 7: the thread panel ──────────────────────────────────────────────
     console.log('\n═══ 7. The thread panel ═══');
-    await digestMsg.locator('.agent-msg-replies').click();
+    // `.first()` — the thread control, now that "Open session" is its sibling
+    // under the same class. A bare locator is a strict-mode violation.
+    await digestMsg.locator('.agent-msg-replies').first().click();
     const panel = page.locator('.agent-thread');
     check('it opens on the right', await until(async () => (await panel.count()) > 0, 10000));
     const sysRows = panel.locator('.agent-thread-sys');
@@ -365,14 +381,32 @@ async function main() {
     const sysText = await sysRows.first().innerText();
     check('the first is the run opening', sysText.includes('Run started'), sysText);
     check('the agent\'s post is in the thread too', await panel.locator('.agent-thread-post').count() === 1);
-    check('the composer is DISABLED', await panel.locator('.agent-thread-input').isDisabled());
-    check('…and says when replying starts working',
-      (await panel.locator('.agent-thread-note').innerText()).includes('step 4'));
+    // THE COMPOSER IS THE CHAT'S OWN, not a bespoke box — and these two
+    // selectors are the proof BY CONSTRUCTION (pattern-component-reuse-over):
+    // if the panel ever regresses to a hand-rolled textarea, the `.chat-cmp-*`
+    // classes vanish and this fails, which is the only way that regression is
+    // caught mechanically rather than by someone noticing.
+    check('the thread mounts the chat\'s real Composer — the input',
+      await until(async () => (await panel.locator('.chat-cmp-input').count()) > 0, 10000));
+    check('…and its Send button', await panel.locator('.chat-cmp-send').count() > 0);
+    check('the step-4 "read only" note is gone',
+      !(await panel.locator('.agent-thread-note').count())
+      || !(await panel.locator('.agent-thread-note').first().innerText()).includes('step 4'));
     await page.screenshot({ path: join(SHOTS, '6-thread-panel.png') });
 
     // ── 8: THE COMPOSER — calling an agent by typing at it ───────────────
     console.log('\n═══ 8. The composer ═══');
-    await page.locator('.agent-thread-close').click().catch(() => {});
+    // CLOSING THE PANEL IS AN ASSERTION, not a best-effort gesture. This line used to
+    // swallow its own failure with `.catch(() => {})`, and that is exactly what hid a real
+    // bug: the panel's composer was stretched over the whole panel, so the close button was
+    // unclickable, the panel never closed, and the NEXT line spent 30s being intercepted by
+    // it before the script died. A control that does not close is worse than none — so the
+    // click is awaited on its own terms and the panel is then asserted GONE.
+    await panel.locator('.agent-thread-close').click({ timeout: 5000 });
+    check('the thread panel closes when you ask it to',
+      await until(async () => (await page.locator('.agent-thread').count()) === 0, 5000));
+    check('…and stops intercepting the channel behind it',
+      await page.locator('.agents-chip').first().isEnabled());
     await page.locator('.agents-chip', { hasText: 'All' }).first().click();
 
     // THE CHANNEL MOUNTS THE CHAT'S OWN COMPOSER (`agentsChannelHost.ts`), so
@@ -479,10 +513,27 @@ async function main() {
     check('…carrying what you typed, without the @address', yourText.trim() === ASK, `got: "${yourText}"`);
     check('…and saying who it went to', (await you.last().locator('.agent-msg-meta').innerText()).includes('Daily insight digest'));
     check('the field clears on send', (await field.inputValue()) === '');
-    check('…and refuses a second ask while that run is in flight', await field.isDisabled());
-    check('…saying who is holding the slot, not "Connecting…"',
-      (await field.getAttribute('placeholder') ?? '').includes('Daily insight digest'),
-      await field.getAttribute('placeholder'));
+
+    // AND THE MENTION OPENS ITS THREAD — the step-4 criterion. The panel needs a real
+    // feed message, which does not exist when the 200 lands, so the channel parks the
+    // pair and opens the panel the instant the feed carries it.
+    check('the mention opens that agent\'s thread',
+      await until(async () => (await page.locator('.agent-thread').count()) === 1, 10000));
+    check('…on the agent that was addressed',
+      (await page.locator('.agent-thread-sub').innerText()).includes('Daily insight digest'));
+
+    // THE RUN SLOT IS NOT TAKEN, and that is correct rather than a regression.
+    // `digest` is a SCHEDULED agent with a session bound on this machine, so an @mention
+    // RESUMES it (see the `sched` branch of `handleAutomationsSay`) instead of starting a
+    // fresh run. A resume is a reply JOB — its own id-keyed registry — while this field's
+    // `unavailable` prop reads `currentAutomationJob`, the run-now slot. So the channel
+    // stays writable during a reply turn, which is what you want: the slot genuinely is
+    // free, and a second mention to a DIFFERENT agent should go straight through.
+    //
+    // This section asserted the opposite until step 4 landed, because back then every
+    // mention started a run. The product moved; this is the script catching up.
+    check('the channel stays writable during a reply turn — no run slot is held',
+      !(await field.isDisabled()));
     await page.screenshot({ path: join(SHOTS, '8-asked.png') });
 
     // THE PROOF: the stand-in only answers this way when the ask reached its
@@ -493,18 +544,28 @@ async function main() {
       for (let i = 0; i < n; i++) if ((await rows.nth(i).innerText()).includes('You asked for: ' + ASK)) return true;
       return false;
     }, 60000);
-    check('the agent RUNS and answers with the words you typed', answered);
-    check('…so the ask reached its prompt, not just the channel', answered);
-    check('the field frees up again once the run settles',
-      await until(async () => !(await field.isDisabled()), 20000));
+    check('the agent ANSWERS with the words you typed', answered);
+    check('…so the message reached its resumed prompt, not just the channel', answered);
+    // The reply turn closes the exchange in the thread with its own terminal entry —
+    // `replied` on success, which `feed.ts` maps to the `done` status word. Without that
+    // mapping a mention's message would read "running" for ever, since a resume writes no
+    // run-cache row for the fresh id to fall back on.
+    check('…and the thread records the turn as replied',
+      await until(async () => threadEntries('digest').some((e) => e.event === 'replied'), 15000));
     await page.screenshot({ path: join(SHOTS, '9-answered.png') });
 
     // The exchange is ONE message: the ask is the question this message
     // answers, never a reply, or the channel would claim a run nobody spoke
     // in had one.
     const askedMsg = page.locator('.agent-msg:not(.agent-msg--you)').filter({ hasText: 'You asked for: ' + ASK }).first();
-    const replies = await askedMsg.locator('.agent-msg-replies').innerText();
-    check('the ask is not counted as a reply', replies.trim() === 'Open thread', `got: "${replies}"`);
+    // `.first()`: the row now carries TWO `.agent-msg-replies` buttons — the
+    // thread control and "Open session" — so a bare locator is a strict-mode
+    // violation rather than a passing assertion.
+    const replies = await askedMsg.locator('.agent-msg-replies').first().innerText();
+    // "Reply in thread", not "Open thread": the step-2 wording existed because
+    // replying did not, and it does now.
+    check('the ask is not counted as a reply', replies.trim() === 'Reply in thread', `got: "${replies}"`);
+    check('…and the run offers its session', await askedMsg.getByText('Open session').count() > 0);
 
     // ── 9: an ask nothing can answer is REFUSED, not swallowed ───────────
     console.log('\n═══ 9. An agent that cannot run ═══');
@@ -533,6 +594,20 @@ async function main() {
 
     // ── 10: the channel uses the width, and Send is reachable ────────────
     console.log('\n═══ 10. Layout ═══');
+    // MEASURED UNSPLIT, because that is what these three claims are about: the channel
+    // filling the page, the composer lining up with the notice above it, and Send sitting
+    // where the floating Agent button would otherwise bury it. Section 8's @mention leaves
+    // the thread panel open (it now opens on the agent you addressed), and a 380px panel
+    // makes all three false for a reason that has nothing to do with the property under
+    // test — the composer simply is not full width any more, so Send is not under the
+    // floater and the lift looks unnecessary. Close it first, and ASSERT the close rather
+    // than swallowing it: a panel that will not shut is the bug this section would
+    // otherwise hide a second time.
+    if (await page.locator('.agent-thread').count() > 0) {
+      await page.locator('.agent-thread-close').click({ timeout: 5000 });
+      check('the thread panel closes before the width is measured',
+        await until(async () => (await page.locator('.agent-thread').count()) === 0, 5000));
+    }
     const geo = await page.evaluate(() => {
       const w = (s) => { const el = document.querySelector(s); return el ? el.getBoundingClientRect() : null; };
       const bar = w('.auto-dispatch');      // the full-width notice in the header

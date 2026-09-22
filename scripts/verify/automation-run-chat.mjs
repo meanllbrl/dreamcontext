@@ -202,7 +202,7 @@ async function runTheme(base, theme) {
   for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(200); }
 
   // ── The board → the automation's detail panel ────────────────────────────────────
-  await page.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
+  await page.locator('.sidebar-item', { hasText: 'Agents' }).first().click();
   check('the Automations board opens',
     await until(async () => (await page.locator('.auto-card').count()) > 0, 15000),
     await page.locator('.page-content, main').first().innerText().catch(() => '').then((t) => t.slice(0, 120)));
@@ -264,7 +264,7 @@ async function runTheme(base, theme) {
 
   // ── Run #2: no transcript → refused in place, no blank chat ──────────────────────
   for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(250); }
-  await page.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
+  await page.locator('.sidebar-item', { hasText: 'Agents' }).first().click();
   await until(async () => (await page.locator('.auto-card').count()) > 0, 15000);
   await page.locator('.auto-card').first().click();
   await until(async () => (await page.locator('.adp-history-row').count()) === 2, 10000);

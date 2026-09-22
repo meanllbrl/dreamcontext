@@ -322,7 +322,7 @@ async function runTheme(base, theme) {
   const tabTexts = async () => tabs().allInnerTexts();
   const openAutomationsBoard = async () => {
     for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(200); }
-    await page.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
+    await page.locator('.sidebar-item', { hasText: 'Agents' }).first().click();
     await until(async () => (await page.locator('.auto-card').count()) > 0, 15000);
   };
 
