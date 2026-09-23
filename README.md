@@ -637,6 +637,7 @@ dreamcontext install-skill --list                     # See everything available
 | **system-prompts** | Prompt engineering, cognitive architecture, agent design |
 | **excalidraw** | ~44 deterministic builders — charts, wireframes, real-proportion device mockups — that turn data into valid Obsidian Excalidraw boards at near-zero token cost, with a 3-check render audit |
 | **video-watching** | Turn a video into a time-mapped transcript with on-screen visuals described inline, then reason about it |
+| **jev-verify** | Browser validation judged in plain language: Playwright drives the page, TypeSafe Jev (System One model via OpenRouter) answers acceptance criteria against the page's text in ~0.5 s for a fraction of a cent; `assert` / `walk` / `judge`. Needs `OPENROUTER_JEV_KEY` |
 
 _Always-on_ packs apply their base principles to every relevant task; the rest load only when the work matches. Packs install to `.claude/skills/{pack}/` (+ agents in `.claude/agents/`); cross-pack dependencies warn at install time.
 

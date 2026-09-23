@@ -192,6 +192,29 @@ describe('installPack — excalidraw (bundleDir standalone)', () => {
   });
 });
 
+// ─── A9d — jev-verify ships its ESM engine, lib and examples ────────────────
+
+describe('installPack — jev-verify (bundleDir + ESM scripts)', () => {
+  it('A9d: ships assert/walk/judge/doctor, the lib, and the example spec; every file is a pack-skill', () => {
+    const result = installPack('jev-verify', tmpDir, ['claude'], manifest);
+
+    const base = join(tmpDir, '.claude', 'skills', 'jev-verify');
+    expect(existsSync(join(base, 'SKILL.md'))).toBe(true);
+    for (const f of ['assert.mjs', 'walk.mjs', 'judge.mjs', 'doctor.mjs']) expect(existsSync(join(base, 'scripts', f))).toBe(true);
+    for (const f of ['jev.mjs', 'page.mjs', 'playwright.mjs', 'report.mjs']) expect(existsSync(join(base, 'scripts', 'lib', f))).toBe(true);
+    expect(existsSync(join(base, 'examples', 'settings-recall.json'))).toBe(true);
+
+    expect(result.installed).toContain('.claude/skills/jev-verify/scripts/assert.mjs');
+    expect(result.installed).toContain('.claude/skills/jev-verify/scripts/lib/jev.mjs');
+    expect(result.installed).toContain('.claude/skills/jev-verify/examples/settings-recall.json');
+    for (const p of result.installed) {
+      expect(ANSI.test(p)).toBe(false);
+      expect(manifest.files[p]?.kind).toBe('pack-skill');
+    }
+    expect(manifest.packs['jev-verify']).toBeDefined();
+  });
+});
+
 // ─── A9c — bundleDir preserves the executable bit on shipped shell scripts ─────
 
 describe('installPack — video-watching (bundleDir + executable engine)', () => {

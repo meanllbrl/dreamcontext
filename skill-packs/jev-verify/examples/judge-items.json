@@ -1,0 +1,7 @@
+[
+  { "slug": "checkout-retry", "status": "completed", "Incremental Revenue": "Direct Revenue — retrying a failed charge recovers roughly 4% of declined renewals." },
+  { "slug": "onboarding-copy", "status": "todo", "Incremental Revenue": "" },
+  { "slug": "hire-qa-lead", "status": "in_progress", "Incremental Revenue": "Long Term Leverage — a QA lead lets two squads ship without a shared release gate." },
+  { "slug": "slack-digest", "status": "completed", "Incremental Revenue": "Saves the team an hour a week." },
+  { "slug": "paywall-ab-test", "status": "in_review", "Incremental Revenue": "   " }
+]
